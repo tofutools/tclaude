@@ -151,7 +151,7 @@ func runNew(params *NewParams) error {
 		"sh", "-c", claudeCmd,
 	}
 
-	tmuxCmd := exec.Command("tmux", tmuxArgs...)
+	tmuxCmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
 	tmuxCmd.Stdout = os.Stdout
 	tmuxCmd.Stderr = os.Stderr
 
@@ -161,8 +161,8 @@ func runNew(params *NewParams) error {
 
 	// Configure tmux to set window title with our session ID
 	// This ensures the title persists and is visible for window focus
-	exec.Command("tmux", "set-option", "-t", tmuxSession, "set-titles", "on").Run()
-	exec.Command("tmux", "set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+	clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
+	clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
 
 	// Get the PID of claude in the tmux session
 	pid := ParsePIDFromTmux(tmuxSession)

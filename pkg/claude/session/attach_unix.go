@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // attachToSession attaches to a tmux session as a subprocess.
@@ -22,7 +24,7 @@ func attachToSessionWithFlags(tmuxSession string, force bool) error {
 		args = []string{"attach-session", "-d", "-t", tmuxSession}
 	}
 
-	cmd := exec.Command("tmux", args...)
+	cmd := exec.Command("tmux", clcommon.TmuxArgs(args...)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
