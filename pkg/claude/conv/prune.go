@@ -81,28 +81,39 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		projectPaths = []string{projectPath}
 	}
 
-	// Find all empty conversations
+	// Find all empty conversations and missing-file index entries
 	var emptyConvs []emptyConversation
+	var missingConvs []emptyConversation
 
 	for _, projectPath := range projectPaths {
-		empty := findEmptyConversations(projectPath)
-		emptyConvs = append(emptyConvs, empty...)
+		emptyConvs = append(emptyConvs, findEmptyConversations(projectPath)...)
+		missingConvs = append(missingConvs, findMissingFileEntries(projectPath)...)
 	}
 
-	if len(emptyConvs) == 0 {
-		fmt.Fprintf(stdout, "No empty conversations found\n")
+	if len(emptyConvs) == 0 && len(missingConvs) == 0 {
+		fmt.Fprintf(stdout, "No empty or missing conversations found\n")
 		return 0
 	}
 
 	// Show what we found
-	fmt.Fprintf(stdout, "Found %d empty conversation(s):\n\n", len(emptyConvs))
-	for _, conv := range emptyConvs {
-		indexedStr := ""
-		if conv.IsIndexed {
-			indexedStr = " (indexed)"
+	if len(emptyConvs) > 0 {
+		fmt.Fprintf(stdout, "Found %d empty conversation(s) (no user messages):\n\n", len(emptyConvs))
+		for _, conv := range emptyConvs {
+			indexedStr := ""
+			if conv.IsIndexed {
+				indexedStr = " (indexed)"
+			}
+			fmt.Fprintf(stdout, "  %s%s\n", conv.SessionID[:8], indexedStr)
 		}
-		fmt.Fprintf(stdout, "  %s%s\n", conv.SessionID[:8], indexedStr)
 	}
+	if len(missingConvs) > 0 {
+		fmt.Fprintf(stdout, "Found %d index-only entry/entries (file missing on disk):\n\n", len(missingConvs))
+		for _, conv := range missingConvs {
+			fmt.Fprintf(stdout, "  %s\n", conv.SessionID[:8])
+		}
+	}
+
+	totalCount := len(emptyConvs) + len(missingConvs)
 
 	if params.DryRun {
 		fmt.Fprintf(stdout, "\nDry run - no changes made\n")
@@ -111,7 +122,7 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 
 	// Confirm deletion
 	if !params.Yes {
-		fmt.Fprintf(stdout, "\nDelete these %d empty conversation(s)? [y/N]: ", len(emptyConvs))
+		fmt.Fprintf(stdout, "\nDelete these %d conversation(s)? [y/N]: ", totalCount)
 		reader := bufio.NewReader(stdin)
 		response, _ := reader.ReadString('\n')
 		response = strings.TrimSpace(strings.ToLower(response))
@@ -121,9 +132,10 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		}
 	}
 
-	// Group by project path for index updates
+	// Combine both lists and group by project path for index updates
+	allConvs := append(emptyConvs, missingConvs...)
 	byProject := make(map[string][]emptyConversation)
-	for _, conv := range emptyConvs {
+	for _, conv := range allConvs {
 		byProject[conv.ProjectPath] = append(byProject[conv.ProjectPath], conv)
 	}
 
@@ -136,7 +148,7 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		index, _ := loadSessionsIndexOnly(projectPath)
 
 		for _, conv := range convs {
-			// Delete the .jsonl file
+			// Delete the .jsonl file (may not exist for missing-file entries)
 			if err := os.Remove(conv.FilePath); err != nil {
 				if !os.IsNotExist(err) {
 					fmt.Fprintf(stderr, "Error deleting %s: %v\n", conv.SessionID[:8], err)
@@ -168,7 +180,7 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		}
 	}
 
-	fmt.Fprintf(stdout, "Deleted %d empty conversation(s)\n", deleted)
+	fmt.Fprintf(stdout, "Deleted %d conversation(s)\n", deleted)
 	return 0
 }
 
@@ -238,6 +250,30 @@ func findEmptyConversations(projectPath string) []emptyConversation {
 	}
 
 	return empty
+}
+
+// findMissingFileEntries finds index entries whose .jsonl file doesn't exist on disk
+func findMissingFileEntries(projectPath string) []emptyConversation {
+	var missing []emptyConversation
+
+	index, err := loadSessionsIndexOnly(projectPath)
+	if err != nil || index == nil {
+		return missing
+	}
+
+	for _, e := range index.Entries {
+		filePath := filepath.Join(projectPath, e.SessionID+".jsonl")
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			missing = append(missing, emptyConversation{
+				SessionID:   e.SessionID,
+				FilePath:    filePath,
+				ProjectPath: projectPath,
+				IsIndexed:   true,
+			})
+		}
+	}
+
+	return missing
 }
 
 // hasUserMessages checks if a .jsonl file contains any user messages

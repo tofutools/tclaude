@@ -150,6 +150,16 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 	}
 	scanDur := time.Since(scanStart)
 
+	// Populate FileSize for entries that don't have it (loaded from index JSON)
+	for i := range index.Entries {
+		if index.Entries[i].FileSize == 0 {
+			filePath := filepath.Join(projectPath, index.Entries[i].SessionID+".jsonl")
+			if info, err := os.Stat(filePath); err == nil {
+				index.Entries[i].FileSize = info.Size()
+			}
+		}
+	}
+
 	if DebugLog {
 		fmt.Fprintf(os.Stderr, "[DEBUG] LoadSessionsIndex %s: read=%v rescan=%d/%d(%v) unindexed=%d(%v)\n",
 			filepath.Base(projectPath), readDur, rescanCount, len(index.Entries), rescanDur, len(unindexed), scanDur)
