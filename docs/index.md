@@ -4,6 +4,8 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 
 ![Demo](demo.gif)
 
+*The demo shows `tofu claude` — tclaude was originally part of [GiGurra/tofu](https://github.com/GiGurra/tofu) and has since been extracted into its own repo. The commands are the same.*
+
 ## Supported Platforms
 
 | Platform | Status |
