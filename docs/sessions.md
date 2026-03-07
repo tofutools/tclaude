@@ -159,14 +159,14 @@ Sessions report their status via Claude hooks:
 
 ## Tmux Integration
 
-Sessions run in tmux with the naming convention `tofu-claude-<id>`.
+Sessions run in tmux with the naming convention `tclaude-<id>`.
 
 ```bash
-# List all tofu tmux sessions
-tmux ls | grep tofu-claude
+# List all tclaude tmux sessions
+tmux ls | grep tclaude-
 
 # Manually attach
-tmux attach -t tofu-claude-abc123
+tmux attach -t tclaude-abc123
 
 # Detach from inside tmux
 Ctrl+B D

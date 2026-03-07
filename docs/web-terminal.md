@@ -54,11 +54,11 @@ Then access `https://<windows-ip>:9443` from your phone.
 
 ## TLS Certificates
 
-A self-signed TLS certificate is generated on first use and saved to `~/.tofu/claude-web/`. The certificate is reused across restarts (same fingerprint), so you only need to trust it once.
+A self-signed TLS certificate is generated on first use and saved to `~/.tclaude/claude-web/`. The certificate is reused across restarts (same fingerprint), so you only need to trust it once.
 
 To trust the certificate in Chrome:
 1. Navigate to `chrome://settings/certificates`
-2. Import `~/.tofu/claude-web/cert.pem` as a trusted authority
+2. Import `~/.tclaude/claude-web/cert.pem` as a trusted authority
 
 To regenerate the certificate:
 

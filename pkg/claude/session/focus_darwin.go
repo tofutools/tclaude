@@ -16,7 +16,7 @@ func TryFocusAttachedSession(tmuxSession string) {
 
 // FocusTmuxSession focuses the terminal window running a specific tmux session.
 func FocusTmuxSession(tmuxSession string) bool {
-	debug := os.Getenv("TOFU_DEBUG") != ""
+	debug := os.Getenv("TCLAUDE_DEBUG") != ""
 
 	if debug {
 		fmt.Printf("[debug] FocusTmuxSession: tmuxSession=%s\n", tmuxSession)
@@ -249,7 +249,7 @@ func terminalFromTTY(tty string) string {
 
 // findTerminalFromPID walks up the process tree to find a terminal app.
 func findTerminalFromPID(pid string) string {
-	debug := os.Getenv("TOFU_DEBUG") != ""
+	debug := os.Getenv("TCLAUDE_DEBUG") != ""
 	visited := make(map[string]bool)
 
 	for pid != "" && pid != "0" && pid != "1" && !visited[pid] {
