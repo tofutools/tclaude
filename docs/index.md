@@ -76,6 +76,8 @@ tclaude conv ls -w
 | `conv resume` | Resume a conversation |
 | `conv delete` | Delete a conversation |
 | `conv prune-empty` | Delete empty conversations |
+| `credentials split` | Split credentials for independent tclaude tokens |
+| `credentials status` | Show which credential store is active |
 
 ## Interactive Watch Mode Keys ⌨️
 
