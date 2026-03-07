@@ -29,7 +29,7 @@ tclaude setup --check
 
 ## Manual Configuration
 
-Alternatively, create `~/.tofu/config.json` manually:
+Alternatively, create `~/.tclaude/config.json` manually:
 
 ```json
 {
@@ -153,7 +153,7 @@ If clicking doesn't work:
 ### Notifications not appearing
 
 1. Run `tclaude setup --check` to verify everything is configured
-2. Check that `~/.tofu/config.json` has `"enabled": true`
+2. Check that `~/.tclaude/config.json` has `"enabled": true`
 3. Check that the session state transition matches your configured rules
 
 ### WSL-specific issues

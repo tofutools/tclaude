@@ -113,8 +113,8 @@ The status bar caches data to stay fast (it runs after every assistant message):
 
 | Data                        | Cache Location                         | TTL        |
 |-----------------------------|----------------------------------------|------------|
-| Git info (repo, branch, PR) | `~/.cache/tofu/claude-git-<hash>.json` | 15 seconds |
-| Subscription limits         | `~/.cache/tofu/claude-usage.json`      | 15 seconds |
+| Git info (repo, branch, PR) | `~/.cache/tclaude/claude-git-<hash>.json` | 15 seconds |
+| Subscription limits         | `~/.cache/tclaude/claude-usage.json`      | 15 seconds |
 
 - Git cache is **per-repo** (keyed by repo root hash), so parallel sessions in different repos don't interfere
 - Usage cache is **shared** since it's account-level data
@@ -127,3 +127,34 @@ The status bar caches data to stay fast (it runs after every assistant message):
 Claude Code pipes JSON session data to the status bar command via stdin. The JSON includes model info, version, workspace directory, context window usage, and cost. The status bar combines this with cached git data and subscription limits to render the output.
 
 The command is hidden from `tclaude --help` since it's only meant to be called by Claude Code.
+
+## Known Issues
+
+### Usage bar shows stale data
+
+The Anthropic OAuth usage endpoint (`/api/oauth/usage`) rate limits aggressively — as few as ~5 requests per access token before returning 429. Once rate limited, the endpoint may stay blocked for hours with no `Retry-After` header.
+
+Tracked upstream in [anthropics/claude-code#31637](https://github.com/anthropics/claude-code/issues/31637).
+
+**Root cause:** Rate limits are per-access-token, not per-account. Refreshing the OAuth token resets the counter.
+
+**Workaround (manual):** If usage data is stuck/stale, you can force a token refresh:
+
+```bash
+# Get your refresh token
+cat ~/.claude/.credentials.json | grep -o '"refreshToken":"[^"]*"' | cut -d'"' -f4
+
+# Refresh the token (replace YOUR_REFRESH_TOKEN below)
+curl -s -X POST https://console.anthropic.com/v1/oauth/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "grant_type": "refresh_token",
+    "refresh_token": "YOUR_REFRESH_TOKEN",
+    "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+  }'
+```
+
+!!! warning
+    Refresh tokens are **one-time use**. You must save both the new `access_token` and `refresh_token` from the response back into `~/.claude/.credentials.json`, or future refreshes will fail.
+
+**Planned:** tclaude will implement automatic token refresh on 429 so this is handled transparently.
