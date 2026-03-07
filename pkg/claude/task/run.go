@@ -111,7 +111,7 @@ func runInTmux(cwd string, detached bool) error {
 		"sh", "-c", runnerCmd,
 	}
 
-	tmuxCmd := exec.Command("tmux", tmuxArgs...)
+	tmuxCmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
 	tmuxCmd.Stdout = os.Stdout
 	tmuxCmd.Stderr = os.Stderr
 
@@ -228,16 +228,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 // answer questions, etc. When the user types /exit or Claude exits,
 // control returns to the task runner.
 func runClaude(cwd, prompt string, extraArgs []string) (string, error) {
-	// Use --output-file to capture Claude's response
-	outputFile, err := os.CreateTemp("", "tclaude-task-report-*.md")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	outputPath := outputFile.Name()
-	outputFile.Close()
-	defer os.Remove(outputPath)
-
-	args := []string{prompt, "--output-file", outputPath}
+	args := []string{prompt}
 	args = append(args, extraArgs...)
 
 	cmd := exec.Command("claude", args...)
@@ -246,12 +237,9 @@ func runClaude(cwd, prompt string, extraArgs []string) (string, error) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err = cmd.Run()
+	err := cmd.Run()
 
-	// Read the captured output
-	report, _ := os.ReadFile(outputPath)
-
-	return string(report), err
+	return "", err
 }
 
 // gitCommitAll stages all changes and commits with the given message.
