@@ -6,7 +6,6 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
-	"github.com/tofutools/tclaude/pkg/claude/credentials"
 	claudegit "github.com/tofutools/tclaude/pkg/claude/git"
 	"github.com/tofutools/tclaude/pkg/claude/selftest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -29,7 +28,6 @@ func Cmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			conv.Cmd(),
-			credentials.Cmd(),
 			session.Cmd(),
 			claudegit.Cmd(),
 			worktree.Cmd(),

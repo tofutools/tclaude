@@ -138,29 +138,8 @@ Tracked upstream in [anthropics/claude-code#31637](https://github.com/anthropics
 
 **Root cause:** Rate limits are per-access-token, not per-account.
 
-**Mitigation:** tclaude caches usage data to stay well under the rate limit. The cache TTL depends on your credential setup (see workaround below).
+**Mitigation:** tclaude caches usage data for 5 minutes to stay well under the rate limit. With hook-triggered eager refresh, this means the status bar updates roughly once every 5 minutes rather than on every hook callback.
 
 **If you hit 429 anyway:** Run `/login` inside Claude Code to get a fresh token.
 
-### Workaround: Split credentials
-
-The recommended fix is to give tclaude its own OAuth credentials, separate from Claude Code:
-
-```bash
-tclaude credentials split
-```
-
-This copies your current Claude Code credentials into `~/.tclaude/api-credentials.json` and removes them from Claude Code's store. Next time Claude Code starts, it will prompt you to log in again, creating a fresh independent token.
-
-**After splitting:**
-- tclaude and Claude Code each have their own access/refresh tokens — no more conflicts
-- tclaude can safely refresh its own token on 429 without invalidating Claude Code's session
-- Cache TTL drops from 5 minutes to 30 seconds, so the status bar updates much more frequently
-
-**Check your current credential status:**
-
-```bash
-tclaude credentials status
-```
-
-> **Note:** If you haven't split credentials, tclaude uses Claude Code's shared token with a conservative 5-minute cache TTL and no automatic token refresh (to avoid invalidating Claude Code's in-memory token). You can also set `TCLAUDE_DEBUG_REFRESH=1` to force token refresh in shared mode, but this is not recommended for normal use.
+> **Note:** Automatic token refresh was removed because it conflicts with Claude Code — both processes share the same OAuth refresh token, and rotating it from tclaude invalidates Claude Code's in-memory copy, eventually forcing a re-login. The refresh code is still present but disabled; set `TCLAUDE_DEBUG_REFRESH=1` to re-enable it for debugging.
