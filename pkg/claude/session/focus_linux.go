@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
@@ -584,7 +585,7 @@ func focusLinuxTmuxSession(tmuxSession string) bool {
 	}
 
 	// Get the client TTY for this tmux session
-	cmd := exec.Command("tmux", "list-clients", "-t", tmuxSession, "-F", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		debugLog("Failed to get tmux client tty: %v", err)

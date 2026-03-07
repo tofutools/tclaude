@@ -147,7 +147,7 @@ func runResumeWithSession(convInfo *clcommon.ConvInfo, projectPath, displayName 
 		"sh", "-c", claudeCmd,
 	}
 
-	tmuxCmd := exec.Command("tmux", tmuxArgs...)
+	tmuxCmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
 	if err := tmuxCmd.Run(); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
 		return 1

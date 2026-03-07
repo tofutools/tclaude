@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
@@ -264,14 +265,14 @@ func CleanupOldExitedSessions(maxAge time.Duration) error {
 
 // IsTmuxSessionAlive checks if a tmux session exists
 func IsTmuxSessionAlive(sessionName string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", sessionName)
+	cmd := clcommon.TmuxCommand("has-session", "-t", sessionName)
 	return cmd.Run() == nil
 }
 
 // GetTmuxSessionAttachedCount returns the number of clients attached to a tmux session
 // Returns 0 if session doesn't exist or on error
 func GetTmuxSessionAttachedCount(sessionName string) int {
-	cmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{session_attached}")
+	cmd := clcommon.TmuxCommand("display-message", "-t", sessionName, "-p", "#{session_attached}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -288,7 +289,7 @@ func IsTmuxSessionAttached(sessionName string) bool {
 // DetachSessionClients detaches all clients from a tmux session
 func DetachSessionClients(sessionName string) error {
 	// Get list of clients attached to this session
-	cmd := exec.Command("tmux", "list-clients", "-t", sessionName, "-F", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("list-clients", "-t", sessionName, "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		return err
@@ -301,7 +302,7 @@ func DetachSessionClients(sessionName string) error {
 			continue
 		}
 		// Detach this specific client
-		_ = exec.Command("tmux", "detach-client", "-t", client).Run()
+		_ = clcommon.TmuxCommand("detach-client", "-t", client).Run()
 	}
 	return nil
 }
@@ -388,7 +389,7 @@ func ShortenPath(path string, maxLen int) string {
 
 // ParsePIDFromTmux gets the PID of the main process in a tmux session
 func ParsePIDFromTmux(sessionName string) int {
-	cmd := exec.Command("tmux", "list-panes", "-t", sessionName, "-F", "#{pane_pid}")
+	cmd := clcommon.TmuxCommand("list-panes", "-t", sessionName, "-F", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0

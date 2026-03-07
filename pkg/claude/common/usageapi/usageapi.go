@@ -97,6 +97,7 @@ type CachedUsage struct {
 	ExtraUsage     *ExtraUsage   `json:"extra_usage,omitempty"`
 	FetchedAt      time.Time     `json:"fetched_at"`
 	LastAttemptAt  time.Time     `json:"last_attempt_at,omitempty"`
+	LastError      string        `json:"last_error,omitempty"`
 }
 
 func cachePath() string {
@@ -552,13 +553,16 @@ func parseBucket(b Bucket) CachedBucket {
 
 // stampLastAttempt updates LastAttemptAt on the cache file so that
 // subsequent calls respect the cacheTTL backoff even after a failed fetch.
-// Creates a minimal cache entry if none exists.
-func stampLastAttempt() {
+// Creates a minimal cache entry if none exists. Records the error message.
+func stampLastAttempt(err error) {
 	cached := loadCacheStale()
 	if cached == nil {
 		cached = &CachedUsage{}
 	}
 	cached.LastAttemptAt = time.Now()
+	if err != nil {
+		cached.LastError = err.Error()
+	}
 	saveCache(cached)
 }
 
@@ -633,13 +637,13 @@ func RefreshCache() {
 	token, err := getTokenFunc()
 	if err != nil {
 		slog.Warn("RefreshCache: failed to get access token", "error", err)
-		stampLastAttempt()
+		stampLastAttempt(err)
 		return
 	}
 	resp, err := fetchWithRateLimitRetry(token)
 	if err != nil {
 		slog.Warn("RefreshCache: failed to fetch usage data", "error", err)
-		stampLastAttempt()
+		stampLastAttempt(err)
 		return
 	}
 	saveCache(buildCachedUsage(resp))
@@ -654,7 +658,7 @@ func GetCached() (*CachedUsage, error) {
 
 	token, err := getTokenFunc()
 	if err != nil {
-		stampLastAttempt()
+		stampLastAttempt(err)
 		if stale := loadCacheStale(); stale != nil && !stale.FetchedAt.IsZero() {
 			return stale, fmt.Errorf("using stale cache: %w", err)
 		}
@@ -664,7 +668,7 @@ func GetCached() (*CachedUsage, error) {
 
 	resp, err := fetchWithRateLimitRetry(token)
 	if err != nil {
-		stampLastAttempt()
+		stampLastAttempt(err)
 		if stale := loadCacheStale(); stale != nil && !stale.FetchedAt.IsZero() {
 			return stale, fmt.Errorf("using stale cache: %w", err)
 		}

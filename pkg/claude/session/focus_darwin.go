@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // TryFocusAttachedSession attempts to focus the terminal window that has the session attached.
@@ -76,7 +78,7 @@ func FocusTmuxSession(tmuxSession string) bool {
 
 // getTmuxClientTTY gets the tty of a client attached to a tmux session.
 func getTmuxClientTTY(tmuxSession string) string {
-	cmd := exec.Command("tmux", "list-clients", "-t", tmuxSession, "-F", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -213,7 +215,7 @@ func detectTerminalApp() string {
 // detectTerminalFromTmux tries to find which terminal is running the current tmux client.
 func detectTerminalFromTmux() string {
 	// Get the tmux client tty
-	cmd := exec.Command("tmux", "display-message", "-p", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("display-message", "-p", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""

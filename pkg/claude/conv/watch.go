@@ -413,7 +413,7 @@ func (m watchModel) deleteConversation(conv *SessionEntry) error {
 func (m watchModel) stopSession(state *session.SessionState) error {
 	// Kill tmux session if alive
 	if session.IsTmuxSessionAlive(state.TmuxSession) {
-		cmd := exec.Command("tmux", "kill-session", "-t", state.TmuxSession)
+		cmd := clcommon.TmuxCommand("kill-session", "-t", state.TmuxSession)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to kill tmux session: %w", err)
 		}
@@ -1075,7 +1075,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		"sh", "-c", claudeCmd,
 	}
 
-	cmd := exec.Command("tmux", tmuxArgs...)
+	cmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
