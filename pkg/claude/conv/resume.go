@@ -45,7 +45,7 @@ func ResumeCmd() *cobra.Command {
 }
 
 func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
-	// Extract just the ID from autocomplete format (e.g., "0459cd73_[tofu_claude]_prompt..." -> "0459cd73")
+	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
 	// Get current directory for local search
@@ -126,10 +126,10 @@ func runResumeWithSession(convInfo *clcommon.ConvInfo, projectPath, displayName 
 		return 1
 	}
 
-	tmuxSession := "tofu-claude-" + sessionID
+	tmuxSession := "tclaude-" + sessionID
 
-	// Build claude command with TOFU_SESSION_ID env var
-	claudeCmd := fmt.Sprintf("TOFU_SESSION_ID=%s claude --resume %s", sessionID, convInfo.SessionID)
+	// Build claude command with TCLAUDE_SESSION_ID env var
+	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude --resume %s", sessionID, convInfo.SessionID)
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
 		quoted := make([]string, len(extraArgs))
 		for i, a := range extraArgs {

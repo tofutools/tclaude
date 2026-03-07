@@ -811,7 +811,7 @@ func (m watchModel) View() string {
 	case watchConfirmDeleteWithSession:
 		b.WriteString(wConfirmStyle.Render("  Has active session. Delete+stop (y), stop only (s), cancel (n)?"))
 	case watchConfirmNoTmux:
-		b.WriteString(wConfirmStyle.Render("  Session was started outside tofu/tmux (◉) - already in its terminal. [press any key]"))
+		b.WriteString(wConfirmStyle.Render("  Session was started outside tclaude/tmux (◉) - already in its terminal. [press any key]"))
 	default:
 		if m.worktreeFocused {
 			b.WriteString(wSearchStyle.Render("  Branch name: [" + m.worktreeInput + "_] (enter to create, esc to cancel)"))
@@ -959,7 +959,7 @@ func RunConvWatchMode(global bool, since, before string) error {
 
 		// Focus only - just focus the window and return to watch mode
 		if result.FocusOnly {
-			os.Setenv("TOFU_SESSION_ID", result.FocusSessionID)
+			os.Setenv("TCLAUDE_SESSION_ID", result.FocusSessionID)
 			session.TryFocusAttachedSession(result.TmuxSession)
 			continue
 		}
@@ -1054,10 +1054,10 @@ func createSessionForConv(conv *SessionEntry) error {
 
 	// Use conv ID prefix as session ID
 	sessionID := conv.SessionID[:8]
-	tmuxSession := "tofu-claude-" + sessionID
+	tmuxSession := "tclaude-" + sessionID
 
-	// Build claude command with TOFU_SESSION_ID env var
-	claudeCmd := fmt.Sprintf("TOFU_SESSION_ID=%s claude --resume %s", sessionID, conv.SessionID)
+	// Build claude command with TCLAUDE_SESSION_ID env var
+	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude --resume %s", sessionID, conv.SessionID)
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
 		quoted := make([]string, len(extraArgs))
 		for i, a := range extraArgs {

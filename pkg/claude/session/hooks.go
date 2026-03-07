@@ -10,15 +10,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common"
 )
 
-// isOurHook returns true if a hook command belongs to tofu/tclaude (any binary variant,
-// including absolute paths like /usr/local/bin/tclaude or /usr/local/bin/tofu)
+// isOurHook returns true if a hook command belongs to tclaude (any binary variant,
+// including absolute paths like /usr/local/bin/tclaude)
 func isOurHook(command string) bool {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
 		return false
 	}
 	base := filepath.Base(fields[0])
-	return base == "tclaude" || base == "tofu"
+	return base == "tclaude"
 }
 
 // HookMatcher represents a hook matcher configuration
@@ -33,16 +33,16 @@ type HookConfig struct {
 	Command string `json:"command"`
 }
 
-// TofuHookCommand is the unified callback command for all hooks (detected at startup)
-var TofuHookCommand string
+// HookCommand is the unified callback command for all hooks (detected at startup)
+var HookCommand string
 
-// RequiredHooks defines the hooks tofu needs for status tracking
+// RequiredHooks defines the hooks tclaude needs for status tracking
 // All hooks use the same unified callback - it reads stdin and figures out what to do
 var RequiredHooks map[string][]HookMatcher
 
 func init() {
-	TofuHookCommand = common.DetectTofuCmd("session", "hook-callback")
-	hook := HookConfig{Type: "command", Command: TofuHookCommand}
+	HookCommand = common.DetectCmd("session", "hook-callback")
+	hook := HookConfig{Type: "command", Command: HookCommand}
 	newMatcher := func() HookMatcher { return HookMatcher{Hooks: []HookConfig{hook}} }
 	RequiredHooks = map[string][]HookMatcher{
 		"UserPromptSubmit":   {newMatcher()},
@@ -58,7 +58,7 @@ func init() {
 	}
 }
 
-// containsCurrentHook checks if a raw matchers JSON contains the current TofuHookCommand
+// containsCurrentHook checks if a raw matchers JSON contains the current HookCommand
 func containsCurrentHook(matchersJSON string) bool {
 	var matchers []HookMatcher
 	if err := json.Unmarshal([]byte(matchersJSON), &matchers); err != nil {
@@ -66,7 +66,7 @@ func containsCurrentHook(matchersJSON string) bool {
 	}
 	for _, m := range matchers {
 		for _, h := range m.Hooks {
-			if h.Command == TofuHookCommand {
+			if h.Command == HookCommand {
 				return true
 			}
 		}
@@ -75,7 +75,7 @@ func containsCurrentHook(matchersJSON string) bool {
 }
 
 // containsStaleHook checks if a raw matchers JSON contains any of our hooks
-// that don't match the current TofuHookCommand (duplicates or old binary variants)
+// that don't match the current HookCommand (duplicates or old binary variants)
 func containsStaleHook(matchersJSON string) bool {
 	var matchers []HookMatcher
 	if err := json.Unmarshal([]byte(matchersJSON), &matchers); err != nil {
@@ -83,7 +83,7 @@ func containsStaleHook(matchersJSON string) bool {
 	}
 	for _, m := range matchers {
 		for _, h := range m.Hooks {
-			if isOurHook(h.Command) && h.Command != TofuHookCommand {
+			if isOurHook(h.Command) && h.Command != HookCommand {
 				return true
 			}
 		}
@@ -91,7 +91,7 @@ func containsStaleHook(matchersJSON string) bool {
 	return false
 }
 
-// removeOurHooksFromEvent removes all tofu/tclaude hooks from an event's matcher list
+// removeOurHooksFromEvent removes all tclaude hooks from an event's matcher list
 func removeOurHooksFromEvent(eventHooksRaw json.RawMessage) (json.RawMessage, bool, error) {
 	var matchers []HookMatcher
 	if err := json.Unmarshal(eventHooksRaw, &matchers); err != nil {
@@ -109,7 +109,7 @@ func removeOurHooksFromEvent(eventHooksRaw json.RawMessage) (json.RawMessage, bo
 				keptHooks = append(keptHooks, h)
 			}
 		}
-		// Only keep the matcher if it still has non-tofu hooks
+		// Only keep the matcher if it still has non-tclaude hooks
 		if len(keptHooks) > 0 {
 			filtered = append(filtered, HookMatcher{Matcher: m.Matcher, Hooks: keptHooks})
 		}
@@ -134,7 +134,7 @@ func ClaudeSettingsPath() string {
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
-// CheckHooksInstalled checks if tofu hooks are installed in Claude settings.
+// CheckHooksInstalled checks if tclaude hooks are installed in Claude settings.
 // Returns: installed (all required hooks present with current binary), missing event names, hasStaleHooks (our hooks present but with a different binary).
 func CheckHooksInstalled() (installed bool, missing []string, hasStaleHooks bool) {
 	settingsPath := ClaudeSettingsPath()
@@ -185,7 +185,7 @@ func CheckHooksInstalled() (installed bool, missing []string, hasStaleHooks bool
 	return len(missing) == 0, missing, hasStaleHooks
 }
 
-// InstallHooks adds tofu hooks to Claude settings, replacing any existing tofu/tclaude hooks
+// InstallHooks adds tclaude hooks to Claude settings, replacing any existing tclaude hooks
 func InstallHooks() error {
 	settingsPath := ClaudeSettingsPath()
 	if settingsPath == "" {
@@ -219,7 +219,7 @@ func InstallHooks() error {
 		hooks = make(map[string]json.RawMessage)
 	}
 
-	// First pass: remove all tofu/tclaude hooks from all events
+	// First pass: remove all tclaude hooks from all events
 	for event, eventHooksRaw := range hooks {
 		if containsStaleHook(string(eventHooksRaw)) {
 			newRaw, removed, err := removeOurHooksFromEvent(eventHooksRaw)
@@ -308,7 +308,7 @@ func EnsureHooksInstalled(autoInstall bool, stdout, stderr *os.File) bool {
 	if !autoInstall {
 		fmt.Fprintf(stderr, "Warning: tclaude session hooks not installed in Claude settings.\n")
 		fmt.Fprintf(stderr, "Missing hooks for: %v\n", missing)
-		fmt.Fprintf(stderr, "Install with: %s session install-hooks\n\n", TofuHookCommand)
+		fmt.Fprintf(stderr, "Install with: %s session install-hooks\n\n", HookCommand)
 		return false
 	}
 

@@ -13,8 +13,8 @@ func TestParseJSONLSession_ExtractsProjectPathAndGitBranch(t *testing.T) {
 	filePath := filepath.Join(tmpDir, sessionID+".jsonl")
 
 	// Sample JSONL content with cwd and gitBranch
-	content := `{"type":"user","cwd":"/home/gigur/git/tofu","sessionId":"b6075720-0f5f-46e5-b382-efb055c6d25b","gitBranch":"main","message":{"role":"user","content":"please say hello"},"timestamp":"2026-02-01T00:35:46.567Z"}
-{"type":"assistant","cwd":"/home/gigur/git/tofu","sessionId":"b6075720-0f5f-46e5-b382-efb055c6d25b","gitBranch":"main","message":{"role":"assistant","content":"Hello!"},"timestamp":"2026-02-01T00:35:48.557Z"}
+	content := `{"type":"user","cwd":"/home/alice/git/myproject","sessionId":"b6075720-0f5f-46e5-b382-efb055c6d25b","gitBranch":"main","message":{"role":"user","content":"please say hello"},"timestamp":"2026-02-01T00:35:46.567Z"}
+{"type":"assistant","cwd":"/home/alice/git/myproject","sessionId":"b6075720-0f5f-46e5-b382-efb055c6d25b","gitBranch":"main","message":{"role":"assistant","content":"Hello!"},"timestamp":"2026-02-01T00:35:48.557Z"}
 `
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write test file: %v", err)
@@ -27,8 +27,8 @@ func TestParseJSONLSession_ExtractsProjectPathAndGitBranch(t *testing.T) {
 	}
 
 	// Verify ProjectPath is extracted
-	if entry.ProjectPath != "/home/gigur/git/tofu" {
-		t.Errorf("Expected ProjectPath '/home/gigur/git/tofu', got '%s'", entry.ProjectPath)
+	if entry.ProjectPath != "/home/alice/git/myproject" {
+		t.Errorf("Expected ProjectPath '/home/alice/git/myproject', got '%s'", entry.ProjectPath)
 	}
 
 	// Verify GitBranch is extracted

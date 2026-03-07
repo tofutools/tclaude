@@ -6,7 +6,7 @@ import (
 )
 
 func CacheDir() string {
-	return filepath.Join(cacheHome(), "tofu")
+	return filepath.Join(cacheHome(), "tclaude")
 }
 
 // https://specifications.freedesktop.org/basedir/latest/#variables

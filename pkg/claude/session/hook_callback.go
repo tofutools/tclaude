@@ -40,7 +40,7 @@ func HookCallbackCmd() *cobra.Command {
 		Long:   "Unified callback for all Claude Code hooks. Reads hook data from stdin and updates session state accordingly.",
 		Hidden: true,
 		Run: func(cmd *cobra.Command, args []string) {
-			// Set up logging to both stderr and ~/.tofu/hooks.log
+			// Set up logging to both stderr and ~/.tclaude/hooks.log
 			SetupHookLogging()
 
 			if err := runHookCallback(); err != nil {
@@ -203,15 +203,15 @@ func getConvTitle(convID, cwd string) string {
 
 // getOrCreateSessionState finds existing session or creates a new one
 func getOrCreateSessionState(input HookCallbackInput) (*SessionState, error) {
-	// Check for TOFU_SESSION_ID env var (session started via tofu)
-	tofuSessionID := os.Getenv("TOFU_SESSION_ID")
+	// Check for TCLAUDE_SESSION_ID env var (session started via tclaude)
+	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")
 
-	if tofuSessionID != "" {
+	if envSessionID != "" {
 		// Load existing session
-		return LoadSessionState(tofuSessionID)
+		return LoadSessionState(envSessionID)
 	}
 
-	// Session wasn't started via tofu - try to auto-register
+	// Session wasn't started via tclaude - try to auto-register
 	if input.ConvID == "" {
 		return nil, nil
 	}
@@ -227,7 +227,7 @@ func getOrCreateSessionState(input HookCallbackInput) (*SessionState, error) {
 }
 
 // autoRegisterSessionFromHook creates a new session state for a Claude session
-// that wasn't started via tofu
+// that wasn't started via tclaude
 func autoRegisterSessionFromHook(input HookCallbackInput) *SessionState {
 	// Find Claude's PID by walking up the process tree
 	claudePID := FindClaudePID()

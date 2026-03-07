@@ -18,7 +18,7 @@ func platformSend(sessionID, title, body string) error {
 func sendDarwinClickable(sessionID, title, body string) error {
 	// Check for terminal-notifier (supports -execute)
 	if _, err := exec.LookPath("terminal-notifier"); err == nil {
-		tofuCmd := strings.Join(common.DetectTofuArgs(), " ")
+		clCmd := strings.Join(common.DetectArgs(), " ")
 
 		// Get full path to tmux (needed by focus command)
 		tmuxPath, err := exec.LookPath("tmux")
@@ -32,9 +32,9 @@ func sendDarwinClickable(sessionID, title, body string) error {
 			// Add tmux's directory to PATH
 			tmuxDir := filepath.Dir(tmuxPath)
 			focusCmd = fmt.Sprintf("PATH=%s:$PATH %s session focus %s",
-				tmuxDir, tofuCmd, sessionID)
+				tmuxDir, clCmd, sessionID)
 		} else {
-			focusCmd = fmt.Sprintf("%s session focus %s", tofuCmd, sessionID)
+			focusCmd = fmt.Sprintf("%s session focus %s", clCmd, sessionID)
 		}
 
 		return exec.Command("terminal-notifier",

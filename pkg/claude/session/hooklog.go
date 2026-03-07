@@ -13,10 +13,10 @@ func HooksLogPath() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".tofu", "hooks.log")
+	return filepath.Join(home, ".tclaude", "hooks.log")
 }
 
-// SetupHookLogging configures slog to write to both stderr and ~/.tofu/hooks.log
+// SetupHookLogging configures slog to write to both stderr and ~/.tclaude/hooks.log
 // Should be called early in hook-callback execution
 func SetupHookLogging() {
 	logPath := HooksLogPath()
@@ -24,7 +24,7 @@ func SetupHookLogging() {
 		return
 	}
 
-	// Ensure ~/.tofu directory exists
+	// Ensure ~/.tclaude directory exists
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
 		return
 	}

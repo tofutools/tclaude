@@ -1,4 +1,4 @@
-// Package config provides configuration loading for tofu.
+// Package config provides configuration loading for tclaude.
 package config
 
 import (
@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-// Config represents the tofu configuration file structure.
+// Config represents the tclaude configuration file structure.
 type Config struct {
 	Notifications *NotificationConfig `json:"notifications,omitempty"`
 }
@@ -42,21 +42,21 @@ func DefaultConfig() *Config {
 	}
 }
 
-// ConfigDir returns the tofu config directory (~/.tofu).
+// ConfigDir returns the tclaude config directory (~/.tclaude).
 func ConfigDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".tofu")
+	return filepath.Join(home, ".tclaude")
 }
 
-// ConfigPath returns the path to the config file (~/.tofu/config.json).
+// ConfigPath returns the path to the config file (~/.tclaude/config.json).
 func ConfigPath() string {
 	return filepath.Join(ConfigDir(), "config.json")
 }
 
-// Load loads the config from ~/.tofu/config.json.
+// Load loads the config from ~/.tclaude/config.json.
 // Returns default config if file doesn't exist.
 func Load() (*Config, error) {
 	path := ConfigPath()
@@ -89,7 +89,7 @@ func Load() (*Config, error) {
 	return &config, nil
 }
 
-// Save saves the config to ~/.tofu/config.json.
+// Save saves the config to ~/.tclaude/config.json.
 func Save(config *Config) error {
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {

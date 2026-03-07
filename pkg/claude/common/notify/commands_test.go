@@ -15,7 +15,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 		title     string
 		body      string
 		sessionID string
-		tofuPath  string
+		clPath  string
 		tmuxDir   string
 		wantArgs  []string
 	}{
@@ -24,7 +24,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 			title:     "Claude: Idle",
 			body:      "abc123 | myproject - Working on feature",
 			sessionID: "abc123",
-			tofuPath:  "/usr/local/bin/tclaude",
+			clPath:  "/usr/local/bin/tclaude",
 			tmuxDir:   "/opt/homebrew/bin",
 			wantArgs: []string{
 				"-title", "Claude: Idle",
@@ -38,7 +38,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 			title:     "Claude: Awaiting permission",
 			body:      "def456 | otherproject",
 			sessionID: "def456",
-			tofuPath:  "/home/user/go/bin/tclaude",
+			clPath:  "/home/user/go/bin/tclaude",
 			tmuxDir:   "",
 			wantArgs: []string{
 				"-title", "Claude: Awaiting permission",
@@ -48,16 +48,16 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 			},
 		},
 		{
-			name:      "fallback tofu path",
+			name:      "fallback path",
 			title:     "Claude: Idle",
 			body:      "test | proj",
 			sessionID: "test",
-			tofuPath:  "",
+			clPath:  "",
 			tmuxDir:   "",
 			wantArgs: []string{
 				"-title", "Claude: Idle",
 				"-message", "test | proj",
-				"-execute", common.DetectTofuCmd() + " session focus test",
+				"-execute", common.DetectCmd() + " session focus test",
 				"-sound", "default",
 			},
 		},
@@ -65,7 +65,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := BuildDarwinNotifyCmd(tt.title, tt.body, tt.sessionID, tt.tofuPath, tt.tmuxDir)
+			cmd := BuildDarwinNotifyCmd(tt.title, tt.body, tt.sessionID, tt.clPath, tt.tmuxDir)
 
 			if cmd.Program != "terminal-notifier" {
 				t.Errorf("Program = %q, want %q", cmd.Program, "terminal-notifier")
@@ -266,14 +266,14 @@ func TestBuildTmuxDetachCmd(t *testing.T) {
 func TestFocusCommandString(t *testing.T) {
 	tests := []struct {
 		name      string
-		tofuPath  string
+		clPath  string
 		tmuxDir   string
 		sessionID string
 		wantFunc  func(tmuxDir string) string // dynamic expected value
 	}{
 		{
 			name:      "with tmux dir",
-			tofuPath:  "/usr/bin/tclaude",
+			clPath:  "/usr/bin/tclaude",
 			tmuxDir:   "/opt/homebrew/bin",
 			sessionID: "abc123",
 			wantFunc: func(tmuxDir string) string {
@@ -282,7 +282,7 @@ func TestFocusCommandString(t *testing.T) {
 		},
 		{
 			name:      "without tmux dir",
-			tofuPath:  "/usr/bin/tclaude",
+			clPath:  "/usr/bin/tclaude",
 			tmuxDir:   "",
 			sessionID: "abc123",
 			wantFunc: func(_ string) string {
@@ -290,19 +290,19 @@ func TestFocusCommandString(t *testing.T) {
 			},
 		},
 		{
-			name:      "fallback tofu",
-			tofuPath:  "",
+			name:      "fallback",
+			clPath:  "",
 			tmuxDir:   "",
 			sessionID: "xyz",
 			wantFunc: func(_ string) string {
-				return common.DetectTofuCmd() + " session focus xyz"
+				return common.DetectCmd() + " session focus xyz"
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FocusCommandString(tt.tofuPath, tt.tmuxDir, tt.sessionID)
+			got := FocusCommandString(tt.clPath, tt.tmuxDir, tt.sessionID)
 			want := tt.wantFunc(tt.tmuxDir)
 			if got != want {
 				t.Errorf("FocusCommandString() = %q, want %q", got, want)

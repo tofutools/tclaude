@@ -120,7 +120,7 @@ func SessionsDir() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".tofu", "claude-sessions")
+	return filepath.Join(home, ".tclaude", "claude-sessions")
 }
 
 // EnsureSessionsDir creates the sessions directory if it doesn't exist

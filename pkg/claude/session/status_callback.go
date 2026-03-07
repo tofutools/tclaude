@@ -68,7 +68,7 @@ func runStatusCallback(params *StatusCallbackParams) error {
 	}
 
 	// Debug logging - useful for troubleshooting hook issues
-	// Log is stored in ~/.tofu/claude-sessions/debug.log
+	// Log is stored in ~/.tclaude/claude-sessions/debug.log
 	_ = EnsureSessionsDir()
 	debugFile, _ := os.OpenFile(DebugLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if debugFile != nil {
@@ -79,13 +79,13 @@ func runStatusCallback(params *StatusCallbackParams) error {
 	}
 
 
-	// Get tofu session ID from environment
-	tofuSessionID := os.Getenv("TOFU_SESSION_ID")
+	// Get tclaude session ID from environment
+	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")
 
 	var state *SessionState
 
-	if tofuSessionID == "" {
-		// Session wasn't started via tofu - try to auto-register
+	if envSessionID == "" {
+		// Session wasn't started via tclaude - try to auto-register
 		if hookInput.SessionID == "" {
 			// No session ID from hook input, can't register
 			return nil
@@ -102,7 +102,7 @@ func runStatusCallback(params *StatusCallbackParams) error {
 		}
 	} else {
 		// Load existing session state
-		state, err = LoadSessionState(tofuSessionID)
+		state, err = LoadSessionState(envSessionID)
 		if err != nil {
 			return fmt.Errorf("failed to load session state: %w", err)
 		}
@@ -158,7 +158,7 @@ func findSessionByConvID(convID string) *SessionState {
 }
 
 // autoRegisterSession creates a new session state for a Claude session
-// that wasn't started via tofu
+// that wasn't started via tclaude
 func autoRegisterSession(hookInput HookInput) *SessionState {
 	// Find Claude's PID by walking up the process tree
 	claudePID := FindClaudePID()

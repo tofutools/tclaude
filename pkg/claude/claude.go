@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Cmd returns the claude subcommand for use in other binaries (e.g. tofu claude ...).
+// Cmd returns the claude subcommand for use in other binaries.
 func Cmd() *cobra.Command {
 	cmd := boa.CmdT[session.NewParams]{
 		Use:         "claude",

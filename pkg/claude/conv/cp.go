@@ -45,7 +45,7 @@ func CpCmd() *cobra.Command {
 }
 
 func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
-	// Extract just the ID from autocomplete format (e.g., "0459cd73_[tofu_claude]_prompt..." -> "0459cd73")
+	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
 	var srcEntry *SessionEntry

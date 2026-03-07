@@ -734,7 +734,7 @@ func (m model) View() string {
 		case confirmDetach:
 			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", m.sessions[m.cursor].ID)))
 		case confirmNoTmux:
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tofu/tmux (◉) - already in its terminal. [press any key]", m.sessions[m.cursor].ID)))
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", m.sessions[m.cursor].ID)))
 		default:
 			b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • q quit"))
 		}
@@ -957,7 +957,7 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 
 		// Focus only - just focus the window and return to watch mode
 		if result.FocusOnly {
-			os.Setenv("TOFU_SESSION_ID", result.SessionID)
+			os.Setenv("TCLAUDE_SESSION_ID", result.SessionID)
 			TryFocusAttachedSession(result.TmuxSession)
 			continue
 		}

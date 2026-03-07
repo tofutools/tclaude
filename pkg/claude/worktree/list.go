@@ -164,7 +164,7 @@ func FindWorktreeByPath(pathQuery string) (*WorktreeInfo, error) {
 		}
 	}
 
-	// Try suffix match (e.g., "tofu-feature" matches "/Users/.../tofu-feature")
+	// Try suffix match (e.g., "my-feature" matches "/Users/.../my-feature")
 	for _, wt := range worktrees {
 		wtPath := filepath.ToSlash(wt.Path)
 		if strings.HasSuffix(wtPath, "/"+pathQuery) || filepath.Base(wt.Path) == pathQuery {

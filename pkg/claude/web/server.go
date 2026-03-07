@@ -68,7 +68,7 @@ func basicAuth(user, pass string) func(http.HandlerFunc) http.HandlerFunc {
 			if !ok ||
 				subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
 				subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
-				w.Header().Set("WWW-Authenticate", `Basic realm="tofu claude web"`)
+				w.Header().Set("WWW-Authenticate", `Basic realm="tclaude web"`)
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}

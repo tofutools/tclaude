@@ -83,11 +83,11 @@ func AttachToTmuxSession(tmuxSession string) int {
 // Sets terminal title for window focus, then replaces process with tmux attach.
 // If forceAttach is true, detaches other clients before attaching (-d flag).
 func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
-	// Set TOFU_SESSION_ID so focus functions can find our session
-	os.Setenv("TOFU_SESSION_ID", sessionID)
+	// Set TCLAUDE_SESSION_ID so focus functions can find our session
+	os.Setenv("TCLAUDE_SESSION_ID", sessionID)
 
 	// Set terminal title to include session ID (helps with window focus on WSL/Windows)
-	setTerminalTitle(fmt.Sprintf("tofu:%s", sessionID))
+	setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))
 
 	// Attach to tmux session (replaces current process)
 	return attachToSessionWithFlags(tmuxSession, forceAttach)

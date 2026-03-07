@@ -55,7 +55,7 @@ func runInit(params *InitParams) error {
 	fmt.Printf("Checking remote repository...\n")
 
 	// Try to clone into a temp directory first to check if repo has content
-	tempDir, err := os.MkdirTemp("", "tofu-claude-sync-")
+	tempDir, err := os.MkdirTemp("", "tclaude-sync-")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}

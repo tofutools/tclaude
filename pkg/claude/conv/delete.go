@@ -44,7 +44,7 @@ func DeleteCmd() *cobra.Command {
 }
 
 func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) int {
-	// Extract just the ID from autocomplete format (e.g., "0459cd73_[tofu_claude]_prompt..." -> "0459cd73")
+	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
 	var entry *SessionEntry
@@ -166,7 +166,7 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 }
 
 // AddTombstoneForProject adds a tombstone for a deleted session
-// projectPath is the local project dir (e.g., ~/.claude/projects/-Users-johkjo-git-tofu)
+// projectPath is the local project dir (e.g., ~/.claude/projects/-Users-alice-git-myproject)
 func AddTombstoneForProject(projectPath, sessionID string) error {
 	// Get the local project dir name (last component of path)
 	localDirName := filepath.Base(projectPath)

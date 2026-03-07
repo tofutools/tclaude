@@ -91,9 +91,9 @@ func runNotifyListen(sessionID, title, body string) error {
 				if len(sig.Body) >= 1 {
 					if id, ok := sig.Body[0].(uint32); ok && id == notifID {
 						slog.Info("Notification clicked", "notifID", notifID)
-						tofuArgs := common.DetectTofuArgs()
-						focusArgs := append(tofuArgs[1:], "session", "focus", sessionID)
-						focusCmd := exec.Command(tofuArgs[0], focusArgs...)
+						clArgs := common.DetectArgs()
+						focusArgs := append(clArgs[1:], "session", "focus", sessionID)
+						focusCmd := exec.Command(clArgs[0], focusArgs...)
 						_ = focusCmd.Run()
 						return nil
 					}

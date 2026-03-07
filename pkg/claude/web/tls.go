@@ -17,13 +17,13 @@ import (
 	"time"
 )
 
-// certDir returns ~/.tofu/claude-web/
+// certDir returns ~/.tclaude/claude-web/
 func certDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".tofu", "claude-web"), nil
+	return filepath.Join(home, ".tclaude", "claude-web"), nil
 }
 
 // deleteCerts removes existing cert and key files, forcing regeneration on next start.
@@ -114,7 +114,7 @@ func generateAndSaveCert(dir, certPath, keyPath string) (*tls.Config, string, er
 
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "tofu claude web"},
+		Subject:      pkix.Name{CommonName: "tclaude web"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 

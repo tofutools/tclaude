@@ -27,9 +27,9 @@ func platformSend(sessionID, title, body string) error {
 //
 //	that created the notification, so send and listen must share a connection
 func sendLinuxClickable(sessionID, title, body string) error {
-	tofuArgs := common.DetectTofuArgs()
-	listenerArgs := append(tofuArgs[1:], "session", "notify-listen", sessionID, title, body)
-	listener := exec.Command(tofuArgs[0], listenerArgs...)
+	clArgs := common.DetectArgs()
+	listenerArgs := append(clArgs[1:], "session", "notify-listen", sessionID, title, body)
+	listener := exec.Command(clArgs[0], listenerArgs...)
 	listener.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := listener.Start(); err != nil {
 		return fmt.Errorf("failed to start notify listener: %w", err)
@@ -87,7 +87,7 @@ try {
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
 } catch {
     # Fallback to generic notifier
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Tofu').Show($toast)
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('tclaude').Show($toast)
 }
 `, sessionID, title, body)
 
@@ -133,7 +133,7 @@ $template = @'
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
 $xml.LoadXml($template)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Tofu').Show($toast)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('tclaude').Show($toast)
 `, title, body)
 
 	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)

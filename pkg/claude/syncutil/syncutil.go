@@ -92,7 +92,7 @@ func SaveConfig(config *SyncConfig) error {
 }
 
 // ProjectDirToPath converts a Claude project dir name back to a path
-// e.g., "-home-gigur-git-tofu" -> "/home/gigur/git/tofu"
+// e.g., "/home/alice/git/myproject" -> "/home/alice/git/myproject"
 func ProjectDirToPath(projectDir string) string {
 	// Remove leading dash and convert dashes to path separators
 	if strings.HasPrefix(projectDir, "-") {
@@ -102,7 +102,7 @@ func ProjectDirToPath(projectDir string) string {
 }
 
 // PathToProjectDir converts a path to Claude project dir name
-// e.g., "/home/gigur/git/tofu" -> "-home-gigur-git-tofu"
+// e.g., "/home/alice/git/myproject" -> "/home/alice/git/myproject"
 func PathToProjectDir(path string) string {
 	// Normalize path separators and remove leading slash
 	path = filepath.ToSlash(path)

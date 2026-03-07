@@ -255,9 +255,9 @@ func focusWindowByPID(pid int) bool {
 	debugLog("Attempting to focus window for PID %d", pid)
 
 	// First try to find window by our known title pattern (set by setTerminalTitle)
-	sessionID := os.Getenv("TOFU_SESSION_ID")
+	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
 	if sessionID != "" {
-		debugLog("Searching ALL windows for title containing 'tofu:%s'", sessionID)
+		debugLog("Searching ALL windows for title containing 'tclaude:%s'", sessionID)
 		if focusWindowByTitlePattern(sessionID) {
 			return true
 		}
@@ -286,10 +286,10 @@ func focusWindowByTitlePattern(sessionID string) bool {
 		return false
 	}
 
-	// Search ALL visible windows for our title pattern "tofu:<sessionID>"
+	// Search ALL visible windows for our title pattern "tclaude:<sessionID>"
 	script := fmt.Sprintf(`
 $sessionId = '%s'
-$pattern = "tofu:$sessionId"
+$pattern = "tclaude:$sessionId"
 
 Add-Type @"
 using System;
@@ -428,7 +428,7 @@ foreach ($w in $windows) {
     Write-Host "  Window: $title (handle: $handle)"
 
     # Check if this window's title contains our session ID
-    if ($title -match $sessionId -or $title -match 'TOFU_SESSION_ID' -or $title -like "*tofu:*") {
+    if ($title -match $sessionId -or $title -match 'TCLAUDE_SESSION_ID' -or $title -like "*tclaude:*") {
         Write-Host "Found matching window!"
         Write-Output "MATCH|$title"
         exit 0
@@ -630,7 +630,7 @@ func focusLinuxWindowByTTY(tty string) bool {
 	if err != nil {
 		debugLog("lsof failed for TTY %s: %v", tty, err)
 		// Fallback: try to focus by window name pattern
-		return focusLinuxWindowByPattern("tofu:")
+		return focusLinuxWindowByPattern("tclaude:")
 	}
 
 	pids := strings.Fields(string(output))
@@ -644,7 +644,7 @@ func focusLinuxWindowByTTY(tty string) bool {
 	}
 
 	// Fallback: try by window name
-	return focusLinuxWindowByPattern("tofu:")
+	return focusLinuxWindowByPattern("tclaude:")
 }
 
 // findLinuxWindowForPID walks up the process tree to find a window.

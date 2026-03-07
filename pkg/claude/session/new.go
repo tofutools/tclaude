@@ -125,10 +125,10 @@ func runNew(params *NewParams) error {
 	if params.Label != "" {
 		sessionID = params.Label
 	}
-	tmuxSession := "tofu-claude-" + sessionID
+	tmuxSession := "tclaude-" + sessionID
 
-	// Build claude command with TOFU_SESSION_ID env var
-	claudeCmd := fmt.Sprintf("TOFU_SESSION_ID=%s claude", sessionID)
+	// Build claude command with TCLAUDE_SESSION_ID env var
+	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude", sessionID)
 	if fullConvID != "" {
 		claudeCmd += " --resume " + fullConvID
 	}
@@ -162,7 +162,7 @@ func runNew(params *NewParams) error {
 	// Configure tmux to set window title with our session ID
 	// This ensures the title persists and is visible for window focus
 	exec.Command("tmux", "set-option", "-t", tmuxSession, "set-titles", "on").Run()
-	exec.Command("tmux", "set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tofu:%s", sessionID)).Run()
+	exec.Command("tmux", "set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
 
 	// Get the PID of claude in the tmux session
 	pid := ParsePIDFromTmux(tmuxSession)

@@ -17,9 +17,9 @@ type StatusLineConfig struct {
 }
 
 // StatusLineCommand is the status-bar command (detected at startup)
-var StatusLineCommand = common.DetectTofuCmd("status-bar")
+var StatusLineCommand = common.DetectCmd("status-bar")
 
-// isOurStatusBar returns true if the command is a tofu/tclaude status-bar command,
+// isOurStatusBar returns true if the command is a tclaude status-bar command,
 // including absolute paths like /usr/local/bin/tclaude status-bar
 func isOurStatusBar(command string) bool {
 	fields := strings.Fields(command)
@@ -27,11 +27,11 @@ func isOurStatusBar(command string) bool {
 		return false
 	}
 	base := filepath.Base(fields[0])
-	return strings.HasSuffix(command, "status-bar") && (base == "tclaude" || base == "tofu")
+	return strings.HasSuffix(command, "status-bar") && (base == "tclaude")
 }
 
 // CheckInstalled checks if the current tclaude status-bar command is configured in Claude settings.
-// Returns true only if the command matches the current binary exactly, not a stale tofu reference.
+// Returns true only if the command matches the current binary exactly, not a stale reference.
 func CheckInstalled() bool {
 	settingsPath := claudeSettingsPath()
 	if settingsPath == "" {
@@ -61,7 +61,7 @@ func CheckInstalled() bool {
 	return sl.Type == "command" && sl.Command == StatusLineCommand
 }
 
-// Install configures the tofu status-bar as the statusLine command in Claude settings
+// Install configures the tclaude status-bar as the statusLine command in Claude settings
 func Install() error {
 	settingsPath := claudeSettingsPath()
 	if settingsPath == "" {

@@ -60,7 +60,7 @@ func runFocus(params *FocusParams) error {
 	fmt.Printf("Focusing session %s...\n", state.ID)
 
 	// Set the session ID for other functions that may need it
-	os.Setenv("TOFU_SESSION_ID", state.ID)
+	os.Setenv("TCLAUDE_SESSION_ID", state.ID)
 
 	// Try to focus the terminal running this session
 	TryFocusAttachedSession(state.TmuxSession)

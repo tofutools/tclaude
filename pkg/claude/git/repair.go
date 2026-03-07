@@ -378,8 +378,8 @@ func canonicalizePath(path string, config *SyncConfig) string {
 }
 
 // canonicalizeEmbeddedProjectDir finds and canonicalizes project dir names embedded in paths
-// e.g., /home/gigur/.claude/projects/-Users-johkjo-git-personal-tofu/session.jsonl
-// becomes /home/gigur/.claude/projects/-home-gigur-git-tofu/session.jsonl
+// e.g., /home/gigur/.claude/projects/-Users-alice-git-myproject/session.jsonl
+// becomes /home/gigur/.claude/projects//home/alice/git/myproject/session.jsonl
 func canonicalizeEmbeddedProjectDir(path string, config *SyncConfig) string {
 	// Look for .claude/projects/ pattern
 	projectsMarker := ".claude/projects/"

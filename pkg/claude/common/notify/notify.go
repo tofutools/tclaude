@@ -16,7 +16,7 @@ func stateDir() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".tofu", "notify-state")
+	return filepath.Join(home, ".tclaude", "notify-state")
 }
 
 // stateFile returns the path to a session's notification state file.

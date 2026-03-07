@@ -17,18 +17,18 @@ type DarwinNotifyCmd struct {
 }
 
 // BuildDarwinNotifyCmd builds the terminal-notifier command for macOS.
-// tofuPath and tmuxDir can be empty strings if not available.
-func BuildDarwinNotifyCmd(title, body, sessionID, tofuPath, tmuxDir string) DarwinNotifyCmd {
+// clPath and tmuxDir can be empty strings if not available.
+func BuildDarwinNotifyCmd(title, body, sessionID, clPath, tmuxDir string) DarwinNotifyCmd {
 	// Build the focus command that runs when notification is clicked
 	var focusCmd string
-	if tofuPath == "" {
-		tofuPath = common.DetectTofuCmd()
+	if clPath == "" {
+		clPath = common.DetectCmd()
 	}
 	if tmuxDir != "" {
 		focusCmd = fmt.Sprintf("PATH=%s:$PATH %s session focus %s",
-			tmuxDir, tofuPath, sessionID)
+			tmuxDir, clPath, sessionID)
 	} else {
-		focusCmd = fmt.Sprintf("%s session focus %s", tofuPath, sessionID)
+		focusCmd = fmt.Sprintf("%s session focus %s", clPath, sessionID)
 	}
 
 	return DarwinNotifyCmd{
@@ -86,7 +86,7 @@ $xml = @"
 $toastXml = New-Object Windows.Data.Xml.Dom.XmlDocument
 $toastXml.LoadXml($xml)
 $toast = New-Object Windows.UI.Notifications.ToastNotification $toastXml
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('tofu').Show($toast)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('tclaude').Show($toast)
 `, protocolURL, escapedTitle, escapedBody)
 
 	return WSLNotifyCmd{
@@ -176,13 +176,13 @@ func NotificationTitle(status string) string {
 }
 
 // FocusCommandString builds the shell command string for focusing a session.
-func FocusCommandString(tofuPath, tmuxDir, sessionID string) string {
-	if tofuPath == "" {
-		tofuPath = common.DetectTofuCmd()
+func FocusCommandString(clPath, tmuxDir, sessionID string) string {
+	if clPath == "" {
+		clPath = common.DetectCmd()
 	}
 	if tmuxDir != "" {
 		return fmt.Sprintf("PATH=%s:$PATH %s session focus %s",
-			filepath.Clean(tmuxDir), tofuPath, sessionID)
+			filepath.Clean(tmuxDir), clPath, sessionID)
 	}
-	return fmt.Sprintf("%s session focus %s", tofuPath, sessionID)
+	return fmt.Sprintf("%s session focus %s", clPath, sessionID)
 }
