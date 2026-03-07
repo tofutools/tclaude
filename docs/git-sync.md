@@ -139,7 +139,7 @@ Keep which version? [l]ocal / [r]emote / [s]kip:
 
 ```bash
 # Install tclaude
-go install github.com/tofutools/tclaude/cmd/tclaude@latest
+go install github.com/tofutools/tclaude@latest
 
 # Initialize with your existing sync repo
 tclaude git init git@github.com:username/my-claude-sync.git

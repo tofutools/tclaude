@@ -32,7 +32,7 @@ After installing tclaude, run the setup command:
 
 ```bash
 # Install tclaude
-go install github.com/tofutools/tclaude/cmd/tclaude@latest
+go install github.com/tofutools/tclaude@latest
 
 # Set up Claude integration (hooks, notifications, protocol handler)
 tclaude setup
