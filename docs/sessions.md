@@ -1,0 +1,210 @@
+# Session Management 📺
+
+Run Claude Code in persistent tmux sessions with status tracking.
+
+## Prerequisites
+
+- **tmux** - Required for session management
+- **Run setup** - For status tracking and notifications: `tclaude setup`
+
+## Commands
+
+### session new
+
+Start Claude in a new tmux session.
+
+```bash
+# Start a new session in current directory
+tclaude session new
+
+# Start in a specific directory
+tclaude session new /path/to/project
+
+# Resume an existing conversation
+tclaude session new --resume <conv-id>
+
+# Start detached (don't attach immediately)
+tclaude session new -d
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-d, --detach` | Start session without attaching |
+| `--resume <id>` | Resume an existing conversation |
+
+### session ls
+
+List active sessions.
+
+```bash
+# List sessions
+tclaude session ls
+
+# Interactive watch mode
+tclaude session ls -w
+
+# Include exited sessions
+tclaude session ls -a
+
+# Filter by status
+tclaude session ls --status idle
+tclaude session ls --hide exited
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-w, --watch` | Interactive watch mode |
+| `-a, --all` | Include exited sessions |
+| `--status <s>` | Show only this status |
+| `--hide <s>` | Hide this status |
+| `--sort <col>` | Sort by: id, dir, status, age, updated |
+
+**Status values:** `idle`, `working`, `awaiting-permission`, `awaiting-input`, `exited`
+
+### session attach
+
+Attach to an existing session.
+
+```bash
+# Attach by session ID
+tclaude session attach <id>
+
+# Force attach (detach other clients)
+tclaude session attach -d <id>
+```
+
+### session kill
+
+Kill one or more sessions.
+
+```bash
+# Kill a specific session
+tclaude session kill <id>
+
+# Kill all sessions
+tclaude session kill --all
+
+# Kill only idle sessions
+tclaude session kill --idle
+
+# Force (no confirmation)
+tclaude session kill -f <id>
+```
+
+## Interactive Watch Mode
+
+Press `w` or use `-w` flag to enter interactive mode.
+
+### Navigation
+
+| Key | Action |
+|-----|--------|
+| `↑`/`k` | Move up |
+| `↓`/`j` | Move down |
+| `Enter` | Attach to session |
+| `q`/`Esc` | Quit |
+
+### Search
+
+| Key | Action |
+|-----|--------|
+| `/` | Start search |
+| `Esc` | Clear search / exit search mode |
+| `Ctrl+U` | Clear search input |
+| `↑`/`↓` | Exit search and navigate |
+
+### Actions
+
+| Key | Action |
+|-----|--------|
+| `Del`/`x` | Kill session (with confirmation) |
+| `r` | Refresh list |
+| `h`/`?` | Show help |
+
+### Filtering
+
+| Key | Action |
+|-----|--------|
+| `f` | Open filter menu |
+| `Space` | Toggle filter option |
+| `Enter` | Apply filter |
+
+### Sorting
+
+| Key | Action |
+|-----|--------|
+| `1`/`F1` | Sort by ID |
+| `2`/`F2` | Sort by Directory |
+| `3`/`F3` | Sort by Status |
+| `4`/`F4` | Sort by Age |
+| `5`/`F5` | Sort by Updated |
+
+Press the same key again to toggle ascending/descending/off.
+
+## Session Status 🔮
+
+Sessions report their status via Claude hooks:
+
+| Status | Color | Description |
+|--------|-------|-------------|
+| `idle` | 🟡 Yellow | Claude is waiting for input |
+| `working` | 🟢 Green | Claude is processing |
+| `awaiting-permission` | 🔴 Red | Needs permission approval |
+| `awaiting-input` | 🔴 Red | Waiting for user input |
+| `exited` | ⚫ Gray | Session has ended |
+
+## Tmux Integration
+
+Sessions run in tmux with the naming convention `tofu-claude-<id>`.
+
+```bash
+# List all tofu tmux sessions
+tmux ls | grep tofu-claude
+
+# Manually attach
+tmux attach -t tofu-claude-abc123
+
+# Detach from inside tmux
+Ctrl+B D
+```
+
+### Recommended Tmux Configuration
+
+There are two approaches for scroll support - **choose one, not both**:
+
+#### Option 1: Tmux Mouse Mode
+
+```bash
+# Enable mouse support (scroll, click, resize panes)
+set -g mouse on
+```
+
+Scroll wheel works inside tmux, but the native terminal scrollbar is hidden.
+
+#### Option 2: Native Terminal Scrollbar
+
+```bash
+# Disable alternate screen buffer - keeps native scrollbar
+set -ga terminal-overrides ',*256color*:smcup@:rmcup@'
+```
+
+Keeps your terminal's native scrollbar visible. This disables the `smcup` (enter alternate screen) and `rmcup` (exit alternate screen) terminal capabilities.
+
+**Trade-off:** Full-screen applications (vim, less, etc.) will leave their content in your scrollback history instead of restoring the previous screen when they exit.
+
+#### Why Not Both?
+
+Using both options simultaneously causes conflicts - the scroll wheel behavior becomes unpredictable. Pick whichever suits your workflow better.
+
+### Other Useful Settings
+
+```bash
+# Increase scrollback buffer (default is 2000)
+set -g history-limit 10000
+```
+
+Reload config after changes: `tmux source ~/.tmux.conf`
