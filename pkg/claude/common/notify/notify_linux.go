@@ -59,14 +59,14 @@ func notifyWSLClickable(title, body, sessionID string) error {
 	body = escapeXML(body)
 
 	// PowerShell script for clickable Windows Toast notification
-	// Uses protocol activation to trigger tofu://focus/SESSION_ID
+	// Uses protocol activation to trigger tclaude://focus/SESSION_ID
 	// Uses Windows Terminal's AppUserModelID for a nicer notification appearance
 	script := fmt.Sprintf(`
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 
 $template = @'
-<toast activationType="protocol" launch="tofu://focus/%s">
+<toast activationType="protocol" launch="tclaude://focus/%s">
   <visual>
     <binding template="ToastGeneric">
       <text>%s</text>

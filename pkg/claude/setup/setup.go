@@ -30,7 +30,7 @@ func Cmd() *cobra.Command {
 	return boa.CmdT[Params]{
 		Use:         "setup",
 		Short:       "Set up tclaude integration (hooks, protocol handler)",
-		Long:        "One-time setup for tclaude integration.\nInstalls hooks in ~/.claude/settings.json and registers the tofu:// protocol handler for clickable notifications.",
+		Long:        "One-time setup for tclaude integration.\nInstalls hooks in ~/.claude/settings.json and registers the tclaude:// protocol handler for clickable notifications.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runSetup(params); err != nil {
@@ -114,7 +114,7 @@ func runSetup(params *Params) error {
 	if statusbar.CheckInstalled() {
 		fmt.Println("✓ Status bar already configured")
 	} else {
-		if askYesNo("Install tofu status bar for Claude Code?", true) {
+		if askYesNo("Install tclaude status bar for Claude Code?", true) {
 			if err := statusbar.Install(); err != nil {
 				fmt.Printf("  Warning: failed to install status bar: %v\n", err)
 			} else {
@@ -135,7 +135,7 @@ func runSetup(params *Params) error {
 		}
 
 		if registered && !params.Force {
-			fmt.Println("✓ Protocol handler already registered (tofu://)")
+			fmt.Println("✓ Protocol handler already registered (tclaude://)")
 		} else {
 			if params.Force {
 				fmt.Println("  Force re-registering protocol handler...")
@@ -144,7 +144,7 @@ func runSetup(params *Params) error {
 				fmt.Printf("  Warning: failed to register protocol handler: %v\n", err)
 				fmt.Println("  Clickable notifications may not work")
 			} else {
-				fmt.Println("✓ Protocol handler registered (tofu://)")
+				fmt.Println("✓ Protocol handler registered (tclaude://)")
 			}
 		}
 	} else if runtime.GOOS == "darwin" {
@@ -245,7 +245,7 @@ func askYesNo(prompt string, defaultYes bool) bool {
 }
 
 func checkStatus() error {
-	fmt.Println("Tofu Claude Setup Status")
+	fmt.Println("tclaude Setup Status")
 	fmt.Println()
 
 	// Check tmux
@@ -284,7 +284,7 @@ func checkStatus() error {
 		if err != nil {
 			fmt.Printf("⚠ Could not check: %v\n", err)
 		} else if registered {
-			fmt.Println("✓ Protocol handler registered (tofu://)")
+			fmt.Println("✓ Protocol handler registered (tclaude://)")
 		} else {
 			fmt.Println("✗ Protocol handler not registered")
 		}
@@ -325,7 +325,7 @@ func checkStatus() error {
 	return nil
 }
 
-// isProtocolRegistered checks if the tofu:// protocol handler is registered with current version.
+// isProtocolRegistered checks if the tclaude:// protocol handler is registered with current version.
 func isProtocolRegistered() (bool, error) {
 	psPath := wsl.FindPowerShell()
 	if psPath == "" {
@@ -333,7 +333,7 @@ func isProtocolRegistered() (bool, error) {
 	}
 
 	checkScript := fmt.Sprintf(`
-$key = Get-ItemProperty -Path 'HKCU:\Software\Classes\tofu' -ErrorAction SilentlyContinue
+$key = Get-ItemProperty -Path 'HKCU:\Software\Classes\tclaude' -ErrorAction SilentlyContinue
 if ($key -and $key.Version -eq '%s') { Write-Output 'registered' }
 `, protocolVersion)
 
@@ -346,7 +346,7 @@ if ($key -and $key.Version -eq '%s') { Write-Output 'registered' }
 	return strings.Contains(string(output), "registered"), nil
 }
 
-// registerProtocol registers the tofu:// protocol handler on Windows via WSL.
+// registerProtocol registers the tclaude:// protocol handler on Windows via WSL.
 func registerProtocol() error {
 	psPath := wsl.FindPowerShell()
 	if psPath == "" {
@@ -354,30 +354,30 @@ func registerProtocol() error {
 	}
 
 	// Register the protocol handler
-	// The handler extracts session ID from tofu://focus/SESSION_ID and calls wsl to run tofu focus
+	// The handler extracts session ID from tclaude://focus/SESSION_ID and calls wsl to run tclaude focus
 	registerScript := fmt.Sprintf(`
 $ErrorActionPreference = 'SilentlyContinue'
 
 # Create protocol key with all required values
-New-Item -Path 'HKCU:\Software\Classes\tofu' -Force | Out-Null
-Set-ItemProperty -Path 'HKCU:\Software\Classes\tofu' -Name '(Default)' -Value 'URL:Tofu Protocol'
-Set-ItemProperty -Path 'HKCU:\Software\Classes\tofu' -Name 'URL Protocol' -Value ''
-Set-ItemProperty -Path 'HKCU:\Software\Classes\tofu' -Name 'Version' -Value '%s'
+New-Item -Path 'HKCU:\Software\Classes\tclaude' -Force | Out-Null
+Set-ItemProperty -Path 'HKCU:\Software\Classes\tclaude' -Name '(Default)' -Value 'URL:tclaude Protocol'
+Set-ItemProperty -Path 'HKCU:\Software\Classes\tclaude' -Name 'URL Protocol' -Value ''
+Set-ItemProperty -Path 'HKCU:\Software\Classes\tclaude' -Name 'Version' -Value '%s'
 
 # Add DefaultIcon (uses Windows Terminal icon if available)
-New-Item -Path 'HKCU:\Software\Classes\tofu\DefaultIcon' -Force | Out-Null
+New-Item -Path 'HKCU:\Software\Classes\tclaude\DefaultIcon' -Force | Out-Null
 $wtPath = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
 if ($wtPath) {
-    Set-ItemProperty -Path 'HKCU:\Software\Classes\tofu\DefaultIcon' -Name '(Default)' -Value "$wtPath,0"
+    Set-ItemProperty -Path 'HKCU:\Software\Classes\tclaude\DefaultIcon' -Name '(Default)' -Value "$wtPath,0"
 }
 
 # Create shell/open/command key
-New-Item -Path 'HKCU:\Software\Classes\tofu\shell\open\command' -Force | Out-Null
+New-Item -Path 'HKCU:\Software\Classes\tclaude\shell\open\command' -Force | Out-Null
 
-# The command extracts session ID and calls wsl to run tofu focus
-# %%1 will be like: tofu://focus/abc12345
-$cmd = 'powershell.exe -NoProfile -WindowStyle Hidden -Command "$url = ''%%1''; $sessionId = $url -replace ''tofu://focus/'',''''; wsl -- tclaude session focus $sessionId"'
-Set-ItemProperty -Path 'HKCU:\Software\Classes\tofu\shell\open\command' -Name '(Default)' -Value $cmd
+# The command extracts session ID and calls wsl to run tclaude focus
+# %%1 will be like: tclaude://focus/abc12345
+$cmd = 'powershell.exe -NoProfile -WindowStyle Hidden -Command "$url = ''%%1''; $sessionId = $url -replace ''tclaude://focus/'',''''; wsl -- tclaude session focus $sessionId"'
+Set-ItemProperty -Path 'HKCU:\Software\Classes\tclaude\shell\open\command' -Name '(Default)' -Value $cmd
 
 Write-Output 'OK'
 `, protocolVersion)

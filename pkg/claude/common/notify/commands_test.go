@@ -111,7 +111,7 @@ func TestBuildWSLNotifyCmd(t *testing.T) {
 		"Claude: Idle",
 		"abc123 | myproject",
 		"/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
-		"tofu://focus/abc123",
+		"tclaude://focus/abc123",
 	)
 
 	if cmd.Program != "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" {
@@ -138,7 +138,7 @@ func TestBuildWSLNotifyCmd(t *testing.T) {
 	// Check script contains expected elements
 	script := cmd.Args[3]
 	expectedParts := []string{
-		"tofu://focus/abc123",
+		"tclaude://focus/abc123",
 		"Claude: Idle",
 		"abc123 | myproject",
 		"ToastNotification",

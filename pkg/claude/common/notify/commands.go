@@ -62,7 +62,7 @@ type WSLNotifyCmd struct {
 }
 
 // BuildWSLNotifyCmd builds the PowerShell command for WSL toast notifications.
-// psPath is the path to PowerShell, protocolURL is the tofu:// URL to open on click.
+// psPath is the path to PowerShell, protocolURL is the tclaude:// URL to open on click.
 func BuildWSLNotifyCmd(title, body, psPath, protocolURL string) WSLNotifyCmd {
 	// Escape for PowerShell
 	escapedTitle := strings.ReplaceAll(title, "'", "''")
