@@ -1,0 +1,427 @@
+package session
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/spf13/cobra"
+)
+
+// SessionState represents the state of a Claude session
+type SessionState struct {
+	ID           string    `json:"id"`
+	TmuxSession  string    `json:"tmuxSession"`
+	PID          int       `json:"pid"`
+	Cwd          string    `json:"cwd"`
+	ConvID       string    `json:"convId,omitempty"`
+	Status       string    `json:"status"`
+	StatusDetail string    `json:"statusDetail,omitempty"`
+	Created      time.Time `json:"created"`
+	Updated      time.Time `json:"updated"`
+	Attached     int       `json:"-"` // Number of attached clients (runtime only, not persisted)
+}
+
+// Status constants
+const (
+	StatusRunning           = "running"
+	StatusWaitingInput      = "waiting_input"
+	StatusWaitingPermission = "waiting_permission"
+	StatusExited            = "exited"
+)
+
+// SortSessionsByKey sorts sessions by the given sort key and direction.
+func SortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirection) {
+	if key == "" || len(sessions) < 2 {
+		return
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		a, b := sessions[i], sessions[j]
+		var less bool
+		switch key {
+		case "id":
+			less = a.ID < b.ID
+		case "project":
+			less = a.Cwd < b.Cwd
+		case "status":
+			less = statusPriority(a.Status) < statusPriority(b.Status)
+		case "updated":
+			less = a.Updated.Before(b.Updated)
+		default:
+			return false
+		}
+		if dir == table.SortDesc {
+			return !less
+		}
+		return less
+	})
+}
+
+// statusPriority returns sort priority for status (lower = shown first when ascending)
+// Red (needs attention) = 0, Yellow (idle) = 1, Green (working) = 2, Gray (exited) = 3
+func statusPriority(status string) int {
+	switch status {
+	case StatusAwaitingPermission, StatusAwaitingInput:
+		return 0 // Red - needs attention, show first
+	case StatusIdle:
+		return 1 // Yellow
+	case StatusWorking:
+		return 2 // Green
+	case StatusExited:
+		return 3 // Gray
+	default:
+		return 0 // Unknown = needs attention
+	}
+}
+
+func Cmd() *cobra.Command {
+	cmd := boa.CmdT[boa.NoParams]{
+		Use:         "session",
+		Short:       "Manage Claude Code sessions (tmux-based)",
+		Long:        "Multiplex and manage multiple Claude Code sessions with detach/reattach support.\n\nWhen run without a subcommand, opens the interactive session viewer.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		SubCmds: []*cobra.Command{
+			NewCmd(),
+			ListCmd(),
+			AttachCmd(),
+			FocusCmd(),
+			KillCmd(),
+			PruneCmd(),
+			StatusCallbackCmd(),
+			HookCallbackCmd(),
+			NotifyListenCmd(),
+		},
+		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
+			// Default to interactive watch mode
+			if err := RunWatchMode(false, table.SortState{}, nil, nil); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}.ToCobra()
+	cmd.Aliases = []string{"sessions"}
+	return cmd
+}
+
+// SessionsDir returns the directory where session state files are stored
+func SessionsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".tofu", "claude-sessions")
+}
+
+// EnsureSessionsDir creates the sessions directory if it doesn't exist
+func EnsureSessionsDir() error {
+	dir := SessionsDir()
+	return os.MkdirAll(dir, 0755)
+}
+
+// SessionStatePath returns the path to a session's state file
+func SessionStatePath(id string) string {
+	return filepath.Join(SessionsDir(), id+".json")
+}
+
+// DebugLogPath returns the path to the debug log file
+func DebugLogPath() string {
+	return filepath.Join(SessionsDir(), "debug.log")
+}
+
+// SaveSessionState saves session state to disk using atomic write (temp file + rename)
+// to avoid race conditions when multiple hook callbacks fire concurrently.
+func SaveSessionState(state *SessionState) error {
+	if err := EnsureSessionsDir(); err != nil {
+		return err
+	}
+	state.Updated = time.Now()
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	targetPath := SessionStatePath(state.ID)
+	tmpFile, err := os.CreateTemp(SessionsDir(), state.ID+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	return os.Rename(tmpPath, targetPath)
+}
+
+// LoadSessionState loads session state from disk
+func LoadSessionState(id string) (*SessionState, error) {
+	path := SessionStatePath(id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var state SessionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		// Try json.Decoder which tolerates trailing garbage after a valid JSON object.
+		// This handles files corrupted by pre-atomic-write race conditions.
+		dec := json.NewDecoder(bytes.NewReader(data))
+		if decErr := dec.Decode(&state); decErr != nil {
+			slog.Error("corrupt session state file", "path", path, "error", err, "raw_content", string(data))
+			return nil, err
+		}
+		slog.Warn("session state file had trailing garbage, repaired", "path", path)
+	}
+	return &state, nil
+}
+
+// DeleteSessionState removes a session's state file
+func DeleteSessionState(id string) error {
+	return os.Remove(SessionStatePath(id))
+}
+
+// DefaultCleanupAge is the default max age for exited sessions in prune command
+const DefaultCleanupAge = 7 * 24 * time.Hour // 1 week
+
+// ListSessionStates returns all session states
+func ListSessionStates() ([]*SessionState, error) {
+
+	dir := SessionsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var states []*SessionState
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := entry.Name()[:len(entry.Name())-5] // remove .json
+		state, err := LoadSessionState(id)
+		if err != nil {
+			continue
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}
+
+// CleanupOldExitedSessions removes exited session states older than maxAge
+func CleanupOldExitedSessions(maxAge time.Duration) error {
+	dir := SessionsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := entry.Name()[:len(entry.Name())-5]
+		state, err := LoadSessionState(id)
+		if err != nil {
+			// Can't load, maybe corrupted - delete it
+			_ = DeleteSessionState(id)
+			continue
+		}
+
+		// Refresh status to ensure we have current state
+		RefreshSessionStatus(state)
+
+		// Delete if exited and older than cutoff
+		if state.Status == StatusExited && state.Updated.Before(cutoff) {
+			_ = DeleteSessionState(id)
+		}
+	}
+	return nil
+}
+
+// IsTmuxSessionAlive checks if a tmux session exists
+func IsTmuxSessionAlive(sessionName string) bool {
+	cmd := exec.Command("tmux", "has-session", "-t", sessionName)
+	return cmd.Run() == nil
+}
+
+// GetTmuxSessionAttachedCount returns the number of clients attached to a tmux session
+// Returns 0 if session doesn't exist or on error
+func GetTmuxSessionAttachedCount(sessionName string) int {
+	cmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{session_attached}")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	count, _ := strconv.Atoi(strings.TrimSpace(string(output)))
+	return count
+}
+
+// IsTmuxSessionAttached checks if a tmux session has any clients attached
+func IsTmuxSessionAttached(sessionName string) bool {
+	return GetTmuxSessionAttachedCount(sessionName) > 0
+}
+
+// DetachSessionClients detaches all clients from a tmux session
+func DetachSessionClients(sessionName string) error {
+	// Get list of clients attached to this session
+	cmd := exec.Command("tmux", "list-clients", "-t", sessionName, "-F", "#{client_tty}")
+	output, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+
+	// Detach each client
+	clients := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, client := range clients {
+		if client == "" {
+			continue
+		}
+		// Detach this specific client
+		_ = exec.Command("tmux", "detach-client", "-t", client).Run()
+	}
+	return nil
+}
+
+// CheckTmuxInstalled verifies tmux is available
+func CheckTmuxInstalled() error {
+	_, err := exec.LookPath("tmux")
+	if err != nil {
+		return fmt.Errorf("tmux is required but not installed. Install it with:\n  Ubuntu/Debian: sudo apt install tmux\n  macOS: brew install tmux")
+	}
+	return nil
+}
+
+// GenerateSessionID creates a short unique session ID
+func GenerateSessionID() string {
+	// Use last 8 hex chars of unix nano time
+	hex := fmt.Sprintf("%016x", time.Now().UnixNano())
+	return hex[len(hex)-8:]
+}
+
+// FormatDuration formats a duration in a human-readable way
+func FormatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+}
+
+// RefreshSessionStatus updates the session status based on actual state
+func RefreshSessionStatus(state *SessionState) {
+	// For tmux-backed sessions, check if tmux session is alive
+	if state.TmuxSession != "" {
+		if IsTmuxSessionAlive(state.TmuxSession) {
+			state.Attached = GetTmuxSessionAttachedCount(state.TmuxSession)
+			return
+		}
+		// Tmux session is dead - fall through to check PID
+		state.Attached = 0
+	}
+
+	// Check if PID is alive (works for both non-tmux sessions and
+	// sessions where tmux died but the process is still running)
+	if state.PID > 0 {
+		if !IsProcessAlive(state.PID) {
+			state.Status = StatusExited
+		}
+		// If PID is alive, keep the current status (updated by hooks)
+		return
+	}
+
+	// No tmux session and no PID - mark as exited
+	state.Status = StatusExited
+}
+
+// ShortID returns the first 8 characters of an ID for display
+func ShortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
+// ShortenPath shortens a path for display
+func ShortenPath(path string, maxLen int) string {
+	if len(path) <= maxLen {
+		return path
+	}
+	// Show last part of path
+	parts := filepath.SplitList(path)
+	if len(parts) > 0 {
+		last := parts[len(parts)-1]
+		if len(last) <= maxLen-3 {
+			return "…" + string(filepath.Separator) + last
+		}
+	}
+	return "…" + path[len(path)-maxLen+1:]
+}
+
+// ParsePIDFromTmux gets the PID of the main process in a tmux session
+func ParsePIDFromTmux(sessionName string) int {
+	cmd := exec.Command("tmux", "list-panes", "-t", sessionName, "-F", "#{pane_pid}")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(string(output[:len(output)-1])) // trim newline
+	return pid
+}
+
+// GetSessionCompletions returns completions for session IDs
+// If includeExited is true, includes exited sessions (for kill command)
+func GetSessionCompletions(includeExited bool) []string {
+	states, err := ListSessionStates()
+	if err != nil || len(states) == 0 {
+		return nil
+	}
+
+	var completions []string
+	for _, state := range states {
+		RefreshSessionStatus(state)
+		if !includeExited && state.Status == StatusExited {
+			continue
+		}
+
+		// Format: ID_status_directory
+		dir := state.Cwd
+		if len(dir) > 30 {
+			dir = "…" + dir[len(dir)-29:]
+		}
+		dir = strings.ReplaceAll(dir, " ", "_")
+
+		completion := fmt.Sprintf("%s_%s_%s", state.ID, state.Status, dir)
+		completions = append(completions, completion)
+	}
+
+	return completions
+}
