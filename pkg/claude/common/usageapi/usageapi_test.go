@@ -232,7 +232,7 @@ func TestLoadCacheWithTTL_RespectsLastAttemptAt(t *testing.T) {
 func TestStampLastAttempt_NoCacheFile_CreatesMinimalEntry(t *testing.T) {
 	setupTestCache(t)
 
-	stampLastAttempt()
+	stampLastAttempt(fmt.Errorf("test error"))
 
 	// Should create a minimal cache entry with just LastAttemptAt
 	cached := loadCacheStale()

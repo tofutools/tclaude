@@ -210,6 +210,9 @@ func run() error {
 	if err != nil {
 		slog.Warn("status-bar: failed to fetch usage", "error", err)
 	}
+	if usage != nil && usage.LastError != "" {
+		line2 = append(line2, fmt.Sprintf("%s[stale⚠ %s]%s", colorRed, session.FormatDuration(time.Since(usage.FetchedAt)), colorReset))
+	}
 	if usage != nil {
 		if usage.FiveHour != nil {
 			hasLimits = true
