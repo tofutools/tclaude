@@ -1,5 +1,9 @@
 # tclaude
 
+[![CI Status](https://github.com/tofutools/tclaude/actions/workflows/ci.yml/badge.svg)](https://github.com/tofutools/tclaude/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/tofutools/tclaude)](https://goreportcard.com/report/github.com/tofutools/tclaude)
+[![Docs](https://img.shields.io/badge/docs-tofutools.github.io%2Ftclaude-blue)](https://tofutools.github.io/tclaude/)
+
 Claude Code CLI extensions and utilities.
 
 Extracted from [GiGurra/tofu](https://github.com/GiGurra/tofu) into its own repo for independent development and easier installation.
@@ -50,6 +54,10 @@ go test ./...
 # Run from source
 go run ./cmd/tclaude --help
 ```
+
+## Documentation
+
+Full documentation available at **[tofutools.github.io/tclaude](https://tofutools.github.io/tclaude/)**.
 
 ## License
 
