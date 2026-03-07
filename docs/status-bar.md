@@ -130,7 +130,7 @@ The command is hidden from `tclaude --help` since it's only meant to be called b
 
 ## Known Issues
 
-### Usage bar shows stale data
+### Usage API rate limiting (429)
 
 The Anthropic OAuth usage endpoint (`/api/oauth/usage`) rate limits aggressively — as few as ~5 requests per access token before returning 429. Once rate limited, the endpoint may stay blocked for hours with no `Retry-After` header.
 
@@ -138,7 +138,24 @@ Tracked upstream in [anthropics/claude-code#31637](https://github.com/anthropics
 
 **Root cause:** Rate limits are per-access-token, not per-account. Refreshing the OAuth token resets the counter.
 
-**Workaround (manual):** If usage data is stuck/stale, you can force a token refresh:
+**Automatic workaround (built-in):** tclaude automatically detects 429 responses and refreshes the OAuth token to get a fresh rate limit window. This happens transparently in all code paths — the status bar, `tclaude usage`, and hook callbacks. The refreshed tokens (both access and refresh) are written back to whichever credential store they came from (file, macOS Keychain, or Linux keyring).
+
+You can verify that token refresh is working by checking the hook logs:
+
+```bash
+# Look for token refresh activity
+tclaude claude session hooklog | grep -i "refresh"
+```
+
+You should see lines like:
+
+```
+level=INFO msg="got 429, attempting token refresh to reset rate limit"
+level=INFO msg="OAuth token refreshed successfully" has_new_refresh_token=true expires_in_seconds=28800 store="macOS keychain"
+level=INFO msg="usage fetch succeeded after token refresh"
+```
+
+**Manual workaround (fallback):** If automatic refresh fails for any reason, you can force a token refresh manually:
 
 ```bash
 # Get your refresh token
@@ -155,6 +172,4 @@ curl -s -X POST https://console.anthropic.com/v1/oauth/token \
 ```
 
 !!! warning
-    Refresh tokens are **one-time use**. You must save both the new `access_token` and `refresh_token` from the response back into `~/.claude/.credentials.json`, or future refreshes will fail.
-
-**Planned:** tclaude will implement automatic token refresh on 429 so this is handled transparently.
+    Refresh tokens are **one-time use**. You must save both the new `access_token` and `refresh_token` from the response back into `~/.claude/.credentials.json` (or Keychain/keyring), or future refreshes will fail.
