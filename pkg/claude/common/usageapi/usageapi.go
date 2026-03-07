@@ -233,6 +233,50 @@ func TclaudeCredentialsPath() string {
 	return tclaudeCredentialsPath()
 }
 
+// StoreStatus describes whether a credential store has credentials.
+type StoreStatus struct {
+	Store string
+	Found bool
+	Path  string // file path if applicable
+}
+
+// ProbeAllStores checks each credential store independently and returns
+// which ones have credentials. Unlike readCredentialsJSON, this does not
+// short-circuit — it checks every store.
+func ProbeAllStores() []StoreStatus {
+	var results []StoreStatus
+
+	// tclaude's own file
+	tcPath := tclaudeCredentialsPath()
+	tcFound := false
+	if tcPath != "" {
+		_, err := os.Stat(tcPath)
+		tcFound = err == nil
+	}
+	results = append(results, StoreStatus{Store: string(storeTclaude), Found: tcFound, Path: tcPath})
+
+	// Claude's credential file
+	cPath := credentialsPath()
+	cFound := false
+	if cPath != "" {
+		_, err := os.Stat(cPath)
+		cFound = err == nil
+	}
+	results = append(results, StoreStatus{Store: string(storeFile), Found: cFound, Path: cPath})
+
+	// macOS keychain
+	if runtime.GOOS == "darwin" {
+		results = append(results, StoreStatus{Store: string(storeMacKeychain), Found: readMacKeychain() != nil})
+	}
+
+	// Linux keyring
+	if runtime.GOOS == "linux" {
+		results = append(results, StoreStatus{Store: string(storeLinuxKeyring), Found: readLinuxKeyring() != nil})
+	}
+
+	return results
+}
+
 // ReadClaudeCredentials reads credentials from Claude Code's stores only
 // (file, keychain/keyring), skipping tclaude's own file. Returns the raw
 // JSON and a human-readable store name.

@@ -102,21 +102,57 @@ func runSplit() error {
 }
 
 func runStatus() error {
-	tcPath := usageapi.TclaudeCredentialsPath()
-	if tcPath == "" {
-		return fmt.Errorf("cannot determine tclaude credentials path")
+	stores := usageapi.ProbeAllStores()
+
+	// Show Claude Code's credential stores
+	fmt.Println("Claude Code credentials:")
+	claudeFound := false
+	for _, s := range stores {
+		if s.Store == "tclaude file" {
+			continue
+		}
+		status := "not found"
+		if s.Found {
+			status = "found"
+			claudeFound = true
+		}
+		if s.Path != "" {
+			fmt.Printf("  %-20s %s (%s)\n", s.Store+":", status, s.Path)
+		} else {
+			fmt.Printf("  %-20s %s\n", s.Store+":", status)
+		}
+	}
+	if !claudeFound {
+		fmt.Println("  (no credentials — Claude Code will prompt to log in)")
+	}
+
+	fmt.Println()
+
+	// Show tclaude's credential status
+	fmt.Println("tclaude credentials:")
+	var tcStore *usageapi.StoreStatus
+	for _, s := range stores {
+		if s.Store == "tclaude file" {
+			tcStore = &s
+			break
+		}
 	}
 
 	ttl := usageapi.CacheTTL()
-	if _, err := os.Stat(tcPath); err == nil {
-		fmt.Printf("Using tclaude's own credentials: %s\n", tcPath)
-		fmt.Println("Token refresh on 429: enabled (safe, independent from Claude Code)")
-		fmt.Printf("Usage refresh interval: %s\n", ttl)
+	if tcStore != nil && tcStore.Found {
+		fmt.Printf("  %-20s found (%s)\n", "tclaude file:", tcStore.Path)
+		fmt.Printf("  %-20s enabled (safe, independent from Claude Code)\n", "token refresh:")
+		fmt.Printf("  %-20s %s\n", "cache TTL:", ttl)
 	} else {
-		fmt.Println("Using Claude Code's credentials (shared)")
-		fmt.Println("Token refresh on 429: disabled (would conflict with Claude Code)")
-		fmt.Printf("Usage refresh interval: %s\n", ttl)
-		fmt.Printf("\nRun 'tclaude credentials split' to create separate credentials.\n")
+		path := ""
+		if tcStore != nil {
+			path = tcStore.Path
+		}
+		fmt.Printf("  %-20s not found (%s)\n", "tclaude file:", path)
+		fmt.Println("  (using Claude Code's credentials — shared)")
+		fmt.Printf("  %-20s disabled (would conflict with Claude Code)\n", "token refresh:")
+		fmt.Printf("  %-20s %s\n", "cache TTL:", ttl)
+		fmt.Printf("\n  Run 'tclaude credentials split' to create separate credentials.\n")
 	}
 	return nil
 }
