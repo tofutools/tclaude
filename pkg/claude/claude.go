@@ -7,6 +7,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	claudegit "github.com/tofutools/tclaude/pkg/claude/git"
+	"github.com/tofutools/tclaude/pkg/claude/selftest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/setup"
 	"github.com/tofutools/tclaude/pkg/claude/stats"
@@ -34,6 +35,7 @@ func Cmd() *cobra.Command {
 			usage.Cmd(),
 			setup.Cmd(),
 			statusbar.Cmd(),
+			selftest.Cmd(),
 			web.Cmd(),
 		},
 		RunFunc: func(params *session.NewParams, cmd *cobra.Command, args []string) {

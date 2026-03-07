@@ -36,7 +36,7 @@ func runUsage(params *Params) error {
 	}
 
 	if params.JSON {
-		raw, err := usageapi.FetchRaw(token)
+		raw, err := usageapi.FetchRawWithRetry(token)
 		if err != nil {
 			return err
 		}
@@ -44,7 +44,7 @@ func runUsage(params *Params) error {
 		return nil
 	}
 
-	resp, err := usageapi.Fetch(token)
+	resp, err := usageapi.FetchWithRetry(token)
 	if err != nil {
 		return err
 	}

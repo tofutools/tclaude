@@ -14,16 +14,27 @@ func setupTestCache(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", tmp)
 }
 
-// stubFuncs replaces fetchFunc and getTokenFunc for the duration of a test.
+// stubFuncs replaces fetchFunc, getTokenFunc, and refreshTokenFunc for the duration of a test.
+// Pass nil for refresh to use a default that always fails (no refresh available).
 func stubFuncs(t *testing.T, token func() (string, error), fetch func(string) (*Response, error)) {
+	t.Helper()
+	stubFuncsWithRefresh(t, token, fetch, func() (string, error) {
+		return "", fmt.Errorf("no refresh token configured in test")
+	})
+}
+
+func stubFuncsWithRefresh(t *testing.T, token func() (string, error), fetch func(string) (*Response, error), refresh func() (string, error)) {
 	t.Helper()
 	origFetch := fetchFunc
 	origToken := getTokenFunc
+	origRefresh := refreshTokenFunc
 	fetchFunc = fetch
 	getTokenFunc = token
+	refreshTokenFunc = refresh
 	t.Cleanup(func() {
 		fetchFunc = origFetch
 		getTokenFunc = origToken
+		refreshTokenFunc = origRefresh
 	})
 }
 
@@ -38,7 +49,11 @@ func okFetch(pct float64) func(string) (*Response, error) {
 }
 
 func failFetch(_ string) (*Response, error) {
-	return nil, fmt.Errorf("API returned 429: rate limited")
+	return nil, fmt.Errorf("API returned 500: server error")
+}
+
+func rateLimitFetch(_ string) (*Response, error) {
+	return nil, &RateLimitError{Body: `{"error":{"message":"Rate limited.","type":"rate_limit_error"}}`}
 }
 
 func TestGetCached_FreshCacheSkipsFetch(t *testing.T) {
@@ -249,5 +264,107 @@ func TestGetCached_BackoffEvenWithoutStaleCache(t *testing.T) {
 
 	if fetchCount.Load() != 1 {
 		t.Errorf("expected 1 fetch during backoff, got %d", fetchCount.Load())
+	}
+}
+
+func TestGetCached_429RefreshesTokenAndRetries(t *testing.T) {
+	setupTestCache(t)
+
+	var fetchCount atomic.Int32
+	var refreshCount atomic.Int32
+
+	stubFuncsWithRefresh(t, okToken,
+		func(token string) (*Response, error) {
+			n := fetchCount.Add(1)
+			if n == 1 {
+				// First fetch: 429
+				return rateLimitFetch(token)
+			}
+			// After refresh: succeed
+			return okFetch(77.0)(token)
+		},
+		func() (string, error) {
+			refreshCount.Add(1)
+			return "refreshed-token", nil
+		},
+	)
+
+	result, err := GetCached()
+	if err != nil {
+		t.Fatalf("expected success after refresh, got error: %v", err)
+	}
+	if result.FiveHour == nil || result.FiveHour.Pct != 77.0 {
+		t.Fatalf("expected 77%%, got %+v", result.FiveHour)
+	}
+	if fetchCount.Load() != 2 {
+		t.Errorf("expected 2 fetches (original + retry), got %d", fetchCount.Load())
+	}
+	if refreshCount.Load() != 1 {
+		t.Errorf("expected 1 refresh, got %d", refreshCount.Load())
+	}
+}
+
+func TestGetCached_429RefreshFailsFallsBackToStale(t *testing.T) {
+	setupTestCache(t)
+
+	// Seed cache
+	stubFuncs(t, okToken, okFetch(33.0))
+	if _, err := GetCached(); err != nil {
+		t.Fatalf("seed fetch failed: %v", err)
+	}
+
+	// Expire cache
+	stale := loadCacheStale()
+	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
+	saveCache(stale)
+
+	// Now return 429 and fail the refresh too
+	stubFuncsWithRefresh(t, okToken, rateLimitFetch,
+		func() (string, error) {
+			return "", fmt.Errorf("refresh token expired")
+		},
+	)
+
+	result, err := GetCached()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if result == nil {
+		t.Fatal("expected stale data, got nil")
+	}
+	if result.FiveHour == nil || result.FiveHour.Pct != 33.0 {
+		t.Fatalf("expected stale 33%%, got %+v", result.FiveHour)
+	}
+}
+
+func TestRefreshCache_429RefreshesTokenAndRetries(t *testing.T) {
+	setupTestCache(t)
+
+	var fetchCount atomic.Int32
+
+	stubFuncsWithRefresh(t, okToken,
+		func(token string) (*Response, error) {
+			n := fetchCount.Add(1)
+			if n == 1 {
+				return rateLimitFetch(token)
+			}
+			return okFetch(55.0)(token)
+		},
+		func() (string, error) {
+			return "refreshed-token", nil
+		},
+	)
+
+	RefreshCache()
+
+	cached := loadCacheStale()
+	if cached == nil {
+		t.Fatal("expected cache to be populated after refresh+retry")
+	}
+	if cached.FiveHour == nil || cached.FiveHour.Pct != 55.0 {
+		t.Fatalf("expected 55%%, got %+v", cached.FiveHour)
+	}
+	if fetchCount.Load() != 2 {
+		t.Errorf("expected 2 fetches, got %d", fetchCount.Load())
 	}
 }
