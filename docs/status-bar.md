@@ -155,21 +155,4 @@ level=INFO msg="OAuth token refreshed successfully" has_new_refresh_token=true e
 level=INFO msg="usage fetch succeeded after token refresh"
 ```
 
-**Manual workaround (fallback):** If automatic refresh fails for any reason, you can force a token refresh manually:
-
-```bash
-# Get your refresh token
-cat ~/.claude/.credentials.json | grep -o '"refreshToken":"[^"]*"' | cut -d'"' -f4
-
-# Refresh the token (replace YOUR_REFRESH_TOKEN below)
-curl -s -X POST https://console.anthropic.com/v1/oauth/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "grant_type": "refresh_token",
-    "refresh_token": "YOUR_REFRESH_TOKEN",
-    "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-  }'
-```
-
-!!! warning
-    Refresh tokens are **one-time use**. You must save both the new `access_token` and `refresh_token` from the response back into `~/.claude/.credentials.json` (or Keychain/keyring), or future refreshes will fail.
+**Manual workaround (fallback):** If automatic refresh fails for any reason, run `/login` inside Claude Code to get a fresh token.
