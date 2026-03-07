@@ -267,8 +267,32 @@ func TestGetCached_BackoffEvenWithoutStaleCache(t *testing.T) {
 	}
 }
 
-func TestGetCached_429RefreshesTokenAndRetries(t *testing.T) {
+func TestGetCached_429ReturnsErrorByDefault(t *testing.T) {
 	setupTestCache(t)
+
+	// Seed cache so we get stale fallback
+	stubFuncs(t, okToken, okFetch(42.0))
+	if _, err := GetCached(); err != nil {
+		t.Fatalf("seed fetch failed: %v", err)
+	}
+	stale := loadCacheStale()
+	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
+	saveCache(stale)
+
+	stubFuncs(t, okToken, rateLimitFetch)
+
+	result, err := GetCached()
+	if err == nil {
+		t.Fatal("expected error on 429, got nil")
+	}
+	if result == nil || result.FiveHour == nil || result.FiveHour.Pct != 42.0 {
+		t.Fatalf("expected stale 42%%, got %+v", result)
+	}
+}
+
+func TestGetCached_429RefreshesTokenWhenEnvSet(t *testing.T) {
+	setupTestCache(t)
+	t.Setenv("TCLAUDE_DEBUG_REFRESH", "1")
 
 	var fetchCount atomic.Int32
 	var refreshCount atomic.Int32
@@ -277,10 +301,8 @@ func TestGetCached_429RefreshesTokenAndRetries(t *testing.T) {
 		func(token string) (*Response, error) {
 			n := fetchCount.Add(1)
 			if n == 1 {
-				// First fetch: 429
 				return rateLimitFetch(token)
 			}
-			// After refresh: succeed
 			return okFetch(77.0)(token)
 		},
 		func() (string, error) {
@@ -337,8 +359,26 @@ func TestGetCached_429RefreshFailsFallsBackToStale(t *testing.T) {
 	}
 }
 
-func TestRefreshCache_429RefreshesTokenAndRetries(t *testing.T) {
+func TestRefreshCache_429DoesNotRetryByDefault(t *testing.T) {
 	setupTestCache(t)
+
+	var fetchCount atomic.Int32
+
+	stubFuncs(t, okToken, func(token string) (*Response, error) {
+		fetchCount.Add(1)
+		return rateLimitFetch(token)
+	})
+
+	RefreshCache()
+
+	if fetchCount.Load() != 1 {
+		t.Errorf("expected 1 fetch (no retry), got %d", fetchCount.Load())
+	}
+}
+
+func TestRefreshCache_429RefreshesTokenWhenEnvSet(t *testing.T) {
+	setupTestCache(t)
+	t.Setenv("TCLAUDE_DEBUG_REFRESH", "1")
 
 	var fetchCount atomic.Int32
 

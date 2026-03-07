@@ -136,22 +136,10 @@ The Anthropic OAuth usage endpoint (`/api/oauth/usage`) rate limits aggressively
 
 Tracked upstream in [anthropics/claude-code#31637](https://github.com/anthropics/claude-code/issues/31637).
 
-**Root cause:** Rate limits are per-access-token, not per-account. Refreshing the OAuth token resets the counter.
+**Root cause:** Rate limits are per-access-token, not per-account.
 
-**Automatic workaround (built-in):** tclaude automatically detects 429 responses and refreshes the OAuth token to get a fresh rate limit window. This happens transparently in all code paths — the status bar, `tclaude usage`, and hook callbacks. The refreshed tokens (both access and refresh) are written back to whichever credential store they came from (file, macOS Keychain, or Linux keyring).
+**Mitigation:** tclaude caches usage data for 5 minutes to stay well under the rate limit. With hook-triggered eager refresh, this means the status bar updates roughly once every 5 minutes rather than on every hook callback.
 
-You can verify that token refresh is working by checking the hook logs:
+**If you hit 429 anyway:** Run `/login` inside Claude Code to get a fresh token.
 
-```bash
-grep -i "refresh" ~/.tclaude/hooks.log
-```
-
-You should see lines like:
-
-```
-level=INFO msg="got 429, attempting token refresh to reset rate limit"
-level=INFO msg="OAuth token refreshed successfully" has_new_refresh_token=true expires_in_seconds=28800 store="macOS keychain"
-level=INFO msg="usage fetch succeeded after token refresh"
-```
-
-**Manual workaround (fallback):** If automatic refresh fails for any reason, run `/login` inside Claude Code to get a fresh token.
+> **Note:** Automatic token refresh was removed because it conflicts with Claude Code — both processes share the same OAuth refresh token, and rotating it from tclaude invalidates Claude Code's in-memory copy, eventually forcing a re-login. The refresh code is still present but disabled; set `TCLAUDE_DEBUG_REFRESH=1` to re-enable it for debugging.

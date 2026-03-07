@@ -25,7 +25,7 @@ const (
 	usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 	tokenEndpoint = "https://console.anthropic.com/v1/oauth/token"
 	oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	cacheTTL      = 60 * time.Second
+	cacheTTL      = 5 * time.Minute
 )
 
 // fetchFunc, getTokenFunc, and refreshTokenFunc are swappable for testing.
@@ -444,7 +444,9 @@ func saveCache(usage *CachedUsage) {
 	_ = os.Rename(tmpPath, path)
 }
 
-// FetchRawWithRetry calls the usage API and on 429 refreshes the token and retries once.
+// FetchRawWithRetry calls the usage API. On 429 it attempts a token refresh
+// only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default because
+// refreshing from tclaude invalidates Claude Code's in-memory refresh token).
 func FetchRawWithRetry(token string) ([]byte, error) {
 	body, err := FetchRaw(token)
 	if err == nil {
@@ -456,7 +458,11 @@ func FetchRawWithRetry(token string) ([]byte, error) {
 		return nil, err
 	}
 
-	slog.Info("FetchRawWithRetry: got 429, attempting token refresh")
+	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
+		return nil, err
+	}
+
+	slog.Info("FetchRawWithRetry: got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
 	newToken, refreshErr := refreshTokenFunc()
 	if refreshErr != nil {
 		slog.Warn("FetchRawWithRetry: token refresh failed", "error", refreshErr)
@@ -556,8 +562,10 @@ func stampLastAttempt() {
 	saveCache(cached)
 }
 
-// fetchWithRateLimitRetry fetches usage data, and on 429 refreshes the token
-// and retries once. Returns the response and the token that succeeded.
+// fetchWithRateLimitRetry fetches usage data. On 429 it attempts a token
+// refresh only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default
+// because refreshing from tclaude invalidates Claude Code's in-memory
+// refresh token).
 func fetchWithRateLimitRetry(token string) (*Response, error) {
 	resp, err := fetchFunc(token)
 	if err == nil {
@@ -569,8 +577,11 @@ func fetchWithRateLimitRetry(token string) (*Response, error) {
 		return nil, err
 	}
 
-	// Got 429 — try refreshing the token to get a fresh rate limit window
-	slog.Info("got 429, attempting token refresh to reset rate limit")
+	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
+		return nil, err
+	}
+
+	slog.Info("got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
 	newToken, refreshErr := refreshTokenFunc()
 	if refreshErr != nil {
 		slog.Warn("token refresh failed after 429, giving up", "error", refreshErr)
@@ -634,9 +645,8 @@ func RefreshCache() {
 	saveCache(buildCachedUsage(resp))
 }
 
-// GetCached returns usage percentages, using a file cache to avoid hammering the API.
-// On 429 rate limit, refreshes the OAuth token and retries once.
-// On other fetch errors, returns stale cached data if available.
+// GetCached returns usage percentages, using a file cache (5 min TTL) to
+// avoid hammering the API. On fetch errors, returns stale cached data if available.
 func GetCached() (*CachedUsage, error) {
 	if cached := loadCache(); cached != nil {
 		return cached, nil
