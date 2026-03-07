@@ -111,7 +111,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 				rescanCount++
 				// Try to get data from the file
 				filePath := filepath.Join(projectPath, index.Entries[i].SessionID+".jsonl")
-				if scanned := parseJSONLSession(filePath, index.Entries[i].SessionID); scanned != nil {
+				if scanned := parseJSONLSession(filePath, index.Entries[i].SessionID, false); scanned != nil {
 					// Update missing fields from scanned data
 					if scanned.Summary != "" && index.Entries[i].Summary == "" {
 						index.Entries[i].Summary = scanned.Summary
@@ -124,6 +124,9 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 					}
 					if scanned.GitBranch != "" && index.Entries[i].GitBranch == "" {
 						index.Entries[i].GitBranch = scanned.GitBranch
+					}
+					if scanned.CustomTitle != "" && index.Entries[i].CustomTitle == "" {
+						index.Entries[i].CustomTitle = scanned.CustomTitle
 					}
 				}
 			}
@@ -185,7 +188,7 @@ func scanUnindexedSessionsExcluding(projectPath string, exclude map[string]bool)
 		}
 
 		filePath := filepath.Join(projectPath, file.Name())
-		entry := parseJSONLSession(filePath, sessionID)
+		entry := parseJSONLSession(filePath, sessionID, true) // full scan for unindexed files
 		if entry != nil {
 			entries = append(entries, *entry)
 		}
@@ -196,22 +199,25 @@ func scanUnindexedSessionsExcluding(projectPath string, exclude map[string]bool)
 
 // jsonlMessage represents a line in the .jsonl conversation file
 type jsonlMessage struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId"`
-	Timestamp string `json:"timestamp"`
-	Cwd       string `json:"cwd"`
-	GitBranch string `json:"gitBranch"`
-	Summary   string `json:"summary"` // For type="summary" messages
-	Message   struct {
+	Type        string `json:"type"`
+	SessionID   string `json:"sessionId"`
+	Timestamp   string `json:"timestamp"`
+	Cwd         string `json:"cwd"`
+	GitBranch   string `json:"gitBranch"`
+	Summary     string `json:"summary"`     // For type="summary" messages
+	CustomTitle string `json:"customTitle"` // For type="custom-title" messages
+	Message     struct {
 		Role    string `json:"role"`
 		Content any    `json:"content"` // Can be string or array
 	} `json:"message"`
 }
 
-// parseJSONLSession parses a .jsonl file and extracts session metadata
-// Stops early once it finds display data (firstPrompt or summary)
-// to avoid reading entire large conversation files into memory
-func parseJSONLSession(filePath, sessionID string) *SessionEntry {
+// parseJSONLSession parses a .jsonl file and extracts session metadata.
+// When fullScan is false, it stops early at the first display data found (firstPrompt or summary).
+// When fullScan is true, it collects firstPrompt from the forward scan and then
+// tail-scans the file for a summary if one wasn't found, giving complete metadata
+// for unindexed conversations.
+func parseJSONLSession(filePath, sessionID string, fullScan bool) *SessionEntry {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil
@@ -227,14 +233,19 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	entry.SessionID = sessionID
 	entry.FullPath = filePath
 	entry.FileMtime = info.ModTime().Unix()
+	entry.FileSize = info.Size()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var firstTimestamp string
 
-	// Scan file looking for display data (firstPrompt or summary)
-	// Stop as soon as we have something to show - don't read the whole file
+	// linesAfterPrompt tracks how many lines we've read past finding firstPrompt.
+	// In quick mode, we read a few extra lines to find custom-title (which appears
+	// shortly after the first user+assistant exchange), then stop.
+	const maxLinesAfterPrompt = 20
+	linesAfterPrompt := 0
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -259,10 +270,14 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 			entry.GitBranch = msg.GitBranch
 		}
 
-		// Capture summaries if we see one (and stop - we have display data)
+		// Capture custom title (written by Claude Code after the first exchange)
+		if msg.Type == "custom-title" && msg.CustomTitle != "" {
+			entry.CustomTitle = msg.CustomTitle
+		}
+
+		// Capture summary
 		if msg.Type == "summary" && msg.Summary != "" {
 			entry.Summary = msg.Summary
-			break
 		}
 
 		// Capture first user message with actual text content as the prompt
@@ -275,8 +290,33 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 				if msg.Timestamp != "" {
 					firstTimestamp = msg.Timestamp
 				}
-				break // We have display data, stop reading
 			}
+		}
+
+		// Check if we can stop scanning
+		hasTitle := entry.CustomTitle != "" || entry.Summary != ""
+		if hasTitle && entry.FirstPrompt != "" {
+			break // Have everything we need
+		}
+		// In quick mode, stop a few lines after finding firstPrompt
+		// (enough to catch custom-title which appears shortly after)
+		if !fullScan && entry.FirstPrompt != "" {
+			linesAfterPrompt++
+			if linesAfterPrompt >= maxLinesAfterPrompt {
+				break
+			}
+		}
+	}
+
+	// In full scan mode, if we're still missing a title (summary or custom-title),
+	// tail-scan the file (summaries and custom-titles can appear later in the file)
+	if fullScan && entry.CustomTitle == "" && entry.Summary == "" && entry.FirstPrompt != "" {
+		title, summary := tailScanForTitleData(filePath, info.Size())
+		if title != "" {
+			entry.CustomTitle = title
+		}
+		if summary != "" {
+			entry.Summary = summary
 		}
 	}
 
@@ -291,6 +331,57 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	entry.MessageCount = 0 // Unknown for unindexed sessions
 
 	return &entry
+}
+
+// tailScanForTitleData reads the last portion of a JSONL file looking for
+// custom-title and summary entries. Returns the last of each found.
+func tailScanForTitleData(filePath string, fileSize int64) (customTitle, summary string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", ""
+	}
+	defer file.Close()
+
+	// Read last 256KB (or entire file if smaller)
+	const tailSize = 256 * 1024
+	offset := fileSize - tailSize
+	if offset < 0 {
+		offset = 0
+	}
+
+	if _, err := file.Seek(offset, 0); err != nil {
+		return "", ""
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
+	// Skip first partial line if we seeked into the middle of the file
+	if offset > 0 {
+		scanner.Scan()
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Quick pre-check to avoid JSON parsing irrelevant lines
+		if !strings.Contains(line, `"summary"`) && !strings.Contains(line, `"custom-title"`) {
+			continue
+		}
+
+		var msg jsonlMessage
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			continue
+		}
+
+		if msg.Type == "summary" && msg.Summary != "" {
+			summary = msg.Summary
+		}
+		if msg.Type == "custom-title" && msg.CustomTitle != "" {
+			customTitle = msg.CustomTitle
+		}
+	}
+
+	return customTitle, summary
 }
 
 // extractMessageContent extracts text content from a message

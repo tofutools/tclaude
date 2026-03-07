@@ -25,6 +25,7 @@ type SessionEntry struct {
 	GitBranch    string `json:"gitBranch"`
 	ProjectPath  string `json:"projectPath"`
 	IsSidechain  bool   `json:"isSidechain"`
+	FileSize     int64  `json:"-"` // Populated at load time, not persisted in index
 }
 
 // DisplayTitle returns the best available title for display
