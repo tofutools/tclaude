@@ -7,7 +7,7 @@
 Claude Code CLI extensions and utilities.
 
 ```bash
-go install github.com/tofutools/tclaude/cmd/tclaude@latest
+go install github.com/tofutools/tclaude@latest
 tclaude setup
 ```
 
