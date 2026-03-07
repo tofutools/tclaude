@@ -25,7 +25,8 @@ const (
 	usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 	tokenEndpoint = "https://console.anthropic.com/v1/oauth/token"
 	oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	cacheTTL      = 5 * time.Minute
+	cacheTTLShared = 5 * time.Minute
+	cacheTTLOwn    = 30 * time.Second
 )
 
 // fetchFunc, getTokenFunc, and refreshTokenFunc are swappable for testing.
@@ -48,6 +49,7 @@ func (e *RateLimitError) Error() string {
 type credentialStore string
 
 const (
+	storeTclaude      credentialStore = "tclaude file"
 	storeFile         credentialStore = "file"
 	storeMacKeychain  credentialStore = "macOS keychain"
 	storeLinuxKeyring credentialStore = "Linux keyring"
@@ -115,6 +117,26 @@ func credentialsPath() string {
 	return filepath.Join(home, ".claude", ".credentials.json")
 }
 
+// tclaudeCredentialsPath returns the path to tclaude's own credential file.
+func tclaudeCredentialsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".tclaude", "api-credentials.json")
+}
+
+// usingOwnCredentials returns true if tclaude has its own credential file,
+// meaning token refresh is safe (won't conflict with Claude Code).
+func usingOwnCredentials() bool {
+	path := tclaudeCredentialsPath()
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // currentUsername returns the current OS username, or empty string.
 func currentUsername() string {
 	if u, err := user.Current(); err == nil {
@@ -132,10 +154,21 @@ func ReadCredentialsForTest() (data []byte, store string, err error) {
 	return result.data, string(result.store), nil
 }
 
-// readCredentialsJSON returns the raw credentials JSON and where it was found,
-// trying the file first, then falling back to the OS keychain/keyring.
+// readCredentialsJSON returns the raw credentials JSON and where it was found.
+// It checks tclaude's own credential file (~/.tclaude/api-credentials.json)
+// first. If present, tclaude uses its own token independently of Claude Code.
+// Otherwise falls back to Claude's stores (file, keychain/keyring).
 func readCredentialsJSON() (*credentialResult, error) {
-	// Try the credentials file first
+	// Check tclaude's own credential file first
+	tcPath := tclaudeCredentialsPath()
+	if tcPath != "" {
+		if data, err := os.ReadFile(tcPath); err == nil {
+			slog.Debug("credentials read from tclaude file", "path", tcPath)
+			return &credentialResult{data: data, store: storeTclaude}, nil
+		}
+	}
+
+	// Fall back to Claude's credential stores
 	path := credentialsPath()
 	if path != "" {
 		if data, err := os.ReadFile(path); err == nil {
@@ -161,6 +194,152 @@ func readCredentialsJSON() (*credentialResult, error) {
 	}
 
 	return nil, fmt.Errorf("cannot read credentials from file or keychain/keyring")
+}
+
+// writeTclaudeCredentials writes credentials to tclaude's own file atomically.
+func writeTclaudeCredentials(data []byte) error {
+	path := tclaudeCredentialsPath()
+	if path == "" {
+		return fmt.Errorf("tclaude credentials path unavailable")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("cannot create tclaude dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// TclaudeCredentialsPath returns the path to tclaude's own credential file.
+func TclaudeCredentialsPath() string {
+	return tclaudeCredentialsPath()
+}
+
+// StoreStatus describes whether a credential store has credentials.
+type StoreStatus struct {
+	Store string
+	Found bool
+	Path  string // file path if applicable
+}
+
+// ProbeAllStores checks each credential store independently and returns
+// which ones have credentials. Unlike readCredentialsJSON, this does not
+// short-circuit — it checks every store.
+func ProbeAllStores() []StoreStatus {
+	var results []StoreStatus
+
+	// tclaude's own file
+	tcPath := tclaudeCredentialsPath()
+	tcFound := false
+	if tcPath != "" {
+		_, err := os.Stat(tcPath)
+		tcFound = err == nil
+	}
+	results = append(results, StoreStatus{Store: string(storeTclaude), Found: tcFound, Path: tcPath})
+
+	// Claude's credential file
+	cPath := credentialsPath()
+	cFound := false
+	if cPath != "" {
+		_, err := os.Stat(cPath)
+		cFound = err == nil
+	}
+	results = append(results, StoreStatus{Store: string(storeFile), Found: cFound, Path: cPath})
+
+	// macOS keychain
+	if runtime.GOOS == "darwin" {
+		results = append(results, StoreStatus{Store: string(storeMacKeychain), Found: readMacKeychain() != nil})
+	}
+
+	// Linux keyring
+	if runtime.GOOS == "linux" {
+		results = append(results, StoreStatus{Store: string(storeLinuxKeyring), Found: readLinuxKeyring() != nil})
+	}
+
+	return results
+}
+
+// ReadClaudeCredentials reads credentials from Claude Code's stores only
+// (file, keychain/keyring), skipping tclaude's own file. Returns the raw
+// JSON and a human-readable store name.
+func ReadClaudeCredentials() (data []byte, store string, err error) {
+	path := credentialsPath()
+	if path != "" {
+		if d, err := os.ReadFile(path); err == nil {
+			return d, string(storeFile), nil
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		if d := readMacKeychain(); d != nil {
+			return d, string(storeMacKeychain), nil
+		}
+	}
+	if runtime.GOOS == "linux" {
+		if d := readLinuxKeyring(); d != nil {
+			return d, string(storeLinuxKeyring), nil
+		}
+	}
+	return nil, "", fmt.Errorf("no Claude credentials found in file or keychain/keyring")
+}
+
+// WriteTclaudeCredentials writes credentials to tclaude's own file.
+func WriteTclaudeCredentials(data []byte) error {
+	return writeTclaudeCredentials(data)
+}
+
+// DeleteClaudeCredentials removes credentials from the specified Claude store.
+func DeleteClaudeCredentials(store string) error {
+	switch credentialStore(store) {
+	case storeFile:
+		path := credentialsPath()
+		if path == "" {
+			return fmt.Errorf("credentials file path unavailable")
+		}
+		return os.Remove(path)
+
+	case storeMacKeychain:
+		username := currentUsername()
+		args := []string{"delete-generic-password", "-s", "Claude Code-credentials"}
+		if username != "" {
+			args = append(args, "-a", username)
+		}
+		if out, err := exec.Command("security", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("keychain delete failed: %w (output: %s)", err, string(out))
+		}
+		return nil
+
+	case storeLinuxKeyring:
+		username := currentUsername()
+		args := []string{"clear", "service", "Claude Code-credentials"}
+		if username != "" {
+			args = append(args, "account", username)
+		}
+		if out, err := exec.Command("secret-tool", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("keyring delete failed: %w (output: %s)", err, string(out))
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unknown credential store: %s", store)
+	}
 }
 
 // readMacKeychain reads credentials from macOS Keychain.
@@ -339,9 +518,13 @@ func updateCredentials(cred *credentialResult, accessToken, refreshToken string,
 	return writeCredentials(cred.store, updated)
 }
 
-// writeCredentials writes credentials back to the specified store.
+// writeCredentials writes credentials back to the store they came from.
 func writeCredentials(store credentialStore, data []byte) error {
 	switch store {
+	case storeTclaude:
+		slog.Info("writing refreshed credentials to tclaude file")
+		return writeTclaudeCredentials(data)
+
 	case storeFile:
 		path := credentialsPath()
 		if path == "" {
@@ -382,9 +565,17 @@ func writeCredentials(store credentialStore, data []byte) error {
 	}
 }
 
+// CacheTTL returns the active cache TTL based on credential mode.
+func CacheTTL() time.Duration {
+	if usingOwnCredentials() {
+		return cacheTTLOwn
+	}
+	return cacheTTLShared
+}
+
 // loadCache returns cached usage if still fresh (within TTL).
 func loadCache() *CachedUsage {
-	return loadCacheWithTTL(cacheTTL)
+	return loadCacheWithTTL(CacheTTL())
 }
 
 // loadCacheStale returns cached usage regardless of age, or nil if missing/corrupt.
@@ -445,8 +636,8 @@ func saveCache(usage *CachedUsage) {
 }
 
 // FetchRawWithRetry calls the usage API. On 429 it attempts a token refresh
-// only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default because
-// refreshing from tclaude invalidates Claude Code's in-memory refresh token).
+// if tclaude has its own credential file (safe, won't conflict with Claude Code)
+// or when TCLAUDE_DEBUG_REFRESH=1 is set as a manual override.
 func FetchRawWithRetry(token string) ([]byte, error) {
 	body, err := FetchRaw(token)
 	if err == nil {
@@ -458,11 +649,11 @@ func FetchRawWithRetry(token string) ([]byte, error) {
 		return nil, err
 	}
 
-	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
+	if !canRefreshToken() {
 		return nil, err
 	}
 
-	slog.Info("FetchRawWithRetry: got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
+	slog.Info("FetchRawWithRetry: got 429, attempting token refresh")
 	newToken, refreshErr := refreshTokenFunc()
 	if refreshErr != nil {
 		slog.Warn("FetchRawWithRetry: token refresh failed", "error", refreshErr)
@@ -562,10 +753,15 @@ func stampLastAttempt() {
 	saveCache(cached)
 }
 
+// canRefreshToken returns true if token refresh is safe to perform.
+// It's safe when tclaude has its own credential file (won't conflict with
+// Claude Code), or when manually enabled via TCLAUDE_DEBUG_REFRESH=1.
+func canRefreshToken() bool {
+	return usingOwnCredentials() || os.Getenv("TCLAUDE_DEBUG_REFRESH") == "1"
+}
+
 // fetchWithRateLimitRetry fetches usage data. On 429 it attempts a token
-// refresh only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default
-// because refreshing from tclaude invalidates Claude Code's in-memory
-// refresh token).
+// refresh if tclaude has its own credential file (safe) or TCLAUDE_DEBUG_REFRESH=1.
 func fetchWithRateLimitRetry(token string) (*Response, error) {
 	resp, err := fetchFunc(token)
 	if err == nil {
@@ -577,11 +773,11 @@ func fetchWithRateLimitRetry(token string) (*Response, error) {
 		return nil, err
 	}
 
-	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
+	if !canRefreshToken() {
 		return nil, err
 	}
 
-	slog.Info("got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
+	slog.Info("got 429, attempting token refresh")
 	newToken, refreshErr := refreshTokenFunc()
 	if refreshErr != nil {
 		slog.Warn("token refresh failed after 429, giving up", "error", refreshErr)
