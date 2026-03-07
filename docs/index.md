@@ -9,9 +9,11 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 | Platform | Status |
 |----------|--------|
 | macOS | ✅ Fully supported |
-| WSL (Windows Subsystem for Linux) | ✅ Fully supported |
-| Linux (native) | ⚠️ Implemented but untested |
+| Linux (native) | ✅ Fully supported |
+| WSL (Windows Subsystem for Linux) | ⚠️ Partial* |
 | Windows (native) | ❌ Not yet implemented |
+
+*\* Clickable notifications only focus the correct window if the target Windows Terminal tab is already selected.*
 
 ## Features
 
