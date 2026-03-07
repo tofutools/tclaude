@@ -90,7 +90,7 @@ extra usage: off
 or when enabled:
 
 ```
-extra usage: on | $12.50 / $100.00 | <bar> 13%
+extra usage: on | 12.50 / 100.00 | <bar> 13%
 ```
 
 Shows the overuse allowance status, credits used vs monthly limit, and utilization.

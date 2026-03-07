@@ -63,7 +63,7 @@ func runUsage(params *Params) error {
 		if eu.IsEnabled {
 			fmt.Printf("extra usage:              enabled\n")
 			if eu.UsedCredits != nil && eu.MonthlyLimit != nil {
-				fmt.Printf("  used:                   $%.2f / $%.2f\n", *eu.UsedCredits, *eu.MonthlyLimit)
+				fmt.Printf("  used:                   %.2f / %.2f\n", *eu.UsedCredits/100, *eu.MonthlyLimit/100)
 			}
 			if eu.Utilization != nil {
 				fmt.Printf("  utilization:            %.1f%%\n", *eu.Utilization)

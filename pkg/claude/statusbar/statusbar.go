@@ -246,7 +246,7 @@ func run() error {
 			var parts []string
 			parts = append(parts, "extra usage: on")
 			if eu.UsedCredits != nil && eu.MonthlyLimit != nil {
-				parts = append(parts, fmt.Sprintf("$%.2f / $%.2f", *eu.UsedCredits, *eu.MonthlyLimit))
+				parts = append(parts, fmt.Sprintf("%.2f / %.2f", *eu.UsedCredits/100, *eu.MonthlyLimit/100))
 			}
 			if eu.Utilization != nil {
 				parts = append(parts, fmt.Sprintf("%s %.0f%%", progressBar(int(*eu.Utilization)), *eu.Utilization))
