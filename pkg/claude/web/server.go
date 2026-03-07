@@ -14,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 )
@@ -100,10 +101,10 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 
 		// Set window-size to smallest so all clients (desktop + phone)
 		// see the same content fitted to the smallest screen
-		exec.Command("tmux", "set-option", "-t", tmuxSession, "window-size", "smallest").Run()
+		clcommon.TmuxCommand("set-option", "-t", tmuxSession, "window-size", "smallest").Run()
 
 		// Spawn tmux attach in a PTY
-		cmd := exec.Command("tmux", "attach-session", "-t", tmuxSession)
+		cmd := exec.Command("tmux", clcommon.TmuxArgs("attach-session", "-t", tmuxSession)...)
 		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 		ptmx, err := pty.Start(cmd)

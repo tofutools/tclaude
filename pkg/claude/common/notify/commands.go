@@ -139,7 +139,7 @@ end tell
 func BuildTmuxDetachCmd(clientTTY string) FocusCmd {
 	return FocusCmd{
 		Program: "tmux",
-		Args:    []string{"detach-client", "-t", clientTTY},
+		Args:    common.TmuxArgs("detach-client", "-t", clientTTY),
 	}
 }
 

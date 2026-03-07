@@ -250,7 +250,7 @@ func TestBuildTmuxDetachCmd(t *testing.T) {
 		t.Errorf("Program = %q, want %q", cmd.Program, "tmux")
 	}
 
-	wantArgs := []string{"detach-client", "-t", "/dev/ttys001"}
+	wantArgs := []string{"-L", "tclaude", "detach-client", "-t", "/dev/ttys001"}
 	if len(cmd.Args) != len(wantArgs) {
 		t.Errorf("Args = %v, want %v", cmd.Args, wantArgs)
 		return
