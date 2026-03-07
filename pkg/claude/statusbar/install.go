@@ -30,7 +30,8 @@ func isOurStatusBar(command string) bool {
 	return strings.HasSuffix(command, "status-bar") && (base == "tclaude" || base == "tofu")
 }
 
-// CheckInstalled checks if any tofu/tclaude status-bar is configured in Claude settings
+// CheckInstalled checks if the current tclaude status-bar command is configured in Claude settings.
+// Returns true only if the command matches the current binary exactly, not a stale tofu reference.
 func CheckInstalled() bool {
 	settingsPath := claudeSettingsPath()
 	if settingsPath == "" {
@@ -57,7 +58,7 @@ func CheckInstalled() bool {
 		return false
 	}
 
-	return sl.Type == "command" && isOurStatusBar(sl.Command)
+	return sl.Type == "command" && sl.Command == StatusLineCommand
 }
 
 // Install configures the tofu status-bar as the statusLine command in Claude settings
