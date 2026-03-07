@@ -143,8 +143,7 @@ Tracked upstream in [anthropics/claude-code#31637](https://github.com/anthropics
 You can verify that token refresh is working by checking the hook logs:
 
 ```bash
-# Look for token refresh activity
-tclaude claude session hooklog | grep -i "refresh"
+grep -i "refresh" ~/.tclaude/hooks.log
 ```
 
 You should see lines like:
