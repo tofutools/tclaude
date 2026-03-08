@@ -699,6 +699,7 @@ func (m watchModel) columns() []table.Column {
 			{Header: "ID", Width: 10, SortKey: "id"},                                                                // ID
 			{Header: "PROJECT", MinWidth: 20, Weight: 0.4, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"}, // Project
 			{Header: "TITLE/PROMPT", MinWidth: 30, Weight: 0.6, Truncate: true, SortKey: "title"},                   // Title
+			{Header: "SIZE", Width: 8, SortKey: "size"},                                                             // File size
 			{Header: "MODIFIED", Width: 16, SortKey: "modified"},                                                    // Modified
 		}
 	}
@@ -706,6 +707,7 @@ func (m watchModel) columns() []table.Column {
 		{Header: "", Width: 2},                                                    // Session indicator
 		{Header: "ID", Width: 10, SortKey: "id"},                                  // ID
 		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"},  // Title
+		{Header: "SIZE", Width: 8, SortKey: "size"},                               // File size
 		{Header: "MODIFIED", Width: 16, SortKey: "modified"},                      // Modified
 	}
 }
@@ -789,13 +791,15 @@ func (m watchModel) View() string {
 		}
 		title := convindex.FormatTitleAndPrompt(titleStr, e.FirstPrompt)
 
+		size := formatFileSize(e.FileSize)
+
 		if m.global {
 			tbl.AddRow(table.Row{
-				Cells: []string{sessionMark, id, e.ProjectPath, title, modified},
+				Cells: []string{sessionMark, id, e.ProjectPath, title, size, modified},
 			})
 		} else {
 			tbl.AddRow(table.Row{
-				Cells: []string{sessionMark, id, title, modified},
+				Cells: []string{sessionMark, id, title, size, modified},
 			})
 		}
 	}
@@ -1022,6 +1026,8 @@ func sortConvEntriesByKey(entries []SessionEntry, key string, dir table.SortDire
 			less = entries[i].ProjectPath < entries[j].ProjectPath
 		case "title":
 			less = strings.ToLower(entries[i].DisplayTitle()) < strings.ToLower(entries[j].DisplayTitle())
+		case "size":
+			less = entries[i].FileSize < entries[j].FileSize
 		case "modified":
 			less = entries[i].Modified < entries[j].Modified
 		default:
@@ -1116,6 +1122,21 @@ func findSessionForConv(convID string) *session.SessionState {
 		}
 	}
 	return nil
+}
+
+// formatFileSize formats bytes as a human-readable size string
+func formatFileSize(size int64) string {
+	if size <= 0 {
+		return ""
+	}
+	if size < 1024 {
+		return fmt.Sprintf("%dB", size)
+	}
+	if size < 1024*1024 {
+		return fmt.Sprintf("%dkB", size/1024)
+	}
+	mb := float64(size) / (1024 * 1024)
+	return fmt.Sprintf("%.1fMB", mb)
 }
 
 // createWorktreeForConv creates a git worktree and starts a session with the conversation

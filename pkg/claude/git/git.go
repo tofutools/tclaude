@@ -20,11 +20,13 @@ the actual ~/.claude/projects, giving full control over the merge process.
 Usage:
   tclaude git init <repo-url>   # Set up sync with a remote repo
   tclaude git sync              # Sync local and remote conversations
-  tclaude git status            # Show sync status`,
+  tclaude git status            # Show sync status
+  tclaude git fetch             # Fetch remote changes without merging`,
 		SubCmds: []*cobra.Command{
 			InitCmd(),
 			SyncCmd(),
 			StatusCmd(),
+			FetchCmd(),
 			RepairCmd(),
 		},
 	}.ToCobra()

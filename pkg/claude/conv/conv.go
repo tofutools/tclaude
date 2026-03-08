@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
@@ -73,6 +74,8 @@ type LoadSessionsIndexOptions struct {
 	SkipUnindexedScan bool
 	// SkipMissingDataRescan skips re-scanning entries with missing display data (faster)
 	SkipMissingDataRescan bool
+	// ForceRescan forces a full rescan of all entries regardless of mtime
+	ForceRescan bool
 }
 
 // LoadSessionsIndex loads the sessions index from a Claude project directory
@@ -150,12 +153,122 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 	}
 	scanDur := time.Since(scanStart)
 
+	// Populate FileSize and detect stale metadata (e.g. custom-title added after index was written)
+	staleRescanCount := 0
+	staleUpdates := map[string]map[string]any{} // sessionID -> fields to patch
+	for i := range index.Entries {
+		filePath := filepath.Join(projectPath, index.Entries[i].SessionID+".jsonl")
+		info, err := os.Stat(filePath)
+		if err != nil {
+			continue
+		}
+		index.Entries[i].FileSize = info.Size()
+		// If the file has been modified since the index was written, rescan for
+		// updated metadata (CustomTitle, Summary, FirstPrompt, etc.)
+		actualMtime := info.ModTime().Unix()
+		indexedMtime := index.Entries[i].FileMtime
+		isStale := opts.ForceRescan || (indexedMtime > 0 && actualMtime > indexedMtime)
+		if DebugLog {
+			status := "ok"
+			if isStale {
+				status = "STALE"
+			}
+			fmt.Fprintf(os.Stderr, "[DEBUG]   %-5s %s mtime=%d indexed=%d diff=%ds size=%d\n",
+				status, index.Entries[i].SessionID[:8], actualMtime, indexedMtime, actualMtime-indexedMtime, info.Size())
+		}
+		if !opts.SkipMissingDataRescan && isStale {
+			staleRescanCount++
+			updates := map[string]any{"fileMtime": actualMtime}
+			index.Entries[i].FileMtime = actualMtime
+			if scanned := parseJSONLSession(filePath, index.Entries[i].SessionID, true); scanned != nil {
+				if scanned.CustomTitle != "" {
+					index.Entries[i].CustomTitle = scanned.CustomTitle
+					updates["customTitle"] = scanned.CustomTitle
+				}
+				if scanned.Summary != "" {
+					index.Entries[i].Summary = scanned.Summary
+					updates["summary"] = scanned.Summary
+				}
+				if scanned.FirstPrompt != "" {
+					index.Entries[i].FirstPrompt = scanned.FirstPrompt
+					updates["firstPrompt"] = scanned.FirstPrompt
+				}
+				if scanned.ProjectPath != "" {
+					index.Entries[i].ProjectPath = scanned.ProjectPath
+					updates["projectPath"] = scanned.ProjectPath
+				}
+				if scanned.GitBranch != "" {
+					index.Entries[i].GitBranch = scanned.GitBranch
+					updates["gitBranch"] = scanned.GitBranch
+				}
+			}
+			staleUpdates[index.Entries[i].SessionID] = updates
+		}
+	}
+
+	// Persist updated fields to index file so stale entries aren't rescanned next time.
+	// Uses shallow deserialization to preserve any fields Claude Code may add in the future.
+	if len(staleUpdates) > 0 {
+		patchIndexEntries(indexPath, staleUpdates)
+	}
+
 	if DebugLog {
-		fmt.Fprintf(os.Stderr, "[DEBUG] LoadSessionsIndex %s: read=%v rescan=%d/%d(%v) unindexed=%d(%v)\n",
-			filepath.Base(projectPath), readDur, rescanCount, len(index.Entries), rescanDur, len(unindexed), scanDur)
+		fmt.Fprintf(os.Stderr, "[DEBUG] LoadSessionsIndex %s: read=%v rescan=%d/%d(%v) stale=%d/%d unindexed=%d(%v)\n",
+			filepath.Base(projectPath), readDur, rescanCount, len(index.Entries), rescanDur, staleRescanCount, len(index.Entries), len(unindexed), scanDur)
 	}
 
 	return &index, nil
+}
+
+// patchIndexEntries does a surgical update of fields in the sessions index file.
+// It deserializes shallowly (map[string]any) to preserve all existing and future fields
+// that Claude Code may write. Uses atomic write (temp file + rename).
+func patchIndexEntries(indexPath string, updates map[string]map[string]any) {
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		return
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+
+	entries, ok := raw["entries"].([]any)
+	if !ok {
+		return
+	}
+
+	changed := false
+	for _, entry := range entries {
+		e, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		sid, _ := e["sessionId"].(string)
+		if fields, found := updates[sid]; found {
+			for k, v := range fields {
+				e[k] = v
+			}
+			changed = true
+		}
+	}
+
+	if !changed {
+		return
+	}
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return
+	}
+
+	// Atomic write: temp file + rename
+	tmpPath := indexPath + ".tmp"
+	if err := os.WriteFile(tmpPath, out, 0600); err != nil {
+		return
+	}
+	os.Rename(tmpPath, indexPath)
 }
 
 // scanUnindexedSessionsExcluding scans for .jsonl files, skipping those in the exclude set
@@ -285,7 +398,8 @@ func parseJSONLSession(filePath, sessionID string, fullScan bool) *SessionEntry 
 			text := extractMessageContent(msg.Message.Content)
 			// Skip messages without text (e.g., tool_result blocks from resumed sessions)
 			// Also skip system-generated messages like "[Request interrupted by user...]"
-			if text != "" && !strings.HasPrefix(text, "[Request interrupted") {
+			// and system-injected messages (local-command-caveat, command-name, etc.)
+			if text != "" && !strings.HasPrefix(text, "[Request interrupted") && !isSystemInjectedMessage(text) {
 				entry.FirstPrompt = text
 				if msg.Timestamp != "" {
 					firstTimestamp = msg.Timestamp
@@ -382,6 +496,20 @@ func tailScanForTitleData(filePath string, fileSize int64) (customTitle, summary
 	}
 
 	return customTitle, summary
+}
+
+// isSystemInjectedMessage returns true if the text is a system-injected message
+// from Claude Code (not actual user input). These start with known system XML tags.
+func isSystemInjectedMessage(text string) bool {
+	if !strings.HasPrefix(text, "<") {
+		return false
+	}
+	for _, tag := range convindex.SystemTags {
+		if strings.HasPrefix(text, "<"+tag+">") {
+			return true
+		}
+	}
+	return false
 }
 
 // extractMessageContent extracts text content from a message

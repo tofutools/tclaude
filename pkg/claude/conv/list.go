@@ -28,7 +28,9 @@ type ListParams struct {
 	Count  bool   `short:"c" long:"count" help:"Only output the count of conversations"`
 	Since  string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
 	Before string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Watch  bool   `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
+	Watch   bool `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
+	Verbose bool `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
+	Reindex bool `long:"reindex" help:"Force rescan all conversations from .jsonl files and update index"`
 }
 
 func ListCmd() *cobra.Command {
@@ -47,6 +49,8 @@ func ListCmd() *cobra.Command {
 }
 
 func RunList(params *ListParams, stdout, stderr *os.File) int {
+	DebugLog = params.Verbose
+
 	// Watch mode
 	if params.Watch {
 		if err := RunConvWatchMode(params.Global, params.Since, params.Before); err != nil {
@@ -57,6 +61,7 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 	}
 
 	var allEntries []SessionEntry
+	loadOpts := LoadSessionsIndexOptions{ForceRescan: params.Reindex}
 
 	if params.Global {
 		// List all projects
@@ -72,7 +77,7 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 				continue
 			}
 			projectPath := filepath.Join(projectsDir, entry.Name())
-			index, err := LoadSessionsIndex(projectPath)
+			index, err := LoadSessionsIndexWithOptions(projectPath, loadOpts)
 			if err != nil {
 				continue // Skip projects with errors
 			}
@@ -99,7 +104,7 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 		}
 
 		// Load index
-		index, err := LoadSessionsIndex(projectPath)
+		index, err := LoadSessionsIndexWithOptions(projectPath, loadOpts)
 		if err != nil {
 			fmt.Fprintf(stderr, "Error loading sessions index: %v\n", err)
 			return 1
