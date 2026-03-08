@@ -205,13 +205,13 @@ func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 		if err := ClearDoingMD(doingPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to clear DOING.md: %v\n", err)
 		}
+
+		// Git commit all changes (code + tracking files) with task title
+		result.Commit = gitCommitAll(cwd, task.Title)
+
 		if err := AppendDoneMD(donePath, result); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update DONE.md: %v\n", err)
 		}
-
-		// Git commit all changes (code + tracking files) with task title
-		commitHash := gitCommitAll(cwd, task.Title)
-		result.Commit = commitHash
 
 		if result.Status == "failed" {
 			sendNotification(cwd, fmt.Sprintf("Task failed: %s", task.Title))
