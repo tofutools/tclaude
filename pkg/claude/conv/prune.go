@@ -219,6 +219,14 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 			fmt.Fprintf(stderr, "Error deleting dangling directory %s: %v\n", conv.SessionID[:8], err)
 			continue
 		}
+
+		// Add tombstone so sync doesn't re-copy from remote
+		if syncInitialized {
+			if err := AddTombstoneForProject(conv.ProjectPath, conv.SessionID); err != nil {
+				fmt.Fprintf(stderr, "Warning: failed to add tombstone for %s: %v\n", conv.SessionID[:8], err)
+			}
+		}
+
 		danglingDeleted++
 	}
 
