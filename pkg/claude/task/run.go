@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -166,7 +167,10 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
 
-	extraClaudeArgs = append(extraClaudeArgs, "--permission-mode", "acceptEdits")
+	hasPermissionMode := slices.Contains(extraClaudeArgs, "--permission-mode")
+	if !hasPermissionMode {
+		extraClaudeArgs = append(extraClaudeArgs, "--permission-mode", "acceptEdits")
+	}
 
 	// Set up signal handling for clean shutdown in watch mode
 	sigCh := make(chan os.Signal, 1)
