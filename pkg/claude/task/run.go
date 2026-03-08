@@ -166,6 +166,8 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
 
+	extraClaudeArgs = append(extraClaudeArgs, "--permission-mode", "acceptEdits")
+
 	// Set up signal handling for clean shutdown in watch mode
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
