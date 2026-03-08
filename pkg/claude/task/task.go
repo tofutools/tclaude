@@ -73,9 +73,6 @@ func DonePath(dir string) string {
 func ParseTodoMD(path string) ([]Task, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 
