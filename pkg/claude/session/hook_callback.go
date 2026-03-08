@@ -30,7 +30,8 @@ type HookCallbackInput struct {
 	StopHookActive   bool   `json:"stop_hook_active,omitempty"`
 	ToolName         string `json:"tool_name,omitempty"`
 	AgentType        string `json:"agent_type,omitempty"`
-	AgentID          string `json:"agent_id,omitempty"`
+	AgentID              string `json:"agent_id,omitempty"`
+	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
 }
 
 func HookCallbackCmd() *cobra.Command {
@@ -192,7 +193,28 @@ func runHookCallback() error {
 	// Notify on state transition (handles cooldown internally)
 	notify.OnStateTransition(state.ID, prevStatus, newStatus, state.Cwd, convTitle)
 
+	// Signal task runner when Stop/UserPromptSubmit fires in task mode
+	handleTaskSignal(input)
+
 	return nil
+}
+
+// handleTaskSignal writes or removes a signal file for the task runner's
+// auto-continue watcher. In task mode, TCLAUDE_TASK_SIGNAL is set to a
+// file path. On Stop, we write the last assistant message (used as the
+// task report). On UserPromptSubmit, we remove the signal to cancel any
+// pending auto-exit (the user is interacting).
+func handleTaskSignal(input HookCallbackInput) {
+	signalPath := os.Getenv("TCLAUDE_TASK_SIGNAL")
+	if signalPath == "" {
+		return
+	}
+	switch input.HookEventName {
+	case "Stop":
+		os.WriteFile(signalPath, []byte(input.LastAssistantMessage), 0644)
+	case "UserPromptSubmit":
+		os.Remove(signalPath)
+	}
 }
 
 // getConvTitle looks up the conversation title and prompt from Claude's session index.

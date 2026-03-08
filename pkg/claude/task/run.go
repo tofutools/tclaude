@@ -1,9 +1,11 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -92,8 +94,8 @@ func runInTmux(cwd string, detached bool) error {
 	tmuxSession := "tclaude-" + sessionID
 
 	// Build command to run the task loop inside tmux
-	runnerCmd := fmt.Sprintf("%s task run --no-tmux -C %s",
-		clcommon.DetectCmd(), clcommon.ShellQuoteArg(cwd))
+	runnerCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s TCLAUDE_TASK_TMUX=%s %s task run --no-tmux -C %s",
+		sessionID, tmuxSession, clcommon.DetectCmd(), clcommon.ShellQuoteArg(cwd))
 
 	// Forward extra claude args through
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
@@ -230,19 +232,95 @@ func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 // Claude gets full terminal I/O — the user can approve permissions,
 // answer questions, etc. When the user types /exit or Claude exits,
 // control returns to the task runner.
+//
+// In tmux mode (TCLAUDE_TASK_TMUX set), a watcher goroutine polls for
+// a signal file written by the Stop hook and auto-sends /exit after a
+// grace period, enabling hands-free task sequencing.
 func runClaude(cwd, prompt string, extraArgs []string) (string, error) {
+	signalPath := taskSignalPath()
+	os.Remove(signalPath) // clean up stale signal from previous run
+
 	args := []string{prompt}
 	args = append(args, extraArgs...)
 
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "TCLAUDE_TASK_SIGNAL="+signalPath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	// Start watcher for auto-continue in tmux mode
+	tmuxSession := os.Getenv("TCLAUDE_TASK_TMUX")
+	if tmuxSession != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession)
+	}
+
 	err := cmd.Run()
 
-	return "", err
+	// Read report from signal file (written by Stop hook with last_assistant_message)
+	report := ""
+	if data, readErr := os.ReadFile(signalPath); readErr == nil {
+		report = string(data)
+	}
+	os.Remove(signalPath)
+
+	return report, err
+}
+
+// taskSignalPath returns the path to the task signal file.
+func taskSignalPath() string {
+	return filepath.Join(common.CacheDir(), "task-signal")
+}
+
+// watchForTaskCompletion polls for the signal file and sends /exit to
+// the tmux session after a grace period. The grace period allows the
+// user to start typing (which triggers UserPromptSubmit, removing the
+// signal file) before auto-exit kicks in.
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession string) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(signalPath); err != nil {
+				continue // no signal yet
+			}
+
+			// Signal detected — wait grace period, re-checking
+			graceEnd := time.Now().Add(5 * time.Second)
+			cancelled := false
+			for time.Now().Before(graceEnd) {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(500 * time.Millisecond):
+				}
+				if _, err := os.Stat(signalPath); err != nil {
+					cancelled = true
+					break // signal removed (user interacted)
+				}
+			}
+			if cancelled {
+				continue
+			}
+
+			// Signal still present after grace period — auto-exit
+			sendTmuxExit(tmuxSession)
+			return
+		}
+	}
+}
+
+// sendTmuxExit sends /exit + Enter to the tmux session.
+func sendTmuxExit(tmuxSession string) {
+	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/exit", "Enter")
+	cmd.Run()
 }
 
 // gitCommitAll stages all changes and commits with the given message.
