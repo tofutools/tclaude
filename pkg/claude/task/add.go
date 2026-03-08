@@ -3,6 +3,8 @@ package task
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -11,15 +13,14 @@ import (
 
 type AddParams struct {
 	Dir    string `short:"C" long:"dir" optional:"true" help:"Directory containing TODO.md (defaults to current directory)"`
-	Title  string `pos:"true" help:"Task title (used as commit message)"`
-	Prompt string `pos:"true" help:"Prompt to send to Claude Code"`
+	Args []string `pos:"true" help:"<prompt> or <title> <prompt>"`
 }
 
 func AddCmd() *cobra.Command {
 	return boa.CmdT[AddParams]{
 		Use:         "add",
 		Short:       "Add a task to TODO.md",
-		Long:        "Add a new task to the TODO.md file in the current project.",
+		Long:        "Add a new task to the TODO.md file in the current project.\nWith one arg, the title is auto-generated via Claude Code.\nWith two args, the first is the title and the second is the prompt.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *AddParams, cmd *cobra.Command, args []string) {
 			if err := runAdd(params); err != nil {
@@ -31,11 +32,24 @@ func AddCmd() *cobra.Command {
 }
 
 func runAdd(params *AddParams) error {
-	if params.Title == "" {
-		return fmt.Errorf("task title is required")
+	var title, prompt string
+	switch len(params.Args) {
+	case 1:
+		prompt = params.Args[0]
+	case 2:
+		title = params.Args[0]
+		prompt = params.Args[1]
+	default:
+		return fmt.Errorf("expected 1 or 2 arguments: <prompt> or <title> <prompt>")
 	}
-	if params.Prompt == "" {
-		return fmt.Errorf("task prompt is required")
+
+	if title == "" {
+		var err error
+		title, err = generateTitle(prompt)
+		if err != nil {
+			return fmt.Errorf("failed to generate title: %w", err)
+		}
+		fmt.Printf("Generated title: %s\n", title)
 	}
 
 	dir, err := resolveDir(params.Dir)
@@ -53,8 +67,8 @@ func runAdd(params *AddParams) error {
 
 	// Add new task
 	tasks = append(tasks, Task{
-		Title:  params.Title,
-		Prompt: params.Prompt,
+		Title:  title,
+		Prompt: prompt,
 	})
 
 	// Write back
@@ -62,6 +76,21 @@ func runAdd(params *AddParams) error {
 		return fmt.Errorf("failed to write TODO.md: %w", err)
 	}
 
-	fmt.Printf("Added task: %s (%d total)\n", params.Title, len(tasks))
+	fmt.Printf("Added task: %s (%d total)\n", title, len(tasks))
 	return nil
+}
+
+// generateTitle uses Claude Code in print mode to generate a short task title from a prompt.
+func generateTitle(prompt string) (string, error) {
+	cmd := exec.Command("claude", "-p",
+		"Generate a short task title (max 8 words, no quotes, no markdown) for this task prompt: "+prompt)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	title := strings.TrimSpace(string(out))
+	if title == "" {
+		return "", fmt.Errorf("claude returned empty title")
+	}
+	return title, nil
 }

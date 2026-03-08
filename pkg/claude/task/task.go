@@ -2,6 +2,7 @@ package task
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,6 +95,9 @@ func DonePath(dir string) string {
 func ParseTodoMD(path string) ([]Task, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
