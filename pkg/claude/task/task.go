@@ -57,6 +57,11 @@ func TodoPath(dir string) string {
 	return filepath.Join(dir, "TODO.md")
 }
 
+// DoingPath returns the path to DOING.md in the given directory
+func DoingPath(dir string) string {
+	return filepath.Join(dir, "DOING.md")
+}
+
 // DonePath returns the path to DONE.md in the given directory
 func DonePath(dir string) string {
 	return filepath.Join(dir, "DONE.md")
@@ -134,6 +139,26 @@ func WriteTodoMD(path string, tasks []Task) error {
 	}
 
 	return os.WriteFile(path, []byte(sb.String()), 0644)
+}
+
+// WriteDoingMD writes the current in-progress task to DOING.md
+func WriteDoingMD(path string, task Task) error {
+	var sb strings.Builder
+	sb.WriteString("## ")
+	sb.WriteString(task.Title)
+	sb.WriteString("\n\n")
+	sb.WriteString(task.Prompt)
+	sb.WriteString("\n")
+	return os.WriteFile(path, []byte(sb.String()), 0644)
+}
+
+// ClearDoingMD removes the DOING.md file
+func ClearDoingMD(path string) error {
+	err := os.Remove(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 // AppendDoneMD appends a completed task result to DONE.md

@@ -151,6 +151,7 @@ func runInTmux(cwd string, detached bool) error {
 // It is called directly (--no-tmux) or inside a tmux session.
 func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 	todoPath := TodoPath(cwd)
+	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
 
 	for {
@@ -171,6 +172,14 @@ func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 		fmt.Printf("Task: %s (%d remaining)\n", task.Title, totalOriginal)
 		fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 
+		// Move task from TODO.md to DOING.md
+		if err := WriteDoingMD(doingPath, task); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write DOING.md: %v\n", err)
+		}
+		if err := WriteTodoMD(todoPath, remaining); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update TODO.md: %v\n", err)
+		}
+
 		// Run Claude Code interactively with the task prompt
 		report, err := runClaude(cwd, task.Prompt, extraClaudeArgs)
 
@@ -190,23 +199,17 @@ func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 			fmt.Printf("\nTask completed: %s\n", task.Title)
 		}
 
-		// Git commit all changes with task title as commit message
-		commitHash := gitCommitAll(cwd, task.Title)
-		result.Commit = commitHash
-
-		// Update TODO.md (remove completed task)
-		if err := WriteTodoMD(todoPath, remaining); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to update TODO.md: %v\n", err)
+		// Move task from DOING.md to DONE.md
+		if err := ClearDoingMD(doingPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to clear DOING.md: %v\n", err)
 		}
-
-		// Append to DONE.md
 		if err := AppendDoneMD(donePath, result); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update DONE.md: %v\n", err)
 		}
 
-		// Commit the tracking file updates
-		gitCommitFiles(cwd, fmt.Sprintf("task: update tracking for %q", task.Title),
-			[]string{"TODO.md", "DONE.md"})
+		// Git commit all changes (code + tracking files) with task title
+		commitHash := gitCommitAll(cwd, task.Title)
+		result.Commit = commitHash
 
 		if result.Status == "failed" {
 			sendNotification(cwd, fmt.Sprintf("Task failed: %s", task.Title))
