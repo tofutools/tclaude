@@ -10,6 +10,7 @@ import (
 )
 
 type AddParams struct {
+	Dir    string `short:"C" long:"dir" optional:"true" help:"Directory containing TODO.md (defaults to current directory)"`
 	Title  string `pos:"true" help:"Task title (used as commit message)"`
 	Prompt string `pos:"true" help:"Prompt to send to Claude Code"`
 }
@@ -37,12 +38,12 @@ func runAdd(params *AddParams) error {
 		return fmt.Errorf("task prompt is required")
 	}
 
-	cwd, err := os.Getwd()
+	dir, err := resolveDir(params.Dir)
 	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+		return err
 	}
 
-	todoPath := TodoPath(cwd)
+	todoPath := TodoPath(dir)
 
 	// Parse existing tasks
 	tasks, err := ParseTodoMD(todoPath)

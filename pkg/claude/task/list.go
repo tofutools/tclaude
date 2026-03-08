@@ -9,7 +9,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-type ListParams struct{}
+type ListParams struct {
+	Dir string `short:"C" long:"dir" optional:"true" help:"Directory containing TODO.md (defaults to current directory)"`
+}
 
 func ListCmd() *cobra.Command {
 	return boa.CmdT[ListParams]{
@@ -25,13 +27,13 @@ func ListCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func runList(_ *ListParams) error {
-	cwd, err := os.Getwd()
+func runList(params *ListParams) error {
+	dir, err := resolveDir(params.Dir)
 	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+		return err
 	}
 
-	tasks, err := ParseTodoMD(TodoPath(cwd))
+	tasks, err := ParseTodoMD(TodoPath(dir))
 	if err != nil {
 		return fmt.Errorf("failed to read TODO.md: %w", err)
 	}

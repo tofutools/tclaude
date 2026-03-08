@@ -52,19 +52,9 @@ Pass extra Claude flags after -- (e.g., -- --dangerously-skip-permissions).`,
 }
 
 func runRun(params *RunParams) error {
-	cwd := params.Dir
-	if cwd == "" {
-		var err error
-		cwd, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
-		}
-	}
-
-	// Make path absolute
-	if cwd[0] != '/' {
-		wd, _ := os.Getwd()
-		cwd = wd + "/" + cwd
+	cwd, err := resolveDir(params.Dir)
+	if err != nil {
+		return err
 	}
 
 	tasks, err := ParseTodoMD(TodoPath(cwd))

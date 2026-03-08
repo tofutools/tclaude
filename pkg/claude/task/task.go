@@ -30,8 +30,12 @@ type TaskResult struct {
 	Timestamp time.Time
 }
 
+type TaskParams struct {
+	Dir string `short:"C" long:"dir" optional:"true" help:"Directory containing task files (defaults to current directory)"`
+}
+
 func Cmd() *cobra.Command {
-	cmd := boa.CmdT[boa.NoParams]{
+	cmd := boa.CmdT[TaskParams]{
 		Use:         "task",
 		Short:       "Manage and run sequential tasks",
 		Long:        "Define tasks in TODO.md and run them sequentially with Claude Code.\n\nWhen run without a subcommand, lists current tasks.",
@@ -41,8 +45,8 @@ func Cmd() *cobra.Command {
 			ListCmd(),
 			RunCmd(),
 		},
-		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
-			if err := runList(&ListParams{}); err != nil {
+		RunFunc: func(params *TaskParams, cmd *cobra.Command, args []string) {
+			if err := runList(&ListParams{Dir: params.Dir}); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -50,6 +54,23 @@ func Cmd() *cobra.Command {
 	}.ToCobra()
 	cmd.Aliases = []string{"tasks"}
 	return cmd
+}
+
+// resolveDir returns an absolute directory path from the given dir parameter.
+// If dir is empty, the current working directory is used.
+func resolveDir(dir string) (string, error) {
+	if dir == "" {
+		d, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current directory: %w", err)
+		}
+		return d, nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve directory: %w", err)
+	}
+	return abs, nil
 }
 
 // TodoPath returns the path to TODO.md in the given directory

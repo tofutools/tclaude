@@ -4,7 +4,7 @@ Run a list of tasks sequentially with Claude Code, with automatic git commits an
 
 ## Overview
 
-Define tasks in a `TODO.md` file at the root of your project. Each task has a title and a prompt. When you run `tclaude task run`, tasks are executed one by one in a tmux session. After each task:
+Define tasks in a `TODO.md` file at the root of your project (or in a custom directory with `-C`). Each task has a title and a prompt. When you run `tclaude task run`, tasks are executed one by one in a tmux session. After each task:
 
 1. All repository changes are committed to git (using the task title as the commit message)
 2. The task is removed from `TODO.md` and recorded in `DONE.md` with status info
@@ -50,6 +50,9 @@ Add a task to `TODO.md`.
 
 ```bash
 tclaude task add "Fix login bug" "Fix the null pointer exception in the login handler"
+
+# Add to a specific directory's TODO.md
+tclaude task add -C /path/to/project "Fix login bug" "Fix the null pointer exception"
 ```
 
 ### task list
@@ -58,6 +61,9 @@ List pending tasks from `TODO.md`.
 
 ```bash
 tclaude task list
+
+# List tasks from a specific directory
+tclaude task list -C /path/to/project
 ```
 
 ### task run
@@ -83,8 +89,11 @@ tclaude task run -- --dangerously-skip-permissions
 | Flag | Description |
 |------|-------------|
 | `-d, --detached` | Start detached (don't attach to session) |
-| `-C, --dir <path>` | Directory to run tasks in (defaults to current) |
+| `-C, --dir <path>` | Directory containing task files (defaults to current) |
+| `-w, --watch` | Watch for new tasks instead of exiting when TODO.md is empty |
 | `--no-tmux` | Run directly without tmux |
+
+> **Note:** The `-C, --dir` flag is available on all task subcommands (`add`, `list`, `run`) and the parent `task` command itself.
 
 ## How It Works
 
