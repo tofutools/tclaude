@@ -74,6 +74,8 @@ type LoadSessionsIndexOptions struct {
 	SkipUnindexedScan bool
 	// SkipMissingDataRescan skips re-scanning entries with missing display data (faster)
 	SkipMissingDataRescan bool
+	// ForceRescan forces a full rescan of all entries regardless of mtime
+	ForceRescan bool
 }
 
 // LoadSessionsIndex loads the sessions index from a Claude project directory
@@ -153,7 +155,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 
 	// Populate FileSize and detect stale metadata (e.g. custom-title added after index was written)
 	staleRescanCount := 0
-	staleMtimes := map[string]int64{} // sessionID -> new mtime (for persisting)
+	staleUpdates := map[string]map[string]any{} // sessionID -> fields to patch
 	for i := range index.Entries {
 		filePath := filepath.Join(projectPath, index.Entries[i].SessionID+".jsonl")
 		info, err := os.Stat(filePath)
@@ -165,7 +167,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 		// updated metadata (CustomTitle, Summary, FirstPrompt, etc.)
 		actualMtime := info.ModTime().Unix()
 		indexedMtime := index.Entries[i].FileMtime
-		isStale := indexedMtime > 0 && actualMtime > indexedMtime
+		isStale := opts.ForceRescan || (indexedMtime > 0 && actualMtime > indexedMtime)
 		if DebugLog {
 			status := "ok"
 			if isStale {
@@ -176,32 +178,38 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 		}
 		if !opts.SkipMissingDataRescan && isStale {
 			staleRescanCount++
-			staleMtimes[index.Entries[i].SessionID] = actualMtime
+			updates := map[string]any{"fileMtime": actualMtime}
 			index.Entries[i].FileMtime = actualMtime
 			if scanned := parseJSONLSession(filePath, index.Entries[i].SessionID, true); scanned != nil {
 				if scanned.CustomTitle != "" {
 					index.Entries[i].CustomTitle = scanned.CustomTitle
+					updates["customTitle"] = scanned.CustomTitle
 				}
 				if scanned.Summary != "" {
 					index.Entries[i].Summary = scanned.Summary
+					updates["summary"] = scanned.Summary
 				}
 				if scanned.FirstPrompt != "" {
 					index.Entries[i].FirstPrompt = scanned.FirstPrompt
+					updates["firstPrompt"] = scanned.FirstPrompt
 				}
 				if scanned.ProjectPath != "" {
 					index.Entries[i].ProjectPath = scanned.ProjectPath
+					updates["projectPath"] = scanned.ProjectPath
 				}
 				if scanned.GitBranch != "" {
 					index.Entries[i].GitBranch = scanned.GitBranch
+					updates["gitBranch"] = scanned.GitBranch
 				}
 			}
+			staleUpdates[index.Entries[i].SessionID] = updates
 		}
 	}
 
-	// Persist updated mtimes to index file so stale entries aren't rescanned next time.
+	// Persist updated fields to index file so stale entries aren't rescanned next time.
 	// Uses shallow deserialization to preserve any fields Claude Code may add in the future.
-	if len(staleMtimes) > 0 {
-		patchIndexMtimes(indexPath, staleMtimes)
+	if len(staleUpdates) > 0 {
+		patchIndexEntries(indexPath, staleUpdates)
 	}
 
 	if DebugLog {
@@ -212,10 +220,10 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 	return &index, nil
 }
 
-// patchIndexMtimes does a surgical update of fileMtime values in the sessions index file.
+// patchIndexEntries does a surgical update of fields in the sessions index file.
 // It deserializes shallowly (map[string]any) to preserve all existing and future fields
 // that Claude Code may write. Uses atomic write (temp file + rename).
-func patchIndexMtimes(indexPath string, mtimes map[string]int64) {
+func patchIndexEntries(indexPath string, updates map[string]map[string]any) {
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
 		return
@@ -238,8 +246,10 @@ func patchIndexMtimes(indexPath string, mtimes map[string]int64) {
 			continue
 		}
 		sid, _ := e["sessionId"].(string)
-		if newMtime, found := mtimes[sid]; found {
-			e["fileMtime"] = newMtime
+		if fields, found := updates[sid]; found {
+			for k, v := range fields {
+				e[k] = v
+			}
 			changed = true
 		}
 	}
