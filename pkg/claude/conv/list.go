@@ -28,7 +28,8 @@ type ListParams struct {
 	Count  bool   `short:"c" long:"count" help:"Only output the count of conversations"`
 	Since  string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
 	Before string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Watch  bool   `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
+	Watch   bool `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
+	Verbose bool `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
 }
 
 func ListCmd() *cobra.Command {
@@ -47,6 +48,8 @@ func ListCmd() *cobra.Command {
 }
 
 func RunList(params *ListParams, stdout, stderr *os.File) int {
+	DebugLog = params.Verbose
+
 	// Watch mode
 	if params.Watch {
 		if err := RunConvWatchMode(params.Global, params.Since, params.Before); err != nil {

@@ -161,7 +161,7 @@ func cleanTitle(title string) string {
 		return ""
 	}
 
-	// Remove XML-like tags (e.g., <local-command-caveat>...</local-command-caveat>)
+	// Remove XML-like tags and their content (system-injected metadata)
 	result := stripXMLTags(title)
 
 	// Replace newlines and carriage returns with visible marker
@@ -178,26 +178,38 @@ func cleanTitle(title string) string {
 	return strings.TrimSpace(result)
 }
 
-// stripXMLTags removes XML-like tags from a string.
-func stripXMLTags(s string) string {
-	var result strings.Builder
-	inTag := false
+// SystemTags are Claude Code system tags that should be stripped entirely
+// (both the tags and their content) from display text.
+var SystemTags = []string{
+	"local-command-caveat",
+	"command-name",
+	"command-message",
+	"command-args",
+	"local-command-stdout",
+	"system-reminder",
+}
 
-	for _, r := range s {
-		if r == '<' {
-			inTag = true
-			continue
-		}
-		if r == '>' {
-			inTag = false
-			continue
-		}
-		if !inTag {
-			result.WriteRune(r)
+// stripXMLTags removes known system XML tags and their content from a string.
+// Only strips tags listed in SystemTags; other XML-like content is left intact.
+func stripXMLTags(s string) string {
+	for _, tag := range SystemTags {
+		open := "<" + tag + ">"
+		close := "</" + tag + ">"
+		for {
+			start := strings.Index(s, open)
+			if start == -1 {
+				break
+			}
+			end := strings.Index(s[start:], close)
+			if end == -1 {
+				// No closing tag — remove from open tag to end of string
+				s = s[:start]
+				break
+			}
+			s = s[:start] + s[start+end+len(close):]
 		}
 	}
-
-	return result.String()
+	return s
 }
 
 // jsonlMessage represents a message in the JSONL transcript
