@@ -25,7 +25,7 @@ func PruneEmptyCmd() *cobra.Command {
 	return boa.CmdT[PruneEmptyParams]{
 		Use:         "prune-empty",
 		Short:       "Delete empty conversations with no user messages",
-		Long:        "Delete Claude Code conversations that have no user messages. Only considers .jsonl files, not conversation directories.",
+		Long:        "Delete Claude Code conversations that have no user messages, remove stale index entries, and clean up dangling companion directories (subagents, etc.) with no corresponding .jsonl file.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *PruneEmptyParams, cmd *cobra.Command, args []string) {
 			exitCode := RunPruneEmpty(params, os.Stdout, os.Stderr, os.Stdin)
@@ -81,17 +81,35 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		projectPaths = []string{projectPath}
 	}
 
-	// Find all empty conversations and missing-file index entries
+	// Find all empty conversations, missing-file index entries, and dangling directories
 	var emptyConvs []emptyConversation
 	var missingConvs []emptyConversation
+	var danglingDirs []emptyConversation
 
 	for _, projectPath := range projectPaths {
-		emptyConvs = append(emptyConvs, findEmptyConversations(projectPath)...)
-		missingConvs = append(missingConvs, findMissingFileEntries(projectPath)...)
+		empty := findEmptyConversations(projectPath)
+		missing := findMissingFileEntries(projectPath)
+		emptyConvs = append(emptyConvs, empty...)
+		missingConvs = append(missingConvs, missing...)
+
+		// Exclude dangling dirs already covered by empty/missing convs
+		// (their companion dirs are cleaned up during conv deletion)
+		coveredIDs := make(map[string]bool)
+		for _, c := range empty {
+			coveredIDs[c.SessionID] = true
+		}
+		for _, c := range missing {
+			coveredIDs[c.SessionID] = true
+		}
+		for _, d := range findDanglingDirectories(projectPath) {
+			if !coveredIDs[d.SessionID] {
+				danglingDirs = append(danglingDirs, d)
+			}
+		}
 	}
 
-	if len(emptyConvs) == 0 && len(missingConvs) == 0 {
-		fmt.Fprintf(stdout, "No empty or missing conversations found\n")
+	if len(emptyConvs) == 0 && len(missingConvs) == 0 && len(danglingDirs) == 0 {
+		fmt.Fprintf(stdout, "No empty, missing, or dangling conversations found\n")
 		return 0
 	}
 
@@ -112,8 +130,14 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 			fmt.Fprintf(stdout, "  %s\n", conv.SessionID[:8])
 		}
 	}
+	if len(danglingDirs) > 0 {
+		fmt.Fprintf(stdout, "Found %d dangling directory/directories (no .jsonl file):\n\n", len(danglingDirs))
+		for _, conv := range danglingDirs {
+			fmt.Fprintf(stdout, "  %s/\n", conv.SessionID[:8])
+		}
+	}
 
-	totalCount := len(emptyConvs) + len(missingConvs)
+	totalCount := len(emptyConvs) + len(missingConvs) + len(danglingDirs)
 
 	if params.DryRun {
 		fmt.Fprintf(stdout, "\nDry run - no changes made\n")
@@ -132,7 +156,7 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		}
 	}
 
-	// Combine both lists and group by project path for index updates
+	// Combine empty and missing lists, group by project path for index updates
 	allConvs := append(emptyConvs, missingConvs...)
 	byProject := make(map[string][]emptyConversation)
 	for _, conv := range allConvs {
@@ -153,6 +177,14 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 				if !os.IsNotExist(err) {
 					fmt.Fprintf(stderr, "Error deleting %s: %v\n", conv.SessionID[:8], err)
 					continue
+				}
+			}
+
+			// Delete companion directory if it exists (subagents, etc.)
+			convDir := filepath.Join(projectPath, conv.SessionID)
+			if info, err := os.Stat(convDir); err == nil && info.IsDir() {
+				if err := os.RemoveAll(convDir); err != nil {
+					fmt.Fprintf(stderr, "Error deleting companion directory for %s: %v\n", conv.SessionID[:8], err)
 				}
 			}
 
@@ -180,7 +212,22 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		}
 	}
 
-	fmt.Fprintf(stdout, "Deleted %d conversation(s)\n", deleted)
+	// Delete dangling directories (UUID dirs with no corresponding .jsonl file)
+	danglingDeleted := 0
+	for _, conv := range danglingDirs {
+		if err := os.RemoveAll(conv.FilePath); err != nil {
+			fmt.Fprintf(stderr, "Error deleting dangling directory %s: %v\n", conv.SessionID[:8], err)
+			continue
+		}
+		danglingDeleted++
+	}
+
+	if deleted > 0 {
+		fmt.Fprintf(stdout, "Deleted %d conversation(s)\n", deleted)
+	}
+	if danglingDeleted > 0 {
+		fmt.Fprintf(stdout, "Deleted %d dangling directory/directories\n", danglingDeleted)
+	}
 	return 0
 }
 
@@ -274,6 +321,51 @@ func findMissingFileEntries(projectPath string) []emptyConversation {
 	}
 
 	return missing
+}
+
+// findDanglingDirectories finds UUID-named directories without a corresponding .jsonl file
+func findDanglingDirectories(projectPath string) []emptyConversation {
+	var dangling []emptyConversation
+
+	files, err := os.ReadDir(projectPath)
+	if err != nil {
+		return dangling
+	}
+
+	// Build set of existing .jsonl session IDs
+	jsonlIDs := make(map[string]bool)
+	for _, file := range files {
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".jsonl") {
+			sessionID := strings.TrimSuffix(file.Name(), ".jsonl")
+			if len(sessionID) == 36 {
+				jsonlIDs[sessionID] = true
+			}
+		}
+	}
+
+	// Find directories with UUID names that lack a corresponding .jsonl file
+	for _, file := range files {
+		if !file.IsDir() {
+			continue
+		}
+		name := file.Name()
+		if len(name) != 36 {
+			continue
+		}
+		// Check it looks like a UUID (hyphens at expected positions)
+		if name[8] != '-' || name[13] != '-' || name[18] != '-' || name[23] != '-' {
+			continue
+		}
+		if !jsonlIDs[name] {
+			dangling = append(dangling, emptyConversation{
+				SessionID:   name,
+				FilePath:    filepath.Join(projectPath, name),
+				ProjectPath: projectPath,
+			})
+		}
+	}
+
+	return dangling
 }
 
 // hasUserMessages checks if a .jsonl file contains any user messages
