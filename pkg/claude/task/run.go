@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -21,6 +23,7 @@ type RunParams struct {
 	Dir      string `short:"C" long:"dir" optional:"true" help:"Directory to run tasks in (defaults to current directory)"`
 	Detached bool   `short:"d" long:"detached" help:"Start detached (don't attach to session)"`
 	NoTmux   bool   `long:"no-tmux" help:"Run without tmux session management"`
+	Watch    bool   `short:"w" long:"watch" help:"Watch for new tasks instead of exiting when TODO.md is empty"`
 }
 
 func RunCmd() *cobra.Command {
@@ -64,27 +67,29 @@ func runRun(params *RunParams) error {
 		cwd = wd + "/" + cwd
 	}
 
-	// Check we have tasks
 	tasks, err := ParseTodoMD(TodoPath(cwd))
 	if err != nil {
 		return fmt.Errorf("failed to read TODO.md: %w", err)
 	}
-	if len(tasks) == 0 {
-		return fmt.Errorf("no tasks found in TODO.md")
+
+	// Check we have tasks (skip check in watch mode)
+	if !params.Watch {
+		if len(tasks) == 0 {
+			return fmt.Errorf("no tasks found in TODO.md")
+		}
+		fmt.Printf("Found %d task(s) in TODO.md\n", len(tasks))
 	}
 
-	fmt.Printf("Found %d task(s) in TODO.md\n", len(tasks))
-
 	if params.NoTmux {
-		return runTaskLoop(cwd, clcommon.ExtractClaudeExtraArgs())
+		return runTaskLoop(cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch)
 	}
 
 	// Run in tmux session
-	return runInTmux(cwd, params.Detached)
+	return runInTmux(cwd, params.Detached, params.Watch)
 }
 
 // runInTmux starts the task runner inside a tmux session
-func runInTmux(cwd string, detached bool) error {
+func runInTmux(cwd string, detached, watch bool) error {
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return err
 	}
@@ -94,8 +99,12 @@ func runInTmux(cwd string, detached bool) error {
 	tmuxSession := "tclaude-" + sessionID
 
 	// Build command to run the task loop inside tmux
-	runnerCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s TCLAUDE_TASK_TMUX=%s %s task run --no-tmux -C %s",
-		sessionID, tmuxSession, clcommon.DetectCmd(), clcommon.ShellQuoteArg(cwd))
+	watchFlag := ""
+	if watch {
+		watchFlag = " --watch"
+	}
+	runnerCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s TCLAUDE_TASK_TMUX=%s %s task run --no-tmux%s -C %s",
+		sessionID, tmuxSession, clcommon.DetectCmd(), watchFlag, clcommon.ShellQuoteArg(cwd))
 
 	// Forward extra claude args through
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
@@ -151,10 +160,16 @@ func runInTmux(cwd string, detached bool) error {
 
 // runTaskLoop is the internal loop that runs tasks sequentially.
 // It is called directly (--no-tmux) or inside a tmux session.
-func runTaskLoop(cwd string, extraClaudeArgs []string) error {
+// When watch is true, it waits for new tasks instead of exiting when TODO.md is empty.
+func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 	todoPath := TodoPath(cwd)
 	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
+
+	// Set up signal handling for clean shutdown in watch mode
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	for {
 		// Re-read TODO.md each iteration (in case it was modified externally)
@@ -163,7 +178,14 @@ func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 			return fmt.Errorf("failed to read TODO.md: %w", err)
 		}
 		if len(tasks) == 0 {
-			break
+			if !watch {
+				break
+			}
+			// Watch mode: wait for tasks to appear
+			if err := waitForTasks(todoPath, sigCh); err != nil {
+				return err
+			}
+			continue
 		}
 
 		task := tasks[0]
@@ -226,6 +248,30 @@ func runTaskLoop(cwd string, extraClaudeArgs []string) error {
 	sendNotification(cwd, "All tasks completed!")
 
 	return nil
+}
+
+// waitForTasks polls TODO.md until tasks appear or a signal is received.
+func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
+	fmt.Println("\nWatching for new tasks in TODO.md... (Ctrl-C to stop)")
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-sigCh:
+			fmt.Println("\nReceived signal, stopping task watcher.")
+			return fmt.Errorf("interrupted")
+		case <-ticker.C:
+			tasks, err := ParseTodoMD(todoPath)
+			if err != nil {
+				return fmt.Errorf("failed to read TODO.md: %w", err)
+			}
+			if len(tasks) > 0 {
+				fmt.Printf("Found %d new task(s) in TODO.md\n", len(tasks))
+				return nil
+			}
+		}
+	}
 }
 
 // runClaude runs Claude Code interactively with the given prompt.
