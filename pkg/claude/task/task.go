@@ -27,7 +27,9 @@ type TaskResult struct {
 	Status    string // "completed" or "failed"
 	Error     string // error message if failed
 	Commit    string // commit hash
+	PlanFile  string // path to Claude's plan file, if any
 	Report    string // Claude's output
+	SessionID string // Claude's session_id from hook input
 	Timestamp time.Time
 }
 
@@ -202,8 +204,14 @@ func AppendDoneMD(path string, result TaskResult) error {
 	sb.WriteString("\n\n")
 	sb.WriteString(fmt.Sprintf("- **Status:** %s\n", result.Status))
 	sb.WriteString(fmt.Sprintf("- **Completed:** %s\n", result.Timestamp.Format("2006-01-02 15:04:05")))
+	if result.SessionID != "" {
+		sb.WriteString(fmt.Sprintf("- **Session ID:** %s\n", result.SessionID))
+	}
 	if result.Commit != "" {
 		sb.WriteString(fmt.Sprintf("- **Commit:** %s\n", result.Commit))
+	}
+	if result.PlanFile != "" {
+		sb.WriteString(fmt.Sprintf("- **Plan:** %s\n", result.PlanFile))
 	}
 	if result.Error != "" {
 		sb.WriteString(fmt.Sprintf("- **Error:** %s\n", result.Error))

@@ -147,6 +147,7 @@ func TestAppendDoneMD(t *testing.T) {
 		Prompt:    "Do something",
 		Status:    "completed",
 		Commit:    "abc1234",
+		PlanFile:  "~/.claude/plans/enchanted-meandering-mountain.md",
 		Report:    "I did the thing.",
 		Timestamp: time.Date(2026, 3, 7, 14, 30, 0, 0, time.UTC),
 	}
@@ -169,6 +170,9 @@ func TestAppendDoneMD(t *testing.T) {
 	}
 	if !strings.Contains(content, "**Commit:** abc1234") {
 		t.Error("missing commit hash")
+	}
+	if !strings.Contains(content, "**Plan:** ~/.claude/plans/enchanted-meandering-mountain.md") {
+		t.Error("missing plan file")
 	}
 	if !strings.Contains(content, "Do something") {
 		t.Error("missing prompt")

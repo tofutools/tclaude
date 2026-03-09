@@ -187,14 +187,21 @@ func runHookCallback() error {
 		usageapi.RefreshCache()
 	}
 
+	// Signal task runner when Stop/UserPromptSubmit fires in task mode
+	handleTaskSignal(input)
+
+	// In task mode, skip idle notifications — the task runner sends its own
+	// targeted notifications (e.g. "Task failed: X", "All tasks completed!").
+	// Other notifications (permission requests, user questions) still fire.
+	if newStatus == StatusIdle && os.Getenv("TCLAUDE_TASK_SIGNAL") != "" {
+		return nil
+	}
+
 	// Look up conversation title for notification
 	convTitle := getConvTitle(state.ConvID, state.Cwd)
 
 	// Notify on state transition (handles cooldown internally)
 	notify.OnStateTransition(state.ID, prevStatus, newStatus, state.Cwd, convTitle)
-
-	// Signal task runner when Stop/UserPromptSubmit fires in task mode
-	handleTaskSignal(input)
 
 	return nil
 }
@@ -212,6 +219,9 @@ func handleTaskSignal(input HookCallbackInput) {
 	switch input.HookEventName {
 	case "Stop":
 		os.WriteFile(signalPath, []byte(input.LastAssistantMessage), 0644)
+		if input.ConvID != "" {
+			os.WriteFile(signalPath+".session-id", []byte(input.ConvID), 0644)
+		}
 	case "UserPromptSubmit":
 		os.Remove(signalPath)
 	}
