@@ -212,6 +212,9 @@ func handleTaskSignal(input HookCallbackInput) {
 	switch input.HookEventName {
 	case "Stop":
 		os.WriteFile(signalPath, []byte(input.LastAssistantMessage), 0644)
+		if input.ConvID != "" {
+			os.WriteFile(signalPath+".session-id", []byte(input.ConvID), 0644)
+		}
 	case "UserPromptSubmit":
 		os.Remove(signalPath)
 	}

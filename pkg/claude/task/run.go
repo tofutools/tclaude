@@ -201,12 +201,13 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, err := runClaude(cwd, task.Prompt, extraClaudeArgs)
+		cr, err := runClaude(cwd, task.Prompt, extraClaudeArgs)
 
 		result := TaskResult{
 			Title:     task.Title,
 			Prompt:    task.Prompt,
-			Report:    report,
+			Report:    cr.Report,
+			SessionID: cr.SessionID,
 			Timestamp: time.Now(),
 		}
 
@@ -278,7 +279,13 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 // In tmux mode (TCLAUDE_TASK_TMUX set), a watcher goroutine polls for
 // a signal file written by the Stop hook and auto-sends /exit after a
 // grace period, enabling hands-free task sequencing.
-func runClaude(cwd, prompt string, extraArgs []string) (string, error) {
+// claudeResult holds the output from a Claude run.
+type claudeResult struct {
+	Report    string // Claude's last assistant message
+	SessionID string // Claude's session_id from hook
+}
+
+func runClaude(cwd, prompt string, extraArgs []string) (claudeResult, error) {
 	signalPath := taskSignalPath()
 	os.Remove(signalPath) // clean up stale signal from previous run
 
@@ -303,13 +310,20 @@ func runClaude(cwd, prompt string, extraArgs []string) (string, error) {
 	err := cmd.Run()
 
 	// Read report from signal file (written by Stop hook with last_assistant_message)
-	report := ""
+	var result claudeResult
 	if data, readErr := os.ReadFile(signalPath); readErr == nil {
-		report = string(data)
+		result.Report = string(data)
 	}
 	os.Remove(signalPath)
 
-	return report, err
+	// Read session_id from companion file (written by Stop hook)
+	sessionIDPath := signalPath + ".session-id"
+	if data, readErr := os.ReadFile(sessionIDPath); readErr == nil {
+		result.SessionID = string(data)
+	}
+	os.Remove(sessionIDPath)
+
+	return result, err
 }
 
 // taskSignalPath returns the path to the task signal file.
