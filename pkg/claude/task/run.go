@@ -208,12 +208,16 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 			fmt.Fprintf(os.Stderr, "Warning: failed to update TODO.md: %v\n", err)
 		}
 
+		// Snapshot plan files before running Claude
+		plansBefore := snapshotPlanFiles()
+
 		// Run Claude Code interactively with the task prompt
 		cr, err := runClaude(cwd, task.Prompt, extraClaudeArgs)
 
 		result := TaskResult{
 			Title:     task.Title,
 			Prompt:    task.Prompt,
+			PlanFile:  findNewPlanFile(plansBefore),
 			Report:    cr.Report,
 			SessionID: cr.SessionID,
 			Timestamp: time.Now(),
@@ -520,6 +524,53 @@ func gitCommitAll(cwd, message string, excludeTaskFiles bool) string {
 		return ""
 	}
 	return strings.TrimSpace(string(hashOut))
+}
+
+// plansDir returns the path to Claude's plans directory.
+func plansDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "plans")
+}
+
+// snapshotPlanFiles returns a set of current .md file names in ~/.claude/plans/.
+func snapshotPlanFiles() map[string]bool {
+	dir := plansDir()
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	result := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			result[e.Name()] = true
+		}
+	}
+	return result
+}
+
+// findNewPlanFile returns the path of the first new .md file in ~/.claude/plans/
+// that wasn't present in the before snapshot.
+func findNewPlanFile(before map[string]bool) string {
+	dir := plansDir()
+	if dir == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") && !before[e.Name()] {
+			return filepath.Join(dir, e.Name())
+		}
+	}
+	return ""
 }
 
 // sendNotification sends a desktop notification about task completion.
