@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	claudegit "github.com/tofutools/tclaude/pkg/claude/git"
 	"github.com/tofutools/tclaude/pkg/claude/selftest"
@@ -12,11 +13,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/setup"
 	"github.com/tofutools/tclaude/pkg/claude/stats"
 	"github.com/tofutools/tclaude/pkg/claude/statusbar"
+	"github.com/tofutools/tclaude/pkg/claude/task"
 	"github.com/tofutools/tclaude/pkg/claude/usage"
 	"github.com/tofutools/tclaude/pkg/claude/web"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 )
 
 // Cmd returns the claude subcommand for use in other binaries.
@@ -37,6 +38,7 @@ func Cmd() *cobra.Command {
 			statusbar.Cmd(),
 			selftest.Cmd(),
 			web.Cmd(),
+			task.Cmd(),
 		},
 		RunFunc: func(params *session.NewParams, cmd *cobra.Command, args []string) {
 			if err := session.RunNew(params); err != nil {
