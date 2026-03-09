@@ -95,26 +95,62 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 		entry, _ = FindSessionByID(index, convID)
 	}
 
-	if entry == nil {
-		fmt.Fprintf(stderr, "Conversation %s not found\n", convID)
-		if !params.Global {
-			fmt.Fprintf(stderr, "Hint: use -g to search all projects\n")
-		}
-		return 1
-	}
+	// If not found in index, try to find matching .jsonl files on disk
+	var fullID string
+	inIndex := entry != nil
 
-	// Use the full session ID from the found entry
-	fullID := entry.SessionID
+	if entry != nil {
+		fullID = entry.SessionID
+	} else {
+		if params.Global {
+			projectsDir := ClaudeProjectsDir()
+			entries, err := os.ReadDir(projectsDir)
+			if err == nil {
+				for _, dirEntry := range entries {
+					if !dirEntry.IsDir() {
+						continue
+					}
+					projPath := projectsDir + "/" + dirEntry.Name()
+					if found := findJSONLByPrefix(projPath, convID); found != "" {
+						fullID = found
+						projectPath = projPath
+						idx, _ := LoadSessionsIndex(projPath)
+						if idx != nil {
+							index = idx
+						}
+						break
+					}
+				}
+			}
+		} else {
+			if projectPath != "" {
+				fullID = findJSONLByPrefix(projectPath, convID)
+			}
+		}
+
+		if fullID == "" {
+			fmt.Fprintf(stderr, "Conversation %s not found\n", convID)
+			if !params.Global {
+				fmt.Fprintf(stderr, "Hint: use -g to search all projects\n")
+			}
+			return 1
+		}
+	}
 
 	// Show what we're about to delete
-	displayName := entry.DisplayTitle()
-	if len(displayName) > 50 {
-		displayName = displayName[:47] + "..."
+	if entry != nil {
+		displayName := entry.DisplayTitle()
+		if len(displayName) > 50 {
+			displayName = displayName[:47] + "..."
+		}
+		fmt.Fprintf(stdout, "Conversation: %s\n", fullID[:8])
+		fmt.Fprintf(stdout, "Project:      %s\n", entry.ProjectPath)
+		fmt.Fprintf(stdout, "Title/Prompt: %s\n", displayName)
+		fmt.Fprintf(stdout, "Messages:     %d\n", entry.MessageCount)
+	} else {
+		fmt.Fprintf(stdout, "Conversation: %s (not in index)\n", fullID[:8])
+		fmt.Fprintf(stdout, "Project:      %s\n", filepath.Base(projectPath))
 	}
-	fmt.Fprintf(stdout, "Conversation: %s\n", fullID[:8])
-	fmt.Fprintf(stdout, "Project:      %s\n", entry.ProjectPath)
-	fmt.Fprintf(stdout, "Title/Prompt: %s\n", displayName)
-	fmt.Fprintf(stdout, "Messages:     %d\n", entry.MessageCount)
 
 	// Confirm deletion
 	if !params.Yes {
@@ -144,13 +180,13 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 		}
 	}
 
-	// Remove from index
-	RemoveSessionByID(index, fullID)
-
-	// Save index
-	if err := SaveSessionsIndex(projectPath, index); err != nil {
-		fmt.Fprintf(stderr, "Error saving sessions index: %v\n", err)
-		return 1
+	// Remove from index (only if it was in the index)
+	if inIndex && index != nil {
+		RemoveSessionByID(index, fullID)
+		if err := SaveSessionsIndex(projectPath, index); err != nil {
+			fmt.Fprintf(stderr, "Error saving sessions index: %v\n", err)
+			return 1
+		}
 	}
 
 	// Add tombstone if sync is initialized
@@ -163,6 +199,33 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 
 	fmt.Fprintf(stdout, "Deleted conversation %s\n", fullID[:8])
 	return 0
+}
+
+// findJSONLByPrefix scans a project directory for a .jsonl file matching the given ID prefix.
+// Returns the full session ID (without .jsonl extension) if exactly one match is found, empty string otherwise.
+func findJSONLByPrefix(projectPath, idPrefix string) string {
+	entries, err := os.ReadDir(projectPath)
+	if err != nil {
+		return ""
+	}
+	var matches []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".jsonl")
+		if id == idPrefix || strings.HasPrefix(id, idPrefix) {
+			matches = append(matches, id)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return ""
 }
 
 // AddTombstoneForProject adds a tombstone for a deleted session

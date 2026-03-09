@@ -363,19 +363,14 @@ func (m watchModel) triggerDelete() watchModel {
 
 // deleteConversation deletes a conversation's files and removes it from the index
 func (m watchModel) deleteConversation(conv *SessionEntry) error {
-	// Determine project path
+	// Determine project path - prefer FullPath (actual file location) over ProjectPath derivation
 	var projectPath string
-	if m.global {
-		// For global mode, derive project path from the conversation's ProjectPath
+	if conv.FullPath != "" {
+		projectPath = filepath.Dir(conv.FullPath)
+	} else if m.global {
 		projectPath = GetClaudeProjectPath(conv.ProjectPath)
 	} else {
 		projectPath = GetClaudeProjectPath(m.projectPath)
-	}
-
-	// Load index
-	index, err := LoadSessionsIndex(projectPath)
-	if err != nil {
-		return fmt.Errorf("failed to load index: %w", err)
 	}
 
 	// Delete conversation file
@@ -392,10 +387,12 @@ func (m watchModel) deleteConversation(conv *SessionEntry) error {
 		}
 	}
 
-	// Remove from index and save
-	RemoveSessionByID(index, conv.SessionID)
-	if err := SaveSessionsIndex(projectPath, index); err != nil {
-		return fmt.Errorf("failed to save index: %w", err)
+	// Remove from index and save (only if the project dir and index exist)
+	index, err := LoadSessionsIndex(projectPath)
+	if err == nil && RemoveSessionByID(index, conv.SessionID) {
+		if err := SaveSessionsIndex(projectPath, index); err != nil {
+			return fmt.Errorf("failed to save index: %w", err)
+		}
 	}
 
 	// Add tombstone if sync is initialized
