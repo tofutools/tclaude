@@ -224,7 +224,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to clear DOING.md: %v\n", err)
 		}
 
-		// Git commit all changes (code + tracking files) with task title
+		// Git commit all changes with task title
 		result.Commit = gitCommitAll(cwd, task.Title)
 
 		if err := AppendDoneMD(donePath, result); err != nil {
@@ -400,28 +400,6 @@ func gitCommitAll(cwd, message string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(hashOut))
-}
-
-// gitCommitFiles stages specific files and commits.
-func gitCommitFiles(cwd, message string, files []string) {
-	// Stage specified files
-	args := append([]string{"add", "--"}, files...)
-	addCmd := exec.Command("git", args...)
-	addCmd.Dir = cwd
-	if err := addCmd.Run(); err != nil {
-		return // files might not exist or have no changes
-	}
-
-	// Check if there are staged changes
-	diffCmd := exec.Command("git", "diff", "--cached", "--quiet")
-	diffCmd.Dir = cwd
-	if diffCmd.Run() == nil {
-		return // nothing staged
-	}
-
-	commitCmd := exec.Command("git", "commit", "-m", message)
-	commitCmd.Dir = cwd
-	commitCmd.Run()
 }
 
 // sendNotification sends a desktop notification about task completion.
