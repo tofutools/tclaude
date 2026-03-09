@@ -72,16 +72,19 @@ func runRun(params *RunParams) error {
 		fmt.Printf("Found %d task(s) in TODO.md\n", len(tasks))
 	}
 
+	// When task files live in the project directory (no --dir), exclude them from commits
+	excludeTaskFiles := params.Dir == "" && os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
+
 	if params.NoTmux {
-		return runTaskLoop(cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch)
+		return runTaskLoop(cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch, excludeTaskFiles)
 	}
 
 	// Run in tmux session
-	return runInTmux(cwd, params.Detached, params.Watch)
+	return runInTmux(cwd, params.Detached, params.Watch, excludeTaskFiles)
 }
 
 // runInTmux starts the task runner inside a tmux session
-func runInTmux(cwd string, detached, watch bool) error {
+func runInTmux(cwd string, detached, watch, excludeTaskFiles bool) error {
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return err
 	}
@@ -95,8 +98,12 @@ func runInTmux(cwd string, detached, watch bool) error {
 	if watch {
 		watchFlag = " --watch"
 	}
-	runnerCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s TCLAUDE_TASK_TMUX=%s %s task run --no-tmux%s -C %s",
-		sessionID, tmuxSession, clcommon.DetectCmd(), watchFlag, clcommon.ShellQuoteArg(cwd))
+	explicitDirEnv := ""
+	if !excludeTaskFiles {
+		explicitDirEnv = " TCLAUDE_TASK_EXPLICIT_DIR=1"
+	}
+	runnerCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s TCLAUDE_TASK_TMUX=%s%s %s task run --no-tmux%s -C %s",
+		sessionID, tmuxSession, explicitDirEnv, clcommon.DetectCmd(), watchFlag, clcommon.ShellQuoteArg(cwd))
 
 	// Forward extra claude args through
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
@@ -153,7 +160,7 @@ func runInTmux(cwd string, detached, watch bool) error {
 // runTaskLoop is the internal loop that runs tasks sequentially.
 // It is called directly (--no-tmux) or inside a tmux session.
 // When watch is true, it waits for new tasks instead of exiting when TODO.md is empty.
-func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
+func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles bool) error {
 	todoPath := TodoPath(cwd)
 	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
@@ -227,7 +234,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 		}
 
 		// Git commit all changes with task title
-		result.Commit = gitCommitAll(cwd, task.Title)
+		result.Commit = gitCommitAll(cwd, task.Title, excludeTaskFiles)
 
 		// If there are no files to commit, the task is not truly completed
 		if result.Status == "completed" && result.Commit == "" {
@@ -471,8 +478,9 @@ func sendTmuxExit(tmuxSession string) {
 }
 
 // gitCommitAll stages all changes and commits with the given message.
+// When excludeTaskFiles is true, TODO.md/DOING.md/DONE.md are unstaged before committing.
 // Returns the commit hash, or empty string on failure.
-func gitCommitAll(cwd, message string) string {
+func gitCommitAll(cwd, message string, excludeTaskFiles bool) string {
 	// Check if there are changes to commit
 	statusCmd := exec.Command("git", "status", "--porcelain")
 	statusCmd.Dir = cwd
@@ -487,6 +495,13 @@ func gitCommitAll(cwd, message string) string {
 	if err := addCmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: git add failed: %v\n", err)
 		return ""
+	}
+
+	// Unstage task management files so they aren't committed
+	if excludeTaskFiles {
+		resetCmd := exec.Command("git", "reset", "HEAD", "--", "TODO.md", "DOING.md", "DONE.md")
+		resetCmd.Dir = cwd
+		_ = resetCmd.Run()
 	}
 
 	// Commit
