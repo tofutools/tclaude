@@ -40,7 +40,7 @@ Update the README with the new API endpoints, request/response
 examples, and setup instructions.
 ```
 
-Each `## ` header starts a new task. The header text becomes the task title (and git commit message). Everything until the next header or end of file is the prompt sent to Claude Code.
+Each `## ` header starts a new task. The header text becomes the task title (and git commit message). Everything until the next header or end of the file is the prompt sent to Claude Code.
 
 ## Commands
 
@@ -50,6 +50,9 @@ Add a task to `TODO.md`.
 
 ```bash
 tclaude task add "Fix login bug" "Fix the null pointer exception in the login handler"
+
+# Specify prompt only, and let Claude determine the title (which is used as commit message)
+tclaude task add "Fix the null pointer exception in the login handler"
 
 # Add to a specific directory's TODO.md
 tclaude task add -C /path/to/project "Fix login bug" "Fix the null pointer exception"
@@ -86,12 +89,12 @@ tclaude task run -- --dangerously-skip-permissions
 
 **Flags:**
 
-| Flag | Description |
-|------|-------------|
-| `-d, --detached` | Start detached (don't attach to session) |
-| `-C, --dir <path>` | Directory containing task files (defaults to current) |
-| `-w, --watch` | Watch for new tasks instead of exiting when TODO.md is empty |
-| `--no-tmux` | Run directly without tmux |
+| Flag               | Description                                                  |
+|--------------------|--------------------------------------------------------------|
+| `-d, --detached`   | Start detached (don't attach to session)                     |
+| `-C, --dir <path>` | Directory containing task files (defaults to current)        |
+| `-w, --watch`      | Watch for new tasks instead of exiting when TODO.md is empty |
+| `--no-tmux`        | Run directly without tmux                                    |
 
 > **Note:** The `-C, --dir` flag is available on all task subcommands (`add`, `list`, `run`) and the parent `task` command itself.
 
@@ -105,7 +108,7 @@ When you run `tclaude task run`:
     - You can attach to the session to approve permissions, answer questions, or monitor progress
     - When Claude is done, type `/exit` to finish the task
     - The runner commits changes, updates tracking files, and starts the next task
-3. A notification is sent when all tasks complete (or if a task fails)
+3. A notification is sent when all tasks are complete (or if a task fails)
 
 ### Interactive Session
 
@@ -130,10 +133,7 @@ Inside the session, Claude Code runs with full interactive capabilities. You can
 
 ### Git Commits
 
-After each task, two commits are created:
-
-1. **Task commit** — all code changes, with the task title as the commit message
-2. **Tracking commit** — updates to `TODO.md` and `DONE.md`
+After each task the changes are committed with the task title as the commit message.
 
 ### Failure Handling
 
