@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
@@ -247,18 +248,45 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 	return nil
 }
 
-// waitForTasks polls TODO.md until tasks appear or a signal is received.
+// waitForTasks watches TODO.md using fsnotify until tasks appear or a signal is received.
 func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 	fmt.Println("\nWatching for new tasks in TODO.md... (Ctrl-C to stop)")
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+
+	// Watch the directory containing TODO.md (file may not exist yet)
+	dir := filepath.Dir(todoPath)
+	base := filepath.Base(todoPath)
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create file watcher: %w", err)
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(dir); err != nil {
+		return fmt.Errorf("failed to watch directory %s: %w", dir, err)
+	}
+
+	// Check once immediately in case tasks were added before we started watching
+	if tasks, err := ParseTodoMD(todoPath); err == nil && len(tasks) > 0 {
+		fmt.Printf("Found %d new task(s) in TODO.md\n", len(tasks))
+		return nil
+	}
 
 	for {
 		select {
 		case <-sigCh:
 			fmt.Println("\nReceived signal, stopping task watcher.")
 			return fmt.Errorf("interrupted")
-		case <-ticker.C:
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return fmt.Errorf("file watcher closed")
+			}
+			if filepath.Base(event.Name) != base {
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+				continue
+			}
 			tasks, err := ParseTodoMD(todoPath)
 			if err != nil {
 				return fmt.Errorf("failed to read TODO.md: %w", err)
@@ -267,6 +295,11 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 				fmt.Printf("Found %d new task(s) in TODO.md\n", len(tasks))
 				return nil
 			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return fmt.Errorf("file watcher closed")
+			}
+			return fmt.Errorf("file watcher error: %w", err)
 		}
 	}
 }
@@ -276,9 +309,9 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 // answer questions, etc. When the user types /exit or Claude exits,
 // control returns to the task runner.
 //
-// In tmux mode (TCLAUDE_TASK_TMUX set), a watcher goroutine polls for
-// a signal file written by the Stop hook and auto-sends /exit after a
-// grace period, enabling hands-free task sequencing.
+// In tmux mode (TCLAUDE_TASK_TMUX set), a watcher goroutine uses fsnotify
+// to detect a signal file written by the Stop hook and auto-sends /exit
+// after a grace period, enabling hands-free task sequencing.
 // claudeResult holds the output from a Claude run.
 type claudeResult struct {
 	Report    string // Claude's last assistant message
@@ -331,44 +364,95 @@ func taskSignalPath() string {
 	return filepath.Join(common.CacheDir(), "task-signal")
 }
 
-// watchForTaskCompletion polls for the signal file and sends /exit to
-// the tmux session after a grace period. The grace period allows the
-// user to start typing (which triggers UserPromptSubmit, removing the
-// signal file) before auto-exit kicks in.
+// watchForTaskCompletion watches for the signal file using fsnotify and sends
+// /exit to the tmux session after a grace period. The grace period allows the
+// user to start typing (which triggers UserPromptSubmit, removing the signal
+// file) before auto-exit kicks in.
 func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession string) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+	dir := filepath.Dir(signalPath)
+	base := filepath.Base(signalPath)
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return // silently fall back to no auto-exit
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(dir); err != nil {
+		return
+	}
+
+	// Check if signal file already exists (race with hook)
+	signalExists := false
+	if _, err := os.Stat(signalPath); err == nil {
+		signalExists = true
+	}
+
+	for {
+		if signalExists {
+			// Signal detected — enter grace period, watching for removal
+			if gracePeriod(ctx, watcher, signalPath, base) {
+				// Signal removed during grace (user interacted) — reset
+				signalExists = false
+				continue
+			}
+			// Signal survived grace period — auto-exit
+			sendTmuxExit(tmuxSession)
+			return
+		}
+
+		// Wait for signal file to appear
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if filepath.Base(event.Name) != base {
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				signalExists = true
+			}
+		case _, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+		}
+	}
+}
+
+// gracePeriod waits 5 seconds, watching for the signal file to be removed.
+// Returns true if the signal was removed (cancelled), false if it survived.
+func gracePeriod(ctx context.Context, watcher *fsnotify.Watcher, signalPath, base string) bool {
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ticker.C:
+			return true // treat context cancellation as cancelled
+		case <-timer.C:
+			// Grace period expired — check signal one final time
 			if _, err := os.Stat(signalPath); err != nil {
-				continue // no signal yet
+				return true // removed just before timer fired
 			}
-
-			// Signal detected — wait grace period, re-checking
-			graceEnd := time.Now().Add(5 * time.Second)
-			cancelled := false
-			for time.Now().Before(graceEnd) {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(500 * time.Millisecond):
-				}
-				if _, err := os.Stat(signalPath); err != nil {
-					cancelled = true
-					break // signal removed (user interacted)
-				}
+			return false
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return false
 			}
-			if cancelled {
+			if filepath.Base(event.Name) != base {
 				continue
 			}
-
-			// Signal still present after grace period — auto-exit
-			sendTmuxExit(tmuxSession)
-			return
+			if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+				return true // signal removed (user interacted)
+			}
+		case _, ok := <-watcher.Errors:
+			if !ok {
+				return false
+			}
 		}
 	}
 }
