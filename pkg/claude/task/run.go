@@ -229,6 +229,13 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch bool) error {
 		// Git commit all changes with task title
 		result.Commit = gitCommitAll(cwd, task.Title)
 
+		// If there are no files to commit, the task is not truly completed
+		if result.Status == "completed" && result.Commit == "" {
+			result.Status = "failed"
+			result.Error = "no files were changed"
+			fmt.Printf("\nTask not completed (no files to commit): %s\n", task.Title)
+		}
+
 		if err := AppendDoneMD(donePath, result); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update DONE.md: %v\n", err)
 		}
