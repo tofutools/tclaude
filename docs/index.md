@@ -8,12 +8,12 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 
 ## Supported Platforms
 
-| Platform | Status |
-|----------|--------|
-| macOS | ✅ Fully supported |
-| Linux (native) | ✅ Fully supported |
-| WSL (Windows Subsystem for Linux) | ⚠️ Partial* |
-| Windows (native) | ❌ Not yet implemented |
+| Platform                          | Status                |
+|-----------------------------------|-----------------------|
+| macOS                             | ✅ Fully supported     |
+| Linux (native)                    | ✅ Fully supported     |
+| WSL (Windows Subsystem for Linux) | ⚠️ Partial*           |
+| Windows (native)                  | ❌ Not yet implemented |
 
 *\* Clickable notifications only focus the correct window if the target Windows Terminal tab is already selected.*
 
@@ -25,6 +25,7 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 - 🔔 **OS Notifications** - Get notified when sessions need attention (opt-in)
 - 🔍 **Interactive Watch Modes** - Browse sessions and conversations with search, filtering, sorting
 - ⚡ **Session Indicators** - Know which conversations have active sessions (⚡ attached, ○ active)
+- ⚙️ **Task Management** - Run multiple tasks automatically
 
 ## Installation
 
@@ -64,39 +65,39 @@ tclaude conv ls -w
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `session new` | Start Claude in a tmux session |
-| `session ls` | List sessions (`-w` for interactive) |
-| `session attach` | Attach to a session |
-| `session kill` | Kill sessions |
-| `web` | Serve a session via web terminal |
-| `conv ls` | List conversations (`-w` for interactive, `-g` for global) |
-| `conv search` | Search conversation text |
-| `conv resume` | Resume a conversation |
-| `conv delete` | Delete a conversation |
-| `conv prune-empty` | Delete empty conversations |
+| Command            | Description                                                |
+|--------------------|------------------------------------------------------------|
+| `session new`      | Start Claude in a tmux session                             |
+| `session ls`       | List sessions (`-w` for interactive)                       |
+| `session attach`   | Attach to a session                                        |
+| `session kill`     | Kill sessions                                              |
+| `web`              | Serve a session via web terminal                           |
+| `conv ls`          | List conversations (`-w` for interactive, `-g` for global) |
+| `conv search`      | Search conversation text                                   |
+| `conv resume`      | Resume a conversation                                      |
+| `conv delete`      | Delete a conversation                                      |
+| `conv prune-empty` | Delete empty conversations                                 |
 
 ## Interactive Watch Mode Keys ⌨️
 
 Both `session ls -w` and `conv ls -w` support these keys:
 
-| Key | Action |
-|-----|--------|
-| `/` | Start search |
-| `↑`/`↓` or `j`/`k` | Navigate |
-| `Enter` | Attach/create session |
-| `Del`/`x` | Delete/kill (with confirmation) |
-| `h` or `?` | Show help |
-| `Esc` | Clear search / quit |
-| `q` | Quit |
+| Key                | Action                          |
+|--------------------|---------------------------------|
+| `/`                | Start search                    |
+| `↑`/`↓` or `j`/`k` | Navigate                        |
+| `Enter`            | Attach/create session           |
+| `Del`/`x`          | Delete/kill (with confirmation) |
+| `h` or `?`         | Show help                       |
+| `Esc`              | Clear search / quit             |
+| `q`                | Quit                            |
 
 Session watch also supports:
 
-| Key | Action |
-|-----|--------|
-| `f` | Filter menu (by status) |
-| `1`-`5` | Sort by column |
+| Key     | Action                  |
+|---------|-------------------------|
+| `f`     | Filter menu (by status) |
+| `1`-`5` | Sort by column          |
 
 ## Documentation
 
@@ -107,6 +108,7 @@ Session watch also supports:
 - [Status Bar](status-bar.md) - Rich status bar for Claude Code's statusline
 - [Web Terminal](web-terminal.md) - Access sessions from your phone or browser
 - [Git Sync](git-sync.md) - Sync conversations across devices
+- [Task Management](tasks.md) - Run multiple tasks automatically
 
 ## Recording a Demo
 
