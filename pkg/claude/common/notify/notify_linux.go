@@ -22,10 +22,9 @@ func platformSend(sessionID, title, body string) error {
 // sendLinuxClickable sends a notification with click-to-focus on native Linux via D-Bus.
 // It spawns a detached background process that sends the notification and listens for
 // the click action on the same D-Bus connection. This is necessary because:
-// 1. The hook-callback process exits immediately, so goroutines can't be used
-// 2. D-Bus notification daemons send ActionInvoked signals only to the connection
-//
-//	that created the notification, so send and listen must share a connection
+//  1. The hook-callback process exits immediately, so goroutines can't be used
+//  2. D-Bus notification daemons send ActionInvoked signals only to the connection
+//     that created the notification, so send and listen must share a connection
 func sendLinuxClickable(sessionID, title, body string) error {
 	clArgs := common.DetectArgs()
 	listenerArgs := append(clArgs[1:], "session", "notify-listen", sessionID, title, body)

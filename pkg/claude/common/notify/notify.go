@@ -4,7 +4,9 @@ package notify
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -80,12 +82,41 @@ func send(sessionID, to, cwd, convTitle string) {
 		body = fmt.Sprintf("%s | %s", shortID(sessionID), projectName)
 	}
 
-	err := platformSend(sessionID, title, body)
+	var err error
+
+	// Check for custom notification command
+	cfg, cfgErr := config.Load()
+	if cfgErr == nil && cfg.Notifications != nil && len(cfg.Notifications.NotificationCommand) > 0 {
+		err = runCustomCommand(cfg.Notifications.NotificationCommand, sessionID, title, body)
+	} else {
+		err = platformSend(sessionID, title, body)
+	}
 
 	if err != nil {
 		// Final fallback to stderr
 		fmt.Fprintf(os.Stderr, "[notify] %s: %s\n", title, body)
 	}
+}
+
+// runCustomCommand executes a custom notification command with template substitution.
+// Each element in cmdTemplate may contain {sessionID}, {title}, {body} placeholders.
+func runCustomCommand(cmdTemplate []string, sessionID, title, body string) error {
+	if len(cmdTemplate) == 0 {
+		return fmt.Errorf("empty notification command")
+	}
+
+	r := strings.NewReplacer(
+		"{sessionID}", sessionID,
+		"{title}", title,
+		"{body}", body,
+	)
+
+	args := make([]string, len(cmdTemplate))
+	for i, tmpl := range cmdTemplate {
+		args[i] = r.Replace(tmpl)
+	}
+
+	return exec.Command(args[0], args[1:]...).Run()
 }
 
 // formatStatus returns a human-readable status string.

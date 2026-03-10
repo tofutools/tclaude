@@ -48,11 +48,12 @@ Alternatively, create `~/.tclaude/config.json` manually:
 
 ### Options
 
-| Field | Description | Default |
-|-------|-------------|---------|
-| `enabled` | Master switch for notifications | `false` |
-| `transitions` | List of state transitions that trigger notifications | See below |
-| `cooldown_seconds` | Minimum seconds between notifications per session | `5` |
+| Field                  | Description                                             | Default   |
+|------------------------|---------------------------------------------------------|-----------|
+| `enabled`              | Master switch for notifications                         | `false`   |
+| `transitions`          | List of state transitions that trigger notifications    | See below |
+| `cooldown_seconds`     | Minimum seconds between notifications per session       | `5`       |
+| `notification_command` | Custom command to run instead of platform notifications | (none)    |
 
 ### Transitions
 
@@ -65,6 +66,39 @@ Each transition rule has `from` and `to` fields. Use `*` as a wildcard to match 
 - `*` → `exited` - Session ended
 
 **Available states:** `working`, `idle`, `awaiting_permission`, `awaiting_input`, `exited`
+
+### Custom Notification Command
+
+You can override the platform-specific notification mechanism with a custom command. The command is specified as an array of strings (program + arguments), where each element may contain these template placeholders:
+
+| Placeholder   | Value                                                       |
+|---------------|-------------------------------------------------------------|
+| `{sessionID}` | The full session ID                                         |
+| `{title}`     | Notification title (e.g., "Claude: Idle")                   |
+| `{body}`      | Notification body (session ID, project, conversation title) |
+
+All placeholders are optional — use only the ones you need, in any order.
+
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "notification_command": ["notify-send", "{title}", "{body}"]
+  }
+}
+```
+
+Pass parameters as flags in any order:
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "notification_command": ["my-notifier", "--session", "{sessionID}", "--msg", "{body}"]
+  }
+}
+```
+
+When `notification_command` is set, it completely replaces the built-in platform notification (D-Bus, terminal-notifier, PowerShell toast). If the command fails, a fallback message is written to stderr.
 
 ### Examples
 

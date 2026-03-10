@@ -14,9 +14,10 @@ type Config struct {
 
 // NotificationConfig holds settings for OS notifications.
 type NotificationConfig struct {
-	Enabled         bool             `json:"enabled"`
-	Transitions     []TransitionRule `json:"transitions,omitempty"`
-	CooldownSeconds int              `json:"cooldown_seconds,omitempty"`
+	Enabled             bool             `json:"enabled"`
+	Transitions         []TransitionRule `json:"transitions,omitempty"`
+	CooldownSeconds     int              `json:"cooldown_seconds,omitempty"`
+	NotificationCommand []string          `json:"notification_command,omitempty"`
 }
 
 // TransitionRule defines a state transition that triggers a notification.
