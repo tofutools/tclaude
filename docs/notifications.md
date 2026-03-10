@@ -71,11 +71,11 @@ Each transition rule has `from` and `to` fields. Use `*` as a wildcard to match 
 
 You can override the platform-specific notification mechanism with a custom command. The command is specified as an array of strings (program + arguments), where each element may contain these template placeholders:
 
-| Placeholder   | Value                                                       |
-|---------------|-------------------------------------------------------------|
-| `{sessionID}` | The full session ID                                         |
-| `{title}`     | Notification title (e.g., "Claude: Idle")                   |
-| `{body}`      | Notification body (session ID, project, conversation title) |
+| Placeholder     | Value                                                       |
+|-----------------|-------------------------------------------------------------|
+| `{{sessionID}}` | The full session ID                                         |
+| `{{title}}`     | Notification title (e.g., "Claude: Idle")                   |
+| `{{body}}`      | Notification body (session ID, project, conversation title) |
 
 All placeholders are optional — use only the ones you need, in any order.
 
@@ -83,7 +83,7 @@ All placeholders are optional — use only the ones you need, in any order.
 {
   "notifications": {
     "enabled": true,
-    "notification_command": ["notify-send", "{title}", "{body}"]
+    "notification_command": ["notify-send", "{{title}}", "{{body}}"]
   }
 }
 ```
@@ -93,7 +93,7 @@ Pass parameters as flags in any order:
 {
   "notifications": {
     "enabled": true,
-    "notification_command": ["my-notifier", "--session", "{sessionID}", "--msg", "{body}"]
+    "notification_command": ["my-notifier", "--session", "{{sessionID}}", "--msg", "{{body}}"]
   }
 }
 ```

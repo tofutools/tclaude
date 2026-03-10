@@ -99,16 +99,16 @@ func send(sessionID, to, cwd, convTitle string) {
 }
 
 // runCustomCommand executes a custom notification command with template substitution.
-// Each element in cmdTemplate may contain {sessionID}, {title}, {body} placeholders.
+// Each element in cmdTemplate may contain {{sessionID}}, {{title}}, {{body}} placeholders.
 func runCustomCommand(cmdTemplate []string, sessionID, title, body string) error {
 	if len(cmdTemplate) == 0 {
 		return fmt.Errorf("empty notification command")
 	}
 
 	r := strings.NewReplacer(
-		"{sessionID}", sessionID,
-		"{title}", title,
-		"{body}", body,
+		"{{sessionID}}", sessionID,
+		"{{title}}", title,
+		"{{body}}", body,
 	)
 
 	args := make([]string, len(cmdTemplate))
