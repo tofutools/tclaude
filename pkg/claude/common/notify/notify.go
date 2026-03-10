@@ -26,8 +26,17 @@ func stateFile(sessionID string) string {
 	return filepath.Join(stateDir(), sessionID)
 }
 
+// IsEnabled returns whether notifications are enabled.
+func IsEnabled() bool {
+	cfg, err := config.Load()
+	if err != nil {
+		return false
+	}
+	return cfg.Notifications != nil && cfg.Notifications.Enabled
+}
+
 // OnStateTransition is called when a session changes state.
-// It checks cooldown via file modification time and sends notification if appropriate.
+// It checks cooldown via file modification time and sends a notification if appropriate.
 // convTitle is optional - pass empty string if not available.
 func OnStateTransition(sessionID, from, to, cwd, convTitle string) {
 	cfg, err := config.Load()
@@ -51,7 +60,7 @@ func OnStateTransition(sessionID, from, to, cwd, convTitle string) {
 	}
 
 	// Send notification
-	send(sessionID, to, cwd, convTitle)
+	Send(sessionID, formatStatus(to), cwd, convTitle)
 
 	// Update state file (touch it)
 	if err := os.MkdirAll(stateDir(), 0755); err == nil {
@@ -63,16 +72,33 @@ func OnStateTransition(sessionID, from, to, cwd, convTitle string) {
 	}
 }
 
-// send actually sends the notification.
-func send(sessionID, to, cwd, convTitle string) {
+// formatStatus returns a human-readable status string.
+func formatStatus(status string) string {
+	switch status {
+	case "working":
+		return "Working"
+	case "idle":
+		return "Idle"
+	case "awaiting_permission":
+		return "Awaiting permission"
+	case "awaiting_input":
+		return "Awaiting input"
+	case "exited":
+		return "Exited"
+	default:
+		return status
+	}
+}
+
+// Send actually sends the notification.
+func Send(sessionID, status, cwd, convTitle string) {
 	// Build notification content
 	projectName := filepath.Base(cwd)
 	if projectName == "" || projectName == "." {
 		projectName = "unknown"
 	}
 
-	statusDisplay := formatStatus(to)
-	title := fmt.Sprintf("Claude: %s", statusDisplay)
+	title := fmt.Sprintf("Claude: %s", status)
 
 	// Build body: ID | Project - conversation title
 	var body string
@@ -84,7 +110,7 @@ func send(sessionID, to, cwd, convTitle string) {
 
 	var err error
 
-	// Check for custom notification command
+	// Check for a custom notification command
 	cfg, cfgErr := config.Load()
 	if cfgErr == nil && cfg.Notifications != nil && len(cfg.Notifications.NotificationCommand) > 0 {
 		err = runCustomCommand(cfg.Notifications.NotificationCommand, sessionID, title, body)
@@ -96,6 +122,14 @@ func send(sessionID, to, cwd, convTitle string) {
 		// Final fallback to stderr
 		fmt.Fprintf(os.Stderr, "[notify] %s: %s\n", title, body)
 	}
+}
+
+// shortID returns a shortened session ID for display.
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }
 
 // runCustomCommand executes a custom notification command with template substitution.
@@ -117,39 +151,4 @@ func runCustomCommand(cmdTemplate []string, sessionID, title, body string) error
 	}
 
 	return exec.Command(args[0], args[1:]...).Run()
-}
-
-// formatStatus returns a human-readable status string.
-func formatStatus(status string) string {
-	switch status {
-	case "working":
-		return "Working"
-	case "idle":
-		return "Idle"
-	case "awaiting_permission":
-		return "Awaiting permission"
-	case "awaiting_input":
-		return "Awaiting input"
-	case "exited":
-		return "Exited"
-	default:
-		return status
-	}
-}
-
-// shortID returns a shortened session ID for display.
-func shortID(id string) string {
-	if len(id) <= 8 {
-		return id
-	}
-	return id[:8]
-}
-
-// IsEnabled returns whether notifications are enabled.
-func IsEnabled() bool {
-	cfg, err := config.Load()
-	if err != nil {
-		return false
-	}
-	return cfg.Notifications != nil && cfg.Notifications.Enabled
 }

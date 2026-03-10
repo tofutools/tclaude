@@ -212,14 +212,14 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		plansBefore := snapshotPlanFiles()
 
 		// Run Claude Code interactively with the task prompt
-		cr, err := runClaude(cwd, task.Prompt, extraClaudeArgs)
+		report, sessionID, err := runClaude(cwd, task.Prompt, extraClaudeArgs)
 
 		result := TaskResult{
 			Title:     task.Title,
 			Prompt:    task.Prompt,
 			PlanFile:  findNewPlanFile(plansBefore),
-			Report:    cr.Report,
-			SessionID: cr.SessionID,
+			Report:    report,
+			SessionID: sessionID,
 			Timestamp: time.Now(),
 		}
 
@@ -232,7 +232,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 			fmt.Printf("\nTask completed: %s\n", task.Title)
 		}
 
-		// Move task from DOING.md to DONE.md
+		// Move the task from DOING.md to DONE.md
 		if err := ClearDoingMD(doingPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to clear DOING.md: %v\n", err)
 		}
@@ -252,7 +252,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 
 		if result.Status == "failed" {
-			sendNotification(cwd, fmt.Sprintf("Task failed: %s", task.Title))
+			sendNotification(sessionID, cwd, "failed", fmt.Sprintf("Task failed: %s", task.Title))
 			return fmt.Errorf("task %q failed: %s", task.Title, result.Error)
 		}
 	}
@@ -261,7 +261,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	fmt.Println("All tasks completed!")
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
 
-	sendNotification(cwd, "All tasks completed!")
+	sendNotification("tasks", cwd, "completed", "All tasks completed!")
 
 	return nil
 }
@@ -331,12 +331,10 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 // to detect a signal file written by the Stop hook and auto-sends /exit
 // after a grace period, enabling hands-free task sequencing.
 // claudeResult holds the output from a Claude run.
-type claudeResult struct {
-	Report    string // Claude's last assistant message
-	SessionID string // Claude's session_id from hook
-}
-
-func runClaude(cwd, prompt string, extraArgs []string) (claudeResult, error) {
+//
+// report string - Claude's last assistant message
+// sessionID string - Claude's session_id from hook
+func runClaude(cwd, prompt string, extraArgs []string) (report string, sessionID string, err error) {
 	signalPath := taskSignalPath()
 	os.Remove(signalPath) // clean up stale signal from previous run
 
@@ -353,28 +351,28 @@ func runClaude(cwd, prompt string, extraArgs []string) (claudeResult, error) {
 	// Start watcher for auto-continue in tmux mode
 	tmuxSession := os.Getenv("TCLAUDE_TASK_TMUX")
 	if tmuxSession != "" {
+		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles)
 	}
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	// Read report from signal file (written by Stop hook with last_assistant_message)
-	var result claudeResult
 	if data, readErr := os.ReadFile(signalPath); readErr == nil {
-		result.Report = string(data)
+		report = string(data)
 	}
 	os.Remove(signalPath)
 
 	// Read session_id from companion file (written by Stop hook)
 	sessionIDPath := signalPath + ".session-id"
 	if data, readErr := os.ReadFile(sessionIDPath); readErr == nil {
-		result.SessionID = string(data)
+		sessionID = string(data)
 	}
 	os.Remove(sessionIDPath)
 
-	return result, err
+	return report, sessionID, err
 }
 
 // taskSignalPath returns the path to the task signal file.
@@ -386,7 +384,7 @@ func taskSignalPath() string {
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession string) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles bool) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -414,7 +412,16 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession string)
 				signalExists = false
 				continue
 			}
-			// Signal survived grace period — auto-exit
+			// Signal survived grace period — check if any files were actually changed
+			sessionIDPath := signalPath + ".session-id"
+			var sessionID string
+			if data, readErr := os.ReadFile(sessionIDPath); readErr == nil {
+				sessionID = string(data)
+			}
+			if !hasTrackedChanges(cwd, excludeTaskFiles) {
+				sendNotification(sessionID, cwd, "waiting", "Task produced no file changes")
+				return
+			}
 			sendTmuxExit(tmuxSession)
 			return
 		}
@@ -479,6 +486,35 @@ func gracePeriod(ctx context.Context, watcher *fsnotify.Watcher, signalPath, bas
 func sendTmuxExit(tmuxSession string) {
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/exit", "Enter")
 	cmd.Run()
+}
+
+// hasTrackedChanges returns true if there are uncommitted changes to git-tracked
+// files, excluding task management files (TODO.md/DOING.md/DONE.md) when excludeTaskFiles is set.
+func hasTrackedChanges(cwd string, excludeTaskFiles bool) bool {
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = cwd
+	out, err := statusCmd.Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		// Porcelain format: XY filename (or XY old -> new for renames)
+		file := strings.TrimSpace(line[2:])
+		if idx := strings.Index(file, " -> "); idx >= 0 {
+			file = file[idx+4:]
+		}
+		if excludeTaskFiles {
+			base := filepath.Base(file)
+			if base == "TODO.md" || base == "DOING.md" || base == "DONE.md" {
+				continue
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // gitCommitAll stages all changes and commits with the given message.
@@ -574,9 +610,9 @@ func findNewPlanFile(before map[string]bool) string {
 }
 
 // sendNotification sends a desktop notification about task completion.
-func sendNotification(cwd, message string) {
+func sendNotification(sessionId, cwd, status, message string) {
 	if !notify.IsEnabled() {
 		return
 	}
-	notify.OnStateTransition("tasks", "", "idle", cwd, message)
+	notify.Send(sessionId, status, cwd, message)
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common"
 )
 
-// DarwinNotifyCmd represents the command to send a notification on macOS.
+// DarwinNotifyCmd represents the command to Send a notification on macOS.
 type DarwinNotifyCmd struct {
 	Program string
 	Args    []string
@@ -55,7 +55,7 @@ func BuildDarwinFallbackCmd(title, body string) DarwinNotifyCmd {
 	}
 }
 
-// WSLNotifyCmd represents the command to send a notification on WSL.
+// WSLNotifyCmd represents the command to Send a notification on WSL.
 type WSLNotifyCmd struct {
 	Program string
 	Args    []string
