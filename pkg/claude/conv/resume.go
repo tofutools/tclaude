@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 )
 
 type ResumeParams struct {
@@ -126,7 +126,7 @@ func runResumeWithSession(convInfo *clcommon.ConvInfo, projectPath, displayName 
 		return 1
 	}
 
-	tmuxSession := "tclaude-" + sessionID
+	tmuxSession := sessionID
 
 	// Build claude command with TCLAUDE_SESSION_ID env var
 	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude --resume %s", sessionID, convInfo.SessionID)
@@ -147,7 +147,7 @@ func runResumeWithSession(convInfo *clcommon.ConvInfo, projectPath, displayName 
 		"sh", "-c", claudeCmd,
 	}
 
-	tmuxCmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
+	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
 	if err := tmuxCmd.Run(); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
 		return 1

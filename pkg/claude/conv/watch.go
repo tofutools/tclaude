@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,27 +30,27 @@ var (
 
 type watchTickMsg time.Time
 type watchFileChangeMsg struct {
-	sessionID string              // ID of the session that changed (empty for delete)
-	deleted   bool                // true if the file was deleted
-	watcher   *fsnotify.Watcher  // reuse watcher across events
+	sessionID string            // ID of the session that changed (empty for delete)
+	deleted   bool              // true if the file was deleted
+	watcher   *fsnotify.Watcher // reuse watcher across events
 }
 
 // watchConfirmMode represents confirmation dialogs
 type watchConfirmMode int
 
 const (
-	watchConfirmNone watchConfirmMode = iota
-	watchConfirmAttachForce       // Session already attached, confirm force attach
-	watchConfirmDelete            // Delete conversation (no active session)
-	watchConfirmDeleteWithSession // Delete conversation that has an active session
-	watchConfirmNoTmux            // Session has no tmux, cannot attach
+	watchConfirmNone              watchConfirmMode = iota
+	watchConfirmAttachForce                        // Session already attached, confirm force attach
+	watchConfirmDelete                             // Delete conversation (no active session)
+	watchConfirmDeleteWithSession                  // Delete conversation that has an active session
+	watchConfirmNoTmux                             // Session has no tmux, cannot attach
 )
 
 type watchModel struct {
 	// Data
 	entries        []SessionEntry
-	filtered       []SessionEntry                    // After search filter
-	activeSessions map[string]*session.SessionState  // convID -> session
+	filtered       []SessionEntry                   // After search filter
+	activeSessions map[string]*session.SessionState // convID -> session
 
 	// Navigation
 	cursor         int
@@ -82,14 +81,14 @@ type watchModel struct {
 	before      string // Filter: modified before
 
 	// Result
-	selectedConv    *SessionEntry
-	shouldCreate    bool   // true = create new session, false = attach to existing
-	forceAttach     bool
-	focusOnly       bool   // Just focus the window, don't attach
-	focusTmux       string // Tmux session to focus
-	focusSessionID  string // Session ID for focus (needed for WSL window title search)
-	createWorktree  bool   // true = create worktree for selected conv
-	worktreeBranch  string // Branch name for worktree
+	selectedConv   *SessionEntry
+	shouldCreate   bool // true = create new session, false = attach to existing
+	forceAttach    bool
+	focusOnly      bool   // Just focus the window, don't attach
+	focusTmux      string // Tmux session to focus
+	focusSessionID string // Session ID for focus (needed for WSL window title search)
+	createWorktree bool   // true = create worktree for selected conv
+	worktreeBranch string // Branch name for worktree
 
 	// Status message (shown briefly after actions)
 	statusMsg string
@@ -692,20 +691,20 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m watchModel) columns() []table.Column {
 	if m.global {
 		return []table.Column{
-			{Header: "", Width: 2},                                                                                  // Session indicator
-			{Header: "ID", Width: 10, SortKey: "id"},                                                                // ID
+			{Header: "", Width: 2},                   // Session indicator
+			{Header: "ID", Width: 10, SortKey: "id"}, // ID
 			{Header: "PROJECT", MinWidth: 20, Weight: 0.4, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"}, // Project
-			{Header: "TITLE/PROMPT", MinWidth: 30, Weight: 0.6, Truncate: true, SortKey: "title"},                   // Title
-			{Header: "SIZE", Width: 8, SortKey: "size"},                                                             // File size
-			{Header: "MODIFIED", Width: 16, SortKey: "modified"},                                                    // Modified
+			{Header: "TITLE/PROMPT", MinWidth: 30, Weight: 0.6, Truncate: true, SortKey: "title"},                                 // Title
+			{Header: "SIZE", Width: 8, SortKey: "size"},                                                                           // File size
+			{Header: "MODIFIED", Width: 16, SortKey: "modified"},                                                                  // Modified
 		}
 	}
 	return []table.Column{
-		{Header: "", Width: 2},                                                    // Session indicator
-		{Header: "ID", Width: 10, SortKey: "id"},                                  // ID
-		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"},  // Title
-		{Header: "SIZE", Width: 8, SortKey: "size"},                               // File size
-		{Header: "MODIFIED", Width: 16, SortKey: "modified"},                      // Modified
+		{Header: "", Width: 2},                                                   // Session indicator
+		{Header: "ID", Width: 10, SortKey: "id"},                                 // ID
+		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"}, // Title
+		{Header: "SIZE", Width: 8, SortKey: "size"},                              // File size
+		{Header: "MODIFIED", Width: 16, SortKey: "modified"},                     // Modified
 	}
 }
 
@@ -1057,7 +1056,7 @@ func createSessionForConv(conv *SessionEntry) error {
 
 	// Use conv ID prefix as session ID
 	sessionID := conv.SessionID[:8]
-	tmuxSession := "tclaude-" + sessionID
+	tmuxSession := sessionID
 
 	// Build claude command with TCLAUDE_SESSION_ID env var
 	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude --resume %s", sessionID, conv.SessionID)
@@ -1078,7 +1077,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		"sh", "-c", claudeCmd,
 	}
 
-	cmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
+	cmd := clcommon.TmuxCommand(tmuxArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -1142,4 +1141,3 @@ func createWorktreeForConv(conv *SessionEntry, branch string) error {
 	// branch, fromBranch, fromConv, path, global, detached
 	return worktree.RunAdd(branch, "", conv.SessionID, "", false, false)
 }
-

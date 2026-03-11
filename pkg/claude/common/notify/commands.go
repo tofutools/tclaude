@@ -135,14 +135,6 @@ end tell
 	}
 }
 
-// BuildTmuxDetachCmd builds the command to detach a client from tmux.
-func BuildTmuxDetachCmd(clientTTY string) FocusCmd {
-	return FocusCmd{
-		Program: "tmux",
-		Args:    common.TmuxArgs("detach-client", "-t", clientTTY),
-	}
-}
-
 // NotificationBody builds the notification body text.
 func NotificationBody(sessionID, projectName, convTitle string) string {
 	shortID := sessionID

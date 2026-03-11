@@ -15,7 +15,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 		title     string
 		body      string
 		sessionID string
-		clPath  string
+		clPath    string
 		tmuxDir   string
 		wantArgs  []string
 	}{
@@ -24,7 +24,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 			title:     "Claude: Idle",
 			body:      "abc123 | myproject - Working on feature",
 			sessionID: "abc123",
-			clPath:  "/usr/local/bin/tclaude",
+			clPath:    "/usr/local/bin/tclaude",
 			tmuxDir:   "/opt/homebrew/bin",
 			wantArgs: []string{
 				"-title", "Claude: Idle",
@@ -38,7 +38,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 			title:     "Claude: Awaiting permission",
 			body:      "def456 | otherproject",
 			sessionID: "def456",
-			clPath:  "/home/user/go/bin/tclaude",
+			clPath:    "/home/user/go/bin/tclaude",
 			tmuxDir:   "",
 			wantArgs: []string{
 				"-title", "Claude: Awaiting permission",
@@ -52,7 +52,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 			title:     "Claude: Idle",
 			body:      "test | proj",
 			sessionID: "test",
-			clPath:  "",
+			clPath:    "",
 			tmuxDir:   "",
 			wantArgs: []string{
 				"-title", "Claude: Idle",
@@ -243,37 +243,17 @@ func TestBuildDarwiniTermFocusCmd(t *testing.T) {
 	}
 }
 
-func TestBuildTmuxDetachCmd(t *testing.T) {
-	cmd := BuildTmuxDetachCmd("/dev/ttys001")
-
-	if cmd.Program != "tmux" {
-		t.Errorf("Program = %q, want %q", cmd.Program, "tmux")
-	}
-
-	wantArgs := []string{"-L", "tclaude", "detach-client", "-t", "/dev/ttys001"}
-	if len(cmd.Args) != len(wantArgs) {
-		t.Errorf("Args = %v, want %v", cmd.Args, wantArgs)
-		return
-	}
-
-	for i, arg := range cmd.Args {
-		if arg != wantArgs[i] {
-			t.Errorf("Args[%d] = %q, want %q", i, arg, wantArgs[i])
-		}
-	}
-}
-
 func TestFocusCommandString(t *testing.T) {
 	tests := []struct {
 		name      string
-		clPath  string
+		clPath    string
 		tmuxDir   string
 		sessionID string
 		wantFunc  func(tmuxDir string) string // dynamic expected value
 	}{
 		{
 			name:      "with tmux dir",
-			clPath:  "/usr/bin/tclaude",
+			clPath:    "/usr/bin/tclaude",
 			tmuxDir:   "/opt/homebrew/bin",
 			sessionID: "abc123",
 			wantFunc: func(tmuxDir string) string {
@@ -282,7 +262,7 @@ func TestFocusCommandString(t *testing.T) {
 		},
 		{
 			name:      "without tmux dir",
-			clPath:  "/usr/bin/tclaude",
+			clPath:    "/usr/bin/tclaude",
 			tmuxDir:   "",
 			sessionID: "abc123",
 			wantFunc: func(_ string) string {
@@ -291,7 +271,7 @@ func TestFocusCommandString(t *testing.T) {
 		},
 		{
 			name:      "fallback",
-			clPath:  "",
+			clPath:    "",
 			tmuxDir:   "",
 			sessionID: "xyz",
 			wantFunc: func(_ string) string {

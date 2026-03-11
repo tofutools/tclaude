@@ -9,14 +9,13 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"sync"
 	"syscall"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 var upgrader = websocket.Upgrader{
@@ -104,7 +103,7 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 		clcommon.TmuxCommand("set-option", "-t", tmuxSession, "window-size", "smallest").Run()
 
 		// Spawn tmux attach in a PTY
-		cmd := exec.Command("tmux", clcommon.TmuxArgs("attach-session", "-t", tmuxSession)...)
+		cmd := clcommon.TmuxCommand("attach-session", "-t", tmuxSession)
 		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 		ptmx, err := pty.Start(cmd)

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 )
 
 type NewParams struct {
@@ -125,7 +125,7 @@ func runNew(params *NewParams) error {
 	if params.Label != "" {
 		sessionID = params.Label
 	}
-	tmuxSession := "tclaude-" + sessionID
+	tmuxSession := sessionID
 
 	// Build claude command with TCLAUDE_SESSION_ID env var
 	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude", sessionID)
@@ -151,7 +151,7 @@ func runNew(params *NewParams) error {
 		"sh", "-c", claudeCmd,
 	}
 
-	tmuxCmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
+	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
 	tmuxCmd.Stdout = os.Stdout
 	tmuxCmd.Stderr = os.Stderr
 

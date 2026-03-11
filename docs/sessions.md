@@ -29,9 +29,9 @@ tclaude session new -d
 
 **Flags:**
 
-| Flag | Description |
-|------|-------------|
-| `-d, --detach` | Start session without attaching |
+| Flag            | Description                     |
+|-----------------|---------------------------------|
+| `-d, --detach`  | Start session without attaching |
 | `--resume <id>` | Resume an existing conversation |
 
 ### session ls
@@ -55,12 +55,12 @@ tclaude session ls --hide exited
 
 **Flags:**
 
-| Flag | Description |
-|------|-------------|
-| `-w, --watch` | Interactive watch mode |
-| `-a, --all` | Include exited sessions |
-| `--status <s>` | Show only this status |
-| `--hide <s>` | Hide this status |
+| Flag           | Description                            |
+|----------------|----------------------------------------|
+| `-w, --watch`  | Interactive watch mode                 |
+| `-a, --all`    | Include exited sessions                |
+| `--status <s>` | Show only this status                  |
+| `--hide <s>`   | Hide this status                       |
 | `--sort <col>` | Sort by: id, dir, status, age, updated |
 
 **Status values:** `idle`, `working`, `awaiting-permission`, `awaiting-input`, `exited`
@@ -101,47 +101,47 @@ Press `w` or use `-w` flag to enter interactive mode.
 
 ### Navigation
 
-| Key | Action |
-|-----|--------|
-| `↑`/`k` | Move up |
-| `↓`/`j` | Move down |
-| `Enter` | Attach to session |
-| `q`/`Esc` | Quit |
+| Key       | Action            |
+|-----------|-------------------|
+| `↑`/`k`   | Move up           |
+| `↓`/`j`   | Move down         |
+| `Enter`   | Attach to session |
+| `q`/`Esc` | Quit              |
 
 ### Search
 
-| Key | Action |
-|-----|--------|
-| `/` | Start search |
-| `Esc` | Clear search / exit search mode |
-| `Ctrl+U` | Clear search input |
-| `↑`/`↓` | Exit search and navigate |
+| Key      | Action                          |
+|----------|---------------------------------|
+| `/`      | Start search                    |
+| `Esc`    | Clear search / exit search mode |
+| `Ctrl+U` | Clear search input              |
+| `↑`/`↓`  | Exit search and navigate        |
 
 ### Actions
 
-| Key | Action |
-|-----|--------|
+| Key       | Action                           |
+|-----------|----------------------------------|
 | `Del`/`x` | Kill session (with confirmation) |
-| `r` | Refresh list |
-| `h`/`?` | Show help |
+| `r`       | Refresh list                     |
+| `h`/`?`   | Show help                        |
 
 ### Filtering
 
-| Key | Action |
-|-----|--------|
-| `f` | Open filter menu |
+| Key     | Action               |
+|---------|----------------------|
+| `f`     | Open filter menu     |
 | `Space` | Toggle filter option |
-| `Enter` | Apply filter |
+| `Enter` | Apply filter         |
 
 ### Sorting
 
-| Key | Action |
-|-----|--------|
-| `1`/`F1` | Sort by ID |
+| Key      | Action            |
+|----------|-------------------|
+| `1`/`F1` | Sort by ID        |
 | `2`/`F2` | Sort by Directory |
-| `3`/`F3` | Sort by Status |
-| `4`/`F4` | Sort by Age |
-| `5`/`F5` | Sort by Updated |
+| `3`/`F3` | Sort by Status    |
+| `4`/`F4` | Sort by Age       |
+| `5`/`F5` | Sort by Updated   |
 
 Press the same key again to toggle ascending/descending/off.
 
@@ -149,24 +149,24 @@ Press the same key again to toggle ascending/descending/off.
 
 Sessions report their status via Claude hooks:
 
-| Status | Color | Description |
-|--------|-------|-------------|
-| `idle` | 🟡 Yellow | Claude is waiting for input |
-| `working` | 🟢 Green | Claude is processing |
-| `awaiting-permission` | 🔴 Red | Needs permission approval |
-| `awaiting-input` | 🔴 Red | Waiting for user input |
-| `exited` | ⚫ Gray | Session has ended |
+| Status                | Color     | Description                 |
+|-----------------------|-----------|-----------------------------|
+| `idle`                | 🟡 Yellow | Claude is waiting for input |
+| `working`             | 🟢 Green  | Claude is processing        |
+| `awaiting-permission` | 🔴 Red    | Needs permission approval   |
+| `awaiting-input`      | 🔴 Red    | Waiting for user input      |
+| `exited`              | ⚫ Gray    | Session has ended           |
 
 ## Tmux Integration
 
-Sessions run in tmux with the naming convention `tclaude-<id>`.
+tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. 
 
 ```bash
 # List all tclaude tmux sessions
-tmux ls | grep tclaude-
+tmux -L tclaude ls
 
 # Manually attach
-tmux attach -t tclaude-abc123
+tmux -L tclaude attach -t abc123
 
 # Detach from inside tmux
 Ctrl+B D
@@ -207,4 +207,4 @@ Using both options simultaneously causes conflicts - the scroll wheel behavior b
 set -g history-limit 10000
 ```
 
-Reload config after changes: `tmux source ~/.tmux.conf`
+Reload config after changes: `tmux -L tclaude source ~/.tmux.conf`

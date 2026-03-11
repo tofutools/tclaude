@@ -91,7 +91,7 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool) error {
 	session.EnsureHooksInstalled(false, os.Stdout, os.Stderr)
 
 	sessionID := "tasks-" + session.GenerateSessionID()
-	tmuxSession := "tclaude-" + sessionID
+	tmuxSession := sessionID
 
 	// Build command to run the task loop inside tmux
 	watchFlag := ""
@@ -121,7 +121,7 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool) error {
 		"sh", "-c", runnerCmd,
 	}
 
-	tmuxCmd := exec.Command("tmux", clcommon.TmuxArgs(tmuxArgs...)...)
+	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
 	tmuxCmd.Stdout = os.Stdout
 	tmuxCmd.Stderr = os.Stderr
 

@@ -24,7 +24,7 @@ func attachToSessionWithFlags(tmuxSession string, force bool) error {
 		args = []string{"attach-session", "-d", "-t", tmuxSession}
 	}
 
-	cmd := exec.Command("tmux", clcommon.TmuxArgs(args...)...)
+	cmd := clcommon.TmuxCommand(args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
