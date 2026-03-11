@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 1
+const currentVersion = 2
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -23,11 +23,17 @@ func migrate(db *sql.DB) error {
 		if err := createSchema(db); err != nil {
 			return err
 		}
-		return importLegacyData(db)
+		if err := importLegacyData(db); err != nil {
+			return err
+		}
+		ver = 1 // createSchema sets version to 1
 	}
 
-	// Future migrations would go here:
-	// if ver < 2 { migrateV1toV2(db) }
+	if ver < 2 {
+		if err := migrateV1toV2(db); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -80,6 +86,29 @@ type legacySessionJSON struct {
 	StatusDetail string    `json:"statusDetail,omitempty"`
 	Created      time.Time `json:"created"`
 	Updated      time.Time `json:"updated"`
+}
+
+func migrateV1toV2(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS usage_cache (
+			id              INTEGER PRIMARY KEY,
+			data            TEXT NOT NULL DEFAULT '{}',
+			fetched_at      TEXT NOT NULL DEFAULT '',
+			last_attempt_at TEXT NOT NULL DEFAULT ''
+		);
+
+		CREATE TABLE IF NOT EXISTS git_cache (
+			repo_hash  TEXT PRIMARY KEY,
+			data       TEXT NOT NULL DEFAULT '{}',
+			fetched_at TEXT NOT NULL DEFAULT ''
+		);
+
+		UPDATE schema_version SET version = 2;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v1→v2: %w", err)
+	}
+	return nil
 }
 
 func importLegacyData(db *sql.DB) error {

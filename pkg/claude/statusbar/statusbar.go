@@ -12,15 +12,15 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
@@ -82,52 +82,27 @@ func Cmd() *cobra.Command {
 	return cmd
 }
 
-// atomicWrite writes data to a temp file then renames it to path, avoiding partial reads.
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	_ = os.MkdirAll(dir, 0755)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
-func gitCachePath() string {
-	cacheDir := common.CacheDir()
-	if cacheDir == "" {
-		return ""
-	}
-	// Key cache per git repo root so parallel sessions in different repos don't clash
+// gitCacheKey returns a hash key for the current git repo root.
+func gitCacheKey() string {
 	repoRoot := gitCmd("rev-parse", "--show-toplevel")
 	if repoRoot == "" {
 		return ""
 	}
 	h := sha256.Sum256([]byte(repoRoot))
-	return filepath.Join(cacheDir, "claude-git-"+hex.EncodeToString(h[:8])+".json")
+	return hex.EncodeToString(h[:8])
 }
 
 func loadGitCache() *cachedGitData {
-	path := gitCachePath()
-	if path == "" {
+	key := gitCacheKey()
+	if key == "" {
 		return nil
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	row, err := db.LoadGitCache(key)
+	if err != nil || row == nil {
 		return nil
 	}
 	var cached cachedGitData
-	if err := json.Unmarshal(data, &cached); err != nil {
+	if err := json.Unmarshal(row.Data, &cached); err != nil {
 		return nil
 	}
 	if time.Since(cached.FetchedAt) > gitCacheTTL {
@@ -137,19 +112,20 @@ func loadGitCache() *cachedGitData {
 }
 
 func saveGitCache(g *cachedGitData) {
-	path := gitCachePath()
-	if path == "" {
-		return
-	}
 	data, err := json.Marshal(g)
 	if err != nil {
 		return
 	}
-	_ = atomicWrite(path, data)
+	key := gitCacheKey()
+	if key == "" {
+		return
+	}
+	if err := db.SaveGitCache(key, data, g.FetchedAt); err != nil {
+		slog.Warn("failed to save git cache", "error", err)
+	}
 }
 
 func run() error {
-	defer common.AcquireHookLock()()
 
 	// Read JSON from stdin (only if piped, not a terminal)
 	var stdinData []byte

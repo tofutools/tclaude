@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 const (
@@ -100,12 +100,43 @@ type CachedUsage struct {
 	LastError      string        `json:"last_error,omitempty"`
 }
 
-func cachePath() string {
-	cacheDir := common.CacheDir()
-	if cacheDir == "" {
-		return ""
+// loadCache returns cached usage if still fresh (within TTL).
+func loadCache() *CachedUsage {
+	return loadCacheWithTTL(cacheTTL)
+}
+
+// loadCacheStale returns cached usage regardless of age, or nil if missing/corrupt.
+func loadCacheStale() *CachedUsage {
+	return loadCacheWithTTL(0)
+}
+
+func loadCacheWithTTL(ttl time.Duration) *CachedUsage {
+	row, err := db.LoadUsageCache()
+	if err != nil || row == nil {
+		return nil
 	}
-	return filepath.Join(cacheDir, "claude-usage.json")
+
+	var cached CachedUsage
+	if err := json.Unmarshal(row.Data, &cached); err != nil {
+		return nil
+	}
+
+	if ttl > 0 && time.Since(cached.LastAttemptAt) > ttl {
+		return nil
+	}
+
+	return &cached
+}
+
+// saveCache persists usage data to SQLite.
+func saveCache(usage *CachedUsage) {
+	data, err := json.Marshal(usage)
+	if err != nil {
+		return
+	}
+	if err := db.SaveUsageCache(data, usage.FetchedAt, usage.LastAttemptAt); err != nil {
+		slog.Warn("failed to save usage cache", "error", err)
+	}
 }
 
 func credentialsPath() string {
@@ -383,67 +414,6 @@ func writeCredentials(store credentialStore, data []byte) error {
 	}
 }
 
-// loadCache returns cached usage if still fresh (within TTL).
-func loadCache() *CachedUsage {
-	return loadCacheWithTTL(cacheTTL)
-}
-
-// loadCacheStale returns cached usage regardless of age, or nil if missing/corrupt.
-func loadCacheStale() *CachedUsage {
-	return loadCacheWithTTL(0)
-}
-
-func loadCacheWithTTL(ttl time.Duration) *CachedUsage {
-	path := cachePath()
-	if path == "" {
-		return nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	var cached CachedUsage
-	if err := json.Unmarshal(data, &cached); err != nil {
-		return nil
-	}
-
-	if ttl > 0 && time.Since(cached.LastAttemptAt) > ttl {
-		return nil
-	}
-
-	return &cached
-}
-
-// saveCache persists usage data to disk using atomic write (tmp + rename).
-func saveCache(usage *CachedUsage) {
-	path := cachePath()
-	if path == "" {
-		return
-	}
-	dir := filepath.Dir(path)
-	_ = os.MkdirAll(dir, 0755)
-	data, err := json.Marshal(usage)
-	if err != nil {
-		return
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return
-	}
-	_ = os.Rename(tmpPath, path)
-}
 
 // FetchRawWithRetry calls the usage API. On 429 it attempts a token refresh
 // only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default because
@@ -629,11 +599,20 @@ func buildCachedUsage(resp *Response) *CachedUsage {
 }
 
 // RefreshCache updates the cache if stale. Called from hooks when the user is
-// likely looking at the status bar. Skips the fetch if the disk cache is fresh.
+// likely looking at the status bar. Uses atomic SQLite claim to prevent
+// concurrent hook processes from all hitting the API simultaneously.
 func RefreshCache() {
-	if cached := loadCache(); cached != nil {
-		return // still fresh, nothing to do
+	// Atomic check-and-claim: only one process proceeds per TTL window.
+	// If we crash after claiming, the TTL expires naturally (no stuck locks).
+	claimed, err := db.TryClaimUsageFetch(cacheTTL)
+	if err != nil {
+		slog.Warn("RefreshCache: failed to check cache", "error", err)
+		return
 	}
+	if !claimed {
+		return // still fresh or another process claimed it
+	}
+
 	token, err := getTokenFunc()
 	if err != nil {
 		slog.Warn("RefreshCache: failed to get access token", "error", err)
