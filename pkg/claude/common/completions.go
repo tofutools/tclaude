@@ -216,6 +216,59 @@ func ShellQuoteArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+// BuildEnvExports builds a shell command prefix that exports all environment variables.
+// It excludes terminal-specific variables that tmux manages itself.
+// Additional variables can be passed that override or add to the environment.
+func BuildEnvExports(additional map[string]string) string {
+	// Variables that should not be forwarded (tmux/terminal-specific)
+	skipVars := map[string]bool{
+		"TMUX":             true,
+		"TMUX_PANE":        true,
+		"TERM":             true,
+		"TERM_PROGRAM":     true,
+		"WINDOWID":         true,
+		"STY":              true,
+		"WINDOW":           true,
+		"TERMCAP":          true,
+		"COLUMNS":          true,
+		"LINES":            true,
+	}
+
+	var exports []string
+
+	// Export all current environment variables (except skipped ones)
+	for _, env := range os.Environ() {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := parts[0]
+		value := parts[1]
+
+		if skipVars[key] {
+			continue
+		}
+
+		// Skip if this will be overridden by additional vars
+		if _, overridden := additional[key]; overridden {
+			continue
+		}
+
+		exports = append(exports, "export "+key+"="+ShellQuoteArg(value))
+	}
+
+	// Add additional/override variables
+	for key, value := range additional {
+		exports = append(exports, "export "+key+"="+ShellQuoteArg(value))
+	}
+
+	if len(exports) == 0 {
+		return ""
+	}
+
+	return strings.Join(exports, "; ") + "; "
+}
+
 // FormatConvCompletion formats a conversation entry for shell completion
 func FormatConvCompletion(e ConvEntry) string {
 	sanitize := func(s string) string {
