@@ -1,10 +1,7 @@
 package session
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,10 +11,11 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 )
 
 // SessionState represents the state of a Claude session
@@ -115,152 +113,116 @@ func Cmd() *cobra.Command {
 	return cmd
 }
 
-// SessionsDir returns the directory where session state files are stored
-func SessionsDir() string {
+// DebugLogPath returns the path to the debug log file
+func DebugLogPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".tclaude", "claude-sessions")
+	return filepath.Join(home, ".tclaude", "debug.log")
 }
 
-// EnsureSessionsDir creates the sessions directory if it doesn't exist
-func EnsureSessionsDir() error {
-	dir := SessionsDir()
-	return os.MkdirAll(dir, 0755)
+// EnsureDebugLogDir creates the directory for debug logs if it doesn't exist.
+func EnsureDebugLogDir() error {
+	path := DebugLogPath()
+	if path == "" {
+		return fmt.Errorf("cannot determine debug log path")
+	}
+	return os.MkdirAll(filepath.Dir(path), 0755)
 }
 
-// SessionStatePath returns the path to a session's state file
-func SessionStatePath(id string) string {
-	return filepath.Join(SessionsDir(), id+".json")
+// toRow converts a SessionState to a db.SessionRow.
+func toRow(s *SessionState) *db.SessionRow {
+	return &db.SessionRow{
+		ID:           s.ID,
+		TmuxSession:  s.TmuxSession,
+		PID:          s.PID,
+		Cwd:          s.Cwd,
+		ConvID:       s.ConvID,
+		Status:       s.Status,
+		StatusDetail: s.StatusDetail,
+		CreatedAt:    s.Created,
+		UpdatedAt:    s.Updated,
+	}
 }
 
-// DebugLogPath returns the path to the debug log file
-func DebugLogPath() string {
-	return filepath.Join(SessionsDir(), "debug.log")
+// fromRow converts a db.SessionRow to a SessionState.
+func fromRow(r *db.SessionRow) *SessionState {
+	return &SessionState{
+		ID:           r.ID,
+		TmuxSession:  r.TmuxSession,
+		PID:          r.PID,
+		Cwd:          r.Cwd,
+		ConvID:       r.ConvID,
+		Status:       r.Status,
+		StatusDetail: r.StatusDetail,
+		Created:      r.CreatedAt,
+		Updated:      r.UpdatedAt,
+	}
 }
 
-// SaveSessionState saves session state to disk using atomic write (temp file + rename)
-// to avoid race conditions when multiple hook callbacks fire concurrently.
+// SaveSessionState saves session state to the database.
 func SaveSessionState(state *SessionState) error {
-	if err := EnsureSessionsDir(); err != nil {
-		return err
-	}
 	state.Updated = time.Now()
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	targetPath := SessionStatePath(state.ID)
-	tmpFile, err := os.CreateTemp(SessionsDir(), state.ID+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-
-	return os.Rename(tmpPath, targetPath)
+	return db.SaveSession(toRow(state))
 }
 
-// LoadSessionState loads session state from disk
+// LoadSessionState loads session state from the database.
 func LoadSessionState(id string) (*SessionState, error) {
-	path := SessionStatePath(id)
-	data, err := os.ReadFile(path)
+	row, err := db.LoadSession(id)
 	if err != nil {
 		return nil, err
 	}
-	var state SessionState
-	if err := json.Unmarshal(data, &state); err != nil {
-		// Try json.Decoder which tolerates trailing garbage after a valid JSON object.
-		// This handles files corrupted by pre-atomic-write race conditions.
-		dec := json.NewDecoder(bytes.NewReader(data))
-		if decErr := dec.Decode(&state); decErr != nil {
-			slog.Error("corrupt session state file", "path", path, "error", err, "raw_content", string(data))
-			return nil, err
-		}
-		slog.Warn("session state file had trailing garbage, repaired", "path", path)
-	}
-	return &state, nil
+	return fromRow(row), nil
 }
 
-// DeleteSessionState removes a session's state file
+// DeleteSessionState removes a session from the database.
 func DeleteSessionState(id string) error {
-	return os.Remove(SessionStatePath(id))
+	return db.DeleteSession(id)
 }
 
 // DefaultCleanupAge is the default max age for exited sessions in prune command
 const DefaultCleanupAge = 7 * 24 * time.Hour // 1 week
 
-// ListSessionStates returns all session states
+// ListSessionStates returns all session states.
 func ListSessionStates() ([]*SessionState, error) {
-
-	dir := SessionsDir()
-	entries, err := os.ReadDir(dir)
+	rows, err := db.ListSessions()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-
-	var states []*SessionState
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		id := entry.Name()[:len(entry.Name())-5] // remove .json
-		state, err := LoadSessionState(id)
-		if err != nil {
-			continue
-		}
-		states = append(states, state)
+	states := make([]*SessionState, len(rows))
+	for i, r := range rows {
+		states[i] = fromRow(r)
 	}
 	return states, nil
 }
 
-// CleanupOldExitedSessions removes exited session states older than maxAge
+// CleanupOldExitedSessions removes exited session states older than maxAge.
 func CleanupOldExitedSessions(maxAge time.Duration) error {
-	dir := SessionsDir()
-	entries, err := os.ReadDir(dir)
+	_, err := db.CleanupOldExited(maxAge)
+	return err
+}
+
+// FindSessionByConvID finds a session by Claude conversation ID using an indexed lookup.
+func FindSessionByConvID(convID string) (*SessionState, error) {
+	row, err := db.FindSessionByConvID(convID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
+		return nil, err
 	}
-
-	cutoff := time.Now().Add(-maxAge)
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		id := entry.Name()[:len(entry.Name())-5]
-		state, err := LoadSessionState(id)
-		if err != nil {
-			// Can't load, maybe corrupted - delete it
-			_ = DeleteSessionState(id)
-			continue
-		}
-
-		// Refresh status to ensure we have current state
-		RefreshSessionStatus(state)
-
-		// Delete if exited and older than cutoff
-		if state.Status == StatusExited && state.Updated.Before(cutoff) {
-			_ = DeleteSessionState(id)
-		}
+	if row == nil {
+		return nil, nil
 	}
-	return nil
+	return fromRow(row), nil
+}
+
+// SessionExists checks whether a session with the given ID exists.
+func SessionExists(id string) (bool, error) {
+	return db.SessionExists(id)
+}
+
+// MaxUpdatedAt returns the most recent updated_at across all sessions.
+func MaxUpdatedAt() (time.Time, error) {
+	return db.MaxUpdatedAt()
 }
 
 // IsTmuxSessionAlive checks if a tmux session exists

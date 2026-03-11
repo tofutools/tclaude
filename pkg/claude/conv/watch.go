@@ -1,7 +1,6 @@
 package conv
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
@@ -29,11 +27,6 @@ var (
 )
 
 type watchTickMsg time.Time
-type watchFileChangeMsg struct {
-	sessionID string            // ID of the session that changed (empty for delete)
-	deleted   bool              // true if the file was deleted
-	watcher   *fsnotify.Watcher // reuse watcher across events
-}
 
 // watchConfirmMode represents confirmation dialogs
 type watchConfirmMode int
@@ -92,6 +85,9 @@ type watchModel struct {
 
 	// Status message (shown briefly after actions)
 	statusMsg string
+
+	// DB polling
+	lastSessionUpdatedAt time.Time
 }
 
 func initialWatchModel(global bool, since, before string) watchModel {
@@ -109,98 +105,13 @@ func initialWatchModel(global bool, since, before string) watchModel {
 }
 
 func (m watchModel) Init() tea.Cmd {
-	return tea.Batch(watchTickCmd(), watchSessionFilesCmd(nil), tea.EnterAltScreen)
+	return tea.Batch(watchTickCmd(), tea.EnterAltScreen)
 }
 
 func watchTickCmd() tea.Cmd {
-	// Fallback tick - slower now that we have file watching
-	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(1500*time.Millisecond, func(t time.Time) tea.Msg {
 		return watchTickMsg(t)
 	})
-}
-
-// watchSessionFilesCmd starts or reuses a file watcher on the session state directory.
-// The watcher is kept alive across events to avoid missing rapid event sequences
-// (e.g., REMOVE+CREATE from atomic file renames).
-func watchSessionFilesCmd(existing *fsnotify.Watcher) tea.Cmd {
-	return func() tea.Msg {
-		watcher := existing
-		if watcher == nil {
-			var err error
-			watcher, err = fsnotify.NewWatcher()
-			if err != nil {
-				return nil // Fall back to polling
-			}
-
-			dir := session.SessionsDir()
-			if dir == "" {
-				watcher.Close()
-				return nil
-			}
-
-			if err := session.EnsureSessionsDir(); err != nil {
-				watcher.Close()
-				return nil
-			}
-
-			if err := watcher.Add(dir); err != nil {
-				watcher.Close()
-				return nil
-			}
-		}
-
-		// Wait for a relevant file change
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return nil
-				}
-				// Only care about .json files (session state files)
-				if filepath.Ext(event.Name) != ".json" {
-					continue
-				}
-				sessionID := filepath.Base(event.Name)
-				sessionID = sessionID[:len(sessionID)-5] // remove .json
-
-				// For remove/rename: atomic writes generate REMOVE then CREATE.
-				// Wait briefly for the replacement file to appear.
-				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-					time.Sleep(50 * time.Millisecond)
-					if isValidSessionStateFile(event.Name) {
-						return watchFileChangeMsg{sessionID: sessionID, deleted: false, watcher: watcher}
-					}
-					return watchFileChangeMsg{sessionID: sessionID, deleted: true, watcher: watcher}
-				}
-
-				// For write/create, verify the file is complete and parseable
-				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-					if isValidSessionStateFile(event.Name) {
-						return watchFileChangeMsg{sessionID: sessionID, deleted: false, watcher: watcher}
-					}
-					// File not yet complete, wait for next event
-				}
-
-			case _, ok := <-watcher.Errors:
-				if !ok {
-					return nil
-				}
-				// On error, close and fall back to polling
-				watcher.Close()
-				return nil
-			}
-		}
-	}
-}
-
-// isValidSessionStateFile checks if a session state file is complete and parseable
-func isValidSessionStateFile(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	var state session.SessionState
-	return json.Unmarshal(data, &state) == nil
 }
 
 // loadConversations loads all conversations based on settings
@@ -295,41 +206,6 @@ func (m watchModel) refreshActiveSessions() watchModel {
 		if state.Status != session.StatusExited && state.ConvID != "" {
 			m.activeSessions[state.ConvID] = state
 		}
-	}
-
-	return m
-}
-
-// updateSingleSession updates just one session in the activeSessions map
-func (m watchModel) updateSingleSession(sessionID string, deleted bool) watchModel {
-	if deleted {
-		// Find and remove any session with this ID
-		for convID, state := range m.activeSessions {
-			if state.ID == sessionID {
-				delete(m.activeSessions, convID)
-				break
-			}
-		}
-		return m
-	}
-
-	// Load the updated session state
-	state, err := session.LoadSessionState(sessionID)
-	if err != nil {
-		return m
-	}
-
-	session.RefreshSessionStatus(state)
-
-	// Update or remove from map based on status
-	if state.Status == session.StatusExited {
-		// Remove from active sessions
-		if state.ConvID != "" {
-			delete(m.activeSessions, state.ConvID)
-		}
-	} else if state.ConvID != "" {
-		// Update in active sessions
-		m.activeSessions[state.ConvID] = state
 	}
 
 	return m
@@ -673,14 +549,13 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.ensureCursorVisible()
 
 	case watchTickMsg:
-		// Only refresh session state (lightweight), not full conversation list
-		m = m.refreshActiveSessions()
+		// Poll DB: only refresh if session data has changed
+		maxUpdated, err := session.MaxUpdatedAt()
+		if err == nil && maxUpdated.After(m.lastSessionUpdatedAt) {
+			m.lastSessionUpdatedAt = maxUpdated
+			m = m.refreshActiveSessions()
+		}
 		return m, watchTickCmd()
-
-	case watchFileChangeMsg:
-		// Session state file changed - update just that session
-		m = m.updateSingleSession(msg.sessionID, msg.deleted)
-		return m, watchSessionFilesCmd(msg.watcher)
 	}
 
 	return m, nil

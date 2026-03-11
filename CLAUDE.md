@@ -28,7 +28,7 @@ CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd
 
 | Package     | Purpose                                                                                                                                                                           |
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `session`   | Core tmux-based session management (new, list, attach, kill, watch). Sessions tracked as JSON state files in `~/.tclaude/claude-sessions/`. Hook callbacks update session status. |
+| `session`   | Core tmux-based session management (new, list, attach, kill, watch). Sessions stored in SQLite (`~/.tclaude/db.sqlite`). Hook callbacks update session status. |
 | `conv`      | Conversation management (list, search, AI search, resume, copy, move, delete, prune). Reads Claude's `.jsonl` conversation files and `sessions-index.json`.                       |
 | `git`       | Git-based conversation sync across devices. Uses `~/.claude/projects_sync` as a separate git working directory.                                                                   |
 | `worktree`  | Git worktree management for parallel Claude sessions on different branches.                                                                                                       |
@@ -46,6 +46,7 @@ CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd
 | `config`    | tclaude config file (`~/.tclaude/config.json`)                                        |
 | `convops`   | Shared conversation operations (used by both `conv` and `convindex`)                  |
 | `convindex` | Conversation index management                                                         |
+| `db`        | SQLite store (`~/.tclaude/db.sqlite`) for session state and notification cooldown. WAL mode, pure-Go via `modernc.org/sqlite`. Auto-migrates legacy JSON files on first open. |
 | `notify`    | Desktop notifications (D-Bus on Linux, terminal-notifier on macOS, PowerShell on WSL) |
 | `table`     | Interactive sortable table UI using bubbletea                                         |
 | `terminal`  | Terminal detection and window focus (platform-specific)                               |
@@ -57,6 +58,6 @@ CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd
 ## Key patterns
 
 - Platform-specific code uses Go build tags: `_linux.go`, `_darwin.go`, `_windows.go`, `_unix.go`
-- Session state is persisted as JSON files with atomic writes (temp file + rename) to handle concurrent hook callbacks
+- Session state is stored in SQLite with WAL mode for concurrent access from hook callbacks
 - Interactive list views (sessions, conversations) use bubbletea with the shared `table` package
 - The status bar command is hidden (`cmd.Hidden = true`) - it's invoked by Claude Code's statusline feature, not directly by users
