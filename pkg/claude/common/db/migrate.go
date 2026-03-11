@@ -91,6 +91,18 @@ func importLegacyData(db *sql.DB) error {
 	importedSessions := importLegacySessions(db, home)
 	importedNotify := importLegacyNotifyState(db, home)
 
+	// Move debug.log from old location (~/.tclaude/claude-sessions/debug.log)
+	// to new location (~/.tclaude/debug.log) before renaming the directory.
+	oldDebugLog := filepath.Join(home, ".tclaude", "claude-sessions", "debug.log")
+	newDebugLog := filepath.Join(home, ".tclaude", "debug.log")
+	if _, err := os.Stat(oldDebugLog); err == nil {
+		if _, err := os.Stat(newDebugLog); os.IsNotExist(err) {
+			if err := os.Rename(oldDebugLog, newDebugLog); err != nil {
+				slog.Warn("failed to move debug.log", "error", err)
+			}
+		}
+	}
+
 	if importedSessions {
 		oldDir := filepath.Join(home, ".tclaude", "claude-sessions")
 		newDir := oldDir + ".migrated"

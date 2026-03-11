@@ -233,6 +233,8 @@ func TestLegacyImport(t *testing.T) {
 	}`), 0644)
 	// Create .auto marker
 	os.WriteFile(sessDir+"/abc12345.auto", []byte("auto-registered"), 0644)
+	// Create legacy debug.log
+	os.WriteFile(sessDir+"/debug.log", []byte("old debug data\n"), 0644)
 
 	// Create legacy notify state
 	notifyDir := dir + "/.tclaude/notify-state"
@@ -272,5 +274,17 @@ func TestLegacyImport(t *testing.T) {
 	}
 	if _, err := os.Stat(sessDir + ".migrated"); err != nil {
 		t.Error("expected .migrated sessions dir")
+	}
+
+	// Verify debug.log moved to new location
+	newDebugLog := dir + "/.tclaude/debug.log"
+	if data, err := os.ReadFile(newDebugLog); err != nil {
+		t.Error("expected debug.log at new location")
+	} else if string(data) != "old debug data\n" {
+		t.Errorf("debug.log content = %q, want %q", string(data), "old debug data\n")
+	}
+	// Old location should be gone (it was moved before the dir rename)
+	if _, err := os.Stat(sessDir + ".migrated/debug.log"); !os.IsNotExist(err) {
+		t.Error("debug.log should not remain in old dir")
 	}
 }
