@@ -1,38 +1,30 @@
 package session
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fsnotify/fsnotify"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 )
 
 var (
 	selectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")) // Dark gray background, preserves row foreground color
-	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))     // Yellow
-	workingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))      // Green
-	needsInput    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))     // Bright red
-	exitedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))     // Gray
+	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))            // Yellow
+	workingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))             // Green
+	needsInput    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))            // Bright red
+	exitedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))            // Gray
 	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("250"))
 	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	searchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )
 
 type tickMsg time.Time
-type fileChangeMsg struct {
-	sessionID string              // ID of the session that changed
-	deleted   bool                // true if the file was deleted
-	watcher   *fsnotify.Watcher  // reuse watcher across events
-}
 
 // Confirmation modes
 type confirmMode int
@@ -71,18 +63,19 @@ type model struct {
 	shouldAttachID string // session ID for inbox watcher
 	forceAttach    bool   // detach other clients when attaching
 	focusOnly      bool   // just focus, don't attach (session already attached elsewhere)
-	createNew     bool   // create a new session after quitting
-	includeAll    bool
-	sort          table.SortState
-	statusFilter  []string        // which statuses to show (empty = all)
-	hideFilter    []string        // which statuses to hide
-	confirmMode   confirmMode     // current confirmation dialog
-	filterMenu    bool            // showing filter menu
-	filterCursor  int             // cursor position in filter menu
-	filterChecked map[string]bool // checked items in filter menu
-	helpView      bool            // showing help view
-	searchInput   string          // current search query
-	searchFocused bool            // whether search box is focused
+	createNew      bool   // create a new session after quitting
+	includeAll     bool
+	sort           table.SortState
+	statusFilter   []string        // which statuses to show (empty = all)
+	hideFilter     []string        // which statuses to hide
+	confirmMode    confirmMode     // current confirmation dialog
+	filterMenu     bool            // showing filter menu
+	filterCursor   int             // cursor position in filter menu
+	filterChecked  map[string]bool // checked items in filter menu
+	helpView       bool            // showing help view
+	searchInput    string          // current search query
+	searchFocused  bool            // whether search box is focused
+	lastUpdatedAt  time.Time       // tracks DB changes for polling
 }
 
 func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
@@ -97,98 +90,13 @@ func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), watchSessionFiles(nil), tea.EnterAltScreen)
+	return tea.Batch(tickCmd(), tea.EnterAltScreen)
 }
 
 func tickCmd() tea.Cmd {
-	// Fallback tick - slower now that we have file watching
-	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
-}
-
-// watchSessionFiles starts or reuses a file watcher on the sessions directory.
-// The watcher is kept alive across events to avoid missing rapid event sequences
-// (e.g., REMOVE+CREATE from atomic file renames).
-func watchSessionFiles(existing *fsnotify.Watcher) tea.Cmd {
-	return func() tea.Msg {
-		watcher := existing
-		if watcher == nil {
-			var err error
-			watcher, err = fsnotify.NewWatcher()
-			if err != nil {
-				return nil // Fall back to polling
-			}
-
-			dir := SessionsDir()
-			if dir == "" {
-				watcher.Close()
-				return nil
-			}
-
-			if err := EnsureSessionsDir(); err != nil {
-				watcher.Close()
-				return nil
-			}
-
-			if err := watcher.Add(dir); err != nil {
-				watcher.Close()
-				return nil
-			}
-		}
-
-		// Wait for a relevant file change
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return nil
-				}
-				// Only care about .json files (session state files)
-				if filepath.Ext(event.Name) != ".json" {
-					continue
-				}
-				sessionID := filepath.Base(event.Name)
-				sessionID = sessionID[:len(sessionID)-5] // remove .json
-
-				// For remove/rename: atomic writes generate REMOVE then CREATE.
-				// Wait briefly for the replacement file to appear.
-				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-					time.Sleep(50 * time.Millisecond)
-					if isValidSessionFile(event.Name) {
-						return fileChangeMsg{sessionID: sessionID, deleted: false, watcher: watcher}
-					}
-					return fileChangeMsg{sessionID: sessionID, deleted: true, watcher: watcher}
-				}
-
-				// For write/create, verify the file is complete and parseable
-				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-					if isValidSessionFile(event.Name) {
-						return fileChangeMsg{sessionID: sessionID, deleted: false, watcher: watcher}
-					}
-					// File not yet complete, wait for next event
-				}
-
-			case _, ok := <-watcher.Errors:
-				if !ok {
-					return nil
-				}
-				// On error, close and fall back to polling
-				watcher.Close()
-				return nil
-			}
-		}
-	}
-}
-
-// isValidSessionFile checks if a session state file is complete and parseable
-func isValidSessionFile(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	var state SessionState
-	return json.Unmarshal(data, &state) == nil
 }
 
 func (m model) refreshSessions() model {
@@ -222,60 +130,6 @@ func (m model) refreshSessions() model {
 	m = m.applySearchFilter()
 
 	return m
-}
-
-// updateSingleSession updates just one session in the list
-func (m model) updateSingleSession(sessionID string, deleted bool) model {
-	if deleted {
-		// Remove session from allSessions
-		for i, s := range m.allSessions {
-			if s.ID == sessionID {
-				m.allSessions = append(m.allSessions[:i], m.allSessions[i+1:]...)
-				break
-			}
-		}
-		return m.applySearchFilter()
-	}
-
-	// Load the updated session state
-	state, err := LoadSessionState(sessionID)
-	if err != nil {
-		return m
-	}
-
-	RefreshSessionStatus(state)
-
-	// Check if session should be visible
-	shouldShow := m.includeAll || state.Status != StatusExited
-	if shouldShow && !m.matchesShowFilter(state.Status) {
-		shouldShow = false
-	}
-	if shouldShow && m.matchesHideFilter(state.Status) {
-		shouldShow = false
-	}
-
-	// Find and update or add the session
-	found := false
-	for i, s := range m.allSessions {
-		if s.ID == sessionID {
-			if shouldShow {
-				m.allSessions[i] = state
-			} else {
-				// Remove from list
-				m.allSessions = append(m.allSessions[:i], m.allSessions[i+1:]...)
-			}
-			found = true
-			break
-		}
-	}
-
-	// Add new session if not found and should be shown
-	if !found && shouldShow {
-		m.allSessions = append(m.allSessions, state)
-		SortSessionsByKey(m.allSessions, m.sort.Key, m.sort.Direction)
-	}
-
-	return m.applySearchFilter()
 }
 
 // applySearchFilter filters sessions based on search input
@@ -589,12 +443,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewportHeight = max(msg.Height-10, 5) // Reserve space for header, footer, etc.
 
 	case tickMsg:
-		m = m.refreshSessions()
+		// Poll DB: only do full refresh if data has changed
+		maxUpdated, err := MaxUpdatedAt()
+		if err == nil && maxUpdated.After(m.lastUpdatedAt) {
+			m.lastUpdatedAt = maxUpdated
+			m = m.refreshSessions()
+		}
 		return m, tickCmd()
-
-	case fileChangeMsg:
-		m = m.updateSingleSession(msg.sessionID, msg.deleted)
-		return m, watchSessionFiles(msg.watcher)
 	}
 
 	return m, nil
@@ -610,12 +465,12 @@ var (
 // Used by both Update (for sort key handling) and View (for rendering).
 func (m model) columns() []table.Column {
 	return []table.Column{
-		{Header: "", Width: 2},                                                                         // Attached indicator
-		{Header: "ID", Width: 10, SortKey: "id"},                                                       // ID
+		{Header: "", Width: 2},                   // Attached indicator
+		{Header: "ID", Width: 10, SortKey: "id"}, // ID
 		{Header: "PROJECT", MinWidth: 15, Weight: 0.25, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"}, // Project
-		{Header: "TITLE/PROMPT", MinWidth: 20, Weight: 0.5, Truncate: true},                            // Title/prompt (not sortable)
-		{Header: "STATUS", MinWidth: 15, Weight: 0.25, Truncate: true, SortKey: "status"},              // Status
-		{Header: "UPDATED", Width: 10, SortKey: "updated"},                                             // Updated
+		{Header: "TITLE/PROMPT", MinWidth: 20, Weight: 0.5, Truncate: true},                                                    // Title/prompt (not sortable)
+		{Header: "STATUS", MinWidth: 15, Weight: 0.25, Truncate: true, SortKey: "status"},                                      // Status
+		{Header: "UPDATED", Width: 10, SortKey: "updated"},                                                                     // Updated
 	}
 }
 

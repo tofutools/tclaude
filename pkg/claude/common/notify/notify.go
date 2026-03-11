@@ -10,21 +10,8 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
-
-// stateDir returns the directory for notification state files.
-func stateDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".tclaude", "notify-state")
-}
-
-// stateFile returns the path to a session's notification state file.
-func stateFile(sessionID string) string {
-	return filepath.Join(stateDir(), sessionID)
-}
 
 // IsEnabled returns whether notifications are enabled.
 func IsEnabled() bool {
@@ -36,7 +23,7 @@ func IsEnabled() bool {
 }
 
 // OnStateTransition is called when a session changes state.
-// It checks cooldown via file modification time and sends a notification if appropriate.
+// It checks cooldown via the database and sends a notification if appropriate.
 // convTitle is optional - pass empty string if not available.
 func OnStateTransition(sessionID, from, to, cwd, convTitle string) {
 	cfg, err := config.Load()
@@ -44,32 +31,22 @@ func OnStateTransition(sessionID, from, to, cwd, convTitle string) {
 		return
 	}
 
-	// Check if transition matches config
 	if !cfg.Notifications.MatchesTransition(from, to) {
 		return
 	}
 
-	// Check cooldown via file modification time
+	// Check cooldown via database
 	cooldown := time.Duration(cfg.Notifications.CooldownSeconds) * time.Second
-	statePath := stateFile(sessionID)
-
-	if info, err := os.Stat(statePath); err == nil {
-		if time.Since(info.ModTime()) < cooldown {
+	if lastNotify, found, err := db.GetNotifyTime(sessionID); err == nil && found {
+		if time.Since(lastNotify) < cooldown {
 			return
 		}
 	}
 
-	// Send notification
 	Send(sessionID, formatStatus(to), cwd, convTitle)
 
-	// Update state file (touch it)
-	if err := os.MkdirAll(stateDir(), 0755); err == nil {
-		// Create or update the file
-		f, err := os.Create(statePath)
-		if err == nil {
-			f.Close()
-		}
-	}
+	// Record notification time
+	_ = db.SetNotifyTime(sessionID)
 }
 
 // formatStatus returns a human-readable status string.

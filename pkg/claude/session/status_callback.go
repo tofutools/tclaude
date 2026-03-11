@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type StatusCallbackParams struct {
@@ -68,8 +67,7 @@ func runStatusCallback(params *StatusCallbackParams) error {
 	}
 
 	// Debug logging - useful for troubleshooting hook issues
-	// Log is stored in ~/.tclaude/claude-sessions/debug.log
-	_ = EnsureSessionsDir()
+	_ = EnsureDebugLogDir()
 	debugFile, _ := os.OpenFile(DebugLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if debugFile != nil {
 		fmt.Fprintf(debugFile, "--- %s ---\n", time.Now().Format(time.RFC3339))
@@ -77,7 +75,6 @@ func runStatusCallback(params *StatusCallbackParams) error {
 		fmt.Fprintf(debugFile, "Stdin: %s\n", string(stdinData))
 		debugFile.Close()
 	}
-
 
 	// Get tclaude session ID from environment
 	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")
@@ -143,18 +140,13 @@ func runStatusCallback(params *StatusCallbackParams) error {
 	return nil
 }
 
-// findSessionByConvID searches for an existing session with the given Claude conversation ID
+// findSessionByConvID searches for an existing session with the given Claude conversation ID.
 func findSessionByConvID(convID string) *SessionState {
-	states, err := ListSessionStates()
+	state, err := FindSessionByConvID(convID)
 	if err != nil {
 		return nil
 	}
-	for _, state := range states {
-		if state.ConvID == convID {
-			return state
-		}
-	}
-	return nil
+	return state
 }
 
 // autoRegisterSession creates a new session state for a Claude session
@@ -163,21 +155,16 @@ func autoRegisterSession(hookInput HookInput) *SessionState {
 	// Find Claude's PID by walking up the process tree
 	claudePID := FindClaudePID()
 	if claudePID == 0 {
-		// Can't find Claude process - can't track this session
 		return nil
 	}
 
-	// Check if we're inside tmux
 	tmuxSession := GetCurrentTmuxSession()
 
-	// Generate a session ID
-	// Use first 8 chars of Claude's session ID for recognizability
 	sessionID := hookInput.SessionID
 	if len(sessionID) > 8 {
 		sessionID = sessionID[:8]
 	}
 
-	// Determine cwd
 	cwd := hookInput.Cwd
 	if cwd == "" {
 		cwd, _ = os.Getwd()
@@ -194,39 +181,23 @@ func autoRegisterSession(hookInput HookInput) *SessionState {
 		Updated:     time.Now(),
 	}
 
-	// Ensure sessions directory exists
-	if err := EnsureSessionsDir(); err != nil {
-		return nil
-	}
-
-	// Check for ID collision (unlikely but possible)
-	existingPath := SessionStatePath(sessionID)
-	if _, err := os.Stat(existingPath); err == nil {
-		// ID already exists - check if it's the same conversation
+	// Handle ID collision
+	if exists, _ := SessionExists(sessionID); exists {
 		existing, err := LoadSessionState(sessionID)
 		if err == nil && existing.ConvID == hookInput.SessionID {
-			// Same conversation, return existing
 			return existing
 		}
-		// Different conversation - append disambiguator
 		for i := 1; i < 100; i++ {
 			newID := fmt.Sprintf("%s-%d", sessionID, i)
-			if _, err := os.Stat(SessionStatePath(newID)); os.IsNotExist(err) {
+			if exists, _ := SessionExists(newID); !exists {
 				state.ID = newID
 				break
 			}
 		}
 	}
 
-	// Save the new session
 	if err := SaveSessionState(state); err != nil {
 		return nil
 	}
-
-	// Write a marker file so we know this was auto-registered
-	// This could be useful for UI differentiation later
-	markerPath := filepath.Join(SessionsDir(), state.ID+".auto")
-	os.WriteFile(markerPath, []byte("auto-registered"), 0644)
-
 	return state
 }
