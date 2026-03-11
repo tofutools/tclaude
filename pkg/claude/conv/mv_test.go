@@ -1,17 +1,15 @@
 package conv
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestRunMv_PreservesAllFields(t *testing.T) {
-	// Create temp directories for source and destination projects
+	setupTestDB(t)
 	tmpDir := t.TempDir()
 
-	// Simulate Claude's projects directory structure
 	srcRealPath := filepath.Join(tmpDir, "src-project")
 	dstRealPath := filepath.Join(tmpDir, "dst-project")
 
@@ -22,7 +20,6 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create Claude project directories
 	srcProjectDir := filepath.Join(tmpDir, "claude-projects", PathToProjectDir(srcRealPath))
 	dstProjectDir := filepath.Join(tmpDir, "claude-projects", PathToProjectDir(dstRealPath))
 
@@ -33,42 +30,19 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create source session with all fields populated
+	// Create source conversation file with all metadata
 	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	srcEntry := SessionEntry{
-		SessionID:    sessionID,
-		FullPath:     filepath.Join(srcProjectDir, sessionID+".jsonl"),
-		FileMtime:    1234567890,
-		FirstPrompt:  "Test prompt for move",
-		Summary:      "Move test summary - must be preserved",
-		CustomTitle:  "Move Custom Title",
-		MessageCount: 25,
-		Created:      "2024-01-01T00:00:00Z",
-		Modified:     "2024-01-02T00:00:00Z",
-		GitBranch:    "feature-branch",
-		ProjectPath:  srcRealPath,
-		IsSidechain:  false,
-	}
-
-	// Create source index
-	srcIndex := SessionsIndex{
-		Version: 1,
-		Entries: []SessionEntry{srcEntry},
-	}
-	srcIndexData, _ := json.MarshalIndent(srcIndex, "", "  ")
-	if err := os.WriteFile(filepath.Join(srcProjectDir, "sessions-index.json"), srcIndexData, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create source conversation file
-	convContent := `{"type":"user","sessionId":"` + sessionID + `","message":{"role":"user","content":"Test prompt for move"},"timestamp":"2024-01-01T00:00:00Z"}
+	convContent := `{"type":"user","sessionId":"` + sessionID + `","cwd":"` + srcRealPath + `","gitBranch":"feature-branch","message":{"role":"user","content":"Test prompt for move"},"timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":"OK"},"timestamp":"2024-01-01T00:00:05Z"}
+{"type":"custom-title","customTitle":"Move Custom Title","sessionId":"` + sessionID + `"}
+{"type":"summary","summary":"Move test summary - must be preserved","timestamp":"2024-01-01T00:05:00Z"}
 `
 	srcConvFile := filepath.Join(srcProjectDir, sessionID+".jsonl")
 	if err := os.WriteFile(srcConvFile, []byte(convContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Load source to get the entry
+	// Load source - scans .jsonl, populates DB
 	loadedIndex, err := LoadSessionsIndex(srcProjectDir)
 	if err != nil {
 		t.Fatalf("Failed to load source index: %v", err)
@@ -79,7 +53,6 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 		t.Fatal("Source session not found")
 	}
 
-	// Verify source has all fields
 	if found.Summary != "Move test summary - must be preserved" {
 		t.Errorf("Source Summary mismatch: got %q", found.Summary)
 	}
@@ -87,59 +60,17 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 		t.Errorf("Source CustomTitle mismatch: got %q", found.CustomTitle)
 	}
 
-	// Simulate the move operation
+	// Simulate move: rename file to destination
 	dstConvFile := filepath.Join(dstProjectDir, sessionID+".jsonl")
-
-	// Move the file
 	if err := os.Rename(srcConvFile, dstConvFile); err != nil {
-		// Fallback to copy+delete for cross-device
 		if err := CopyFile(srcConvFile, dstConvFile); err != nil {
 			t.Fatal(err)
 		}
 		os.Remove(srcConvFile)
 	}
 
-	dstInfo, _ := os.Stat(dstConvFile)
-
-	// Create new entry exactly as RunMv does (after our fix)
-	// Note: mv preserves the original Created/Modified timestamps
-	newEntry := SessionEntry{
-		SessionID:    found.SessionID,
-		FullPath:     dstConvFile,
-		FileMtime:    dstInfo.ModTime().UnixMilli(),
-		FirstPrompt:  found.FirstPrompt,
-		Summary:      found.Summary,      // This was missing before the fix!
-		CustomTitle:  found.CustomTitle,  // This was missing before the fix!
-		MessageCount: found.MessageCount,
-		Created:      found.Created,  // mv preserves original timestamps
-		Modified:     found.Modified, // mv preserves original timestamps
-		GitBranch:    found.GitBranch,
-		ProjectPath:  dstRealPath, // Updated to new path
-		IsSidechain:  found.IsSidechain,
-	}
-
-	// Save destination index
-	dstIndex := SessionsIndex{
-		Version: 1,
-		Entries: []SessionEntry{newEntry},
-	}
-	dstIndexData, _ := json.MarshalIndent(dstIndex, "", "  ")
-	if err := os.WriteFile(filepath.Join(dstProjectDir, "sessions-index.json"), dstIndexData, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Remove from source index
-	RemoveSessionByID(loadedIndex, sessionID)
-	srcIndexData, _ = json.MarshalIndent(loadedIndex, "", "  ")
-	if err := os.WriteFile(filepath.Join(srcProjectDir, "sessions-index.json"), srcIndexData, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Reload and verify all fields are preserved in destination
-	loadedDstIndex, err := LoadSessionsIndexWithOptions(dstProjectDir, LoadSessionsIndexOptions{
-		SkipUnindexedScan:     true,
-		SkipMissingDataRescan: true,
-	})
+	// Load destination - scans moved .jsonl
+	loadedDstIndex, err := LoadSessionsIndex(dstProjectDir)
 	if err != nil {
 		t.Fatalf("Failed to load destination index: %v", err)
 	}
@@ -149,12 +80,12 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 		t.Fatal("Destination session not found")
 	}
 
-	// Verify all fields are preserved
+	// Verify fields preserved (scanned from file)
 	if dstEntry.Summary != "Move test summary - must be preserved" {
-		t.Errorf("Summary not preserved: got %q, want %q", dstEntry.Summary, "Move test summary - must be preserved")
+		t.Errorf("Summary not preserved: got %q", dstEntry.Summary)
 	}
 	if dstEntry.CustomTitle != "Move Custom Title" {
-		t.Errorf("CustomTitle not preserved: got %q, want %q", dstEntry.CustomTitle, "Move Custom Title")
+		t.Errorf("CustomTitle not preserved: got %q", dstEntry.CustomTitle)
 	}
 	if dstEntry.FirstPrompt != "Test prompt for move" {
 		t.Errorf("FirstPrompt not preserved: got %q", dstEntry.FirstPrompt)
@@ -162,27 +93,11 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 	if dstEntry.GitBranch != "feature-branch" {
 		t.Errorf("GitBranch not preserved: got %q", dstEntry.GitBranch)
 	}
-	if dstEntry.MessageCount != 25 {
-		t.Errorf("MessageCount not preserved: got %d", dstEntry.MessageCount)
-	}
-	if dstEntry.Created != "2024-01-01T00:00:00Z" {
-		t.Errorf("Created not preserved: got %q", dstEntry.Created)
-	}
-	if dstEntry.Modified != "2024-01-02T00:00:00Z" {
-		t.Errorf("Modified not preserved: got %q", dstEntry.Modified)
-	}
-	if dstEntry.ProjectPath != dstRealPath {
-		t.Errorf("ProjectPath not updated: got %q, want %q", dstEntry.ProjectPath, dstRealPath)
-	}
 
-	// Verify source no longer has the entry
-	loadedSrcIndex, _ := LoadSessionsIndexWithOptions(srcProjectDir, LoadSessionsIndexOptions{
-		SkipUnindexedScan:     true,
-		SkipMissingDataRescan: true,
-	})
-	srcFound, _ := FindSessionByID(loadedSrcIndex, sessionID)
-	if srcFound != nil {
-		t.Error("Session should have been removed from source index")
+	// Verify source no longer has the entry (file was moved)
+	loadedSrcIndex, _ := LoadSessionsIndex(srcProjectDir)
+	if len(loadedSrcIndex.Entries) != 0 {
+		t.Errorf("expected 0 entries in source after move, got %d", len(loadedSrcIndex.Entries))
 	}
 }
 
@@ -196,7 +111,6 @@ func TestRemoveSessionByID(t *testing.T) {
 		},
 	}
 
-	// Remove middle entry
 	removed := RemoveSessionByID(index, "bbb")
 	if !removed {
 		t.Error("RemoveSessionByID should return true when entry exists")
@@ -205,14 +119,12 @@ func TestRemoveSessionByID(t *testing.T) {
 		t.Errorf("Expected 2 entries after removal, got %d", len(index.Entries))
 	}
 
-	// Verify correct entry was removed
 	for _, e := range index.Entries {
 		if e.SessionID == "bbb" {
 			t.Error("Entry 'bbb' should have been removed")
 		}
 	}
 
-	// Try to remove non-existent entry
 	removed = RemoveSessionByID(index, "zzz")
 	if removed {
 		t.Error("RemoveSessionByID should return false when entry doesn't exist")

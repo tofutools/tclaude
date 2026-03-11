@@ -1,7 +1,6 @@
 package session
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,7 +15,7 @@ func HooksLogPath() string {
 	return filepath.Join(home, ".tclaude", "hooks.log")
 }
 
-// SetupHookLogging configures slog to write to both stderr and ~/.tclaude/hooks.log
+// SetupHookLogging configures slog to write to ~/.tclaude/hooks.log
 // Should be called early in hook-callback execution
 func SetupHookLogging() {
 	logPath := HooksLogPath()
@@ -35,11 +34,8 @@ func SetupHookLogging() {
 		return
 	}
 
-	// Create multi-writer for both stderr and file
-	multiWriter := io.MultiWriter(os.Stderr, logFile)
-
-	// Set up slog with text handler writing to both destinations
-	handler := slog.NewTextHandler(multiWriter, &slog.HandlerOptions{
+	// Set up slog with text handler writing to hooks log file only
+	handler := slog.NewTextHandler(logFile, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})
 	slog.SetDefault(slog.New(handler))

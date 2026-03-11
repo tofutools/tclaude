@@ -80,6 +80,7 @@ func TestFindJSONLByPrefix_NonexistentDir(t *testing.T) {
 }
 
 func TestRunDelete_NotInIndex_DeletesFiles(t *testing.T) {
+	setupTestDB(t)
 	dir := t.TempDir()
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -153,6 +154,7 @@ func TestRunDelete_NotInIndex_OutputShowsNotInIndex(t *testing.T) {
 }
 
 func TestRunDelete_InIndex_DoesNotFallbackToDisk(t *testing.T) {
+	setupTestDB(t)
 	dir := t.TempDir()
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -185,8 +187,7 @@ func TestRunDelete_InIndex_DoesNotFallbackToDisk(t *testing.T) {
 // Tests for watchModel.deleteConversation (watch.go)
 
 func TestDeleteConversation_UsesFullPath(t *testing.T) {
-	// When FullPath is set, deleteConversation should use its directory
-	// instead of deriving from ProjectPath (which may point elsewhere)
+	setupTestDB(t)
 	dir := t.TempDir()
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -227,8 +228,7 @@ func TestDeleteConversation_UsesFullPath(t *testing.T) {
 }
 
 func TestDeleteConversation_NotInIndex_NoSaveError(t *testing.T) {
-	// When conversation is not in the index, deleteConversation should
-	// still delete the files and not fail trying to save the index
+	setupTestDB(t)
 	dir := t.TempDir()
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -253,8 +253,7 @@ func TestDeleteConversation_NotInIndex_NoSaveError(t *testing.T) {
 }
 
 func TestDeleteConversation_NoIndexFile_NoSaveError(t *testing.T) {
-	// When the project directory has no sessions-index.json at all,
-	// deleteConversation should still delete files without error
+	setupTestDB(t)
 	dir := t.TempDir()
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -299,7 +298,7 @@ func TestDeleteConversation_NonexistentProjectDir_ViaProjectPath(t *testing.T) {
 }
 
 func TestDeleteConversation_IndexPreservedForOtherEntries(t *testing.T) {
-	// Deleting one conversation should not affect other entries in the index
+	setupTestDB(t)
 	dir := t.TempDir()
 	deleteID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	keepID := "11111111-2222-3333-4444-555555555555"
@@ -341,7 +340,7 @@ func TestDeleteConversation_IndexPreservedForOtherEntries(t *testing.T) {
 }
 
 func TestDeleteConversation_LocalMode_UsesModelProjectPath(t *testing.T) {
-	// In non-global mode with no FullPath, should use m.projectPath
+	setupTestDB(t)
 	dir := t.TempDir()
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 

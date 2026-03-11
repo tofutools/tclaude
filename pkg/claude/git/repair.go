@@ -10,6 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
@@ -277,6 +278,36 @@ func updateSessionPaths(dir string, config *SyncConfig, localHome string) (int, 
 	return fixed, nil
 }
 
+// loadIndexWithUnindexed reads sessions-index.json and adds entries for any .jsonl files
+// that aren't already in the index. This ensures the repair/sync code picks up all conversations.
+func loadIndexWithUnindexed(projectDir string) (*conv.SessionsIndex, error) {
+	index, err := convops.LoadSessionsIndex(projectDir)
+	if err != nil {
+		return nil, err
+	}
+
+	indexed := make(map[string]bool, len(index.Entries))
+	for _, e := range index.Entries {
+		indexed[e.SessionID] = true
+	}
+	if files, err := os.ReadDir(projectDir); err == nil {
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+				continue
+			}
+			id := strings.TrimSuffix(f.Name(), ".jsonl")
+			if indexed[id] {
+				continue
+			}
+			filePath := filepath.Join(projectDir, f.Name())
+			if entry := conv.ParseJSONLSessionPublic(filePath, id); entry != nil {
+				index.Entries = append(index.Entries, *entry)
+			}
+		}
+	}
+	return index, nil
+}
+
 // updateIndexFile updates projectPath fields in a sessions-index.json
 // If localHome is non-empty, paths are localized; otherwise they are canonicalized
 // Also rebuilds the index to include all .jsonl files (prevents unindexed files from adding old paths)
@@ -289,8 +320,8 @@ func updateIndexFile(indexPath string, config *SyncConfig, localHome string) (bo
 	tombstones, _ := syncutil.LoadTombstones(projectDir)
 	tombstonedIDs := tombstones.TombstonedSessionIDs()
 
-	// Load index using conv package (includes unindexed sessions)
-	index, err := conv.LoadSessionsIndex(projectDir)
+	// Read sessions-index.json and include unindexed .jsonl files
+	index, err := loadIndexWithUnindexed(projectDir)
 	if err != nil {
 		return false, err
 	}
@@ -503,11 +534,8 @@ func fixProjectPathInconsistencies(dir string, config *SyncConfig, dryRun bool, 
 func fixProjectPathInIndex(indexPath, projectDirName string, config *SyncConfig, dryRun bool, localHome string) (int, error) {
 	projectDir := filepath.Dir(indexPath)
 
-	// Load index using conv package - skip unindexed scanning since updateIndexFile already ran
-	index, err := conv.LoadSessionsIndexWithOptions(projectDir, conv.LoadSessionsIndexOptions{
-		SkipUnindexedScan:     true,
-		SkipMissingDataRescan: true,
-	})
+	// Read sessions-index.json directly (repair operates on JSON files, not DB-backed scan)
+	index, err := convops.LoadSessionsIndex(projectDir)
 	if err != nil {
 		return 0, err
 	}

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 2
+const currentVersion = 3
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -31,6 +31,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 2 {
 		if err := migrateV1toV2(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 3 {
+		if err := migrateV2toV3(db); err != nil {
 			return err
 		}
 	}
@@ -107,6 +113,35 @@ func migrateV1toV2(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v1→v2: %w", err)
+	}
+	return nil
+}
+
+func migrateV2toV3(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS conv_index (
+			conv_id       TEXT PRIMARY KEY,
+			project_dir   TEXT NOT NULL,
+			full_path     TEXT NOT NULL,
+			file_mtime    INTEGER NOT NULL DEFAULT 0,
+			file_size     INTEGER NOT NULL DEFAULT 0,
+			first_prompt  TEXT NOT NULL DEFAULT '',
+			summary       TEXT NOT NULL DEFAULT '',
+			custom_title  TEXT NOT NULL DEFAULT '',
+			message_count INTEGER NOT NULL DEFAULT 0,
+			created       TEXT NOT NULL DEFAULT '',
+			modified      TEXT NOT NULL DEFAULT '',
+			git_branch    TEXT NOT NULL DEFAULT '',
+			project_path  TEXT NOT NULL DEFAULT '',
+			is_sidechain  INTEGER NOT NULL DEFAULT 0,
+			indexed_at    TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_conv_index_project_dir ON conv_index(project_dir);
+
+		UPDATE schema_version SET version = 3;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v2→v3: %w", err)
 	}
 	return nil
 }

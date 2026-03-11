@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/tofutools/tclaude/pkg/claude/conv"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
@@ -330,7 +330,7 @@ func loadConversationTitles(projectsDir string) map[string]string {
 		}
 
 		projectPath := filepath.Join(projectsDir, project.Name())
-		index, err := conv.LoadSessionsIndex(projectPath)
+		index, err := convops.LoadSessionsIndex(projectPath)
 		if err != nil {
 			continue
 		}

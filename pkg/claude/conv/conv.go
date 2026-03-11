@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
 )
@@ -70,244 +72,171 @@ var DebugLog = false
 
 // LoadSessionsIndexOptions configures LoadSessionsIndex behavior
 type LoadSessionsIndexOptions struct {
-	// SkipUnindexedScan skips scanning for unindexed .jsonl files (faster)
-	SkipUnindexedScan bool
-	// SkipMissingDataRescan skips re-scanning entries with missing display data (faster)
-	SkipMissingDataRescan bool
 	// ForceRescan forces a full rescan of all entries regardless of mtime
 	ForceRescan bool
 }
 
-// LoadSessionsIndex loads the sessions index from a Claude project directory
-// It also scans for unindexed .jsonl files and merges them, deduplicating by sessionId
-// Additionally, it re-scans entries with missing display data (no prompt, summary, or title)
+// LoadSessionsIndex loads conversations for a Claude project directory.
+// Uses our SQLite conv_index as cache, scanning .jsonl files only when their mtime has changed.
 func LoadSessionsIndex(projectPath string) (*SessionsIndex, error) {
 	return LoadSessionsIndexWithOptions(projectPath, LoadSessionsIndexOptions{})
 }
 
-// LoadSessionsIndexWithOptions loads the sessions index with configurable behavior
+// LoadSessionsIndexWithOptions loads conversations with configurable behavior.
+// Flow: list .jsonl files -> check DB mtime -> parse only if stale/new -> return entries from DB.
 func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOptions) (*SessionsIndex, error) {
 	start := time.Now()
-	indexPath := filepath.Join(projectPath, "sessions-index.json")
-	data, err := os.ReadFile(indexPath)
 
-	var index SessionsIndex
+	// 1. List .jsonl files on disk
+	files, err := os.ReadDir(projectPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			index = SessionsIndex{Version: 1, Entries: []SessionEntry{}}
-		} else {
-			return nil, fmt.Errorf("failed to read sessions index: %w", err)
+			return &SessionsIndex{Version: 1, Entries: []SessionEntry{}}, nil
 		}
-	} else {
-		if err := json.Unmarshal(data, &index); err != nil {
-			return nil, fmt.Errorf("failed to parse sessions index: %w", err)
-		}
+		return nil, fmt.Errorf("failed to read project dir: %w", err)
 	}
-	readDur := time.Since(start)
 
-	// Re-scan entries with missing display data
-	rescanStart := time.Now()
-	rescanCount := 0
-	if !opts.SkipMissingDataRescan {
-		for i := range index.Entries {
-			if index.Entries[i].DisplayTitle() == "" {
-				rescanCount++
-				// Try to get data from the file
-				filePath := filepath.Join(projectPath, index.Entries[i].SessionID+".jsonl")
-				if scanned := parseJSONLSession(filePath, index.Entries[i].SessionID, false); scanned != nil {
-					// Update missing fields from scanned data
-					if scanned.Summary != "" && index.Entries[i].Summary == "" {
-						index.Entries[i].Summary = scanned.Summary
-					}
-					if scanned.FirstPrompt != "" && index.Entries[i].FirstPrompt == "" {
-						index.Entries[i].FirstPrompt = scanned.FirstPrompt
-					}
-					if scanned.ProjectPath != "" && index.Entries[i].ProjectPath == "" {
-						index.Entries[i].ProjectPath = scanned.ProjectPath
-					}
-					if scanned.GitBranch != "" && index.Entries[i].GitBranch == "" {
-						index.Entries[i].GitBranch = scanned.GitBranch
-					}
-					if scanned.CustomTitle != "" && index.Entries[i].CustomTitle == "" {
-						index.Entries[i].CustomTitle = scanned.CustomTitle
-					}
-				}
-			}
-		}
+	// 2. Load existing DB entries for this project
+	dbRows, err := db.ListConvIndex(projectPath)
+	if err != nil {
+		slog.Warn("conv_index: db read failed, will scan all files", "error", err)
+		dbRows = nil
 	}
-	rescanDur := time.Since(rescanStart)
-
-	// Scan for unindexed .jsonl files and merge them
-	scanStart := time.Now()
-	var unindexed []SessionEntry
-	if !opts.SkipUnindexedScan {
-		// Build set of already indexed session IDs to avoid redundant parsing
-		indexedIDs := make(map[string]bool)
-		for _, e := range index.Entries {
-			indexedIDs[e.SessionID] = true
-		}
-		unindexed = scanUnindexedSessionsExcluding(projectPath, indexedIDs)
-		if len(unindexed) > 0 {
-			index.Entries = append(index.Entries, unindexed...)
-		}
+	dbByID := make(map[string]*db.ConvIndexRow, len(dbRows))
+	for _, r := range dbRows {
+		dbByID[r.ConvID] = r
 	}
-	scanDur := time.Since(scanStart)
 
-	// Populate FileSize and detect stale metadata (e.g. custom-title added after index was written)
-	staleRescanCount := 0
-	staleUpdates := map[string]map[string]any{} // sessionID -> fields to patch
-	for i := range index.Entries {
-		filePath := filepath.Join(projectPath, index.Entries[i].SessionID+".jsonl")
-		info, err := os.Stat(filePath)
+	// 3. For each .jsonl file, use DB cache or scan
+	var entries []SessionEntry
+	seenIDs := make(map[string]bool)
+	scannedCount := 0
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".jsonl") {
+			continue
+		}
+		convID := strings.TrimSuffix(file.Name(), ".jsonl")
+		if len(convID) != 36 { // UUID length
+			continue
+		}
+		seenIDs[convID] = true
+
+		filePath := filepath.Join(projectPath, file.Name())
+		info, err := file.Info()
 		if err != nil {
 			continue
 		}
-		index.Entries[i].FileSize = info.Size()
-		// If the file has been modified since the index was written, rescan for
-		// updated metadata (CustomTitle, Summary, FirstPrompt, etc.)
-		actualMtime := info.ModTime().Unix()
-		indexedMtime := index.Entries[i].FileMtime
-		isStale := opts.ForceRescan || (indexedMtime > 0 && actualMtime > indexedMtime)
-		if DebugLog {
-			status := "ok"
-			if isStale {
-				status = "STALE"
-			}
-			fmt.Fprintf(os.Stderr, "[DEBUG]   %-5s %s mtime=%d indexed=%d diff=%ds size=%d\n",
-				status, index.Entries[i].SessionID[:8], actualMtime, indexedMtime, actualMtime-indexedMtime, info.Size())
+		fileMtime := info.ModTime().Unix()
+		fileSize := info.Size()
+
+		// Check if DB entry is fresh
+		if cached, ok := dbByID[convID]; ok && !opts.ForceRescan && cached.FileMtime >= fileMtime {
+			// DB is fresh, use cached data
+			entries = append(entries, dbRowToEntry(cached, fileSize))
+			continue
 		}
-		if !opts.SkipMissingDataRescan && isStale {
-			staleRescanCount++
-			updates := map[string]any{"fileMtime": actualMtime}
-			index.Entries[i].FileMtime = actualMtime
-			if scanned := parseJSONLSession(filePath, index.Entries[i].SessionID, true); scanned != nil {
-				if scanned.CustomTitle != "" {
-					index.Entries[i].CustomTitle = scanned.CustomTitle
-					updates["customTitle"] = scanned.CustomTitle
-				}
-				if scanned.Summary != "" {
-					index.Entries[i].Summary = scanned.Summary
-					updates["summary"] = scanned.Summary
-				}
-				if scanned.FirstPrompt != "" {
-					index.Entries[i].FirstPrompt = scanned.FirstPrompt
-					updates["firstPrompt"] = scanned.FirstPrompt
-				}
-				if scanned.ProjectPath != "" {
-					index.Entries[i].ProjectPath = scanned.ProjectPath
-					updates["projectPath"] = scanned.ProjectPath
-				}
-				if scanned.GitBranch != "" {
-					index.Entries[i].GitBranch = scanned.GitBranch
-					updates["gitBranch"] = scanned.GitBranch
-				}
+
+		// Need to scan the file
+		scannedCount++
+		slog.Info("conv_index: scanning file",
+			"conv_id", convID[:8],
+			"project", filepath.Base(projectPath),
+			"reason", scanReason(dbByID[convID], opts.ForceRescan))
+
+		scanned := parseJSONLSession(filePath, convID)
+		if scanned == nil {
+			// File has no useful data (e.g., only file-history-snapshot lines).
+			// Store a stub so we don't rescan on every startup.
+			stub := &db.ConvIndexRow{
+				ConvID:     convID,
+				ProjectDir: projectPath,
+				FullPath:   filePath,
+				FileMtime:  fileMtime,
+				FileSize:   fileSize,
 			}
-			staleUpdates[index.Entries[i].SessionID] = updates
+			if err := db.UpsertConvIndex(stub); err != nil {
+				slog.Warn("conv_index: db upsert stub failed", "conv_id", convID[:8], "error", err)
+			}
+			continue
 		}
+		scanned.FileSize = fileSize
+
+		// Upsert into DB
+		row := entryToDBRow(scanned, projectPath)
+		if err := db.UpsertConvIndex(row); err != nil {
+			slog.Warn("conv_index: db upsert failed", "conv_id", convID[:8], "error", err)
+		}
+
+		entries = append(entries, *scanned)
 	}
 
-	// Persist updated fields to index file so stale entries aren't rescanned next time.
-	// Uses shallow deserialization to preserve any fields Claude Code may add in the future.
-	if len(staleUpdates) > 0 {
-		patchIndexEntries(indexPath, staleUpdates)
+	// 4. Remove DB entries for files that no longer exist on disk
+	for convID := range dbByID {
+		if !seenIDs[convID] {
+			if err := db.DeleteConvIndex(convID); err != nil {
+				slog.Warn("conv_index: db delete failed", "conv_id", convID[:8], "error", err)
+			}
+		}
 	}
 
 	if DebugLog {
-		fmt.Fprintf(os.Stderr, "[DEBUG] LoadSessionsIndex %s: read=%v rescan=%d/%d(%v) stale=%d/%d unindexed=%d(%v)\n",
-			filepath.Base(projectPath), readDur, rescanCount, len(index.Entries), rescanDur, staleRescanCount, len(index.Entries), len(unindexed), scanDur)
+		fmt.Fprintf(os.Stderr, "[DEBUG] LoadSessionsIndex %s: total=%d scanned=%d cached=%d elapsed=%v\n",
+			filepath.Base(projectPath), len(entries), scannedCount, len(entries)-scannedCount, time.Since(start))
 	}
 
-	return &index, nil
+	return &SessionsIndex{Version: 1, Entries: entries}, nil
 }
 
-// patchIndexEntries does a surgical update of fields in the sessions index file.
-// It deserializes shallowly (map[string]any) to preserve all existing and future fields
-// that Claude Code may write. Uses atomic write (temp file + rename).
-func patchIndexEntries(indexPath string, updates map[string]map[string]any) {
-	data, err := os.ReadFile(indexPath)
-	if err != nil {
-		return
+// scanReason returns a human-readable reason for why a file is being scanned.
+func scanReason(cached *db.ConvIndexRow, forceRescan bool) string {
+	if forceRescan {
+		return "force-rescan"
 	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return
+	if cached == nil {
+		return "new-file"
 	}
-
-	entries, ok := raw["entries"].([]any)
-	if !ok {
-		return
-	}
-
-	changed := false
-	for _, entry := range entries {
-		e, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		sid, _ := e["sessionId"].(string)
-		if fields, found := updates[sid]; found {
-			for k, v := range fields {
-				e[k] = v
-			}
-			changed = true
-		}
-	}
-
-	if !changed {
-		return
-	}
-
-	out, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return
-	}
-
-	// Atomic write: temp file + rename
-	tmpPath := indexPath + ".tmp"
-	if err := os.WriteFile(tmpPath, out, 0600); err != nil {
-		return
-	}
-	os.Rename(tmpPath, indexPath)
+	return "mtime-changed"
 }
 
-// scanUnindexedSessionsExcluding scans for .jsonl files, skipping those in the exclude set
-// This avoids expensive parsing of already-indexed sessions
-func scanUnindexedSessionsExcluding(projectPath string, exclude map[string]bool) []SessionEntry {
-	var entries []SessionEntry
-
-	files, err := os.ReadDir(projectPath)
-	if err != nil {
-		return entries
+// dbRowToEntry converts a DB row to a SessionEntry.
+func dbRowToEntry(r *db.ConvIndexRow, fileSize int64) SessionEntry {
+	return SessionEntry{
+		SessionID:    r.ConvID,
+		FullPath:     r.FullPath,
+		FileMtime:    r.FileMtime,
+		FirstPrompt:  r.FirstPrompt,
+		Summary:      r.Summary,
+		CustomTitle:  r.CustomTitle,
+		MessageCount: r.MessageCount,
+		Created:      r.Created,
+		Modified:     r.Modified,
+		GitBranch:    r.GitBranch,
+		ProjectPath:  r.ProjectPath,
+		IsSidechain:  r.IsSidechain,
+		FileSize:     fileSize,
 	}
+}
 
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(file.Name(), ".jsonl") {
-			continue
-		}
-
-		// Extract session ID from filename (e.g., "0789725a-bc71-47dd-9ca5-1b4fe7aead9b.jsonl")
-		sessionID := strings.TrimSuffix(file.Name(), ".jsonl")
-		if len(sessionID) != 36 { // UUID length
-			continue
-		}
-
-		// Skip if already indexed
-		if exclude != nil && exclude[sessionID] {
-			continue
-		}
-
-		filePath := filepath.Join(projectPath, file.Name())
-		entry := parseJSONLSession(filePath, sessionID, true) // full scan for unindexed files
-		if entry != nil {
-			entries = append(entries, *entry)
-		}
+// entryToDBRow converts a SessionEntry to a DB row for storage.
+func entryToDBRow(e *SessionEntry, projectDir string) *db.ConvIndexRow {
+	return &db.ConvIndexRow{
+		ConvID:       e.SessionID,
+		ProjectDir:   projectDir,
+		FullPath:     e.FullPath,
+		FileMtime:    e.FileMtime,
+		FileSize:     e.FileSize,
+		FirstPrompt:  e.FirstPrompt,
+		Summary:      e.Summary,
+		CustomTitle:  e.CustomTitle,
+		MessageCount: e.MessageCount,
+		Created:      e.Created,
+		Modified:     e.Modified,
+		GitBranch:    e.GitBranch,
+		ProjectPath:  e.ProjectPath,
+		IsSidechain:  e.IsSidechain,
+		IndexedAt:    time.Now(),
 	}
-
-	return entries
 }
 
 // jsonlMessage represents a line in the .jsonl conversation file
@@ -325,12 +254,15 @@ type jsonlMessage struct {
 	} `json:"message"`
 }
 
+// ParseJSONLSessionPublic is the exported version of parseJSONLSession for use by repair code.
+func ParseJSONLSessionPublic(filePath, sessionID string) *SessionEntry {
+	return parseJSONLSession(filePath, sessionID)
+}
+
 // parseJSONLSession parses a .jsonl file and extracts session metadata.
-// When fullScan is false, it stops early at the first display data found (firstPrompt or summary).
-// When fullScan is true, it collects firstPrompt from the forward scan and then
-// tail-scans the file for a summary if one wasn't found, giving complete metadata
-// for unindexed conversations.
-func parseJSONLSession(filePath, sessionID string, fullScan bool) *SessionEntry {
+// Always does a full scan: reads forward for prompt/title/summary, then
+// tail-scans if title data wasn't found in the forward pass.
+func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil
@@ -352,12 +284,6 @@ func parseJSONLSession(filePath, sessionID string, fullScan bool) *SessionEntry 
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var firstTimestamp string
-
-	// linesAfterPrompt tracks how many lines we've read past finding firstPrompt.
-	// In quick mode, we read a few extra lines to find custom-title (which appears
-	// shortly after the first user+assistant exchange), then stop.
-	const maxLinesAfterPrompt = 20
-	linesAfterPrompt := 0
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -388,7 +314,7 @@ func parseJSONLSession(filePath, sessionID string, fullScan bool) *SessionEntry 
 			entry.CustomTitle = msg.CustomTitle
 		}
 
-		// Capture summary
+		// Capture summary (keep last one seen)
 		if msg.Type == "summary" && msg.Summary != "" {
 			entry.Summary = msg.Summary
 		}
@@ -407,30 +333,9 @@ func parseJSONLSession(filePath, sessionID string, fullScan bool) *SessionEntry 
 			}
 		}
 
-		// Check if we can stop scanning
-		hasTitle := entry.CustomTitle != "" || entry.Summary != ""
-		if hasTitle && entry.FirstPrompt != "" {
-			break // Have everything we need
-		}
-		// In quick mode, stop a few lines after finding firstPrompt
-		// (enough to catch custom-title which appears shortly after)
-		if !fullScan && entry.FirstPrompt != "" {
-			linesAfterPrompt++
-			if linesAfterPrompt >= maxLinesAfterPrompt {
-				break
-			}
-		}
-	}
-
-	// In full scan mode, if we're still missing a title (summary or custom-title),
-	// tail-scan the file (summaries and custom-titles can appear later in the file)
-	if fullScan && entry.CustomTitle == "" && entry.Summary == "" && entry.FirstPrompt != "" {
-		title, summary := tailScanForTitleData(filePath, info.Size())
-		if title != "" {
-			entry.CustomTitle = title
-		}
-		if summary != "" {
-			entry.Summary = summary
+		// Stop early only if we have ALL the fields we care about
+		if entry.CustomTitle != "" && entry.Summary != "" && entry.FirstPrompt != "" && entry.ProjectPath != "" {
+			break
 		}
 	}
 
@@ -440,62 +345,10 @@ func parseJSONLSession(filePath, sessionID string, fullScan bool) *SessionEntry 
 	}
 
 	entry.Created = firstTimestamp
-	// Use file mtime for Modified since we're not reading the whole file
 	entry.Modified = info.ModTime().UTC().Format(time.RFC3339)
-	entry.MessageCount = 0 // Unknown for unindexed sessions
+	entry.MessageCount = 0
 
 	return &entry
-}
-
-// tailScanForTitleData reads the last portion of a JSONL file looking for
-// custom-title and summary entries. Returns the last of each found.
-func tailScanForTitleData(filePath string, fileSize int64) (customTitle, summary string) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", ""
-	}
-	defer file.Close()
-
-	// Read last 256KB (or entire file if smaller)
-	const tailSize = 256 * 1024
-	offset := fileSize - tailSize
-	if offset < 0 {
-		offset = 0
-	}
-
-	if _, err := file.Seek(offset, 0); err != nil {
-		return "", ""
-	}
-
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-
-	// Skip first partial line if we seeked into the middle of the file
-	if offset > 0 {
-		scanner.Scan()
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Quick pre-check to avoid JSON parsing irrelevant lines
-		if !strings.Contains(line, `"summary"`) && !strings.Contains(line, `"custom-title"`) {
-			continue
-		}
-
-		var msg jsonlMessage
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			continue
-		}
-
-		if msg.Type == "summary" && msg.Summary != "" {
-			summary = msg.Summary
-		}
-		if msg.Type == "custom-title" && msg.CustomTitle != "" {
-			customTitle = msg.CustomTitle
-		}
-	}
-
-	return customTitle, summary
 }
 
 // isSystemInjectedMessage returns true if the text is a system-injected message

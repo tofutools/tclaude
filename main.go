@@ -5,9 +5,11 @@ import (
 	"runtime/debug"
 
 	"github.com/tofutools/tclaude/pkg/claude"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 func main() {
+	common.SetupLogging()
 	cmd := claude.Cmd()
 	cmd.Use = "tclaude"
 	cmd.Version = appVersion()

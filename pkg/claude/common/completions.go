@@ -1,11 +1,12 @@
 package common
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // ConvEntry represents a conversation entry for completions
@@ -87,20 +88,23 @@ func GetConversationCompletions(global bool) []string {
 }
 
 func loadConvEntries(projectPath string) []ConvEntry {
-	indexPath := filepath.Join(projectPath, "sessions-index.json")
-	data, err := os.ReadFile(indexPath)
+	rows, err := db.ListConvIndex(projectPath)
 	if err != nil {
 		return nil
 	}
 
-	var index struct {
-		Entries []ConvEntry `json:"entries"`
+	entries := make([]ConvEntry, 0, len(rows))
+	for _, r := range rows {
+		entries = append(entries, ConvEntry{
+			SessionID:   r.ConvID,
+			FirstPrompt: r.FirstPrompt,
+			Summary:     r.Summary,
+			CustomTitle: r.CustomTitle,
+			ProjectPath: r.ProjectPath,
+			Modified:    r.Modified,
+		})
 	}
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil
-	}
-
-	return index.Entries
+	return entries
 }
 
 func getClaudeProjectPath(realPath string) string {
@@ -169,20 +173,40 @@ func resolveConvIDLocal(shortID string, cwd string) *ConvInfo {
 }
 
 func findConvInProject(shortID, projPath string) *ConvInfo {
-	entries := loadConvEntries(projPath)
+	// Try DB first (fast)
+	row, err := db.GetConvIndex(shortID)
+	if err == nil && row != nil && row.ProjectDir == projPath {
+		return &ConvInfo{
+			SessionID:    row.ConvID,
+			ProjectPath:  row.ProjectPath,
+			FirstPrompt:  row.FirstPrompt,
+			DisplayTitle: dbRowDisplayTitle(row),
+		}
+	}
 
-	for _, e := range entries {
-		// Exact match or prefix match
-		if e.SessionID == shortID || strings.HasPrefix(e.SessionID, shortID) {
+	// Try prefix match in DB, filtered to this project
+	rows, _ := db.ListConvIndex(projPath)
+	for _, r := range rows {
+		if r.ConvID == shortID || strings.HasPrefix(r.ConvID, shortID) {
 			return &ConvInfo{
-				SessionID:    e.SessionID,
-				ProjectPath:  e.ProjectPath,
-				FirstPrompt:  e.FirstPrompt,
-				DisplayTitle: e.DisplayTitle(),
+				SessionID:    r.ConvID,
+				ProjectPath:  r.ProjectPath,
+				FirstPrompt:  r.FirstPrompt,
+				DisplayTitle: dbRowDisplayTitle(r),
 			}
 		}
 	}
 	return nil
+}
+
+func dbRowDisplayTitle(r *db.ConvIndexRow) string {
+	if r.CustomTitle != "" {
+		return r.CustomTitle
+	}
+	if r.Summary != "" {
+		return r.Summary
+	}
+	return r.FirstPrompt
 }
 
 // ExtractClaudeExtraArgs finds the first '--' in os.Args and returns everything after it.

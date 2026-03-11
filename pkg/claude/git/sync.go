@@ -391,8 +391,8 @@ func isTombstonedFile(name string, tombstonedIDs map[string]bool) bool {
 func copyAndLocalizeIndex(srcPath, dstPath string, config *SyncConfig, localHome string) error {
 	srcDir := filepath.Dir(srcPath)
 
-	// Load index using conv package - this includes unindexed sessions
-	index, err := conv.LoadSessionsIndex(srcDir)
+	// Load index including unindexed .jsonl files
+	index, err := loadIndexWithUnindexed(srcDir)
 	if err != nil {
 		return err
 	}
@@ -536,14 +536,14 @@ func mergeSessionsIndex(srcProject, dstProject string) error {
 	tombstonedIDs := tombstones.TombstonedSessionIDs()
 
 	// Load src (local) index - include unindexed sessions
-	srcIndex, err := conv.LoadSessionsIndex(srcProject)
+	srcIndex, err := loadIndexWithUnindexed(srcProject)
 	if err != nil {
 		srcIndex = &conv.SessionsIndex{Version: 1}
 	}
 
 	// Load dst (sync/remote) index - also include unindexed sessions
 	// (there may be .jsonl files that exist in sync but aren't in the index)
-	dstIndex, err := conv.LoadSessionsIndex(dstProject)
+	dstIndex, err := loadIndexWithUnindexed(dstProject)
 	if err != nil {
 		dstIndex = &conv.SessionsIndex{Version: 1}
 	}
@@ -780,8 +780,8 @@ func updateUnprocessedSyncDirs(projectsDir, syncDir string) {
 
 		projectDir := filepath.Join(syncDir, entry.Name())
 
-		// Load index (includes unindexed sessions)
-		index, err := conv.LoadSessionsIndex(projectDir)
+		// Load index including unindexed .jsonl files
+		index, err := loadIndexWithUnindexed(projectDir)
 		if err != nil {
 			continue
 		}

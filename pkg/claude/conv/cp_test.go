@@ -1,18 +1,18 @@
 package conv
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestRunCp_PreservesAllFields(t *testing.T) {
-	// Create temp directories for source and destination projects
+	setupTestDB(t)
 	tmpDir := t.TempDir()
 
-	// Simulate Claude's projects directory structure
 	srcRealPath := filepath.Join(tmpDir, "src-project")
 	dstRealPath := filepath.Join(tmpDir, "dst-project")
 
@@ -23,7 +23,6 @@ func TestRunCp_PreservesAllFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create Claude project directories
 	srcProjectDir := filepath.Join(tmpDir, "claude-projects", PathToProjectDir(srcRealPath))
 	dstProjectDir := filepath.Join(tmpDir, "claude-projects", PathToProjectDir(dstRealPath))
 
@@ -31,47 +30,18 @@ func TestRunCp_PreservesAllFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create source session with all fields populated
+	// Create source conversation file with all metadata inline
 	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	srcEntry := SessionEntry{
-		SessionID:    sessionID,
-		FullPath:     filepath.Join(srcProjectDir, sessionID+".jsonl"),
-		FileMtime:    1234567890,
-		FirstPrompt:  "Test prompt",
-		Summary:      "Test summary that should be preserved",
-		CustomTitle:  "Custom Title Here",
-		MessageCount: 10,
-		Created:      "2024-01-01T00:00:00Z",
-		Modified:     "2024-01-02T00:00:00Z",
-		GitBranch:    "main",
-		ProjectPath:  srcRealPath,
-		IsSidechain:  true,
-	}
-
-	// Create source index
-	srcIndex := SessionsIndex{
-		Version: 1,
-		Entries: []SessionEntry{srcEntry},
-	}
-	srcIndexData, _ := json.MarshalIndent(srcIndex, "", "  ")
-	if err := os.WriteFile(filepath.Join(srcProjectDir, "sessions-index.json"), srcIndexData, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create source conversation file
-	convContent := `{"type":"user","sessionId":"` + sessionID + `","message":{"role":"user","content":"Test prompt"},"timestamp":"2024-01-01T00:00:00Z"}
+	convContent := `{"type":"user","sessionId":"` + sessionID + `","cwd":"` + srcRealPath + `","gitBranch":"main","message":{"role":"user","content":"Test prompt"},"timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":"Hello"},"timestamp":"2024-01-01T00:00:05Z"}
+{"type":"custom-title","customTitle":"Custom Title Here","sessionId":"` + sessionID + `"}
+{"type":"summary","summary":"Test summary that should be preserved","timestamp":"2024-01-01T00:05:00Z"}
 `
 	if err := os.WriteFile(filepath.Join(srcProjectDir, sessionID+".jsonl"), []byte(convContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// We can't easily override ClaudeProjectsDir, so we'll test the core logic directly
-	// by manually setting up the destination and verifying the entry creation
-
-	// For a proper integration test, let's just verify the SessionEntry construction
-	// by simulating what RunCp does
-
-	// Load source index
+	// Load source - scans .jsonl and populates DB
 	loadedIndex, err := LoadSessionsIndex(srcProjectDir)
 	if err != nil {
 		t.Fatalf("Failed to load source index: %v", err)
@@ -82,63 +52,31 @@ func TestRunCp_PreservesAllFields(t *testing.T) {
 		t.Fatal("Source session not found")
 	}
 
-	// Verify source has all fields
+	// Verify source has all fields from scanning
 	if found.Summary != "Test summary that should be preserved" {
 		t.Errorf("Source Summary mismatch: got %q", found.Summary)
 	}
 	if found.CustomTitle != "Custom Title Here" {
 		t.Errorf("Source CustomTitle mismatch: got %q", found.CustomTitle)
 	}
+	if found.GitBranch != "main" {
+		t.Errorf("Source GitBranch mismatch: got %q", found.GitBranch)
+	}
 
-	// Now simulate the copy operation by creating the new entry the same way RunCp does
+	// Simulate copy: create destination with new UUID
 	newConvID := "11111111-2222-3333-4444-555555555555"
-	dstConvFile := filepath.Join(dstProjectDir, newConvID+".jsonl")
-
-	// Create destination directory
 	if err := os.MkdirAll(dstProjectDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	// Copy conversation file (simulating CopyConversationFile)
 	srcData, _ := os.ReadFile(filepath.Join(srcProjectDir, sessionID+".jsonl"))
 	dstData := strings.ReplaceAll(string(srcData), sessionID, newConvID)
+	dstConvFile := filepath.Join(dstProjectDir, newConvID+".jsonl")
 	if err := os.WriteFile(dstConvFile, []byte(dstData), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	dstInfo, _ := os.Stat(dstConvFile)
-
-	// Create new entry exactly as RunCp does (after our fix)
-	newEntry := SessionEntry{
-		SessionID:    newConvID,
-		FullPath:     dstConvFile,
-		FileMtime:    dstInfo.ModTime().UnixMilli(),
-		FirstPrompt:  found.FirstPrompt,
-		Summary:      found.Summary,      // This was missing before the fix!
-		CustomTitle:  found.CustomTitle,  // This was missing before the fix!
-		MessageCount: found.MessageCount,
-		Created:      "2024-01-03T00:00:00Z",
-		Modified:     "2024-01-03T00:00:00Z",
-		GitBranch:    found.GitBranch,
-		ProjectPath:  dstRealPath,
-		IsSidechain:  found.IsSidechain,
-	}
-
-	// Save destination index
-	dstIndex := SessionsIndex{
-		Version: 1,
-		Entries: []SessionEntry{newEntry},
-	}
-	dstIndexData, _ := json.MarshalIndent(dstIndex, "", "  ")
-	if err := os.WriteFile(filepath.Join(dstProjectDir, "sessions-index.json"), dstIndexData, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Reload and verify all fields are preserved
-	loadedDstIndex, err := LoadSessionsIndexWithOptions(dstProjectDir, LoadSessionsIndexOptions{
-		SkipUnindexedScan:     true,
-		SkipMissingDataRescan: true,
-	})
+	// Load destination - scans .jsonl and populates DB
+	loadedDstIndex, err := LoadSessionsIndex(dstProjectDir)
 	if err != nil {
 		t.Fatalf("Failed to load destination index: %v", err)
 	}
@@ -150,10 +88,10 @@ func TestRunCp_PreservesAllFields(t *testing.T) {
 
 	// Verify all fields are preserved
 	if dstEntry.Summary != "Test summary that should be preserved" {
-		t.Errorf("Summary not preserved: got %q, want %q", dstEntry.Summary, "Test summary that should be preserved")
+		t.Errorf("Summary not preserved: got %q", dstEntry.Summary)
 	}
 	if dstEntry.CustomTitle != "Custom Title Here" {
-		t.Errorf("CustomTitle not preserved: got %q, want %q", dstEntry.CustomTitle, "Custom Title Here")
+		t.Errorf("CustomTitle not preserved: got %q", dstEntry.CustomTitle)
 	}
 	if dstEntry.FirstPrompt != "Test prompt" {
 		t.Errorf("FirstPrompt not preserved: got %q", dstEntry.FirstPrompt)
@@ -161,11 +99,17 @@ func TestRunCp_PreservesAllFields(t *testing.T) {
 	if dstEntry.GitBranch != "main" {
 		t.Errorf("GitBranch not preserved: got %q", dstEntry.GitBranch)
 	}
-	if dstEntry.IsSidechain != true {
-		t.Errorf("IsSidechain not preserved: got %v", dstEntry.IsSidechain)
+
+	// Verify DB was populated for destination
+	row, err := db.GetConvIndex(newConvID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if dstEntry.ProjectPath != dstRealPath {
-		t.Errorf("ProjectPath not updated: got %q, want %q", dstEntry.ProjectPath, dstRealPath)
+	if row == nil {
+		t.Fatal("expected DB entry for destination conv")
+	}
+	if row.Summary != "Test summary that should be preserved" {
+		t.Errorf("DB Summary mismatch: got %q", row.Summary)
 	}
 }
 

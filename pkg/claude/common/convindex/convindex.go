@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // SessionsIndex represents the sessions-index.json file (minimal version for fast loading)
@@ -46,68 +47,41 @@ var (
 	GetClaudeProjectPath = convops.GetClaudeProjectPath
 )
 
-// LoadSessionsIndexFast loads just the sessions index JSON without scanning.
-func LoadSessionsIndexFast(projectPath string) (*SessionsIndex, error) {
-	indexPath := filepath.Join(projectPath, "sessions-index.json")
-	data, err := os.ReadFile(indexPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &SessionsIndex{Version: 1, Entries: []SessionEntry{}}, nil
-		}
-		return nil, err
-	}
-
-	var index SessionsIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, err
-	}
-	return &index, nil
-}
-
-// FindSessionByID finds a session entry by its ID (full or prefix)
-func FindSessionByID(index *SessionsIndex, sessionID string) *SessionEntry {
-	if index == nil {
-		return nil
-	}
-	// First try exact match
-	for i, entry := range index.Entries {
-		if entry.SessionID == sessionID {
-			return &index.Entries[i]
-		}
-	}
-	// Then try prefix match
-	var matches []*SessionEntry
-	for i, entry := range index.Entries {
-		if strings.HasPrefix(entry.SessionID, sessionID) {
-			matches = append(matches, &index.Entries[i])
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0]
-	}
-	return nil
-}
-
 // GetConvTitle is a convenience function to look up a conversation title.
-// It checks the index first, then falls back to parsing the .jsonl file directly.
+// It checks the DB first, then falls back to parsing the .jsonl file directly.
 func GetConvTitle(convID, cwd string) string {
 	if convID == "" || cwd == "" {
 		return ""
 	}
 
-	projectPath := GetClaudeProjectPath(cwd)
+	// Try DB first (fast PK lookup)
+	if row, err := db.GetConvIndex(convID); err == nil && row != nil {
+		entry := &SessionEntry{
+			SessionID:   row.ConvID,
+			FirstPrompt: row.FirstPrompt,
+			Summary:     row.Summary,
+			CustomTitle: row.CustomTitle,
+		}
+		if title := entry.DisplayTitle(); title != "" {
+			return cleanTitle(title)
+		}
+	}
 
-	// Try index first
-	index, _ := LoadSessionsIndexFast(projectPath)
-	if index != nil {
-		if entry := FindSessionByID(index, convID); entry != nil {
-			if title := entry.DisplayTitle(); title != "" {
-				return cleanTitle(title)
-			}
+	// Try prefix match in DB
+	if row, err := db.FindConvIndexByPrefix(convID); err == nil && row != nil {
+		entry := &SessionEntry{
+			SessionID:   row.ConvID,
+			FirstPrompt: row.FirstPrompt,
+			Summary:     row.Summary,
+			CustomTitle: row.CustomTitle,
+		}
+		if title := entry.DisplayTitle(); title != "" {
+			return cleanTitle(title)
 		}
 	}
 
 	// Fallback: parse .jsonl file directly for unindexed conversations
+	projectPath := GetClaudeProjectPath(cwd)
 	return cleanTitle(parseFirstPromptFromJSONL(projectPath, convID))
 }
 
@@ -134,23 +108,23 @@ func GetConvTitleAndPrompt(convID, cwd string) string {
 		return ""
 	}
 
-	projectPath := GetClaudeProjectPath(cwd)
-
-	// Try index first
-	index, _ := LoadSessionsIndexFast(projectPath)
-	if index != nil {
-		if entry := FindSessionByID(index, convID); entry != nil {
-			title := ""
-			if entry.CustomTitle != "" {
-				title = entry.CustomTitle
-			} else if entry.Summary != "" {
-				title = entry.Summary
-			}
-			return FormatTitleAndPrompt(title, entry.FirstPrompt)
+	// Try DB first (exact match, then prefix)
+	row, err := db.GetConvIndex(convID)
+	if err != nil || row == nil {
+		row, _ = db.FindConvIndexByPrefix(convID)
+	}
+	if row != nil {
+		title := ""
+		if row.CustomTitle != "" {
+			title = row.CustomTitle
+		} else if row.Summary != "" {
+			title = row.Summary
 		}
+		return FormatTitleAndPrompt(title, row.FirstPrompt)
 	}
 
 	// Fallback: parse .jsonl file directly for unindexed conversations
+	projectPath := GetClaudeProjectPath(cwd)
 	return cleanTitle(parseFirstPromptFromJSONL(projectPath, convID))
 }
 
