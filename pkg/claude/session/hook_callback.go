@@ -206,11 +206,17 @@ func runHookCallback() error {
 	return nil
 }
 
+// TaskSignal is the JSON structure written to the task signal file.
+type TaskSignal struct {
+	Report    string `json:"report"`
+	SessionID string `json:"sessionId,omitempty"`
+}
+
 // handleTaskSignal writes or removes a signal file for the task runner's
 // auto-continue watcher. In task mode, TCLAUDE_TASK_SIGNAL is set to a
-// file path. On Stop, we write the last assistant message (used as the
-// task report). On UserPromptSubmit, we remove the signal to cancel any
-// pending auto-exit (the user is interacting).
+// file path. On Stop, we write the report and session ID as JSON.
+// On UserPromptSubmit, we remove the signal to cancel any pending
+// auto-exit (the user is interacting).
 func handleTaskSignal(input HookCallbackInput) {
 	signalPath := os.Getenv("TCLAUDE_TASK_SIGNAL")
 	if signalPath == "" {
@@ -218,9 +224,12 @@ func handleTaskSignal(input HookCallbackInput) {
 	}
 	switch input.HookEventName {
 	case "Stop":
-		os.WriteFile(signalPath, []byte(input.LastAssistantMessage), 0644)
-		if input.ConvID != "" {
-			os.WriteFile(signalPath+".session-id", []byte(input.ConvID), 0644)
+		signal := TaskSignal{
+			Report:    input.LastAssistantMessage,
+			SessionID: input.ConvID,
+		}
+		if data, err := json.Marshal(signal); err == nil {
+			os.WriteFile(signalPath, data, 0644)
 		}
 	case "UserPromptSubmit":
 		os.Remove(signalPath)

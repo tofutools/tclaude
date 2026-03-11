@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -360,18 +361,15 @@ func runClaude(cwd, prompt string, extraArgs []string) (report string, sessionID
 
 	err = cmd.Run()
 
-	// Read report from signal file (written by Stop hook with last_assistant_message)
+	// Read report and session ID from signal file (written by Stop hook as JSON)
 	if data, readErr := os.ReadFile(signalPath); readErr == nil {
-		report = string(data)
+		var signal session.TaskSignal
+		if json.Unmarshal(data, &signal) == nil {
+			report = signal.Report
+			sessionID = signal.SessionID
+		}
 	}
 	os.Remove(signalPath)
-
-	// Read session_id from companion file (written by Stop hook)
-	sessionIDPath := signalPath + ".session-id"
-	if data, readErr := os.ReadFile(sessionIDPath); readErr == nil {
-		sessionID = string(data)
-	}
-	os.Remove(sessionIDPath)
 
 	return report, sessionID, err
 }
@@ -415,10 +413,12 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				continue
 			}
 			// Signal survived grace period — check if any files were actually changed
-			sessionIDPath := signalPath + ".session-id"
 			var sessionID string
-			if data, readErr := os.ReadFile(sessionIDPath); readErr == nil {
-				sessionID = string(data)
+			if data, readErr := os.ReadFile(signalPath); readErr == nil {
+				var signal session.TaskSignal
+				if json.Unmarshal(data, &signal) == nil {
+					sessionID = signal.SessionID
+				}
 			}
 			if !hasTrackedChanges(cwd, excludeTaskFiles) {
 				sendNotification(sessionID, cwd, "waiting", "Task produced no file changes")
