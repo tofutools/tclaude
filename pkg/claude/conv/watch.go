@@ -109,7 +109,7 @@ func (m watchModel) Init() tea.Cmd {
 }
 
 func watchTickCmd() tea.Cmd {
-	return tea.Tick(1500*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 		return watchTickMsg(t)
 	})
 }
