@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -335,7 +337,7 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
 func runClaude(cwd, prompt string, extraArgs []string) (report string, sessionID string, err error) {
-	signalPath := taskSignalPath()
+	signalPath := taskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
 	args := []string{prompt}
@@ -359,25 +361,23 @@ func runClaude(cwd, prompt string, extraArgs []string) (report string, sessionID
 
 	err = cmd.Run()
 
-	// Read report from signal file (written by Stop hook with last_assistant_message)
+	// Read report and session ID from signal file (written by Stop hook as JSON)
 	if data, readErr := os.ReadFile(signalPath); readErr == nil {
-		report = string(data)
+		var signal session.TaskSignal
+		if json.Unmarshal(data, &signal) == nil {
+			report = signal.Report
+			sessionID = signal.SessionID
+		}
 	}
 	os.Remove(signalPath)
-
-	// Read session_id from companion file (written by Stop hook)
-	sessionIDPath := signalPath + ".session-id"
-	if data, readErr := os.ReadFile(sessionIDPath); readErr == nil {
-		sessionID = string(data)
-	}
-	os.Remove(sessionIDPath)
 
 	return report, sessionID, err
 }
 
-// taskSignalPath returns the path to the task signal file.
-func taskSignalPath() string {
-	return filepath.Join(common.CacheDir(), "task-signal")
+// taskSignalPath returns a per-project path to the task signal file,
+// allowing concurrent task runners in different projects.
+func taskSignalPath(cwd string) string {
+	return filepath.Join(common.CacheDir(), "task-signal-"+convops.PathToProjectDir(cwd))
 }
 
 // watchForTaskCompletion watches for the signal file using fsnotify and sends
@@ -413,10 +413,12 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				continue
 			}
 			// Signal survived grace period — check if any files were actually changed
-			sessionIDPath := signalPath + ".session-id"
 			var sessionID string
-			if data, readErr := os.ReadFile(sessionIDPath); readErr == nil {
-				sessionID = string(data)
+			if data, readErr := os.ReadFile(signalPath); readErr == nil {
+				var signal session.TaskSignal
+				if json.Unmarshal(data, &signal) == nil {
+					sessionID = signal.SessionID
+				}
 			}
 			if !hasTrackedChanges(cwd, excludeTaskFiles) {
 				sendNotification(sessionID, cwd, "waiting", "Task produced no file changes")
