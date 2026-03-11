@@ -133,13 +133,14 @@ jobs:
           cd dist
           for dir in */; do
             name="${dir%/}"
-            if [[ "$name" == *"windows"* ]]; then
-              zip -r "${name}.zip" "$dir"
-            else
-              tar -czvf "${name}.tar.gz" "$dir"
-            fi
+            # if [[ "$name" == *"windows"* ]]; then
+            #   zip -r "${name}.zip" "$dir"
+            # else
+            tar -czvf "${name}.tar.gz" "$dir"
+            # fi
           done
-          sha256sum *.tar.gz *.zip > checksums.txt
+          # sha256sum *.tar.gz *.zip > checksums.txt
+          sha256sum *.tar.gz > checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -147,7 +148,7 @@ jobs:
           tag_name: ${{ needs.version.outputs.new_version }}
           files: |
             dist/*.tar.gz
-            dist/*.zip
+            # dist/*.zip
             dist/checksums.txt
           generate_release_notes: true
         env:
