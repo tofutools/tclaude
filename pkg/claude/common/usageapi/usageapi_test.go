@@ -5,13 +5,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// setupTestCache points the cache at a temp dir and returns a cleanup function.
+// setupTestCache sets up an isolated SQLite DB for cache testing.
 func setupTestCache(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", tmp)
+	t.Setenv("HOME", tmp)
+	db.ResetForTest()
 }
 
 // stubFuncs replaces fetchFunc, getTokenFunc, and refreshTokenFunc for the duration of a test.

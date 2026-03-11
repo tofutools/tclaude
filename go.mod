@@ -4,7 +4,6 @@ go 1.26.1
 
 require (
 	github.com/GiGurra/boa v0.4.3
-	github.com/alexflint/go-filemutex v1.3.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
