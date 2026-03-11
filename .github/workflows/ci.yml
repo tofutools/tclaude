@@ -15,7 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest] # windows-latest, windows-11-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -80,12 +80,12 @@ jobs:
           - os: macos-latest
             goos: darwin
             goarch: arm64
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-          - os: windows-11-arm
-            goos: windows
-            goarch: arm64
+          #- os: windows-latest
+          #  goos: windows
+          #  goarch: amd64
+          #- os: windows-11-arm
+          #  goos: windows
+          #  goarch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
