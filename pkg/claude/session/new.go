@@ -127,8 +127,12 @@ func runNew(params *NewParams) error {
 	}
 	tmuxSession := sessionID
 
-	// Build claude command with TCLAUDE_SESSION_ID env var
-	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude", sessionID)
+	// Build claude command with all environment variables forwarded
+	envExports := clcommon.BuildEnvExports(map[string]string{
+		"TCLAUDE_SESSION_ID": sessionID,
+	})
+
+	claudeCmd := envExports + "claude"
 	if fullConvID != "" {
 		claudeCmd += " --resume " + fullConvID
 	}

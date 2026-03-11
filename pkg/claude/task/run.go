@@ -95,17 +95,22 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool) error {
 	sessionID := "tasks-" + session.GenerateSessionID()
 	tmuxSession := sessionID
 
-	// Build command to run the task loop inside tmux
+	// Build command to run the task loop inside tmux with all environment variables forwarded
 	watchFlag := ""
 	if watch {
 		watchFlag = " --watch"
 	}
-	explicitDirEnv := ""
-	if !excludeTaskFiles {
-		explicitDirEnv = " TCLAUDE_TASK_EXPLICIT_DIR=1"
+
+	additionalEnv := map[string]string{
+		"TCLAUDE_SESSION_ID": sessionID,
+		"TCLAUDE_TASK_TMUX":  tmuxSession,
 	}
-	runnerCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s TCLAUDE_TASK_TMUX=%s%s %s task run --no-tmux%s -C %s",
-		sessionID, tmuxSession, explicitDirEnv, clcommon.DetectCmd(), watchFlag, clcommon.ShellQuoteArg(cwd))
+	if !excludeTaskFiles {
+		additionalEnv["TCLAUDE_TASK_EXPLICIT_DIR"] = "1"
+	}
+
+	envExports := clcommon.BuildEnvExports(additionalEnv)
+	runnerCmd := envExports + clcommon.DetectCmd() + " task run --no-tmux" + watchFlag + " -C " + clcommon.ShellQuoteArg(cwd)
 
 	// Forward extra claude args through
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
