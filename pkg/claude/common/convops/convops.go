@@ -66,6 +66,7 @@ func PathToProjectDir(realPath string) string {
 		absPath = realPath
 	}
 	projectDir := strings.ReplaceAll(absPath, string(filepath.Separator), "-")
+	projectDir = strings.ReplaceAll(projectDir, ".", "-")
 	projectDir = strings.ReplaceAll(projectDir, ":", "")
 	return projectDir
 }
