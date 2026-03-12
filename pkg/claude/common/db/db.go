@@ -4,6 +4,7 @@ package db
 
 import (
 	"database/sql"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -65,6 +66,18 @@ func Open() (*sql.DB, error) {
 		}
 	})
 	return globalDB, initErr
+}
+
+// Close closes the singleton database connection if it is open.
+// It is safe to call multiple times.
+func Close() {
+	if globalDB != nil {
+		err := globalDB.Close()
+		if err != nil {
+			slog.Warn("Unable to close DB", "error", err)
+		}
+		globalDB = nil
+	}
 }
 
 // ResetForTest allows tests to reset the singleton so Open() re-initializes.

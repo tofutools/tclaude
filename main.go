@@ -5,17 +5,25 @@ import (
 	"runtime/debug"
 
 	"github.com/tofutools/tclaude/pkg/claude"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
 func main() {
 	common.SetupLogging()
+	exitCode := run()
+	db.Close()
+	os.Exit(exitCode)
+}
+
+func run() int {
 	cmd := claude.Cmd()
 	cmd.Use = "tclaude"
 	cmd.Version = appVersion()
 	if err := cmd.Execute(); err != nil {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func appVersion() string {
