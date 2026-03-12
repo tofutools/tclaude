@@ -71,6 +71,28 @@ Refactor the authentication module:
 				{Title: "Real task", Prompt: "Do something"},
 			},
 		},
+		{
+			name:  "plan mode task",
+			input: "## [plan] Design new API\n\nDesign the REST API for the new service.\n",
+			want: []Task{
+				{Title: "Design new API", Prompt: "Design the REST API for the new service.", PlanMode: true},
+			},
+		},
+		{
+			name: "mixed plan and normal tasks",
+			input: `## [plan] Architect the system
+
+Design the overall architecture.
+
+## Implement the feature
+
+Build it out.
+`,
+			want: []Task{
+				{Title: "Architect the system", Prompt: "Design the overall architecture.", PlanMode: true},
+				{Title: "Implement the feature", Prompt: "Build it out."},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -85,6 +107,9 @@ Refactor the authentication module:
 				}
 				if got[i].Prompt != tt.want[i].Prompt {
 					t.Errorf("task %d prompt = %q, want %q", i, got[i].Prompt, tt.want[i].Prompt)
+				}
+				if got[i].PlanMode != tt.want[i].PlanMode {
+					t.Errorf("task %d PlanMode = %v, want %v", i, got[i].PlanMode, tt.want[i].PlanMode)
 				}
 			}
 		})
@@ -227,7 +252,7 @@ func TestRoundTrip(t *testing.T) {
 
 	original := []Task{
 		{Title: "Task A", Prompt: "Prompt A line 1\nPrompt A line 2"},
-		{Title: "Task B", Prompt: "Simple prompt"},
+		{Title: "Task B", Prompt: "Simple prompt", PlanMode: true},
 		{Title: "Task C", Prompt: "Multi\nline\nprompt"},
 	}
 
@@ -250,6 +275,9 @@ func TestRoundTrip(t *testing.T) {
 		}
 		if parsed[i].Prompt != original[i].Prompt {
 			t.Errorf("task %d prompt = %q, want %q", i, parsed[i].Prompt, original[i].Prompt)
+		}
+		if parsed[i].PlanMode != original[i].PlanMode {
+			t.Errorf("task %d PlanMode = %v, want %v", i, parsed[i].PlanMode, original[i].PlanMode)
 		}
 	}
 }

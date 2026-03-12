@@ -12,8 +12,9 @@ import (
 )
 
 type AddParams struct {
-	Dir    string `short:"C" long:"dir" optional:"true" help:"Directory containing TODO.md (defaults to current directory)"`
-	Args []string `pos:"true" help:"<prompt> or <title> <prompt>"`
+	Dir      string   `short:"C" long:"dir" optional:"true" help:"Directory containing TODO.md (defaults to current directory)"`
+	PlanMode bool     `long:"plan" help:"Mark task as requiring planning (runs with --permission-mode plan)"`
+	Args     []string `pos:"true" help:"<prompt> or <title> <prompt>"`
 }
 
 func AddCmd() *cobra.Command {
@@ -67,8 +68,9 @@ func runAdd(params *AddParams) error {
 
 	// Add new task
 	tasks = append(tasks, Task{
-		Title:  title,
-		Prompt: prompt,
+		Title:    title,
+		Prompt:   prompt,
+		PlanMode: params.PlanMode,
 	})
 
 	// Write back

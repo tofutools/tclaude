@@ -42,6 +42,23 @@ examples, and setup instructions.
 
 Each `## ` header starts a new task. The header text becomes the task title (and git commit message). Everything until the next header or end of the file is the prompt sent to Claude Code.
 
+### Plan Mode
+
+Prefix a task title with `[plan]` to run it with `--permission-mode plan` instead of the default `acceptEdits`. This is useful for tasks that require architectural planning or design work where you want Claude to propose changes without applying them directly.
+
+```markdown
+## [plan] Design the new billing API
+
+Design the REST API for the billing service. Consider
+authentication, rate limiting, and error handling.
+
+## Implement billing endpoints
+
+Build the billing endpoints based on the plan.
+```
+
+The `[plan]` prefix is stripped from the task title before it's used as a git commit message.
+
 ## Commands
 
 ### task add
@@ -53,6 +70,9 @@ tclaude task add "Fix login bug" "Fix the null pointer exception in the login ha
 
 # Specify prompt only, and let Claude determine the title (which is used as commit message)
 tclaude task add "Fix the null pointer exception in the login handler"
+
+# Add a task that requires planning (runs with --permission-mode plan)
+tclaude task add --plan "Design auth system" "Design the authentication architecture"
 
 # Add to a specific directory's TODO.md
 tclaude task add -C /path/to/project "Fix login bug" "Fix the null pointer exception"

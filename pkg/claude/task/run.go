@@ -173,9 +173,6 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	donePath := DonePath(cwd)
 
 	hasPermissionMode := slices.Contains(extraClaudeArgs, "--permission-mode")
-	if !hasPermissionMode {
-		extraClaudeArgs = append(extraClaudeArgs, "--permission-mode", "acceptEdits")
-	}
 
 	// Set up signal handling for clean shutdown in watch mode
 	sigCh := make(chan os.Signal, 1)
@@ -218,8 +215,18 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		// Snapshot plan files before running Claude
 		plansBefore := snapshotPlanFiles()
 
+		// Build per-task args (permission mode depends on task)
+		taskArgs := extraClaudeArgs
+		if !hasPermissionMode {
+			mode := "acceptEdits"
+			if task.PlanMode {
+				mode = "plan"
+			}
+			taskArgs = append(slices.Clone(extraClaudeArgs), "--permission-mode", mode)
+		}
+
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, err := runClaude(cwd, task.Prompt, extraClaudeArgs)
+		report, sessionID, err := runClaude(cwd, task.Prompt, taskArgs)
 
 		result := TaskResult{
 			Title:     task.Title,

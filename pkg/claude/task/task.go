@@ -16,8 +16,9 @@ import (
 
 // Task represents a task to be done
 type Task struct {
-	Title  string
-	Prompt string
+	Title    string
+	Prompt   string
+	PlanMode bool // run with --permission-mode plan instead of acceptEdits
 }
 
 // TaskResult represents a completed task
@@ -122,8 +123,15 @@ func parseTasks(content string) []Task {
 					tasks = append(tasks, *current)
 				}
 			}
+			title := strings.TrimSpace(strings.TrimPrefix(line, "## "))
+			planMode := false
+			if strings.HasPrefix(title, "[plan] ") {
+				planMode = true
+				title = strings.TrimPrefix(title, "[plan] ")
+			}
 			current = &Task{
-				Title: strings.TrimSpace(strings.TrimPrefix(line, "## ")),
+				Title:    title,
+				PlanMode: planMode,
 			}
 			continue
 		}
@@ -156,6 +164,9 @@ func WriteTodoMD(path string, tasks []Task) error {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("## ")
+		if t.PlanMode {
+			sb.WriteString("[plan] ")
+		}
 		sb.WriteString(t.Title)
 		sb.WriteString("\n\n")
 		sb.WriteString(t.Prompt)
@@ -169,6 +180,9 @@ func WriteTodoMD(path string, tasks []Task) error {
 func WriteDoingMD(path string, task Task) error {
 	var sb strings.Builder
 	sb.WriteString("## ")
+	if task.PlanMode {
+		sb.WriteString("[plan] ")
+	}
 	sb.WriteString(task.Title)
 	sb.WriteString("\n\n")
 	sb.WriteString(task.Prompt)
