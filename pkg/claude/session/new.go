@@ -168,6 +168,9 @@ func runNew(params *NewParams) error {
 	clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
 	clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
 
+	// Configure keybindings for session navigation (idempotent)
+	ConfigureTmuxKeybindings()
+
 	// Get the PID of claude in the tmux session
 	pid := ParsePIDFromTmux(tmuxSession)
 
