@@ -3,6 +3,7 @@ package notify
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,6 +70,13 @@ func formatStatus(status string) string {
 
 // Send actually sends the notification.
 func Send(sessionID, status, cwd, convTitle string) {
+	slog.Info("sending notification",
+		"sessionID", sessionID,
+		"status", status,
+		"cwd", cwd,
+		"convTitle", convTitle,
+	)
+
 	// Build notification content
 	projectName := filepath.Base(cwd)
 	if projectName == "" || projectName == "." {
