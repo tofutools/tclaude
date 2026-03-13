@@ -146,6 +146,37 @@ func DeleteConvIndex(convID string) error {
 	return err
 }
 
+// MaxConvIndexUpdatedAt returns the maximum indexed_at timestamp across all conv_index entries.
+// Used by watch mode to detect changes made by other tclaude instances.
+func MaxConvIndexUpdatedAt() (time.Time, error) {
+	db, err := Open()
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	var indexedAt string
+	err = db.QueryRow(`SELECT COALESCE(MAX(indexed_at), '') FROM conv_index`).Scan(&indexedAt)
+	if err != nil || indexedAt == "" {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339Nano, indexedAt)
+}
+
+// MaxConvIndexUpdatedAtForProject returns the maximum indexed_at for a specific project.
+func MaxConvIndexUpdatedAtForProject(projectDir string) (time.Time, error) {
+	db, err := Open()
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	var indexedAt string
+	err = db.QueryRow(`SELECT COALESCE(MAX(indexed_at), '') FROM conv_index WHERE project_dir = ?`, projectDir).Scan(&indexedAt)
+	if err != nil || indexedAt == "" {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339Nano, indexedAt)
+}
+
 // DeleteConvIndexByProjectDir removes all entries for a project directory.
 func DeleteConvIndexByProjectDir(projectDir string) error {
 	db, err := Open()

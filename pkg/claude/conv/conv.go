@@ -384,6 +384,67 @@ func extractMessageContent(content any) string {
 	return ""
 }
 
+// LoadEntriesFromDB loads conversation entries directly from the SQLite cache
+// without touching the filesystem. Used by watch mode for fast refreshes.
+// If projectPath is empty, loads all entries across all projects (global mode).
+func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
+	var dbRows []*db.ConvIndexRow
+	var err error
+	if projectPath == "" {
+		dbRows, err = db.ListAllConvIndex()
+	} else {
+		dbRows, err = db.ListConvIndex(projectPath)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]SessionEntry, 0, len(dbRows))
+	for _, r := range dbRows {
+		entries = append(entries, dbRowToEntry(r, r.FileSize))
+	}
+	return entries, nil
+}
+
+// ScanAndUpsertFile scans a single .jsonl conversation file and upserts the
+// result into the DB cache. The project dir is derived from the file's parent
+// directory. Returns the resulting SessionEntry, or nil if the file has no
+// useful data or was deleted.
+func ScanAndUpsertFile(filePath string) *SessionEntry {
+	convID := strings.TrimSuffix(filepath.Base(filePath), ".jsonl")
+	if len(convID) != 36 {
+		return nil
+	}
+	projectDir := filepath.Dir(filePath)
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			_ = db.DeleteConvIndex(convID)
+		}
+		return nil
+	}
+
+	scanned := parseJSONLSession(filePath, convID)
+	if scanned == nil {
+		stub := &db.ConvIndexRow{
+			ConvID:     convID,
+			ProjectDir: projectDir,
+			FullPath:   filePath,
+			FileMtime:  info.ModTime().Unix(),
+			FileSize:   info.Size(),
+			IndexedAt:  time.Now(),
+		}
+		_ = db.UpsertConvIndex(stub)
+		return nil
+	}
+	scanned.FileSize = info.Size()
+
+	row := entryToDBRow(scanned, projectDir)
+	_ = db.UpsertConvIndex(row)
+	return scanned
+}
+
 // ListSessions returns all sessions from a project directory
 func ListSessions(projectPath string) ([]SessionEntry, error) {
 	index, err := LoadSessionsIndex(projectPath)

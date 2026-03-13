@@ -69,7 +69,7 @@ func runGoto(params *GotoParams) error {
 	}
 
 	if len(clients) < 2 {
-		return fmt.Errorf("no other attached sessions to switch to")
+		return nil
 	}
 
 	// Sort by session name for stable ordering
