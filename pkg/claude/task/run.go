@@ -226,7 +226,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, err := runClaude(cwd, task.Prompt, taskArgs)
+		report, sessionID, err := runClaude(cwd, task.Prompt, taskArgs, task.PlanAutoAccept)
 
 		result := TaskResult{
 			Title:     task.Title,
@@ -348,7 +348,7 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 //
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
-func runClaude(cwd, prompt string, extraArgs []string) (report string, sessionID string, err error) {
+func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool) (report string, sessionID string, err error) {
 	signalPath := taskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
@@ -368,7 +368,7 @@ func runClaude(cwd, prompt string, extraArgs []string) (report string, sessionID
 		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planAutoAccept)
 	}
 
 	err = cmd.Run()
@@ -396,7 +396,7 @@ func taskSignalPath(cwd string) string {
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles bool) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planAutoAccept bool) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -416,27 +416,49 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 		signalExists = true
 	}
 
+	planAccepted := false
+
 	for {
 		if signalExists {
+			// Read the signal to determine what triggered it
+			var signal session.TaskSignal
+			if data, readErr := os.ReadFile(signalPath); readErr == nil {
+				json.Unmarshal(data, &signal)
+			}
+
 			// Signal detected — enter grace period, watching for removal
 			if gracePeriod(ctx, watcher, signalPath, base) {
 				// Signal removed during grace (user interacted) — reset
 				signalExists = false
 				continue
 			}
-			// Signal survived grace period — check if any files were actually changed
-			var sessionID string
-			if data, readErr := os.ReadFile(signalPath); readErr == nil {
-				var signal session.TaskSignal
-				if json.Unmarshal(data, &signal) == nil {
-					sessionID = signal.SessionID
+
+			// Plan auto-accept before plan is accepted: wait specifically for
+			// the ExitPlanMode permission request, ignore everything else
+			// (including Stop events that fire when Claude finishes planning)
+			if planAutoAccept && !planAccepted {
+				if signal.Event == "PermissionRequest" && signal.ToolName == "ExitPlanMode" {
+					planAccepted = true
+					os.Remove(signalPath)
+					sendTmuxEnter(tmuxSession)
+				} else {
+					os.Remove(signalPath)
 				}
+				signalExists = false
+				continue
+			}
+
+			// Signal survived grace period — check if any files were actually changed
+			if signal.Event != "Stop" {
+				// Non-Stop signals that weren't handled above — reset and wait
+				signalExists = false
+				continue
 			}
 			if !hasTrackedChanges(cwd, excludeTaskFiles) {
-				sendNotification(sessionID, cwd, "waiting", "Task produced no file changes")
+				sendNotification(signal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
-			sendTmuxExit(tmuxSession)
+			sendTmuxMessage(tmuxSession, "/exit")
 			return
 		}
 
@@ -496,9 +518,15 @@ func gracePeriod(ctx context.Context, watcher *fsnotify.Watcher, signalPath, bas
 	}
 }
 
-// sendTmuxExit sends /exit + Enter to the tmux session.
-func sendTmuxExit(tmuxSession string) {
-	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/exit", "Enter")
+// sendTmuxMessage sends arbitrary text + Enter to the tmux session.
+func sendTmuxMessage(tmuxSession, message string) {
+	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, message, "Enter")
+	cmd.Run()
+}
+
+// sendTmuxEnter sends just an Enter keypress to the tmux session.
+func sendTmuxEnter(tmuxSession string) {
+	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter")
 	cmd.Run()
 }
 

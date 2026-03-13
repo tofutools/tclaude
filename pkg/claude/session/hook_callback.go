@@ -207,6 +207,8 @@ func runHookCallback() error {
 type TaskSignal struct {
 	Report    string `json:"report"`
 	SessionID string `json:"sessionId,omitempty"`
+	Event     string `json:"event,omitempty"`    // hook event name (e.g. "Stop", "PermissionRequest")
+	ToolName  string `json:"toolName,omitempty"` // tool name from the hook (e.g. "ExitPlanMode")
 }
 
 // handleTaskSignal writes or removes a signal file for the task runner's
@@ -224,9 +226,22 @@ func handleTaskSignal(input HookCallbackInput) {
 		signal := TaskSignal{
 			Report:    input.LastAssistantMessage,
 			SessionID: input.ConvID,
+			Event:     input.HookEventName,
 		}
 		if data, err := json.Marshal(signal); err == nil {
 			os.WriteFile(signalPath, data, 0644)
+		}
+	case "PermissionRequest":
+		// Signal plan-auto watcher when Claude asks to accept the plan
+		if input.ToolName == "ExitPlanMode" {
+			signal := TaskSignal{
+				SessionID: input.ConvID,
+				Event:     input.HookEventName,
+				ToolName:  input.ToolName,
+			}
+			if data, err := json.Marshal(signal); err == nil {
+				os.WriteFile(signalPath, data, 0644)
+			}
 		}
 	case "UserPromptSubmit":
 		os.Remove(signalPath)

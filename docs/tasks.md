@@ -59,6 +59,19 @@ Build the billing endpoints based on the plan.
 
 The `[plan]` prefix is stripped from the task title before it's used as a git commit message.
 
+### Plan Auto-Accept Mode
+
+Prefix a task title with `[plan-auto]` to run Claude in plan mode, then automatically accept the plan and proceed to implementation — all in a single task. Claude first creates a plan (using `--permission-mode plan`), and when the plan is ready (detected via the `ExitPlanMode` permission request hook), the task runner automatically accepts it so Claude exits plan mode and implements the changes.
+
+```markdown
+## [plan-auto] Design and implement billing API
+
+Design the REST API for the billing service, then implement it.
+Consider authentication, rate limiting, and error handling.
+```
+
+The session remains interactive throughout — you can still attach to approve permissions or answer questions during implementation. The standard grace period (5 seconds) applies before auto-accept, so if you start typing before then, your interaction takes priority.
+
 ## Commands
 
 ### task add
@@ -73,6 +86,9 @@ tclaude task add "Fix the null pointer exception in the login handler"
 
 # Add a task that requires planning (runs with --permission-mode plan)
 tclaude task add --plan "Design auth system" "Design the authentication architecture"
+
+# Add a task that plans then auto-accepts and implements
+tclaude task add --plan-auto "Design and build auth" "Design and implement the auth system"
 
 # Add to a specific directory's TODO.md
 tclaude task add -C /path/to/project "Fix login bug" "Fix the null pointer exception"

@@ -16,9 +16,10 @@ import (
 
 // Task represents a task to be done
 type Task struct {
-	Title    string
-	Prompt   string
-	PlanMode bool // run with --permission-mode plan instead of acceptEdits
+	Title          string
+	Prompt         string
+	PlanMode       bool // run with --permission-mode plan instead of acceptEdits
+	PlanAutoAccept bool // plan mode + auto-accept and implement
 }
 
 // TaskResult represents a completed task
@@ -125,13 +126,19 @@ func parseTasks(content string) []Task {
 			}
 			title := strings.TrimSpace(strings.TrimPrefix(line, "## "))
 			planMode := false
-			if strings.HasPrefix(title, "[plan] ") {
+			planAutoAccept := false
+			if strings.HasPrefix(title, "[plan-auto] ") {
+				planAutoAccept = true
+				planMode = true
+				title = strings.TrimPrefix(title, "[plan-auto] ")
+			} else if strings.HasPrefix(title, "[plan] ") {
 				planMode = true
 				title = strings.TrimPrefix(title, "[plan] ")
 			}
 			current = &Task{
-				Title:    title,
-				PlanMode: planMode,
+				Title:          title,
+				PlanMode:       planMode,
+				PlanAutoAccept: planAutoAccept,
 			}
 			continue
 		}
@@ -164,7 +171,9 @@ func WriteTodoMD(path string, tasks []Task) error {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("## ")
-		if t.PlanMode {
+		if t.PlanAutoAccept {
+			sb.WriteString("[plan-auto] ")
+		} else if t.PlanMode {
 			sb.WriteString("[plan] ")
 		}
 		sb.WriteString(t.Title)
@@ -180,7 +189,9 @@ func WriteTodoMD(path string, tasks []Task) error {
 func WriteDoingMD(path string, task Task) error {
 	var sb strings.Builder
 	sb.WriteString("## ")
-	if task.PlanMode {
+	if task.PlanAutoAccept {
+		sb.WriteString("[plan-auto] ")
+	} else if task.PlanMode {
 		sb.WriteString("[plan] ")
 	}
 	sb.WriteString(task.Title)

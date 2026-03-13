@@ -49,7 +49,13 @@ func runList(params *ListParams) error {
 		if len(prompt) > 80 {
 			prompt = prompt[:77] + "..."
 		}
-		fmt.Printf("  %d. %s\n     %s\n\n", i+1, t.Title, prompt)
+		modeTag := ""
+		if t.PlanAutoAccept {
+			modeTag = " [plan-auto]"
+		} else if t.PlanMode {
+			modeTag = " [plan]"
+		}
+		fmt.Printf("  %d. %s%s\n     %s\n\n", i+1, t.Title, modeTag, prompt)
 	}
 
 	return nil

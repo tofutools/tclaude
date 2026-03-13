@@ -93,6 +93,33 @@ Build it out.
 				{Title: "Implement the feature", Prompt: "Build it out."},
 			},
 		},
+		{
+			name:  "plan-auto task",
+			input: "## [plan-auto] Design new API\n\nDesign and implement the REST API.\n",
+			want: []Task{
+				{Title: "Design new API", Prompt: "Design and implement the REST API.", PlanMode: true, PlanAutoAccept: true},
+			},
+		},
+		{
+			name: "mixed plan-auto plan and normal",
+			input: `## [plan-auto] Design and build auth
+
+Design auth then implement it.
+
+## [plan] Review architecture
+
+Review the architecture.
+
+## Fix the bug
+
+Fix it.
+`,
+			want: []Task{
+				{Title: "Design and build auth", Prompt: "Design auth then implement it.", PlanMode: true, PlanAutoAccept: true},
+				{Title: "Review architecture", Prompt: "Review the architecture.", PlanMode: true},
+				{Title: "Fix the bug", Prompt: "Fix it."},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -110,6 +137,9 @@ Build it out.
 				}
 				if got[i].PlanMode != tt.want[i].PlanMode {
 					t.Errorf("task %d PlanMode = %v, want %v", i, got[i].PlanMode, tt.want[i].PlanMode)
+				}
+				if got[i].PlanAutoAccept != tt.want[i].PlanAutoAccept {
+					t.Errorf("task %d PlanAutoAccept = %v, want %v", i, got[i].PlanAutoAccept, tt.want[i].PlanAutoAccept)
 				}
 			}
 		})
@@ -254,6 +284,7 @@ func TestRoundTrip(t *testing.T) {
 		{Title: "Task A", Prompt: "Prompt A line 1\nPrompt A line 2"},
 		{Title: "Task B", Prompt: "Simple prompt", PlanMode: true},
 		{Title: "Task C", Prompt: "Multi\nline\nprompt"},
+		{Title: "Task D", Prompt: "Plan and implement", PlanMode: true, PlanAutoAccept: true},
 	}
 
 	if err := WriteTodoMD(path, original); err != nil {
@@ -278,6 +309,9 @@ func TestRoundTrip(t *testing.T) {
 		}
 		if parsed[i].PlanMode != original[i].PlanMode {
 			t.Errorf("task %d PlanMode = %v, want %v", i, parsed[i].PlanMode, original[i].PlanMode)
+		}
+		if parsed[i].PlanAutoAccept != original[i].PlanAutoAccept {
+			t.Errorf("task %d PlanAutoAccept = %v, want %v", i, parsed[i].PlanAutoAccept, original[i].PlanAutoAccept)
 		}
 	}
 }
