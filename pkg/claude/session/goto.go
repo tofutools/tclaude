@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -35,6 +37,12 @@ func GotoCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// tmuxClient is a lightweight representation of an attached tmux client.
+type tmuxClient struct {
+	session string
+	tty     string
+}
+
 func runGoto(params *GotoParams) error {
 	if params.Direction != "next" && params.Direction != "prev" {
 		return fmt.Errorf("direction must be 'next' or 'prev', got %q", params.Direction)
@@ -45,50 +53,52 @@ func runGoto(params *GotoParams) error {
 		return fmt.Errorf("not inside a tclaude session ($TCLAUDE_SESSION_ID not set)")
 	}
 
-	// Get alive sessions that have a terminal attached
-	states, err := ListSessionStates()
+	// Single tmux call to get all attached clients with their session and TTY
+	cmd := clcommon.TmuxCommand("list-clients", "-F", "#{session_name} #{client_tty}")
+	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to list sessions: %w", err)
+		return fmt.Errorf("failed to list tmux clients: %w", err)
 	}
 
-	var alive []*SessionState
-	for _, s := range states {
-		if s.TmuxSession != "" && IsTmuxSessionAlive(s.TmuxSession) && IsTmuxSessionAttached(s.TmuxSession) {
-			alive = append(alive, s)
+	var clients []tmuxClient
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			clients = append(clients, tmuxClient{session: parts[0], tty: parts[1]})
 		}
 	}
 
-	if len(alive) < 2 {
+	if len(clients) < 2 {
 		return fmt.Errorf("no other attached sessions to switch to")
 	}
 
-	// Sort by ID for stable ordering
-	sort.Slice(alive, func(i, j int) bool {
-		return alive[i].ID < alive[j].ID
+	// Sort by session name for stable ordering
+	sort.Slice(clients, func(i, j int) bool {
+		return clients[i].session < clients[j].session
 	})
 
 	// Find current session index
 	currentIdx := -1
-	for i, s := range alive {
-		if s.ID == currentID {
+	for i, c := range clients {
+		if c.session == currentID {
 			currentIdx = i
 			break
 		}
 	}
 
 	if currentIdx == -1 {
-		return fmt.Errorf("current session %s not found among attached sessions", currentID)
+		return fmt.Errorf("current session %s not found among attached clients", currentID)
 	}
 
 	// Pick next or prev (wrapping around)
 	var targetIdx int
 	if params.Direction == "next" {
-		targetIdx = (currentIdx + 1) % len(alive)
+		targetIdx = (currentIdx + 1) % len(clients)
 	} else {
-		targetIdx = (currentIdx - 1 + len(alive)) % len(alive)
+		targetIdx = (currentIdx - 1 + len(clients)) % len(clients)
 	}
 
-	target := alive[targetIdx]
-	TryFocusAttachedSession(target.TmuxSession)
+	target := clients[targetIdx]
+	focusTTY(target.tty)
 	return nil
 }
