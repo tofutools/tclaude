@@ -43,19 +43,36 @@ brew services start ollama
 ollama serve
 ```
 
-### 3. Pull the embedding model
+### 3. Pull an embedding model
 
 ```bash
-ollama pull qwen3-embedding
+# Default — best quality, 32K context, 100+ languages
+ollama pull qwen3-embedding:0.6b
+
+# Alternative — faster indexing, smaller download
+ollama pull nomic-embed-text
 ```
 
-This downloads the `qwen3-embedding` model (~639MB, one-time). It has a 32K token context window, supports 100+ languages, and produces 1024-dimensional embeddings.
+| Model | Size | Dimensions | Context | Indexing speed | Languages |
+|-------|------|-----------|---------|----------------|-----------|
+| `qwen3-embedding:0.6b` (default) | 639 MB | 1024 | 32K tokens | ~1.5s/conv | 100+ |
+| `nomic-embed-text` | 274 MB | 768 | 8K tokens | ~0.1s/conv | English-focused |
+
+`qwen3-embedding:0.6b` produces higher-quality embeddings with a much larger context window (most conversations fit in a single chunk). `nomic-embed-text` is significantly faster to index and uses less disk/memory — a good choice if you have many conversations or limited hardware.
+
+To use nomic instead of the default:
+
+```bash
+export TCLAUDE_EMBED_MODEL=nomic-embed-text
+```
+
+Or pass `--model nomic-embed-text` to individual commands.
 
 ### 4. Verify
 
 ```bash
 curl -s http://localhost:11434/api/embed \
-  -d '{"model": "qwen3-embedding", "input": "hello world"}' \
+  -d '{"model": "qwen3-embedding:0.6b", "input": "hello world"}' \
   | python3 -c "import sys,json; e=json.load(sys.stdin)['embeddings'][0]; print(f'{len(e)} dimensions')"
 # Expected: 1024 dimensions
 ```
@@ -143,7 +160,7 @@ tclaude conv index-embeddings --model mxbai-embed-large  # use a different model
 |------|-------------|
 | `-g, --global` | Index conversations from all projects |
 | `--reindex` | Wipe and rebuild all embeddings |
-| `--model` | Embedding model name (default: `qwen3-embedding`) |
+| `--model` | Embedding model name (default: `qwen3-embedding:0.6b`) |
 | `--url` | Ollama API base URL (default: `http://localhost:11434`) |
 
 ### `tclaude conv search-embeddings`
@@ -161,7 +178,7 @@ tclaude conv sem "query"          # shorthand alias
 | `-n` | Number of results (default: 10) |
 | `-l, --long` | Show matching chunk text |
 | `--json` | JSON output |
-| `--model` | Embedding model name (default: `qwen3-embedding`) |
+| `--model` | Embedding model name (default: `qwen3-embedding:0.6b`) |
 | `--url` | Ollama API base URL (default: `http://localhost:11434`) |
 
 ## How It Works
@@ -179,7 +196,7 @@ Conversations are ranked by the **maximum similarity** across all their chunks, 
 
 ### Storage
 
-Embeddings are stored in `~/.tclaude/db.sqlite` (table `conv_embeddings`). Each chunk stores its text, embedding vector (1024 floats as raw bytes for qwen3-embedding), and creation timestamp.
+Embeddings are stored in `~/.tclaude/db.sqlite` (table `conv_embeddings`). Each chunk stores its text, embedding vector (raw float32 bytes — 1024 dims for qwen3-embedding, 768 for nomic), model name, and creation timestamp.
 
 ### Invalidation
 
@@ -191,7 +208,10 @@ Indexing is incremental using file modification times:
 
 ### Context length handling
 
-If a chunk exceeds the model's context window, `tclaude` automatically reduces it by 1/3 and retries, repeating until it fits. In practice, the 24K character limit rarely triggers this with `qwen3-embedding`'s 32K token context.
+If a chunk exceeds the model's context window, `tclaude` automatically reduces it by 1/3 and retries, repeating until it fits. In practice, this rarely triggers — especially with `qwen3-embedding`'s 32K token context.
+
+!!! note "Switching models"
+    Embeddings are model-specific — you can't search with a different model than you indexed with. If you switch models, rebuild the index with `tclaude conv index-embeddings --reindex`.
 
 ## Code Layout
 
