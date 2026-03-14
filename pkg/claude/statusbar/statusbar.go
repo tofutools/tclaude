@@ -12,11 +12,13 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -185,7 +187,11 @@ func run() error {
 	}
 
 	var line2 []string
-	line2 = append(line2, fmt.Sprintf("%s %s %d%%", modelLabel, contextBar(ctxPct), ctxPct))
+	ctxLabel := fmt.Sprintf("%d%%", ctxPct)
+	if threshold := autoCompactThreshold(); threshold > 0 {
+		ctxLabel = fmt.Sprintf("%d%%/%d%%", ctxPct, threshold)
+	}
+	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct), ctxLabel))
 
 	// Usage limits (subscription plan) or cost (API plan)
 	usage, err := usageapi.GetCached()
@@ -435,4 +441,16 @@ func resetTimer(t time.Time) string {
 		return fmt.Sprintf("%s(%dh%dm)%s", colorDim, h, m, colorReset)
 	}
 	return fmt.Sprintf("%s(%dm)%s", colorDim, m, colorReset)
+}
+
+// autoCompactThreshold returns the auto-compact percentage threshold,
+// checking the CLI env var first, then the config file. Returns 0 if not set.
+func autoCompactThreshold() int {
+	if v, err := strconv.Atoi(os.Getenv("TCLAUDE_AUTO_COMPACT")); err == nil && v > 0 {
+		return v
+	}
+	if cfg, err := config.Load(); err == nil && cfg.AutoCompactPercent != nil {
+		return *cfg.AutoCompactPercent
+	}
+	return 0
 }
