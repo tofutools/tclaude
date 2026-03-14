@@ -29,10 +29,12 @@ tclaude session new -d
 
 **Flags:**
 
-| Flag            | Description                     |
-|-----------------|---------------------------------|
-| `-d, --detach`  | Start session without attaching |
-| `--resume <id>` | Resume an existing conversation |
+| Flag              | Description                                              |
+|-------------------|----------------------------------------------------------|
+| `-d, --detach`    | Start session without attaching                          |
+| `--resume <id>`   | Resume an existing conversation                          |
+| `--label <name>`  | Custom label for the session                             |
+| `--compact <pct>` | Auto-compact at this context usage percentage (see below) |
 
 ### session ls
 
@@ -156,6 +158,39 @@ Sessions report their status via Claude hooks:
 | `awaiting-permission` | 🔴 Red    | Needs permission approval   |
 | `awaiting-input`      | 🔴 Red    | Waiting for user input      |
 | `exited`              | ⚫ Gray    | Session has ended           |
+
+## Auto-Compact
+
+Claude Code compacts context at ~83% usage (200K window) or ~95% (1M window) by default. With larger context windows, this can lead to context rot, higher costs, and slower responses. Auto-compact lets you trigger `/compact` at a lower threshold.
+
+When enabled, the status bar tracks context usage and the Stop hook sends `/compact` via tmux when the threshold is exceeded. After compaction, the state resets so it can trigger again.
+
+### Per-session (CLI flag)
+
+```bash
+# Compact at 50% context usage
+tclaude --compact 50
+
+# Also works with session new and task run
+tclaude session new --compact 40
+tclaude task run --compact 60
+```
+
+### Global (config file)
+
+Set `auto_compact_percent` in `~/.tclaude/config.json`:
+
+```json
+{
+  "auto_compact_percent": 50
+}
+```
+
+The CLI flag overrides the config file, so you can set a global default and override per-session.
+
+### Status bar
+
+When auto-compact is configured, the status bar shows the threshold alongside context usage (e.g. `30%/50%`) and the context bar rescales so it fills completely as usage approaches the limit.
 
 ## Tmux Integration
 
