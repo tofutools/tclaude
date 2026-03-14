@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 4
+const currentVersion = 5
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -43,6 +43,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 4 {
 		if err := migrateV3toV4(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 5 {
+		if err := migrateV4toV5(db); err != nil {
 			return err
 		}
 	}
@@ -161,6 +167,28 @@ func migrateV3toV4(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v3→v4: %w", err)
+	}
+	return nil
+}
+
+func migrateV4toV5(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS conv_embeddings (
+			conv_id     TEXT NOT NULL,
+			chunk_index INTEGER NOT NULL,
+			chunk_type  TEXT NOT NULL DEFAULT 'content',
+			chunk_text  TEXT NOT NULL DEFAULT '',
+			embedding   BLOB NOT NULL,
+			model       TEXT NOT NULL DEFAULT '',
+			created_at  TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (conv_id, chunk_index)
+		);
+		CREATE INDEX IF NOT EXISTS idx_conv_embeddings_conv_id ON conv_embeddings(conv_id);
+
+		UPDATE schema_version SET version = 5;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v4→v5: %w", err)
 	}
 	return nil
 }

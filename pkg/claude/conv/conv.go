@@ -49,6 +49,8 @@ func Cmd() *cobra.Command {
 			ListCmd(),
 			SearchCmd(),
 			AISearchCmd(),
+			IndexEmbeddingsCmd(),
+			SearchEmbeddingsCmd(),
 			ResumeCmd(),
 			CpCmd(),
 			MvCmd(),
