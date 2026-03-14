@@ -8,13 +8,6 @@ When searching past conversations, you rarely remember exact keywords — you re
 
 Semantic search embeds your conversations into vector space and finds matches by meaning. Searching for "auth token refresh" will find conversations about authentication and OAuth even if those exact words weren't used.
 
-**Key properties:**
-
-- **Private** — all processing happens locally, conversation data never leaves your machine
-- **Fast** — sub-second search once indexed
-- **Free** — zero per-query cost after initial setup
-- **Offline** — works without internet after the model is downloaded
-
 ## Prerequisites
 
 Semantic search requires [Ollama](https://ollama.com) running locally with an embedding model.
