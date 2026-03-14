@@ -309,7 +309,7 @@ func EnsureHooksInstalled(autoInstall bool, stdout, stderr *os.File) bool {
 	if !autoInstall {
 		fmt.Fprintf(stderr, "Warning: tclaude session hooks not installed in Claude settings.\n")
 		fmt.Fprintf(stderr, "Missing hooks for: %v\n", missing)
-		fmt.Fprintf(stderr, "Install with: %s session install-hooks\n\n", HookCommand)
+		fmt.Fprintf(stderr, "Install with: tclaude setup\n\n")
 		return false
 	}
 
