@@ -187,11 +187,12 @@ func run() error {
 	}
 
 	var line2 []string
+	compactThreshold := autoCompactThreshold()
 	ctxLabel := fmt.Sprintf("%d%%", ctxPct)
-	if threshold := autoCompactThreshold(); threshold > 0 {
-		ctxLabel = fmt.Sprintf("%d%%/%d%%", ctxPct, threshold)
+	if compactThreshold > 0 {
+		ctxLabel = fmt.Sprintf("%d%%/%d%%", ctxPct, compactThreshold)
 	}
-	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct), ctxLabel))
+	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct, compactThreshold), ctxLabel))
 
 	// Usage limits (subscription plan) or cost (API plan)
 	usage, err := usageapi.GetCached()
@@ -354,9 +355,10 @@ func getPRURL(branch string) string {
 }
 
 // contextBar returns a progress bar for context usage with a compaction marker.
-// The bar shows usable space (before compaction) as ░ and the compaction buffer as ▒.
-// Color thresholds are relative to the effective max (~83.5%).
-func contextBar(pct int) string {
+// When compactThreshold is set (>0), the full bar represents 0-threshold%,
+// so it fills completely as usage approaches the compact limit.
+// Otherwise uses the default compaction buffer (~16.5%) with a ▒ zone.
+func contextBar(pct int, compactThreshold int) string {
 	if pct < 0 {
 		pct = 0
 	}
@@ -364,6 +366,30 @@ func contextBar(pct int) string {
 		pct = 100
 	}
 
+	// Custom threshold: full bar represents 0 to threshold
+	if compactThreshold > 0 {
+		effectiveMax := float64(compactThreshold)
+		usageFraction := float64(pct) / effectiveMax * 100
+		filled := int(math.Round(float64(pct) / effectiveMax * float64(barWidth)))
+		if filled > barWidth {
+			filled = barWidth
+		}
+
+		color := colorGreen
+		if usageFraction >= 85 {
+			color = colorRed
+		} else if usageFraction >= 60 {
+			color = colorYellow
+		}
+
+		empty := barWidth - filled
+		return fmt.Sprintf("%s%s%s%s%s",
+			color, strings.Repeat("█", filled),
+			colorDim, strings.Repeat("░", empty),
+			colorReset)
+	}
+
+	// Default: two-zone bar with compaction buffer as ▒
 	effectiveMax := 100.0 - compactionBuffer
 	compactionCells := int(math.Round(compactionBuffer * float64(barWidth) / 100))
 	usableCells := barWidth - compactionCells
@@ -372,7 +398,6 @@ func contextBar(pct int) string {
 		filled = barWidth
 	}
 
-	// Color based on how close we are to the effective max
 	usageFraction := float64(pct) / effectiveMax * 100
 	color := colorGreen
 	if usageFraction >= 85 {
@@ -381,7 +406,6 @@ func contextBar(pct int) string {
 		color = colorYellow
 	}
 
-	// Build bar: filled cells, then empty usable cells (░), then compaction cells (▒)
 	filledInUsable := filled
 	if filledInUsable > usableCells {
 		filledInUsable = usableCells
