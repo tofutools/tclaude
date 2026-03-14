@@ -51,7 +51,7 @@ ollama pull nomic-embed-text
 | `qwen3-embedding:0.6b` (default) | 639 MB | 1024 | 32K tokens | ~1.5s/conv | 100+ |
 | `nomic-embed-text` | 274 MB | 768 | 8K tokens | ~0.1s/conv | English-focused |
 
-`qwen3-embedding:0.6b` produces higher-quality embeddings with a much larger context window (most conversations fit in a single chunk). `nomic-embed-text` is significantly faster to index and uses less disk/memory — a good choice if you have many conversations or limited hardware.
+`qwen3-embedding:0.6b` produces higher-quality embeddings with a much larger context window. `nomic-embed-text` is significantly faster to index and uses less disk/memory — a good choice if you have many conversations or limited hardware.
 
 To use nomic instead of the default:
 
