@@ -2,6 +2,7 @@ package conv
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,8 +11,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/syncutil"
@@ -27,6 +30,16 @@ var (
 )
 
 type watchTickMsg time.Time
+
+// fsFileChangeMsg is sent when fsnotify detects a .jsonl file change.
+// New files and deletes arrive immediately; writes to existing files
+// are debounced (only sent after fsDebounceDelay of inactivity).
+type fsFileChangeMsg struct {
+	FilePath string
+	Removed  bool
+}
+
+const fsDebounceDelay = 30 * time.Second
 
 // watchConfirmMode represents confirmation dialogs
 type watchConfirmMode int
@@ -87,219 +100,48 @@ type watchModel struct {
 	statusMsg string
 
 	// DB polling
-	lastSessionUpdatedAt time.Time
+	lastSessionUpdatedAt   time.Time
+	lastConvIndexUpdatedAt time.Time
+	claudeProjectDir       string // resolved Claude project dir for single-project mode
+
+	// fsnotify — debounced channel-based approach
+	watcher   *fsnotify.Watcher
+	fsChan    chan fsFileChangeMsg // debounced events delivered here
+	fsCloseCh chan struct{}        // closed to stop the debounce goroutine
 }
 
 func initialWatchModel(global bool, since, before string) watchModel {
 	cwd, _ := os.Getwd()
+
+	var claudeProjectDir string
+	if !global {
+		claudeProjectDir = GetClaudeProjectPath(cwd)
+	}
+
 	return watchModel{
-		entries:        []SessionEntry{},
-		filtered:       []SessionEntry{},
-		activeSessions: make(map[string]*session.SessionState),
-		global:         global,
-		projectPath:    cwd,
-		since:          since,
-		before:         before,
-		viewportHeight: 20, // Will be adjusted based on terminal size
+		entries:          []SessionEntry{},
+		filtered:         []SessionEntry{},
+		activeSessions:   make(map[string]*session.SessionState),
+		global:           global,
+		projectPath:      cwd,
+		claudeProjectDir: claudeProjectDir,
+		since:            since,
+		before:           before,
+		viewportHeight:   20, // Will be adjusted based on terminal size
 	}
 }
 
-func (m watchModel) Init() tea.Cmd {
-	return tea.Batch(watchTickCmd(), tea.EnterAltScreen)
+// --- tea.Model interface (pointer receiver) ---
+
+func (m *watchModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{watchTickCmd(), tea.EnterAltScreen}
+	if fsCmd := m.startFSWatcher(); fsCmd != nil {
+		cmds = append(cmds, fsCmd)
+	}
+	return tea.Batch(cmds...)
 }
 
-func watchTickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
-		return watchTickMsg(t)
-	})
-}
-
-// loadConversations loads all conversations based on settings
-func (m watchModel) loadConversations() watchModel {
-	var allEntries []SessionEntry
-
-	if m.global {
-		projectsDir := ClaudeProjectsDir()
-		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
-			return m
-		}
-
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			projectPath := projectsDir + "/" + entry.Name()
-			index, err := LoadSessionsIndex(projectPath)
-			if err != nil {
-				continue
-			}
-			allEntries = append(allEntries, index.Entries...)
-		}
-	} else {
-		projectPath := GetClaudeProjectPath(m.projectPath)
-		index, err := LoadSessionsIndex(projectPath)
-		if err != nil {
-			m.entries = []SessionEntry{}
-			m.filtered = []SessionEntry{}
-			return m
-		}
-		allEntries = index.Entries
-	}
-
-	// Filter by time if specified
-	allEntries, _ = FilterEntriesByTime(allEntries, m.since, m.before)
-
-	// Sort by current sort state, defaulting to modified descending
-	if m.sort.Key != "" {
-		sortConvEntriesByKey(allEntries, m.sort.Key, m.sort.Direction)
-	} else {
-		sortEntries(allEntries, "modified", false)
-	}
-
-	m.entries = allEntries
-	m = m.applySearchFilter()
-	m = m.refreshActiveSessions()
-	return m
-}
-
-// applySearchFilter filters entries based on search input
-func (m watchModel) applySearchFilter() watchModel {
-	if m.searchInput == "" {
-		m.filtered = m.entries
-		return m
-	}
-
-	query := strings.ToLower(m.searchInput)
-	var filtered []SessionEntry
-	for _, e := range m.entries {
-		if matchesSearch(e, query) {
-			filtered = append(filtered, e)
-		}
-	}
-	m.filtered = filtered
-
-	// Reset cursor/viewport if needed
-	if m.cursor >= len(m.filtered) {
-		m.cursor = 0
-	}
-	m.viewportOffset = 0
-
-	return m
-}
-
-func matchesSearch(e SessionEntry, query string) bool {
-	return strings.Contains(strings.ToLower(e.DisplayTitle()), query) ||
-		strings.Contains(strings.ToLower(e.FirstPrompt), query) ||
-		strings.Contains(strings.ToLower(e.ProjectPath), query) ||
-		strings.Contains(strings.ToLower(e.GitBranch), query) ||
-		strings.Contains(strings.ToLower(e.SessionID), query)
-}
-
-// refreshActiveSessions updates which conversations have active sessions
-func (m watchModel) refreshActiveSessions() watchModel {
-	states, _ := session.ListSessionStates()
-	m.activeSessions = make(map[string]*session.SessionState)
-
-	for _, state := range states {
-		session.RefreshSessionStatus(state)
-		if state.Status != session.StatusExited && state.ConvID != "" {
-			m.activeSessions[state.ConvID] = state
-		}
-	}
-
-	return m
-}
-
-// ensureCursorVisible scrolls viewport to keep cursor visible
-func (m watchModel) ensureCursorVisible() watchModel {
-	if m.cursor < m.viewportOffset {
-		m.viewportOffset = m.cursor
-	}
-	if m.cursor >= m.viewportOffset+m.viewportHeight {
-		m.viewportOffset = m.cursor - m.viewportHeight + 1
-	}
-	return m
-}
-
-// triggerDelete initiates delete confirmation for the selected conversation
-func (m watchModel) triggerDelete() watchModel {
-	if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
-		conv := m.filtered[m.cursor]
-		if _, hasSession := m.activeSessions[conv.SessionID]; hasSession {
-			m.confirmMode = watchConfirmDeleteWithSession
-		} else {
-			m.confirmMode = watchConfirmDelete
-		}
-		m.statusMsg = ""
-	}
-	return m
-}
-
-// deleteConversation deletes a conversation's files and removes it from the index
-func (m watchModel) deleteConversation(conv *SessionEntry) error {
-	// Determine project path - prefer FullPath (actual file location) over ProjectPath derivation
-	var projectPath string
-	if conv.FullPath != "" {
-		projectPath = filepath.Dir(conv.FullPath)
-	} else if m.global {
-		projectPath = GetClaudeProjectPath(conv.ProjectPath)
-	} else {
-		projectPath = GetClaudeProjectPath(m.projectPath)
-	}
-
-	// Delete conversation file
-	convFile := projectPath + "/" + conv.SessionID + ".jsonl"
-	if err := os.Remove(convFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to delete file: %w", err)
-	}
-
-	// Delete conversation directory if it exists
-	convDir := projectPath + "/" + conv.SessionID
-	if info, err := os.Stat(convDir); err == nil && info.IsDir() {
-		if err := os.RemoveAll(convDir); err != nil {
-			return fmt.Errorf("failed to delete directory: %w", err)
-		}
-	}
-
-	// Remove from index and save (only if the project dir and index exist)
-	index, err := LoadSessionsIndex(projectPath)
-	if err == nil && RemoveSessionByID(index, conv.SessionID) {
-		if err := SaveSessionsIndex(projectPath, index); err != nil {
-			return fmt.Errorf("failed to save index: %w", err)
-		}
-	}
-
-	// Add tombstone if sync is initialized
-	if syncutil.IsInitialized() {
-		if err := AddTombstoneForProject(projectPath, conv.SessionID); err != nil {
-			// Log but don't fail - tombstone is best-effort
-			fmt.Printf("Warning: failed to add tombstone: %v\n", err)
-		}
-	}
-
-	return nil
-}
-
-// stopSession stops a session's tmux session and removes its state file
-func (m watchModel) stopSession(state *session.SessionState) error {
-	// Kill tmux session if alive
-	if session.IsTmuxSessionAlive(state.TmuxSession) {
-		cmd := clcommon.TmuxCommand("kill-session", "-t", state.TmuxSession)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to kill tmux session: %w", err)
-		}
-	}
-
-	// Remove state file
-	if err := session.DeleteSessionState(state.ID); err != nil {
-		return fmt.Errorf("failed to delete session state: %w", err)
-	}
-
-	return nil
-}
-
-func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Handle confirmation dialogs first
@@ -316,16 +158,14 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.confirmMode = watchConfirmNone
 						return m, tea.Quit
 					case watchConfirmDelete:
-						// Delete conversation (no session)
 						if err := m.deleteConversation(&conv); err != nil {
 							m.statusMsg = "Error: " + err.Error()
 						} else {
 							m.statusMsg = "Deleted conversation " + conv.SessionID[:8]
 						}
 						m.confirmMode = watchConfirmNone
-						m = m.loadConversations()
+						m.reloadFromDB()
 					case watchConfirmDeleteWithSession:
-						// Stop session AND delete conversation
 						if state, ok := m.activeSessions[conv.SessionID]; ok {
 							if err := m.stopSession(state); err != nil {
 								m.statusMsg = "Error stopping session: " + err.Error()
@@ -337,11 +177,10 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.statusMsg = "Stopped session and deleted conversation " + conv.SessionID[:8]
 						}
 						m.confirmMode = watchConfirmNone
-						m = m.loadConversations()
+						m.reloadFromDB()
 					}
 				}
 			case "s", "S":
-				// Stop session only (when there's an active session)
 				if m.confirmMode == watchConfirmDeleteWithSession && m.cursor < len(m.filtered) {
 					conv := m.filtered[m.cursor]
 					if state, ok := m.activeSessions[conv.SessionID]; ok {
@@ -352,12 +191,11 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.confirmMode = watchConfirmNone
-					m = m.refreshActiveSessions()
+					m.refreshActiveSessions()
 				}
 			case "n", "N", "esc", " ":
 				m.confirmMode = watchConfirmNone
 			}
-			// Any key dismisses the no-tmux message
 			if m.confirmMode == watchConfirmNoTmux {
 				m.confirmMode = watchConfirmNone
 			}
@@ -376,39 +214,36 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				if m.searchInput != "" {
 					m.searchInput = ""
-					m = m.applySearchFilter()
+					m.applySearchFilter()
 				} else {
 					m.searchFocused = false
 				}
 			case "enter":
 				m.searchFocused = false
 			case "up":
-				// Exit search and navigate up
 				m.searchFocused = false
 				if m.cursor > 0 {
 					m.cursor--
-					m = m.ensureCursorVisible()
+					m.ensureCursorVisible()
 				}
 			case "down":
-				// Exit search and navigate down
 				m.searchFocused = false
 				if m.cursor < len(m.filtered)-1 {
 					m.cursor++
-					m = m.ensureCursorVisible()
+					m.ensureCursorVisible()
 				}
 			case "backspace":
 				if len(m.searchInput) > 0 {
 					m.searchInput = m.searchInput[:len(m.searchInput)-1]
-					m = m.applySearchFilter()
+					m.applySearchFilter()
 				}
 			case "ctrl+u":
 				m.searchInput = ""
-				m = m.applySearchFilter()
+				m.applySearchFilter()
 			default:
-				// Add printable characters to search
 				if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] < 127 {
 					m.searchInput += msg.String()
-					m = m.applySearchFilter()
+					m.applySearchFilter()
 				}
 			}
 			return m, nil
@@ -436,11 +271,9 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+u":
 				m.worktreeInput = ""
 			default:
-				// Add valid branch name characters
 				ch := msg.String()
 				if len(ch) == 1 {
 					c := ch[0]
-					// Allow alphanumeric, dash, underscore, slash
 					if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '/' {
 						m.worktreeInput += ch
 					}
@@ -456,26 +289,26 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.searchInput != "" {
 				m.searchInput = ""
-				m = m.applySearchFilter()
+				m.applySearchFilter()
 			}
 		case "/":
 			m.searchFocused = true
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				m = m.ensureCursorVisible()
+				m.ensureCursorVisible()
 			}
 		case "down", "j":
 			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
-				m = m.ensureCursorVisible()
+				m.ensureCursorVisible()
 			}
 		case "pgup", "ctrl+b":
 			m.cursor -= m.viewportHeight
 			if m.cursor < 0 {
 				m.cursor = 0
 			}
-			m = m.ensureCursorVisible()
+			m.ensureCursorVisible()
 		case "pgdown", "ctrl+f":
 			m.cursor += m.viewportHeight
 			if m.cursor >= len(m.filtered) {
@@ -484,107 +317,96 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < 0 {
 				m.cursor = 0
 			}
-			m = m.ensureCursorVisible()
+			m.ensureCursorVisible()
 		case "home", "g":
 			m.cursor = 0
-			m = m.ensureCursorVisible()
+			m.ensureCursorVisible()
 		case "end", "G":
 			if len(m.filtered) > 0 {
 				m.cursor = len(m.filtered) - 1
 			}
-			m = m.ensureCursorVisible()
+			m.ensureCursorVisible()
 		case "enter":
 			if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 				conv := m.filtered[m.cursor]
-				// Check if session already exists for this conversation
 				if existing, ok := m.activeSessions[conv.SessionID]; ok {
 					tmuxAlive := existing.TmuxSession != "" && session.IsTmuxSessionAlive(existing.TmuxSession)
 					if !tmuxAlive {
-						// Non-tmux or dead tmux session, cannot attach
 						m.confirmMode = watchConfirmNoTmux
 					} else if existing.Attached > 0 {
-						// Session already has clients attached - just focus the window
 						m.focusOnly = true
 						m.focusTmux = existing.TmuxSession
 						m.focusSessionID = existing.ID
 						return m, tea.Quit
 					} else {
 						m.selectedConv = &conv
-						m.shouldCreate = false // Just attach to existing
+						m.shouldCreate = false
 						return m, tea.Quit
 					}
 				} else {
 					m.selectedConv = &conv
-					m.shouldCreate = true // Create new session
+					m.shouldCreate = true
 					return m, tea.Quit
 				}
 			}
 		case "r":
-			// Force refresh conversations
-			m = m.loadConversations()
+			m.fullReloadConversations()
 			m.statusMsg = ""
 		case "h", "?":
 			m.helpView = true
 		case "W", "w":
-			// Create worktree for selected conversation
 			if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 				m.worktreeFocused = true
 				m.worktreeInput = ""
 			}
 		case "delete", "backspace", "x", "ctrl+d":
-			// Delete conversation (with confirmation)
-			// Note: ctrl+d is what macOS sends for forward delete key
-			m = m.triggerDelete()
+			m.triggerDelete()
 		default:
 			if m.sort.HandleSortKey(m.columns(), msg.String()) {
-				m = m.loadConversations()
+				// In-memory re-sort only — no disk or DB access
+				m.resortAndFilter()
 			}
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Calculate viewport height (terminal height - search box - header - separator - scroll - footer)
 		m.viewportHeight = max(msg.Height-10, 5)
-		m = m.ensureCursorVisible()
+		m.ensureCursorVisible()
 
 	case watchTickMsg:
-		// Poll DB: only refresh if session data has changed
-		maxUpdated, err := session.MaxUpdatedAt()
-		if err == nil && maxUpdated.After(m.lastSessionUpdatedAt) {
-			m.lastSessionUpdatedAt = maxUpdated
-			m = m.refreshActiveSessions()
+		// Poll session DB: refresh active session indicators if changed
+		maxSessionUpdated, err := session.MaxUpdatedAt()
+		if err == nil && maxSessionUpdated.After(m.lastSessionUpdatedAt) {
+			m.lastSessionUpdatedAt = maxSessionUpdated
+			m.refreshActiveSessions()
 		}
+
+		// Poll conv_index DB: detect changes from other tclaude instances
+		var maxConvUpdated time.Time
+		if m.global {
+			maxConvUpdated, _ = db.MaxConvIndexUpdatedAt()
+		} else {
+			maxConvUpdated, _ = db.MaxConvIndexUpdatedAtForProject(m.claudeProjectDir)
+		}
+		if !maxConvUpdated.IsZero() && maxConvUpdated.After(m.lastConvIndexUpdatedAt) {
+			m.lastConvIndexUpdatedAt = maxConvUpdated
+			m.reloadFromDB()
+		}
+
 		return m, watchTickCmd()
+
+	case fsFileChangeMsg:
+		if m.shouldAcceptFSEvent(msg.FilePath) {
+			m.handleFSChange(msg.FilePath, msg.Removed)
+		}
+		return m, m.continueListenFSEvents()
 	}
 
 	return m, nil
 }
 
-// columns returns the column definitions for the conversation table.
-// Used by both Update (for sort key handling) and View (for rendering).
-func (m watchModel) columns() []table.Column {
-	if m.global {
-		return []table.Column{
-			{Header: "", Width: 2},                   // Session indicator
-			{Header: "ID", Width: 10, SortKey: "id"}, // ID
-			{Header: "PROJECT", MinWidth: 20, Weight: 0.4, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"}, // Project
-			{Header: "TITLE/PROMPT", MinWidth: 30, Weight: 0.6, Truncate: true, SortKey: "title"},                                 // Title
-			{Header: "SIZE", Width: 8, SortKey: "size"},                                                                           // File size
-			{Header: "MODIFIED", Width: 16, SortKey: "modified"},                                                                  // Modified
-		}
-	}
-	return []table.Column{
-		{Header: "", Width: 2},                                                   // Session indicator
-		{Header: "ID", Width: 10, SortKey: "id"},                                 // ID
-		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"}, // Title
-		{Header: "SIZE", Width: 8, SortKey: "size"},                              // File size
-		{Header: "MODIFIED", Width: 16, SortKey: "modified"},                     // Modified
-	}
-}
-
-func (m watchModel) View() string {
-	// Help view overlay
+func (m *watchModel) View() string {
 	if m.helpView {
 		return m.renderHelpView()
 	}
@@ -636,32 +458,26 @@ func (m watchModel) View() string {
 	tbl.ViewportHeight = m.viewportHeight
 	tbl.Sort = m.sort.ToConfig(cols)
 
-	// Add rows for all filtered entries
 	for _, e := range m.filtered {
-		// Session indicator (plain text - ANSI in cells breaks row selection highlight)
 		sessionMark := "  "
 		if state, ok := m.activeSessions[e.SessionID]; ok {
 			tmuxAlive := state.TmuxSession != "" && session.IsTmuxSessionAlive(state.TmuxSession)
 			if !tmuxAlive {
-				sessionMark = " ◉" // Non-tmux or dead tmux
+				sessionMark = " ◉"
 			} else if state.Attached > 0 {
-				sessionMark = "⚡" // Tmux with attached clients
+				sessionMark = "⚡"
 			} else {
-				sessionMark = " ▷" // Tmux detached
+				sessionMark = " ▷"
 			}
 		}
 
-		// Format fields
 		id := e.SessionID[:8]
 		modified := formatDate(e.Modified)
-
-		// Build title: [title]: prompt, or just prompt (table handles truncation)
 		var titleStr string
 		if e.HasTitle() {
 			titleStr = e.DisplayTitle()
 		}
 		title := convindex.FormatTitleAndPrompt(titleStr, e.FirstPrompt)
-
 		size := formatFileSize(e.FileSize)
 
 		if m.global {
@@ -675,7 +491,6 @@ func (m watchModel) View() string {
 		}
 	}
 
-	// Render table with scroll indicator
 	b.WriteString(tbl.RenderWithScroll(&wHelpStyle))
 	b.WriteString("\n\n")
 	switch m.confirmMode {
@@ -701,7 +516,461 @@ func (m watchModel) View() string {
 	return b.String()
 }
 
-func (m watchModel) renderHelpView() string {
+// --- Data loading ---
+
+// fullReloadConversations does a full disk+DB scan. Used for initial load and manual refresh (r key).
+func (m *watchModel) fullReloadConversations() {
+	var allEntries []SessionEntry
+
+	if m.global {
+		projectsDir := ClaudeProjectsDir()
+		entries, err := os.ReadDir(projectsDir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			projectPath := projectsDir + "/" + entry.Name()
+			index, err := LoadSessionsIndex(projectPath)
+			if err != nil {
+				continue
+			}
+			allEntries = append(allEntries, index.Entries...)
+		}
+	} else {
+		index, err := LoadSessionsIndex(m.claudeProjectDir)
+		if err != nil {
+			m.entries = []SessionEntry{}
+			m.filtered = []SessionEntry{}
+			return
+		}
+		allEntries = index.Entries
+	}
+
+	m.setEntries(allEntries)
+}
+
+// reloadFromDB loads entries from the SQLite cache only (no filesystem access).
+// Used when DB polling detects changes made by another tclaude instance.
+func (m *watchModel) reloadFromDB() {
+	var dbProjectDir string
+	if !m.global {
+		dbProjectDir = m.claudeProjectDir
+	}
+	allEntries, err := LoadEntriesFromDB(dbProjectDir)
+	if err != nil {
+		return
+	}
+	m.setEntries(allEntries)
+}
+
+// setEntries replaces the entries list, applies time filter, sort, and search filter.
+func (m *watchModel) setEntries(allEntries []SessionEntry) {
+	allEntries, _ = FilterEntriesByTime(allEntries, m.since, m.before)
+	m.sortInPlace(allEntries)
+	m.entries = allEntries
+	m.applySearchFilter()
+	m.refreshActiveSessions()
+}
+
+// --- Sorting (in-memory only) ---
+
+// sortInPlace sorts the given slice using current sort state (or default modified desc).
+func (m *watchModel) sortInPlace(entries []SessionEntry) {
+	if m.sort.Key != "" {
+		sortConvEntriesByKey(entries, m.sort.Key, m.sort.Direction)
+	} else {
+		sortEntriesByModifiedDesc(entries)
+	}
+}
+
+// resortAndFilter re-sorts the in-memory entries and reapplies the search filter.
+func (m *watchModel) resortAndFilter() {
+	m.sortInPlace(m.entries)
+	m.applySearchFilter()
+}
+
+// --- fsnotify ---
+
+func watchTickCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return watchTickMsg(t)
+	})
+}
+
+// startFSWatcher sets up an fsnotify watcher on ~/.claude/projects and starts
+// a background goroutine that debounces events per file.
+func (m *watchModel) startFSWatcher() tea.Cmd {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		slog.Warn("watch: failed to create fsnotify watcher", "error", err)
+		return nil
+	}
+	m.watcher = w
+	m.fsChan = make(chan fsFileChangeMsg, 64)
+	m.fsCloseCh = make(chan struct{})
+
+	projectsDir := ClaudeProjectsDir()
+	if projectsDir == "" {
+		return nil
+	}
+
+	// Always watch the projects root so we detect new project subdirs
+	// (and in single-project mode, detect the project dir being created).
+	if err := w.Add(projectsDir); err != nil {
+		slog.Warn("watch: failed to watch projects dir", "path", projectsDir, "error", err)
+	}
+
+	if m.global {
+		// Watch each existing subdirectory
+		entries, err := os.ReadDir(projectsDir)
+		if err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					if err := w.Add(filepath.Join(projectsDir, e.Name())); err != nil {
+						slog.Debug("watch: failed to watch project subdir", "name", e.Name(), "error", err)
+					}
+				}
+			}
+		}
+	} else if m.claudeProjectDir != "" {
+		// Watch the specific project dir (may not exist yet — that's OK,
+		// the debounce loop will add it when we see it created under projectsDir).
+		if err := w.Add(m.claudeProjectDir); err != nil {
+			slog.Debug("watch: project dir not watchable yet, will detect via parent", "path", m.claudeProjectDir, "error", err)
+		}
+	}
+
+	go fsDebounceLoop(w, projectsDir, m.fsChan, m.fsCloseCh)
+
+	return waitForFSEvent(m.fsChan)
+}
+
+// fsDebounceLoop reads raw fsnotify events and dispatches them:
+//   - New files (Create) and deletes (Remove/Rename) are sent immediately.
+//   - Writes to existing files are debounced per-file: only forwarded after
+//     fsDebounceDelay of inactivity, since active conversations write constantly.
+func fsDebounceLoop(w *fsnotify.Watcher, projectsDir string, outCh chan<- fsFileChangeMsg, closeCh <-chan struct{}) {
+	timers := make(map[string]*time.Timer)
+	known := make(map[string]bool) // tracks files we've already seen
+
+	defer func() {
+		for _, t := range timers {
+			t.Stop()
+		}
+	}()
+
+	for {
+		select {
+		case <-closeCh:
+			return
+		case event, ok := <-w.Events:
+			if !ok {
+				return
+			}
+			path := event.Name
+
+			// Auto-watch new project subdirectories created under projectsDir.
+			// In single-project mode this catches the project dir being created
+			// after startup; in global mode it watches all new projects.
+			if event.Op&fsnotify.Create != 0 && filepath.Dir(path) == projectsDir {
+				if info, err := os.Stat(path); err == nil && info.IsDir() {
+					_ = w.Add(path)
+					continue // directory event, not a .jsonl file
+				}
+			}
+
+			// Only care about .jsonl files
+			if !strings.HasSuffix(path, ".jsonl") {
+				continue
+			}
+
+			// Verify depth: parent must be a direct child of projectsDir
+			if filepath.Dir(filepath.Dir(path)) != projectsDir {
+				continue
+			}
+
+			removed := event.Op&fsnotify.Remove != 0 || event.Op&fsnotify.Rename != 0
+			isCreate := event.Op&fsnotify.Create != 0
+
+			if removed {
+				if t, ok := timers[path]; ok {
+					t.Stop()
+					delete(timers, path)
+				}
+				delete(known, path)
+				select {
+				case outCh <- fsFileChangeMsg{FilePath: path, Removed: true}:
+				case <-closeCh:
+					return
+				}
+				continue
+			}
+
+			if isCreate && !known[path] {
+				// New file — send immediately
+				known[path] = true
+				if t, ok := timers[path]; ok {
+					t.Stop()
+					delete(timers, path)
+				}
+				select {
+				case outCh <- fsFileChangeMsg{FilePath: path, Removed: false}:
+				case <-closeCh:
+					return
+				}
+				continue
+			}
+
+			// Write to existing file — debounce
+			known[path] = true
+			if t, ok := timers[path]; ok {
+				t.Stop()
+			}
+			timers[path] = time.AfterFunc(fsDebounceDelay, func() {
+				select {
+				case outCh <- fsFileChangeMsg{FilePath: path, Removed: false}:
+				case <-closeCh:
+				}
+				delete(timers, path)
+			})
+
+		case <-w.Errors:
+			// Ignore errors, keep listening
+		}
+	}
+}
+
+func waitForFSEvent(ch <-chan fsFileChangeMsg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
+func (m *watchModel) continueListenFSEvents() tea.Cmd {
+	if m.fsChan == nil {
+		return nil
+	}
+	return waitForFSEvent(m.fsChan)
+}
+
+// handleFSChange processes a single file change event from fsnotify.
+func (m *watchModel) handleFSChange(filePath string, removed bool) {
+	convID := strings.TrimSuffix(filepath.Base(filePath), ".jsonl")
+	if len(convID) != 36 {
+		return
+	}
+
+	if removed {
+		_ = db.DeleteConvIndex(convID)
+		m.removeEntry(convID)
+		m.applySearchFilter()
+		return
+	}
+
+	entry := ScanAndUpsertFile(filePath)
+	if entry == nil {
+		return
+	}
+
+	m.upsertEntry(*entry)
+	m.sortInPlace(m.entries)
+	m.applySearchFilter()
+}
+
+func (m *watchModel) shouldAcceptFSEvent(filePath string) bool {
+	if m.global {
+		return true
+	}
+	return filepath.Dir(filePath) == m.claudeProjectDir
+}
+
+// closeWatcher cleans up the fsnotify watcher and debounce goroutine.
+func (m *watchModel) closeWatcher() {
+	if m.fsCloseCh != nil {
+		close(m.fsCloseCh)
+		m.fsCloseCh = nil
+	}
+	if m.watcher != nil {
+		m.watcher.Close()
+		m.watcher = nil
+	}
+}
+
+// --- In-memory entry management ---
+
+func (m *watchModel) removeEntry(convID string) {
+	for i, e := range m.entries {
+		if e.SessionID == convID {
+			m.entries = append(m.entries[:i], m.entries[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m *watchModel) upsertEntry(entry SessionEntry) {
+	for i, e := range m.entries {
+		if e.SessionID == entry.SessionID {
+			m.entries[i] = entry
+			return
+		}
+	}
+	m.entries = append(m.entries, entry)
+}
+
+// --- Search filter ---
+
+func (m *watchModel) applySearchFilter() {
+	if m.searchInput == "" {
+		m.filtered = m.entries
+		return
+	}
+
+	query := strings.ToLower(m.searchInput)
+	m.filtered = m.filtered[:0] // reuse backing array
+	for _, e := range m.entries {
+		if matchesSearch(e, query) {
+			m.filtered = append(m.filtered, e)
+		}
+	}
+
+	if m.cursor >= len(m.filtered) {
+		m.cursor = 0
+	}
+	m.viewportOffset = 0
+}
+
+func matchesSearch(e SessionEntry, query string) bool {
+	return strings.Contains(strings.ToLower(e.DisplayTitle()), query) ||
+		strings.Contains(strings.ToLower(e.FirstPrompt), query) ||
+		strings.Contains(strings.ToLower(e.ProjectPath), query) ||
+		strings.Contains(strings.ToLower(e.GitBranch), query) ||
+		strings.Contains(strings.ToLower(e.SessionID), query)
+}
+
+// --- Session state ---
+
+func (m *watchModel) refreshActiveSessions() {
+	states, _ := session.ListSessionStates()
+	m.activeSessions = make(map[string]*session.SessionState)
+	for _, state := range states {
+		session.RefreshSessionStatus(state)
+		if state.Status != session.StatusExited && state.ConvID != "" {
+			m.activeSessions[state.ConvID] = state
+		}
+	}
+}
+
+// --- Navigation ---
+
+func (m *watchModel) ensureCursorVisible() {
+	if m.cursor < m.viewportOffset {
+		m.viewportOffset = m.cursor
+	}
+	if m.cursor >= m.viewportOffset+m.viewportHeight {
+		m.viewportOffset = m.cursor - m.viewportHeight + 1
+	}
+}
+
+// --- Actions ---
+
+func (m *watchModel) triggerDelete() {
+	if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
+		conv := m.filtered[m.cursor]
+		if _, hasSession := m.activeSessions[conv.SessionID]; hasSession {
+			m.confirmMode = watchConfirmDeleteWithSession
+		} else {
+			m.confirmMode = watchConfirmDelete
+		}
+		m.statusMsg = ""
+	}
+}
+
+func (m *watchModel) deleteConversation(conv *SessionEntry) error {
+	var projectPath string
+	if conv.FullPath != "" {
+		projectPath = filepath.Dir(conv.FullPath)
+	} else if m.global {
+		projectPath = GetClaudeProjectPath(conv.ProjectPath)
+	} else {
+		projectPath = GetClaudeProjectPath(m.projectPath)
+	}
+
+	convFile := projectPath + "/" + conv.SessionID + ".jsonl"
+	if err := os.Remove(convFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete file: %w", err)
+	}
+
+	convDir := projectPath + "/" + conv.SessionID
+	if info, err := os.Stat(convDir); err == nil && info.IsDir() {
+		if err := os.RemoveAll(convDir); err != nil {
+			return fmt.Errorf("failed to delete directory: %w", err)
+		}
+	}
+
+	index, err := LoadSessionsIndex(projectPath)
+	if err == nil && RemoveSessionByID(index, conv.SessionID) {
+		if err := SaveSessionsIndex(projectPath, index); err != nil {
+			return fmt.Errorf("failed to save index: %w", err)
+		}
+	}
+
+	_ = db.DeleteConvIndex(conv.SessionID)
+	m.removeEntry(conv.SessionID)
+
+	if syncutil.IsInitialized() {
+		if err := AddTombstoneForProject(projectPath, conv.SessionID); err != nil {
+			fmt.Printf("Warning: failed to add tombstone: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+func (m *watchModel) stopSession(state *session.SessionState) error {
+	if session.IsTmuxSessionAlive(state.TmuxSession) {
+		cmd := clcommon.TmuxCommand("kill-session", "-t", state.TmuxSession)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to kill tmux session: %w", err)
+		}
+	}
+	if err := session.DeleteSessionState(state.ID); err != nil {
+		return fmt.Errorf("failed to delete session state: %w", err)
+	}
+	return nil
+}
+
+// --- Column definitions ---
+
+func (m *watchModel) columns() []table.Column {
+	if m.global {
+		return []table.Column{
+			{Header: "", Width: 2},
+			{Header: "ID", Width: 10, SortKey: "id"},
+			{Header: "PROJECT", MinWidth: 20, Weight: 0.4, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"},
+			{Header: "TITLE/PROMPT", MinWidth: 30, Weight: 0.6, Truncate: true, SortKey: "title"},
+			{Header: "SIZE", Width: 8, SortKey: "size"},
+			{Header: "MODIFIED", Width: 16, SortKey: "modified"},
+		}
+	}
+	return []table.Column{
+		{Header: "", Width: 2},
+		{Header: "ID", Width: 10, SortKey: "id"},
+		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"},
+		{Header: "SIZE", Width: 8, SortKey: "size"},
+		{Header: "MODIFIED", Width: 16, SortKey: "modified"},
+	}
+}
+
+// --- Help view ---
+
+func (m *watchModel) renderHelpView() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	b.WriteString(wSearchStyle.Render("  Conversation Watch - Keyboard Shortcuts"))
@@ -754,6 +1023,8 @@ func (m watchModel) renderHelpView() string {
 	return b.String()
 }
 
+// --- Public API ---
+
 // WatchResult holds the result of the watch mode selection
 type WatchResult struct {
 	Conv           *SessionEntry
@@ -784,21 +1055,31 @@ func RunConvWatch(global bool, since, before string, state ConvWatchState) (Watc
 	m.viewportOffset = state.ViewportOffset
 	m.sort = state.Sort
 
-	m = m.loadConversations()
+	// Initial full load from disk+DB (populates cache for new/changed files)
+	m.fullReloadConversations()
+
+	// Snapshot the conv_index timestamp so the tick doesn't immediately reload
+	if m.global {
+		m.lastConvIndexUpdatedAt, _ = db.MaxConvIndexUpdatedAt()
+	} else {
+		m.lastConvIndexUpdatedAt, _ = db.MaxConvIndexUpdatedAtForProject(m.claudeProjectDir)
+	}
 
 	// Ensure cursor is still valid after loading (list may have changed)
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(0, len(m.filtered)-1)
 	}
-	m = m.ensureCursorVisible()
+	m.ensureCursorVisible()
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(&m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return WatchResult{}, state, err
 	}
 
-	fm := finalModel.(watchModel)
+	fm := finalModel.(*watchModel)
+	fm.closeWatcher()
+
 	newState := ConvWatchState{
 		SearchInput:    fm.searchInput,
 		Cursor:         fm.cursor,
@@ -822,42 +1103,34 @@ func RunConvWatchMode(global bool, since, before string) error {
 	var watchState ConvWatchState
 	for {
 		result, newState, err := RunConvWatch(global, since, before, watchState)
-		watchState = newState // Preserve state between cycles
+		watchState = newState
 		if err != nil {
 			return err
 		}
 
 		if result.Conv == nil && !result.FocusOnly && !result.CreateWorktree {
-			// User quit without selecting
 			return nil
 		}
 
-		// Focus only - just focus the window and return to watch mode
 		if result.FocusOnly {
 			os.Setenv("TCLAUDE_SESSION_ID", result.FocusSessionID)
 			session.TryFocusAttachedSession(result.TmuxSession)
 			continue
 		}
 
-		// Create worktree - exits watch mode to run git commands
 		if result.CreateWorktree {
 			if err := createWorktreeForConv(result.Conv, result.WorktreeBranch); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
 			}
-			// Don't return to watch mode after worktree creation
-			// (the new session will be in the worktree directory)
 			return nil
 		}
 
 		if result.ShouldCreate {
-			// Create a new session for this conversation
 			if err := createSessionForConv(result.Conv); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
-				// Continue back to watch mode
 				continue
 			}
 		} else {
-			// Attach to existing session
 			sessState := findSessionForConv(result.Conv.SessionID)
 			if sessState == nil {
 				fmt.Fprintf(os.Stderr, "Session not found, creating new...\n")
@@ -871,19 +1144,16 @@ func RunConvWatchMode(global bool, since, before string) error {
 				} else {
 					fmt.Printf("Attaching to %s... (Ctrl+B D to detach)\n", sessState.ID)
 				}
-
 				if err := session.AttachToSession(sessState.ID, sessState.TmuxSession, result.ForceAttach); err != nil {
-					// Session may have exited, continue to watch mode
 					continue
 				}
 			}
 		}
-
-		// After detach or session end, loop back to watch mode
 	}
 }
 
-// sortConvEntriesByKey sorts conversation entries by the given sort key and direction.
+// --- Sorting (package-level helpers) ---
+
 func sortConvEntriesByKey(entries []SessionEntry, key string, dir table.SortDirection) {
 	if key == "" || len(entries) < 2 {
 		return
@@ -911,13 +1181,19 @@ func sortConvEntriesByKey(entries []SessionEntry, key string, dir table.SortDire
 	})
 }
 
-// createSessionForConv creates a new session for a conversation
+func sortEntriesByModifiedDesc(entries []SessionEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Modified > entries[j].Modified
+	})
+}
+
+// --- Session/worktree helpers ---
+
 func createSessionForConv(conv *SessionEntry) error {
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return err
 	}
 
-	// Ensure hooks are installed
 	session.EnsureHooksInstalled(false, os.Stdout, os.Stderr)
 
 	cwd := conv.ProjectPath
@@ -929,11 +1205,9 @@ func createSessionForConv(conv *SessionEntry) error {
 		}
 	}
 
-	// Use conv ID prefix as session ID
 	sessionID := conv.SessionID[:8]
 	tmuxSession := sessionID
 
-	// Build claude command with TCLAUDE_SESSION_ID env var
 	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude --resume %s", sessionID, conv.SessionID)
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
 		quoted := make([]string, len(extraArgs))
@@ -943,10 +1217,8 @@ func createSessionForConv(conv *SessionEntry) error {
 		claudeCmd += " " + strings.Join(quoted, " ")
 	}
 
-	// Create tmux session
 	tmuxArgs := []string{
-		"new-session",
-		"-d",
+		"new-session", "-d",
 		"-s", tmuxSession,
 		"-c", cwd,
 		"sh", "-c", claudeCmd,
@@ -960,7 +1232,6 @@ func createSessionForConv(conv *SessionEntry) error {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
-	// Get PID and save state
 	pid := session.ParsePIDFromTmux(tmuxSession)
 	state := &session.SessionState{
 		ID:          sessionID,
@@ -983,7 +1254,6 @@ func createSessionForConv(conv *SessionEntry) error {
 	return session.AttachToSession(sessionID, tmuxSession, false)
 }
 
-// findSessionForConv finds an existing session for a conversation ID
 func findSessionForConv(convID string) *session.SessionState {
 	states, _ := session.ListSessionStates()
 	for _, state := range states {
@@ -995,7 +1265,6 @@ func findSessionForConv(convID string) *session.SessionState {
 	return nil
 }
 
-// formatFileSize formats bytes as a human-readable size string
 func formatFileSize(size int64) string {
 	if size <= 0 {
 		return ""
@@ -1010,9 +1279,6 @@ func formatFileSize(size int64) string {
 	return fmt.Sprintf("%.1fMB", mb)
 }
 
-// createWorktreeForConv creates a git worktree and starts a session with the conversation
 func createWorktreeForConv(conv *SessionEntry, branch string) error {
-	// Call the worktree add function directly
-	// branch, fromBranch, fromConv, path, global, detached
 	return worktree.RunAdd(branch, "", conv.SessionID, "", false, false)
 }

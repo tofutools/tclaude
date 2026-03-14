@@ -9,7 +9,8 @@ import (
 
 // Config represents the tclaude configuration file structure.
 type Config struct {
-	Notifications *NotificationConfig `json:"notifications,omitempty"`
+	Notifications      *NotificationConfig `json:"notifications,omitempty"`
+	AutoCompactPercent *int                `json:"auto_compact_percent,omitempty"`
 }
 
 // NotificationConfig holds settings for OS notifications.
