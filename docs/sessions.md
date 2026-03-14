@@ -186,7 +186,15 @@ Set `auto_compact_percent` in `~/.tclaude/config.json`:
 }
 ```
 
-The CLI flag overrides the config file, so you can set a global default and override per-session.
+### Environment variable
+
+The `TCLAUDE_AUTO_COMPACT` environment variable can also set the threshold. This is what the `--compact` flag sets internally, but you can set it directly if needed.
+
+```bash
+export TCLAUDE_AUTO_COMPACT=50
+```
+
+**Priority order:** env var > config file. The `--compact` CLI flag sets the env var for the tmux session.
 
 ### Status bar
 
