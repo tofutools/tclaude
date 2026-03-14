@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -69,7 +70,7 @@ func GetConversationCompletions(global bool) []string {
 			return nil
 		}
 
-		projectPath := getClaudeProjectPath(cwd)
+		projectPath := convops.GetClaudeProjectPath(cwd)
 		entries = loadConvEntries(projectPath)
 	}
 
@@ -105,16 +106,6 @@ func loadConvEntries(projectPath string) []ConvEntry {
 		})
 	}
 	return entries
-}
-
-func getClaudeProjectPath(realPath string) string {
-	absPath, err := filepath.Abs(realPath)
-	if err != nil {
-		absPath = realPath
-	}
-	projectDir := strings.ReplaceAll(absPath, string(filepath.Separator), "-")
-	projectDir = strings.ReplaceAll(projectDir, ":", "")
-	return filepath.Join(ClaudeProjectsDir(), projectDir)
 }
 
 // ExtractIDFromCompletion extracts just the ID from autocomplete format
@@ -168,7 +159,7 @@ func resolveConvIDGlobal(shortID string) *ConvInfo {
 }
 
 func resolveConvIDLocal(shortID string, cwd string) *ConvInfo {
-	projPath := getClaudeProjectPath(cwd)
+	projPath := convops.GetClaudeProjectPath(cwd)
 	return findConvInProject(shortID, projPath)
 }
 
@@ -246,16 +237,16 @@ func ShellQuoteArg(s string) string {
 func BuildEnvExports(additional map[string]string) string {
 	// Variables that should not be forwarded (tmux/terminal-specific)
 	skipVars := map[string]bool{
-		"TMUX":             true,
-		"TMUX_PANE":        true,
-		"TERM":             true,
-		"TERM_PROGRAM":     true,
-		"WINDOWID":         true,
-		"STY":              true,
-		"WINDOW":           true,
-		"TERMCAP":          true,
-		"COLUMNS":          true,
-		"LINES":            true,
+		"TMUX":         true,
+		"TMUX_PANE":    true,
+		"TERM":         true,
+		"TERM_PROGRAM": true,
+		"WINDOWID":     true,
+		"STY":          true,
+		"WINDOW":       true,
+		"TERMCAP":      true,
+		"COLUMNS":      true,
+		"LINES":        true,
 	}
 
 	var exports []string
