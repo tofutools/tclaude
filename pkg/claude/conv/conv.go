@@ -48,7 +48,8 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			ListCmd(),
 			SearchCmd(),
-			AISearchCmd(),
+			IndexEmbeddingsCmd(),
+			SearchEmbeddingsCmd(),
 			ResumeCmd(),
 			CpCmd(),
 			MvCmd(),

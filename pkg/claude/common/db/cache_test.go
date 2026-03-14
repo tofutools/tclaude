@@ -230,7 +230,7 @@ func TestSchemaV1ToV2Migration(t *testing.T) {
 	if err := d.QueryRow("SELECT version FROM schema_version").Scan(&ver); err != nil {
 		t.Fatalf("schema_version: %v", err)
 	}
-	if ver != 4 {
-		t.Fatalf("expected version 4, got %d", ver)
+	if ver != 5 {
+		t.Fatalf("expected version 5, got %d", ver)
 	}
 }

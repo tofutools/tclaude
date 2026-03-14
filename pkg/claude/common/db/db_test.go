@@ -28,8 +28,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err := db.QueryRow("SELECT version FROM schema_version").Scan(&ver); err != nil {
 		t.Fatalf("schema_version query: %v", err)
 	}
-	if ver != 4 {
-		t.Fatalf("expected version 4, got %d", ver)
+	if ver != 5 {
+		t.Fatalf("expected version 5, got %d", ver)
 	}
 }
 
