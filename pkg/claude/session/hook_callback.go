@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
@@ -103,6 +106,8 @@ func runHookCallback() error {
 	case "Stop":
 		newStatus = StatusIdle
 		statusDetail = ""
+		// Check auto-compact threshold
+		handleAutoCompact(input)
 
 	case "SessionStart":
 		// Session started or resumed - update ConvID and set to idle
@@ -115,6 +120,17 @@ func runHookCallback() error {
 		if statusDetail == "" {
 			statusDetail = "permission"
 		}
+
+	case "PostCompact":
+		// Reset auto-compact state so it can trigger again next time
+		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+			if err := db.ResetCompact(sessionID); err != nil {
+				slog.Warn("failed to reset compact state", "error", err)
+			} else {
+				slog.Info("auto-compact state reset", "session_id", sessionID)
+			}
+		}
+		return nil
 
 	case "Notification":
 		// Check notification type for legacy support
@@ -328,4 +344,60 @@ func autoRegisterSessionFromHook(input HookCallbackInput) *SessionState {
 		return nil
 	}
 	return state
+}
+
+// handleAutoCompact checks if auto-compaction should be triggered on Stop.
+// Reads the config threshold and the session's stored context_pct,
+// then CAS-claims compact_pending and sends /compact via tmux keys.
+func handleAutoCompact(input HookCallbackInput) {
+	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
+	if sessionID == "" {
+		return
+	}
+
+	cfg, err := config.Load()
+	if err != nil || cfg.AutoCompactPercent == nil {
+		return
+	}
+	threshold := float64(*cfg.AutoCompactPercent)
+
+	contextPct, _, err := db.GetCompactState(sessionID)
+	if err != nil {
+		slog.Warn("auto-compact: failed to read compact state", "error", err)
+		return
+	}
+
+	if contextPct < threshold {
+		return
+	}
+
+	// CAS: only one Stop hook should trigger compaction
+	claimed, err := db.TryClaimCompact(sessionID)
+	if err != nil {
+		slog.Warn("auto-compact: failed to claim", "error", err)
+		return
+	}
+	if !claimed {
+		slog.Debug("auto-compact: already claimed", "session_id", sessionID)
+		return
+	}
+
+	// Send /compact to the tmux session
+	tmuxSession := GetCurrentTmuxSession()
+	if tmuxSession == "" {
+		slog.Warn("auto-compact: not in a tmux session")
+		return
+	}
+
+	slog.Info("auto-compact: triggering /compact",
+		"session_id", sessionID,
+		"tmux_session", tmuxSession,
+		"context_pct", contextPct,
+		"threshold", threshold,
+	)
+
+	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/compact", "Enter")
+	if err := cmd.Run(); err != nil {
+		slog.Error("auto-compact: failed to send keys", "error", err)
+	}
 }

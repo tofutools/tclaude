@@ -177,6 +177,13 @@ func run() error {
 		ctxPct = int(*input.ContextWindow.UsedPercentage)
 	}
 
+	// Store context percentage in DB for auto-compact feature
+	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+		if err := db.UpdateContextPct(sessionID, float64(ctxPct)); err != nil {
+			slog.Warn("status-bar: failed to update context_pct", "error", err)
+		}
+	}
+
 	var line2 []string
 	line2 = append(line2, fmt.Sprintf("%s %s %d%%", modelLabel, contextBar(ctxPct), ctxPct))
 

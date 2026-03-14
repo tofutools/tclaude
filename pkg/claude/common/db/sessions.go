@@ -163,6 +163,55 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 	return result, rows.Err()
 }
 
+// UpdateContextPct stores the latest context window usage percentage for a session.
+func UpdateContextPct(sessionID string, pct float64) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET context_pct = ? WHERE id = ?`, pct, sessionID)
+	return err
+}
+
+// TryClaimCompact atomically sets compact_pending to the current unix timestamp
+// if it is currently 0. Returns true if the claim was made (caller should send /compact).
+func TryClaimCompact(sessionID string) (bool, error) {
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	now := float64(time.Now().Unix())
+	result, err := db.Exec(
+		`UPDATE sessions SET compact_pending = ? WHERE id = ? AND compact_pending = 0`,
+		now, sessionID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := result.RowsAffected()
+	return n > 0, nil
+}
+
+// ResetCompact clears compact_pending and zeroes context_pct for a session.
+func ResetCompact(sessionID string) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET compact_pending = 0, context_pct = 0 WHERE id = ?`, sessionID)
+	return err
+}
+
+// GetCompactState returns the context_pct and compact_pending values for a session.
+func GetCompactState(sessionID string) (contextPct float64, compactPending float64, err error) {
+	db, err := Open()
+	if err != nil {
+		return 0, 0, err
+	}
+	err = db.QueryRow(`SELECT context_pct, compact_pending FROM sessions WHERE id = ?`, sessionID).
+		Scan(&contextPct, &compactPending)
+	return
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

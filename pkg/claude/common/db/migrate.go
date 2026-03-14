@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 3
+const currentVersion = 4
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -37,6 +37,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 3 {
 		if err := migrateV2toV3(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 4 {
+		if err := migrateV3toV4(db); err != nil {
 			return err
 		}
 	}
@@ -142,6 +148,19 @@ func migrateV2toV3(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v2→v3: %w", err)
+	}
+	return nil
+}
+
+func migrateV3toV4(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN context_pct REAL NOT NULL DEFAULT 0;
+		ALTER TABLE sessions ADD COLUMN compact_pending REAL NOT NULL DEFAULT 0;
+
+		UPDATE schema_version SET version = 4;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v3→v4: %w", err)
 	}
 	return nil
 }
