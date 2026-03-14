@@ -1,9 +1,31 @@
 # Semantic Search for Claude Code Sessions
 
+## Status
+
+**Phase 1 complete** (2026-03-14). CLI indexing and search commands are working.
+
+What's done:
+- Ollama integration with `nomic-embed-text` model
+- Conversation chunking (metadata + content at turn boundaries)
+- Adaptive context handling (auto-reduces chunk size on context length errors)
+- SQLite storage for embeddings (schema v5)
+- Incremental indexing with mtime-based invalidation and orphan cleanup
+- `tclaude conv index-embeddings` — build/update the embedding index
+- `tclaude conv search-embeddings "query"` — semantic search by meaning
+- Ranking by max similarity per conversation (not sum/avg — avoids large-doc bias)
+- Legacy `ai-search` command removed; its aliases (`ai`, `ask`) now point to semantic search
+- 18 unit tests with mocked Ollama server
+
+What's next (Phase 2):
+- Hotkey in `tclaude conv ls -w` (watch mode) to toggle semantic search
+- Background indexing on watch mode startup
+- Similarity score column in the interactive table
+- Re-split (instead of truncate) chunks that exceed context length
+
 ## Problem
 
 When searching past conversations, users rarely remember exact keywords — they remember
-the *subject* or *concept* they discussed. Regex/keyword search fails here. The existing
+the *subject* or *concept* they discussed. Regex/keyword search fails here.
 The previous `ai-search` command worked by sending truncated metadata (200 char prompts)
 to Claude via `claude -p`, which was slow, expensive, and lossy.
 
@@ -66,6 +88,13 @@ rarely triggers reduction with `nomic-embed-text`'s 8K token context.
 Ollama does not yet offer a `/api/tokenize` endpoint (PR pending), so exact token counting
 isn't possible. The char-based estimate works well enough.
 
+### Ranking
+
+Conversations are ranked by the **max similarity** across all their chunks, not sum or
+average. This prevents large conversations (many chunks) from being artificially boosted
+over short ones. The question is "does *any part* of this conversation match well?", not
+"how many parts match."
+
 ### Storage
 
 SQLite table `conv_embeddings` in `~/.tclaude/db.sqlite` (schema v5):
@@ -101,7 +130,8 @@ Brute-force cosine similarity is fine for personal conversation history scale
 ### Invalidation
 
 Same mtime-based pattern as the existing `conv_index`:
-- On indexing, compare file mtime against stored `created_at`.
+- Each embedding row has a `created_at` timestamp set when indexed.
+- On indexing, compare file mtime against the stored `created_at` for that conversation.
 - If the conversation file is newer, re-chunk and re-embed.
 - Orphaned embeddings (conversations deleted from disk) are cleaned up on each index run.
 - `--reindex` flag wipes all embeddings and rebuilds from scratch (also useful when
@@ -146,7 +176,7 @@ tclaude conv search-embeddings -g -l "database migration"  # show matching chunk
 tclaude conv search-embeddings --json "API rate limiting"
 ```
 
-Aliases: `sem`, `semantic`
+Aliases: `sem`, `semantic`, `ai`, `ask`, `ai-search`
 
 Flags:
 - `-g, --global` — search across all projects
@@ -156,11 +186,16 @@ Flags:
 - `--model` — embedding model name (default: `nomic-embed-text`)
 - `--url` — Ollama API base URL (default: `http://localhost:11434`)
 
-### Phase 2: Interactive integration (future)
+## Code layout
 
-- Hotkey in `tclaude conv ls -w` (watch mode) to toggle semantic search.
-- Background indexing on watch mode startup.
-- Similarity score column in the table.
+| File | Purpose |
+|------|---------|
+| `pkg/claude/common/db/embeddings.go` | SQLite CRUD for `conv_embeddings` table |
+| `pkg/claude/common/db/migrate.go` | Schema v5 migration (creates the table) |
+| `pkg/claude/conv/embeddings.go` | Ollama client, chunking, cosine similarity, `IndexConversation` |
+| `pkg/claude/conv/embed_search.go` | `index-embeddings` and `search-embeddings` commands |
+| `pkg/claude/conv/embeddings_test.go` | 18 tests with mocked Ollama server |
+| `docs/semantic-search.md` | This file |
 
 ## Dependencies
 
