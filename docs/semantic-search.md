@@ -1,162 +1,81 @@
-# Semantic Search for Claude Code Sessions
+# Semantic Search
 
-## Status
+Search conversations by meaning, not just keywords. Powered by local embeddings via [Ollama](https://ollama.com) — your data never leaves your machine.
 
-**Phase 1 complete** (2026-03-14). CLI indexing and search commands are working.
+## Why Semantic Search?
 
-What's done:
-- Ollama integration with `nomic-embed-text` model
-- Conversation chunking (metadata + content at turn boundaries)
-- Adaptive context handling (auto-reduces chunk size on context length errors)
-- SQLite storage for embeddings (schema v5)
-- Incremental indexing with mtime-based invalidation and orphan cleanup
-- `tclaude conv index-embeddings` — build/update the embedding index
-- `tclaude conv search-embeddings "query"` — semantic search by meaning
-- Ranking by max similarity per conversation (not sum/avg — avoids large-doc bias)
-- Legacy `ai-search` command removed; its aliases (`ai`, `ask`) now point to semantic search
-- 18 unit tests with mocked Ollama server
+When searching past conversations, you rarely remember exact keywords — you remember the *subject* or *concept* you discussed. Keyword search (`conv search`) requires exact text matches, which often misses what you're looking for.
 
-What's next (Phase 2):
-- Hotkey in `tclaude conv ls -w` (watch mode) to toggle semantic search
-- Background indexing on watch mode startup
-- Similarity score column in the interactive table
-- Re-split (instead of truncate) chunks that exceed context length
+Semantic search embeds your conversations into vector space and finds matches by meaning. Searching for "auth token refresh" will find conversations about authentication and OAuth even if those exact words weren't used.
 
-## Problem
+**Key properties:**
 
-When searching past conversations, users rarely remember exact keywords — they remember
-the *subject* or *concept* they discussed. Regex/keyword search fails here.
-The previous `ai-search` command worked by sending truncated metadata (200 char prompts)
-to Claude via `claude -p`, which was slow, expensive, and lossy.
+- **Private** — all processing happens locally, conversation data never leaves your machine
+- **Fast** — sub-second search once indexed
+- **Free** — zero per-query cost after initial setup
+- **Offline** — works without internet after the model is downloaded
 
-## Approach
+## Prerequisites
 
-Local semantic search using embedding vectors. Conversations are chunked, embedded via a
-local model (Ollama), stored in SQLite, and searched by cosine similarity.
+Semantic search requires [Ollama](https://ollama.com) running locally with an embedding model.
 
-### Why local embeddings?
+### 1. Install Ollama
 
-- **Privacy**: conversation data never leaves the machine.
-- **Speed**: sub-second search once indexed, vs seconds for API-based AI search.
-- **Cost**: zero per-query cost after initial setup.
-- **Offline**: works without internet after model is downloaded.
+=== "macOS (Homebrew)"
 
-## Architecture
+    ```bash
+    brew install ollama
+    ```
 
-### Embedding backend
+=== "Linux / WSL"
 
-[Ollama](https://ollama.com) running locally on `localhost:11434` (loopback only, not
-exposed on external interfaces). The `/api/embed` endpoint accepts text and returns
-embedding vectors. The base URL is configurable via `--url` to support alternative
-compatible backends.
+    ```bash
+    curl -fsSL https://ollama.com/install.sh | sh
+    ```
 
-**Default model**: `nomic-embed-text` — chosen for:
-- 8,192 token context window (important for longer chunks)
-- Small footprint: 274MB disk, ~0.5GB RAM (unloads after 5min idle)
-- Very fast inference (sub-100ms per embedding on Apple Silicon)
-- Good quality (surpasses OpenAI ada-002 on short and long context tasks)
-
-### Chunking strategy
-
-Each conversation produces multiple chunks:
-
-1. **Metadata chunk** (index 0) — `title + summary + first prompt + project path`.
-   Always generated. This is the "what was this conversation about" anchor.
-
-2. **Content chunks** — actual message content, split at turn boundaries:
-   - Messages are grouped as user+assistant turn pairs to preserve semantic context
-     (a question without its answer loses meaning).
-   - Turns accumulate into a buffer. When adding the next turn would exceed ~24K chars
-     (~8K tokens), the buffer is emitted as a chunk and a new one starts.
-   - Short conversations (under the limit) produce a single content chunk.
-   - System-injected messages and interrupted request markers are filtered out.
-
-### Adaptive context handling
-
-The Ollama `/api/embed` endpoint returns HTTP 400 with
-`{"error": "the input length exceeds the context length"}` when input is too large.
-
-`EmbedOne()` handles this automatically:
-- On context length error, reduce text by 1/3 and retry.
-- Repeat until it fits or text is under 8K chars (at which point, give up on that chunk).
-- Logs a warning via `slog` when reduction occurs.
-
-**Known limitation**: reduction truncates the tail of the chunk — the lost content is not
-re-split into a new chunk. This is a future improvement. In practice, the 24K char limit
-rarely triggers reduction with `nomic-embed-text`'s 8K token context.
-
-Ollama does not yet offer a `/api/tokenize` endpoint (PR pending), so exact token counting
-isn't possible. The char-based estimate works well enough.
-
-### Ranking
-
-Conversations are ranked by the **max similarity** across all their chunks, not sum or
-average. This prevents large conversations (many chunks) from being artificially boosted
-over short ones. The question is "does *any part* of this conversation match well?", not
-"how many parts match."
-
-### Storage
-
-SQLite table `conv_embeddings` in `~/.tclaude/db.sqlite` (schema v5):
-
-```sql
-CREATE TABLE conv_embeddings (
-    conv_id     TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL,
-    chunk_type  TEXT NOT NULL,  -- "metadata" or "content"
-    chunk_text  TEXT NOT NULL,
-    embedding   BLOB NOT NULL,  -- float32 array as raw bytes
-    model       TEXT NOT NULL,  -- e.g. "nomic-embed-text"
-    created_at  TEXT NOT NULL,  -- RFC3339
-    PRIMARY KEY (conv_id, chunk_index)
-);
-CREATE INDEX idx_conv_embeddings_conv_id ON conv_embeddings(conv_id);
-```
-
-Embeddings are stored as raw `[]float32` bytes (768 floats x 4 bytes = 3,072 bytes per
-chunk for nomic-embed-text).
-
-### Search flow
-
-1. Embed the query text via Ollama `/api/embed`.
-2. Load all embeddings from SQLite into memory.
-3. Compute cosine similarity between query embedding and every stored chunk.
-4. Rank conversations by their best-matching chunk (max similarity across chunks).
-5. Return top-K conversations with the matching chunk text as context.
-
-Brute-force cosine similarity is fine for personal conversation history scale
-(thousands to tens of thousands of chunks — sub-millisecond in memory).
-
-### Invalidation
-
-Same mtime-based pattern as the existing `conv_index`:
-- Each embedding row has a `created_at` timestamp set when indexed.
-- On indexing, compare file mtime against the stored `created_at` for that conversation.
-- If the conversation file is newer, re-chunk and re-embed.
-- Orphaned embeddings (conversations deleted from disk) are cleaned up on each index run.
-- `--reindex` flag wipes all embeddings and rebuilds from scratch (also useful when
-  switching to a different embedding model).
-
-## Commands
-
-### `tclaude conv index-embeddings`
-
-Build the semantic search index. Chunks conversations and generates embeddings via Ollama.
+### 2. Start Ollama
 
 ```bash
-tclaude conv index-embeddings          # index current project
-tclaude conv index-embeddings -g       # index all projects
-tclaude conv index-embeddings --reindex  # force full rebuild
-tclaude conv index-embeddings --model mxbai-embed-large  # use different model
+# Start as a background service (recommended — auto-starts on login)
+brew services start ollama
+
+# Or run manually in foreground
+ollama serve
 ```
 
-Flags:
-- `-g, --global` — index conversations from all projects
-- `--reindex` — wipe and rebuild all embeddings
-- `--model` — embedding model name (default: `nomic-embed-text`)
-- `--url` — Ollama API base URL (default: `http://localhost:11434`)
+### 3. Pull the embedding model
 
-Output shows per-conversation progress with chunk count and timing:
+```bash
+ollama pull nomic-embed-text
+```
+
+This downloads the `nomic-embed-text` model (~274MB, one-time). It has an 8K token context window, runs in ~0.5GB RAM (unloads after 5 minutes of idle), and produces embeddings in under 100ms on Apple Silicon.
+
+### 4. Verify
+
+```bash
+curl -s http://localhost:11434/api/embed \
+  -d '{"model": "nomic-embed-text", "input": "hello world"}' \
+  | python3 -c "import sys,json; e=json.load(sys.stdin)['embeddings'][0]; print(f'{len(e)} dimensions')"
+# Expected: 768 dimensions
+```
+
+## Getting Started
+
+### Build the index
+
+Before searching, you need to index your conversations:
+
+```bash
+# Index conversations for the current project
+tclaude conv index-embeddings
+
+# Index all projects
+tclaude conv index-embeddings -g
+```
+
+Indexing chunks each conversation into pieces (metadata + content at turn boundaries), embeds them via Ollama, and stores the vectors in SQLite. It's incremental — only new or modified conversations are re-indexed on subsequent runs.
+
 ```
 Indexing 48 conversations (15 already indexed)...
   [1/48] a9a330a8 please unzip all the zip files - 1 chunks (66ms)
@@ -165,102 +84,121 @@ Indexing 48 conversations (15 already indexed)...
 Done in 5.6s: 48 conversations, 78 chunks, 0 errors
 ```
 
-### `tclaude conv search-embeddings "query"`
-
-Semantic search across indexed conversations.
+### Search
 
 ```bash
+# Search by meaning
 tclaude conv search-embeddings "auth token refresh"
-tclaude conv search-embeddings -g "kubernetes deployment" -n 5
-tclaude conv search-embeddings -g -l "database migration"  # show matching chunks
+
+# Search all projects
+tclaude conv search-embeddings -g "kubernetes deployment"
+
+# Show matching chunk text
+tclaude conv search-embeddings -l "database migration"
+
+# JSON output
 tclaude conv search-embeddings --json "API rate limiting"
 ```
 
 Aliases: `sem`, `semantic`, `ai`, `ask`, `ai-search`
 
-Flags:
-- `-g, --global` — search across all projects
-- `-n` — number of results (default: 10)
-- `-l, --long` — show matching chunk text
-- `--json` — JSON output
-- `--model` — embedding model name (default: `nomic-embed-text`)
-- `--url` — Ollama API base URL (default: `http://localhost:11434`)
+## Interactive Watch Mode
 
-## Code layout
+Semantic search is integrated into the interactive conversation browser (`tclaude conv ls -w`).
+
+### Usage
+
+1. Press **`s`** to start a semantic search
+2. If Ollama is running, tclaude checks how many conversations need indexing
+3. If unindexed conversations exist, you'll be prompted: `"N of M conversations not indexed. Index now? [y/n]"`
+    - **`y`** — indexes with a progress bar, then shows the search input
+    - **`n`** — skips indexing and searches what's already indexed
+4. Type your query in the cyan `Semantic: [query_]` input and press **Enter**
+5. Results are displayed sorted by similarity, with a **SCORE** column added to the table
+6. You can select and attach to any result with **Enter**, just like normal mode
+
+### Exiting Semantic Mode
+
+| Key | Action |
+|-----|--------|
+| `Esc` | Exit semantic results, return to normal listing |
+| `/` | Switch to text search |
+| `1`–`5` | Sort by column (exits semantic mode) |
+| `s` | Start a new semantic search |
+
+## CLI Reference
+
+### `tclaude conv index-embeddings`
+
+Build or update the semantic search index.
+
+```bash
+tclaude conv index-embeddings          # index current project
+tclaude conv index-embeddings -g       # index all projects
+tclaude conv index-embeddings --reindex  # force full rebuild
+tclaude conv index-embeddings --model mxbai-embed-large  # use a different model
+```
+
+| Flag | Description |
+|------|-------------|
+| `-g, --global` | Index conversations from all projects |
+| `--reindex` | Wipe and rebuild all embeddings |
+| `--model` | Embedding model name (default: `nomic-embed-text`) |
+| `--url` | Ollama API base URL (default: `http://localhost:11434`) |
+
+### `tclaude conv search-embeddings`
+
+Search conversations by meaning.
+
+```bash
+tclaude conv search-embeddings "query"
+tclaude conv sem "query"          # shorthand alias
+```
+
+| Flag | Description |
+|------|-------------|
+| `-g, --global` | Search across all projects |
+| `-n` | Number of results (default: 10) |
+| `-l, --long` | Show matching chunk text |
+| `--json` | JSON output |
+| `--model` | Embedding model name (default: `nomic-embed-text`) |
+| `--url` | Ollama API base URL (default: `http://localhost:11434`) |
+
+## How It Works
+
+### Chunking
+
+Each conversation is split into chunks for embedding:
+
+1. **Metadata chunk** (always generated) — title, summary, first prompt, and project path. This is the "what was this conversation about" anchor.
+2. **Content chunks** — user + assistant message pairs, grouped at turn boundaries. Chunks target ~24K characters (~8K tokens). Short conversations produce a single content chunk.
+
+### Ranking
+
+Conversations are ranked by the **maximum similarity** across all their chunks, not the sum or average. This prevents long conversations (many chunks) from being artificially boosted over short ones.
+
+### Storage
+
+Embeddings are stored in `~/.tclaude/db.sqlite` (table `conv_embeddings`). Each chunk stores its text, embedding vector (768 floats as raw bytes), and creation timestamp.
+
+### Invalidation
+
+Indexing is incremental using file modification times:
+
+- If a conversation file is newer than its stored embeddings, it gets re-indexed
+- Orphaned embeddings (deleted conversations) are cleaned up automatically
+- Use `--reindex` to force a full rebuild (useful when switching models)
+
+### Context length handling
+
+If a chunk exceeds the model's context window, `tclaude` automatically reduces it by 1/3 and retries, repeating until it fits. In practice, the 24K character limit rarely triggers this with `nomic-embed-text`'s 8K token context.
+
+## Code Layout
 
 | File | Purpose |
 |------|---------|
-| `pkg/claude/common/db/embeddings.go` | SQLite CRUD for `conv_embeddings` table |
-| `pkg/claude/common/db/migrate.go` | Schema v5 migration (creates the table) |
-| `pkg/claude/conv/embeddings.go` | Ollama client, chunking, cosine similarity, `IndexConversation` |
-| `pkg/claude/conv/embed_search.go` | `index-embeddings` and `search-embeddings` commands |
-| `pkg/claude/conv/embeddings_test.go` | 18 tests with mocked Ollama server |
-| `docs/semantic-search.md` | This file |
-
-## Dependencies
-
-- **Runtime**: Ollama installed and running (`ollama serve`).
-- **Model**: `ollama pull nomic-embed-text` (one-time, 274MB download).
-- **Code**: No new Go dependencies — pure HTTP client to Ollama API, existing SQLite via
-  `modernc.org/sqlite`.
-
-## Setup guide
-
-### Install Ollama (macOS)
-
-```bash
-# Via Homebrew (recommended for CLI usage — reads shell env vars normally)
-brew install ollama
-
-# Start as a background service (auto-starts on login)
-brew services start ollama
-
-# Or run manually in foreground
-ollama serve
-```
-
-Alternative: `curl -fsSL https://ollama.com/install.sh | sh` (installs the macOS app
-variant, which auto-starts but requires `launchctl setenv` for env vars).
-
-### Pull the embedding model
-
-```bash
-ollama pull nomic-embed-text  # ~274MB download, one-time
-```
-
-### Verify it works
-
-```bash
-# Test the embed endpoint
-curl -s http://localhost:11434/api/embed \
-  -d '{"model": "nomic-embed-text", "input": "hello world"}' \
-  | python3 -c "import sys,json; e=json.load(sys.stdin)['embeddings'][0]; print(f'{len(e)} dimensions')"
-# Expected: 768 dimensions
-```
-
-## Ollama API reference
-
-```bash
-# Embed text
-curl http://localhost:11434/api/embed -d '{
-  "model": "nomic-embed-text",
-  "input": "your text here"
-}'
-# Response: {"embeddings": [[0.123, -0.456, ...]], "prompt_eval_count": 5}
-
-# Context length exceeded (HTTP 400):
-# {"error": "the input length exceeds the context length"}
-```
-
-The `prompt_eval_count` field in successful responses reports the actual token count.
-
-## Verified results (2026-03-14)
-
-Tested on macOS (Apple Silicon, Homebrew install, Ollama 0.18.0):
-- Ollama listens on `127.0.0.1:11434` only (loopback, not exposed externally)
-- Memory: ~430MB with model loaded, ~42MB server-only (model unloads after 5min idle)
-- Embedding endpoint returns 768-dimensional float32 vectors
-- Semantic similarity ranking works correctly: query "authentication debugging"
-  scored 0.59 against an auth-related text vs 0.37-0.38 against unrelated texts
-- 48 conversations indexed globally in ~5.6s, producing 78 chunks with zero errors
-- Search queries return results in sub-second time
+| `pkg/claude/conv/embeddings.go` | Ollama client, chunking, cosine similarity |
+| `pkg/claude/conv/embed_search.go` | CLI commands (`index-embeddings`, `search-embeddings`) |
+| `pkg/claude/conv/watch.go` | Interactive watch mode integration |
+| `pkg/claude/common/db/embeddings.go` | SQLite storage for embeddings |
+| `pkg/claude/conv/embeddings_test.go` | Unit tests with mocked Ollama server |

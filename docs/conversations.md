@@ -143,12 +143,15 @@ Press `w` or use `-w` flag to enter interactive mode.
 
 | Key | Action |
 |-----|--------|
-| `/` | Start search |
-| `Esc` | Clear search / exit search mode |
+| `/` | Start text search (title, prompt, project, branch, ID) |
+| `s` | Start [semantic search](semantic-search.md) (requires Ollama) |
+| `Esc` | Clear search / exit search or semantic mode |
 | `Ctrl+U` | Clear search input |
 | `↑`/`↓` | Exit search and navigate |
 
-Search matches against: title, first prompt, project path, git branch, session ID.
+Text search (`/`) matches against: title, first prompt, project path, git branch, session ID.
+
+Semantic search (`s`) finds conversations by meaning using local embeddings. See [Semantic Search](semantic-search.md) for setup and details.
 
 ### Actions
 

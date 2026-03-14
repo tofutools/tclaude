@@ -39,6 +39,7 @@ nav:
   - Session Management: sessions.md
   - Task Management: tasks.md
   - Conversation Management: conversations.md
+  - Semantic Search: semantic-search.md
   - Git Worktrees: worktrees.md
   - Notifications: notifications.md
   - Web Terminal: web-terminal.md

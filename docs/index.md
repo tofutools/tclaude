@@ -24,6 +24,7 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 - 📊 **Status Bar** - Rich statusline with context usage, rate limits, git links
 - 🔔 **OS Notifications** - Get notified when sessions need attention (opt-in)
 - 🔍 **Interactive Watch Modes** - Browse sessions and conversations with search, filtering, sorting
+- 🧠 **Semantic Search** - Find conversations by meaning using local embeddings (Ollama)
 - ⚡ **Session Indicators** - Know which conversations have active sessions (⚡ attached, ○ active)
 - ⚙️ **Task Management** - Run multiple tasks automatically
 
@@ -74,6 +75,8 @@ tclaude conv ls -w
 | `web`              | Serve a session via web terminal                           |
 | `conv ls`          | List conversations (`-w` for interactive, `-g` for global) |
 | `conv search`      | Search conversation text                                   |
+| `conv search-embeddings` | Semantic search by meaning (requires Ollama)         |
+| `conv index-embeddings`  | Build/update semantic search index                   |
 | `conv resume`      | Resume a conversation                                      |
 | `conv delete`      | Delete a conversation                                      |
 | `conv prune-empty` | Delete empty conversations                                 |
@@ -84,7 +87,8 @@ Both `session ls -w` and `conv ls -w` support these keys:
 
 | Key                | Action                          |
 |--------------------|---------------------------------|
-| `/`                | Start search                    |
+| `/`                | Start text search               |
+| `s`                | Start semantic search           |
 | `↑`/`↓` or `j`/`k` | Navigate                        |
 | `Enter`            | Attach/create session           |
 | `Del`/`x`          | Delete/kill (with confirmation) |
@@ -107,6 +111,7 @@ Session watch also supports:
 - [OS Notifications](notifications.md) - Get notified when sessions need attention
 - [Status Bar](status-bar.md) - Rich status bar for Claude Code's statusline
 - [Web Terminal](web-terminal.md) - Access sessions from your phone or browser
+- [Semantic Search](semantic-search.md) - Search conversations by meaning
 - [Git Sync](git-sync.md) - Sync conversations across devices
 - [Task Management](tasks.md) - Run multiple tasks automatically
 

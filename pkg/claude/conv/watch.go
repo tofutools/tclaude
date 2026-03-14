@@ -27,6 +27,7 @@ var (
 	wHelpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	wSearchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	wConfirmStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+	wSemanticStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")) // cyan
 )
 
 type watchTickMsg time.Time
@@ -40,6 +41,30 @@ type fsFileChangeMsg struct {
 }
 
 const fsDebounceDelay = 30 * time.Second
+
+// Semantic search message types
+type semanticCheckMsg struct {
+	Unindexed int
+	Total     int
+	Err       error
+}
+
+type semanticIndexProgressMsg struct {
+	Done   int
+	Total  int
+	Errors int
+}
+
+type semanticIndexDoneMsg struct {
+	Indexed int
+	Errors  int
+}
+
+type semanticSearchResultMsg struct {
+	Results []EmbedSearchResult
+	Query   string
+	Err     error
+}
 
 // watchConfirmMode represents confirmation dialogs
 type watchConfirmMode int
@@ -70,6 +95,23 @@ type watchModel struct {
 	// Worktree branch input
 	worktreeInput   string
 	worktreeFocused bool
+
+	// Semantic search
+	semanticFocused        bool
+	semanticQuery          string
+	semanticMode           bool
+	semanticResults        []EmbedSearchResult
+	semanticScores         map[string]float32
+	semanticError          string
+	semanticIndexing       bool
+	semanticIndexTotal     int
+	semanticIndexDone      int
+	semanticIndexErrors    int
+	semanticIndexChan      chan tea.Msg
+	semanticCancelCh       chan struct{}
+	semanticIndexPrompt    bool
+	semanticUnindexedCount int
+	semanticTotalCount     int
 
 	// Sort
 	sort table.SortState
@@ -144,6 +186,9 @@ func (m *watchModel) Init() tea.Cmd {
 func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Clear transient semantic error on any key
+		m.semanticError = ""
+
 		// Handle confirmation dialogs first
 		if m.confirmMode != watchConfirmNone {
 			switch msg.String() {
@@ -208,8 +253,67 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Handle semantic indexing (only esc to cancel)
+		if m.semanticIndexing {
+			if msg.String() == "esc" {
+				if m.semanticCancelCh != nil {
+					close(m.semanticCancelCh)
+					m.semanticCancelCh = nil
+				}
+				m.semanticIndexing = false
+				m.semanticFocused = true
+			}
+			return m, nil
+		}
+
+		// Handle semantic index prompt
+		if m.semanticIndexPrompt {
+			switch msg.String() {
+			case "y", "Y":
+				return m, m.semanticStartIndex()
+			case "n", "N", "esc":
+				m.semanticIndexPrompt = false
+				m.semanticFocused = true
+			}
+			return m, nil
+		}
+
+		// Handle semantic search input
+		if m.semanticFocused {
+			if msg.Paste {
+				m.semanticQuery += string(msg.Runes)
+				return m, nil
+			}
+			switch msg.String() {
+			case "esc":
+				m.semanticFocused = false
+				m.semanticQuery = ""
+			case "enter":
+				if m.semanticQuery != "" {
+					m.semanticFocused = false
+					return m, m.semanticRunSearch(m.semanticQuery)
+				}
+			case "backspace":
+				if len(m.semanticQuery) > 0 {
+					m.semanticQuery = m.semanticQuery[:len(m.semanticQuery)-1]
+				}
+			case "ctrl+u":
+				m.semanticQuery = ""
+			default:
+				if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] < 127 {
+					m.semanticQuery += msg.String()
+				}
+			}
+			return m, nil
+		}
+
 		// Handle search mode
 		if m.searchFocused {
+			if msg.Paste {
+				m.searchInput += string(msg.Runes)
+				m.applySearchFilter()
+				return m, nil
+			}
 			switch msg.String() {
 			case "esc":
 				if m.searchInput != "" {
@@ -287,12 +391,17 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "esc":
-			if m.searchInput != "" {
+			if m.semanticMode {
+				m.clearSemanticMode()
+			} else if m.searchInput != "" {
 				m.searchInput = ""
 				m.applySearchFilter()
 			}
 		case "/":
+			m.clearSemanticMode()
 			m.searchFocused = true
+		case "s":
+			return m, m.semanticPreCheck()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -362,7 +471,15 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "delete", "backspace", "x", "ctrl+d":
 			m.triggerDelete()
 		default:
-			if m.sort.HandleSortKey(m.columns(), msg.String()) {
+			if m.semanticMode {
+				// Sort keys exit semantic mode
+				ch := msg.String()
+				if len(ch) == 1 && ch[0] >= '1' && ch[0] <= '9' {
+					m.clearSemanticMode()
+					m.sort.HandleSortKey(m.columns(), ch)
+					m.resortAndFilter()
+				}
+			} else if m.sort.HandleSortKey(m.columns(), msg.String()) {
 				// In-memory re-sort only — no disk or DB access
 				m.resortAndFilter()
 			}
@@ -401,6 +518,50 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.handleFSChange(msg.FilePath, msg.Removed)
 		}
 		return m, m.continueListenFSEvents()
+
+	case semanticCheckMsg:
+		if msg.Err != nil {
+			m.semanticError = "Ollama error: " + msg.Err.Error()
+			return m, nil
+		}
+		if msg.Unindexed > 0 {
+			m.semanticIndexPrompt = true
+			m.semanticUnindexedCount = msg.Unindexed
+			m.semanticTotalCount = msg.Total
+		} else {
+			m.semanticFocused = true
+		}
+		return m, nil
+
+	case semanticIndexProgressMsg:
+		m.semanticIndexDone = msg.Done
+		m.semanticIndexTotal = msg.Total
+		m.semanticIndexErrors = msg.Errors
+		return m, waitForSemanticIndex(m.semanticIndexChan)
+
+	case semanticIndexDoneMsg:
+		m.semanticIndexing = false
+		m.semanticFocused = true
+		return m, nil
+
+	case semanticSearchResultMsg:
+		if msg.Err != nil {
+			m.semanticError = "Search error: " + msg.Err.Error()
+			m.semanticQuery = ""
+			return m, nil
+		}
+		m.semanticResults = msg.Results
+		m.semanticScores = make(map[string]float32, len(msg.Results))
+		m.filtered = m.filtered[:0]
+		for _, r := range msg.Results {
+			m.semanticScores[r.Entry.SessionID] = r.Similarity
+			m.filtered = append(m.filtered, r.Entry)
+		}
+		m.semanticMode = true
+		m.semanticQuery = msg.Query
+		m.cursor = 0
+		m.viewportOffset = 0
+		return m, nil
 	}
 
 	return m, nil
@@ -415,7 +576,20 @@ func (m *watchModel) View() string {
 
 	// Search box
 	b.WriteString("\n  ")
-	if m.searchFocused {
+	if m.semanticIndexing {
+		progress := semanticProgressBar(m.semanticIndexDone, m.semanticIndexTotal)
+		b.WriteString(wSemanticStyle.Render(fmt.Sprintf("Indexing: [%s] %d/%d (esc to cancel)", progress, m.semanticIndexDone, m.semanticIndexTotal)))
+	} else if m.semanticIndexPrompt {
+		b.WriteString(wSemanticStyle.Render(fmt.Sprintf("%d of %d conversations not indexed. Index now? [y/n]", m.semanticUnindexedCount, m.semanticTotalCount)))
+	} else if m.semanticFocused {
+		b.WriteString(wSemanticStyle.Render("Semantic: [" + m.semanticQuery + "_]"))
+	} else if m.semanticQuery != "" && !m.semanticMode {
+		b.WriteString(wSemanticStyle.Render("Searching: [" + m.semanticQuery + "]..."))
+	} else if m.semanticMode {
+		b.WriteString(wSemanticStyle.Render("Semantic: [" + m.semanticQuery + "]"))
+	} else if m.semanticError != "" {
+		b.WriteString(wConfirmStyle.Render(m.semanticError))
+	} else if m.searchFocused {
 		b.WriteString(wSearchStyle.Render("Search: "))
 		b.WriteString(wSearchStyle.Render("[" + m.searchInput + "_]"))
 	} else if m.searchInput != "" {
@@ -440,7 +614,7 @@ func (m *watchModel) View() string {
 			b.WriteString("  No matches for \"" + m.searchInput + "\"\n")
 		}
 		b.WriteString("\n")
-		b.WriteString(wHelpStyle.Render("  r refresh • / search • q quit"))
+		b.WriteString(wHelpStyle.Render("  r refresh • / search • s semantic • q quit"))
 		b.WriteString("\n")
 		return b.String()
 	}
@@ -480,15 +654,20 @@ func (m *watchModel) View() string {
 		title := convindex.FormatTitleAndPrompt(titleStr, e.FirstPrompt)
 		size := formatFileSize(e.FileSize)
 
+		var cells []string
 		if m.global {
-			tbl.AddRow(table.Row{
-				Cells: []string{sessionMark, id, e.ProjectPath, title, size, modified},
-			})
+			cells = []string{sessionMark, id, e.ProjectPath, title, size, modified}
 		} else {
-			tbl.AddRow(table.Row{
-				Cells: []string{sessionMark, id, title, size, modified},
-			})
+			cells = []string{sessionMark, id, title, size, modified}
 		}
+		if m.semanticMode {
+			score := ""
+			if s, ok := m.semanticScores[e.SessionID]; ok {
+				score = fmt.Sprintf("%.4f", s)
+			}
+			cells = append(cells, score)
+		}
+		tbl.AddRow(table.Row{Cells: cells})
 	}
 
 	b.WriteString(tbl.RenderWithScroll(&wHelpStyle))
@@ -507,8 +686,10 @@ func (m *watchModel) View() string {
 			b.WriteString(wSearchStyle.Render("  Branch name: [" + m.worktreeInput + "_] (enter to create, esc to cancel)"))
 		} else if m.statusMsg != "" {
 			b.WriteString(wSearchStyle.Render("  " + m.statusMsg))
+		} else if m.semanticMode {
+			b.WriteString(wHelpStyle.Render("  s new search • / text search • esc exit • h help • q quit"))
 		} else {
-			b.WriteString(wHelpStyle.Render("  h help • ↑/↓ navigate • enter attach • W worktree • del delete • q quit"))
+			b.WriteString(wHelpStyle.Render("  / search • s semantic • enter attach • h help • q quit"))
 		}
 	}
 	b.WriteString("\n")
@@ -803,6 +984,147 @@ func (m *watchModel) closeWatcher() {
 	}
 }
 
+// --- Semantic search ---
+
+// semanticPreCheck tests Ollama connectivity and counts unindexed conversations.
+func (m *watchModel) semanticPreCheck() tea.Cmd {
+	entries := make([]SessionEntry, len(m.entries))
+	copy(entries, m.entries)
+	return func() tea.Msg {
+		client := NewOllamaClient("", "")
+		_, err := client.EmbedOne("test")
+		if err != nil {
+			return semanticCheckMsg{Err: err}
+		}
+
+		embeddedConvs, err := db.ListEmbeddedConvIDs()
+		if err != nil {
+			return semanticCheckMsg{Err: err}
+		}
+
+		unindexed := 0
+		for _, e := range entries {
+			embeddedAt, exists := embeddedConvs[e.SessionID]
+			if !exists || e.FileMtime > embeddedAt.Unix() {
+				unindexed++
+			}
+		}
+
+		return semanticCheckMsg{
+			Unindexed: unindexed,
+			Total:     len(entries),
+		}
+	}
+}
+
+// semanticStartIndex begins background indexing of unindexed conversations.
+func (m *watchModel) semanticStartIndex() tea.Cmd {
+	entries := make([]SessionEntry, len(m.entries))
+	copy(entries, m.entries)
+
+	ch := make(chan tea.Msg, 1)
+	cancelCh := make(chan struct{})
+	m.semanticIndexChan = ch
+	m.semanticCancelCh = cancelCh
+	m.semanticIndexing = true
+	m.semanticIndexPrompt = false
+	m.semanticIndexDone = 0
+	m.semanticIndexTotal = m.semanticUnindexedCount // initial estimate from precheck
+	m.semanticIndexErrors = 0
+
+	go func() {
+		defer close(ch)
+		client := NewOllamaClient("", "")
+
+		embeddedConvs, err := db.ListEmbeddedConvIDs()
+		if err != nil {
+			ch <- semanticIndexDoneMsg{Errors: 1}
+			return
+		}
+
+		var toIndex []SessionEntry
+		for _, e := range entries {
+			embeddedAt, exists := embeddedConvs[e.SessionID]
+			if !exists || e.FileMtime > embeddedAt.Unix() {
+				toIndex = append(toIndex, e)
+			}
+		}
+
+		total := len(toIndex)
+		done := 0
+		errors := 0
+
+		for _, entry := range toIndex {
+			select {
+			case <-cancelCh:
+				ch <- semanticIndexDoneMsg{Indexed: done, Errors: errors}
+				return
+			default:
+			}
+			_, err := IndexConversation(entry, client)
+			if err != nil {
+				errors++
+			} else {
+				done++
+			}
+			ch <- semanticIndexProgressMsg{Done: done + errors, Total: total, Errors: errors}
+		}
+		ch <- semanticIndexDoneMsg{Indexed: done, Errors: errors}
+	}()
+
+	return waitForSemanticIndex(ch)
+}
+
+// semanticRunSearch embeds the query and searches stored embeddings.
+func (m *watchModel) semanticRunSearch(query string) tea.Cmd {
+	entries := make([]SessionEntry, len(m.entries))
+	copy(entries, m.entries)
+	return func() tea.Msg {
+		client := NewOllamaClient("", "")
+		queryEmbedding, err := client.EmbedOne(query)
+		if err != nil {
+			return semanticSearchResultMsg{Query: query, Err: err}
+		}
+		results, err := SearchEmbeddings(queryEmbedding, entries, 0)
+		return semanticSearchResultMsg{Results: results, Query: query, Err: err}
+	}
+}
+
+// clearSemanticMode resets all semantic search state and restores normal listing.
+func (m *watchModel) clearSemanticMode() {
+	m.semanticFocused = false
+	m.semanticQuery = ""
+	m.semanticMode = false
+	m.semanticResults = nil
+	m.semanticScores = nil
+	m.semanticError = ""
+	m.semanticIndexing = false
+	m.semanticIndexPrompt = false
+	m.applySearchFilter()
+}
+
+func waitForSemanticIndex(ch <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
+func semanticProgressBar(done, total int) string {
+	width := 20
+	filled := 0
+	if total > 0 {
+		filled = done * width / total
+	}
+	if filled > width {
+		filled = width
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+}
+
 // --- In-memory entry management ---
 
 func (m *watchModel) removeEntry(convID string) {
@@ -827,6 +1149,9 @@ func (m *watchModel) upsertEntry(entry SessionEntry) {
 // --- Search filter ---
 
 func (m *watchModel) applySearchFilter() {
+	if m.semanticMode {
+		return
+	}
 	if m.searchInput == "" {
 		m.filtered = m.entries
 		return
@@ -950,7 +1275,7 @@ func (m *watchModel) stopSession(state *session.SessionState) error {
 
 func (m *watchModel) columns() []table.Column {
 	if m.global {
-		return []table.Column{
+		cols := []table.Column{
 			{Header: "", Width: 2},
 			{Header: "ID", Width: 10, SortKey: "id"},
 			{Header: "PROJECT", MinWidth: 20, Weight: 0.4, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"},
@@ -958,14 +1283,22 @@ func (m *watchModel) columns() []table.Column {
 			{Header: "SIZE", Width: 8, SortKey: "size"},
 			{Header: "MODIFIED", Width: 16, SortKey: "modified"},
 		}
+		if m.semanticMode {
+			cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})
+		}
+		return cols
 	}
-	return []table.Column{
+	cols := []table.Column{
 		{Header: "", Width: 2},
 		{Header: "ID", Width: 10, SortKey: "id"},
 		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"},
 		{Header: "SIZE", Width: 8, SortKey: "size"},
 		{Header: "MODIFIED", Width: 16, SortKey: "modified"},
 	}
+	if m.semanticMode {
+		cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})
+	}
+	return cols
 }
 
 // --- Help view ---
@@ -1009,6 +1342,12 @@ func (m *watchModel) renderHelpView() string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
+	b.WriteString("\n")
+
+	b.WriteString(wHeaderStyle.Render("  Semantic Search"))
+	b.WriteString("\n")
+	b.WriteString("    s         Start semantic search (requires Ollama)\n")
+	b.WriteString("    esc       Exit semantic results\n")
 	b.WriteString("\n")
 
 	b.WriteString(wHeaderStyle.Render("  Indicators"))
