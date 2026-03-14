@@ -201,12 +201,11 @@ func runHookCallback() error {
 	}
 
 	// Signal task runner when Stop/UserPromptSubmit fires in task mode
-	handleTaskSignal(input)
+	taskSignalWasHandled := handleTaskSignal(input)
 
-	// In task mode, skip idle notifications — the task runner sends its own
+	// In task mode, skip notifications — the task runner sends its own
 	// targeted notifications (e.g. "Task failed: X", "All tasks completed!").
-	// Other notifications (permission requests, user questions) still fire.
-	if newStatus == StatusIdle && os.Getenv("TCLAUDE_TASK_SIGNAL") != "" {
+	if taskSignalWasHandled {
 		return nil
 	}
 
@@ -232,10 +231,10 @@ type TaskSignal struct {
 // file path. On Stop, we write the report and session ID as JSON.
 // On UserPromptSubmit, we remove the signal to cancel any pending
 // auto-exit (the user is interacting).
-func handleTaskSignal(input HookCallbackInput) {
+func handleTaskSignal(input HookCallbackInput) bool {
 	signalPath := os.Getenv("TCLAUDE_TASK_SIGNAL")
 	if signalPath == "" {
-		return
+		return false
 	}
 	switch input.HookEventName {
 	case "Stop":
@@ -246,6 +245,7 @@ func handleTaskSignal(input HookCallbackInput) {
 		}
 		if data, err := json.Marshal(signal); err == nil {
 			os.WriteFile(signalPath, data, 0644)
+			return true
 		}
 	case "PermissionRequest":
 		// Signal plan-auto watcher when Claude asks to accept the plan
@@ -257,11 +257,13 @@ func handleTaskSignal(input HookCallbackInput) {
 			}
 			if data, err := json.Marshal(signal); err == nil {
 				os.WriteFile(signalPath, data, 0644)
+				return true
 			}
 		}
 	case "UserPromptSubmit":
 		os.Remove(signalPath)
 	}
+	return false
 }
 
 // getConvTitle looks up the conversation title and prompt from Claude's session index.
