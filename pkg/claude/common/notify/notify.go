@@ -70,7 +70,7 @@ func formatStatus(status string) string {
 
 // Send actually sends the notification.
 func Send(sessionID, status, cwd, convTitle string) {
-	slog.Info("sending notification",
+	slog.Debug("sending notification",
 		"sessionID", sessionID,
 		"status", status,
 		"cwd", cwd,

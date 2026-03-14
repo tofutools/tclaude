@@ -114,24 +114,6 @@ func Cmd() *cobra.Command {
 	return cmd
 }
 
-// DebugLogPath returns the path to the debug log file
-func DebugLogPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".tclaude", "debug.log")
-}
-
-// EnsureDebugLogDir creates the directory for debug logs if it doesn't exist.
-func EnsureDebugLogDir() error {
-	path := DebugLogPath()
-	if path == "" {
-		return fmt.Errorf("cannot determine debug log path")
-	}
-	return os.MkdirAll(filepath.Dir(path), 0755)
-}
-
 // toRow converts a SessionState to a db.SessionRow.
 func toRow(s *SessionState) *db.SessionRow {
 	return &db.SessionRow{

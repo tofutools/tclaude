@@ -4,6 +4,7 @@ package session
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,49 +18,38 @@ import (
 func findPowerShell() string {
 	path := wsl.FindPowerShell()
 	if path != "" {
-		debugLog("Found PowerShell at: %s", path)
+		slog.Debug(fmt.Sprintf("Found PowerShell at: %s", path), "module", "focus")
 	} else {
-		debugLog("PowerShell not found")
+		slog.Debug("PowerShell not found", "module", "focus")
 	}
 	return path
 }
 
-// debugLog writes to the debug log file.
-// Always logs focus operations since they're hard to debug otherwise.
-func debugLog(format string, args ...any) {
-	f, err := os.OpenFile(DebugLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "[focus] "+format+"\n", args...)
-}
-
 // TryFocusAttachedSession attempts to focus the terminal window that has the session attached.
 func TryFocusAttachedSession(tmuxSession string) {
-	debugLog("TryFocusAttachedSession called for: %s", tmuxSession)
+	slog.Debug(fmt.Sprintf("TryFocusAttachedSession called for: %s", tmuxSession), "module", "focus")
 
 	if isWSL() {
-		debugLog("WSL detected, using Windows focus")
+		slog.Debug("WSL detected, using Windows focus", "module", "focus")
 		focusWSLWindow()
 		return
 	}
 
 	// Native Linux - use xdotool
-	debugLog("Native Linux, using xdotool")
+	slog.Debug("Native Linux, using xdotool", "module", "focus")
 	focusLinuxTmuxSession(tmuxSession)
 }
 
 // FocusOwnWindow attempts to focus the current process's terminal window.
 func FocusOwnWindow() bool {
-	debugLog("FocusOwnWindow called")
+	slog.Debug("FocusOwnWindow called", "module", "focus")
 
 	if isWSL() {
-		debugLog("Detected WSL environment")
+		slog.Debug("Detected WSL environment", "module", "focus")
 		return focusWSLWindow()
 	}
 
-	debugLog("Native Linux, using xdotool")
+	slog.Debug("Native Linux, using xdotool", "module", "focus")
 	return focusLinuxCurrentWindow()
 }
 
@@ -76,16 +66,16 @@ func isWSL() bool {
 // focusWSLWindow attempts to focus the terminal window hosting this WSL session.
 // It walks up the process tree to find the Windows terminal process and focuses it.
 func focusWSLWindow() bool {
-	// Get our PID and walk up to find terminal
+	// Get our PID and walk up to find the terminal
 	pid := os.Getpid()
-	debugLog("Current PID: %d", pid)
+	slog.Debug(fmt.Sprintf("Current PID: %d", pid), "module", "focus")
 
 	// Walk up the process tree looking for the init process (PID 1's parent on WSL is the Windows side)
 	terminalPID := findTerminalPID(pid)
-	debugLog("Found terminal PID: %d", terminalPID)
+	slog.Debug(fmt.Sprintf("Found terminal PID: %d", terminalPID), "module", "focus")
 
 	if terminalPID == 0 {
-		debugLog("No terminal PID found, trying fallback to focus any terminal")
+		slog.Debug("No terminal PID found, trying fallback to focus any terminal", "module", "focus")
 		// Fallback: just try to focus any Windows Terminal or terminal window
 		return focusAnyTerminal()
 	}
@@ -96,7 +86,7 @@ func focusWSLWindow() bool {
 // findTerminalPID walks up the process tree to find the terminal's Windows PID.
 // Returns 0 if not found.
 func findTerminalPID(pid int) int {
-	debugLog("Walking process tree from PID %d", pid)
+	slog.Debug(fmt.Sprintf("Walking process tree from PID %d", pid), "module", "focus")
 
 	// In WSL, we can try to get the Windows PID from the init process
 	// The WSL init process (PID 1) is spawned by the Windows side
@@ -105,14 +95,14 @@ func findTerminalPID(pid int) int {
 	current := pid
 	for current > 1 {
 		ppid := getParentPID(current)
-		debugLog("  PID %d -> parent %d", current, ppid)
+		slog.Debug(fmt.Sprintf("  PID %d -> parent %d", current, ppid), "module", "focus")
 		if ppid <= 0 {
 			break
 		}
 		current = ppid
 	}
 
-	debugLog("Reached PID %d, now querying Windows side", current)
+	slog.Debug(fmt.Sprintf("Reached PID %d, now querying Windows side", current), "module", "focus")
 
 	// Now use PowerShell to find the Windows process hosting WSL
 	// We look for the wsl.exe or WindowsTerminal.exe process
@@ -140,7 +130,7 @@ func getParentPID(pid int) int {
 // getWSLHostPID uses PowerShell to find the Windows process hosting this WSL instance.
 // It walks up the process tree from wsl.exe until it finds a process with a window handle.
 func getWSLHostPID() int {
-	debugLog("Querying PowerShell for WSL host process...")
+	slog.Debug("Querying PowerShell for WSL host process...", "module", "focus")
 
 	// Walk up from wsl.exe until we find a process with a main window
 	script := `
@@ -179,7 +169,7 @@ Write-Output "0|No window found in process tree"
 `
 	psPath := findPowerShell()
 	if psPath == "" {
-		debugLog("PowerShell not found")
+		slog.Debug("PowerShell not found", "module", "focus")
 		return 0
 	}
 	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)
@@ -193,19 +183,19 @@ Write-Output "0|No window found in process tree"
 			parts := strings.SplitN(line, "|", 2)
 			pid, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
 			if len(parts) > 1 {
-				debugLog("PowerShell: %s", parts[1])
+				slog.Debug(fmt.Sprintf("PowerShell: %s", parts[1]), "module", "focus")
 			}
 			if pid > 0 {
-				debugLog("PowerShell returned host PID: %d", pid)
+				slog.Debug(fmt.Sprintf("PowerShell returned host PID: %d", pid), "module", "focus")
 				return pid
 			}
 		} else if line != "" {
-			debugLog("PowerShell trace: %s", line)
+			slog.Debug(fmt.Sprintf("PowerShell trace: %s", line), "module", "focus")
 		}
 	}
 
 	if err != nil {
-		debugLog("PowerShell error: %v", err)
+		slog.Debug(fmt.Sprintf("PowerShell error: %v", err), "module", "focus")
 	}
 	return 0
 }
@@ -213,7 +203,7 @@ Write-Output "0|No window found in process tree"
 // focusWTTab tries to focus a Windows Terminal tab by title.
 // Returns true if successfully focused a tab with our session ID.
 func focusWTTab(sessionID string) bool {
-	debugLog("Trying to focus Windows Terminal tab for session: %s", sessionID)
+	slog.Debug(fmt.Sprintf("Trying to focus Windows Terminal tab for session: %s", sessionID), "module", "focus")
 	// This is now handled by focusWindowByTitlePattern and focusWTTabByCycling
 	return false
 }
@@ -221,15 +211,15 @@ func focusWTTab(sessionID string) bool {
 // focusWTTabByCycling opens a new Windows Terminal window and attaches to the session.
 // This is more reliable than trying to find/focus existing tabs.
 func focusWTTabByCycling(sessionID string) bool {
-	debugLog("Fallback: opening new Windows Terminal window to attach to session %s", sessionID)
+	slog.Debug(fmt.Sprintf("Fallback: opening new Windows Terminal window to attach to session %s", sessionID), "module", "focus")
 
 	psPath := findPowerShell()
 	if psPath == "" {
-		debugLog("PowerShell not found")
+		slog.Debug("PowerShell not found", "module", "focus")
 		return false
 	}
 
-	// Open new Windows Terminal window with wsl running attach command
+	// Open a new Windows Terminal window with wsl running attach command
 	// Use -f (force) to detach from any existing attachment
 	// Syntax: wt.exe -w -1 wsl -- bash -c "command" (-w -1 = new window)
 	script := fmt.Sprintf(`
@@ -240,10 +230,10 @@ Write-Output "True"
 	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))
-	debugLog("Open new WT window result: %s", outStr)
+	slog.Debug(fmt.Sprintf("Open new WT window result: %s", outStr), "module", "focus")
 
 	if err != nil {
-		debugLog("Failed to open new WT window: %v", err)
+		slog.Debug(fmt.Sprintf("Failed to open new WT window: %v", err), "module", "focus")
 		return false
 	}
 
@@ -253,23 +243,23 @@ Write-Output "True"
 // focusWindowByPID focuses a window by its Windows process ID.
 // This is now a fallback - we prefer searching ALL windows by title pattern.
 func focusWindowByPID(pid int) bool {
-	debugLog("Attempting to focus window for PID %d", pid)
+	slog.Debug(fmt.Sprintf("Attempting to focus window for PID %d", pid), "module", "focus")
 
 	// First try to find window by our known title pattern (set by setTerminalTitle)
 	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
 	if sessionID != "" {
-		debugLog("Searching ALL windows for title containing 'tclaude:%s'", sessionID)
+		slog.Debug(fmt.Sprintf("Searching ALL windows for title containing 'tclaude:%s'", sessionID), "module", "focus")
 		if focusWindowByTitlePattern(sessionID) {
 			return true
 		}
 	}
 
-	debugLog("Title pattern search failed, trying tab cycling")
+	slog.Debug("Title pattern search failed, trying tab cycling", "module", "focus")
 	if focusWTTabByCycling(sessionID) {
 		return true
 	}
 
-	debugLog("Tab cycling failed, trying PID-based enumeration")
+	slog.Debug("Tab cycling failed, trying PID-based enumeration", "module", "focus")
 	return focusWindowByPIDEnumeration(pid, sessionID)
 }
 
@@ -283,7 +273,7 @@ func focusWindowByTitlePattern(sessionID string) bool {
 
 	psPath := findPowerShell()
 	if psPath == "" {
-		debugLog("PowerShell not found")
+		slog.Debug("PowerShell not found", "module", "focus")
 		return false
 	}
 
@@ -347,10 +337,10 @@ Write-Output "NOMATCH"
 	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))
-	debugLog("Title pattern search output:\n%s", outStr)
+	slog.Debug(fmt.Sprintf("Title pattern search output:\n%s", outStr), "module", "focus")
 
 	if err != nil {
-		debugLog("Title pattern search error: %v", err)
+		slog.Debug(fmt.Sprintf("Title pattern search error: %v", err), "module", "focus")
 	}
 
 	// Parse output
@@ -358,7 +348,7 @@ Write-Output "NOMATCH"
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "MATCH|") {
 			matchTitle := strings.TrimPrefix(line, "MATCH|")
-			debugLog("Found matching window: %s", matchTitle)
+			slog.Debug(fmt.Sprintf("Found matching window: %s", matchTitle), "module", "focus")
 			return focusByTitle(matchTitle)
 		}
 	}
@@ -370,7 +360,7 @@ Write-Output "NOMATCH"
 func focusWindowByPIDEnumeration(pid int, sessionID string) bool {
 	psPath := findPowerShell()
 	if psPath == "" {
-		debugLog("PowerShell not found")
+		slog.Debug("PowerShell not found", "module", "focus")
 		return false
 	}
 
@@ -445,7 +435,7 @@ foreach ($w in $windows) {
 	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))
-	debugLog("Window enumeration output:\n%s", outStr)
+	slog.Debug(fmt.Sprintf("Window enumeration output:\n%s", outStr), "module", "focus")
 
 	// Parse output to find matching window title
 	var matchTitle string
@@ -461,15 +451,15 @@ foreach ($w in $windows) {
 	}
 
 	if matchTitle != "" {
-		debugLog("Focusing matched window: %s", matchTitle)
+		slog.Debug(fmt.Sprintf("Focusing matched window: %s", matchTitle), "module", "focus")
 		return focusByTitle(matchTitle)
 	}
 
 	// No exact match - log all titles found
-	debugLog("No matching window found. Available windows: %v", allTitles)
+	slog.Debug(fmt.Sprintf("No matching window found. Available windows: %v", allTitles), "module", "focus")
 
 	if err != nil {
-		debugLog("Enumeration error: %v", err)
+		slog.Debug(fmt.Sprintf("Enumeration error: %v", err), "module", "focus")
 	}
 
 	return false
@@ -477,7 +467,7 @@ foreach ($w in $windows) {
 
 // focusByTitle focuses a window using AppActivate by title
 func focusByTitle(title string) bool {
-	debugLog("Focusing by title: %s", title)
+	slog.Debug(fmt.Sprintf("Focusing by title: %s", title), "module", "focus")
 
 	// Escape quotes in title
 	escapedTitle := strings.ReplaceAll(title, "'", "''")
@@ -496,23 +486,23 @@ $wshell.AppActivate($title)
 	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)
 	output, err := cmd.CombinedOutput()
 	if len(output) > 0 {
-		debugLog("AppActivate output: %s", strings.TrimSpace(string(output)))
+		slog.Debug(fmt.Sprintf("AppActivate output: %s", strings.TrimSpace(string(output))), "module", "focus")
 	}
 	if err != nil {
-		debugLog("AppActivate failed: %v", err)
+		slog.Debug(fmt.Sprintf("AppActivate failed: %v", err), "module", "focus")
 		return false
 	}
-	debugLog("AppActivate succeeded")
+	slog.Debug("AppActivate succeeded", "module", "focus")
 	return true
 }
 
 // focusAnyTerminal tries to focus Windows Terminal or other common terminals.
 func focusAnyTerminal() bool {
-	debugLog("Trying to focus any terminal window...")
+	slog.Debug("Trying to focus any terminal window...", "module", "focus")
 
 	// Try common terminal process names
 	terminals := []string{"WindowsTerminal", "cmd", "powershell", "pwsh", "ConEmu64", "ConEmu"}
-	debugLog("Looking for: %v", terminals)
+	slog.Debug(fmt.Sprintf("Looking for: %v", terminals), "module", "focus")
 
 	script := fmt.Sprintf(`
 $ProcessNames = "%s"
@@ -556,19 +546,19 @@ exit 1
 `, strings.Join(terminals, ","))
 	psPath := findPowerShell()
 	if psPath == "" {
-		debugLog("PowerShell not found")
+		slog.Debug("PowerShell not found", "module", "focus")
 		return false
 	}
 	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)
 	output, err := cmd.CombinedOutput()
 	if len(output) > 0 {
-		debugLog("PowerShell output: %s", strings.TrimSpace(string(output)))
+		slog.Debug(fmt.Sprintf("PowerShell output: %s", strings.TrimSpace(string(output))), "module", "focus")
 	}
 	if err != nil {
-		debugLog("Focus any terminal failed: %v", err)
+		slog.Debug(fmt.Sprintf("Focus any terminal failed: %v", err), "module", "focus")
 		return false
 	}
-	debugLog("Focus any terminal succeeded")
+	slog.Debug("Focus any terminal succeeded", "module", "focus")
 	return true
 }
 
@@ -580,7 +570,7 @@ exit 1
 func focusLinuxTmuxSession(tmuxSession string) bool {
 	// Check if xdotool is available
 	if _, err := exec.LookPath("xdotool"); err != nil {
-		debugLog("xdotool not found, cannot focus window")
+		slog.Debug("xdotool not found, cannot focus window", "module", "focus")
 		return false
 	}
 
@@ -588,17 +578,17 @@ func focusLinuxTmuxSession(tmuxSession string) bool {
 	cmd := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
-		debugLog("Failed to get tmux client tty: %v", err)
+		slog.Debug(fmt.Sprintf("Failed to get tmux client tty: %v", err), "module", "focus")
 		return false
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	if len(lines) == 0 || lines[0] == "" {
-		debugLog("No clients attached to tmux session")
+		slog.Debug("No clients attached to tmux session", "module", "focus")
 		return false
 	}
 	tty := lines[0]
-	debugLog("Found client TTY: %s", tty)
+	slog.Debug(fmt.Sprintf("Found client TTY: %s", tty), "module", "focus")
 
 	// Find the terminal window by walking the process tree from TTY
 	return focusLinuxWindowByTTY(tty)
@@ -608,17 +598,17 @@ func focusLinuxTmuxSession(tmuxSession string) bool {
 func focusLinuxCurrentWindow() bool {
 	// Check if xdotool is available
 	if _, err := exec.LookPath("xdotool"); err != nil {
-		debugLog("xdotool not found, cannot focus window")
+		slog.Debug("xdotool not found, cannot focus window", "module", "focus")
 		return false
 	}
 
 	// Try to get the active window from the current TTY
 	tty, err := os.Readlink("/proc/self/fd/0")
 	if err != nil {
-		debugLog("Failed to get current TTY: %v", err)
+		slog.Debug(fmt.Sprintf("Failed to get current TTY: %v", err), "module", "focus")
 		return false
 	}
-	debugLog("Current TTY: %s", tty)
+	slog.Debug(fmt.Sprintf("Current TTY: %s", tty), "module", "focus")
 
 	return focusLinuxWindowByTTY(tty)
 }
@@ -629,13 +619,13 @@ func focusLinuxWindowByTTY(tty string) bool {
 	cmd := exec.Command("lsof", "-t", tty)
 	output, err := cmd.Output()
 	if err != nil {
-		debugLog("lsof failed for TTY %s: %v", tty, err)
+		slog.Debug(fmt.Sprintf("lsof failed for TTY %s: %v", tty, err), "module", "focus")
 		// Fallback: try to focus by window name pattern
 		return focusLinuxWindowByPattern("tclaude:")
 	}
 
 	pids := strings.Fields(string(output))
-	debugLog("Found PIDs on TTY: %v", pids)
+	slog.Debug(fmt.Sprintf("Found PIDs on TTY: %v", pids), "module", "focus")
 
 	// Walk up process tree to find terminal
 	for _, pidStr := range pids {
@@ -662,7 +652,7 @@ func findLinuxWindowForPID(pidStr string) string {
 		if err == nil {
 			windows := strings.Fields(string(output))
 			if len(windows) > 0 {
-				debugLog("Found window %s for PID %s", windows[0], current)
+				slog.Debug(fmt.Sprintf("Found window %s for PID %s", windows[0], current), "module", "focus")
 				return windows[0]
 			}
 		}
@@ -688,38 +678,38 @@ func findLinuxWindowForPID(pidStr string) string {
 
 // focusLinuxWindowByID focuses a window by its X window ID.
 func focusLinuxWindowByID(windowID string) bool {
-	debugLog("Focusing window ID: %s", windowID)
+	slog.Debug(fmt.Sprintf("Focusing window ID: %s", windowID), "module", "focus")
 
 	// Activate the window
 	cmd := exec.Command("xdotool", "windowactivate", "--sync", windowID)
 	if err := cmd.Run(); err != nil {
-		debugLog("xdotool windowactivate failed: %v", err)
+		slog.Debug(fmt.Sprintf("xdotool windowactivate failed: %v", err), "module", "focus")
 		return false
 	}
 
-	debugLog("Successfully focused window")
+	slog.Debug("Successfully focused window", "module", "focus")
 	return true
 }
 
 // focusLinuxWindowByPattern searches for and focuses a window by name pattern.
 func focusLinuxWindowByPattern(pattern string) bool {
-	debugLog("Searching for window with pattern: %s", pattern)
+	slog.Debug(fmt.Sprintf("Searching for window with pattern: %s", pattern), "module", "focus")
 
 	// Search for windows matching the pattern
 	cmd := exec.Command("xdotool", "search", "--name", pattern)
 	output, err := cmd.Output()
 	if err != nil {
-		debugLog("xdotool search failed: %v", err)
+		slog.Debug(fmt.Sprintf("xdotool search failed: %v", err), "module", "focus")
 		return false
 	}
 
 	windows := strings.Fields(string(output))
 	if len(windows) == 0 {
-		debugLog("No windows found matching pattern")
+		slog.Debug("No windows found matching pattern", "module", "focus")
 		return false
 	}
 
-	debugLog("Found %d windows, focusing first: %s", len(windows), windows[0])
+	slog.Debug(fmt.Sprintf("Found %d windows, focusing first: %s", len(windows), windows[0]), "module", "focus")
 	return focusLinuxWindowByID(windows[0])
 }
 

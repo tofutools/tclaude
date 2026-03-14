@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // OutputLogPath returns the path to the general output log file
@@ -16,8 +17,7 @@ func OutputLogPath() string {
 }
 
 // SetupLogging configures slog to write to ~/.tclaude/output.log (file only, not stderr).
-// Hook callbacks override this with their own SetupHookLogging which writes to hooks.log.
-func SetupLogging() {
+func SetupLogging(level slog.Level) {
 	logPath := OutputLogPath()
 	if logPath == "" {
 		return
@@ -33,7 +33,23 @@ func SetupLogging() {
 	}
 
 	handler := slog.NewTextHandler(logFile, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: level,
 	})
 	slog.SetDefault(slog.New(handler))
+}
+
+// ParseLogLevel parses a string log level into a slog.Level.
+func ParseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

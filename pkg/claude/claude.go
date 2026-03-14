@@ -6,6 +6,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	claudegit "github.com/tofutools/tclaude/pkg/claude/git"
 	"github.com/tofutools/tclaude/pkg/claude/selftest"
@@ -22,6 +23,7 @@ import (
 
 // Cmd returns the claude subcommand for use in other binaries.
 func Cmd() *cobra.Command {
+	var logLevel string
 	cmd := boa.CmdT[session.NewParams]{
 		Use:         "claude",
 		Short:       "Claude Code utilities",
@@ -47,6 +49,16 @@ func Cmd() *cobra.Command {
 			}
 		},
 	}.ToCobra()
+	cmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		finalLogLevel := logLevel
+		if !cmd.Flags().Changed("log-level") {
+			if cfg, err := config.Load(); err == nil && cfg.LogLevel != "" {
+				finalLogLevel = cfg.LogLevel
+			}
+		}
+		common.SetupLogging(common.ParseLogLevel(finalLogLevel))
+	}
 	cmd.Args = cobra.ArbitraryArgs
+	cmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	return cmd
 }

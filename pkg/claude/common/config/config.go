@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Notifications      *NotificationConfig `json:"notifications,omitempty"`
 	AutoCompactPercent *int                `json:"auto_compact_percent,omitempty"`
+	LogLevel           string              `json:"log_level,omitempty"`
 }
 
 // NotificationConfig holds settings for OS notifications.
@@ -18,7 +19,7 @@ type NotificationConfig struct {
 	Enabled             bool             `json:"enabled"`
 	Transitions         []TransitionRule `json:"transitions,omitempty"`
 	CooldownSeconds     int              `json:"cooldown_seconds,omitempty"`
-	NotificationCommand []string          `json:"notification_command,omitempty"`
+	NotificationCommand []string         `json:"notification_command,omitempty"`
 }
 
 // TransitionRule defines a state transition that triggers a notification.
@@ -31,6 +32,7 @@ type TransitionRule struct {
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
+		LogLevel: "info",
 		Notifications: &NotificationConfig{
 			Enabled: false,
 			Transitions: []TransitionRule{
@@ -73,6 +75,11 @@ func Load() (*Config, error) {
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
+	}
+
+	// Apply defaults for missing fields
+	if config.LogLevel == "" {
+		config.LogLevel = "info"
 	}
 
 	// Apply defaults for missing sections

@@ -43,11 +43,8 @@ func HookCallbackCmd() *cobra.Command {
 		Long:   "Unified callback for all Claude Code hooks. Reads hook data from stdin and updates session state accordingly.",
 		Hidden: true,
 		Run: func(cmd *cobra.Command, args []string) {
-			// Set up logging to both stderr and ~/.tclaude/hooks.log
-			SetupHookLogging()
-
 			if err := runHookCallback(); err != nil {
-				slog.Error("hook callback failed", "error", err)
+				slog.Error("hook callback failed", "error", err, "module", "hooks")
 				os.Exit(1)
 			}
 		},
@@ -65,7 +62,7 @@ func runHookCallback() error {
 	var input HookCallbackInput
 	if len(stdinData) > 0 {
 		if err := json.NewDecoder(bytes.NewReader(stdinData)).Decode(&input); err != nil {
-			slog.Error("failed to parse hook input", "error", err, "raw_input", string(stdinData))
+			slog.Error("failed to parse hook input", "error", err, "raw_input", string(stdinData), "module", "hooks")
 			return fmt.Errorf("failed to parse hook input: %w", err)
 		}
 	} else {
@@ -79,6 +76,7 @@ func runHookCallback() error {
 		"notification_type", input.NotificationType,
 		"tool_name", input.ToolName,
 		"cwd", input.Cwd,
+		"module", "hooks",
 	)
 
 	// Determine status based on hook event
@@ -126,9 +124,9 @@ func runHookCallback() error {
 		// Reset auto-compact state so it can trigger again next time
 		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
 			if err := db.ResetCompact(sessionID); err != nil {
-				slog.Warn("failed to reset compact state", "error", err)
+				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
 			} else {
-				slog.Info("auto-compact state reset", "session_id", sessionID)
+				slog.Info("auto-compact state reset", "session_id", sessionID, "module", "hooks")
 			}
 		}
 		return nil
@@ -157,7 +155,7 @@ func runHookCallback() error {
 	if err != nil || state == nil {
 		return err
 	}
-	slog.Info("session found", "session_id", state.ID, "status", state.Status)
+	slog.Info("session found", "session_id", state.ID, "status", state.Status, "module", "hooks")
 
 	// Capture previous status for notification
 	prevStatus := state.Status
@@ -173,6 +171,7 @@ func runHookCallback() error {
 			"old_conv_id", state.ConvID,
 			"new_conv_id", input.ConvID,
 			"session_id", state.ID,
+			"module", "hooks",
 		)
 		state.ConvID = input.ConvID
 	}
@@ -373,7 +372,7 @@ func handleAutoCompact(input HookCallbackInput) {
 
 	contextPct, _, err := db.GetCompactState(sessionID)
 	if err != nil {
-		slog.Warn("auto-compact: failed to read compact state", "error", err)
+		slog.Warn("auto-compact: failed to read compact state", "error", err, "module", "hooks")
 		return
 	}
 
@@ -384,18 +383,18 @@ func handleAutoCompact(input HookCallbackInput) {
 	// CAS: only one Stop hook should trigger compaction
 	claimed, err := db.TryClaimCompact(sessionID)
 	if err != nil {
-		slog.Warn("auto-compact: failed to claim", "error", err)
+		slog.Warn("auto-compact: failed to claim", "error", err, "module", "hooks")
 		return
 	}
 	if !claimed {
-		slog.Debug("auto-compact: already claimed", "session_id", sessionID)
+		slog.Debug("auto-compact: already claimed", "session_id", sessionID, "module", "hooks")
 		return
 	}
 
 	// Send /compact to the tmux session
 	tmuxSession := GetCurrentTmuxSession()
 	if tmuxSession == "" {
-		slog.Warn("auto-compact: not in a tmux session")
+		slog.Warn("auto-compact: not in a tmux session", "module", "hooks")
 		return
 	}
 
@@ -404,10 +403,11 @@ func handleAutoCompact(input HookCallbackInput) {
 		"tmux_session", tmuxSession,
 		"context_pct", contextPct,
 		"threshold", threshold,
+		"module", "hooks",
 	)
 
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/compact", "Enter")
 	if err := cmd.Run(); err != nil {
-		slog.Error("auto-compact: failed to send keys", "error", err)
+		slog.Error("auto-compact: failed to send keys", "error", err, "module", "hooks")
 	}
 }

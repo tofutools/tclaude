@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 
@@ -67,14 +68,11 @@ func runStatusCallback(params *StatusCallbackParams) error {
 	}
 
 	// Debug logging - useful for troubleshooting hook issues
-	_ = EnsureDebugLogDir()
-	debugFile, _ := os.OpenFile(DebugLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if debugFile != nil {
-		fmt.Fprintf(debugFile, "--- %s ---\n", time.Now().Format(time.RFC3339))
-		fmt.Fprintf(debugFile, "Status: %s\n", params.Status)
-		fmt.Fprintf(debugFile, "Stdin: %s\n", string(stdinData))
-		debugFile.Close()
-	}
+	slog.Debug("status callback received",
+		"status", params.Status,
+		"stdin_len", len(stdinData),
+		"module", "hooks",
+	)
 
 	// Get tclaude session ID from environment
 	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")

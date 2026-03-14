@@ -73,9 +73,8 @@ func Cmd() *cobra.Command {
 		Long:        "Reads JSON session data from stdin (provided by Claude Code) and prints status bar output.\nConfigure in ~/.claude/settings.json as a statusLine command.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-			session.SetupHookLogging()
 			if err := run(); err != nil {
-				slog.Error("status-bar failed", "error", err)
+				slog.Error("status-bar failed", "error", err, "module", "hooks")
 				os.Exit(1)
 			}
 		},
@@ -123,7 +122,7 @@ func saveGitCache(g *cachedGitData) {
 		return
 	}
 	if err := db.SaveGitCache(key, data, g.FetchedAt); err != nil {
-		slog.Warn("failed to save git cache", "error", err)
+		slog.Warn("failed to save git cache", "error", err, "module", "hooks")
 	}
 }
 
@@ -143,7 +142,7 @@ func run() error {
 	var input StatusLineInput
 	if len(stdinData) > 0 {
 		if err := json.NewDecoder(bytes.NewReader(stdinData)).Decode(&input); err != nil {
-			slog.Error("status-bar: failed to parse input", "error", err, "raw_input", string(stdinData))
+			slog.Error("status-bar: failed to parse input", "error", err, "raw_input", string(stdinData), "module", "hooks")
 			return fmt.Errorf("failed to parse stdin JSON: %w", err)
 		}
 	} else {
@@ -182,7 +181,7 @@ func run() error {
 	// Store context percentage in DB for auto-compact feature
 	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
 		if err := db.UpdateContextPct(sessionID, float64(ctxPct)); err != nil {
-			slog.Warn("status-bar: failed to update context_pct", "error", err)
+			slog.Warn("status-bar: failed to update context_pct", "error", err, "module", "hooks")
 		}
 	}
 
@@ -198,7 +197,7 @@ func run() error {
 	usage, err := usageapi.GetCached()
 	hasLimits := false
 	if err != nil {
-		slog.Warn("status-bar: failed to fetch usage", "error", err)
+		slog.Warn("status-bar: failed to fetch usage", "error", err, "module", "hooks")
 	}
 	if usage != nil && usage.LastError != "" {
 		line2 = append(line2, fmt.Sprintf("%s[stale⚠️ %s]%s", colorRed, session.FormatDuration(time.Since(usage.FetchedAt)), colorReset))

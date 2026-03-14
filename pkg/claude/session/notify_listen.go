@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/godbus/dbus/v5"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // NotifyListenCmd returns a hidden command that sends a D-Bus notification and
@@ -24,10 +24,8 @@ func NotifyListenCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.ExactArgs(3),
 		Run: func(cmd *cobra.Command, args []string) {
-			SetupHookLogging()
-
 			if err := runNotifyListen(args[0], args[1], args[2]); err != nil {
-				slog.Error("notify-listen failed", "error", err)
+				slog.Error("notify-listen failed", "error", err, "module", "hooks")
 				os.Exit(1)
 			}
 		},
@@ -76,7 +74,7 @@ func runNotifyListen(sessionID, title, body string) error {
 		return fmt.Errorf("failed to get notification ID: %w", err)
 	}
 
-	slog.Info("Notification sent, waiting for callback", "notifID", notifID)
+	slog.Info("Notification sent, waiting for callback", "notifID", notifID, "module", "hooks")
 
 	// Wait up to 5 minutes for an action or close
 	timeout := time.After(5 * time.Minute)
@@ -90,7 +88,7 @@ func runNotifyListen(sessionID, title, body string) error {
 			case "org.freedesktop.Notifications.NotificationClosed":
 				if len(sig.Body) >= 1 {
 					if id, ok := sig.Body[0].(uint32); ok && id == notifID {
-						slog.Info("Notification clicked", "notifID", notifID)
+						slog.Info("Notification clicked", "notifID", notifID, "module", "hooks")
 						clArgs := common.DetectArgs()
 						focusArgs := append(clArgs[1:], "session", "focus", sessionID)
 						focusCmd := exec.Command(clArgs[0], focusArgs...)

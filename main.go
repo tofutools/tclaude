@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"os"
 	"runtime/debug"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func main() {
-	common.SetupLogging()
+	common.SetupLogging(slog.LevelInfo)
 	exitCode := run()
 	db.Close()
 	os.Exit(exitCode)
