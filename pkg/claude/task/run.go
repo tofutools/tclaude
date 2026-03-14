@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -430,6 +431,8 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				json.Unmarshal(data, &signal)
 			}
 
+			slog.Debug("signal received", "signal", signal)
+
 			// Signal detected — enter grace period, watching for removal
 			if gracePeriod(ctx, watcher, signalPath, base) {
 				// Signal removed during grace (user interacted) — reset
@@ -442,10 +445,12 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			// (including Stop events that fire when Claude finishes planning)
 			if planAutoAccept && !planAccepted {
 				if signal.Event == "PermissionRequest" && signal.ToolName == "ExitPlanMode" {
+					slog.Debug("accepting plan")
 					planAccepted = true
 					os.Remove(signalPath)
 					sendTmuxEnter(tmuxSession)
 				} else {
+					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event)
 					os.Remove(signalPath)
 				}
 				signalExists = false
@@ -455,13 +460,16 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			// Signal survived grace period — check if any files were actually changed
 			if signal.Event != "Stop" {
 				// Non-Stop signals that weren't handled above — reset and wait
+				slog.Debug("ignoring signal", "event", signal.Event)
 				signalExists = false
 				continue
 			}
 			if !hasTrackedChanges(cwd, excludeTaskFiles) {
+				slog.Debug("task produced no file changes", "event", signal.Event)
 				sendNotification(signal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
+			slog.Debug("exiting", "event", signal.Event)
 			sendTmuxMessage(tmuxSession, "/exit")
 			return
 		}
