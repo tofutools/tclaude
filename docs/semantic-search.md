@@ -4,8 +4,8 @@
 
 When searching past conversations, users rarely remember exact keywords — they remember
 the *subject* or *concept* they discussed. Regex/keyword search fails here. The existing
-AI search (`tclaude conv ai-search`) works but is slow, expensive, and sends truncated
-data (200 char prompts) to Claude.
+The previous `ai-search` command worked by sending truncated metadata (200 char prompts)
+to Claude via `claude -p`, which was slow, expensive, and lossy.
 
 ## Approach
 

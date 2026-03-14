@@ -199,7 +199,7 @@ type SearchEmbeddingsParams struct {
 func SearchEmbeddingsCmd() *cobra.Command {
 	return boa.CmdT[SearchEmbeddingsParams]{
 		Use:         "search-embeddings",
-		Aliases:     []string{"sem", "semantic"},
+		Aliases:     []string{"sem", "semantic", "ai", "ask", "ai-search"},
 		Short:       "Semantic search across conversations",
 		Long:        "Search conversations by meaning using local embeddings (requires prior index-embeddings).",
 		ParamEnrich: common.DefaultParamEnricher(),
