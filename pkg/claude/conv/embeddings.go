@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultOllamaURL  = "http://localhost:11434"
-	defaultEmbedModel = "nomic-embed-text"
+	defaultEmbedModel = "qwen3-embedding:0.6b"
 	maxChunkChars     = 24000 // target ~8K tokens; EmbedOne auto-reduces if too large
 )
 

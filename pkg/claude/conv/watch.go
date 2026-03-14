@@ -1081,6 +1081,19 @@ func (m *watchModel) semanticRunSearch(query string) tea.Cmd {
 	copy(entries, m.entries)
 	return func() tea.Msg {
 		client := NewOllamaClient("", "")
+
+		// Check for model mismatch
+		if models, err := db.ListEmbeddingModels(); err == nil && len(models) > 0 {
+			for _, mdl := range models {
+				if mdl != client.Model {
+					return semanticSearchResultMsg{
+						Query: query,
+						Err:   fmt.Errorf("index built with %q, but searching with %q — run 'tclaude conv index-embeddings --reindex'", models[0], client.Model),
+					}
+				}
+			}
+		}
+
 		queryEmbedding, err := client.EmbedOne(query)
 		if err != nil {
 			return semanticSearchResultMsg{Query: query, Err: err}

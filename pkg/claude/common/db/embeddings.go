@@ -11,7 +11,7 @@ type EmbeddingRow struct {
 	ChunkIndex int
 	ChunkType  string // "metadata" or "content"
 	ChunkText  string
-	Embedding  []byte // raw float32 bytes (768 floats × 4 bytes = 3072 bytes for nomic-embed-text)
+	Embedding  []byte // raw float32 bytes (e.g. 1024 floats × 4 bytes = 4096 bytes for qwen3-embedding)
 	Model      string
 	CreatedAt  time.Time
 }
@@ -127,6 +127,30 @@ func ListEmbeddedConvIDs() (map[string]time.Time, error) {
 		result[convID] = t
 	}
 	return result, rows.Err()
+}
+
+// ListEmbeddingModels returns the distinct model names used in stored embeddings.
+func ListEmbeddingModels() ([]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.Query(`SELECT DISTINCT model FROM conv_embeddings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var models []string
+	for rows.Next() {
+		var model string
+		if err := rows.Scan(&model); err != nil {
+			return nil, err
+		}
+		models = append(models, model)
+	}
+	return models, rows.Err()
 }
 
 // DeleteAllEmbeddings removes all embedding rows.

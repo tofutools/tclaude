@@ -19,8 +19,8 @@ import (
 type IndexEmbeddingsParams struct {
 	Global  bool   `short:"g" help:"Index conversations from all projects"`
 	Reindex bool   `long:"reindex" help:"Force re-index all conversations (ignore cache)"`
-	Model   string `long:"model" help:"Embedding model name" default:"nomic-embed-text"`
-	URL     string `long:"url" help:"Ollama API base URL" default:"http://localhost:11434"`
+	Model   string `long:"model" env:"TCLAUDE_EMBED_MODEL" help:"Embedding model name" default:"qwen3-embedding:0.6b"`
+	URL     string `long:"url" env:"TCLAUDE_OLLAMA_URL" help:"Ollama API base URL" default:"http://localhost:11434"`
 }
 
 func IndexEmbeddingsCmd() *cobra.Command {
@@ -192,8 +192,8 @@ type SearchEmbeddingsParams struct {
 	Limit  int    `short:"n" help:"Number of results" default:"10"`
 	Long   bool   `short:"l" help:"Show matching chunk text"`
 	JSON   bool   `long:"json" help:"Output as JSON"`
-	Model  string `long:"model" help:"Embedding model name" default:"nomic-embed-text"`
-	URL    string `long:"url" help:"Ollama API base URL" default:"http://localhost:11434"`
+	Model  string `long:"model" env:"TCLAUDE_EMBED_MODEL" help:"Embedding model name" default:"qwen3-embedding:0.6b"`
+	URL    string `long:"url" env:"TCLAUDE_OLLAMA_URL" help:"Ollama API base URL" default:"http://localhost:11434"`
 }
 
 func SearchEmbeddingsCmd() *cobra.Command {
@@ -219,6 +219,22 @@ func RunSearchEmbeddings(params *SearchEmbeddingsParams, stdout, stderr *os.File
 	}
 
 	client := NewOllamaClient(params.URL, params.Model)
+
+	// Check for model mismatch with existing index
+	if models, err := db.ListEmbeddingModels(); err == nil && len(models) > 0 {
+		mismatch := false
+		for _, m := range models {
+			if m != params.Model {
+				mismatch = true
+				break
+			}
+		}
+		if mismatch {
+			fmt.Fprintf(stderr, "Error: index was built with model %q, but searching with %q\n", models[0], params.Model)
+			fmt.Fprintf(stderr, "Run 'tclaude conv index-embeddings --reindex' to rebuild with the new model\n")
+			return 1
+		}
+	}
 
 	// Embed the query
 	queryEmbedding, err := client.EmbedOne(params.Query)

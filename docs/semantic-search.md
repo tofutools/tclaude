@@ -46,18 +46,18 @@ ollama serve
 ### 3. Pull the embedding model
 
 ```bash
-ollama pull nomic-embed-text
+ollama pull qwen3-embedding
 ```
 
-This downloads the `nomic-embed-text` model (~274MB, one-time). It has an 8K token context window, runs in ~0.5GB RAM (unloads after 5 minutes of idle), and produces embeddings in under 100ms on Apple Silicon.
+This downloads the `qwen3-embedding` model (~639MB, one-time). It has a 32K token context window, supports 100+ languages, and produces 1024-dimensional embeddings.
 
 ### 4. Verify
 
 ```bash
 curl -s http://localhost:11434/api/embed \
-  -d '{"model": "nomic-embed-text", "input": "hello world"}' \
+  -d '{"model": "qwen3-embedding", "input": "hello world"}' \
   | python3 -c "import sys,json; e=json.load(sys.stdin)['embeddings'][0]; print(f'{len(e)} dimensions')"
-# Expected: 768 dimensions
+# Expected: 1024 dimensions
 ```
 
 ## Getting Started
@@ -143,7 +143,7 @@ tclaude conv index-embeddings --model mxbai-embed-large  # use a different model
 |------|-------------|
 | `-g, --global` | Index conversations from all projects |
 | `--reindex` | Wipe and rebuild all embeddings |
-| `--model` | Embedding model name (default: `nomic-embed-text`) |
+| `--model` | Embedding model name (default: `qwen3-embedding`) |
 | `--url` | Ollama API base URL (default: `http://localhost:11434`) |
 
 ### `tclaude conv search-embeddings`
@@ -161,7 +161,7 @@ tclaude conv sem "query"          # shorthand alias
 | `-n` | Number of results (default: 10) |
 | `-l, --long` | Show matching chunk text |
 | `--json` | JSON output |
-| `--model` | Embedding model name (default: `nomic-embed-text`) |
+| `--model` | Embedding model name (default: `qwen3-embedding`) |
 | `--url` | Ollama API base URL (default: `http://localhost:11434`) |
 
 ## How It Works
@@ -179,7 +179,7 @@ Conversations are ranked by the **maximum similarity** across all their chunks, 
 
 ### Storage
 
-Embeddings are stored in `~/.tclaude/db.sqlite` (table `conv_embeddings`). Each chunk stores its text, embedding vector (768 floats as raw bytes), and creation timestamp.
+Embeddings are stored in `~/.tclaude/db.sqlite` (table `conv_embeddings`). Each chunk stores its text, embedding vector (1024 floats as raw bytes for qwen3-embedding), and creation timestamp.
 
 ### Invalidation
 
@@ -191,7 +191,7 @@ Indexing is incremental using file modification times:
 
 ### Context length handling
 
-If a chunk exceeds the model's context window, `tclaude` automatically reduces it by 1/3 and retries, repeating until it fits. In practice, the 24K character limit rarely triggers this with `nomic-embed-text`'s 8K token context.
+If a chunk exceeds the model's context window, `tclaude` automatically reduces it by 1/3 and retries, repeating until it fits. In practice, the 24K character limit rarely triggers this with `qwen3-embedding`'s 32K token context.
 
 ## Code Layout
 
