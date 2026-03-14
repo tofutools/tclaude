@@ -75,21 +75,25 @@ func containsCurrentHook(matchersJSON string) bool {
 	return false
 }
 
-// containsStaleHook checks if a raw matchers JSON contains any of our hooks
-// that don't match the current HookCommand (duplicates or old binary variants)
-func containsStaleHook(matchersJSON string) bool {
+// needsHookCleanup checks if a raw matchers JSON contains stale tclaude hooks
+// (wrong binary) or duplicate tclaude hooks that should be deduplicated
+func needsHookCleanup(matchersJSON string) bool {
 	var matchers []HookMatcher
 	if err := json.Unmarshal([]byte(matchersJSON), &matchers); err != nil {
 		return false
 	}
+	ourCount := 0
 	for _, m := range matchers {
 		for _, h := range m.Hooks {
-			if isOurHook(h.Command) && h.Command != HookCommand {
-				return true
+			if isOurHook(h.Command) {
+				if h.Command != HookCommand {
+					return true // stale hook (different binary)
+				}
+				ourCount++
 			}
 		}
 	}
-	return false
+	return ourCount > 1 // duplicate hooks
 }
 
 // removeOurHooksFromEvent removes all tclaude hooks from an event's matcher list
@@ -136,8 +140,8 @@ func ClaudeSettingsPath() string {
 }
 
 // CheckHooksInstalled checks if tclaude hooks are installed in Claude settings.
-// Returns: installed (all required hooks present with current binary), missing event names, hasStaleHooks (our hooks present but with a different binary).
-func CheckHooksInstalled() (installed bool, missing []string, hasStaleHooks bool) {
+// Returns: installed (all required hooks present with current binary), missing event names, needsRepair (stale or duplicate hooks detected).
+func CheckHooksInstalled() (installed bool, missing []string, needsRepair bool) {
 	settingsPath := ClaudeSettingsPath()
 	if settingsPath == "" {
 		return false, []string{"all"}, false
@@ -166,11 +170,10 @@ func CheckHooksInstalled() (installed bool, missing []string, hasStaleHooks bool
 		return false, []string{"all (invalid hooks section)"}, false
 	}
 
-	// Check for stale hooks (our hooks with a different binary)
+	// Check for stale or duplicate hooks
 	for _, eventHooks := range hooks {
-		s := string(eventHooks)
-		if containsStaleHook(s) {
-			hasStaleHooks = true
+		if needsHookCleanup(string(eventHooks)) {
+			needsRepair = true
 			break
 		}
 	}
@@ -183,7 +186,7 @@ func CheckHooksInstalled() (installed bool, missing []string, hasStaleHooks bool
 		}
 	}
 
-	return len(missing) == 0, missing, hasStaleHooks
+	return len(missing) == 0, missing, needsRepair
 }
 
 // InstallHooks adds tclaude hooks to Claude settings, replacing any existing tclaude hooks
@@ -220,19 +223,17 @@ func InstallHooks() error {
 		hooks = make(map[string]json.RawMessage)
 	}
 
-	// First pass: remove all tclaude hooks from all events
+	// First pass: remove all tclaude hooks from all events (prevents duplicates)
 	for event, eventHooksRaw := range hooks {
-		if containsStaleHook(string(eventHooksRaw)) {
-			newRaw, removed, err := removeOurHooksFromEvent(eventHooksRaw)
-			if err != nil {
-				return fmt.Errorf("failed to clean hooks from %s: %w", event, err)
-			}
-			if removed {
-				if newRaw == nil {
-					delete(hooks, event)
-				} else {
-					hooks[event] = newRaw
-				}
+		newRaw, removed, err := removeOurHooksFromEvent(eventHooksRaw)
+		if err != nil {
+			return fmt.Errorf("failed to clean hooks from %s: %w", event, err)
+		}
+		if removed {
+			if newRaw == nil {
+				delete(hooks, event)
+			} else {
+				hooks[event] = newRaw
 			}
 		}
 	}
@@ -288,14 +289,14 @@ func InstallHooks() error {
 // Stale hooks (wrong/duplicate binary) are always auto-repaired since the user already
 // opted into hook management. The autoInstall flag only controls first-time installation.
 func EnsureHooksInstalled(autoInstall bool, stdout, stderr *os.File) bool {
-	installed, missing, hasStaleHooks := CheckHooksInstalled()
-	if installed && !hasStaleHooks {
+	installed, missing, needsRepair := CheckHooksInstalled()
+	if installed && !needsRepair {
 		return true
 	}
 
-	// Always auto-repair stale hooks (duplicates or old binary) without prompting.
+	// Always auto-repair stale/duplicate hooks without prompting.
 	// The user already opted in to hook management; we're just keeping them consistent.
-	if hasStaleHooks {
+	if needsRepair {
 		if err := InstallHooks(); err != nil {
 			fmt.Fprintf(stderr, "Warning: Failed to repair stale hooks: %v\n", err)
 		}

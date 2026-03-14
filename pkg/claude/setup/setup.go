@@ -93,12 +93,12 @@ func runSetup(params *Params) error {
 
 	// 1. Install hooks
 	fmt.Println("=== Hooks ===")
-	installed, missing, hasOldHooks := session.CheckHooksInstalled()
-	if installed && !hasOldHooks {
+	installed, missing, needsRepair := session.CheckHooksInstalled()
+	if installed && !needsRepair {
 		fmt.Println("✓ All hooks already installed")
 	} else {
-		if hasOldHooks {
-			fmt.Println("  Removing old-style hooks...")
+		if needsRepair {
+			fmt.Println("  Repairing stale/duplicate hooks...")
 		}
 		if len(missing) > 0 {
 			fmt.Printf("  Installing hooks for: %v\n", missing)
@@ -258,9 +258,9 @@ func checkStatus() error {
 
 	// Check hooks
 	fmt.Println("\n=== Hooks ===")
-	installed, missing, hasOldHooks := session.CheckHooksInstalled()
-	if hasOldHooks {
-		fmt.Println("⚠ Old-style hooks detected (need upgrade)")
+	installed, missing, needsRepair := session.CheckHooksInstalled()
+	if needsRepair {
+		fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
 	}
 	if installed {
 		fmt.Println("✓ All hooks installed")
