@@ -19,6 +19,7 @@ type NewParams struct {
 	Global   bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
 	Label    string `long:"label" optional:"true" help:"Custom label for the session"`
 	Detached bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
+	Compact  int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
 }
 
 func NewCmd() *cobra.Command {
@@ -128,9 +129,13 @@ func runNew(params *NewParams) error {
 	tmuxSession := sessionID
 
 	// Build claude command with all environment variables forwarded
-	envExports := clcommon.BuildEnvExports(map[string]string{
+	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID": sessionID,
-	})
+	}
+	if params.Compact > 0 {
+		additionalEnv["TCLAUDE_AUTO_COMPACT"] = fmt.Sprintf("%d", params.Compact)
+	}
+	envExports := clcommon.BuildEnvExports(additionalEnv)
 
 	claudeCmd := envExports + "claude"
 	if fullConvID != "" {

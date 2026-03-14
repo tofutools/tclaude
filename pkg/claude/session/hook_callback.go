@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -355,11 +356,20 @@ func handleAutoCompact(input HookCallbackInput) {
 		return
 	}
 
-	cfg, err := config.Load()
-	if err != nil || cfg.AutoCompactPercent == nil {
-		return
+	// CLI env var overrides config file
+	var threshold float64
+	if envVal := os.Getenv("TCLAUDE_AUTO_COMPACT"); envVal != "" {
+		if v, err := strconv.Atoi(envVal); err == nil && v > 0 {
+			threshold = float64(v)
+		}
 	}
-	threshold := float64(*cfg.AutoCompactPercent)
+	if threshold == 0 {
+		cfg, err := config.Load()
+		if err != nil || cfg.AutoCompactPercent == nil {
+			return
+		}
+		threshold = float64(*cfg.AutoCompactPercent)
+	}
 
 	contextPct, _, err := db.GetCompactState(sessionID)
 	if err != nil {
