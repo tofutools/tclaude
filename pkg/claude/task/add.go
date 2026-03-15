@@ -2,6 +2,7 @@ package task
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -65,7 +66,7 @@ func runAdd(params *AddParams, args []string) error {
 		return fmt.Errorf("failed to read TODO.md: %w", err)
 	}
 
-	// Add new task (--plan-auto is a superset of --plan)
+	// Add a new task (--plan-auto is a superset of --plan)
 	planAutoAccept := params.PlanAutoAccept
 	planMode := params.PlanMode || planAutoAccept
 	tasks = append(tasks, Task{
