@@ -7,41 +7,37 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type replayParams struct {
-	Delay boa.Optional[string] `descr:"Delay between hook callbacks (e.g. 100ms, 1s)" short:"d"`
+	File  string `pos:"true" help:"JSONL file to replay"`
+	Delay string `short:"d" long:"delay" optional:"true" help:"Delay between hook callbacks (e.g. 100ms, 1s)"`
 }
 
 func ReplayCmd() *cobra.Command {
 	cmd := boa.CmdT[replayParams]{
 		Use:         "replay [file]",
 		Short:       "Replay a recorded hook JSONL file to simulate a session",
-		Long:        "Replays a JSONL file of hook inputs (recorded with record_hooks: true) by running hook-callback for each line. Defaults to ~/.tclaude/hook.jsonl. Useful for testing and debugging session state changes without running Claude.",
+		Long:        "Replays a JSONL file of hook inputs (recorded with record_hooks: true) by running hook-callback for each line. Useful for testing and debugging session state changes without running Claude.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *replayParams, cmd *cobra.Command, args []string) {
-			file := filepath.Join(config.ConfigDir(), "hook.jsonl")
-			if len(args) > 0 {
-				file = args[0]
-			}
-
 			var delay time.Duration
-			if p.Delay.HasValue() {
+			if p.Delay != "" {
 				var err error
-				delay, err = time.ParseDuration(*p.Delay.Value())
+				delay, err = time.ParseDuration(p.Delay)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: invalid delay %q: %v\n", *p.Delay.Value(), err)
+					fmt.Fprintf(os.Stderr, "Error: invalid delay %q: %v\n", p.Delay, err)
 					os.Exit(1)
 				}
 			}
 
-			if err := runReplay(file, delay); err != nil {
+			if err := runReplay(p.File, delay); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -63,6 +59,8 @@ func runReplay(file string, delay time.Duration) error {
 		return fmt.Errorf("failed to determine executable path: %w", err)
 	}
 
+	sessionId := strings.TrimSuffix(file, filepath.Ext(file))
+
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1 MiB line buffer
 	lineNum := 0
@@ -77,6 +75,7 @@ func runReplay(file string, delay time.Duration) error {
 		fmt.Fprintf(os.Stderr, "[replay] line %d\n", lineNum)
 
 		cmd := exec.Command(self, "session", "hook-callback")
+		cmd.Env = append(os.Environ(), fmt.Sprintf("TCLAUDE_SESSION_ID=%s", sessionId), "TCLAUDE_REPLAY_MODE=true")
 		cmd.Stdin = bytes.NewReader(line)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
