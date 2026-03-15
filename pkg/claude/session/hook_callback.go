@@ -232,7 +232,9 @@ func runHookCallback() error {
 	convTitle := getConvTitle(state.ConvID, state.Cwd)
 
 	// Notify on state transition (handles cooldown internally)
-	notify.OnStateTransition(state.ID, prevStatus, newStatus, state.Cwd, convTitle)
+	if input.HookEventName != "SessionStart" {
+		notify.OnStateTransition(state.ID, prevStatus, newStatus, state.Cwd, convTitle)
+	}
 
 	return nil
 }
