@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -67,6 +68,17 @@ func runHookCallback() error {
 		}
 	} else {
 		return fmt.Errorf("no input received on stdin")
+	}
+
+	// Append raw JSON to hook.jsonl if record_hooks is enabled
+	if cfg, err := config.Load(); err == nil && cfg.RecordHooks {
+		logPath := filepath.Join(config.ConfigDir(), "hook.jsonl")
+		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			line := bytes.TrimRight(stdinData, "\n")
+			f.Write(line)
+			f.Write([]byte("\n"))
+			f.Close()
+		}
 	}
 
 	// Log hook event

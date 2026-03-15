@@ -12,6 +12,7 @@ type Config struct {
 	Notifications      *NotificationConfig `json:"notifications,omitempty"`
 	AutoCompactPercent *int                `json:"auto_compact_percent,omitempty"`
 	LogLevel           string              `json:"log_level,omitempty"`
+	RecordHooks        bool                `json:"record_hooks,omitempty"`
 }
 
 // NotificationConfig holds settings for OS notifications.
