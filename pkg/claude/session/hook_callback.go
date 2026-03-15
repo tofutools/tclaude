@@ -90,6 +90,7 @@ func runHookCallback() error {
 		"notification_type", input.NotificationType,
 		"tool_name", input.ToolName,
 		"cwd", input.Cwd,
+		"sessionId", envSessionID,
 		"module", "hooks",
 	)
 
