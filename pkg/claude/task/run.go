@@ -27,7 +27,6 @@ import (
 type RunParams struct {
 	Dir              string `short:"C" long:"dir" optional:"true" help:"Directory to run tasks in (defaults to current directory)"`
 	Detached         bool   `short:"d" long:"detached" help:"Start detached (don't attach to session)"`
-	NoTmux           bool   `long:"no-tmux" help:"Run without tmux session management"`
 	Watch            bool   `short:"w" long:"watch" help:"Watch for new tasks instead of exiting when TODO.md is empty"`
 	Compact          int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
 	Verify           string `long:"verify" optional:"true" help:"Shell command to run after each task to verify success"`
@@ -81,7 +80,7 @@ func runRun(params *RunParams) error {
 	// When task files live in the project directory (no --dir), exclude them from commits
 	excludeTaskFiles := params.Dir == "" && os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 
-	if params.NoTmux {
+	if os.Getenv("TCLAUDE_TASK_TMUX") != "" {
 		return runTaskLoop(cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch, excludeTaskFiles, params.Verify, params.VerifyMaxRetries)
 	}
 
@@ -117,7 +116,7 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int, 
 	}
 
 	envExports := clcommon.BuildEnvExports(additionalEnv)
-	runnerCmd := envExports + clcommon.DetectCmd() + " task run --no-tmux" + watchFlag + " -C " + clcommon.ShellQuoteArg(cwd)
+	runnerCmd := envExports + clcommon.DetectCmd() + " task run" + watchFlag + " -C " + clcommon.ShellQuoteArg(cwd)
 
 	if verify != "" {
 		runnerCmd += " --verify " + clcommon.ShellQuoteArg(verify)
@@ -247,32 +246,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 
 		// Run Claude Code interactively with the task prompt
-		noTmux := os.Getenv("TCLAUDE_TASK_TMUX") == ""
-		var report, sessionID string
-		var runErr error
-		if !noTmux || verifyCmd == "" {
-			// tmux mode: watcher goroutine handles retries inside tmux
-			report, sessionID, runErr = runClaude(cwd, task.Prompt, taskArgs, task.PlanAutoAccept, verifyCmd, verifyMaxRetries)
-		} else {
-			// no-tmux mode: manual retry loop
-			currentPrompt := task.Prompt
-			for attempts := 0; ; {
-				report, sessionID, runErr = runClaude(cwd, currentPrompt, taskArgs, task.PlanAutoAccept, "", 0)
-				if runErr != nil {
-					break
-				}
-				attempts++
-				output, verifyErr := runVerifyCmd(verifyCmd, cwd)
-				if verifyErr == nil {
-					break
-				}
-				if attempts >= verifyMaxRetries {
-					runErr = fmt.Errorf("verification failed after %d attempt(s): %s", attempts, output)
-					break
-				}
-				currentPrompt = fmt.Sprintf("Verification failed (attempt %d/%d):\n```\n%s\n```\nPlease fix the issue and try again.", attempts, verifyMaxRetries, output)
-			}
-		}
+		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanAutoAccept, verifyCmd, verifyMaxRetries)
 
 		result := TaskResult{
 			Title:     task.Title,
