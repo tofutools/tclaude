@@ -3,7 +3,6 @@ package conv
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -18,7 +17,6 @@ type ResumeParams struct {
 	ConvID   string `pos:"true" help:"Conversation ID to resume (can be short prefix)"`
 	Global   bool   `short:"g" help:"Search for conversation across all projects"`
 	Detached bool   `short:"d" long:"detached" help:"Start detached (don't attach to session)"`
-	NoTmux   bool   `long:"no-tmux" help:"Run without tmux session management (old behavior)"`
 }
 
 func ResumeCmd() *cobra.Command {
@@ -76,30 +74,7 @@ func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
 		displayName = displayName[:47] + "..."
 	}
 
-	// Use session management by default (unless --no-tmux)
-	if !params.NoTmux {
-		return runResumeWithSession(convInfo, projectPath, displayName, !params.Detached, stdout, stderr)
-	}
-
-	fmt.Fprintf(stdout, "Resuming [%s] in %s\n\n", displayName, projectPath)
-
-	// Run claude --resume as a subprocess with connected I/O
-	claudeArgs := append([]string{"--resume", convInfo.SessionID}, clcommon.ExtractClaudeExtraArgs()...)
-	cmd := exec.Command("claude", claudeArgs...)
-	cmd.Dir = projectPath
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintf(stderr, "Error running claude: %v\n", err)
-		return 1
-	}
-
-	return 0
+	return runResumeWithSession(convInfo, projectPath, displayName, !params.Detached, stdout, stderr)
 }
 
 func runResumeWithSession(convInfo *clcommon.ConvInfo, projectPath, displayName string, attach bool, stdout, stderr *os.File) int {

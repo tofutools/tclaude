@@ -185,7 +185,6 @@ func runVerifyCmd(verifyCmd, cwd string) (string, error) {
 }
 
 // runTaskLoop is the internal loop that runs tasks sequentially.
-// It is called directly (--no-tmux) or inside a tmux session.
 // When watch is true, it waits for new tasks instead of exiting when TODO.md is empty.
 func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles bool, verifyCmd string, verifyMaxRetries int) error {
 	todoPath := TodoPath(cwd)
