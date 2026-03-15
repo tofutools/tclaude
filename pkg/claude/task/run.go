@@ -441,14 +441,12 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 					if planAutoAccept && !planAccepted {
 						slog.Debug("accepting plan")
 						planAccepted = true
-						os.Remove(signalPath)
 						sendTmuxEnter(tmuxSession)
 					} else {
 						sendNotification(signal.SessionID, cwd, "plan ready", "Please review and accept plan")
 					}
 				} else {
 					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event)
-					os.Remove(signalPath)
 				}
 				signalExists = false
 				continue
