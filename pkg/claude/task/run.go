@@ -27,7 +27,6 @@ import (
 type RunParams struct {
 	Dir      string `short:"C" long:"dir" optional:"true" help:"Directory to run tasks in (defaults to current directory)"`
 	Detached bool   `short:"d" long:"detached" help:"Start detached (don't attach to session)"`
-	NoTmux   bool   `long:"no-tmux" help:"Run without tmux session management"`
 	Watch    bool   `short:"w" long:"watch" help:"Watch for new tasks instead of exiting when TODO.md is empty"`
 	Compact  int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
 }
@@ -79,7 +78,7 @@ func runRun(params *RunParams) error {
 	// When task files live in the project directory (no --dir), exclude them from commits
 	excludeTaskFiles := params.Dir == "" && os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 
-	if params.NoTmux {
+	if os.Getenv("TCLAUDE_TASK_TMUX") != "" {
 		return runTaskLoop(cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch, excludeTaskFiles)
 	}
 
@@ -115,7 +114,7 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) 
 	}
 
 	envExports := clcommon.BuildEnvExports(additionalEnv)
-	runnerCmd := envExports + clcommon.DetectCmd() + " task run --no-tmux" + watchFlag + " -C " + clcommon.ShellQuoteArg(cwd)
+	runnerCmd := envExports + clcommon.DetectCmd() + " task run" + watchFlag + " -C " + clcommon.ShellQuoteArg(cwd)
 
 	// Forward extra claude args through
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
@@ -170,7 +169,6 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) 
 }
 
 // runTaskLoop is the internal loop that runs tasks sequentially.
-// It is called directly (--no-tmux) or inside a tmux session.
 // When watch is true, it waits for new tasks instead of exiting when TODO.md is empty.
 func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles bool) error {
 	todoPath := TodoPath(cwd)
