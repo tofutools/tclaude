@@ -18,7 +18,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -352,7 +351,7 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
 func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool) (report string, sessionID string, err error) {
-	signalPath := taskSignalPath(cwd)
+	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
 	args := []string{prompt}
@@ -387,12 +386,6 @@ func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool) (rep
 	os.Remove(signalPath)
 
 	return report, sessionID, err
-}
-
-// taskSignalPath returns a per-project path to the task signal file,
-// allowing concurrent task runners in different projects.
-func taskSignalPath(cwd string) string {
-	return filepath.Join(common.CacheDir(), "task-signal-"+convops.PathToProjectDir(cwd))
 }
 
 // watchForTaskCompletion watches for the signal file using fsnotify and sends

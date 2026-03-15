@@ -13,6 +13,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -371,4 +372,10 @@ func GetSessionCompletions(includeExited bool) []string {
 	}
 
 	return completions
+}
+
+// TaskSignalPath returns a per-project path to the task signal file,
+// allowing concurrent task runners in different projects.
+func TaskSignalPath(cwd string) string {
+	return filepath.Join(common.CacheDir(), "task-signal-"+convops.PathToProjectDir(cwd))
 }

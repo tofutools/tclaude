@@ -93,8 +93,12 @@ func runReplay(file string, delay time.Duration) error {
 
 		fmt.Fprintf(os.Stderr, "[replay] line %d\n", lineNum)
 
+		env := append(os.Environ(), fmt.Sprintf("TCLAUDE_SESSION_ID=%s", sessionID), "TCLAUDE_REPLAY_MODE=true")
+		if strings.HasPrefix(sessionID, "tasks-") {
+			env = append(env, fmt.Sprintf("TCLAUDE_TASK_SIGNAL=%s", TaskSignalPath(cwd)))
+		}
 		cmd := exec.Command(self, "session", "hook-callback")
-		cmd.Env = append(os.Environ(), fmt.Sprintf("TCLAUDE_SESSION_ID=%s", sessionID), "TCLAUDE_REPLAY_MODE=true")
+		cmd.Env = env
 		cmd.Stdin = bytes.NewReader(line)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
