@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -331,24 +330,6 @@ func RunSearchEmbeddings(params *SearchEmbeddingsParams, stdout, stderr *os.File
 		entries[i] = r.Entry
 	}
 	RenderTable(stdout, entries, params.Global, params.Long, nil)
-
-	// Show similarity scores and matching chunks
-	fmt.Fprintln(stdout)
-	for _, r := range results {
-		title := r.Entry.DisplayTitle()
-		if len(title) > 60 {
-			title = title[:57] + "..."
-		}
-		fmt.Fprintf(stdout, "  %.4f  %s  %s\n", r.Similarity, r.Entry.SessionID[:8], title)
-		if params.Long {
-			chunkPreview := r.ChunkText
-			if len(chunkPreview) > 200 {
-				chunkPreview = chunkPreview[:197] + "..."
-			}
-			chunkPreview = strings.ReplaceAll(chunkPreview, "\n", " ")
-			fmt.Fprintf(stdout, "           [%s] %s\n", r.ChunkType, chunkPreview)
-		}
-	}
 
 	fmt.Fprintf(stdout, "\n%d result(s)\n", len(results))
 	return 0
