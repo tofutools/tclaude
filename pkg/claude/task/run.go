@@ -228,7 +228,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, err := runClaude(cwd, task.Prompt, taskArgs, task.PlanAutoAccept)
+		report, sessionID, err := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept)
 
 		result := TaskResult{
 			Title:     task.Title,
@@ -350,7 +350,7 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 //
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
-func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool) (report string, sessionID string, err error) {
+func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept bool) (report string, sessionID string, err error) {
 	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
@@ -370,7 +370,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool) (rep
 		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planAutoAccept)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept)
 	}
 
 	err = cmd.Run()
@@ -392,7 +392,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool) (rep
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planAutoAccept bool) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode bool, planAutoAccept bool) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -431,15 +431,21 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				continue
 			}
 
-			// Plan auto-accept before plan is accepted: wait specifically for
-			// the ExitPlanMode permission request, ignore everything else
-			// (including Stop events that fire when Claude finishes planning)
-			if planAutoAccept && !planAccepted {
+			if planMode {
 				if signal.Event == "PermissionRequest" && signal.ToolName == "ExitPlanMode" {
-					slog.Debug("accepting plan")
-					planAccepted = true
-					os.Remove(signalPath)
-					sendTmuxEnter(tmuxSession)
+					slog.Debug("plan ready")
+
+					// Plan auto-accept before plan is accepted: wait specifically for
+					// the ExitPlanMode permission request, ignore everything else
+					// (including Stop events that fire when Claude finishes planning)
+					if planAutoAccept && !planAccepted {
+						slog.Debug("accepting plan")
+						planAccepted = true
+						os.Remove(signalPath)
+						sendTmuxEnter(tmuxSession)
+					} else {
+						sendNotification(signal.SessionID, cwd, "plan ready", "Please review and accept plan")
+					}
 				} else {
 					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event)
 					os.Remove(signalPath)
