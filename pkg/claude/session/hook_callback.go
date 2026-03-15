@@ -70,8 +70,10 @@ func runHookCallback() error {
 		return fmt.Errorf("no input received on stdin")
 	}
 
+	replayMode := os.Getenv("TCLAUDE_REPLAY_MODE") != ""
+
 	// Append raw JSON to hook.jsonl if record_hooks is enabled
-	if cfg, err := config.Load(); err == nil && cfg.RecordHooks {
+	if cfg, err := config.Load(); err == nil && cfg.RecordHooks && !replayMode {
 		logPath := filepath.Join(config.ConfigDir(), "hook.jsonl")
 		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 			line := bytes.TrimRight(stdinData, "\n")

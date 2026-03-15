@@ -100,6 +100,7 @@ func Cmd() *cobra.Command {
 			PruneCmd(),
 			StatusCallbackCmd(),
 			HookCallbackCmd(),
+			ReplayCmd(),
 			NotifyListenCmd(),
 		},
 		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
