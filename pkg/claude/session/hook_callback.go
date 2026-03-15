@@ -59,6 +59,10 @@ func runHookCallback() error {
 		return fmt.Errorf("failed to read stdin: %w", err)
 	}
 
+	if os.Getenv("TCLAUDE_IGNORE_HOOKS") != "" {
+		return nil
+	}
+
 	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")
 
 	// Append raw JSON to <sessionId>.jsonl if record_hooks is enabled, and we are not currently replaying
