@@ -60,6 +60,18 @@ func runHookCallback() error {
 		return fmt.Errorf("failed to read stdin: %w", err)
 	}
 
+	// Append raw JSON to hook.jsonl if record_hooks is enabled, and we are not currently replaying
+	replayMode := os.Getenv("TCLAUDE_REPLAY_MODE") != ""
+	if cfg, err := config.Load(); err == nil && cfg.RecordHooks && !replayMode {
+		logPath := filepath.Join(config.ConfigDir(), "hook.jsonl")
+		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			line := bytes.TrimRight(stdinData, "\n")
+			_, _ = f.Write(line)
+			_, _ = f.Write([]byte("\n"))
+			_ = f.Close()
+		}
+	}
+
 	var input HookCallbackInput
 	if len(stdinData) > 0 {
 		if err := json.NewDecoder(bytes.NewReader(stdinData)).Decode(&input); err != nil {
@@ -68,19 +80,6 @@ func runHookCallback() error {
 		}
 	} else {
 		return fmt.Errorf("no input received on stdin")
-	}
-
-	replayMode := os.Getenv("TCLAUDE_REPLAY_MODE") != ""
-
-	// Append raw JSON to hook.jsonl if record_hooks is enabled
-	if cfg, err := config.Load(); err == nil && cfg.RecordHooks && !replayMode {
-		logPath := filepath.Join(config.ConfigDir(), "hook.jsonl")
-		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-			line := bytes.TrimRight(stdinData, "\n")
-			f.Write(line)
-			f.Write([]byte("\n"))
-			f.Close()
-		}
 	}
 
 	// Log hook event
