@@ -266,6 +266,52 @@ func TestAppendDoneMD(t *testing.T) {
 	}
 }
 
+func TestRunAddComma(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantTitle  string
+		wantPrompt string
+	}{
+		{
+			name:       "comma in prompt",
+			args:       []string{"Fix stuff", "Fix items a, b, and c"},
+			wantTitle:  "Fix stuff",
+			wantPrompt: "Fix items a, b, and c",
+		},
+		{
+			name:       "comma in title",
+			args:       []string{"Auth, logging, and tests", "Implement all three"},
+			wantTitle:  "Auth, logging, and tests",
+			wantPrompt: "Implement all three",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subdir := filepath.Join(t.TempDir(), tt.name)
+			os.MkdirAll(subdir, 0755)
+			params := &AddParams{Dir: subdir}
+			if err := runAdd(params, tt.args); err != nil {
+				t.Fatalf("runAdd failed: %v", err)
+			}
+			tasks, err := ParseTodoMD(filepath.Join(subdir, "TODO.md"))
+			if err != nil {
+				t.Fatalf("ParseTodoMD failed: %v", err)
+			}
+			if len(tasks) != 1 {
+				t.Fatalf("got %d tasks, want 1", len(tasks))
+			}
+			if tasks[0].Title != tt.wantTitle {
+				t.Errorf("title = %q, want %q", tasks[0].Title, tt.wantTitle)
+			}
+			if tasks[0].Prompt != tt.wantPrompt {
+				t.Errorf("prompt = %q, want %q", tasks[0].Prompt, tt.wantPrompt)
+			}
+		})
+	}
+}
+
 func TestParseTodoMDNotFound(t *testing.T) {
 	tasks, err := ParseTodoMD("/nonexistent/TODO.md")
 	if err != nil {
