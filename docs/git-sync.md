@@ -1,5 +1,11 @@
 # Git Sync 🔄
 
+> **EXPERIMENTAL — USE AT YOUR OWN RISK**
+>
+> This feature is highly experimental and subject to rewrite or breaking changes at any time.
+> There are no guarantees that it won't sync away, overwrite, or otherwise lose your data.
+> **Back up your `~/.claude/projects` directory before using this.**
+
 Sync Claude Code conversations across multiple computers using a git repository.
 
 ## Overview

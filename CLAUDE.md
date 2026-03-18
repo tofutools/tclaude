@@ -30,7 +30,7 @@ CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `session`   | Core tmux-based session management (new, list, attach, kill, watch). Sessions stored in SQLite (`~/.tclaude/db.sqlite`). Hook callbacks update session status. |
 | `conv`      | Conversation management (list, search, AI search, resume, copy, move, delete, prune). Reads Claude's `.jsonl` conversation files and `sessions-index.json`.                       |
-| `git`       | Git-based conversation sync across devices. Uses `~/.claude/projects_sync` as a separate git working directory.                                                                   |
+| `git`       | **Experimental.** Git-based conversation sync across devices. Uses `~/.claude/projects_sync` as a separate git working directory. Subject to rewrite; no guarantees against data loss. |
 | `worktree`  | Git worktree management for parallel Claude sessions on different branches.                                                                                                       |
 | `stats`     | Activity statistics from Claude's `~/.claude/stats-cache.json`.                                                                                                                   |
 | `usage`     | Subscription usage limits via Anthropic API.                                                                                                                                      |
