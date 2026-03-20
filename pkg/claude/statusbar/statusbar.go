@@ -20,8 +20,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
@@ -53,6 +51,20 @@ type StatusLineInput struct {
 	Cost struct {
 		TotalCostUSD float64 `json:"total_cost_usd"`
 	} `json:"cost"`
+	RateLimits *RateLimits `json:"rate_limits"`
+}
+
+// RateLimits represents the rate limit buckets from Claude Code's statusline input.
+type RateLimits struct {
+	FiveHour      *RateLimitBucket `json:"five_hour"`
+	SevenDay      *RateLimitBucket `json:"seven_day"`
+	SevenDaySonnet *RateLimitBucket `json:"seven_day_sonnet"`
+}
+
+// RateLimitBucket represents a single rate limit bucket with usage and reset time.
+type RateLimitBucket struct {
+	UsedPercentage float64 `json:"used_percentage"`
+	ResetsAt       int64   `json:"resets_at"` // unix timestamp
 }
 
 // cachedGitData holds cached results from git/gh commands
@@ -193,33 +205,32 @@ func run() error {
 	}
 	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct, compactThreshold), ctxLabel))
 
-	// Usage limits (subscription plan) or cost (API plan)
-	usage, err := usageapi.GetCached()
+	// Rate limits from Claude Code's statusline input (subscription plan) or cost (API plan)
 	hasLimits := false
-	if err != nil {
-		slog.Warn("status-bar: failed to fetch usage", "error", err, "module", "hooks")
-	}
-	if usage != nil && usage.LastError != "" {
-		line2 = append(line2, fmt.Sprintf("%s[stale⚠️ %s]%s", colorRed, session.FormatDuration(time.Since(usage.FetchedAt)), colorReset))
-	}
-	if usage != nil {
-		if usage.FiveHour != nil {
+	if rl := input.RateLimits; rl != nil {
+		if rl.FiveHour != nil {
 			hasLimits = true
-			line2 = append(line2, fmt.Sprintf("5h %s %.0f%% %s", progressBar(int(usage.FiveHour.Pct)), usage.FiveHour.Pct, resetTimer(usage.FiveHour.ResetsAt)))
+			line2 = append(line2, fmt.Sprintf("5h %s %.0f%% %s",
+				progressBar(int(rl.FiveHour.UsedPercentage)),
+				rl.FiveHour.UsedPercentage,
+				resetTimer(time.Unix(rl.FiveHour.ResetsAt, 0))))
 		}
-		if usage.SevenDay != nil {
+		if rl.SevenDay != nil {
 			hasLimits = true
-			line2 = append(line2, fmt.Sprintf("7d %s %.0f%% %s", progressBar(int(usage.SevenDay.Pct)), usage.SevenDay.Pct, resetTimer(usage.SevenDay.ResetsAt)))
+			line2 = append(line2, fmt.Sprintf("7d %s %.0f%% %s",
+				progressBar(int(rl.SevenDay.UsedPercentage)),
+				rl.SevenDay.UsedPercentage,
+				resetTimer(time.Unix(rl.SevenDay.ResetsAt, 0))))
 		}
-		if usage.SevenDaySonnet != nil {
+		if rl.SevenDaySonnet != nil && rl.SevenDaySonnet.UsedPercentage > 0 {
 			hasLimits = true
-			if usage.SevenDaySonnet.Pct > 0 {
-				line2 = append(line2, fmt.Sprintf("sonnet %.0f%% %s", usage.SevenDaySonnet.Pct, resetTimer(usage.SevenDaySonnet.ResetsAt)))
-			}
+			line2 = append(line2, fmt.Sprintf("sonnet %.0f%% %s",
+				rl.SevenDaySonnet.UsedPercentage,
+				resetTimer(time.Unix(rl.SevenDaySonnet.ResetsAt, 0))))
 		}
 	}
 
-	// Cost only shown on API plan (no limit buckets available)
+	// Cost only shown on API plan (no rate limit buckets available)
 	if !hasLimits && input.Cost.TotalCostUSD > 0 {
 		line2 = append(line2, fmt.Sprintf("$%.2f", input.Cost.TotalCostUSD))
 	}
@@ -229,22 +240,6 @@ func run() error {
 	// === Line 3: git-links ===
 	if len(line1) > 0 {
 		fmt.Println(strings.Join(line1, " | "))
-	}
-
-	// === Line 3: extra usage (only if available) ===
-	if usage != nil && usage.ExtraUsage != nil {
-		eu := usage.ExtraUsage
-		if eu.IsEnabled {
-			var parts []string
-			parts = append(parts, "extra usage: on")
-			if eu.UsedCredits != nil && eu.MonthlyLimit != nil {
-				parts = append(parts, fmt.Sprintf("%.2f / %.2f", *eu.UsedCredits/100, *eu.MonthlyLimit/100))
-			}
-			if eu.Utilization != nil {
-				parts = append(parts, fmt.Sprintf("%s %.0f%%", progressBar(int(*eu.Utilization)), *eu.Utilization))
-			}
-			fmt.Println(strings.Join(parts, " | "))
-		}
 	}
 
 	return nil
