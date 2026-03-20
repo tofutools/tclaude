@@ -1184,6 +1184,20 @@ func (m *watchModel) applySearchFilter() {
 	m.viewportOffset = 0
 }
 
+// rebuildSemanticFiltered reconstructs the filtered list from entries matching
+// saved semantic scores, sorted by similarity descending.
+func (m *watchModel) rebuildSemanticFiltered() {
+	m.filtered = m.filtered[:0]
+	for _, e := range m.entries {
+		if _, ok := m.semanticScores[e.SessionID]; ok {
+			m.filtered = append(m.filtered, e)
+		}
+	}
+	sort.Slice(m.filtered, func(i, j int) bool {
+		return m.semanticScores[m.filtered[i].SessionID] > m.semanticScores[m.filtered[j].SessionID]
+	})
+}
+
 func matchesSearch(e SessionEntry, query string) bool {
 	return strings.Contains(strings.ToLower(e.DisplayTitle()), query) ||
 		strings.Contains(strings.ToLower(e.FirstPrompt), query) ||
@@ -1395,6 +1409,9 @@ type ConvWatchState struct {
 	Cursor         int
 	ViewportOffset int
 	Sort           table.SortState
+	SemanticMode   bool
+	SemanticQuery  string
+	SemanticScores map[string]float32
 }
 
 // RunConvWatch runs the interactive watch mode and returns the result
@@ -1406,9 +1423,17 @@ func RunConvWatch(global bool, since, before string, state ConvWatchState) (Watc
 	m.cursor = state.Cursor
 	m.viewportOffset = state.ViewportOffset
 	m.sort = state.Sort
+	m.semanticMode = state.SemanticMode
+	m.semanticQuery = state.SemanticQuery
+	m.semanticScores = state.SemanticScores
 
 	// Initial full load from disk+DB (populates cache for new/changed files)
 	m.fullReloadConversations()
+
+	// If returning in semantic mode, rebuild filtered list from saved scores
+	if m.semanticMode && len(m.semanticScores) > 0 {
+		m.rebuildSemanticFiltered()
+	}
 
 	// Snapshot the conv_index timestamp so the tick doesn't immediately reload
 	if m.global {
@@ -1437,6 +1462,9 @@ func RunConvWatch(global bool, since, before string, state ConvWatchState) (Watc
 		Cursor:         fm.cursor,
 		ViewportOffset: fm.viewportOffset,
 		Sort:           fm.sort,
+		SemanticMode:   fm.semanticMode,
+		SemanticQuery:  fm.semanticQuery,
+		SemanticScores: fm.semanticScores,
 	}
 	return WatchResult{
 		Conv:           fm.selectedConv,
