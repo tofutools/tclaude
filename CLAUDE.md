@@ -33,8 +33,8 @@ CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd
 | `git`       | **Experimental.** Git-based conversation sync across devices. Uses `~/.claude/projects_sync` as a separate git working directory. Subject to rewrite; no guarantees against data loss. |
 | `worktree`  | Git worktree management for parallel Claude sessions on different branches.                                                                                                       |
 | `stats`     | Activity statistics from Claude's `~/.claude/stats-cache.json`.                                                                                                                   |
-| `usage`     | Subscription usage limits via Anthropic API.                                                                                                                                      |
-| `statusbar` | Status bar output for Claude Code's statusline feature (hidden command, reads JSON from stdin).                                                                                   |
+| `usage`     | Standalone subscription usage limits via Anthropic OAuth API.                                                                                                                     |
+| `statusbar` | Status bar output for Claude Code's statusline feature (hidden command, reads JSON from stdin). Uses rate limits from Claude Code's statusline input (>= 2.1.80).                 |
 | `web`       | Web terminal server - serves tmux sessions via xterm.js + WebSocket with TLS and basic auth.                                                                                      |
 | `setup`     | One-time setup: installs hooks in `~/.claude/settings.json`, registers protocol handler, configures notifications.                                                                |
 | `selftest`  | Hidden integration tests for manual verification of credentials and API access.                                                                                                   |
@@ -50,7 +50,7 @@ CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd
 | `notify`    | Desktop notifications (D-Bus on Linux, terminal-notifier on macOS, PowerShell on WSL) |
 | `table`     | Interactive sortable table UI using bubbletea                                         |
 | `terminal`  | Terminal detection and window focus (platform-specific)                               |
-| `usageapi`  | Anthropic usage API client with OAuth token refresh                                   |
+| `usageapi`  | Anthropic OAuth usage API client (used by `usage` command and `selftest`, no longer used by statusbar) |
 | `wsl`       | WSL detection and PowerShell path resolution                                          |
 
 **`pkg/common/`:** Shared utilities (dirs, file locking, size parsing).
