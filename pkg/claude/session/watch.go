@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 )
@@ -83,8 +83,10 @@ type model struct {
 func newSessionSearchInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.TextStyle = searchStyle
-	ti.Cursor.Style = searchStyle
+	s := ti.Styles()
+	s.Focused.Text = searchStyle
+	s.Blurred.Text = searchStyle
+	ti.SetStyles(s)
 	return ti
 }
 
@@ -101,7 +103,7 @@ func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), tea.EnterAltScreen)
+	return tickCmd()
 }
 
 func tickCmd() tea.Cmd {
@@ -239,7 +241,7 @@ func (m model) triggerKill() model {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Handle confirmation dialogs first
 		if m.confirmMode != confirmNone {
 			if m.confirmMode == confirmQuit {
@@ -492,15 +494,15 @@ func (m model) columns() []table.Column {
 	}
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	// Help view overlay
 	if m.helpView {
-		return m.renderHelpView()
+		return tea.View{Content: m.renderHelpView(), AltScreen: true}
 	}
 
 	// Filter menu overlay
 	if m.filterMenu {
-		return m.renderFilterMenu()
+		return tea.View{Content: m.renderFilterMenu(), AltScreen: true}
 	}
 
 	var b strings.Builder
@@ -538,7 +540,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("  n new • / search • f filter • r refresh • q quit"))
 		b.WriteString("\n")
-		return b.String()
+		return tea.View{Content: b.String(), AltScreen: true}
 	}
 
 	// Build table using shared column definitions
@@ -622,7 +624,7 @@ func (m model) View() string {
 	}
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.View{Content: b.String(), AltScreen: true}
 }
 
 func (m model) renderFilterMenu() string {
@@ -761,7 +763,7 @@ func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState
 		m.cursor = max(0, len(m.sessions)-1)
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
 		return AttachResult{}, state, err

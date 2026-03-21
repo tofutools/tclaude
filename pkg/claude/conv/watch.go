@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
@@ -161,17 +161,22 @@ type watchModel struct {
 func newSearchInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	ti.TextStyle = wSearchStyle
-	ti.Cursor.Style = wSearchStyle
+	s := ti.Styles()
+	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Focused.Text = wSearchStyle
+	s.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Blurred.Text = wSearchStyle
+	ti.SetStyles(s)
 	return ti
 }
 
 func newWorktreeInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.TextStyle = wSearchStyle
-	ti.Cursor.Style = wSearchStyle
+	s := ti.Styles()
+	s.Focused.Text = wSearchStyle
+	s.Blurred.Text = wSearchStyle
+	ti.SetStyles(s)
 	ti.Validate = func(s string) error {
 		for _, c := range s {
 			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '/') {
@@ -191,17 +196,18 @@ func newSemanticInput() textarea.Model {
 	ta.MaxHeight = 3
 	ta.CharLimit = 0
 	// Disable default enter for newline insertion — enter submits the search.
-	// Newlines via alt+enter or paste.
+	// Newlines via shift+enter, alt+enter, or paste.
 	ta.KeyMap.InsertNewline = key.NewBinding()
 	// Style: match semantic color scheme
-	focused := textarea.Style{
+	focused := textarea.StyleState{
 		Base:        lipgloss.NewStyle(),
 		Text:        wSemanticStyle,
 		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
 	}
-	ta.FocusedStyle = focused
-	ta.BlurredStyle = focused
-	ta.Cursor.Style = wSemanticStyle
+	styles := ta.Styles()
+	styles.Focused = focused
+	styles.Blurred = focused
+	ta.SetStyles(styles)
 	return ta
 }
 
@@ -232,7 +238,7 @@ func initialWatchModel(global bool, since, before string) watchModel {
 // --- tea.Model interface (pointer receiver) ---
 
 func (m *watchModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{watchTickCmd(), tea.EnterAltScreen}
+	cmds := []tea.Cmd{watchTickCmd()}
 	if fsCmd := m.startFSWatcher(); fsCmd != nil {
 		cmds = append(cmds, fsCmd)
 	}
@@ -241,7 +247,7 @@ func (m *watchModel) Init() tea.Cmd {
 
 func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Clear transient semantic error on any key
 		m.semanticError = ""
 
@@ -352,8 +358,9 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.semanticFocused = false
 				m.semanticInput.Blur()
 				m.semanticInput.Reset()
-			case "alt+enter":
-				// Insert newline (shift+enter not distinguishable in bubbletea v1)
+			case "shift+enter", "alt+enter", "ctrl+j":
+				// Insert newline in multiline query
+				// Note: many terminals report shift+enter as ctrl+j
 				m.semanticInput.InsertString("\n")
 				m.updateSemanticInputHeight()
 				return m, nil
@@ -628,9 +635,9 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *watchModel) View() string {
+func (m *watchModel) View() tea.View {
 	if m.helpView {
-		return m.renderHelpView()
+		return tea.View{Content: m.renderHelpView(), AltScreen: true}
 	}
 
 	var b strings.Builder
@@ -680,7 +687,7 @@ func (m *watchModel) View() string {
 		b.WriteString("\n")
 		b.WriteString(wHelpStyle.Render("  r refresh • / search • s semantic • q quit"))
 		b.WriteString("\n")
-		return b.String()
+		return tea.View{Content: b.String(), AltScreen: true}
 	}
 
 	// Build table using shared column definitions
@@ -762,7 +769,7 @@ func (m *watchModel) View() string {
 	}
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.View{Content: b.String(), AltScreen: true}
 }
 
 // --- Data loading ---
@@ -1454,7 +1461,7 @@ func (m *watchModel) renderHelpView() string {
 	b.WriteString("\n")
 	b.WriteString("    s         Start semantic search (requires Ollama)\n")
 	b.WriteString("    enter     Submit search query\n")
-	b.WriteString("    alt+enter Insert newline (multiline query)\n")
+	b.WriteString("    shift+enter Insert newline (multiline query)\n")
 	b.WriteString("    esc       Exit semantic results\n")
 	b.WriteString("\n")
 
@@ -1529,7 +1536,7 @@ func RunConvWatch(global bool, since, before string, state ConvWatchState) (Watc
 	}
 	m.ensureCursorVisible()
 
-	p := tea.NewProgram(&m, tea.WithAltScreen())
+	p := tea.NewProgram(&m)
 	finalModel, err := p.Run()
 	if err != nil {
 		return WatchResult{}, state, err
