@@ -97,6 +97,7 @@ type watchModel struct {
 	worktreeFocused bool
 
 	// Semantic search
+	semanticChecking       bool
 	semanticFocused        bool
 	semanticQuery          string
 	semanticMode           bool
@@ -401,6 +402,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearSemanticMode()
 			m.searchFocused = true
 		case "s":
+			m.semanticChecking = true
 			return m, m.semanticPreCheck()
 		case "up", "k":
 			if m.cursor > 0 {
@@ -520,6 +522,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.continueListenFSEvents()
 
 	case semanticCheckMsg:
+		m.semanticChecking = false
 		if msg.Err != nil {
 			m.semanticError = "Ollama error: " + msg.Err.Error()
 			return m, nil
@@ -576,7 +579,9 @@ func (m *watchModel) View() string {
 
 	// Search box
 	b.WriteString("\n  ")
-	if m.semanticIndexing {
+	if m.semanticChecking {
+		b.WriteString(wSemanticStyle.Render("Checking embedding model is available..."))
+	} else if m.semanticIndexing {
 		progress := semanticProgressBar(m.semanticIndexDone, m.semanticIndexTotal)
 		b.WriteString(wSemanticStyle.Render(fmt.Sprintf("Indexing: [%s] %d/%d (esc to cancel)", progress, m.semanticIndexDone, m.semanticIndexTotal)))
 	} else if m.semanticIndexPrompt {
@@ -1105,6 +1110,7 @@ func (m *watchModel) semanticRunSearch(query string) tea.Cmd {
 
 // clearSemanticMode resets all semantic search state and restores normal listing.
 func (m *watchModel) clearSemanticMode() {
+	m.semanticChecking = false
 	m.semanticFocused = false
 	m.semanticQuery = ""
 	m.semanticMode = false
