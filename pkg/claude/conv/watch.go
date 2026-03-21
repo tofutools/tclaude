@@ -353,7 +353,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.semanticInput.Blur()
 				m.semanticInput.Reset()
 			case "alt+enter":
-				// Insert newline (shift+enter not distinguishable in terminals)
+				// Insert newline (shift+enter not distinguishable in bubbletea v1)
 				m.semanticInput.InsertString("\n")
 				m.updateSemanticInputHeight()
 				return m, nil
