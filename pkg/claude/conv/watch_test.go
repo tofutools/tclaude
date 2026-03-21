@@ -96,8 +96,9 @@ func TestResortPreservesSearchFilter(t *testing.T) {
 			{SessionID: "cccc0000-0000-0000-0000-000000000003", FirstPrompt: "fix test", FileSize: 200},
 		},
 		activeSessions: make(map[string]*SessionState),
-		searchInput:    "fix",
+		searchInput:    newSearchInput(),
 	}
+	m.searchInput.SetValue("fix")
 
 	m.sort = table.SortState{Key: "size", Direction: table.SortAsc}
 	m.resortAndFilter()
@@ -193,9 +194,10 @@ func TestApplySearchFilter(t *testing.T) {
 			{SessionID: "cccc0000-0000-0000-0000-000000000003", FirstPrompt: "refactor login page"},
 		},
 		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
 	}
 
-	m.searchInput = "login"
+	m.searchInput.SetValue("login")
 	m.applySearchFilter()
 
 	if len(m.filtered) != 2 {
@@ -203,7 +205,7 @@ func TestApplySearchFilter(t *testing.T) {
 	}
 
 	// Clear search
-	m.searchInput = ""
+	m.searchInput.SetValue("")
 	m.applySearchFilter()
 
 	if len(m.filtered) != 3 {
@@ -219,9 +221,10 @@ func TestApplySearchFilter_MatchesMultipleFields(t *testing.T) {
 			{SessionID: "cccc0000-0000-0000-0000-000000000003", FirstPrompt: "nothing here"},
 		},
 		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
 	}
 
-	m.searchInput = "myproject"
+	m.searchInput.SetValue("myproject")
 	m.applySearchFilter()
 
 	if len(m.filtered) != 2 {
@@ -235,9 +238,10 @@ func TestApplySearchFilter_CaseInsensitive(t *testing.T) {
 			{SessionID: "aaaa0000-0000-0000-0000-000000000001", FirstPrompt: "Fix The BUG"},
 		},
 		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
 	}
 
-	m.searchInput = "fix the bug"
+	m.searchInput.SetValue("fix the bug")
 	m.applySearchFilter()
 
 	if len(m.filtered) != 1 {
@@ -253,10 +257,11 @@ func TestApplySearchFilter_ResetsCursorWhenOutOfBounds(t *testing.T) {
 			{SessionID: "cccc0000-0000-0000-0000-000000000003", FirstPrompt: "no"},
 		},
 		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
 		cursor:         2, // pointing at 3rd entry
 	}
 
-	m.searchInput = "match"
+	m.searchInput.SetValue("match")
 	m.applySearchFilter()
 
 	if m.cursor != 0 {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
@@ -74,9 +75,17 @@ type model struct {
 	filterCursor   int             // cursor position in filter menu
 	filterChecked  map[string]bool // checked items in filter menu
 	helpView       bool            // showing help view
-	searchInput    string          // current search query
+	searchInput    textinput.Model  // search query input
 	searchFocused  bool            // whether search box is focused
 	lastUpdatedAt  time.Time       // tracks DB changes for polling
+}
+
+func newSessionSearchInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.TextStyle = searchStyle
+	ti.Cursor.Style = searchStyle
+	return ti
 }
 
 func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
@@ -87,6 +96,7 @@ func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
 		sort:         table.SortState{},
 		statusFilter: statusFilter,
 		hideFilter:   hideFilter,
+		searchInput:  newSessionSearchInput(),
 	}
 }
 
@@ -135,10 +145,11 @@ func (m model) refreshSessions() model {
 
 // applySearchFilter filters sessions based on search input
 func (m model) applySearchFilter() model {
-	if m.searchInput == "" {
+	searchVal := m.searchInput.Value()
+	if searchVal == "" {
 		m.sessions = m.allSessions
 	} else {
-		query := strings.ToLower(m.searchInput)
+		query := strings.ToLower(searchVal)
 		var filtered []*SessionState
 		for _, s := range m.allSessions {
 			if sessionMatchesSearch(s, query) {
@@ -277,40 +288,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.searchFocused {
 			switch msg.String() {
 			case "esc", "ctrl+c":
-				if m.searchInput != "" {
-					m.searchInput = ""
+				if m.searchInput.Value() != "" {
+					m.searchInput.SetValue("")
 					m = m.applySearchFilter()
 				} else {
 					m.searchFocused = false
+					m.searchInput.Blur()
 				}
 			case "enter":
 				m.searchFocused = false
+				m.searchInput.Blur()
 			case "up":
-				// Exit search and navigate up
 				m.searchFocused = false
+				m.searchInput.Blur()
 				if m.cursor > 0 {
 					m.cursor--
 				}
 			case "down":
-				// Exit search and navigate down
 				m.searchFocused = false
+				m.searchInput.Blur()
 				if m.cursor < len(m.sessions)-1 {
 					m.cursor++
 				}
-			case "backspace":
-				if len(m.searchInput) > 0 {
-					m.searchInput = m.searchInput[:len(m.searchInput)-1]
-					m = m.applySearchFilter()
-				}
-			case "ctrl+u":
-				m.searchInput = ""
-				m = m.applySearchFilter()
 			default:
-				// Add printable characters to search
-				if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] < 127 {
-					m.searchInput += msg.String()
+				prevVal := m.searchInput.Value()
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				if m.searchInput.Value() != prevVal {
 					m = m.applySearchFilter()
 				}
+				return m, cmd
 			}
 			return m, nil
 		}
@@ -372,14 +379,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "esc":
-			if m.searchInput != "" {
-				m.searchInput = ""
+			if m.searchInput.Value() != "" {
+				m.searchInput.SetValue("")
 				m = m.applySearchFilter()
 			} else {
 				m.confirmMode = confirmQuit
 			}
 		case "/":
 			m.searchFocused = true
+			m.searchInput.Focus()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -501,9 +509,9 @@ func (m model) View() string {
 	b.WriteString("\n  ")
 	if m.searchFocused {
 		b.WriteString(searchStyle.Render("Search: "))
-		b.WriteString(searchStyle.Render("[" + m.searchInput + "_]"))
-	} else if m.searchInput != "" {
-		b.WriteString(searchStyle.Render("Search: [" + m.searchInput + "]"))
+		b.WriteString(m.searchInput.View())
+	} else if m.searchInput.Value() != "" {
+		b.WriteString(searchStyle.Render("Search: [" + m.searchInput.Value() + "]"))
 	} else {
 		b.WriteString(helpStyle.Render("/ to search"))
 	}
@@ -525,7 +533,7 @@ func (m model) View() string {
 			}
 			b.WriteString("\n")
 		} else {
-			b.WriteString("  No matches for \"" + m.searchInput + "\"\n")
+			b.WriteString("  No matches for \"" + m.searchInput.Value() + "\"\n")
 		}
 		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("  n new • / search • f filter • r refresh • q quit"))
@@ -744,7 +752,7 @@ type AttachResult struct {
 func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState, error) {
 	m := initialModel(includeAll, state.StatusFilter, state.HideFilter)
 	m.sort = state.Sort
-	m.searchInput = state.SearchInput
+	m.searchInput.SetValue(state.SearchInput)
 	m.cursor = state.Cursor
 	m = m.refreshSessions()
 
@@ -771,7 +779,7 @@ func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState
 		Sort:         fm.sort,
 		StatusFilter: fm.statusFilter,
 		HideFilter:   fm.hideFilter,
-		SearchInput:  fm.searchInput,
+		SearchInput:  fm.searchInput.Value(),
 		Cursor:       fm.cursor,
 	}
 	return result, newState, nil
