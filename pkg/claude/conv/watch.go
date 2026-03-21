@@ -264,9 +264,9 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Handle semantic indexing (only esc to cancel)
+		// Handle semantic indexing (only esc/ctrl+c to cancel)
 		if m.semanticIndexing {
-			if msg.String() == "esc" {
+			if msg.String() == "esc" || msg.String() == "ctrl+c" {
 				if m.semanticCancelCh != nil {
 					close(m.semanticCancelCh)
 					m.semanticCancelCh = nil
@@ -282,7 +282,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				return m, m.semanticStartIndex()
-			case "n", "N", "esc":
+			case "n", "N", "esc", "ctrl+c":
 				m.semanticIndexPrompt = false
 				m.semanticFocused = true
 			}
@@ -296,7 +296,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			switch msg.String() {
-			case "esc":
+			case "esc", "ctrl+c":
 				m.semanticFocused = false
 				m.semanticQuery = ""
 			case "enter":
@@ -326,7 +326,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			switch msg.String() {
-			case "esc":
+			case "esc", "ctrl+c":
 				if m.searchInput != "" {
 					m.searchInput = ""
 					m.applySearchFilter()
@@ -367,7 +367,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle worktree branch input mode
 		if m.worktreeFocused {
 			switch msg.String() {
-			case "esc":
+			case "esc", "ctrl+c":
 				m.worktreeFocused = false
 				m.worktreeInput = ""
 			case "enter":

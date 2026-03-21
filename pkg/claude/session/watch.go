@@ -276,7 +276,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle search mode
 		if m.searchFocused {
 			switch msg.String() {
-			case "esc":
+			case "esc", "ctrl+c":
 				if m.searchInput != "" {
 					m.searchInput = ""
 					m = m.applySearchFilter()
