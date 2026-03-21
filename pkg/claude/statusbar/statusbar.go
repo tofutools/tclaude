@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
@@ -205,7 +206,9 @@ func run() error {
 	}
 	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct, compactThreshold), ctxLabel))
 
-	// Rate limits from Claude Code's statusline input (subscription plan) or cost (API plan)
+	// Rate limits from Claude Code's statusline input (subscription plan) or cost (API plan).
+	// Falls back to Anthropic usage API (cached) when statusline input lacks rate limit data
+	// (e.g. before the first API response in a new session).
 	hasLimits := false
 	if rl := input.RateLimits; rl != nil {
 		if rl.FiveHour != nil {
@@ -227,6 +230,45 @@ func run() error {
 			line2 = append(line2, fmt.Sprintf("sonnet %.0f%% %s",
 				rl.SevenDaySonnet.UsedPercentage,
 				resetTimer(time.Unix(rl.SevenDaySonnet.ResetsAt, 0))))
+		}
+	}
+
+	// Fallback: use Anthropic usage API cache when statusline input has no rate limits
+	if !hasLimits {
+		if usage, err := usageapi.GetCached(); usage != nil {
+			if err != nil {
+				slog.Warn("status-bar: using stale usage cache", "error", err, "module", "hooks")
+			}
+			if usage.FiveHour != nil {
+				hasLimits = true
+				label := "5h"
+				if err != nil {
+					label = "~5h"
+				}
+				line2 = append(line2, fmt.Sprintf("%s %s %.0f%% %s",
+					label,
+					progressBar(int(usage.FiveHour.Pct)),
+					usage.FiveHour.Pct,
+					resetTimer(usage.FiveHour.ResetsAt)))
+			}
+			if usage.SevenDay != nil {
+				hasLimits = true
+				label := "7d"
+				if err != nil {
+					label = "~7d"
+				}
+				line2 = append(line2, fmt.Sprintf("%s %s %.0f%% %s",
+					label,
+					progressBar(int(usage.SevenDay.Pct)),
+					usage.SevenDay.Pct,
+					resetTimer(usage.SevenDay.ResetsAt)))
+			}
+			if usage.SevenDaySonnet != nil && usage.SevenDaySonnet.Pct > 0 {
+				hasLimits = true
+				line2 = append(line2, fmt.Sprintf("sonnet %.0f%% %s",
+					usage.SevenDaySonnet.Pct,
+					resetTimer(usage.SevenDaySonnet.ResetsAt)))
+			}
 		}
 	}
 
