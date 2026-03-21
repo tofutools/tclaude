@@ -550,6 +550,28 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case tea.PasteMsg:
+		if m.semanticFocused {
+			var cmd tea.Cmd
+			m.semanticInput, cmd = m.semanticInput.Update(msg)
+			m.updateSemanticInputHeight()
+			return m, cmd
+		}
+		if m.searchFocused {
+			prevVal := m.searchInput.Value()
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			if m.searchInput.Value() != prevVal {
+				m.applySearchFilter()
+			}
+			return m, cmd
+		}
+		if m.worktreeFocused {
+			var cmd tea.Cmd
+			m.worktreeInput, cmd = m.worktreeInput.Update(msg)
+			return m, cmd
+		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
