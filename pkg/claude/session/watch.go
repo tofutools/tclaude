@@ -35,6 +35,7 @@ const (
 	confirmAttachForce // Session already attached, confirm force attach
 	confirmNoTmux      // Session has no tmux, cannot attach
 	confirmDetach      // Confirm detaching clients from session
+	confirmQuit        // Confirm exit via ESC
 )
 
 // Filter options for the checkbox menu
@@ -230,6 +231,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Handle confirmation dialogs first
 		if m.confirmMode != confirmNone {
+			if m.confirmMode == confirmQuit {
+				switch msg.String() {
+				case "enter", "y", "Y":
+					return m, tea.Quit
+				default:
+					m.confirmMode = confirmNone
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "y", "Y":
 				if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
@@ -366,7 +376,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchInput = ""
 				m = m.applySearchFilter()
 			} else {
-				return m, tea.Quit
+				m.confirmMode = confirmQuit
 			}
 		case "/":
 			m.searchFocused = true
@@ -580,21 +590,27 @@ func (m model) View() string {
 	// Render table
 	b.WriteString(tbl.RenderWithScroll(&helpStyle))
 	b.WriteString("\n\n")
-	if m.cursor < len(m.sessions) {
-		switch m.confirmMode {
-		case confirmKill:
+	switch m.confirmMode {
+	case confirmQuit:
+		b.WriteString(confirmStyle.Render("  Exit? [enter/y=yes / any key=cancel]"))
+	case confirmKill:
+		if m.cursor < len(m.sessions) {
 			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Kill session %s? [y/n]", m.sessions[m.cursor].ID)))
-		case confirmAttachForce:
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", m.sessions[m.cursor].ID)))
-		case confirmDetach:
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", m.sessions[m.cursor].ID)))
-		case confirmNoTmux:
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", m.sessions[m.cursor].ID)))
-		default:
-			b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • q quit"))
 		}
-	} else {
-		b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • q quit"))
+	case confirmAttachForce:
+		if m.cursor < len(m.sessions) {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", m.sessions[m.cursor].ID)))
+		}
+	case confirmDetach:
+		if m.cursor < len(m.sessions) {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", m.sessions[m.cursor].ID)))
+		}
+	case confirmNoTmux:
+		if m.cursor < len(m.sessions) {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", m.sessions[m.cursor].ID)))
+		}
+	default:
+		b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • esc/q quit"))
 	}
 	b.WriteString("\n")
 

@@ -75,6 +75,7 @@ const (
 	watchConfirmDelete                             // Delete conversation (no active session)
 	watchConfirmDeleteWithSession                  // Delete conversation that has an active session
 	watchConfirmNoTmux                             // Session has no tmux, cannot attach
+	watchConfirmQuit                               // Confirm exit via ESC
 )
 
 type watchModel struct {
@@ -192,6 +193,15 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle confirmation dialogs first
 		if m.confirmMode != watchConfirmNone {
+			if m.confirmMode == watchConfirmQuit {
+				switch msg.String() {
+				case "enter", "y", "Y":
+					return m, tea.Quit
+				default:
+					m.confirmMode = watchConfirmNone
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "y", "Y":
 				if m.cursor < len(m.filtered) {
@@ -397,6 +407,8 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.searchInput != "" {
 				m.searchInput = ""
 				m.applySearchFilter()
+			} else {
+				m.confirmMode = watchConfirmQuit
 			}
 		case "/":
 			m.clearSemanticMode()
@@ -678,6 +690,8 @@ func (m *watchModel) View() string {
 	b.WriteString(tbl.RenderWithScroll(&wHelpStyle))
 	b.WriteString("\n\n")
 	switch m.confirmMode {
+	case watchConfirmQuit:
+		b.WriteString(wConfirmStyle.Render("  Exit? [enter/y=yes / any key=cancel]"))
 	case watchConfirmAttachForce:
 		b.WriteString(wConfirmStyle.Render("  Session already attached. Detach others? [y/n]"))
 	case watchConfirmDelete:
@@ -692,9 +706,9 @@ func (m *watchModel) View() string {
 		} else if m.statusMsg != "" {
 			b.WriteString(wSearchStyle.Render("  " + m.statusMsg))
 		} else if m.semanticMode {
-			b.WriteString(wHelpStyle.Render("  s new search • / text search • esc exit • h help • q quit"))
+			b.WriteString(wHelpStyle.Render("  s new search • / text search • esc exit • h help • esc/q quit"))
 		} else {
-			b.WriteString(wHelpStyle.Render("  / search • s semantic • enter attach • h help • q quit"))
+			b.WriteString(wHelpStyle.Render("  / search • s semantic • enter attach • h help • esc/q quit"))
 		}
 	}
 	b.WriteString("\n")
