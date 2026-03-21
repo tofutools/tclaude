@@ -628,6 +628,26 @@ func RefreshCache() {
 	saveCache(buildCachedUsage(resp))
 }
 
+// UpdateFromStatusLine updates the usage cache with rate limit data received
+// from Claude Code's statusline input. This keeps the cache fresh without
+// needing an API call, so other consumers (e.g. new sessions before their
+// first API response) see up-to-date data.
+func UpdateFromStatusLine(fiveHour, sevenDay, sevenDaySonnet *CachedBucket) {
+	now := time.Now()
+	cached := &CachedUsage{
+		FiveHour:       fiveHour,
+		SevenDay:       sevenDay,
+		SevenDaySonnet: sevenDaySonnet,
+		FetchedAt:      now,
+		LastAttemptAt:  now,
+	}
+	// Preserve extra usage data from any existing cache entry
+	if existing := loadCacheStale(); existing != nil {
+		cached.ExtraUsage = existing.ExtraUsage
+	}
+	saveCache(cached)
+}
+
 // GetCached returns usage percentages, using a file cache (5 min TTL) to
 // avoid hammering the API. On fetch errors, returns stale cached data if available.
 func GetCached() (*CachedUsage, error) {

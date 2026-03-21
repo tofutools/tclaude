@@ -231,6 +231,19 @@ func run() error {
 				rl.SevenDaySonnet.UsedPercentage,
 				resetTimer(time.Unix(rl.SevenDaySonnet.ResetsAt, 0))))
 		}
+
+		// Update SQLite cache so other sessions/consumers see fresh data
+		var fh, sd, sds *usageapi.CachedBucket
+		if rl.FiveHour != nil {
+			fh = &usageapi.CachedBucket{Pct: rl.FiveHour.UsedPercentage, ResetsAt: time.Unix(rl.FiveHour.ResetsAt, 0)}
+		}
+		if rl.SevenDay != nil {
+			sd = &usageapi.CachedBucket{Pct: rl.SevenDay.UsedPercentage, ResetsAt: time.Unix(rl.SevenDay.ResetsAt, 0)}
+		}
+		if rl.SevenDaySonnet != nil {
+			sds = &usageapi.CachedBucket{Pct: rl.SevenDaySonnet.UsedPercentage, ResetsAt: time.Unix(rl.SevenDaySonnet.ResetsAt, 0)}
+		}
+		usageapi.UpdateFromStatusLine(fh, sd, sds)
 	}
 
 	// Fallback: use Anthropic usage API cache when statusline input has no rate limits
