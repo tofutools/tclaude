@@ -627,6 +627,182 @@ func TestSearchEmbeddings_NoResults(t *testing.T) {
 	}
 }
 
+// --- Orphan cleanup scoping tests ---
+
+// TestRunIndexEmbeddings_LocalModePreservesOtherProjectEmbeddings verifies that
+// running index-embeddings in local (non-global) mode does NOT delete embeddings
+// belonging to conversations in other projects.
+func TestRunIndexEmbeddings_LocalModePreservesOtherProjectEmbeddings(t *testing.T) {
+	setupEmbeddingsTestDB(t)
+	server := newMockOllama(t, 8, 0)
+	defer server.Close()
+
+	home := os.Getenv("HOME")
+
+	// Project A: the "local" project we'll run index-embeddings on.
+	// It has convA1 (still on disk) and convA2 (orphan — indexed but file deleted).
+	// Project B: a different project with convB whose embeddings must survive.
+	projectDirB := filepath.Join(home, ".claude", "projects", "-projectB")
+	os.MkdirAll(projectDirB, 0755)
+
+	convA1 := "aaaaaaaa-aaaa-aaaa-aaaa-111111111111"
+	convA2 := "aaaaaaaa-aaaa-aaaa-aaaa-222222222222"
+	convB := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+	convContent := `{"type":"user","cwd":"/x","message":{"role":"user","content":"hello"},"timestamp":"2026-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":"hi"},"timestamp":"2026-01-01T00:00:01Z"}
+`
+	os.WriteFile(filepath.Join(projectDirB, convB+".jsonl"), []byte(convContent), 0644)
+
+	// Create a working directory that maps to project A.
+	// Resolve symlinks since os.Getwd() returns the real path on macOS
+	// (e.g. /private/var/... vs /var/...) and GetClaudeProjectPath must match.
+	cwdA, _ := filepath.EvalSymlinks(t.TempDir())
+	projectDirA := GetClaudeProjectPath(cwdA)
+	os.MkdirAll(projectDirA, 0755)
+	// convA1 exists on disk, convA2 does not (orphan)
+	os.WriteFile(filepath.Join(projectDirA, convA1+".jsonl"), []byte(convContent), 0644)
+
+	// Index all three conversations (store embeddings)
+	client := NewOllamaClient(server.URL, "test-model")
+	for _, e := range []struct {
+		id, dir string
+	}{
+		{convA1, projectDirA},
+		{convA2, projectDirA},
+		{convB, projectDirB},
+	} {
+		// For convA2 (orphan), write a temp file so IndexConversation can read it
+		fullPath := filepath.Join(e.dir, e.id+".jsonl")
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			tmp := filepath.Join(t.TempDir(), e.id+".jsonl")
+			os.WriteFile(tmp, []byte(convContent), 0644)
+			fullPath = tmp
+		}
+		entry := SessionEntry{SessionID: e.id, FirstPrompt: "hello", FullPath: fullPath}
+		if _, err := IndexConversation(entry, client); err != nil {
+			t.Fatalf("index %s: %v", e.id, err)
+		}
+		// Insert conv_index entry so ListEmbeddedConvIDsForProject can join
+		db.UpsertConvIndex(&db.ConvIndexRow{
+			ConvID:     e.id,
+			ProjectDir: e.dir,
+			FullPath:   filepath.Join(e.dir, e.id+".jsonl"),
+		})
+	}
+
+	// Verify all three have embeddings
+	for _, id := range []string{convA1, convA2, convB} {
+		rows, _ := db.ListEmbeddingsForConv(id)
+		if len(rows) == 0 {
+			t.Fatalf("setup failed: %s has no embeddings", id)
+		}
+	}
+
+	// Run index-embeddings in local mode (cwd = cwdA -> projectDirA)
+	oldWd, _ := os.Getwd()
+	os.Chdir(cwdA)
+	defer os.Chdir(oldWd)
+
+	stdout, _ := os.CreateTemp(t.TempDir(), "stdout")
+	stderr, _ := os.CreateTemp(t.TempDir(), "stderr")
+
+	params := &IndexEmbeddingsParams{
+		Global: false,
+		Model:  "test-model",
+		URL:    server.URL,
+	}
+	RunIndexEmbeddings(params, stdout, stderr)
+
+	// convA1: still on disk, embeddings should survive
+	rowsA1, _ := db.ListEmbeddingsForConv(convA1)
+	if len(rowsA1) == 0 {
+		t.Error("convA1 embeddings were incorrectly deleted")
+	}
+
+	// convA2: orphan within project A, should be cleaned up
+	rowsA2, _ := db.ListEmbeddingsForConv(convA2)
+	if len(rowsA2) != 0 {
+		t.Errorf("expected convA2 (orphan) embeddings to be cleaned up, got %d", len(rowsA2))
+	}
+
+	// convB: belongs to project B, MUST still exist
+	rowsB, _ := db.ListEmbeddingsForConv(convB)
+	if len(rowsB) == 0 {
+		t.Error("convB embeddings were incorrectly deleted by local-mode orphan cleanup")
+	}
+}
+
+// TestRunIndexEmbeddings_GlobalModeCleanupOrphans verifies that global mode
+// correctly cleans up orphaned embeddings across all projects.
+func TestRunIndexEmbeddings_GlobalModeCleanupOrphans(t *testing.T) {
+	setupEmbeddingsTestDB(t)
+	server := newMockOllama(t, 8, 0)
+	defer server.Close()
+
+	home := os.Getenv("HOME")
+
+	// Set up a project with a conversation
+	projectDir := filepath.Join(home, ".claude", "projects", "-testproject")
+	os.MkdirAll(projectDir, 0755)
+
+	convLive := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	convOrphan := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+	convContent := `{"type":"user","cwd":"/x","message":{"role":"user","content":"hello"},"timestamp":"2026-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":"hi"},"timestamp":"2026-01-01T00:00:01Z"}
+`
+	// Only the live conversation has a .jsonl file
+	os.WriteFile(filepath.Join(projectDir, convLive+".jsonl"), []byte(convContent), 0644)
+
+	// Index both conversations in DB
+	client := NewOllamaClient(server.URL, "test-model")
+	entryLive := SessionEntry{SessionID: convLive, FirstPrompt: "hello", FullPath: filepath.Join(projectDir, convLive+".jsonl")}
+	entryOrphan := SessionEntry{SessionID: convOrphan, FirstPrompt: "hello", FullPath: filepath.Join(projectDir, convOrphan+".jsonl")}
+
+	// Write a temp file for the orphan so IndexConversation can read it
+	tmpOrphanFile := filepath.Join(t.TempDir(), convOrphan+".jsonl")
+	os.WriteFile(tmpOrphanFile, []byte(convContent), 0644)
+	entryOrphan.FullPath = tmpOrphanFile
+
+	if _, err := IndexConversation(entryLive, client); err != nil {
+		t.Fatalf("index live: %v", err)
+	}
+	if _, err := IndexConversation(entryOrphan, client); err != nil {
+		t.Fatalf("index orphan: %v", err)
+	}
+
+	// Verify both have embeddings
+	rowsLive, _ := db.ListEmbeddingsForConv(convLive)
+	rowsOrphan, _ := db.ListEmbeddingsForConv(convOrphan)
+	if len(rowsLive) == 0 || len(rowsOrphan) == 0 {
+		t.Fatalf("setup failed: live=%d orphan=%d embeddings", len(rowsLive), len(rowsOrphan))
+	}
+
+	// Run in global mode — orphan has no .jsonl file so should be cleaned up
+	stdout, _ := os.CreateTemp(t.TempDir(), "stdout")
+	stderr, _ := os.CreateTemp(t.TempDir(), "stderr")
+
+	params := &IndexEmbeddingsParams{
+		Global: true,
+		Model:  "test-model",
+		URL:    server.URL,
+	}
+	RunIndexEmbeddings(params, stdout, stderr)
+
+	// Live conversation's embeddings should still exist
+	rowsLive, _ = db.ListEmbeddingsForConv(convLive)
+	if len(rowsLive) == 0 {
+		t.Error("live conversation embeddings were incorrectly deleted")
+	}
+
+	// Orphan's embeddings should be cleaned up
+	rowsOrphan, _ = db.ListEmbeddingsForConv(convOrphan)
+	if len(rowsOrphan) != 0 {
+		t.Errorf("expected orphan embeddings to be cleaned up, got %d", len(rowsOrphan))
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }
