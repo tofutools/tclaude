@@ -19,6 +19,12 @@ type StatusLineConfig struct {
 // StatusLineCommand is the status-bar command (detected at startup)
 var StatusLineCommand = common.DetectCmd("status-bar")
 
+// ReinitStatusLineCommand re-evaluates the status-bar command path using current DetectCmd settings.
+// Call this after changing common.SetAbsolutePaths().
+func ReinitStatusLineCommand() {
+	StatusLineCommand = common.DetectCmd("status-bar")
+}
+
 // isOurStatusBar returns true if the command is a tclaude status-bar command,
 // including absolute paths like /usr/local/bin/tclaude status-bar
 func isOurStatusBar(command string) bool {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -22,8 +23,9 @@ import (
 const protocolVersion = "3"
 
 type Params struct {
-	Check bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
-	Force bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
+	Check         bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
+	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
+	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
 }
 
 func Cmd() *cobra.Command {
@@ -44,6 +46,13 @@ func Cmd() *cobra.Command {
 func runSetup(params *Params) error {
 	if params.Check {
 		return checkStatus()
+	}
+
+	// Configure path mode for hooks and callbacks
+	if params.AbsolutePaths {
+		clcommon.SetAbsolutePaths(true)
+		session.ReinitHookCommand()
+		statusbar.ReinitStatusLineCommand()
 	}
 
 	fmt.Println("Setting up tclaude integration...")
