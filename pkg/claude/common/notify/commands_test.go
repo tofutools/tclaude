@@ -57,7 +57,7 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 			wantArgs: []string{
 				"-title", "Claude: Idle",
 				"-message", "test | proj",
-				"-execute", common.DetectCmd() + " session focus test",
+				"-execute", common.DetectAbsoluteCmd() + " session focus test",
 				"-sound", "default",
 			},
 		},
@@ -275,7 +275,7 @@ func TestFocusCommandString(t *testing.T) {
 			tmuxDir:   "",
 			sessionID: "xyz",
 			wantFunc: func(_ string) string {
-				return common.DetectCmd() + " session focus xyz"
+				return common.DetectAbsoluteCmd() + " session focus xyz"
 			},
 		},
 	}

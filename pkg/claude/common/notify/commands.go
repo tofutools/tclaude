@@ -22,7 +22,9 @@ func BuildDarwinNotifyCmd(title, body, sessionID, clPath, tmuxDir string) Darwin
 	// Build the focus command that runs when notification is clicked
 	var focusCmd string
 	if clPath == "" {
-		clPath = common.DetectCmd()
+		// Use absolute path because terminal-notifier -execute runs in a
+		// minimal shell environment where tclaude may not be on PATH.
+		clPath = common.DetectAbsoluteCmd()
 	}
 	if tmuxDir != "" {
 		focusCmd = fmt.Sprintf("PATH=%s:$PATH %s session focus %s",
@@ -170,7 +172,8 @@ func NotificationTitle(status string) string {
 // FocusCommandString builds the shell command string for focusing a session.
 func FocusCommandString(clPath, tmuxDir, sessionID string) string {
 	if clPath == "" {
-		clPath = common.DetectCmd()
+		// Use absolute path for commands run outside normal shell environment.
+		clPath = common.DetectAbsoluteCmd()
 	}
 	if tmuxDir != "" {
 		return fmt.Sprintf("PATH=%s:$PATH %s session focus %s",
