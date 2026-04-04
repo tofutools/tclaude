@@ -1,4 +1,6 @@
-# Web Terminal
+# Web Terminal (Deprecated)
+
+> **Deprecated:** Claude Code now has a built-in remote access mode. Consider using that instead. This feature may be removed in a future version.
 
 Access your Claude Code sessions from a phone or any browser over the network.
 
