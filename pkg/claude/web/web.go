@@ -24,7 +24,7 @@ type Params struct {
 
 func Cmd() *cobra.Command {
 	return boa.CmdT[Params]{
-		Use:   "web [session-id]",
+		Use:   "web",
 		Short: "Serve a Claude session via web terminal",
 		Long: `Start a web server that mirrors a Claude Code tmux session in the browser.
 
