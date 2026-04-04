@@ -130,9 +130,9 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 			slog.Info("client disconnected", "remote", addr)
 		}()
 
-		// Set window-size to smallest so all clients (desktop + phone)
-		// see the same content fitted to the smallest screen
-		clcommon.TmuxCommand("set-option", "-t", tmuxSession, "window-size", "smallest").Run()
+		// Set window-size to latest so the most recently active client
+		// dictates the size - avoids dots filling the phone screen
+		clcommon.TmuxCommand("set-option", "-t", tmuxSession, "window-size", "latest").Run()
 
 		// Spawn tmux attach in a PTY
 		cmd := clcommon.TmuxCommand("attach-session", "-t", tmuxSession)
