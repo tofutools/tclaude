@@ -20,28 +20,20 @@ const indexHTML = `<!DOCTYPE html>
     }
     #status.connected { background: rgba(0,120,0,0.8); }
     #status.disconnected { background: rgba(180,0,0,0.8); }
-    #esc-btn {
-      position: fixed; top: 8px; left: 8px;
-      padding: 8px 16px; border-radius: 6px;
-      font-family: monospace; font-size: 14px; font-weight: bold;
-      color: #fff; background: rgba(180,40,40,0.85);
-      border: 1px solid rgba(255,255,255,0.2);
-      z-index: 10; cursor: pointer;
-      touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-      user-select: none;
+    #extra-keys {
+      position: fixed; bottom: 8px; left: 8px; right: 8px;
+      display: none; gap: 4px;
+      justify-content: center;
+      z-index: 11;
     }
-    #esc-btn:active { background: rgba(220,60,60,0.95); }
-    #arrow-btns {
-      position: fixed; top: 8px; right: 60px;
-      display: flex; gap: 4px;
-      z-index: 10;
-    }
-    .arrow-btn {
-      width: 44px; height: 44px;
+    #extra-keys.visible { display: flex; }
+    .has-input-bar #extra-keys { bottom: 56px; }
+    .extra-key {
+      height: 44px; min-width: 44px;
+      padding: 0 14px;
       display: flex; align-items: center; justify-content: center;
       border-radius: 6px;
-      font-size: 18px;
+      font-family: monospace; font-size: 14px; font-weight: bold;
       color: #fff; background: rgba(80,80,120,0.85);
       border: 1px solid rgba(255,255,255,0.2);
       cursor: pointer;
@@ -49,7 +41,24 @@ const indexHTML = `<!DOCTYPE html>
       -webkit-tap-highlight-color: transparent;
       user-select: none;
     }
-    .arrow-btn:active { background: rgba(100,100,160,0.95); }
+    .extra-key:active { background: rgba(100,100,160,0.95); }
+    .extra-key.esc { background: rgba(180,40,40,0.85); }
+    .extra-key.esc:active { background: rgba(220,60,60,0.95); }
+    #keys-toggle {
+      position: fixed; bottom: 8px; right: 8px;
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+      font-size: 20px;
+      color: #fff; background: rgba(80,80,80,0.7);
+      border: 1px solid rgba(255,255,255,0.2);
+      z-index: 12; cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    #keys-toggle:active { background: rgba(100,100,100,0.9); }
+    .has-input-bar #keys-toggle { bottom: 56px; }
     #input-bar {
       display: none;
       position: fixed; bottom: 0; left: 0; right: 0;
@@ -81,13 +90,14 @@ const indexHTML = `<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <div id="esc-btn">ESC</div>
-  <div id="arrow-btns">
-    <div class="arrow-btn" data-key="left">&#9664;</div>
-    <div class="arrow-btn" data-key="down">&#9660;</div>
-    <div class="arrow-btn" data-key="up">&#9650;</div>
-    <div class="arrow-btn" data-key="right">&#9654;</div>
+  <div id="extra-keys">
+    <div class="extra-key esc" data-seq="\x1b">ESC</div>
+    <div class="extra-key" data-key="left">&#9664;</div>
+    <div class="extra-key" data-key="down">&#9660;</div>
+    <div class="extra-key" data-key="up">&#9650;</div>
+    <div class="extra-key" data-key="right">&#9654;</div>
   </div>
+  <div id="keys-toggle">&#8943;</div>
   <div id="status">connecting...</div>
   <div id="terminal"></div>
   <div id="input-bar">
@@ -186,25 +196,24 @@ const indexHTML = `<!DOCTYPE html>
       sendResize();
     });
 
-    // ESC button sends escape key to terminal
-    document.getElementById('esc-btn').addEventListener('click', (e) => {
+    // Toggle extra keys panel
+    const extraKeys = document.getElementById('extra-keys');
+    document.getElementById('keys-toggle').addEventListener('click', (e) => {
       e.preventDefault();
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(new TextEncoder().encode('\x1b'));
-      }
-      term.focus();
+      extraKeys.classList.toggle('visible');
     });
 
-    // Arrow buttons send ANSI escape sequences
-    const arrowSeqs = {left: '\x1b[D', down: '\x1b[B', up: '\x1b[A', right: '\x1b[C'};
-    document.querySelectorAll('.arrow-btn').forEach((btn) => {
+    // Extra keys: ESC and arrow buttons
+    const keySeqs = {left: '\x1b[D', down: '\x1b[B', up: '\x1b[A', right: '\x1b[C'};
+    document.querySelectorAll('.extra-key').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
-        const seq = arrowSeqs[btn.dataset.key];
+        const seq = btn.dataset.seq || keySeqs[btn.dataset.key];
         if (seq && ws && ws.readyState === WebSocket.OPEN) {
           ws.send(new TextEncoder().encode(seq));
         }
-        term.focus();
+        // Don't focus terminal on touch devices - avoids opening virtual keyboard
+        if (!isTouchDevice) term.focus();
       });
     });
 
@@ -213,6 +222,7 @@ const indexHTML = `<!DOCTYPE html>
     if (isTouchDevice) {
       const inputBar = document.getElementById('input-bar');
       inputBar.style.display = 'flex';
+      document.body.classList.add('has-input-bar');
       // Make room for the input bar
       const barHeight = 52;
       document.getElementById('terminal').style.height = 'calc(100% - ' + barHeight + 'px)';
