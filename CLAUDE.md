@@ -35,7 +35,7 @@ CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd
 | `stats`     | Activity statistics from Claude's `~/.claude/stats-cache.json`.                                                                                                                   |
 | `usage`     | Standalone subscription usage limits via Anthropic OAuth API.                                                                                                                     |
 | `statusbar` | Status bar output for Claude Code's statusline feature (hidden command, reads JSON from stdin). Uses rate limits from Claude Code's statusline input (>= 2.1.80).                 |
-| `web`       | Web terminal server - serves tmux sessions via xterm.js + WebSocket with TLS and basic auth.                                                                                      |
+| `web`       | Web terminal server - serves tmux sessions via xterm.js + WebSocket with TLS, auto-generated credentials, QR codes, and mobile input support.                                      |
 | `setup`     | One-time setup: installs hooks in `~/.claude/settings.json`, registers protocol handler, configures notifications.                                                                |
 | `selftest`  | Hidden integration tests for manual verification of credentials and API access.                                                                                                   |
 
