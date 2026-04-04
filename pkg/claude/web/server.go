@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -22,43 +24,65 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func serve(bind string, port int, user, pass, tmuxSession string, useTLS bool) error {
+// preparedServer holds a server ready to serve on an already-bound listener.
+type preparedServer struct {
+	server   *http.Server
+	listener net.Listener
+}
+
+// prepare creates the HTTP server, binds the TCP listener, and sets up TLS if needed.
+// The listener is bound immediately so the port is reserved before any output is printed.
+func prepare(bind string, port int, user, pass, tmuxSession string, useTLS bool) (*preparedServer, error) {
 	mux := http.NewServeMux()
-
 	auth := basicAuth(user, pass)
-
 	mux.HandleFunc("/", auth(handleIndex))
 	mux.HandleFunc("/ws", auth(handleWS(tmuxSession)))
 
 	addr := fmt.Sprintf("%s:%d", bind, port)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{
+		Addr:     addr,
+		Handler:  mux,
+		ErrorLog: log.New(io.Discard, "", 0), // suppress noisy TLS handshake errors from net/http
+	}
 
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	if useTLS {
+		tlsConfig, fingerprint, err := loadOrGenerateCert()
+		if err != nil {
+			ln.Close()
+			return nil, fmt.Errorf("failed to generate TLS certificate: %w", err)
+		}
+		fmt.Printf("  fingerprint: %s\n", fingerprint)
+		server.TLSConfig = tlsConfig
+		ln = tls.NewListener(ln, tlsConfig)
+	}
+
+	return &preparedServer{server: server, listener: ln}, nil
+}
+
+// serve starts accepting connections and blocks until shutdown.
+func (ps *preparedServer) serve() error {
 	// Graceful shutdown on Ctrl+C
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 		fmt.Println("\nShutting down...")
-		server.Close()
+		ps.server.Close()
 	}()
 
-	if useTLS {
-		tlsConfig, fingerprint, err := loadOrGenerateCert()
-		if err != nil {
-			return fmt.Errorf("failed to generate TLS certificate: %w", err)
-		}
-		fmt.Printf("  fingerprint: %s\n", fingerprint)
-		server.TLSConfig = tlsConfig
+	return ps.server.Serve(ps.listener)
+}
 
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			return err
-		}
-		tlsLn := tls.NewListener(ln, tlsConfig)
-		return server.Serve(tlsLn)
+func clientAddr(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		return fwd
 	}
-
-	return server.ListenAndServe()
+	return r.RemoteAddr
 }
 
 func basicAuth(user, pass string) func(http.HandlerFunc) http.HandlerFunc {
@@ -68,10 +92,12 @@ func basicAuth(user, pass string) func(http.HandlerFunc) http.HandlerFunc {
 			if !ok ||
 				subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
 				subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
+				slog.Warn("auth failed", "method", r.Method, "path", r.URL.Path, "remote", clientAddr(r))
 				w.Header().Set("WWW-Authenticate", `Basic realm="tclaude web"`)
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
+			slog.Info("authenticated", "method", r.Method, "path", r.URL.Path, "remote", clientAddr(r))
 			next(w, r)
 		}
 	}
@@ -91,12 +117,18 @@ type resizeMsg struct {
 
 func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		addr := clientAddr(r)
+		slog.Info("client connected", "remote", addr)
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("websocket upgrade: %v", err)
+			slog.Error("websocket upgrade failed", "remote", addr, "error", err)
 			return
 		}
-		defer conn.Close()
+		defer func() {
+			conn.Close()
+			slog.Info("client disconnected", "remote", addr)
+		}()
 
 		// Set window-size to smallest so all clients (desktop + phone)
 		// see the same content fitted to the smallest screen
@@ -108,7 +140,7 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 
 		ptmx, err := pty.Start(cmd)
 		if err != nil {
-			log.Printf("pty start: %v", err)
+			slog.Error("pty start failed", "error", err)
 			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Error: %v\r\n", err)))
 			return
 		}

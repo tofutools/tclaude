@@ -32,10 +32,34 @@ const indexHTML = `<!DOCTYPE html>
       user-select: none;
     }
     #esc-btn:active { background: rgba(220,60,60,0.95); }
+    #arrow-btns {
+      position: fixed; top: 8px; right: 60px;
+      display: flex; gap: 4px;
+      z-index: 10;
+    }
+    .arrow-btn {
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+      font-size: 18px;
+      color: #fff; background: rgba(80,80,120,0.85);
+      border: 1px solid rgba(255,255,255,0.2);
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .arrow-btn:active { background: rgba(100,100,160,0.95); }
   </style>
 </head>
 <body>
   <div id="esc-btn">ESC</div>
+  <div id="arrow-btns">
+    <div class="arrow-btn" data-key="left">&#9664;</div>
+    <div class="arrow-btn" data-key="down">&#9660;</div>
+    <div class="arrow-btn" data-key="up">&#9650;</div>
+    <div class="arrow-btn" data-key="right">&#9654;</div>
+  </div>
   <div id="status">connecting...</div>
   <div id="terminal"></div>
 
@@ -136,6 +160,19 @@ const indexHTML = `<!DOCTYPE html>
         ws.send(new TextEncoder().encode('\x1b'));
       }
       term.focus();
+    });
+
+    // Arrow buttons send ANSI escape sequences
+    const arrowSeqs = {left: '\x1b[D', down: '\x1b[B', up: '\x1b[A', right: '\x1b[C'};
+    document.querySelectorAll('.arrow-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const seq = arrowSeqs[btn.dataset.key];
+        if (seq && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(new TextEncoder().encode(seq));
+        }
+        term.focus();
+      });
     });
 
     // Two-finger scroll sends mouse wheel escape sequences to tmux
