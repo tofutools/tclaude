@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	tbl "github.com/tofutools/tclaude/pkg/claude/common/table"
-	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
+	tbl "github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
 
@@ -164,6 +164,8 @@ func getStatusColorFunc(status string) func(a ...interface{}) string {
 	switch status {
 	case StatusIdle:
 		return text.FgYellow.Sprint
+	case StatusMainAgentIdle:
+		return text.FgGreen.Sprint
 	case StatusWorking:
 		return text.FgGreen.Sprint
 	case StatusAwaitingPermission, StatusAwaitingInput:

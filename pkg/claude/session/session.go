@@ -77,6 +77,8 @@ func statusPriority(status string) int {
 		return 0 // Red - needs attention, show first
 	case StatusIdle:
 		return 1 // Yellow
+	case StatusMainAgentIdle:
+		return 2 // Green
 	case StatusWorking:
 		return 2 // Green
 	case StatusExited:
