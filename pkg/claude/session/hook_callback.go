@@ -79,6 +79,7 @@ func runHookCallback() error {
 		} else {
 			logPath := fmt.Sprintf("%s.jsonl", envSessionID)
 			if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
+				_ = f.Chmod(0600)
 				line := bytes.TrimRight(stdinData, "\n")
 				_, _ = f.Write(line)
 				_, _ = f.Write([]byte("\n"))
@@ -299,9 +300,10 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 		return false
 	}
 	// Validate that the signal path is within the expected cache directory.
-	allowedDir := filepath.Join(common.CacheDir(), "")
+	allowedDir := filepath.Clean(common.CacheDir())
 	cleanPath := filepath.Clean(signalPath)
-	if !strings.HasPrefix(cleanPath, allowedDir) {
+	rel, err := filepath.Rel(allowedDir, cleanPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		slog.Warn("task signal path outside allowed directory, ignoring", "path", signalPath, "module", "hooks")
 		return false
 	}
@@ -313,7 +315,11 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 			Event:     input.HookEventName,
 		}
 		if data, err := json.Marshal(signal); err == nil {
-			os.WriteFile(signalPath, data, 0600)
+			if err := os.WriteFile(signalPath, data, 0600); err != nil {
+				slog.Warn("Unable to write signal file", "err", err, "module", "hooks")
+				return false
+			}
+			_ = os.Chmod(signalPath, 0600)
 			return true
 		}
 	} else {
@@ -327,7 +333,11 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 					ToolName:  input.ToolName,
 				}
 				if data, err := json.Marshal(signal); err == nil {
-					os.WriteFile(signalPath, data, 0600)
+					if err := os.WriteFile(signalPath, data, 0600); err != nil {
+						slog.Warn("Unable to write signal file", "err", err, "module", "hooks")
+						return false
+					}
+					_ = os.Chmod(signalPath, 0600)
 					return true
 				}
 			}
