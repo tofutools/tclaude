@@ -312,6 +312,81 @@ func TestRunAddComma(t *testing.T) {
 	}
 }
 
+func TestParseFrontmatter(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantCmd     string
+		wantMaxIter int
+		wantContent string
+	}{
+		{
+			name:        "no frontmatter",
+			input:       "## Task\n\nDo something\n",
+			wantCmd:     "",
+			wantMaxIter: 3,
+			wantContent: "## Task\n\nDo something\n",
+		},
+		{
+			name:        "verify only",
+			input:       "---\nverify: go test ./...\n---\n\n## Task\n\nDo something\n",
+			wantCmd:     "go test ./...",
+			wantMaxIter: 3,
+			wantContent: "\n## Task\n\nDo something\n",
+		},
+		{
+			name:        "verify and max iterations",
+			input:       "---\nverify: make test\nmax_verify_iterations: 5\n---\n\n## Task\n\nDo something\n",
+			wantCmd:     "make test",
+			wantMaxIter: 5,
+			wantContent: "\n## Task\n\nDo something\n",
+		},
+		{
+			name:        "unclosed frontmatter treated as no frontmatter",
+			input:       "---\nverify: go test ./...\n\n## Task\n\nDo something\n",
+			wantCmd:     "",
+			wantMaxIter: 3,
+			wantContent: "---\nverify: go test ./...\n\n## Task\n\nDo something\n",
+		},
+		{
+			name:        "invalid max_verify_iterations ignored",
+			input:       "---\nverify: go test ./...\nmax_verify_iterations: notanumber\n---\n\n## Task\n",
+			wantCmd:     "go test ./...",
+			wantMaxIter: 3,
+			wantContent: "\n## Task\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, content := parseFrontmatter(tt.input)
+			if cfg.VerifyCmd != tt.wantCmd {
+				t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, tt.wantCmd)
+			}
+			if cfg.MaxVerifyIterations != tt.wantMaxIter {
+				t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, tt.wantMaxIter)
+			}
+			if content != tt.wantContent {
+				t.Errorf("remaining content = %q, want %q", content, tt.wantContent)
+			}
+		})
+	}
+}
+
+func TestParseTasksWithFrontmatter(t *testing.T) {
+	input := "---\nverify: go test ./...\n---\n\n## Fix the bug\n\nFix it\n"
+	tasks := parseTasks(input)
+	if len(tasks) != 1 {
+		t.Fatalf("got %d tasks, want 1", len(tasks))
+	}
+	if tasks[0].Title != "Fix the bug" {
+		t.Errorf("title = %q, want %q", tasks[0].Title, "Fix the bug")
+	}
+	if tasks[0].Prompt != "Fix it" {
+		t.Errorf("prompt = %q, want %q", tasks[0].Prompt, "Fix it")
+	}
+}
+
 func TestParseTodoMDNotFound(t *testing.T) {
 	tasks, err := ParseTodoMD("/nonexistent/TODO.md")
 	if err != nil {
