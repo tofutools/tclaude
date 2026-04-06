@@ -197,6 +197,9 @@ func (m model) matchesShowFilter(status string) bool {
 		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
 			return true
 		}
+		if f == StatusWorking && status == StatusMainAgentIdle {
+			return true
+		}
 	}
 	return false
 }
@@ -212,6 +215,9 @@ func (m model) matchesHideFilter(status string) bool {
 		}
 		// Handle grouped filters
 		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
+			return true
+		}
+		if f == StatusWorking && status == StatusMainAgentIdle {
 			return true
 		}
 	}

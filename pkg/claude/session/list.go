@@ -225,7 +225,7 @@ func normalizeStatusFilter(show []string) []string {
 		case "idle":
 			result = append(result, StatusIdle)
 		case "working":
-			result = append(result, StatusWorking)
+			result = append(result, StatusWorking, StatusMainAgentIdle)
 		case "awaiting_permission", "permission":
 			result = append(result, StatusAwaitingPermission)
 		case "awaiting_input", "input":
