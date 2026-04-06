@@ -7,7 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,7 +20,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
+	"github.com/tofutools/tclaude/pkg/common"
 )
+
+var safeSessionIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // HookCallbackInput represents the JSON input from any Claude Code hook
 type HookCallbackInput struct {
@@ -68,19 +74,23 @@ func runHookCallback() error {
 	// Append raw JSON to <sessionId>.jsonl if record_hooks is enabled, and we are not currently replaying
 	replayMode := os.Getenv("TCLAUDE_REPLAY_MODE") != ""
 	if cfg, err := config.Load(); err == nil && cfg.RecordHooks && !replayMode && envSessionID != "" {
-		logPath := fmt.Sprintf("%s.jsonl", envSessionID)
-		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-			line := bytes.TrimRight(stdinData, "\n")
-			_, _ = f.Write(line)
-			_, _ = f.Write([]byte("\n"))
-			_ = f.Close()
+		if !safeSessionIDRe.MatchString(envSessionID) {
+			slog.Warn("unsafe session ID rejected for hook recording", "session_id", envSessionID, "module", "hooks")
+		} else {
+			logPath := fmt.Sprintf("%s.jsonl", envSessionID)
+			if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
+				line := bytes.TrimRight(stdinData, "\n")
+				_, _ = f.Write(line)
+				_, _ = f.Write([]byte("\n"))
+				_ = f.Close()
+			}
 		}
 	}
 
 	var input HookCallbackInput
 	if len(stdinData) > 0 {
 		if err := json.NewDecoder(bytes.NewReader(stdinData)).Decode(&input); err != nil {
-			slog.Error("failed to parse hook input", "error", err, "raw_input", string(stdinData), "module", "hooks")
+			slog.Error("failed to parse hook input", "error", err, "input_bytes", len(stdinData), "module", "hooks")
 			return fmt.Errorf("failed to parse hook input: %w", err)
 		}
 	} else {
@@ -288,6 +298,14 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 	if signalPath == "" {
 		return false
 	}
+	// Validate that the signal path is within the expected cache directory.
+	allowedDir := filepath.Join(common.CacheDir(), "")
+	cleanPath := filepath.Clean(signalPath)
+	if !strings.HasPrefix(cleanPath, allowedDir) {
+		slog.Warn("task signal path outside allowed directory, ignoring", "path", signalPath, "module", "hooks")
+		return false
+	}
+	signalPath = cleanPath
 	if isDone {
 		signal := TaskSignal{
 			Report:    input.LastAssistantMessage,
@@ -295,7 +313,7 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 			Event:     input.HookEventName,
 		}
 		if data, err := json.Marshal(signal); err == nil {
-			os.WriteFile(signalPath, data, 0644)
+			os.WriteFile(signalPath, data, 0600)
 			return true
 		}
 	} else {
@@ -309,7 +327,7 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 					ToolName:  input.ToolName,
 				}
 				if data, err := json.Marshal(signal); err == nil {
-					os.WriteFile(signalPath, data, 0644)
+					os.WriteFile(signalPath, data, 0600)
 					return true
 				}
 			}
