@@ -21,16 +21,17 @@ import (
 
 // SessionState represents the state of a Claude session
 type SessionState struct {
-	ID           string    `json:"id"`
-	TmuxSession  string    `json:"tmuxSession"`
-	PID          int       `json:"pid"`
-	Cwd          string    `json:"cwd"`
-	ConvID       string    `json:"convId,omitempty"`
-	Status       string    `json:"status"`
-	StatusDetail string    `json:"statusDetail,omitempty"`
-	Created      time.Time `json:"created"`
-	Updated      time.Time `json:"updated"`
-	Attached     int       `json:"-"` // Number of attached clients (runtime only, not persisted)
+	ID            string    `json:"id"`
+	TmuxSession   string    `json:"tmuxSession"`
+	PID           int       `json:"pid"`
+	Cwd           string    `json:"cwd"`
+	ConvID        string    `json:"convId,omitempty"`
+	Status        string    `json:"status"`
+	StatusDetail  string    `json:"statusDetail,omitempty"`
+	SubagentCount int       `json:"subagentCount"`
+	Created       time.Time `json:"created"`
+	Updated       time.Time `json:"updated"`
+	Attached      int       `json:"-"` // Number of attached clients (runtime only, not persisted)
 }
 
 // Status constants
@@ -76,6 +77,8 @@ func statusPriority(status string) int {
 		return 0 // Red - needs attention, show first
 	case StatusIdle:
 		return 1 // Yellow
+	case StatusMainAgentIdle:
+		return 2 // Green
 	case StatusWorking:
 		return 2 // Green
 	case StatusExited:
@@ -119,30 +122,32 @@ func Cmd() *cobra.Command {
 // toRow converts a SessionState to a db.SessionRow.
 func toRow(s *SessionState) *db.SessionRow {
 	return &db.SessionRow{
-		ID:           s.ID,
-		TmuxSession:  s.TmuxSession,
-		PID:          s.PID,
-		Cwd:          s.Cwd,
-		ConvID:       s.ConvID,
-		Status:       s.Status,
-		StatusDetail: s.StatusDetail,
-		CreatedAt:    s.Created,
-		UpdatedAt:    s.Updated,
+		ID:            s.ID,
+		TmuxSession:   s.TmuxSession,
+		PID:           s.PID,
+		Cwd:           s.Cwd,
+		ConvID:        s.ConvID,
+		Status:        s.Status,
+		StatusDetail:  s.StatusDetail,
+		SubagentCount: s.SubagentCount,
+		CreatedAt:     s.Created,
+		UpdatedAt:     s.Updated,
 	}
 }
 
 // fromRow converts a db.SessionRow to a SessionState.
 func fromRow(r *db.SessionRow) *SessionState {
 	return &SessionState{
-		ID:           r.ID,
-		TmuxSession:  r.TmuxSession,
-		PID:          r.PID,
-		Cwd:          r.Cwd,
-		ConvID:       r.ConvID,
-		Status:       r.Status,
-		StatusDetail: r.StatusDetail,
-		Created:      r.CreatedAt,
-		Updated:      r.UpdatedAt,
+		ID:            r.ID,
+		TmuxSession:   r.TmuxSession,
+		PID:           r.PID,
+		Cwd:           r.Cwd,
+		ConvID:        r.ConvID,
+		Status:        r.Status,
+		StatusDetail:  r.StatusDetail,
+		SubagentCount: r.SubagentCount,
+		Created:       r.CreatedAt,
+		Updated:       r.UpdatedAt,
 	}
 }
 

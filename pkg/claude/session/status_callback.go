@@ -21,6 +21,7 @@ type StatusCallbackParams struct {
 // Valid status values for callbacks
 const (
 	StatusWorking            = "working"
+	StatusMainAgentIdle      = "main_agent_idle"
 	StatusIdle               = "idle"
 	StatusAwaitingPermission = "awaiting_permission"
 	StatusAwaitingInput      = "awaiting_input"

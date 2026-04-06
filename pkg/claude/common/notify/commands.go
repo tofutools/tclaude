@@ -157,6 +157,8 @@ func NotificationTitle(status string) string {
 	switch status {
 	case "idle":
 		display = "Idle"
+	case "main_agent_idle":
+		display = "Subagents working"
 	case "working":
 		display = "Working"
 	case "awaiting_permission":

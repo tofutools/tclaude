@@ -75,7 +75,7 @@ type model struct {
 	filterCursor   int             // cursor position in filter menu
 	filterChecked  map[string]bool // checked items in filter menu
 	helpView       bool            // showing help view
-	searchInput    textinput.Model  // search query input
+	searchInput    textinput.Model // search query input
 	searchFocused  bool            // whether search box is focused
 	lastUpdatedAt  time.Time       // tracks DB changes for polling
 }
@@ -197,6 +197,9 @@ func (m model) matchesShowFilter(status string) bool {
 		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
 			return true
 		}
+		if f == StatusWorking && status == StatusMainAgentIdle {
+			return true
+		}
 	}
 	return false
 }
@@ -212,6 +215,9 @@ func (m model) matchesHideFilter(status string) bool {
 		}
 		// Handle grouped filters
 		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
+			return true
+		}
+		if f == StatusWorking && status == StatusMainAgentIdle {
 			return true
 		}
 	}
@@ -720,6 +726,8 @@ func getRowStyle(status string) lipgloss.Style {
 	switch status {
 	case StatusIdle:
 		return idleStyle
+	case StatusMainAgentIdle:
+		return workingStyle
 	case StatusWorking:
 		return workingStyle
 	case StatusAwaitingPermission, StatusAwaitingInput:

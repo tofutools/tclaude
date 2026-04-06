@@ -87,6 +87,22 @@ func runHookCallback() error {
 		return fmt.Errorf("no input received on stdin")
 	}
 
+	// Acquire a per-session exclusive lock to prevent concurrent hook callbacks
+	// from racing on the read-modify-write of session state.
+	sessionKey := envSessionID
+	if sessionKey == "" {
+		sessionKey = input.ConvID
+	}
+	if sessionKey != "" {
+		unlock, lockErr := acquireHookLock(sessionKey)
+		if lockErr != nil {
+			slog.Warn("failed to acquire hook lock", "error", lockErr, "module", "hooks")
+			return fmt.Errorf("failed to acquire hook lock: %w", lockErr)
+		}
+
+		defer unlock()
+	}
+
 	// Log hook event
 	slog.Info("hook received",
 		"event", input.HookEventName,
@@ -98,45 +114,67 @@ func runHookCallback() error {
 		"module", "hooks",
 	)
 
-	// Determine status based on hook event
-	var newStatus string
-	var statusDetail string
+	// Get or create session state
+	state, err := getOrCreateSessionState(input)
+	if err != nil || state == nil {
+		return err
+	}
+	slog.Info("session found", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 
+	// Capture previous status for notification
+	prevStatus := state.Status
+
+	stopped := false
+
+	// Update state based on hook event
 	switch input.HookEventName {
 	case "UserPromptSubmit":
-		newStatus = StatusWorking
-		statusDetail = "UserPromptSubmit"
+		state.Status = StatusWorking
+		state.StatusDetail = "UserPromptSubmit"
 
 	case "PreToolUse":
 		// Tool is about to execute
-		newStatus = StatusWorking
-		statusDetail = input.ToolName
+		state.Status = StatusWorking
+		state.StatusDetail = input.ToolName
 
 	case "PostToolUse", "PostToolUseFailure":
 		// Tool completed (success or failure) - back to working
-		newStatus = StatusWorking
-		statusDetail = input.ToolName
+		state.Status = StatusWorking
+		state.StatusDetail = input.ToolName
 
-	case "SubagentStart", "SubagentStop":
-		// Just log, don't update status (can fire after Stop and overwrite idle)
-		return nil
+	case "SubagentStart":
+		state.SubagentCount += 1
+
+	case "SubagentStop":
+		if state.SubagentCount > 0 {
+			state.SubagentCount -= 1
+		}
+		if state.SubagentCount == 0 && state.Status == StatusMainAgentIdle {
+			state.Status = StatusIdle
+			state.StatusDetail = ""
+			stopped = true
+		}
 
 	case "Stop":
-		newStatus = StatusIdle
-		statusDetail = ""
-		// Check auto-compact threshold
-		handleAutoCompact(input)
+		if state.SubagentCount < 1 {
+			state.Status = StatusIdle
+			state.StatusDetail = ""
+			stopped = true
+		} else {
+			state.Status = StatusMainAgentIdle
+			state.StatusDetail = fmt.Sprintf("%d subagents running", state.SubagentCount)
+		}
 
 	case "SessionStart":
 		// Session started or resumed - update ConvID and set to idle
-		newStatus = StatusIdle
-		statusDetail = ""
+		state.Status = StatusIdle
+		state.StatusDetail = ""
 
 	case "PermissionRequest":
-		newStatus = StatusAwaitingPermission
-		statusDetail = input.ToolName
-		if statusDetail == "" {
-			statusDetail = "permission"
+		state.Status = StatusAwaitingPermission
+		state.StatusDetail = input.ToolName
+		if state.StatusDetail == "" {
+			state.StatusDetail = "permission"
 		}
 
 	case "PostCompact":
@@ -154,11 +192,11 @@ func runHookCallback() error {
 		// Check notification type for legacy support
 		switch input.NotificationType {
 		case "permission_prompt":
-			newStatus = StatusAwaitingPermission
-			statusDetail = input.Message
+			state.Status = StatusAwaitingPermission
+			state.StatusDetail = input.Message
 		case "elicitation_dialog":
-			newStatus = StatusAwaitingInput
-			statusDetail = input.Message
+			state.Status = StatusAwaitingInput
+			state.StatusDetail = input.Message
 		default:
 			// Unknown notification type - log but don't update status
 			return nil
@@ -169,19 +207,11 @@ func runHookCallback() error {
 		return nil
 	}
 
-	// Get or create session state
-	state, err := getOrCreateSessionState(input)
-	if err != nil || state == nil {
-		return err
+	if stopped {
+		// Check auto-compact threshold
+		handleAutoCompact(input)
 	}
-	slog.Info("session found", "session_id", state.ID, "status", state.Status, "module", "hooks")
 
-	// Capture previous status for notification
-	prevStatus := state.Status
-
-	// Update status
-	state.Status = newStatus
-	state.StatusDetail = statusDetail
 	state.Updated = time.Now()
 
 	// Update ConvID from hook input (tracks conversation changes on resume)
@@ -207,6 +237,7 @@ func runHookCallback() error {
 	}
 
 	// Save updated state
+	slog.Info("updating session", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 	if err := SaveSessionState(state); err != nil {
 		return err
 	}
@@ -215,12 +246,12 @@ func runHookCallback() error {
 	// Runs synchronously — hook callbacks are separate processes so this
 	// just keeps the process alive a bit longer without blocking Claude.
 	// SQLite's TryClaimUsageFetch prevents concurrent API calls.
-	if newStatus == StatusIdle || newStatus == StatusAwaitingPermission || newStatus == StatusAwaitingInput {
+	if state.Status == StatusIdle || state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
 		usageapi.RefreshCache()
 	}
 
 	// Signal task runner when Stop/UserPromptSubmit fires in task mode
-	taskSignalWasHandled := handleTaskSignal(input)
+	taskSignalWasHandled := handleTaskSignal(stopped, input)
 
 	// In task mode, skip notifications — the task runner sends its own
 	// targeted notifications (e.g. "Task failed: X", "All tasks completed!").
@@ -233,7 +264,7 @@ func runHookCallback() error {
 
 	// Notify on state transition (handles cooldown internally)
 	if input.HookEventName != "SessionStart" {
-		notify.OnStateTransition(state.ID, prevStatus, newStatus, state.Cwd, convTitle)
+		notify.OnStateTransition(state.ID, prevStatus, state.Status, state.Cwd, convTitle)
 	}
 
 	return nil
@@ -252,13 +283,12 @@ type TaskSignal struct {
 // file path. On Stop, we write the report and session ID as JSON.
 // On UserPromptSubmit, we remove the signal to cancel any pending
 // auto-exit (the user is interacting).
-func handleTaskSignal(input HookCallbackInput) bool {
+func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 	signalPath := os.Getenv("TCLAUDE_TASK_SIGNAL")
 	if signalPath == "" {
 		return false
 	}
-	switch input.HookEventName {
-	case "Stop":
+	if isDone {
 		signal := TaskSignal{
 			Report:    input.LastAssistantMessage,
 			SessionID: input.ConvID,
@@ -268,21 +298,24 @@ func handleTaskSignal(input HookCallbackInput) bool {
 			os.WriteFile(signalPath, data, 0644)
 			return true
 		}
-	case "PermissionRequest":
-		// Signal plan-auto watcher when Claude asks to accept the plan
-		if input.ToolName == "ExitPlanMode" {
-			signal := TaskSignal{
-				SessionID: input.ConvID,
-				Event:     input.HookEventName,
-				ToolName:  input.ToolName,
+	} else {
+		switch input.HookEventName {
+		case "PermissionRequest":
+			// Signal plan-auto watcher when Claude asks to accept the plan
+			if input.ToolName == "ExitPlanMode" {
+				signal := TaskSignal{
+					SessionID: input.ConvID,
+					Event:     input.HookEventName,
+					ToolName:  input.ToolName,
+				}
+				if data, err := json.Marshal(signal); err == nil {
+					os.WriteFile(signalPath, data, 0644)
+					return true
+				}
 			}
-			if data, err := json.Marshal(signal); err == nil {
-				os.WriteFile(signalPath, data, 0644)
-				return true
-			}
+		case "UserPromptSubmit":
+			os.Remove(signalPath)
 		}
-	case "UserPromptSubmit":
-		os.Remove(signalPath)
 	}
 	return false
 }
