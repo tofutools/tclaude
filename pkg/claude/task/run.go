@@ -255,6 +255,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		if err != nil {
 			result.Status = "failed"
 			result.Error = err.Error()
+			slog.Warn("task failed", "err", err)
 			fmt.Printf("\nTask failed: %s\nError: %v\n", task.Title, err)
 		} else {
 			result.Status = "completed"
@@ -367,8 +368,10 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
-	args := []string{prompt}
+	var args []string
 	args = append(args, extraArgs...)
+	args = append(args, "--")
+	args = append(args, strings.ReplaceAll(prompt, "\n", " "))
 
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = cwd
