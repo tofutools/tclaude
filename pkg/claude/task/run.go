@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -182,6 +183,18 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	defer signal.Stop(sigCh)
 
 	for {
+		if usage, err := usageapi.GetCached(); usage != nil && usage.FiveHour != nil {
+			if err != nil {
+				slog.Warn("task run: using stale usage cache", "error", err, "module", "task")
+			}
+			if int(usage.FiveHour.Pct) >= 100 { // rate limited
+				resetsAt := usage.FiveHour.ResetsAt
+				fmt.Printf("Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format(time.TimeOnly))
+				time.Sleep(time.Until(resetsAt.Add(time.Minute)))
+				fmt.Printf("Rate limit reset, running tasks")
+			}
+		}
+
 		// Re-read TODO.md each iteration (in case it was modified externally)
 		tasks, err := ParseTodoMD(todoPath)
 		if err != nil {
