@@ -124,6 +124,8 @@ func runHookCallback() error {
 	// Capture previous status for notification
 	prevStatus := state.Status
 
+	stopped := false
+
 	// Update state based on hook event
 	switch input.HookEventName {
 	case "UserPromptSubmit":
@@ -147,13 +149,20 @@ func runHookCallback() error {
 		if state.SubagentCount > 0 {
 			state.SubagentCount -= 1
 		}
+		if state.SubagentCount == 0 && state.Status == StatusMainAgentIdle {
+			state.Status = StatusIdle
+			state.StatusDetail = ""
+			stopped = true
+		}
 
 	case "Stop":
 		if state.SubagentCount < 1 {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
-			// Check auto-compact threshold
-			handleAutoCompact(input)
+			stopped = true
+		} else {
+			state.Status = StatusMainAgentIdle
+			state.StatusDetail = fmt.Sprintf("%d subagents running", state.SubagentCount)
 		}
 
 	case "SessionStart":
@@ -198,6 +207,11 @@ func runHookCallback() error {
 		return nil
 	}
 
+	if stopped {
+		// Check auto-compact threshold
+		handleAutoCompact(input)
+	}
+
 	state.Updated = time.Now()
 
 	// Update ConvID from hook input (tracks conversation changes on resume)
@@ -237,7 +251,7 @@ func runHookCallback() error {
 	}
 
 	// Signal task runner when Stop/UserPromptSubmit fires in task mode
-	taskSignalWasHandled := handleTaskSignal(state.Status == StatusIdle && input.HookEventName == "Stop", input)
+	taskSignalWasHandled := handleTaskSignal(stopped, input)
 
 	// In task mode, skip notifications — the task runner sends its own
 	// targeted notifications (e.g. "Task failed: X", "All tasks completed!").
