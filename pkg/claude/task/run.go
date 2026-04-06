@@ -18,7 +18,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -245,7 +244,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanAutoAccept, verifyCmd, verifyMaxRetries)
+		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, verifyCmd, verifyMaxRetries)
 
 		result := TaskResult{
 			Title:     task.Title,
@@ -367,8 +366,8 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 //
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
-func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool, verifyCmd string, verifyMaxRetries int) (report string, sessionID string, err error) {
-	signalPath := taskSignalPath(cwd)
+func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int) (report string, sessionID string, err error) {
+	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
 	args := []string{prompt}
@@ -388,7 +387,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool, veri
 		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planAutoAccept, verifyCmd, verifyMaxRetries, verifyCh)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyCh)
 	}
 
 	err = cmd.Run()
@@ -414,17 +413,11 @@ func runClaude(cwd, prompt string, extraArgs []string, planAutoAccept bool, veri
 	return report, sessionID, err
 }
 
-// taskSignalPath returns a per-project path to the task signal file,
-// allowing concurrent task runners in different projects.
-func taskSignalPath(cwd string) string {
-	return filepath.Join(common.CacheDir(), "task-signal-"+convops.PathToProjectDir(cwd))
-}
-
 // watchForTaskCompletion watches for the signal file using fsnotify and sends
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyCh chan<- string) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyCh chan<- string) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -464,18 +457,22 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				continue
 			}
 
-			// Plan auto-accept before plan is accepted: wait specifically for
-			// the ExitPlanMode permission request, ignore everything else
-			// (including Stop events that fire when Claude finishes planning)
-			if planAutoAccept && !planAccepted {
+			if planMode {
 				if signal.Event == "PermissionRequest" && signal.ToolName == "ExitPlanMode" {
-					slog.Debug("accepting plan")
-					planAccepted = true
-					os.Remove(signalPath)
-					sendTmuxEnter(tmuxSession)
+					slog.Debug("plan ready")
+
+					// Plan auto-accept before plan is accepted: wait specifically for
+					// the ExitPlanMode permission request, ignore everything else
+					// (including Stop events that fire when Claude finishes planning)
+					if planAutoAccept && !planAccepted {
+						slog.Debug("accepting plan")
+						planAccepted = true
+						sendTmuxEnter(tmuxSession)
+					} else {
+						sendNotification(signal.SessionID, cwd, "plan ready", "Please review and accept plan")
+					}
 				} else {
 					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event)
-					os.Remove(signalPath)
 				}
 				signalExists = false
 				continue

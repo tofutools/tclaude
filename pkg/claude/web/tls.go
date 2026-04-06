@@ -123,7 +123,7 @@ func generateAndSaveCert(dir, certPath, keyPath string) (*tls.Config, string, er
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 
-		DNSNames:    []string{"localhost"},
+		DNSNames:    certDNSNames(),
 		IPAddresses: localIPs(),
 	}
 
@@ -163,6 +163,13 @@ func generateAndSaveCert(dir, certPath, keyPath string) (*tls.Config, string, er
 		Certificates: []tls.Certificate{tlsCert},
 	}
 	return tlsConfig, fpStr, nil
+}
+
+// certDNSNames returns DNS names to include in the TLS certificate SAN.
+func certDNSNames() []string {
+	names := []string{"localhost"}
+	names = append(names, hostnameAlternatives()...)
+	return names
 }
 
 // localIPs returns all non-loopback IPv4 addresses on the machine

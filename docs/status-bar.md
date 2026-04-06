@@ -4,14 +4,15 @@ A rich status bar for Claude Code's statusline feature.
 
 ## Overview
 
-tclaude provides a status bar command that Claude Code calls automatically to display contextual information below the input area. It shows model info, workspace details, git links, context usage, subscription limits, and extra usage status.
+tclaude provides a status bar command that Claude Code calls automatically to display contextual information below the input area. It shows model info, git links, context usage, and subscription rate limits.
+
+**Requires Claude Code >= 2.1.80.**
 
 **Example output:**
 
 ```
-[Opus 4.6 2.1.37] | /home/user/project | https://github.com/user/project
-ctx ████░░░░▒▒ 42% | 5h ░░░░░░░░░░ 8% (3h41m) | 7d ░░░░░░░░░░ 5% (2d9h) | sonnet ░░░░░░░░░░ 0% (4d11h)
-extra usage: off
+o4.6 ████░░░░▒▒ 42% | 5h ░░░░░░░░░░ 8% (3h41m) | 7d ░░░░░░░░░░ 5% (2d9h)
+[main] | 🔗 https://github.com/user/project
 ```
 
 ## Setup
@@ -41,36 +42,22 @@ tclaude setup --check
 
 ## What It Shows
 
-### Line 1: Session Info
+### Line 1: Context & Rate Limits
 
 ```
-[Model Version] | Dir | Git Links
-```
-
-| Element | Description |
-|---------|-------------|
-| `[Opus 4.6 2.1.37]` | Model name and Claude Code version (cyan) |
-| `📂 /path/to/project` | Current working directory |
-| `🔗 <url>` | Git repo URL, branch diff URL, and/or PR URL |
-
-**Git links** adapt to context:
-- **On default branch:** shows the repo URL
-- **On a feature branch:** shows a compare URL (`repo/compare/main...branch`)
-- **With an open PR:** appends the PR URL
-
-### Line 2: Usage & Limits
-
-```
-ctx <bar> N% | 5h <bar> N% (timer) | 7d <bar> N% (timer) | sonnet <bar> N% (timer)
+o4.6 <bar> N% | 5h <bar> N% (timer) | 7d <bar> N% (timer) | sonnet <bar> N% (timer)
 ```
 
 | Element | Description |
 |---------|-------------|
-| `ctx` | Context window usage with compaction buffer indicator |
+| `o4.6` | Short model label (first letter lowercase + version) |
+| Context bar | Context window usage with compaction buffer indicator |
 | `5h` | 5-hour rate limit utilization and reset timer |
 | `7d` | 7-day rate limit utilization and reset timer |
-| `sonnet` | 7-day Sonnet limit (premium/max only) |
-| `$N.NN` | Session cost (API plan only, hidden on subscription plans) |
+| `sonnet` | 7-day Sonnet limit (only shown when > 0%) |
+| `$N.NN` | Session cost (API plan only, shown when no rate limits) |
+
+Rate limits come directly from Claude Code's statusline input (added in 2.1.80), so they're always fresh — no API calls or caching needed.
 
 **Progress bars** are color-coded:
 - Green: normal usage
@@ -81,23 +68,26 @@ ctx <bar> N% | 5h <bar> N% (timer) | 7d <bar> N% (timer) | sonnet <bar> N% (time
 
 **Reset timers** show time until the limit resets: `(45m)`, `(3h30m)`, or `(2d9h)`.
 
-### Line 3: Extra Usage
+### Line 2: Git Info
 
 ```
-extra usage: off
+[branch] | 🔗 <url>
 ```
 
-or when enabled:
+| Element | Description |
+|---------|-------------|
+| `[main]` | Current git branch (cyan) |
+| `📂 /path/to/project` | Current working directory (shown when not in a git repo) |
+| `🔗 <url>` | Git repo URL, branch diff URL, and/or PR URL |
 
-```
-extra usage: on | 12.50 / 100.00 | <bar> 13%
-```
-
-Shows the overuse allowance status, credits used vs monthly limit, and utilization.
+**Git links** adapt to context:
+- **On default branch:** shows the repo URL
+- **On a feature branch:** shows a compare URL (`repo/compare/main...branch`)
+- **With an open PR:** shows the PR URL
 
 ## Usage Command
 
-You can also check your subscription limits directly:
+You can also check your subscription limits directly (uses the Anthropic OAuth API):
 
 ```bash
 # Human-readable output
@@ -109,37 +99,17 @@ tclaude usage --json
 
 ## Caching
 
-The status bar caches data to stay fast (it runs after every assistant message):
+The status bar caches git data to stay fast (it runs after every assistant message):
 
-| Data                        | Cache Location                         | TTL        |
-|-----------------------------|----------------------------------------|------------|
-| Git info (repo, branch, PR) | `~/.cache/tclaude/claude-git-<hash>.json` | 15 seconds |
-| Subscription limits         | `~/.cache/tclaude/claude-usage.json`      | 15 seconds |
+| Data                        | Cache Location | TTL        |
+|-----------------------------|----------------|------------|
+| Git info (repo, branch, PR) | SQLite DB      | 15 seconds |
 
 - Git cache is **per-repo** (keyed by repo root hash), so parallel sessions in different repos don't interfere
-- Usage cache is **shared** since it's account-level data
-- All cache writes are **atomic** (write to temp file + rename) to avoid corruption from parallel sessions
-- Context window percentage, cost, and model info come fresh from Claude Code on each invocation
-- **Eager refresh:** Hook callbacks automatically refresh the usage cache when Claude becomes idle, awaits permission, or awaits input — so the status bar shows fresh data right when you're looking at it
+- Rate limits, context window, cost, and model info come fresh from Claude Code on each invocation — no caching needed
 
 ## How It Works
 
-Claude Code pipes JSON session data to the status bar command via stdin. The JSON includes model info, version, workspace directory, context window usage, and cost. The status bar combines this with cached git data and subscription limits to render the output.
+Claude Code pipes JSON session data to the status bar command via stdin. The JSON includes model info, workspace directory, context window usage, cost, and rate limits. The status bar combines this with cached git data to render the output.
 
 The command is hidden from `tclaude --help` since it's only meant to be called by Claude Code.
-
-## Known Issues
-
-### Usage API rate limiting (429)
-
-The Anthropic OAuth usage endpoint (`/api/oauth/usage`) rate limits aggressively — as few as ~5 requests per access token before returning 429. Once rate limited, the endpoint may stay blocked for hours with no `Retry-After` header.
-
-Tracked upstream in [anthropics/claude-code#31637](https://github.com/anthropics/claude-code/issues/31637).
-
-**Root cause:** Rate limits are per-access-token, not per-account.
-
-**Mitigation:** tclaude caches usage data for 5 minutes to stay well under the rate limit. With hook-triggered eager refresh, this means the status bar updates roughly once every 5 minutes rather than on every hook callback.
-
-**If you hit 429 anyway:** Run `/login` inside Claude Code to get a fresh token.
-
-> **Note:** Automatic token refresh was removed because it conflicts with Claude Code — both processes share the same OAuth refresh token, and rotating it from tclaude invalidates Claude Code's in-memory copy, eventually forcing a re-login. The refresh code is still present but disabled; set `TCLAUDE_DEBUG_REFRESH=1` to re-enable it for debugging.

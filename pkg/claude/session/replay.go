@@ -21,8 +21,8 @@ type replayParams struct {
 }
 
 func ReplayCmd() *cobra.Command {
-	cmd := boa.CmdT[replayParams]{
-		Use:         "replay [file]",
+	return boa.CmdT[replayParams]{
+		Use:         "replay",
 		Short:       "Replay a recorded hook JSONL file to simulate a session",
 		Long:        "Replays a JSONL file of hook inputs (recorded with record_hooks: true) by running hook-callback for each line. Useful for testing and debugging session state changes without running Claude.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -43,8 +43,6 @@ func ReplayCmd() *cobra.Command {
 			}
 		},
 	}.ToCobra()
-	cmd.Args = cobra.MaximumNArgs(1)
-	return cmd
 }
 
 func runReplay(file string, delay time.Duration) error {
@@ -59,7 +57,28 @@ func runReplay(file string, delay time.Duration) error {
 		return fmt.Errorf("failed to determine executable path: %w", err)
 	}
 
-	sessionId := strings.TrimSuffix(file, filepath.Ext(file))
+	sessionID := strings.TrimSuffix(file, filepath.Ext(file))
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Create session state (starts as idle, waiting for user input)
+	state := &SessionState{
+		ID:          sessionID,
+		TmuxSession: sessionID,
+		PID:         0,
+		Cwd:         cwd,
+		ConvID:      "",
+		Status:      StatusIdle,
+		Created:     time.Now(),
+		Updated:     time.Now(),
+	}
+
+	if err := SaveSessionState(state); err != nil {
+		return fmt.Errorf("failed to save session state: %w", err)
+	}
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1 MiB line buffer
@@ -74,8 +93,12 @@ func runReplay(file string, delay time.Duration) error {
 
 		fmt.Fprintf(os.Stderr, "[replay] line %d\n", lineNum)
 
+		env := append(os.Environ(), fmt.Sprintf("TCLAUDE_SESSION_ID=%s", sessionID), "TCLAUDE_REPLAY_MODE=true")
+		if strings.HasPrefix(sessionID, "tasks-") {
+			env = append(env, fmt.Sprintf("TCLAUDE_TASK_SIGNAL=%s", TaskSignalPath(cwd)))
+		}
 		cmd := exec.Command(self, "session", "hook-callback")
-		cmd.Env = append(os.Environ(), fmt.Sprintf("TCLAUDE_SESSION_ID=%s", sessionId), "TCLAUDE_REPLAY_MODE=true")
+		cmd.Env = env
 		cmd.Stdin = bytes.NewReader(line)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -88,6 +111,8 @@ func runReplay(file string, delay time.Duration) error {
 			time.Sleep(delay)
 		}
 	}
+
+	DeleteSessionState(sessionID)
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading file: %w", err)

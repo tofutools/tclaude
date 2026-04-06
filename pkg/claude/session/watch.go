@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 )
@@ -35,6 +36,7 @@ const (
 	confirmAttachForce // Session already attached, confirm force attach
 	confirmNoTmux      // Session has no tmux, cannot attach
 	confirmDetach      // Confirm detaching clients from session
+	confirmQuit        // Confirm exit via ESC
 )
 
 // Filter options for the checkbox menu
@@ -73,9 +75,19 @@ type model struct {
 	filterCursor   int             // cursor position in filter menu
 	filterChecked  map[string]bool // checked items in filter menu
 	helpView       bool            // showing help view
-	searchInput    string          // current search query
+	searchInput    textinput.Model // search query input
 	searchFocused  bool            // whether search box is focused
 	lastUpdatedAt  time.Time       // tracks DB changes for polling
+}
+
+func newSessionSearchInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = ""
+	s := ti.Styles()
+	s.Focused.Text = searchStyle
+	s.Blurred.Text = searchStyle
+	ti.SetStyles(s)
+	return ti
 }
 
 func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
@@ -86,11 +98,12 @@ func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
 		sort:         table.SortState{},
 		statusFilter: statusFilter,
 		hideFilter:   hideFilter,
+		searchInput:  newSessionSearchInput(),
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), tea.EnterAltScreen)
+	return tickCmd()
 }
 
 func tickCmd() tea.Cmd {
@@ -134,10 +147,11 @@ func (m model) refreshSessions() model {
 
 // applySearchFilter filters sessions based on search input
 func (m model) applySearchFilter() model {
-	if m.searchInput == "" {
+	searchVal := m.searchInput.Value()
+	if searchVal == "" {
 		m.sessions = m.allSessions
 	} else {
-		query := strings.ToLower(m.searchInput)
+		query := strings.ToLower(searchVal)
 		var filtered []*SessionState
 		for _, s := range m.allSessions {
 			if sessionMatchesSearch(s, query) {
@@ -183,6 +197,9 @@ func (m model) matchesShowFilter(status string) bool {
 		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
 			return true
 		}
+		if f == StatusWorking && status == StatusMainAgentIdle {
+			return true
+		}
 	}
 	return false
 }
@@ -198,6 +215,9 @@ func (m model) matchesHideFilter(status string) bool {
 		}
 		// Handle grouped filters
 		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
+			return true
+		}
+		if f == StatusWorking && status == StatusMainAgentIdle {
 			return true
 		}
 	}
@@ -227,9 +247,18 @@ func (m model) triggerKill() model {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Handle confirmation dialogs first
 		if m.confirmMode != confirmNone {
+			if m.confirmMode == confirmQuit {
+				switch msg.String() {
+				case "enter", "y", "Y":
+					return m, tea.Quit
+				default:
+					m.confirmMode = confirmNone
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "y", "Y":
 				if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
@@ -266,41 +295,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle search mode
 		if m.searchFocused {
 			switch msg.String() {
-			case "esc":
-				if m.searchInput != "" {
-					m.searchInput = ""
+			case "esc", "ctrl+c":
+				if m.searchInput.Value() != "" {
+					m.searchInput.SetValue("")
 					m = m.applySearchFilter()
 				} else {
 					m.searchFocused = false
+					m.searchInput.Blur()
 				}
 			case "enter":
 				m.searchFocused = false
+				m.searchInput.Blur()
 			case "up":
-				// Exit search and navigate up
 				m.searchFocused = false
+				m.searchInput.Blur()
 				if m.cursor > 0 {
 					m.cursor--
 				}
 			case "down":
-				// Exit search and navigate down
 				m.searchFocused = false
+				m.searchInput.Blur()
 				if m.cursor < len(m.sessions)-1 {
 					m.cursor++
 				}
-			case "backspace":
-				if len(m.searchInput) > 0 {
-					m.searchInput = m.searchInput[:len(m.searchInput)-1]
-					m = m.applySearchFilter()
-				}
-			case "ctrl+u":
-				m.searchInput = ""
-				m = m.applySearchFilter()
 			default:
-				// Add printable characters to search
-				if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] < 127 {
-					m.searchInput += msg.String()
+				prevVal := m.searchInput.Value()
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				if m.searchInput.Value() != prevVal {
 					m = m.applySearchFilter()
 				}
+				return m, cmd
 			}
 			return m, nil
 		}
@@ -362,14 +387,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "esc":
-			if m.searchInput != "" {
-				m.searchInput = ""
+			if m.searchInput.Value() != "" {
+				m.searchInput.SetValue("")
 				m = m.applySearchFilter()
 			} else {
-				return m, tea.Quit
+				m.confirmMode = confirmQuit
 			}
 		case "/":
 			m.searchFocused = true
+			m.searchInput.Focus()
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -474,15 +500,15 @@ func (m model) columns() []table.Column {
 	}
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	// Help view overlay
 	if m.helpView {
-		return m.renderHelpView()
+		return tea.View{Content: m.renderHelpView(), AltScreen: true}
 	}
 
 	// Filter menu overlay
 	if m.filterMenu {
-		return m.renderFilterMenu()
+		return tea.View{Content: m.renderFilterMenu(), AltScreen: true}
 	}
 
 	var b strings.Builder
@@ -491,9 +517,9 @@ func (m model) View() string {
 	b.WriteString("\n  ")
 	if m.searchFocused {
 		b.WriteString(searchStyle.Render("Search: "))
-		b.WriteString(searchStyle.Render("[" + m.searchInput + "_]"))
-	} else if m.searchInput != "" {
-		b.WriteString(searchStyle.Render("Search: [" + m.searchInput + "]"))
+		b.WriteString(m.searchInput.View())
+	} else if m.searchInput.Value() != "" {
+		b.WriteString(searchStyle.Render("Search: [" + m.searchInput.Value() + "]"))
 	} else {
 		b.WriteString(helpStyle.Render("/ to search"))
 	}
@@ -515,12 +541,12 @@ func (m model) View() string {
 			}
 			b.WriteString("\n")
 		} else {
-			b.WriteString("  No matches for \"" + m.searchInput + "\"\n")
+			b.WriteString("  No matches for \"" + m.searchInput.Value() + "\"\n")
 		}
 		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("  n new • / search • f filter • r refresh • q quit"))
 		b.WriteString("\n")
-		return b.String()
+		return tea.View{Content: b.String(), AltScreen: true}
 	}
 
 	// Build table using shared column definitions
@@ -580,25 +606,31 @@ func (m model) View() string {
 	// Render table
 	b.WriteString(tbl.RenderWithScroll(&helpStyle))
 	b.WriteString("\n\n")
-	if m.cursor < len(m.sessions) {
-		switch m.confirmMode {
-		case confirmKill:
+	switch m.confirmMode {
+	case confirmQuit:
+		b.WriteString(confirmStyle.Render("  Exit? [enter/y=yes / any key=cancel]"))
+	case confirmKill:
+		if m.cursor < len(m.sessions) {
 			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Kill session %s? [y/n]", m.sessions[m.cursor].ID)))
-		case confirmAttachForce:
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", m.sessions[m.cursor].ID)))
-		case confirmDetach:
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", m.sessions[m.cursor].ID)))
-		case confirmNoTmux:
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", m.sessions[m.cursor].ID)))
-		default:
-			b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • q quit"))
 		}
-	} else {
-		b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • q quit"))
+	case confirmAttachForce:
+		if m.cursor < len(m.sessions) {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", m.sessions[m.cursor].ID)))
+		}
+	case confirmDetach:
+		if m.cursor < len(m.sessions) {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", m.sessions[m.cursor].ID)))
+		}
+	case confirmNoTmux:
+		if m.cursor < len(m.sessions) {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", m.sessions[m.cursor].ID)))
+		}
+	default:
+		b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • esc/q quit"))
 	}
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.View{Content: b.String(), AltScreen: true}
 }
 
 func (m model) renderFilterMenu() string {
@@ -694,6 +726,8 @@ func getRowStyle(status string) lipgloss.Style {
 	switch status {
 	case StatusIdle:
 		return idleStyle
+	case StatusMainAgentIdle:
+		return workingStyle
 	case StatusWorking:
 		return workingStyle
 	case StatusAwaitingPermission, StatusAwaitingInput:
@@ -728,7 +762,7 @@ type AttachResult struct {
 func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState, error) {
 	m := initialModel(includeAll, state.StatusFilter, state.HideFilter)
 	m.sort = state.Sort
-	m.searchInput = state.SearchInput
+	m.searchInput.SetValue(state.SearchInput)
 	m.cursor = state.Cursor
 	m = m.refreshSessions()
 
@@ -737,7 +771,7 @@ func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState
 		m.cursor = max(0, len(m.sessions)-1)
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
 		return AttachResult{}, state, err
@@ -755,7 +789,7 @@ func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState
 		Sort:         fm.sort,
 		StatusFilter: fm.statusFilter,
 		HideFilter:   fm.hideFilter,
-		SearchInput:  fm.searchInput,
+		SearchInput:  fm.searchInput.Value(),
 		Cursor:       fm.cursor,
 	}
 	return result, newState, nil

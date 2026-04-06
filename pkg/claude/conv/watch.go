@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
@@ -75,6 +78,7 @@ const (
 	watchConfirmDelete                             // Delete conversation (no active session)
 	watchConfirmDeleteWithSession                  // Delete conversation that has an active session
 	watchConfirmNoTmux                             // Session has no tmux, cannot attach
+	watchConfirmQuit                               // Confirm exit via ESC
 )
 
 type watchModel struct {
@@ -89,16 +93,18 @@ type watchModel struct {
 	viewportHeight int
 
 	// Search
-	searchInput   string
+	searchInput   textinput.Model
 	searchFocused bool
 
 	// Worktree branch input
-	worktreeInput   string
+	worktreeInput   textinput.Model
 	worktreeFocused bool
 
 	// Semantic search
+	semanticChecking       bool
 	semanticFocused        bool
-	semanticQuery          string
+	semanticInput          textarea.Model
+	semanticQuery          string // last submitted query (for display after search)
 	semanticMode           bool
 	semanticResults        []EmbedSearchResult
 	semanticScores         map[string]float32
@@ -152,6 +158,59 @@ type watchModel struct {
 	fsCloseCh chan struct{}        // closed to stop the debounce goroutine
 }
 
+func newSearchInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = ""
+	s := ti.Styles()
+	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Focused.Text = wSearchStyle
+	s.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Blurred.Text = wSearchStyle
+	ti.SetStyles(s)
+	return ti
+}
+
+func newWorktreeInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = ""
+	s := ti.Styles()
+	s.Focused.Text = wSearchStyle
+	s.Blurred.Text = wSearchStyle
+	ti.SetStyles(s)
+	ti.Validate = func(s string) error {
+		for _, c := range s {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '/') {
+				return fmt.Errorf("invalid branch character: %c", c)
+			}
+		}
+		return nil
+	}
+	return ti
+}
+
+func newSemanticInput() textarea.Model {
+	ta := textarea.New()
+	ta.Prompt = ""
+	ta.ShowLineNumbers = false
+	ta.SetHeight(1) // starts at 1 line, grows with content up to 3
+	ta.MaxHeight = 3
+	ta.CharLimit = 0
+	// Disable default enter for newline insertion — enter submits the search.
+	// Newlines via shift+enter, alt+enter, or paste.
+	ta.KeyMap.InsertNewline = key.NewBinding()
+	// Style: match semantic color scheme
+	focused := textarea.StyleState{
+		Base:        lipgloss.NewStyle(),
+		Text:        wSemanticStyle,
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
+	}
+	styles := ta.Styles()
+	styles.Focused = focused
+	styles.Blurred = focused
+	ta.SetStyles(styles)
+	return ta
+}
+
 func initialWatchModel(global bool, since, before string) watchModel {
 	cwd, _ := os.Getwd()
 
@@ -164,6 +223,9 @@ func initialWatchModel(global bool, since, before string) watchModel {
 		entries:          []SessionEntry{},
 		filtered:         []SessionEntry{},
 		activeSessions:   make(map[string]*session.SessionState),
+		searchInput:      newSearchInput(),
+		worktreeInput:    newWorktreeInput(),
+		semanticInput:    newSemanticInput(),
 		global:           global,
 		projectPath:      cwd,
 		claudeProjectDir: claudeProjectDir,
@@ -176,7 +238,7 @@ func initialWatchModel(global bool, since, before string) watchModel {
 // --- tea.Model interface (pointer receiver) ---
 
 func (m *watchModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{watchTickCmd(), tea.EnterAltScreen}
+	cmds := []tea.Cmd{watchTickCmd()}
 	if fsCmd := m.startFSWatcher(); fsCmd != nil {
 		cmds = append(cmds, fsCmd)
 	}
@@ -185,12 +247,21 @@ func (m *watchModel) Init() tea.Cmd {
 
 func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Clear transient semantic error on any key
 		m.semanticError = ""
 
 		// Handle confirmation dialogs first
 		if m.confirmMode != watchConfirmNone {
+			if m.confirmMode == watchConfirmQuit {
+				switch msg.String() {
+				case "enter", "y", "Y":
+					return m, tea.Quit
+				default:
+					m.confirmMode = watchConfirmNone
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "y", "Y":
 				if m.cursor < len(m.filtered) {
@@ -253,15 +324,16 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Handle semantic indexing (only esc to cancel)
+		// Handle semantic indexing (only esc/ctrl+c to cancel)
 		if m.semanticIndexing {
-			if msg.String() == "esc" {
+			if msg.String() == "esc" || msg.String() == "ctrl+c" {
 				if m.semanticCancelCh != nil {
 					close(m.semanticCancelCh)
 					m.semanticCancelCh = nil
 				}
 				m.semanticIndexing = false
 				m.semanticFocused = true
+				m.semanticInput.Focus()
 			}
 			return m, nil
 		}
@@ -271,84 +343,80 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				return m, m.semanticStartIndex()
-			case "n", "N", "esc":
+			case "n", "N", "esc", "ctrl+c":
 				m.semanticIndexPrompt = false
 				m.semanticFocused = true
+				m.semanticInput.Focus()
 			}
 			return m, nil
 		}
 
 		// Handle semantic search input
 		if m.semanticFocused {
-			if msg.Paste {
-				m.semanticQuery += string(msg.Runes)
-				return m, nil
-			}
 			switch msg.String() {
-			case "esc":
+			case "esc", "ctrl+c":
 				m.semanticFocused = false
-				m.semanticQuery = ""
+				m.semanticInput.Blur()
+				m.semanticInput.Reset()
+			case "shift+enter", "alt+enter", "ctrl+j":
+				// Insert newline in multiline query
+				// Note: many terminals report shift+enter as ctrl+j
+				m.semanticInput.InsertString("\n")
+				m.updateSemanticInputHeight()
+				return m, nil
 			case "enter":
-				if m.semanticQuery != "" {
+				query := strings.TrimSpace(m.semanticInput.Value())
+				if query != "" {
 					m.semanticFocused = false
-					return m, m.semanticRunSearch(m.semanticQuery)
+					m.semanticInput.Blur()
+					m.semanticQuery = query
+					return m, m.semanticRunSearch(query)
 				}
-			case "backspace":
-				if len(m.semanticQuery) > 0 {
-					m.semanticQuery = m.semanticQuery[:len(m.semanticQuery)-1]
-				}
-			case "ctrl+u":
-				m.semanticQuery = ""
 			default:
-				if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] < 127 {
-					m.semanticQuery += msg.String()
-				}
+				var cmd tea.Cmd
+				m.semanticInput, cmd = m.semanticInput.Update(msg)
+				m.updateSemanticInputHeight()
+				return m, cmd
 			}
 			return m, nil
 		}
 
 		// Handle search mode
 		if m.searchFocused {
-			if msg.Paste {
-				m.searchInput += string(msg.Runes)
-				m.applySearchFilter()
-				return m, nil
-			}
 			switch msg.String() {
-			case "esc":
-				if m.searchInput != "" {
-					m.searchInput = ""
+			case "esc", "ctrl+c":
+				if m.searchInput.Value() != "" {
+					m.searchInput.SetValue("")
 					m.applySearchFilter()
 				} else {
 					m.searchFocused = false
+					m.searchInput.Blur()
 				}
 			case "enter":
 				m.searchFocused = false
+				m.searchInput.Blur()
 			case "up":
 				m.searchFocused = false
+				m.searchInput.Blur()
 				if m.cursor > 0 {
 					m.cursor--
 					m.ensureCursorVisible()
 				}
 			case "down":
 				m.searchFocused = false
+				m.searchInput.Blur()
 				if m.cursor < len(m.filtered)-1 {
 					m.cursor++
 					m.ensureCursorVisible()
 				}
-			case "backspace":
-				if len(m.searchInput) > 0 {
-					m.searchInput = m.searchInput[:len(m.searchInput)-1]
-					m.applySearchFilter()
-				}
-			case "ctrl+u":
-				m.searchInput = ""
-				m.applySearchFilter()
 			default:
-				if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] < 127 {
-					m.searchInput += msg.String()
+				prevVal := m.searchInput.Value()
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				if m.searchInput.Value() != prevVal {
 					m.applySearchFilter()
 				}
+				return m, cmd
 			}
 			return m, nil
 		}
@@ -356,32 +424,24 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle worktree branch input mode
 		if m.worktreeFocused {
 			switch msg.String() {
-			case "esc":
+			case "esc", "ctrl+c":
 				m.worktreeFocused = false
-				m.worktreeInput = ""
+				m.worktreeInput.Blur()
+				m.worktreeInput.SetValue("")
 			case "enter":
-				if m.worktreeInput != "" && m.cursor < len(m.filtered) {
+				if m.worktreeInput.Value() != "" && m.cursor < len(m.filtered) {
 					conv := m.filtered[m.cursor]
 					m.selectedConv = &conv
 					m.createWorktree = true
-					m.worktreeBranch = m.worktreeInput
+					m.worktreeBranch = m.worktreeInput.Value()
 					return m, tea.Quit
 				}
 				m.worktreeFocused = false
-			case "backspace":
-				if len(m.worktreeInput) > 0 {
-					m.worktreeInput = m.worktreeInput[:len(m.worktreeInput)-1]
-				}
-			case "ctrl+u":
-				m.worktreeInput = ""
+				m.worktreeInput.Blur()
 			default:
-				ch := msg.String()
-				if len(ch) == 1 {
-					c := ch[0]
-					if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '/' {
-						m.worktreeInput += ch
-					}
-				}
+				var cmd tea.Cmd
+				m.worktreeInput, cmd = m.worktreeInput.Update(msg)
+				return m, cmd
 			}
 			return m, nil
 		}
@@ -393,14 +453,18 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.semanticMode {
 				m.clearSemanticMode()
-			} else if m.searchInput != "" {
-				m.searchInput = ""
+			} else if m.searchInput.Value() != "" {
+				m.searchInput.SetValue("")
 				m.applySearchFilter()
+			} else {
+				m.confirmMode = watchConfirmQuit
 			}
 		case "/":
 			m.clearSemanticMode()
 			m.searchFocused = true
+			m.searchInput.Focus()
 		case "s":
+			m.semanticChecking = true
 			return m, m.semanticPreCheck()
 		case "up", "k":
 			if m.cursor > 0 {
@@ -466,7 +530,8 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "W", "w":
 			if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 				m.worktreeFocused = true
-				m.worktreeInput = ""
+				m.worktreeInput.SetValue("")
+				m.worktreeInput.Focus()
 			}
 		case "delete", "backspace", "x", "ctrl+d":
 			m.triggerDelete()
@@ -483,6 +548,28 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// In-memory re-sort only — no disk or DB access
 				m.resortAndFilter()
 			}
+		}
+
+	case tea.PasteMsg:
+		if m.semanticFocused {
+			var cmd tea.Cmd
+			m.semanticInput, cmd = m.semanticInput.Update(msg)
+			m.updateSemanticInputHeight()
+			return m, cmd
+		}
+		if m.searchFocused {
+			prevVal := m.searchInput.Value()
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			if m.searchInput.Value() != prevVal {
+				m.applySearchFilter()
+			}
+			return m, cmd
+		}
+		if m.worktreeFocused {
+			var cmd tea.Cmd
+			m.worktreeInput, cmd = m.worktreeInput.Update(msg)
+			return m, cmd
 		}
 
 	case tea.WindowSizeMsg:
@@ -520,6 +607,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.continueListenFSEvents()
 
 	case semanticCheckMsg:
+		m.semanticChecking = false
 		if msg.Err != nil {
 			m.semanticError = "Ollama error: " + msg.Err.Error()
 			return m, nil
@@ -530,6 +618,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.semanticTotalCount = msg.Total
 		} else {
 			m.semanticFocused = true
+			m.semanticInput.Focus()
 		}
 		return m, nil
 
@@ -542,6 +631,7 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case semanticIndexDoneMsg:
 		m.semanticIndexing = false
 		m.semanticFocused = true
+		m.semanticInput.Focus()
 		return m, nil
 
 	case semanticSearchResultMsg:
@@ -567,22 +657,25 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *watchModel) View() string {
+func (m *watchModel) View() tea.View {
 	if m.helpView {
-		return m.renderHelpView()
+		return tea.View{Content: m.renderHelpView(), AltScreen: true}
 	}
 
 	var b strings.Builder
 
 	// Search box
 	b.WriteString("\n  ")
-	if m.semanticIndexing {
+	if m.semanticChecking {
+		b.WriteString(wSemanticStyle.Render("Checking embedding model is available..."))
+	} else if m.semanticIndexing {
 		progress := semanticProgressBar(m.semanticIndexDone, m.semanticIndexTotal)
 		b.WriteString(wSemanticStyle.Render(fmt.Sprintf("Indexing: [%s] %d/%d (esc to cancel)", progress, m.semanticIndexDone, m.semanticIndexTotal)))
 	} else if m.semanticIndexPrompt {
 		b.WriteString(wSemanticStyle.Render(fmt.Sprintf("%d of %d conversations not indexed. Index now? [y/n]", m.semanticUnindexedCount, m.semanticTotalCount)))
 	} else if m.semanticFocused {
-		b.WriteString(wSemanticStyle.Render("Semantic: [" + m.semanticQuery + "_]"))
+		b.WriteString(wSemanticStyle.Render("Semantic: "))
+		b.WriteString(m.semanticInput.View())
 	} else if m.semanticQuery != "" && !m.semanticMode {
 		b.WriteString(wSemanticStyle.Render("Searching: [" + m.semanticQuery + "]..."))
 	} else if m.semanticMode {
@@ -591,9 +684,9 @@ func (m *watchModel) View() string {
 		b.WriteString(wConfirmStyle.Render(m.semanticError))
 	} else if m.searchFocused {
 		b.WriteString(wSearchStyle.Render("Search: "))
-		b.WriteString(wSearchStyle.Render("[" + m.searchInput + "_]"))
-	} else if m.searchInput != "" {
-		b.WriteString(wSearchStyle.Render("Search: [" + m.searchInput + "]"))
+		b.WriteString(m.searchInput.View())
+	} else if m.searchInput.Value() != "" {
+		b.WriteString(wSearchStyle.Render("Search: [" + m.searchInput.Value() + "]"))
 	} else {
 		b.WriteString(wHelpStyle.Render("/ to search"))
 	}
@@ -611,12 +704,12 @@ func (m *watchModel) View() string {
 		if len(m.entries) == 0 {
 			b.WriteString("  No conversations found\n")
 		} else {
-			b.WriteString("  No matches for \"" + m.searchInput + "\"\n")
+			b.WriteString("  No matches for \"" + m.searchInput.Value() + "\"\n")
 		}
 		b.WriteString("\n")
 		b.WriteString(wHelpStyle.Render("  r refresh • / search • s semantic • q quit"))
 		b.WriteString("\n")
-		return b.String()
+		return tea.View{Content: b.String(), AltScreen: true}
 	}
 
 	// Build table using shared column definitions
@@ -673,6 +766,8 @@ func (m *watchModel) View() string {
 	b.WriteString(tbl.RenderWithScroll(&wHelpStyle))
 	b.WriteString("\n\n")
 	switch m.confirmMode {
+	case watchConfirmQuit:
+		b.WriteString(wConfirmStyle.Render("  Exit? [enter/y=yes / any key=cancel]"))
 	case watchConfirmAttachForce:
 		b.WriteString(wConfirmStyle.Render("  Session already attached. Detach others? [y/n]"))
 	case watchConfirmDelete:
@@ -683,18 +778,20 @@ func (m *watchModel) View() string {
 		b.WriteString(wConfirmStyle.Render("  Session was started outside tclaude/tmux (◉) - already in its terminal. [press any key]"))
 	default:
 		if m.worktreeFocused {
-			b.WriteString(wSearchStyle.Render("  Branch name: [" + m.worktreeInput + "_] (enter to create, esc to cancel)"))
+			b.WriteString(wSearchStyle.Render("  Branch: "))
+			b.WriteString(m.worktreeInput.View())
+			b.WriteString(wHelpStyle.Render(" (enter to create, esc to cancel)"))
 		} else if m.statusMsg != "" {
 			b.WriteString(wSearchStyle.Render("  " + m.statusMsg))
 		} else if m.semanticMode {
-			b.WriteString(wHelpStyle.Render("  s new search • / text search • esc exit • h help • q quit"))
+			b.WriteString(wHelpStyle.Render("  s new search • / text search • esc exit • h help • esc/q quit"))
 		} else {
-			b.WriteString(wHelpStyle.Render("  / search • s semantic • enter attach • h help • q quit"))
+			b.WriteString(wHelpStyle.Render("  / search • s semantic • enter attach • h help • esc/q quit"))
 		}
 	}
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.View{Content: b.String(), AltScreen: true}
 }
 
 // --- Data loading ---
@@ -1105,7 +1202,10 @@ func (m *watchModel) semanticRunSearch(query string) tea.Cmd {
 
 // clearSemanticMode resets all semantic search state and restores normal listing.
 func (m *watchModel) clearSemanticMode() {
+	m.semanticChecking = false
 	m.semanticFocused = false
+	m.semanticInput.Blur()
+	m.semanticInput.Reset()
 	m.semanticQuery = ""
 	m.semanticMode = false
 	m.semanticResults = nil
@@ -1161,17 +1261,25 @@ func (m *watchModel) upsertEntry(entry SessionEntry) {
 
 // --- Search filter ---
 
+// updateSemanticInputHeight auto-grows the textarea from 1 to 3 lines based on content.
+// Beyond 3 lines, the textarea's internal viewport handles scrolling.
+func (m *watchModel) updateSemanticInputHeight() {
+	lines := min(max(m.semanticInput.LineCount(), 1), 3)
+	m.semanticInput.SetHeight(lines)
+}
+
 func (m *watchModel) applySearchFilter() {
 	if m.semanticMode {
 		return
 	}
-	if m.searchInput == "" {
+	searchVal := m.searchInput.Value()
+	if searchVal == "" {
 		m.filtered = m.entries
 		return
 	}
 
-	query := strings.ToLower(m.searchInput)
-	m.filtered = m.filtered[:0] // reuse backing array
+	query := strings.ToLower(searchVal)
+	m.filtered = make([]SessionEntry, 0, len(m.entries))
 	for _, e := range m.entries {
 		if matchesSearch(e, query) {
 			m.filtered = append(m.filtered, e)
@@ -1182,6 +1290,20 @@ func (m *watchModel) applySearchFilter() {
 		m.cursor = 0
 	}
 	m.viewportOffset = 0
+}
+
+// rebuildSemanticFiltered reconstructs the filtered list from entries matching
+// saved semantic scores, sorted by similarity descending.
+func (m *watchModel) rebuildSemanticFiltered() {
+	m.filtered = m.filtered[:0]
+	for _, e := range m.entries {
+		if _, ok := m.semanticScores[e.SessionID]; ok {
+			m.filtered = append(m.filtered, e)
+		}
+	}
+	sort.Slice(m.filtered, func(i, j int) bool {
+		return m.semanticScores[m.filtered[i].SessionID] > m.semanticScores[m.filtered[j].SessionID]
+	})
 }
 
 func matchesSearch(e SessionEntry, query string) bool {
@@ -1360,6 +1482,8 @@ func (m *watchModel) renderHelpView() string {
 	b.WriteString(wHeaderStyle.Render("  Semantic Search"))
 	b.WriteString("\n")
 	b.WriteString("    s         Start semantic search (requires Ollama)\n")
+	b.WriteString("    enter     Submit search query\n")
+	b.WriteString("    shift+enter Insert newline (multiline query)\n")
 	b.WriteString("    esc       Exit semantic results\n")
 	b.WriteString("\n")
 
@@ -1395,6 +1519,9 @@ type ConvWatchState struct {
 	Cursor         int
 	ViewportOffset int
 	Sort           table.SortState
+	SemanticMode   bool
+	SemanticQuery  string
+	SemanticScores map[string]float32
 }
 
 // RunConvWatch runs the interactive watch mode and returns the result
@@ -1402,13 +1529,21 @@ func RunConvWatch(global bool, since, before string, state ConvWatchState) (Watc
 	m := initialWatchModel(global, since, before)
 
 	// Restore previous state
-	m.searchInput = state.SearchInput
+	m.searchInput.SetValue(state.SearchInput)
 	m.cursor = state.Cursor
 	m.viewportOffset = state.ViewportOffset
 	m.sort = state.Sort
+	m.semanticMode = state.SemanticMode
+	m.semanticQuery = state.SemanticQuery
+	m.semanticScores = state.SemanticScores
 
 	// Initial full load from disk+DB (populates cache for new/changed files)
 	m.fullReloadConversations()
+
+	// If returning in semantic mode, rebuild filtered list from saved scores
+	if m.semanticMode && len(m.semanticScores) > 0 {
+		m.rebuildSemanticFiltered()
+	}
 
 	// Snapshot the conv_index timestamp so the tick doesn't immediately reload
 	if m.global {
@@ -1423,7 +1558,7 @@ func RunConvWatch(global bool, since, before string, state ConvWatchState) (Watc
 	}
 	m.ensureCursorVisible()
 
-	p := tea.NewProgram(&m, tea.WithAltScreen())
+	p := tea.NewProgram(&m)
 	finalModel, err := p.Run()
 	if err != nil {
 		return WatchResult{}, state, err
@@ -1433,10 +1568,13 @@ func RunConvWatch(global bool, since, before string, state ConvWatchState) (Watc
 	fm.closeWatcher()
 
 	newState := ConvWatchState{
-		SearchInput:    fm.searchInput,
+		SearchInput:    fm.searchInput.Value(),
 		Cursor:         fm.cursor,
 		ViewportOffset: fm.viewportOffset,
 		Sort:           fm.sort,
+		SemanticMode:   fm.semanticMode,
+		SemanticQuery:  fm.semanticQuery,
+		SemanticScores: fm.semanticScores,
 	}
 	return WatchResult{
 		Conv:           fm.selectedConv,

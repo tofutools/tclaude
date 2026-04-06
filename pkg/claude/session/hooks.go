@@ -41,6 +41,11 @@ var HookCommand string
 var RequiredHooks map[string][]HookMatcher
 
 func init() {
+	initHookCommands()
+}
+
+// initHookCommands sets HookCommand and RequiredHooks based on current DetectCmd output.
+func initHookCommands() {
 	HookCommand = common.DetectCmd("session", "hook-callback")
 	hook := HookConfig{Type: "command", Command: HookCommand}
 	newMatcher := func() HookMatcher { return HookMatcher{Hooks: []HookConfig{hook}} }
@@ -57,6 +62,12 @@ func init() {
 		"SessionStart":       {newMatcher()},
 		"PostCompact":        {newMatcher()},
 	}
+}
+
+// ReinitHookCommand re-evaluates the hook command path using current DetectCmd settings.
+// Call this after changing common.SetAbsolutePaths().
+func ReinitHookCommand() {
+	initHookCommands()
 }
 
 // containsCurrentHook checks if a raw matchers JSON contains the current HookCommand

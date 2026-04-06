@@ -57,6 +57,8 @@ func formatStatus(status string) string {
 		return "Working"
 	case "idle":
 		return "Idle"
+	case "main_agent_idle":
+		return "Main agent idle, subagents running"
 	case "awaiting_permission":
 		return "Awaiting permission"
 	case "awaiting_input":

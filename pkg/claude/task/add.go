@@ -6,41 +6,40 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type AddParams struct {
-	Dir            string   `short:"C" long:"dir" optional:"true" help:"Directory containing TODO.md (defaults to current directory)"`
-	PlanMode       bool     `long:"plan" help:"Mark task as requiring planning (runs with --permission-mode plan)"`
-	PlanAutoAccept bool     `long:"plan-auto" help:"Plan first, then auto-accept and implement"`
-	Args           []string `pos:"true" help:"<prompt> or <title> <prompt>"`
+	Dir            string
+	PlanMode       bool
+	PlanAutoAccept bool
 }
 
 func AddCmd() *cobra.Command {
-	return boa.CmdT[AddParams]{
-		Use:         "add",
-		Short:       "Add a task to TODO.md",
-		Long:        "Add a new task to the TODO.md file in the current project.\nWith one arg, the title is auto-generated via Claude Code.\nWith two args, the first is the title and the second is the prompt.",
-		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(params *AddParams, cmd *cobra.Command, args []string) {
-			if err := runAdd(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
+	params := &AddParams{}
+	cmd := &cobra.Command{
+		Use:   "add <prompt> | add <title> <prompt>",
+		Short: "Add a task to TODO.md",
+		Long:  "Add a new task to the TODO.md file in the current project.\nWith one arg, the title is auto-generated via Claude Code.\nWith two args, the first is the title and the second is the prompt.",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAdd(params, args)
 		},
-	}.ToCobra()
+	}
+	cmd.Flags().StringVarP(&params.Dir, "dir", "C", "", "Directory containing TODO.md (defaults to current directory)")
+	cmd.Flags().BoolVar(&params.PlanMode, "plan", false, "Mark task as requiring planning (runs with --permission-mode plan)")
+	cmd.Flags().BoolVar(&params.PlanAutoAccept, "plan-auto", false, "Plan first, then auto-accept and implement")
+	return cmd
 }
 
-func runAdd(params *AddParams) error {
+func runAdd(params *AddParams, args []string) error {
 	var title, prompt string
-	switch len(params.Args) {
+	switch len(args) {
 	case 1:
-		prompt = params.Args[0]
+		prompt = args[0]
 	case 2:
-		title = params.Args[0]
-		prompt = params.Args[1]
+		title = args[0]
+		prompt = args[1]
 	default:
 		return fmt.Errorf("expected 1 or 2 arguments: <prompt> or <title> <prompt>")
 	}
@@ -67,7 +66,7 @@ func runAdd(params *AddParams) error {
 		return fmt.Errorf("failed to read TODO.md: %w", err)
 	}
 
-	// Add new task (--plan-auto is a superset of --plan)
+	// Add a new task (--plan-auto is a superset of --plan)
 	planAutoAccept := params.PlanAutoAccept
 	planMode := params.PlanMode || planAutoAccept
 	tasks = append(tasks, Task{
@@ -90,6 +89,7 @@ func runAdd(params *AddParams) error {
 func generateTitle(prompt string) (string, error) {
 	cmd := exec.Command("claude", "-p",
 		"Generate a short task title (max 8 words, no quotes, no markdown) for this task prompt: "+prompt)
+	cmd.Env = append(os.Environ(), "TCLAUDE_IGNORE_HOOKS=true")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

@@ -18,7 +18,9 @@ func platformSend(sessionID, title, body string) error {
 func sendDarwinClickable(sessionID, title, body string) error {
 	// Check for terminal-notifier (supports -execute)
 	if _, err := exec.LookPath("terminal-notifier"); err == nil {
-		clCmd := strings.Join(common.DetectArgs(), " ")
+		// Use absolute path because terminal-notifier -execute runs in a
+		// minimal shell environment where tclaude may not be on PATH.
+		clCmd := strings.Join(common.DetectAbsoluteArgs(), " ")
 
 		// Get full path to tmux (needed by focus command)
 		tmuxPath, err := exec.LookPath("tmux")

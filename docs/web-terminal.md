@@ -1,4 +1,6 @@
-# Web Terminal
+# Web Terminal (Deprecated)
+
+> **Deprecated:** Claude Code now has a built-in remote access mode. Consider using that instead. This feature may be removed in a future version.
 
 Access your Claude Code sessions from a phone or any browser over the network.
 
@@ -13,20 +15,33 @@ The web terminal mirrors an existing tmux-based Claude session via xterm.js and 
 tclaude
 
 # In another terminal, start the web server
-tclaude web --user myuser --pass mypass
-
-# Open https://localhost:8443 in your browser
+tclaude web
 ```
 
-## Accessing from Your Phone (LAN)
+Credentials are auto-generated (username defaults to hostname, password is random). The bind address defaults to your local hostname, making it reachable on the LAN. The server prints the credentials and connection URL on startup.
 
-Bind to all interfaces so the server is reachable on your network:
+## Connecting from Your Phone
+
+Use `--qr` to display a QR code containing the full URL with embedded credentials:
 
 ```bash
-tclaude web --user myuser --pass mypass --bind 0.0.0.0
+tclaude web --qr
 ```
 
-Then open `https://<your-ip>:8443` on your phone and accept the self-signed certificate warning.
+Scan the QR code with your phone camera and accept the self-signed certificate warning. You can also press **space** at any time to show the QR code.
+
+To bind to all interfaces explicitly:
+
+```bash
+tclaude web --bind 0.0.0.0
+```
+
+### Mobile Features
+
+On touch devices, the web terminal provides:
+- **Input bar** at the bottom for text entry with proper autocorrect/IME support
+- **Tab** and **Enter** buttons next to the input field
+- **Extra keys panel** (ESC, arrow keys) toggled via the `⋮` button
 
 ### WSL Users
 
@@ -46,15 +61,16 @@ Then access `https://<windows-ip>:9443` from your phone.
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-p, --port` | Port to listen on | `8443` |
-| `-u, --user` | Username for basic auth (required) | |
-| `--pass` | Password for basic auth (required) | |
-| `--bind` | Address to bind to | `127.0.0.1` |
+| `-u, --user` | Username for basic auth | hostname |
+| `--pass` | Password for basic auth | auto-generated |
+| `--bind` | Address to bind to (tab-completable) | hostname |
+| `--qr` | Show QR code for easy mobile connection | `false` |
 | `--no-tls` | Disable TLS | `false` |
 | `--new-cert` | Force regenerate TLS certificate | `false` |
 
 ## TLS Certificates
 
-A self-signed TLS certificate is generated on first use and saved to `~/.tclaude/claude-web/`. The certificate is reused across restarts (same fingerprint), so you only need to trust it once.
+A self-signed TLS certificate is generated on first use and saved to `~/.tclaude/claude-web/`. The certificate includes your hostname and local IPs as SANs. It is reused across restarts (same fingerprint), so you only need to trust it once.
 
 To trust the certificate in Chrome:
 1. Navigate to `chrome://settings/certificates`
@@ -63,7 +79,7 @@ To trust the certificate in Chrome:
 To regenerate the certificate:
 
 ```bash
-tclaude web --new-cert --user myuser --pass mypass
+tclaude web --new-cert
 ```
 
 ## Multiple Sessions
@@ -75,11 +91,17 @@ If you have multiple Claude sessions running, specify which one to serve:
 tclaude session ls
 
 # Serve a specific session
-tclaude web --user myuser --pass mypass abc123
+tclaude web abc123
 ```
 
 If only one session is running, it auto-detects.
 
 ## Terminal Sizing
 
-The terminal resizes to the smallest connected client, so all viewers (desktop + phone) see the same content.
+The terminal uses tmux `window-size latest`, so the most recently active client dictates the terminal size. When you interact from your phone, the terminal resizes to fit; the desktop terminal shows dot-fill in the unused area.
+
+## Keyboard Shortcuts
+
+While the server is running:
+- **Space** - Show QR code
+- **q** or **Ctrl+C** - Stop the server

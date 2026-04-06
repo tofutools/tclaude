@@ -20,24 +20,91 @@ const indexHTML = `<!DOCTYPE html>
     }
     #status.connected { background: rgba(0,120,0,0.8); }
     #status.disconnected { background: rgba(180,0,0,0.8); }
-    #esc-btn {
-      position: fixed; top: 8px; left: 8px;
-      padding: 8px 16px; border-radius: 6px;
+    #extra-keys {
+      position: fixed; bottom: 8px; left: 8px; right: 8px;
+      display: none; gap: 4px;
+      justify-content: center;
+      z-index: 11;
+    }
+    #extra-keys.visible { display: flex; }
+    .has-input-bar #extra-keys { bottom: 56px; }
+    .extra-key {
+      height: 44px; min-width: 44px;
+      padding: 0 14px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
       font-family: monospace; font-size: 14px; font-weight: bold;
-      color: #fff; background: rgba(180,40,40,0.85);
+      color: #fff; background: rgba(80,80,120,0.85);
       border: 1px solid rgba(255,255,255,0.2);
-      z-index: 10; cursor: pointer;
+      cursor: pointer;
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
       user-select: none;
     }
-    #esc-btn:active { background: rgba(220,60,60,0.95); }
+    .extra-key:active { background: rgba(100,100,160,0.95); }
+    .extra-key.esc { background: rgba(180,40,40,0.85); }
+    .extra-key.esc:active { background: rgba(220,60,60,0.95); }
+    #keys-toggle {
+      position: fixed; bottom: 8px; right: 8px;
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+      font-size: 20px;
+      color: #fff; background: rgba(80,80,80,0.7);
+      border: 1px solid rgba(255,255,255,0.2);
+      z-index: 12; cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    #keys-toggle:active { background: rgba(100,100,100,0.9); }
+    .has-input-bar #keys-toggle { bottom: 56px; }
+    #input-bar {
+      display: none;
+      position: fixed; bottom: 0; left: 0; right: 0;
+      gap: 4px; padding: 6px;
+      background: rgba(30,30,50,0.95);
+      border-top: 1px solid rgba(255,255,255,0.15);
+      z-index: 10;
+    }
+    #mobile-input {
+      flex: 1; min-width: 0;
+      padding: 8px 12px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(0,0,0,0.5);
+      color: #e0e0e0;
+      font-family: monospace; font-size: 16px;
+      outline: none;
+    }
+    .input-btn {
+      padding: 8px 14px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(80,80,120,0.85);
+      color: #fff; font-size: 16px;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .input-btn:active { background: rgba(100,100,160,0.95); }
   </style>
 </head>
 <body>
-  <div id="esc-btn">ESC</div>
+  <div id="extra-keys">
+    <div class="extra-key esc" data-seq="\x1b">ESC</div>
+    <div class="extra-key" data-key="left">&#9664;</div>
+    <div class="extra-key" data-key="down">&#9660;</div>
+    <div class="extra-key" data-key="up">&#9650;</div>
+    <div class="extra-key" data-key="right">&#9654;</div>
+  </div>
+  <div id="keys-toggle">&#8943;</div>
   <div id="status">connecting...</div>
   <div id="terminal"></div>
+  <div id="input-bar">
+    <input type="text" id="mobile-input" placeholder="Type here..." autocomplete="off" autocorrect="on" autocapitalize="off" spellcheck="true">
+    <button class="input-btn" id="tab-btn">&#8677;</button>
+    <button class="input-btn" id="send-btn">&#9166;</button>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
@@ -129,13 +196,72 @@ const indexHTML = `<!DOCTYPE html>
       sendResize();
     });
 
-    // ESC button sends escape key to terminal
-    document.getElementById('esc-btn').addEventListener('click', (e) => {
+    // Toggle extra keys panel
+    const extraKeys = document.getElementById('extra-keys');
+    document.getElementById('keys-toggle').addEventListener('click', (e) => {
+      e.preventDefault();
+      extraKeys.classList.toggle('visible');
+    });
+
+    // Extra keys: ESC and arrow buttons
+    const keySeqs = {left: '\x1b[D', down: '\x1b[B', up: '\x1b[A', right: '\x1b[C'};
+    document.querySelectorAll('.extra-key').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const seq = btn.dataset.seq || keySeqs[btn.dataset.key];
+        if (seq && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(new TextEncoder().encode(seq));
+        }
+        // Don't focus terminal on touch devices - avoids opening virtual keyboard
+        if (!isTouchDevice) term.focus();
+      });
+    });
+
+    // Mobile input bar - shown on touch devices for proper IME/autocorrect support
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    if (isTouchDevice) {
+      const inputBar = document.getElementById('input-bar');
+      inputBar.style.display = 'flex';
+      document.body.classList.add('has-input-bar');
+      // Make room for the input bar
+      const barHeight = 52;
+      document.getElementById('terminal').style.height = 'calc(100% - ' + barHeight + 'px)';
+      fitAddon.fit();
+      sendResize();
+    }
+
+    const mobileInput = document.getElementById('mobile-input');
+
+    function sendMobileInput() {
+      const text = mobileInput.value;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        if (text) {
+          ws.send(new TextEncoder().encode(text));
+        }
+        ws.send(new TextEncoder().encode('\r'));
+      }
+      mobileInput.value = '';
+      mobileInput.focus();
+    }
+
+    mobileInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendMobileInput();
+      }
+    });
+
+    document.getElementById('send-btn').addEventListener('click', (e) => {
+      e.preventDefault();
+      sendMobileInput();
+    });
+
+    document.getElementById('tab-btn').addEventListener('click', (e) => {
       e.preventDefault();
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(new TextEncoder().encode('\x1b'));
+        ws.send(new TextEncoder().encode('\t'));
       }
-      term.focus();
+      mobileInput.focus();
     });
 
     // Two-finger scroll sends mouse wheel escape sequences to tmux

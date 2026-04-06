@@ -80,6 +80,63 @@ func windowsLANIPs() []string {
 	return ips
 }
 
+// resolvableHostnames returns hostname variants that actually resolve on this machine.
+// Tries the full hostname (e.g. "Mac.lan") and short hostname (e.g. "Mac").
+func resolvableHostnames() []string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil
+	}
+
+	var results []string
+	candidates := []string{hostname}
+
+	// Also try short hostname if there's a domain suffix
+	if dot := strings.IndexByte(hostname, '.'); dot != -1 {
+		candidates = append(candidates, hostname[:dot])
+	}
+
+	// Only include candidates that actually resolve
+	for _, h := range candidates {
+		if _, err := net.LookupHost(h); err == nil {
+			results = append(results, h)
+		}
+	}
+	return results
+}
+
+// hostnameAlternatives returns hostname candidates without DNS resolution (fast, for autocomplete).
+func hostnameAlternatives() []string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil
+	}
+	alts := []string{hostname}
+	if dot := strings.IndexByte(hostname, '.'); dot != -1 {
+		alts = append(alts, hostname[:dot])
+	}
+	return alts
+}
+
+// getBindAlternatives returns dynamically calculated bind address alternatives for shell completion.
+// Avoids DNS lookups to stay fast.
+func getBindAlternatives() []string {
+	alts := []string{"0.0.0.0"}
+
+	// Add non-loopback local IPs
+	for _, ip := range localIPStrings() {
+		if ip != "127.0.0.1" {
+			alts = append(alts, ip)
+		}
+	}
+
+	// Add hostname variants (no DNS lookup, just candidates)
+	alts = append(alts, hostnameAlternatives()...)
+
+	alts = append(alts, "127.0.0.1")
+	return alts
+}
+
 // printNetworkInfo prints reachable addresses for the server
 func printNetworkInfo(scheme string, port int) {
 	hostname, _ := os.Hostname()

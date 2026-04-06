@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/tofutools/tclaude/pkg/claude"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -21,7 +22,7 @@ func run() int {
 	cmd := claude.Cmd()
 	cmd.Use = "tclaude"
 	cmd.Version = appVersion()
-	if err := cmd.Execute(); err != nil {
+	if err := boa.Execute(cmd); err != nil {
 		return 1
 	}
 	return 0

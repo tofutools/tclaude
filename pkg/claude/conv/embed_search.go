@@ -54,6 +54,12 @@ func RunIndexEmbeddings(params *IndexEmbeddingsParams, stdout, stderr *os.File) 
 	// Load conversations
 	var allEntries []SessionEntry
 
+	// In non-global mode, query the project's embedded conv IDs BEFORE
+	// LoadSessionsIndex runs, because LoadSessionsIndex deletes conv_index
+	// entries for .jsonl files that no longer exist on disk. We need those
+	// entries to scope the orphan cleanup via the conv_index join.
+	var projectEmbeddedConvs map[string]time.Time
+
 	if params.Global {
 		projectsDir := ClaudeProjectsDir()
 		entries, err := os.ReadDir(projectsDir)
@@ -78,12 +84,19 @@ func RunIndexEmbeddings(params *IndexEmbeddingsParams, stdout, stderr *os.File) 
 			fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
 			return 1
 		}
-		projectPath := GetClaudeProjectPath(cwd)
-		if _, err := os.Stat(projectPath); os.IsNotExist(err) {
+		localProjectDir := GetClaudeProjectPath(cwd)
+		if _, err := os.Stat(localProjectDir); os.IsNotExist(err) {
 			fmt.Fprintf(stderr, "No Claude conversations found for %s\n", cwd)
 			return 1
 		}
-		index, err := LoadSessionsIndex(projectPath)
+		// Snapshot embedded conv IDs for this project before LoadSessionsIndex
+		// cleans up conv_index entries for deleted files.
+		projectEmbeddedConvs, err = db.ListEmbeddedConvIDsForProject(localProjectDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error checking existing embeddings: %v\n", err)
+			return 1
+		}
+		index, err := LoadSessionsIndex(localProjectDir)
 		if err != nil {
 			fmt.Fprintf(stderr, "Error loading sessions index: %v\n", err)
 			return 1
@@ -102,11 +115,18 @@ func RunIndexEmbeddings(params *IndexEmbeddingsParams, stdout, stderr *os.File) 
 		validIDs[e.SessionID] = true
 	}
 
-	// Clean up orphaned embeddings (conversations deleted from disk)
-	embeddedConvs, err := db.ListEmbeddedConvIDs()
-	if err != nil {
-		fmt.Fprintf(stderr, "Error checking existing embeddings: %v\n", err)
-		return 1
+	// Clean up orphaned embeddings (conversations deleted from disk).
+	// In non-global mode, use the pre-snapshotted project-scoped list
+	// so we don't accidentally delete embeddings from other projects.
+	var embeddedConvs map[string]time.Time
+	if projectEmbeddedConvs != nil {
+		embeddedConvs = projectEmbeddedConvs
+	} else {
+		embeddedConvs, err = db.ListEmbeddedConvIDs()
+		if err != nil {
+			fmt.Fprintf(stderr, "Error checking existing embeddings: %v\n", err)
+			return 1
+		}
 	}
 	orphans := 0
 	for convID := range embeddedConvs {

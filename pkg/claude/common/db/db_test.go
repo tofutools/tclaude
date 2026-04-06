@@ -28,8 +28,8 @@ func TestOpenAndMigrate(t *testing.T) {
 	if err := db.QueryRow("SELECT version FROM schema_version").Scan(&ver); err != nil {
 		t.Fatalf("schema_version query: %v", err)
 	}
-	if ver != 5 {
-		t.Fatalf("expected version 5, got %d", ver)
+	if ver != currentVersion {
+		t.Fatalf("expected version %d, got %d", currentVersion, ver)
 	}
 }
 
@@ -38,13 +38,14 @@ func TestSessionCRUD(t *testing.T) {
 
 	now := time.Now().Truncate(time.Millisecond)
 	s := &SessionRow{
-		ID:          "test-001",
-		TmuxSession: "tmux-001",
-		PID:         12345,
-		Cwd:         "/tmp/project",
-		ConvID:      "conv-abc",
-		Status:      "idle",
-		CreatedAt:   now,
+		ID:            "test-001",
+		TmuxSession:   "tmux-001",
+		PID:           12345,
+		Cwd:           "/tmp/project",
+		ConvID:        "conv-abc",
+		Status:        "idle",
+		SubagentCount: 1,
+		CreatedAt:     now,
 	}
 
 	// Save

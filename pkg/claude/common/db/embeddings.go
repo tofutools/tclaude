@@ -129,6 +129,36 @@ func ListEmbeddedConvIDs() (map[string]time.Time, error) {
 	return result, rows.Err()
 }
 
+// ListEmbeddedConvIDsForProject returns conversation IDs that have embeddings
+// and belong to the given project directory (matched via conv_index).
+func ListEmbeddedConvIDsForProject(projectDir string) (map[string]time.Time, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.Query(`SELECT e.conv_id, MAX(e.created_at)
+		FROM conv_embeddings e
+		JOIN conv_index ci ON ci.conv_id = e.conv_id
+		WHERE ci.project_dir = ?
+		GROUP BY e.conv_id`, projectDir)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]time.Time)
+	for rows.Next() {
+		var convID, createdAt string
+		if err := rows.Scan(&convID, &createdAt); err != nil {
+			return nil, err
+		}
+		t, _ := time.Parse(time.RFC3339Nano, createdAt)
+		result[convID] = t
+	}
+	return result, rows.Err()
+}
+
 // ListEmbeddingModels returns the distinct model names used in stored embeddings.
 func ListEmbeddingModels() ([]string, error) {
 	db, err := Open()
