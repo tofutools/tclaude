@@ -97,9 +97,10 @@ func runHookCallback() error {
 		unlock, lockErr := acquireHookLock(sessionKey)
 		if lockErr != nil {
 			slog.Warn("failed to acquire hook lock", "error", lockErr, "module", "hooks")
-		} else {
-			defer unlock()
+			return fmt.Errorf("failed to acquire hook lock: %w", lockErr)
 		}
+
+		defer unlock()
 	}
 
 	// Log hook event
@@ -143,7 +144,9 @@ func runHookCallback() error {
 		state.SubagentCount += 1
 
 	case "SubagentStop":
-		state.SubagentCount -= 1
+		if state.SubagentCount > 0 {
+			state.SubagentCount -= 1
+		}
 
 	case "Stop":
 		if state.SubagentCount < 1 {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gofrs/flock"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -22,7 +23,7 @@ func acquireHookLock(sessionKey string) (func(), error) {
 		return func() {}, fmt.Errorf("failed to create lock dir: %w", err)
 	}
 
-	lockPath := filepath.Join(lockDir, "hook-"+sessionKey+".lock")
+	lockPath := filepath.Join(lockDir, "hook-"+strings.ReplaceAll(sessionKey, "/", "-")+".lock")
 	fl := flock.New(lockPath)
 	if err := fl.Lock(); err != nil {
 		return func() {}, fmt.Errorf("failed to acquire lock: %w", err)
