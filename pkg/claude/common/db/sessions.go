@@ -15,6 +15,7 @@ type SessionRow struct {
 	ConvID         string
 	Status         string
 	StatusDetail   string
+	SubagentCount  int
 	AutoRegistered bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -28,10 +29,10 @@ func SaveSession(s *SessionRow) error {
 	}
 	s.UpdatedAt = time.Now()
 	_, err = db.Exec(`INSERT OR REPLACE INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, auto_registered, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, auto_registered, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
-		s.Status, s.StatusDetail, boolToInt(s.AutoRegistered),
+		s.Status, s.StatusDetail, s.SubagentCount, boolToInt(s.AutoRegistered),
 		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano))
 	return err
 }
@@ -42,7 +43,7 @@ func LoadSession(id string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
 		auto_registered, created_at, updated_at FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
@@ -63,7 +64,7 @@ func ListSessions() ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail,
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
 		auto_registered, created_at, updated_at FROM sessions`)
 	if err != nil {
 		return nil, err
@@ -78,7 +79,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
 		auto_registered, created_at, updated_at FROM sessions WHERE conv_id = ? LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -133,7 +134,7 @@ func scanSession(row *sql.Row) (*SessionRow, error) {
 	var autoReg int
 	var createdStr, updatedStr string
 	err := row.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-		&s.Status, &s.StatusDetail, &autoReg, &createdStr, &updatedStr)
+		&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +152,7 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 		var autoReg int
 		var createdStr, updatedStr string
 		err := rows.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-			&s.Status, &s.StatusDetail, &autoReg, &createdStr, &updatedStr)
+			&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session row: %w", err)
 		}
