@@ -183,15 +183,24 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	defer signal.Stop(sigCh)
 
 	for {
-		if usage, err := usageapi.GetCached(); usage != nil && usage.FiveHour != nil {
+		usage, err := usageapi.GetCached()
+		if usage == nil {
+			if err != nil {
+				slog.Warn("task run: unable to check rate limit", "error", err, "module", "task")
+			}
+			// Continue without rate limit check - usage data unavailable
+		} else {
 			if err != nil {
 				slog.Warn("task run: using stale usage cache", "error", err, "module", "task")
 			}
-			if int(usage.FiveHour.Pct) >= 100 { // rate limited
-				resetsAt := usage.FiveHour.ResetsAt
-				fmt.Printf("Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format(time.TimeOnly))
-				time.Sleep(time.Until(resetsAt.Add(time.Minute)))
-				fmt.Printf("Rate limit reset, running tasks")
+			if usage.FiveHour != nil {
+				if int(usage.FiveHour.Pct) >= 100 { // rate limited
+					resetsAt := usage.FiveHour.ResetsAt
+					slog.Debug("Waiting for 5 hour rate limit to reset", "time", resetsAt, "module", "task")
+					fmt.Printf("Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
+					time.Sleep(time.Until(resetsAt.Add(10 * time.Second)))
+					fmt.Printf("Rate limit reset, running tasks\n")
+				}
 			}
 		}
 
@@ -255,7 +264,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		if err != nil {
 			result.Status = "failed"
 			result.Error = err.Error()
-			slog.Warn("task failed", "err", err)
+			slog.Warn("task failed", "err", err, "module", "task")
 			fmt.Printf("\nTask failed: %s\nError: %v\n", task.Title, err)
 		} else {
 			result.Status = "completed"
@@ -438,7 +447,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				json.Unmarshal(data, &signal)
 			}
 
-			slog.Debug("signal received", "signal", signal)
+			slog.Debug("signal received", "signal", signal, "module", "task")
 
 			// Signal detected — enter grace period, watching for removal
 			if gracePeriod(ctx, watcher, signalPath, base) {
@@ -449,20 +458,20 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 
 			if planMode {
 				if signal.Event == "PermissionRequest" && signal.ToolName == "ExitPlanMode" {
-					slog.Debug("plan ready")
+					slog.Debug("plan ready", "module", "task")
 
 					// Plan auto-accept before plan is accepted: wait specifically for
 					// the ExitPlanMode permission request, ignore everything else
 					// (including Stop events that fire when Claude finishes planning)
 					if planAutoAccept && !planAccepted {
-						slog.Debug("accepting plan")
+						slog.Debug("accepting plan", "module", "task")
 						planAccepted = true
 						sendTmuxEnter(tmuxSession)
 					} else {
 						sendNotification(signal.SessionID, cwd, "plan ready", "Please review and accept plan")
 					}
 				} else {
-					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event)
+					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event, "module", "task")
 				}
 				signalExists = false
 				continue
@@ -471,16 +480,16 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			// Signal survived grace period — check if any files were actually changed
 			if signal.Event != "Stop" {
 				// Non-Stop signals that weren't handled above — reset and wait
-				slog.Debug("ignoring signal", "event", signal.Event)
+				slog.Debug("ignoring signal", "event", signal.Event, "module", "task")
 				signalExists = false
 				continue
 			}
 			if !hasTrackedChanges(cwd, excludeTaskFiles) {
-				slog.Debug("task produced no file changes", "event", signal.Event)
+				slog.Debug("task produced no file changes", "event", signal.Event, "module", "task")
 				sendNotification(signal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
-			slog.Debug("exiting", "event", signal.Event)
+			slog.Debug("exiting", "event", signal.Event, "module", "task")
 			sendTmuxMessage(tmuxSession, "/exit")
 			return
 		}
