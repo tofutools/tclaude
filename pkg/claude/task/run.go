@@ -18,6 +18,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -182,6 +183,8 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	cfg, _ := config.Load()
+
 	for {
 		usage, err := usageapi.GetCached()
 		if usage == nil {
@@ -194,7 +197,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 				slog.Warn("task run: using stale usage cache", "error", err, "module", "task")
 			}
 			if usage.FiveHour != nil {
-				if int(usage.FiveHour.Pct) >= 100 { // rate limited
+				if usage.FiveHour.Pct > cfg.Tasks.FiveHourRateLimitPercentMaxUsed { // rate limited
 					resetsAt := usage.FiveHour.ResetsAt
 					slog.Debug("Waiting for 5 hour rate limit to reset", "time", resetsAt, "module", "task")
 					fmt.Printf("Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
