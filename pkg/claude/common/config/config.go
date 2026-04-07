@@ -109,10 +109,9 @@ func Load() (*Config, error) {
 	}
 	if config.Tasks == nil {
 		config.Tasks = DefaultConfig().Tasks
-	} else {
-		if config.Tasks.FiveHourRateLimitPercentMaxUsed == 0.0 {
-			config.Tasks.FiveHourRateLimitPercentMaxUsed = DefaultConfig().Tasks.FiveHourRateLimitPercentMaxUsed
-		}
+	} else if v := config.Tasks.FiveHourRateLimitPercentMaxUsed; v < 0 || v > 100 {
+		slog.Warn("Invalid tasks.five_hour_rate_limit_percent_max_used; using default", "value", v)
+		config.Tasks.FiveHourRateLimitPercentMaxUsed = DefaultConfig().Tasks.FiveHourRateLimitPercentMaxUsed
 	}
 
 	return &config, nil
