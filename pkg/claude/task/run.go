@@ -18,7 +18,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -181,7 +183,30 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	cfg, _ := config.Load()
+
 	for {
+		usage, err := usageapi.GetCached()
+		if usage == nil {
+			if err != nil {
+				slog.Warn("task run: unable to check rate limit", "error", err, "module", "task")
+			}
+			// Continue without rate limit check - usage data unavailable
+		} else {
+			if err != nil {
+				slog.Warn("task run: using stale usage cache", "error", err, "module", "task")
+			}
+			if usage.FiveHour != nil {
+				if usage.FiveHour.Pct > cfg.Tasks.FiveHourRateLimitPercentMaxUsed { // rate limited
+					resetsAt := usage.FiveHour.ResetsAt
+					slog.Debug("Waiting for 5 hour rate limit to reset", "time", resetsAt, "module", "task")
+					fmt.Printf("Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
+					time.Sleep(time.Until(resetsAt.Add(10 * time.Second)))
+					fmt.Printf("Rate limit reset, running tasks\n")
+				}
+			}
+		}
+
 		// Re-read TODO.md each iteration (in case it was modified externally)
 		tasks, err := ParseTodoMD(todoPath)
 		if err != nil {
@@ -242,6 +267,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		if err != nil {
 			result.Status = "failed"
 			result.Error = err.Error()
+			slog.Warn("task failed", "err", err, "module", "task")
 			fmt.Printf("\nTask failed: %s\nError: %v\n", task.Title, err)
 		} else {
 			result.Status = "completed"
@@ -354,8 +380,10 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
-	args := []string{prompt}
+	var args []string
 	args = append(args, extraArgs...)
+	args = append(args, "--")
+	args = append(args, strings.ReplaceAll(prompt, "\n", " "))
 
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = cwd
@@ -422,7 +450,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				json.Unmarshal(data, &signal)
 			}
 
-			slog.Debug("signal received", "signal", signal)
+			slog.Debug("signal received", "signal", signal, "module", "task")
 
 			// Signal detected — enter grace period, watching for removal
 			if gracePeriod(ctx, watcher, signalPath, base) {
@@ -433,20 +461,20 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 
 			if planMode {
 				if signal.Event == "PermissionRequest" && signal.ToolName == "ExitPlanMode" {
-					slog.Debug("plan ready")
+					slog.Debug("plan ready", "module", "task")
 
 					// Plan auto-accept before plan is accepted: wait specifically for
 					// the ExitPlanMode permission request, ignore everything else
 					// (including Stop events that fire when Claude finishes planning)
 					if planAutoAccept && !planAccepted {
-						slog.Debug("accepting plan")
+						slog.Debug("accepting plan", "module", "task")
 						planAccepted = true
 						sendTmuxEnter(tmuxSession)
 					} else {
 						sendNotification(signal.SessionID, cwd, "plan ready", "Please review and accept plan")
 					}
 				} else {
-					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event)
+					slog.Debug("ignoring signal while waiting for plan", "event", signal.Event, "module", "task")
 				}
 				signalExists = false
 				continue
@@ -455,16 +483,16 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			// Signal survived grace period — check if any files were actually changed
 			if signal.Event != "Stop" {
 				// Non-Stop signals that weren't handled above — reset and wait
-				slog.Debug("ignoring signal", "event", signal.Event)
+				slog.Debug("ignoring signal", "event", signal.Event, "module", "task")
 				signalExists = false
 				continue
 			}
 			if !hasTrackedChanges(cwd, excludeTaskFiles) {
-				slog.Debug("task produced no file changes", "event", signal.Event)
+				slog.Debug("task produced no file changes", "event", signal.Event, "module", "task")
 				sendNotification(signal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
-			slog.Debug("exiting", "event", signal.Event)
+			slog.Debug("exiting", "event", signal.Event, "module", "task")
 			sendTmuxMessage(tmuxSession, "/exit")
 			return
 		}

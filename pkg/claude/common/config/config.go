@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -13,6 +14,7 @@ type Config struct {
 	AutoCompactPercent *int                `json:"auto_compact_percent,omitempty"`
 	LogLevel           string              `json:"log_level,omitempty"`
 	RecordHooks        bool                `json:"record_hooks,omitempty"`
+	Tasks              *TasksConfig        `json:"tasks,omitempty"`
 }
 
 // NotificationConfig holds settings for OS notifications.
@@ -21,6 +23,11 @@ type NotificationConfig struct {
 	Transitions         []TransitionRule `json:"transitions,omitempty"`
 	CooldownSeconds     int              `json:"cooldown_seconds,omitempty"`
 	NotificationCommand []string         `json:"notification_command,omitempty"`
+}
+
+// TasksConfig holds settings for task runner
+type TasksConfig struct {
+	FiveHourRateLimitPercentMaxUsed float64 `json:"five_hour_rate_limit_percent_max_used"`
 }
 
 // TransitionRule defines a state transition that triggers a notification.
@@ -43,6 +50,9 @@ func DefaultConfig() *Config {
 				{From: "*", To: "exited"},
 			},
 			CooldownSeconds: 5,
+		},
+		Tasks: &TasksConfig{
+			FiveHourRateLimitPercentMaxUsed: 99.0,
 		},
 	}
 }
@@ -70,12 +80,14 @@ func Load() (*Config, error) {
 		if os.IsNotExist(err) {
 			return DefaultConfig(), nil
 		}
-		return nil, err
+		slog.Warn("Unable to load config", "err", err)
+		return DefaultConfig(), err
 	}
 
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
+		slog.Warn("Unable to load config", "err", err)
+		return DefaultConfig(), err
 	}
 
 	// Apply defaults for missing fields
@@ -94,6 +106,12 @@ func Load() (*Config, error) {
 		if len(config.Notifications.Transitions) == 0 {
 			config.Notifications.Transitions = DefaultConfig().Notifications.Transitions
 		}
+	}
+	if config.Tasks == nil {
+		config.Tasks = DefaultConfig().Tasks
+	} else if v := config.Tasks.FiveHourRateLimitPercentMaxUsed; v < 0 || v > 100 {
+		slog.Warn("Invalid tasks.five_hour_rate_limit_percent_max_used; using default", "value", v)
+		config.Tasks.FiveHourRateLimitPercentMaxUsed = DefaultConfig().Tasks.FiveHourRateLimitPercentMaxUsed
 	}
 
 	return &config, nil
