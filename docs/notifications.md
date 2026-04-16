@@ -69,31 +69,35 @@ Each transition rule has `from` and `to` fields. Use `*` as a wildcard to match 
 
 ### Custom Notification Command
 
-You can override the platform-specific notification mechanism with a custom command. The command is specified as an array of strings (program + arguments), where each element may contain these template placeholders:
+You can override the platform-specific notification mechanism with a custom command. The command is specified as an array of strings (program + arguments). When invoked, tclaude writes a JSON object to the command's stdin:
 
-| Placeholder     | Value                                                       |
-|-----------------|-------------------------------------------------------------|
-| `{{sessionID}}` | The full session ID                                         |
-| `{{title}}`     | Notification title (e.g., "Claude: Idle")                   |
-| `{{body}}`      | Notification body (session ID, project, conversation title) |
+```json
+{"title":"Claude: Idle","body":"abc12345 | myproject - My conversation","sessionID":"abc12345..."}
+```
 
-All placeholders are optional — use only the ones you need, in any order.
+| Field       | Value                                                       |
+|-------------|-------------------------------------------------------------|
+| `sessionID` | The full session ID                                         |
+| `title`     | Notification title (e.g., `"Claude: Idle"`)                 |
+| `body`      | Notification body (session ID, project, conversation title) |
+
+The command must complete within 5 seconds; a warning is logged if it times out.
 
 ```json
 {
   "notifications": {
     "enabled": true,
-    "notification_command": ["notify-send", "{{title}}", "{{body}}"]
+    "notification_command": ["my-notifier"]
   }
 }
 ```
 
-Pass parameters as flags in any order:
+The command can take additional fixed arguments:
 ```json
 {
   "notifications": {
     "enabled": true,
-    "notification_command": ["my-notifier", "--session", "{{sessionID}}", "--msg", "{{body}}"]
+    "notification_command": ["my-notifier", "--format", "json"]
   }
 }
 ```
