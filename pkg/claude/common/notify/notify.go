@@ -2,12 +2,16 @@
 package notify
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -119,23 +123,44 @@ func shortID(id string) string {
 	return id[:8]
 }
 
-// runCustomCommand executes a custom notification command with template substitution.
-// Each element in cmdTemplate may contain {{sessionID}}, {{title}}, {{body}} placeholders.
+// runCustomCommand executes a custom notification command, passing notification
+// data as JSON on stdin. The JSON structure is always:
+//
+//	{"title":"...","body":"...","sessionID":"..."}
+//
+// The command is specified as a slice (program + arguments); no placeholder
+// substitution is performed on the arguments. The command must complete within
+// 5 seconds; a warning is logged if it times out.
 func runCustomCommand(cmdTemplate []string, sessionID, title, body string) error {
 	if len(cmdTemplate) == 0 {
 		return fmt.Errorf("empty notification command")
 	}
 
-	r := strings.NewReplacer(
-		"{{sessionID}}", sessionID,
-		"{{title}}", title,
-		"{{body}}", body,
-	)
-
-	args := make([]string, len(cmdTemplate))
-	for i, tmpl := range cmdTemplate {
-		args[i] = r.Replace(tmpl)
+	payload := map[string]string{
+		"title":     title,
+		"body":      body,
+		"sessionID": sessionID,
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal notification payload: %w", err)
 	}
 
-	return exec.Command(args[0], args[1:]...).Run()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, cmdTemplate[0], cmdTemplate[1:]...)
+	cmd.Stdin = io.MultiReader(bytes.NewReader(jsonData), bytes.NewReader([]byte{'\n'}))
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		slog.Warn("notification command timed out", "cmd", cmdTemplate[0], "stdout", stdout.String(), "stderr", stderr.String())
+		return ctx.Err()
+	}
+	if err != nil {
+		slog.Warn("notification command error", "err", err, "stdout", stdout.String(), "stderr", stderr.String())
+	}
+	return err
 }
