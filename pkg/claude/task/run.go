@@ -407,9 +407,10 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 	cmd.Stderr = os.Stderr
 
 	// Start watcher for auto-continue in tmux mode
-	verifyCh := make(chan string, 1)
+	var verifyCh chan string
 	tmuxSession := os.Getenv("TCLAUDE_TASK_TMUX")
 	if tmuxSession != "" {
+		verifyCh = make(chan string, 1)
 		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -516,13 +517,12 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				sendNotification(taskSignal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
-			slog.Debug("exiting", "event", taskSignal.Event)
 			if verifyCmd != "" {
 				output, verifyErr := runVerifyCmd(verifyCmd, cwd)
 				attempts++
-				slog.Debug("verify attempt", "attempt", attempts, "max", verifyMaxRetries, "err", verifyErr)
+				slog.Debug("verify attempt", "attempt", attempts, "max", verifyMaxRetries, "err", verifyErr, "module", "task")
 				if verifyErr != nil {
-					if attempts < verifyMaxRetries {
+					if attempts <= verifyMaxRetries {
 						msg := fmt.Sprintf("Verification failed (attempt %d/%d):\n```\n%s\n```\nPlease fix the issue and try again.", attempts, verifyMaxRetries, output)
 						os.Remove(signalPath)
 						signalExists = false
@@ -531,6 +531,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 					}
 					// Retries exhausted
 					verifyCh <- fmt.Sprintf("verification failed after %d attempt(s):\n```\n%s\n```", attempts, output)
+					slog.Debug("exiting", "event", taskSignal.Event, "module", "task")
 					sendTmuxMessage(tmuxSession, "/exit")
 					return
 				}
