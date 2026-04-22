@@ -185,7 +185,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
 
-	cfg, err := ParseTodoConfig(todoPath)
+	taskCfg, err := ParseTodoConfig(todoPath)
 	if err != nil {
 		return fmt.Errorf("failed to read TODO.md config: %w", err)
 	}
@@ -267,7 +267,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, cfg.VerifyCmd, cfg.MaxVerifyIterations)
+		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, taskCfg.VerifyCmd, taskCfg.MaxVerifyIterations)
 
 		result := TaskResult{
 			Title:     task.Title,
@@ -512,7 +512,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				continue
 			}
 			if !hasTrackedChanges(cwd, excludeTaskFiles) {
-				slog.Debug("task produced no file changes", "event", signal.Event, "module", "task")
+				slog.Debug("task produced no file changes", "event", taskSignal.Event, "module", "task")
 				sendNotification(taskSignal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
@@ -536,7 +536,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				}
 				slog.Debug("verify passed", "attempt", attempts)
 			}
-			slog.Debug("exiting", "event", signal.Event, "module", "task")
+			slog.Debug("exiting", "event", taskSignal.Event, "module", "task")
 			sendTmuxMessage(tmuxSession, "/exit")
 			return
 		}
