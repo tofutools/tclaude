@@ -79,7 +79,8 @@ Optional project-level settings are stored in `tasks.json` alongside your `TODO.
 ```json
 {
   "verify": "go test ./...",
-  "max_verify_iterations": 5
+  "max_verify_iterations": 5,
+  "verify_timeout": "2m"
 }
 ```
 
@@ -87,6 +88,7 @@ Optional project-level settings are stored in `tasks.json` alongside your `TODO.
 |-------------------------|-----------------------------------------------------------------------------|
 | `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`) |
 | `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                  |
+| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`) |
 
 When a `verify` command is set, the task runner executes it after Claude finishes. If it fails, Claude is given the output and asked to fix the issue, then the command is re-run — up to `max_verify_iterations` times. If retries are exhausted, the task is marked as failed.
 

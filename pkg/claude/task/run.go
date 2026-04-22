@@ -169,15 +169,6 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) 
 	return session.AttachToSession(sessionID, tmuxSession, false)
 }
 
-// runVerifyCmd runs a shell verification command in cwd.
-// Returns combined output and the error (nil if the command succeeds).
-func runVerifyCmd(verifyCmd, cwd string) (string, error) {
-	cmd := exec.Command("sh", "-c", verifyCmd)
-	cmd.Dir = cwd
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
-
 // runTaskLoop is the internal loop that runs tasks sequentially.
 // When watch is true, it waits for new tasks instead of exiting when TODO.md is empty.
 func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles bool) error {
@@ -267,7 +258,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, taskCfg.VerifyCmd, taskCfg.MaxVerifyIterations)
+		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, taskCfg.VerifyCmd, taskCfg.MaxVerifyIterations, taskCfg.VerifyTimeout)
 
 		result := TaskResult{
 			Title:     task.Title,
@@ -390,7 +381,7 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 //
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
-func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int) (report string, sessionID string, err error) {
+func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration) (report string, sessionID string, err error) {
 	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
@@ -414,7 +405,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyCh)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyTimeout, verifyCh)
 	}
 
 	err = cmd.Run()
@@ -444,7 +435,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyCh chan<- string) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration, verifyCh chan<- string) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -518,10 +509,16 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				return
 			}
 			if verifyCmd != "" {
-				output, verifyErr := runVerifyCmd(verifyCmd, cwd)
+				if ctx.Err() != nil {
+					return
+				}
+				output, verifyErr := runVerifyCmd(ctx, verifyCmd, cwd, verifyTimeout)
 				attempts++
 				slog.Debug("verify attempt", "attempt", attempts, "max", verifyMaxRetries, "err", verifyErr, "module", "task")
 				if verifyErr != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					if attempts <= verifyMaxRetries {
 						msg := fmt.Sprintf("Verification failed (attempt %d/%d):\n```\n%s\n```\nPlease fix the issue and try again.", attempts, verifyMaxRetries, output)
 						os.Remove(signalPath)
@@ -596,6 +593,17 @@ func gracePeriod(ctx context.Context, watcher *fsnotify.Watcher, signalPath, bas
 			}
 		}
 	}
+}
+
+// runVerifyCmd runs a shell verification command in cwd with the given timeout.
+// Returns combined output and the error (nil if the command succeeds).
+func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Duration) (string, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", verifyCmd)
+	cmd.Dir = cwd
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 // sendTmuxMessage sends arbitrary text + Enter to the tmux session.
