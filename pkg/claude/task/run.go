@@ -185,9 +185,9 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
 
-	taskCfg, err := ParseTodoConfig(todoPath)
+	taskCfg, err := LoadTasksConfig(cwd)
 	if err != nil {
-		return fmt.Errorf("failed to read TODO.md config: %w", err)
+		return fmt.Errorf("failed to read tasks.json: %w", err)
 	}
 
 	hasPermissionMode := slices.Contains(extraClaudeArgs, "--permission-mode")

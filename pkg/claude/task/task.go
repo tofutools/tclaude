@@ -2,11 +2,11 @@ package task
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,61 +15,36 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// TodoConfig holds optional YAML frontmatter configuration from TODO.md.
-type TodoConfig struct {
-	VerifyCmd           string // shell command to run after each task to verify success
-	MaxVerifyIterations int    // max fix-and-retry attempts on verify failure (default 3)
+// TasksConfig holds project-level configuration from tasks.json.
+type TasksConfig struct {
+	VerifyCmd           string `json:"verify,omitempty"`
+	MaxVerifyIterations int    `json:"max_verify_iterations,omitempty"`
 }
 
 const defaultMaxVerifyIterations = 3
 
-// parseFrontmatter extracts YAML-style key:value frontmatter from content.
-// Returns the parsed config and the content with the frontmatter block removed.
-// The frontmatter block is delimited by lines containing only "---".
-func parseFrontmatter(content string) (TodoConfig, string) {
-	cfg := TodoConfig{MaxVerifyIterations: defaultMaxVerifyIterations}
-
-	if !strings.HasPrefix(content, "---\n") {
-		return cfg, content
-	}
-
-	rest := content[4:]
-	fm, remaining, found := strings.Cut(rest, "\n---")
-	if !found {
-		return cfg, content
-	}
-	remaining = strings.TrimPrefix(remaining, "\n")
-
-	for line := range strings.SplitSeq(fm, "\n") {
-		key, val, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-		switch key {
-		case "verify":
-			cfg.VerifyCmd = val
-		case "max_verify_iterations":
-			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				cfg.MaxVerifyIterations = n
-			}
-		}
-	}
-
-	return cfg, remaining
+// TasksConfigPath returns the path to tasks.json in the given directory.
+func TasksConfigPath(dir string) string {
+	return filepath.Join(dir, "tasks.json")
 }
 
-// ParseTodoConfig reads the YAML frontmatter from TODO.md and returns the config.
-func ParseTodoConfig(path string) (TodoConfig, error) {
-	data, err := os.ReadFile(path)
+// LoadTasksConfig reads tasks.json from the given directory.
+// Returns defaults if the file does not exist.
+func LoadTasksConfig(dir string) (TasksConfig, error) {
+	cfg := TasksConfig{MaxVerifyIterations: defaultMaxVerifyIterations}
+	data, err := os.ReadFile(TasksConfigPath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return TodoConfig{MaxVerifyIterations: defaultMaxVerifyIterations}, nil
+			return cfg, nil
 		}
-		return TodoConfig{}, err
+		return cfg, err
 	}
-	cfg, _ := parseFrontmatter(string(data))
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("invalid tasks.json: %w", err)
+	}
+	if cfg.MaxVerifyIterations <= 0 {
+		cfg.MaxVerifyIterations = defaultMaxVerifyIterations
+	}
 	return cfg, nil
 }
 
@@ -168,8 +143,6 @@ func ParseTodoMD(path string) ([]Task, error) {
 }
 
 func parseTasks(content string) []Task {
-	_, content = parseFrontmatter(content)
-
 	var tasks []Task
 	var current *Task
 

@@ -72,6 +72,24 @@ Consider authentication, rate limiting, and error handling.
 
 The session remains interactive throughout — you can still attach to approve permissions or answer questions during implementation. The standard grace period (5 seconds) applies before auto-accept, so if you start typing before then, your interaction takes priority.
 
+## Project Configuration
+
+Optional project-level settings are stored in `tasks.json` alongside your `TODO.md`:
+
+```json
+{
+  "verify": "go test ./...",
+  "max_verify_iterations": 5
+}
+```
+
+| Field                   | Description                                                                 |
+|-------------------------|-----------------------------------------------------------------------------|
+| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`) |
+| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                  |
+
+When a `verify` command is set, the task runner executes it after Claude finishes. If it fails, Claude is given the output and asked to fix the issue, then the command is re-run — up to `max_verify_iterations` times. If retries are exhausted, the task is marked as failed.
+
 ## Commands
 
 ### task add

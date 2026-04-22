@@ -312,79 +312,70 @@ func TestRunAddComma(t *testing.T) {
 	}
 }
 
-func TestParseFrontmatter(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       string
-		wantCmd     string
-		wantMaxIter int
-		wantContent string
-	}{
-		{
-			name:        "no frontmatter",
-			input:       "## Task\n\nDo something\n",
-			wantCmd:     "",
-			wantMaxIter: 3,
-			wantContent: "## Task\n\nDo something\n",
-		},
-		{
-			name:        "verify only",
-			input:       "---\nverify: go test ./...\n---\n\n## Task\n\nDo something\n",
-			wantCmd:     "go test ./...",
-			wantMaxIter: 3,
-			wantContent: "\n## Task\n\nDo something\n",
-		},
-		{
-			name:        "verify and max iterations",
-			input:       "---\nverify: make test\nmax_verify_iterations: 5\n---\n\n## Task\n\nDo something\n",
-			wantCmd:     "make test",
-			wantMaxIter: 5,
-			wantContent: "\n## Task\n\nDo something\n",
-		},
-		{
-			name:        "unclosed frontmatter treated as no frontmatter",
-			input:       "---\nverify: go test ./...\n\n## Task\n\nDo something\n",
-			wantCmd:     "",
-			wantMaxIter: 3,
-			wantContent: "---\nverify: go test ./...\n\n## Task\n\nDo something\n",
-		},
-		{
-			name:        "invalid max_verify_iterations ignored",
-			input:       "---\nverify: go test ./...\nmax_verify_iterations: notanumber\n---\n\n## Task\n",
-			wantCmd:     "go test ./...",
-			wantMaxIter: 3,
-			wantContent: "\n## Task\n",
-		},
-	}
+func TestLoadTasksConfig(t *testing.T) {
+	t.Run("missing file returns defaults", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyCmd != "" {
+			t.Errorf("VerifyCmd = %q, want empty", cfg.VerifyCmd)
+		}
+		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
+			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, content := parseFrontmatter(tt.input)
-			if cfg.VerifyCmd != tt.wantCmd {
-				t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, tt.wantCmd)
-			}
-			if cfg.MaxVerifyIterations != tt.wantMaxIter {
-				t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, tt.wantMaxIter)
-			}
-			if content != tt.wantContent {
-				t.Errorf("remaining content = %q, want %q", content, tt.wantContent)
-			}
-		})
-	}
-}
+	t.Run("verify only", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"go test ./..."}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyCmd != "go test ./..." {
+			t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, "go test ./...")
+		}
+		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
+			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
+		}
+	})
 
-func TestParseTasksWithFrontmatter(t *testing.T) {
-	input := "---\nverify: go test ./...\n---\n\n## Fix the bug\n\nFix it\n"
-	tasks := parseTasks(input)
-	if len(tasks) != 1 {
-		t.Fatalf("got %d tasks, want 1", len(tasks))
-	}
-	if tasks[0].Title != "Fix the bug" {
-		t.Errorf("title = %q, want %q", tasks[0].Title, "Fix the bug")
-	}
-	if tasks[0].Prompt != "Fix it" {
-		t.Errorf("prompt = %q, want %q", tasks[0].Prompt, "Fix it")
-	}
+	t.Run("verify and max iterations", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"make test","max_verify_iterations":5}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyCmd != "make test" {
+			t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, "make test")
+		}
+		if cfg.MaxVerifyIterations != 5 {
+			t.Errorf("MaxVerifyIterations = %d, want 5", cfg.MaxVerifyIterations)
+		}
+	})
+
+	t.Run("zero max_verify_iterations falls back to default", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
+			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
+		}
+	})
+
+	t.Run("invalid JSON returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`not json`), 0644)
+		_, err := LoadTasksConfig(dir)
+		if err == nil {
+			t.Error("expected error for invalid JSON, got nil")
+		}
+	})
 }
 
 func TestParseTodoMDNotFound(t *testing.T) {
