@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -105,13 +106,26 @@ func runHookCallback() error {
 		sessionKey = input.ConvID
 	}
 	if sessionKey != "" {
-		unlock, lockErr := acquireHookLock(sessionKey)
-		if lockErr != nil {
-			slog.Warn("failed to acquire hook lock", "error", lockErr, "module", "hooks")
-			return fmt.Errorf("failed to acquire hook lock: %w", lockErr)
+		lockDir := filepath.Dir(db.DBPath())
+		if lockDir == "" || lockDir == "." {
+			return fmt.Errorf("could not determine lock directory")
+		}
+		if err := os.MkdirAll(lockDir, 0755); err != nil {
+			return fmt.Errorf("failed to create lock dir: %w", err)
 		}
 
-		defer unlock()
+		lockPath := filepath.Join(lockDir, "hook-"+strings.ReplaceAll(sessionKey, "/", "-")+".lock")
+		fl := flock.New(lockPath)
+		if err := fl.Lock(); err != nil {
+			_ = fl.Close()
+			_ = os.Remove(lockPath)
+			return fmt.Errorf("failed to acquire lock: %w", err)
+		}
+
+		defer func() {
+			_ = fl.Unlock()
+			_ = os.Remove(lockPath)
+		}()
 	}
 
 	// Log hook event
