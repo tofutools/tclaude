@@ -17,9 +17,10 @@ import (
 
 // TasksConfig holds project-level configuration from tasks.json.
 type TasksConfig struct {
-	VerifyCmd           string        `json:"verify,omitempty"`
-	MaxVerifyIterations int           `json:"max_verify_iterations,omitempty"`
-	VerifyTimeout       time.Duration `json:"verify_timeout,omitempty"`
+	VerifyCmd           string `json:"verify,omitempty"`
+	MaxVerifyIterations int    `json:"max_verify_iterations,omitempty"`
+	verifyTimeout       string `json:"verify_timeout,omitempty"`
+	VerifyTimeout       time.Duration
 }
 
 const defaultMaxVerifyIterations = 3
@@ -47,8 +48,13 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 	if cfg.MaxVerifyIterations <= 0 {
 		cfg.MaxVerifyIterations = defaultMaxVerifyIterations
 	}
-	if cfg.VerifyTimeout <= 0 {
+	if cfg.verifyTimeout == "" {
 		cfg.VerifyTimeout = defaultVerifyTimeout
+	} else {
+		cfg.VerifyTimeout, err = time.ParseDuration(cfg.verifyTimeout)
+		if err != nil {
+			return cfg, err
+		}
 	}
 	return cfg, nil
 }
