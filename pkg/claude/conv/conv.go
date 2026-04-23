@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 )
 
 // Type aliases - use types from convops to avoid duplication
@@ -25,14 +25,14 @@ type SessionEntry = convops.SessionEntry
 
 // Re-export functions from convops for backward compatibility
 var (
-	ClaudeProjectsDir   = convops.ClaudeProjectsDir
-	PathToProjectDir    = convops.PathToProjectDir
+	ClaudeProjectsDir    = convops.ClaudeProjectsDir
+	PathToProjectDir     = convops.PathToProjectDir
 	GetClaudeProjectPath = convops.GetClaudeProjectPath
-	SaveSessionsIndex   = convops.SaveSessionsIndex
-	FindSessionByID     = convops.FindSessionByID
-	RemoveSessionByID   = convops.RemoveSessionByID
-	CopyDir             = convops.CopyDir
-	CopyFile            = convops.CopyFile
+	SaveSessionsIndex    = convops.SaveSessionsIndex
+	FindSessionByID      = convops.FindSessionByID
+	RemoveSessionByID    = convops.RemoveSessionByID
+	CopyDir              = convops.CopyDir
+	CopyFile             = convops.CopyFile
 	CopyConversationFile = convops.CopyConversationFile
 )
 

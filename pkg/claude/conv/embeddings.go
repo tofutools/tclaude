@@ -50,9 +50,9 @@ type ollamaEmbedRequest struct {
 }
 
 type ollamaEmbedResponse struct {
-	Embeddings     [][]float32 `json:"embeddings"`
-	Error          string      `json:"error,omitempty"`
-	PromptEvalCount int        `json:"prompt_eval_count,omitempty"`
+	Embeddings      [][]float32 `json:"embeddings"`
+	Error           string      `json:"error,omitempty"`
+	PromptEvalCount int         `json:"prompt_eval_count,omitempty"`
 }
 
 var errContextLength = fmt.Errorf("input length exceeds context length")

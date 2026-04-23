@@ -374,4 +374,3 @@ func TestDeleteConversation_LocalMode_UsesModelProjectPath(t *testing.T) {
 		t.Errorf("Expected 0 entries after delete, got %d", len(idx.Entries))
 	}
 }
-

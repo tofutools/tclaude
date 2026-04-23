@@ -62,9 +62,9 @@ func TestResortAndFilter_AllSortKeys(t *testing.T) {
 	}
 
 	tests := []struct {
-		key      string
-		dir      table.SortDirection
-		firstID  string // expected first entry after sort
+		key     string
+		dir     table.SortDirection
+		firstID string // expected first entry after sort
 	}{
 		{"id", table.SortAsc, "aaaa0000-0000-0000-0000-000000000001"},
 		{"id", table.SortDesc, "cccc0000-0000-0000-0000-000000000003"},
@@ -74,8 +74,8 @@ func TestResortAndFilter_AllSortKeys(t *testing.T) {
 		{"size", table.SortDesc, "cccc0000-0000-0000-0000-000000000003"},
 		{"project", table.SortAsc, "aaaa0000-0000-0000-0000-000000000001"},
 		{"project", table.SortDesc, "cccc0000-0000-0000-0000-000000000003"},
-		{"title", table.SortAsc, "aaaa0000-0000-0000-0000-000000000001"},   // Apple
-		{"title", table.SortDesc, "cccc0000-0000-0000-0000-000000000003"},  // Zebra
+		{"title", table.SortAsc, "aaaa0000-0000-0000-0000-000000000001"},  // Apple
+		{"title", table.SortDesc, "cccc0000-0000-0000-0000-000000000003"}, // Zebra
 	}
 
 	for _, tt := range tests {

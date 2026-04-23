@@ -105,10 +105,10 @@ func TestPadFunctions(t *testing.T) {
 			{"hello world", 5, "hell…"},
 			{"", 3, "   "},
 			// Wide character tests - ⚡ has display width 2
-			{"⚡", 2, "⚡"},        // Exactly fits
-			{"⚡", 3, "⚡ "},       // Needs 1 space padding
-			{"⚡", 4, "⚡  "},      // Needs 2 spaces padding
-			{" ▷", 2, " ▷"},       // Narrow chars fit
+			{"⚡", 2, "⚡"},   // Exactly fits
+			{"⚡", 3, "⚡ "},  // Needs 1 space padding
+			{"⚡", 4, "⚡  "}, // Needs 2 spaces padding
+			{" ▷", 2, " ▷"}, // Narrow chars fit
 			// ANSI styled text - escape codes should not affect width
 			{lipgloss.NewStyle().Foreground(lipgloss.Color("46")).Render("⚡"), 2,
 				lipgloss.NewStyle().Foreground(lipgloss.Color("46")).Render("⚡")}, // Styled emoji fits in 2
@@ -602,10 +602,10 @@ func TestSortStateToConfig(t *testing.T) {
 
 func TestHandleSortKey(t *testing.T) {
 	columns := []Column{
-		{Header: "", Width: 2},             // Not sortable
-		{Header: "ID", Width: 10, SortKey: "id"},       // Sortable #1
+		{Header: "", Width: 2},                          // Not sortable
+		{Header: "ID", Width: 10, SortKey: "id"},        // Sortable #1
 		{Header: "NAME", MinWidth: 20, SortKey: "name"}, // Sortable #2
-		{Header: "TITLE", MinWidth: 30},    // Not sortable
+		{Header: "TITLE", MinWidth: 30},                 // Not sortable
 		{Header: "DATE", Width: 16, SortKey: "date"},    // Sortable #3
 	}
 
@@ -655,10 +655,10 @@ func TestHandleSortKey(t *testing.T) {
 
 func TestSortableColumnIndex(t *testing.T) {
 	columns := []Column{
-		{Header: "A"},                      // Not sortable
-		{Header: "B", SortKey: "b"},        // Sortable #1
-		{Header: "C"},                      // Not sortable
-		{Header: "D", SortKey: "d"},        // Sortable #2
+		{Header: "A"},               // Not sortable
+		{Header: "B", SortKey: "b"}, // Sortable #1
+		{Header: "C"},               // Not sortable
+		{Header: "D", SortKey: "d"}, // Sortable #2
 	}
 
 	if idx := SortableColumnIndex(columns, 1); idx != 1 {

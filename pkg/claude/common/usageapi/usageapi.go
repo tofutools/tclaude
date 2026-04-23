@@ -414,7 +414,6 @@ func writeCredentials(store credentialStore, data []byte) error {
 	}
 }
 
-
 // FetchRawWithRetry calls the usage API. On 429 it attempts a token refresh
 // only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default because
 // refreshing from tclaude invalidates Claude Code's in-memory refresh token).

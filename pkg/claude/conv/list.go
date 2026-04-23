@@ -10,27 +10,27 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
-	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
+	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
 
 type ListParams struct {
-	Dir    string `short:"C" long:"dir" optional:"true" help:"Directory to list conversations from (defaults to current directory)"`
-	Global bool   `short:"g" help:"List conversations from all projects"`
-	SortBy string `long:"sort-by" help:"Sort by: created, modified, messages, prompt, project" default:"modified"`
-	Asc    bool   `long:"asc" help:"Sort ascending (default is descending)"`
-	Long   bool   `short:"l" help:"Show detailed output"`
-	Limit  int    `short:"n" help:"Limit number of results (0 = no limit)" default:"0"`
-	JSON   bool   `long:"json" help:"Output as JSON"`
-	Count  bool   `short:"c" long:"count" help:"Only output the count of conversations"`
-	Since  string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Before string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Watch   bool `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
-	Verbose bool `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
-	Reindex bool `long:"reindex" help:"Force rescan all conversations from .jsonl files and update index"`
+	Dir     string `short:"C" long:"dir" optional:"true" help:"Directory to list conversations from (defaults to current directory)"`
+	Global  bool   `short:"g" help:"List conversations from all projects"`
+	SortBy  string `long:"sort-by" help:"Sort by: created, modified, messages, prompt, project" default:"modified"`
+	Asc     bool   `long:"asc" help:"Sort ascending (default is descending)"`
+	Long    bool   `short:"l" help:"Show detailed output"`
+	Limit   int    `short:"n" help:"Limit number of results (0 = no limit)" default:"0"`
+	JSON    bool   `long:"json" help:"Output as JSON"`
+	Count   bool   `short:"c" long:"count" help:"Only output the count of conversations"`
+	Since   string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
+	Before  string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
+	Watch   bool   `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
+	Verbose bool   `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
+	Reindex bool   `long:"reindex" help:"Force rescan all conversations from .jsonl files and update index"`
 }
 
 func ListCmd() *cobra.Command {
