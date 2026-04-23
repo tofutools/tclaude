@@ -10,11 +10,11 @@ import (
 )
 
 var (
-	isWSLCached     bool
-	isWSLChecked    bool
-	isWSLMu         sync.Mutex
-	powershellPath  string
-	powershellOnce  sync.Once
+	isWSLCached    bool
+	isWSLChecked   bool
+	isWSLMu        sync.Mutex
+	powershellPath string
+	powershellOnce sync.Once
 )
 
 // IsWSL returns true if running inside Windows Subsystem for Linux.

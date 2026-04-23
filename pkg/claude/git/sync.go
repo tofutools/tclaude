@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 )
 
 type SyncParams struct {

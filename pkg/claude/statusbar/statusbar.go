@@ -57,8 +57,8 @@ type StatusLineInput struct {
 
 // RateLimits represents the rate limit buckets from Claude Code's statusline input.
 type RateLimits struct {
-	FiveHour      *RateLimitBucket `json:"five_hour"`
-	SevenDay      *RateLimitBucket `json:"seven_day"`
+	FiveHour       *RateLimitBucket `json:"five_hour"`
+	SevenDay       *RateLimitBucket `json:"seven_day"`
 	SevenDaySonnet *RateLimitBucket `json:"seven_day_sonnet"`
 }
 

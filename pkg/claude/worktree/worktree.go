@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type Params struct{}
@@ -39,9 +39,9 @@ func Cmd() *cobra.Command {
 
 // GitInfo contains information about the current git repository
 type GitInfo struct {
-	RepoRoot    string // Absolute path to repo root
-	RepoName    string // Name of the repo (directory name)
-	IsWorktree  bool   // True if current directory is already a worktree
+	RepoRoot     string // Absolute path to repo root
+	RepoName     string // Name of the repo (directory name)
+	IsWorktree   bool   // True if current directory is already a worktree
 	MainWorktree string // Path to the main worktree (if in a linked worktree)
 }
 

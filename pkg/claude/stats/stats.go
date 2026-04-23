@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // StatsCache represents the stats-cache.json file structure
@@ -41,12 +41,12 @@ type DailyTokens struct {
 }
 
 type Model struct {
-	InputTokens             int     `json:"inputTokens"`
-	OutputTokens            int     `json:"outputTokens"`
-	CacheReadInputTokens    int64   `json:"cacheReadInputTokens"`
-	CacheCreationInputTokens int64  `json:"cacheCreationInputTokens"`
-	WebSearchRequests       int     `json:"webSearchRequests"`
-	CostUSD                 float64 `json:"costUSD"`
+	InputTokens              int     `json:"inputTokens"`
+	OutputTokens             int     `json:"outputTokens"`
+	CacheReadInputTokens     int64   `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int64   `json:"cacheCreationInputTokens"`
+	WebSearchRequests        int     `json:"webSearchRequests"`
+	CostUSD                  float64 `json:"costUSD"`
 }
 
 type LongestSession struct {

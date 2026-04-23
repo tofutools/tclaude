@@ -123,7 +123,7 @@ func TestMergeTombstones_EmptySrc(t *testing.T) {
 
 func TestCleanupOldTombstones(t *testing.T) {
 	now := time.Now().UTC()
-	old := now.Add(-40 * 24 * time.Hour) // 40 days ago
+	old := now.Add(-40 * 24 * time.Hour)    // 40 days ago
 	recent := now.Add(-10 * 24 * time.Hour) // 10 days ago
 
 	deletions := &Deletions{

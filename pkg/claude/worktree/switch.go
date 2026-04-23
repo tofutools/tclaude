@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type SwitchParams struct {

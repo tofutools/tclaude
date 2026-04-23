@@ -2,9 +2,9 @@ package git
 
 import (
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/spf13/cobra"
 )
 
 func Cmd() *cobra.Command {

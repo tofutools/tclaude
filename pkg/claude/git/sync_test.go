@@ -213,7 +213,7 @@ func TestMergeSessionsIndex_NewerLocalWins(t *testing.T) {
 			{
 				SessionID:    "session-1",
 				ProjectPath:  "/home/local/git/myproject",
-				MessageCount: 100, // More messages
+				MessageCount: 100,                    // More messages
 				Modified:     "2024-01-20T12:00:00Z", // Newer
 			},
 		},
@@ -228,7 +228,7 @@ func TestMergeSessionsIndex_NewerLocalWins(t *testing.T) {
 			{
 				SessionID:    "session-1",
 				ProjectPath:  "/home/canonical/git/myproject",
-				MessageCount: 50, // Fewer messages
+				MessageCount: 50,                     // Fewer messages
 				Modified:     "2024-01-15T12:00:00Z", // Older
 			},
 		},
