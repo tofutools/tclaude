@@ -368,6 +368,18 @@ func TestLoadTasksConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("timeout", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0,"verify_timeout":"2m"}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyTimeout != 2*time.Minute {
+			t.Errorf("VerifyTimeout = %d, want %d", cfg.VerifyTimeout, 2*time.Minute)
+		}
+	})
+
 	t.Run("invalid JSON returns error", func(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(TasksConfigPath(dir), []byte(`not json`), 0644)
