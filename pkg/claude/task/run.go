@@ -601,7 +601,7 @@ func gracePeriod(ctx context.Context, watcher *fsnotify.Watcher, signalPath, bas
 func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Duration) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", verifyCmd)
+	cmd := exec.CommandContext(timeoutCtx, "bash", "-c", verifyCmd)
 	cmd.Dir = cwd
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
