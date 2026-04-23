@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gofrs/flock"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // acquireHookLock acquires an exclusive file lock for the given session key,
@@ -14,7 +15,7 @@ import (
 // This prevents concurrent hook callbacks for the same session from racing
 // on the read-modify-write of session state.
 func acquireHookLock(sessionKey string) (func(), error) {
-	lockDir := filepath.Join(os.TempDir(), "tclaude-locks")
+	lockDir := filepath.Join(common.CacheDir(), "locks")
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
 		return func() {}, fmt.Errorf("failed to create lock dir: %w", err)
 	}
