@@ -48,6 +48,7 @@ Pass extra Claude flags after -- (e.g., -- --dangerously-skip-permissions).`,
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *RunParams, cmd *cobra.Command, args []string) {
 			if err := runRun(params); err != nil {
+				slog.Warn("Error in task runner", "err", err, "module", "task")
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
