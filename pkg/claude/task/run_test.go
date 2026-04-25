@@ -96,6 +96,7 @@ func setupTclaudeEnv(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	// Reset the db singleton so it re-opens against the temp HOME.
 	db.ResetForTest()
