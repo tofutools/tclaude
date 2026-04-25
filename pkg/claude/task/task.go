@@ -2,6 +2,7 @@ package task
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,50 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/common"
 )
+
+// TasksConfig holds project-level configuration from tasks.json.
+type TasksConfig struct {
+	VerifyCmd           string        `json:"verify,omitempty"`
+	MaxVerifyIterations int           `json:"max_verify_iterations,omitempty"`
+	VerifyTimeoutStr    string        `json:"verify_timeout,omitempty"`
+	VerifyTimeout       time.Duration `json:"-"`
+}
+
+const defaultMaxVerifyIterations = 3
+const defaultVerifyTimeout = time.Minute
+
+// TasksConfigPath returns the path to tasks.json in the given directory.
+func TasksConfigPath(dir string) string {
+	return filepath.Join(dir, "tasks.json")
+}
+
+// LoadTasksConfig reads tasks.json from the given directory.
+// Returns defaults if the file does not exist.
+func LoadTasksConfig(dir string) (TasksConfig, error) {
+	cfg := TasksConfig{MaxVerifyIterations: defaultMaxVerifyIterations}
+	data, err := os.ReadFile(TasksConfigPath(dir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, nil
+		}
+		return cfg, err
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("invalid tasks.json: %w", err)
+	}
+	if cfg.MaxVerifyIterations <= 0 {
+		cfg.MaxVerifyIterations = defaultMaxVerifyIterations
+	}
+	if cfg.VerifyTimeoutStr == "" {
+		cfg.VerifyTimeout = defaultVerifyTimeout
+	} else {
+		cfg.VerifyTimeout, err = time.ParseDuration(cfg.VerifyTimeoutStr)
+		if err != nil {
+			return cfg, err
+		}
+	}
+	return cfg, nil
+}
 
 // Task represents a task to be done
 type Task struct {

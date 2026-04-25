@@ -6,10 +6,11 @@ Run a list of tasks sequentially with Claude Code, with automatic git commits an
 
 Define tasks in a `TODO.md` file at the root of your project (or in a custom directory with `-C`). Each task has a title and a prompt. When you run `tclaude task run`, tasks are executed one by one in a tmux session. After each task:
 
-1. All repository changes are committed to git (using the task title as the commit message)
-2. The task is removed from `TODO.md` and recorded in `DONE.md` with status info
-3. Claude Code's context is cleared (each task runs in a fresh session)
-4. The next task starts automatically
+1. Check if any files have changed, if not the user is notified, and the task runner waits for manual intervention.
+2. All repository changes are committed to git (using the task title as the commit message)
+3. The task is removed from `TODO.md` and recorded in `DONE.md` with status info
+4. Claude Code's context is cleared (each task runs in a fresh session)
+5. The next task starts automatically
 
 When all tasks are done, a desktop notification is sent.
 
@@ -72,6 +73,26 @@ Consider authentication, rate limiting, and error handling.
 
 The session remains interactive throughout — you can still attach to approve permissions or answer questions during implementation. The standard grace period (5 seconds) applies before auto-accept, so if you start typing before then, your interaction takes priority.
 
+## Project Configuration
+
+Optional project-level settings are stored in `tasks.json` alongside your `TODO.md`:
+
+```json
+{
+  "verify": "go test ./...",
+  "max_verify_iterations": 5,
+  "verify_timeout": "2m"
+}
+```
+
+| Field                   | Description                                                                 |
+|-------------------------|-----------------------------------------------------------------------------|
+| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`) |
+| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                  |
+| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`) |
+
+When a `verify` command is set, the task runner executes it after Claude finishes. If it fails, Claude is given the output and asked to fix the issue, then the command is re-run — up to `max_verify_iterations` times. If retries are exhausted, the task runner notifies the user and waits for manual intervention.
+
 ## Commands
 
 ### task add
@@ -130,7 +151,6 @@ tclaude task run -- --dangerously-skip-permissions
 | `-d, --detached`   | Start detached (don't attach to session)                     |
 | `-C, --dir <path>` | Directory containing task files (defaults to current)        |
 | `-w, --watch`      | Watch for new tasks instead of exiting when TODO.md is empty |
-| `--no-tmux`        | Run directly without tmux                                    |
 
 > **Note:** The `-C, --dir` flag is available on all task subcommands (`add`, `list`, `run`) and the parent `task` command itself.
 

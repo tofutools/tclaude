@@ -10,12 +10,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/common/executil"
 )
 
 // IsEnabled returns whether notifications are enabled.
@@ -150,7 +150,7 @@ func runCustomCommand(cmdTemplate []string, sessionID, title, body string) error
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, cmdTemplate[0], cmdTemplate[1:]...)
+	cmd := executil.CommandContext(ctx, cmdTemplate[0], cmdTemplate[1:]...)
 	cmd.Stdin = io.MultiReader(bytes.NewReader(jsonData), bytes.NewReader([]byte{'\n'}))
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

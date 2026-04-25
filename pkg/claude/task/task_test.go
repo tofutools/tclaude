@@ -312,6 +312,163 @@ func TestRunAddComma(t *testing.T) {
 	}
 }
 
+func TestRunAddPlanFlags(t *testing.T) {
+	tests := []struct {
+		name            string
+		args            []string
+		params          AddParams
+		wantPlanMode    bool
+		wantPlanAuto    bool
+	}{
+		{
+			name:         "no flags",
+			args:         []string{"Do the thing", "Implement it"},
+			wantPlanMode: false,
+			wantPlanAuto: false,
+		},
+		{
+			name:         "plan flag",
+			args:         []string{"Design something", "Design it"},
+			params:       AddParams{PlanMode: true},
+			wantPlanMode: true,
+			wantPlanAuto: false,
+		},
+		{
+			name:         "plan-auto flag implies plan",
+			args:         []string{"Design and build", "Design then build"},
+			params:       AddParams{PlanAutoAccept: true},
+			wantPlanMode: true,
+			wantPlanAuto: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.params.Dir = t.TempDir()
+			if err := runAdd(&tt.params, tt.args); err != nil {
+				t.Fatalf("runAdd failed: %v", err)
+			}
+			tasks, err := ParseTodoMD(filepath.Join(tt.params.Dir, "TODO.md"))
+			if err != nil {
+				t.Fatalf("ParseTodoMD failed: %v", err)
+			}
+			if len(tasks) != 1 {
+				t.Fatalf("got %d tasks, want 1", len(tasks))
+			}
+			if tasks[0].PlanMode != tt.wantPlanMode {
+				t.Errorf("PlanMode = %v, want %v", tasks[0].PlanMode, tt.wantPlanMode)
+			}
+			if tasks[0].PlanAutoAccept != tt.wantPlanAuto {
+				t.Errorf("PlanAutoAccept = %v, want %v", tasks[0].PlanAutoAccept, tt.wantPlanAuto)
+			}
+		})
+	}
+}
+
+func TestRunAddAppend(t *testing.T) {
+	dir := t.TempDir()
+	params := &AddParams{Dir: dir}
+
+	if err := runAdd(params, []string{"First task", "Do first thing"}); err != nil {
+		t.Fatalf("first runAdd failed: %v", err)
+	}
+	if err := runAdd(params, []string{"Second task", "Do second thing"}); err != nil {
+		t.Fatalf("second runAdd failed: %v", err)
+	}
+
+	tasks, err := ParseTodoMD(filepath.Join(dir, "TODO.md"))
+	if err != nil {
+		t.Fatalf("ParseTodoMD failed: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("got %d tasks, want 2", len(tasks))
+	}
+	if tasks[0].Title != "First task" || tasks[0].Prompt != "Do first thing" {
+		t.Errorf("task 0 = {%q, %q}, want {First task, Do first thing}", tasks[0].Title, tasks[0].Prompt)
+	}
+	if tasks[1].Title != "Second task" || tasks[1].Prompt != "Do second thing" {
+		t.Errorf("task 1 = {%q, %q}, want {Second task, Do second thing}", tasks[1].Title, tasks[1].Prompt)
+	}
+}
+
+func TestLoadTasksConfig(t *testing.T) {
+	t.Run("missing file returns defaults", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyCmd != "" {
+			t.Errorf("VerifyCmd = %q, want empty", cfg.VerifyCmd)
+		}
+		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
+			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
+		}
+	})
+
+	t.Run("verify only", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"go test ./..."}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyCmd != "go test ./..." {
+			t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, "go test ./...")
+		}
+		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
+			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
+		}
+	})
+
+	t.Run("verify and max iterations", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"make test","max_verify_iterations":5}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyCmd != "make test" {
+			t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, "make test")
+		}
+		if cfg.MaxVerifyIterations != 5 {
+			t.Errorf("MaxVerifyIterations = %d, want 5", cfg.MaxVerifyIterations)
+		}
+	})
+
+	t.Run("zero max_verify_iterations falls back to default", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
+			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0,"verify_timeout":"2m"}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyTimeout != 2*time.Minute {
+			t.Errorf("VerifyTimeout = %d, want %d", cfg.VerifyTimeout, 2*time.Minute)
+		}
+	})
+
+	t.Run("invalid JSON returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`not json`), 0644)
+		_, err := LoadTasksConfig(dir)
+		if err == nil {
+			t.Error("expected error for invalid JSON, got nil")
+		}
+	})
+}
+
 func TestParseTodoMDNotFound(t *testing.T) {
 	tasks, err := ParseTodoMD("/nonexistent/TODO.md")
 	if err != nil {

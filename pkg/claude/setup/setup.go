@@ -26,6 +26,7 @@ type Params struct {
 	Check         bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
 	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
 	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
+	Yes           bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
 }
 
 func Cmd() *cobra.Command {
@@ -66,7 +67,7 @@ func runSetup(params *Params) error {
 		fmt.Println("✗ tmux not found (required for session management)")
 		if runtime.GOOS == "darwin" {
 			if isBrewInstalled() {
-				if askYesNo("Install tmux via Homebrew?", true) {
+				if askYesNo("Install tmux via Homebrew?", true, params.Yes) {
 					fmt.Println("  Installing tmux...")
 					if err := installTmux(); err != nil {
 						fmt.Printf("  Failed to install: %v\n", err)
@@ -123,7 +124,7 @@ func runSetup(params *Params) error {
 	if statusbar.CheckInstalled() {
 		fmt.Println("✓ Status bar already configured")
 	} else {
-		if askYesNo("Install tclaude status bar for Claude Code?", true) {
+		if askYesNo("Install tclaude status bar for Claude Code?", true, params.Yes) {
 			if err := statusbar.Install(); err != nil {
 				fmt.Printf("  Warning: failed to install status bar: %v\n", err)
 			} else {
@@ -163,7 +164,7 @@ func runSetup(params *Params) error {
 		} else {
 			fmt.Println("✗ terminal-notifier not found")
 			if isBrewInstalled() {
-				if askYesNo("Install terminal-notifier via Homebrew?", true) {
+				if askYesNo("Install terminal-notifier via Homebrew?", true, params.Yes) {
 					fmt.Println("  Installing terminal-notifier...")
 					if err := installTerminalNotifier(); err != nil {
 						fmt.Printf("  Failed to install: %v\n", err)
@@ -208,7 +209,7 @@ func runSetup(params *Params) error {
 	if cfg.Notifications != nil && cfg.Notifications.Enabled {
 		fmt.Println("✓ Notifications already enabled")
 	} else {
-		if askYesNo("Enable desktop notifications when Claude needs attention?", true) {
+		if askYesNo("Enable desktop notifications when Claude needs attention?", true, params.Yes) {
 			if cfg.Notifications == nil {
 				cfg.Notifications = config.DefaultConfig().Notifications
 			}
@@ -230,8 +231,13 @@ func runSetup(params *Params) error {
 	return nil
 }
 
-// askYesNo prompts the user for a yes/no answer.
-func askYesNo(prompt string, defaultYes bool) bool {
+// askYesNo prompts the user for a yes/no answer. If assumeYes is true, prints the prompt and returns true without reading input.
+func askYesNo(prompt string, defaultYes bool, assumeYes bool) bool {
+	if assumeYes {
+		fmt.Printf("%s [y]: yes\n", prompt)
+		return true
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 
 	defaultStr := "Y/n"
