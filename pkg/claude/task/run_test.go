@@ -47,6 +47,17 @@ func fakeClaude() {
 		os.WriteFile(filepath.Join(cwd, fmt.Sprintf("result_%d.txt", n)), []byte("done\n"), 0644)
 	case "fail":
 		os.Exit(1)
+	case "print_stdin":
+		_, _ = io.Copy(os.Stdout, os.Stdin)
+	case "count_invocations":
+		// Increment a counter file and print "has feedback" so the review loop gets output.
+		counterPath := filepath.Join(cwd, ".review_counter")
+		data, _ := os.ReadFile(counterPath)
+		n := 0
+		fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+		n++
+		os.WriteFile(counterPath, []byte(fmt.Sprintf("%d", n)), 0644)
+		fmt.Print("has feedback")
 		// "no_change" and default: exit 0, touch nothing.
 	}
 }
@@ -424,5 +435,129 @@ func TestRunTaskLoop_ExcludeTaskFiles(t *testing.T) {
 	}
 	if !strings.Contains(committed, "result.txt") {
 		t.Errorf("result.txt should be committed; committed files:\n%s", committed)
+	}
+}
+
+// ── getGitDiff ────────────────────────────────────────────────────────────────
+
+func TestGetGitDiff_CleanRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	if diff := getGitDiff(dir); diff != "" {
+		t.Errorf("expected empty diff for clean repo, got %q", diff)
+	}
+}
+
+func TestGetGitDiff_WithChanges(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	path := filepath.Join(dir, "file.txt")
+	os.WriteFile(path, []byte("original"), 0644)
+	gitRun(t, dir, "add", "file.txt")
+	gitRun(t, dir, "commit", "-m", "add file")
+	os.WriteFile(path, []byte("modified"), 0644)
+	diff := getGitDiff(dir)
+	if diff == "" {
+		t.Fatal("expected non-empty diff for modified file")
+	}
+	if !strings.Contains(diff, "modified") {
+		t.Errorf("diff should mention modified content, got: %s", diff)
+	}
+}
+
+func TestGetGitDiff_UntrackedFileIgnored(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	// Untracked files don't appear in git diff HEAD
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
+	if diff := getGitDiff(dir); diff != "" {
+		t.Errorf("expected empty diff for untracked-only changes, got %q", diff)
+	}
+}
+
+// ── runReviewAgent ────────────────────────────────────────────────────────────
+
+func TestRunReviewAgent_DiffPrependedToPrompt(t *testing.T) {
+	setupFakeClaude(t, "print_stdin")
+	out, err := runReviewAgent(context.Background(), "review this", "some diff content", t.TempDir(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "some diff content") {
+		t.Errorf("output should contain diff content, got: %q", out)
+	}
+	if !strings.Contains(out, "review this") {
+		t.Errorf("output should contain review prompt, got: %q", out)
+	}
+}
+
+func TestRunReviewAgent_Timeout(t *testing.T) {
+	binDir := t.TempDir()
+	claudeName := "claude"
+	if runtime.GOOS == "windows" {
+		claudeName = "claude.exe"
+	}
+	script := "#!/bin/sh\nsleep 10\n"
+	if err := os.WriteFile(filepath.Join(binDir, claudeName), []byte(script), 0755); err != nil {
+		t.Fatalf("write fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err := runReviewAgent(context.Background(), "review prompt", "some diff", t.TempDir(), 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error for timed-out review agent")
+	}
+}
+
+// ── review iteration loop ─────────────────────────────────────────────────────
+
+// simulateReviewLoop mirrors the reviewAttempts logic in watchForTaskCompletion.
+// It returns how many feedback rounds were sent before the loop exited.
+func simulateReviewLoop(t *testing.T, cwd string, maxIter int) int {
+	t.Helper()
+	reviewAttempts := 0
+	feedbackSent := 0
+	for {
+		out, err := runReviewAgent(context.Background(), "review prompt", "some diff", cwd, 5*time.Second)
+		if err != nil || out == "" {
+			break
+		}
+		if reviewAttempts < maxIter {
+			reviewAttempts++
+			feedbackSent++
+			continue // would send feedback to Claude and wait for next Stop
+		}
+		break // max iterations reached — exit anyway
+	}
+	return feedbackSent
+}
+
+func TestReviewLoop_StopsAtMaxIterations(t *testing.T) {
+	setupFakeClaude(t, "count_invocations")
+	dir := t.TempDir()
+
+	const maxIter = 3
+	feedbackSent := simulateReviewLoop(t, dir, maxIter)
+	if feedbackSent != maxIter {
+		t.Errorf("feedbackSent = %d, want %d", feedbackSent, maxIter)
+	}
+
+	// Verify the fake claude was called maxIter+1 times:
+	// maxIter sends that triggered a loop, plus 1 final call that hit the cap.
+	data, _ := os.ReadFile(filepath.Join(dir, ".review_counter"))
+	n := 0
+	fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+	if n != maxIter+1 {
+		t.Errorf("review agent called %d times, want %d", n, maxIter+1)
+	}
+}
+
+func TestReviewLoop_ExitsImmediatelyWhenNoFeedback(t *testing.T) {
+	setupFakeClaude(t, "no_change") // exits 0, prints nothing
+	dir := t.TempDir()
+
+	feedbackSent := simulateReviewLoop(t, dir, 3)
+	if feedbackSent != 0 {
+		t.Errorf("expected 0 feedback rounds for agent with no output, got %d", feedbackSent)
 	}
 }

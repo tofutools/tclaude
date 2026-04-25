@@ -21,10 +21,16 @@ type TasksConfig struct {
 	MaxVerifyIterations int           `json:"max_verify_iterations,omitempty"`
 	VerifyTimeoutStr    string        `json:"verify_timeout,omitempty"`
 	VerifyTimeout       time.Duration `json:"-"`
+	ReviewPrompt        string        `json:"review_prompt,omitempty"`
+	MaxReviewIterations int           `json:"max_review_iterations,omitempty"`
+	ReviewTimeoutStr    string        `json:"review_timeout,omitempty"`
+	ReviewTimeout       time.Duration `json:"-"`
 }
 
 const defaultMaxVerifyIterations = 3
 const defaultVerifyTimeout = time.Minute
+const defaultMaxReviewIterations = 1
+const defaultReviewTimeout = 5 * time.Minute
 
 // TasksConfigPath returns the path to tasks.json in the given directory.
 func TasksConfigPath(dir string) string {
@@ -34,7 +40,12 @@ func TasksConfigPath(dir string) string {
 // LoadTasksConfig reads tasks.json from the given directory.
 // Returns defaults if the file does not exist.
 func LoadTasksConfig(dir string) (TasksConfig, error) {
-	cfg := TasksConfig{MaxVerifyIterations: defaultMaxVerifyIterations}
+	cfg := TasksConfig{
+		MaxVerifyIterations: defaultMaxVerifyIterations,
+		VerifyTimeout:       defaultVerifyTimeout,
+		MaxReviewIterations: defaultMaxReviewIterations,
+		ReviewTimeout:       defaultReviewTimeout,
+	}
 	data, err := os.ReadFile(TasksConfigPath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -48,10 +59,21 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 	if cfg.MaxVerifyIterations <= 0 {
 		cfg.MaxVerifyIterations = defaultMaxVerifyIterations
 	}
+	if cfg.MaxReviewIterations <= 0 {
+		cfg.MaxReviewIterations = defaultMaxReviewIterations
+	}
 	if cfg.VerifyTimeoutStr == "" {
 		cfg.VerifyTimeout = defaultVerifyTimeout
 	} else {
 		cfg.VerifyTimeout, err = time.ParseDuration(cfg.VerifyTimeoutStr)
+		if err != nil {
+			return cfg, err
+		}
+	}
+	if cfg.ReviewTimeoutStr == "" {
+		cfg.ReviewTimeout = defaultReviewTimeout
+	} else {
+		cfg.ReviewTimeout, err = time.ParseDuration(cfg.ReviewTimeoutStr)
 		if err != nil {
 			return cfg, err
 		}

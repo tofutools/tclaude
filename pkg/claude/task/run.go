@@ -261,7 +261,7 @@ func runTaskLoop(out io.Writer, cwd string, extraClaudeArgs []string, watch, exc
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, taskCfg.VerifyCmd, taskCfg.MaxVerifyIterations, taskCfg.VerifyTimeout)
+		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, taskCfg.VerifyCmd, taskCfg.MaxVerifyIterations, taskCfg.VerifyTimeout, taskCfg.ReviewPrompt, taskCfg.MaxReviewIterations, taskCfg.ReviewTimeout)
 
 		result := TaskResult{
 			Title:     task.Title,
@@ -384,7 +384,7 @@ func waitForTasks(out io.Writer, todoPath string, sigCh <-chan os.Signal) error 
 //
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
-func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration) (report string, sessionID string, err error) {
+func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration, reviewPrompt string, maxReviewIterations int, reviewTimeout time.Duration) (report string, sessionID string, err error) {
 	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
@@ -406,7 +406,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyTimeout)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyTimeout, reviewPrompt, maxReviewIterations, reviewTimeout)
 	}
 
 	err = cmd.Run()
@@ -428,7 +428,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration, reviewPrompt string, maxReviewIterations int, reviewTimeout time.Duration) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -450,6 +450,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 
 	planAccepted := false
 	attempts := 0
+	reviewAttempts := 0
 
 	for {
 		if signalExists {
@@ -528,6 +529,36 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				}
 				slog.Debug("verify passed", "attempt", attempts)
 			}
+			if reviewPrompt != "" {
+				diff := getGitDiff(cwd)
+				if diff == "" {
+					slog.Debug("skipping review: empty diff", "module", "task")
+				} else {
+					if ctx.Err() != nil {
+						return
+					}
+					slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", maxReviewIterations, "module", "task")
+					reviewOutput, reviewErr := runReviewAgent(ctx, reviewPrompt, diff, cwd, reviewTimeout)
+					outputPreview := reviewOutput
+					if len(outputPreview) > 50 {
+						outputPreview = outputPreview[:50]
+					}
+					slog.Debug("review complete", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+					if reviewErr == nil && reviewOutput != "" {
+						if reviewAttempts < maxReviewIterations {
+							reviewAttempts++
+							os.Remove(signalPath)
+							signalExists = false
+							msg := fmt.Sprintf("Review feedback please fix:\n%s", reviewOutput)
+							sendTmuxMessage(tmuxSession, msg)
+							sendTmuxEnter(tmuxSession)
+							attempts = 0 // reset verify attempts for post-review changes
+							continue
+						}
+						slog.Debug("review max iterations reached, proceeding despite feedback", "attempts", reviewAttempts, "module", "task")
+					}
+				}
+			}
 			slog.Debug("exiting", "event", taskSignal.Event, "module", "task")
 			sendTmuxMessage(tmuxSession, "/exit")
 			return
@@ -598,6 +629,31 @@ func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Durat
 	cmd := executil.CommandContext(timeoutCtx, "bash", "-c", verifyCmd)
 	cmd.Dir = cwd
 	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// getGitDiff returns the output of git diff HEAD in cwd, or empty string on error.
+func getGitDiff(cwd string) string {
+	cmd := exec.Command("git", "diff", "HEAD")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// runReviewAgent runs a non-interactive Claude review with the given prompt in cwd.
+// diff is the output of git diff HEAD, appended after reviewPrompt
+// Returns the review output and any error.
+func runReviewAgent(ctx context.Context, reviewPrompt, diff, cwd string, timeout time.Duration) (string, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	prompt := reviewPrompt + "\n```diff\n" + diff + "\n```\n"
+	cmd := executil.CommandContext(timeoutCtx, "claude", "--print", "--permission-mode", "default")
+	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Dir = cwd
+	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
 

@@ -64,6 +64,17 @@ func (c *Cmd) Run() error {
 	return c.Wait()
 }
 
+// Output runs the command and returns its stdout output.
+func (c *Cmd) Output() ([]byte, error) {
+	if c.Stdout != nil {
+		return nil, errors.New("exec: Stdout already set")
+	}
+	var b bytes.Buffer
+	c.Stdout = &b
+	err := c.Run()
+	return b.Bytes(), err
+}
+
 // CombinedOutput runs the command and returns combined stdout+stderr output.
 func (c *Cmd) CombinedOutput() ([]byte, error) {
 	if c.Stdout != nil {

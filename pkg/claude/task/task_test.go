@@ -314,11 +314,11 @@ func TestRunAddComma(t *testing.T) {
 
 func TestRunAddPlanFlags(t *testing.T) {
 	tests := []struct {
-		name            string
-		args            []string
-		params          AddParams
-		wantPlanMode    bool
-		wantPlanAuto    bool
+		name         string
+		args         []string
+		params       AddParams
+		wantPlanMode bool
+		wantPlanAuto bool
 	}{
 		{
 			name:         "no flags",
@@ -456,6 +456,71 @@ func TestLoadTasksConfig(t *testing.T) {
 		}
 		if cfg.VerifyTimeout != 2*time.Minute {
 			t.Errorf("VerifyTimeout = %d, want %d", cfg.VerifyTimeout, 2*time.Minute)
+		}
+	})
+
+	t.Run("max_review_iterations default", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxReviewIterations != defaultMaxReviewIterations {
+			t.Errorf("MaxReviewIterations = %d, want %d", cfg.MaxReviewIterations, defaultMaxReviewIterations)
+		}
+	})
+
+	t.Run("max_review_iterations custom", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_review_iterations":3}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxReviewIterations != 3 {
+			t.Errorf("MaxReviewIterations = %d, want 3", cfg.MaxReviewIterations)
+		}
+	})
+
+	t.Run("zero max_review_iterations falls back to default", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_review_iterations":0}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxReviewIterations != defaultMaxReviewIterations {
+			t.Errorf("MaxReviewIterations = %d, want %d", cfg.MaxReviewIterations, defaultMaxReviewIterations)
+		}
+	})
+
+	t.Run("review_timeout default", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewTimeout != defaultReviewTimeout {
+			t.Errorf("ReviewTimeout = %v, want %v", cfg.ReviewTimeout, defaultReviewTimeout)
+		}
+	})
+
+	t.Run("review_timeout custom", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"review_timeout":"10m"}`), 0644)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewTimeout != 10*time.Minute {
+			t.Errorf("ReviewTimeout = %v, want 10m", cfg.ReviewTimeout)
+		}
+	})
+
+	t.Run("invalid review_timeout returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(TasksConfigPath(dir), []byte(`{"review_timeout":"notaduration"}`), 0644)
+		_, err := LoadTasksConfig(dir)
+		if err == nil {
+			t.Error("expected error for invalid review_timeout, got nil")
 		}
 	})
 

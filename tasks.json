@@ -1,5 +1,7 @@
 {
   "verify": "./verify.sh",
   "max_verify_iterations": 5,
-  "verify_timeout": "10s"
+  "verify_timeout": "10s",
+  "review_prompt": "You are an expert code reviewer. Analyze the following diff and provide a thorough code review that includes:\n- Analysis of code quality and style\n- Specific suggestions for improvements\n- Any potential issues or risks\nFocus on:\n- Code correctness\n- Following project conventions\n- Performance implications\n- Test coverage\n- Security considerations\nFormat your review as action points to address your findings. If there is nothing worth changing, do not output anything.",
+  "max_review_iterations": 3
 }
