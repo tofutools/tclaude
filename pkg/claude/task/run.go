@@ -517,6 +517,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						signalExists = false
 						msg := fmt.Sprintf("Verification failed (attempt %d/%d), please fix the issue and try again:\n```\n%s\n```\n", attempts, verifyMaxRetries, output)
 						sendTmuxMessage(tmuxSession, msg)
+						sendTmuxEnter(tmuxSession)
 						continue
 					}
 					// Retries exhausted
