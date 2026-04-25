@@ -65,6 +65,14 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 }
 
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
 // setupFakeClaude copies the current test binary as "claude" into a temp bin
 // dir, prepends it to PATH, and sets FAKE_CLAUDE / FAKE_CLAUDE_BEHAVIOR.
 func setupFakeClaude(t *testing.T, behavior string) {
@@ -132,8 +140,8 @@ func TestHasTrackedChanges_ModifiedTrackedFile(t *testing.T) {
 	initGitRepo(t, dir)
 	path := filepath.Join(dir, "file.txt")
 	os.WriteFile(path, []byte("original"), 0644)
-	exec.Command("git", "-C", dir, "add", "file.txt").Run()
-	exec.Command("git", "-C", dir, "commit", "-m", "add file").Run()
+	gitRun(t, dir, "add", "file.txt")
+	gitRun(t, dir, "commit", "-m", "add file")
 	os.WriteFile(path, []byte("modified"), 0644)
 	if !hasTrackedChanges(dir, false) {
 		t.Error("expected true for modified tracked file")
