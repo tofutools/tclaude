@@ -512,14 +512,14 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						return
 					}
 					if attempts <= verifyMaxRetries {
-						msg := fmt.Sprintf("Verification failed (attempt %d/%d):\n```\n%s\n```\nPlease fix the issue and try again.", attempts, verifyMaxRetries, output)
 						os.Remove(signalPath)
 						signalExists = false
+						msg := fmt.Sprintf("Verification failed (attempt %d/%d), please fix the issue and try again:\n```\n%s\n```\n", attempts, verifyMaxRetries, output)
 						sendTmuxMessage(tmuxSession, msg)
 						continue
 					}
 					// Retries exhausted
-					msg := fmt.Sprintf("verification failed after %d attempt(s):\n```\n%s\n```", attempts, output)
+					msg := fmt.Sprintf("verification failed after %d attempt(s): %s", attempts, output)
 					slog.Debug(msg, "event", taskSignal.Event, "module", "task")
 					sendNotification(taskSignal.SessionID, cwd, "waiting", msg)
 					return
