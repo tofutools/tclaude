@@ -399,14 +399,12 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 	cmd.Stderr = os.Stderr
 
 	// Start watcher for auto-continue in tmux mode
-	var verifyCh chan string
 	tmuxSession := os.Getenv("TCLAUDE_TASK_TMUX")
 	if tmuxSession != "" {
-		verifyCh = make(chan string, 1)
 		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyTimeout, verifyCh)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyTimeout)
 	}
 
 	err = cmd.Run()
@@ -421,14 +419,6 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 	}
 	os.Remove(signalPath)
 
-	select {
-	case failMsg := <-verifyCh:
-		if err == nil {
-			err = fmt.Errorf("verification failed: %s", failMsg)
-		}
-	default:
-	}
-
 	return report, sessionID, err
 }
 
@@ -436,7 +426,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration, verifyCh chan<- string) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -528,9 +518,9 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						continue
 					}
 					// Retries exhausted
-					verifyCh <- fmt.Sprintf("verification failed after %d attempt(s):\n```\n%s\n```", attempts, output)
-					slog.Debug("exiting", "event", taskSignal.Event, "module", "task")
-					sendTmuxMessage(tmuxSession, "/exit")
+					msg := fmt.Sprintf("verification failed after %d attempt(s):\n```\n%s\n```", attempts, output)
+					slog.Debug(msg, "event", taskSignal.Event, "module", "task")
+					sendNotification(taskSignal.SessionID, cwd, "waiting", msg)
 					return
 				}
 				slog.Debug("verify passed", "attempt", attempts)
