@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +26,7 @@ func TestMain(m *testing.M) {
 		fakeClaude()
 		os.Exit(0)
 	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	os.Exit(m.Run())
 }
 
@@ -296,7 +299,7 @@ func TestRunTaskLoop_SingleTaskCompletes(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(dir, nil, false, false); err != nil {
+	if err := runTaskLoop(io.Discard, dir, nil, false, false); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -330,7 +333,7 @@ func TestRunTaskLoop_ClaudeFails(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	err := runTaskLoop(dir, nil, false, false)
+	err := runTaskLoop(io.Discard, dir, nil, false, false)
 	if err == nil {
 		t.Fatal("expected error from failing claude")
 	}
@@ -354,7 +357,7 @@ func TestRunTaskLoop_NoFileChanges(t *testing.T) {
 	}
 
 	// excludeTaskFiles=true so that writing empty TODO.md doesn't count as work.
-	err := runTaskLoop(dir, nil, false, true)
+	err := runTaskLoop(io.Discard, dir, nil, false, true)
 	if err == nil {
 		t.Fatal("expected error when no files changed")
 	}
@@ -377,7 +380,7 @@ func TestRunTaskLoop_MultipleTasksSequential(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(dir, nil, false, false); err != nil {
+	if err := runTaskLoop(io.Discard, dir, nil, false, false); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -406,7 +409,7 @@ func TestRunTaskLoop_ExcludeTaskFiles(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(dir, nil, false, true); err != nil {
+	if err := runTaskLoop(io.Discard, dir, nil, false, true); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 

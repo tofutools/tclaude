@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -82,7 +83,7 @@ func runRun(params *RunParams) error {
 	excludeTaskFiles := params.Dir == "" && os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 
 	if os.Getenv("TCLAUDE_TASK_TMUX") != "" {
-		return runTaskLoop(cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch, excludeTaskFiles)
+		return runTaskLoop(os.Stdout, cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch, excludeTaskFiles)
 	}
 
 	// Run in tmux session
@@ -173,7 +174,7 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) 
 
 // runTaskLoop is the internal loop that runs tasks sequentially.
 // When watch is true, it waits for new tasks instead of exiting when TODO.md is empty.
-func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles bool) error {
+func runTaskLoop(out io.Writer, cwd string, extraClaudeArgs []string, watch, excludeTaskFiles bool) error {
 	todoPath := TodoPath(cwd)
 	doingPath := DoingPath(cwd)
 	donePath := DonePath(cwd)
@@ -207,9 +208,9 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 				if usage.FiveHour.Pct > cfg.Tasks.FiveHourRateLimitPercentMaxUsed { // rate limited
 					resetsAt := usage.FiveHour.ResetsAt
 					slog.Debug("Waiting for 5 hour rate limit to reset", "time", resetsAt, "module", "task")
-					fmt.Printf("Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
+					fmt.Fprintf(out, "Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
 					time.Sleep(time.Until(resetsAt.Add(10 * time.Second)))
-					fmt.Printf("Rate limit reset, running tasks\n")
+					fmt.Fprintf(out, "Rate limit reset, running tasks\n")
 				}
 			}
 		}
@@ -224,7 +225,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 				break
 			}
 			// Watch mode: wait for tasks to appear
-			if err := waitForTasks(todoPath, sigCh); err != nil {
+			if err := waitForTasks(out, todoPath, sigCh); err != nil {
 				return err
 			}
 			continue
@@ -234,9 +235,9 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		remaining := tasks[1:]
 		totalOriginal := len(tasks)
 
-		fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-		fmt.Printf("Task: %s (%d remaining)\n", task.Title, totalOriginal)
-		fmt.Printf("%s\n\n", strings.Repeat("=", 60))
+		fmt.Fprintf(out, "\n%s\n", strings.Repeat("=", 60))
+		fmt.Fprintf(out, "Task: %s (%d remaining)\n", task.Title, totalOriginal)
+		fmt.Fprintf(out, "%s\n\n", strings.Repeat("=", 60))
 
 		// Move task from TODO.md to DOING.md
 		if err := WriteDoingMD(doingPath, task); err != nil {
@@ -275,10 +276,10 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 			result.Status = "failed"
 			result.Error = runErr.Error()
 			slog.Warn("task failed", "err", runErr, "module", "task")
-			fmt.Printf("\nTask failed: %s\nError: %v\n", task.Title, runErr)
+			fmt.Fprintf(out, "\nTask failed: %s\nError: %v\n", task.Title, runErr)
 		} else {
 			result.Status = "completed"
-			fmt.Printf("\nTask completed: %s\n", task.Title)
+			fmt.Fprintf(out, "\nTask completed: %s\n", task.Title)
 		}
 
 		// Move the task from DOING.md to DONE.md
@@ -293,7 +294,7 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		if result.Status == "completed" && result.Commit == "" {
 			result.Status = "failed"
 			result.Error = "no files were changed"
-			fmt.Printf("\nTask not completed (no files to commit): %s\n", task.Title)
+			fmt.Fprintf(out, "\nTask not completed (no files to commit): %s\n", task.Title)
 		}
 
 		if err := AppendDoneMD(donePath, result); err != nil {
@@ -306,9 +307,9 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 		}
 	}
 
-	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	fmt.Println("All tasks completed!")
-	fmt.Printf("%s\n", strings.Repeat("=", 60))
+	fmt.Fprintf(out, "\n%s\n", strings.Repeat("=", 60))
+	fmt.Fprintln(out, "All tasks completed!")
+	fmt.Fprintf(out, "%s\n", strings.Repeat("=", 60))
 
 	sendNotification("tasks", cwd, "completed", "All tasks completed!")
 
@@ -316,8 +317,8 @@ func runTaskLoop(cwd string, extraClaudeArgs []string, watch, excludeTaskFiles b
 }
 
 // waitForTasks watches TODO.md using fsnotify until tasks appear or a signal is received.
-func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
-	fmt.Println("\nWatching for new tasks in TODO.md... (Ctrl-C to stop)")
+func waitForTasks(out io.Writer, todoPath string, sigCh <-chan os.Signal) error {
+	fmt.Fprintln(out, "\nWatching for new tasks in TODO.md... (Ctrl-C to stop)")
 
 	// Watch the directory containing TODO.md (file may not exist yet)
 	dir := filepath.Dir(todoPath)
@@ -335,14 +336,14 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 
 	// Check once immediately in case tasks were added before we started watching
 	if tasks, err := ParseTodoMD(todoPath); err == nil && len(tasks) > 0 {
-		fmt.Printf("Found %d new task(s) in TODO.md\n", len(tasks))
+		fmt.Fprintf(out, "Found %d new task(s) in TODO.md\n", len(tasks))
 		return nil
 	}
 
 	for {
 		select {
 		case <-sigCh:
-			fmt.Println("\nReceived signal, stopping task watcher.")
+			fmt.Fprintln(out, "\nReceived signal, stopping task watcher.")
 			return fmt.Errorf("interrupted")
 		case event, ok := <-watcher.Events:
 			if !ok {
@@ -359,7 +360,7 @@ func waitForTasks(todoPath string, sigCh <-chan os.Signal) error {
 				return fmt.Errorf("failed to read TODO.md: %w", err)
 			}
 			if len(tasks) > 0 {
-				fmt.Printf("Found %d new task(s) in TODO.md\n", len(tasks))
+				fmt.Fprintf(out, "Found %d new task(s) in TODO.md\n", len(tasks))
 				return nil
 			}
 		case err, ok := <-watcher.Errors:
