@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/common/executil"
 )
 
 type RunParams struct {
@@ -592,7 +593,7 @@ func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Durat
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Using `bash` rather than `sh` to be consistent with how Claude Code executes commands
-	cmd := exec.CommandContext(timeoutCtx, "bash", "-c", verifyCmd)
+	cmd := executil.CommandContext(timeoutCtx, "bash", "-c", verifyCmd)
 	cmd.Dir = cwd
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
