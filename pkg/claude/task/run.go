@@ -591,6 +591,7 @@ func gracePeriod(ctx context.Context, watcher *fsnotify.Watcher, signalPath, bas
 func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Duration) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// Using `bash` rather than `sh` to be consistent with how Claude Code executes commands
 	cmd := exec.CommandContext(timeoutCtx, "bash", "-c", verifyCmd)
 	cmd.Dir = cwd
 	out, err := cmd.CombinedOutput()
