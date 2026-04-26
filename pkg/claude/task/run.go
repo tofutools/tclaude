@@ -566,22 +566,22 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				slog.Debug("verify passed", "attempt", attempts)
 			}
 			if opts.reviewPrompt != "" {
-				diff := getGitDiff(cwd, baseCommit)
-				if diff == "" {
-					slog.Debug("skipping review: empty diff", "module", "task")
-				} else {
-					if ctx.Err() != nil {
-						return
-					}
-					slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
-					reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewPrompt, diff, cwd, opts.reviewTimeout)
-					outputPreview := reviewOutput
-					if r := []rune(reviewOutput); len(r) > 50 {
-						outputPreview = string(r[:50])
-					}
-					slog.Debug("review complete", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
-					if reviewErr == nil && reviewOutput != "" {
-						if reviewAttempts < opts.maxReviewIterations {
+				if reviewAttempts < opts.maxReviewIterations {
+					diff := getGitDiff(cwd, baseCommit)
+					if diff == "" {
+						slog.Debug("skipping review: empty diff", "module", "task")
+					} else {
+						if ctx.Err() != nil {
+							return
+						}
+						slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
+						reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewPrompt, diff, cwd, opts.reviewTimeout)
+						outputPreview := reviewOutput
+						if r := []rune(reviewOutput); len(r) > 50 {
+							outputPreview = string(r[:50])
+						}
+						slog.Debug("review complete", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+						if reviewErr == nil && reviewOutput != "" {
 							reviewAttempts++
 							os.Remove(signalPath)
 							signalExists = false
@@ -591,8 +591,9 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 							attempts = 0 // reset verify attempts for post-review changes
 							continue
 						}
-						slog.Debug("review max iterations reached, proceeding despite feedback", "attempts", reviewAttempts, "module", "task")
 					}
+				} else {
+					slog.Info("review max iterations reached, proceeding anyway", "attempts", reviewAttempts, "module", "task")
 				}
 			}
 			slog.Debug("exiting", "event", taskSignal.Event, "module", "task")
