@@ -49,6 +49,8 @@ func fakeClaude() {
 		os.Exit(1)
 	case "print_stdin":
 		_, _ = io.Copy(os.Stdout, os.Stdin)
+	case "sleep":
+		time.Sleep(10 * time.Second)
 	case "count_invocations":
 		// Increment a counter file and print "has feedback" so the review loop gets output.
 		counterPath := filepath.Join(cwd, ".review_counter")
@@ -492,17 +494,7 @@ func TestRunReviewAgent_DiffPrependedToPrompt(t *testing.T) {
 }
 
 func TestRunReviewAgent_Timeout(t *testing.T) {
-	binDir := t.TempDir()
-	claudeName := "claude"
-	if runtime.GOOS == "windows" {
-		claudeName = "claude.exe"
-	}
-	script := "#!/bin/sh\nsleep 10\n"
-	if err := os.WriteFile(filepath.Join(binDir, claudeName), []byte(script), 0755); err != nil {
-		t.Fatalf("write fake claude: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
+	setupFakeClaude(t, "sleep")
 	_, err := runReviewAgent(context.Background(), "review prompt", "some diff", t.TempDir(), 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected error for timed-out review agent")

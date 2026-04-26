@@ -540,8 +540,8 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 					slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", maxReviewIterations, "module", "task")
 					reviewOutput, reviewErr := runReviewAgent(ctx, reviewPrompt, diff, cwd, reviewTimeout)
 					outputPreview := reviewOutput
-					if len(outputPreview) > 50 {
-						outputPreview = outputPreview[:50]
+					if r := []rune(reviewOutput); len(r) > 50 {
+						outputPreview = string(r[:50])
 					}
 					slog.Debug("review complete", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
 					if reviewErr == nil && reviewOutput != "" {
@@ -549,7 +549,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 							reviewAttempts++
 							os.Remove(signalPath)
 							signalExists = false
-							msg := fmt.Sprintf("Review feedback please fix:\n%s", reviewOutput)
+							msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
 							sendTmuxMessage(tmuxSession, msg)
 							sendTmuxEnter(tmuxSession)
 							attempts = 0 // reset verify attempts for post-review changes
@@ -638,6 +638,7 @@ func getGitDiff(cwd string) string {
 	cmd.Dir = cwd
 	out, err := cmd.Output()
 	if err != nil {
+		slog.Warn("git diff HEAD failed", "err", err, "module", "task")
 		return ""
 	}
 	return strings.TrimSpace(string(out))
