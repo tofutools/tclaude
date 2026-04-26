@@ -47,6 +47,19 @@ func fakeClaude() {
 		os.WriteFile(filepath.Join(cwd, fmt.Sprintf("result_%d.txt", n)), []byte("done\n"), 0644)
 	case "fail":
 		os.Exit(1)
+	case "print_stdin":
+		_, _ = io.Copy(os.Stdout, os.Stdin)
+	case "sleep":
+		time.Sleep(10 * time.Second)
+	case "count_invocations":
+		// Increment a counter file and print "has feedback" so the review loop gets output.
+		counterPath := filepath.Join(cwd, ".review_counter")
+		data, _ := os.ReadFile(counterPath)
+		n := 0
+		fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+		n++
+		os.WriteFile(counterPath, []byte(fmt.Sprintf("%d", n)), 0644)
+		fmt.Print("has feedback")
 		// "no_change" and default: exit 0, touch nothing.
 	}
 }
@@ -133,7 +146,11 @@ func setupTclaudeEnv(t *testing.T) {
 func TestHasTrackedChanges_Clean(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	if hasTrackedChanges(dir, false) {
+	got, err := hasTrackedChanges(dir, false, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
 		t.Error("expected false for clean repo")
 	}
 }
@@ -146,7 +163,11 @@ func TestHasTrackedChanges_ModifiedTrackedFile(t *testing.T) {
 	gitRun(t, dir, "add", "file.txt")
 	gitRun(t, dir, "commit", "-m", "add file")
 	os.WriteFile(path, []byte("modified"), 0644)
-	if !hasTrackedChanges(dir, false) {
+	got, err := hasTrackedChanges(dir, false, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Error("expected true for modified tracked file")
 	}
 }
@@ -155,7 +176,11 @@ func TestHasTrackedChanges_UntrackedFile(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
-	if !hasTrackedChanges(dir, false) {
+	got, err := hasTrackedChanges(dir, false, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Error("expected true for untracked file")
 	}
 }
@@ -165,7 +190,11 @@ func TestHasTrackedChanges_OnlyTaskFilesExcluded(t *testing.T) {
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "DOING.md"), []byte("## t\n\np\n"), 0644)
-	if hasTrackedChanges(dir, true) {
+	got, err := hasTrackedChanges(dir, true, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
 		t.Error("expected false when only task files present and excludeTaskFiles=true")
 	}
 }
@@ -175,8 +204,95 @@ func TestHasTrackedChanges_TaskAndOtherFilesExcluded(t *testing.T) {
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("work"), 0644)
-	if !hasTrackedChanges(dir, true) {
+	got, err := hasTrackedChanges(dir, true, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Error("expected true when non-task file is also present")
+	}
+}
+
+func TestHasTrackedChanges_AgentCommit(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit, err := getCurrentCommit(dir)
+	if err != nil {
+		t.Fatalf("getCurrentCommit: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
+	gitRun(t, dir, "add", "result.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+	got, err := hasTrackedChanges(dir, false, baseCommit)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected true when agent committed a file")
+	}
+}
+
+func TestHasTrackedChanges_AgentCommitOnlyTaskFiles(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit, err := getCurrentCommit(dir)
+	if err != nil {
+		t.Fatalf("getCurrentCommit: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte(""), 0644)
+	gitRun(t, dir, "add", "TODO.md")
+	gitRun(t, dir, "commit", "-m", "update tasks")
+	got, err := hasTrackedChanges(dir, true, baseCommit)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Error("expected false when agent only committed task files and excludeTaskFiles=true")
+	}
+}
+
+func TestHasTrackedChanges_AgentCommitNonTaskFile(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit, err := getCurrentCommit(dir)
+	if err != nil {
+		t.Fatalf("getCurrentCommit: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
+	gitRun(t, dir, "add", "TODO.md", "result.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+	got, err := hasTrackedChanges(dir, true, baseCommit)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected true when agent committed result.txt alongside task files")
+	}
+}
+
+// ── getCurrentCommit ──────────────────────────────────────────────────────────
+
+func TestGetCurrentCommit_ValidRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	commit, err := getCurrentCommit(dir)
+	if err != nil {
+		t.Fatalf("expected no error for valid repo, got: %v", err)
+	}
+	if commit == "" {
+		t.Fatal("expected non-empty commit hash for valid repo")
+	}
+	if len(commit) < 40 {
+		t.Errorf("expected hex SHA of at least 40 characters, got %q (len %d)", commit, len(commit))
+	}
+}
+
+func TestGetCurrentCommit_NotARepo(t *testing.T) {
+	dir := t.TempDir()
+	commit, err := getCurrentCommit(dir)
+	if err == nil {
+		t.Errorf("expected error for non-repo directory, got commit %q", commit)
 	}
 }
 
@@ -299,7 +415,7 @@ func TestRunTaskLoop_SingleTaskCompletes(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, nil, false, false); err != nil {
+	if err := runTaskLoop(io.Discard, dir, dir, nil, false, false); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -333,7 +449,7 @@ func TestRunTaskLoop_ClaudeFails(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	err := runTaskLoop(io.Discard, dir, nil, false, false)
+	err := runTaskLoop(io.Discard, dir, dir, nil, false, false)
 	if err == nil {
 		t.Fatal("expected error from failing claude")
 	}
@@ -357,7 +473,7 @@ func TestRunTaskLoop_NoFileChanges(t *testing.T) {
 	}
 
 	// excludeTaskFiles=true so that writing empty TODO.md doesn't count as work.
-	err := runTaskLoop(io.Discard, dir, nil, false, true)
+	err := runTaskLoop(io.Discard, dir, dir, nil, false, true)
 	if err == nil {
 		t.Fatal("expected error when no files changed")
 	}
@@ -380,7 +496,7 @@ func TestRunTaskLoop_MultipleTasksSequential(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, nil, false, false); err != nil {
+	if err := runTaskLoop(io.Discard, dir, dir, nil, false, false); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -409,7 +525,7 @@ func TestRunTaskLoop_ExcludeTaskFiles(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, nil, false, true); err != nil {
+	if err := runTaskLoop(io.Discard, dir, dir, nil, false, true); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -424,5 +540,346 @@ func TestRunTaskLoop_ExcludeTaskFiles(t *testing.T) {
 	}
 	if !strings.Contains(committed, "result.txt") {
 		t.Errorf("result.txt should be committed; committed files:\n%s", committed)
+	}
+}
+
+func TestRunTaskLoop_SeparateTaskDir(t *testing.T) {
+	// Verifies that taskDir controls where task files are read from while cwd
+	// controls where Claude runs (and where git commits land).
+	setupTclaudeEnv(t)
+	cwd := t.TempDir()
+	taskDir := filepath.Join(cwd, "tasks")
+	if err := os.Mkdir(taskDir, 0755); err != nil {
+		t.Fatalf("mkdir taskDir: %v", err)
+	}
+	initGitRepo(t, cwd)
+	setupFakeClaude(t, "create_file") // writes result.txt into os.Getwd() (cwd)
+
+	if err := WriteTodoMD(TodoPath(taskDir), []Task{{Title: "Separate dir task", Prompt: "Do something"}}); err != nil {
+		t.Fatalf("WriteTodoMD: %v", err)
+	}
+
+	if err := runTaskLoop(io.Discard, cwd, taskDir, nil, false, false); err != nil {
+		t.Fatalf("runTaskLoop: %v", err)
+	}
+
+	// Task management files should be in taskDir.
+	remaining, _ := ParseTodoMD(TodoPath(taskDir))
+	if len(remaining) != 0 {
+		t.Errorf("expected empty TODO.md in taskDir, got %d tasks", len(remaining))
+	}
+	doneData, err := os.ReadFile(DonePath(taskDir))
+	if err != nil {
+		t.Fatalf("DONE.md should exist in taskDir: %v", err)
+	}
+	if !strings.Contains(string(doneData), "## Separate dir task") {
+		t.Error("DONE.md in taskDir missing task title")
+	}
+	// result.txt was created in cwd (where fake claude ran), and committed there.
+	if _, err := os.Stat(filepath.Join(cwd, "result.txt")); err != nil {
+		t.Errorf("result.txt should exist in cwd: %v", err)
+	}
+	// The commit should be on cwd's repo, not inside taskDir.
+	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git show: %v", err)
+	}
+	if !strings.Contains(string(out), "result.txt") {
+		t.Errorf("result.txt should be committed in cwd repo; got:\n%s", out)
+	}
+}
+
+func TestRunTaskLoop_ExternalTaskDir(t *testing.T) {
+	// taskDir is a completely separate temp directory outside the git repo.
+	// Verifies that git operations target cwd exclusively and that task files
+	// are written to and read from the external taskDir.
+	setupTclaudeEnv(t)
+	cwd := t.TempDir()
+	taskDir := t.TempDir() // independent — not under cwd
+	initGitRepo(t, cwd)
+	setupFakeClaude(t, "create_file") // writes result.txt into cwd
+
+	if err := WriteTodoMD(TodoPath(taskDir), []Task{{Title: "External dir task", Prompt: "Do something"}}); err != nil {
+		t.Fatalf("WriteTodoMD: %v", err)
+	}
+
+	if err := runTaskLoop(io.Discard, cwd, taskDir, nil, false, false); err != nil {
+		t.Fatalf("runTaskLoop: %v", err)
+	}
+
+	// Task management files must be in taskDir, not in the git repo.
+	remaining, _ := ParseTodoMD(TodoPath(taskDir))
+	if len(remaining) != 0 {
+		t.Errorf("expected empty TODO.md in taskDir, got %d tasks", len(remaining))
+	}
+	doneData, err := os.ReadFile(DonePath(taskDir))
+	if err != nil {
+		t.Fatalf("DONE.md should exist in taskDir: %v", err)
+	}
+	if !strings.Contains(string(doneData), "## External dir task") {
+		t.Error("DONE.md in taskDir missing task title")
+	}
+	// No task files should have leaked into cwd.
+	for _, name := range []string{"TODO.md", "DOING.md", "DONE.md"} {
+		if _, err := os.Stat(filepath.Join(cwd, name)); !os.IsNotExist(err) {
+			t.Errorf("%s should not exist in cwd", name)
+		}
+	}
+	// result.txt was committed in cwd's repo, not in taskDir.
+	if _, err := os.Stat(filepath.Join(cwd, "result.txt")); err != nil {
+		t.Errorf("result.txt should exist in cwd: %v", err)
+	}
+	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git show: %v", err)
+	}
+	if !strings.Contains(string(out), "result.txt") {
+		t.Errorf("result.txt should be committed in cwd repo; got:\n%s", out)
+	}
+	// taskDir should not be a git repo (sanity check that we never ran git there).
+	if _, err := os.Stat(filepath.Join(taskDir, ".git")); !os.IsNotExist(err) {
+		t.Error("taskDir should not have a .git directory")
+	}
+}
+
+// ── getGitDiff ────────────────────────────────────────────────────────────────
+
+func TestGetGitDiff_CleanRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	diff, err := getGitDiff(dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if diff != "" {
+		t.Errorf("expected empty diff for clean repo, got %q", diff)
+	}
+}
+
+func TestGetGitDiff_WithChanges(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	path := filepath.Join(dir, "file.txt")
+	os.WriteFile(path, []byte("original"), 0644)
+	gitRun(t, dir, "add", "file.txt")
+	gitRun(t, dir, "commit", "-m", "add file")
+	os.WriteFile(path, []byte("modified"), 0644)
+	diff, err := getGitDiff(dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if diff == "" {
+		t.Fatal("expected non-empty diff for modified file")
+	}
+	if !strings.Contains(diff, "modified") {
+		t.Errorf("diff should mention modified content, got: %s", diff)
+	}
+}
+
+func TestGetGitDiff_UntrackedFileIgnored(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	// Untracked files don't appear in git diff HEAD
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
+	diff, err := getGitDiff(dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if diff != "" {
+		t.Errorf("expected empty diff for untracked-only changes, got %q", diff)
+	}
+}
+
+func TestGetGitDiff_WithBaseCommit(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit, err := getCurrentCommit(dir)
+	if err != nil {
+		t.Fatalf("getCurrentCommit: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("agent output"), 0644)
+	gitRun(t, dir, "add", "result.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+	diff, err := getGitDiff(dir, baseCommit)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if diff == "" {
+		t.Fatal("expected non-empty diff when baseCommit predates a commit")
+	}
+	if !strings.Contains(diff, "agent output") {
+		t.Errorf("diff should contain committed content, got: %s", diff)
+	}
+}
+
+func TestGetGitDiff_WithBaseCommitAndUncommitted(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit, err := getCurrentCommit(dir)
+	if err != nil {
+		t.Fatalf("getCurrentCommit: %v", err)
+	}
+
+	// Agent commits one file.
+	os.WriteFile(filepath.Join(dir, "committed.txt"), []byte("committed content"), 0644)
+	gitRun(t, dir, "add", "committed.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+
+	// Then leaves another file modified but uncommitted.
+	os.WriteFile(filepath.Join(dir, "uncommitted.txt"), []byte("uncommitted content"), 0644)
+	gitRun(t, dir, "add", "uncommitted.txt")
+
+	diff, err := getGitDiff(dir, baseCommit)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(diff, "committed content") {
+		t.Errorf("diff should contain committed content, got: %s", diff)
+	}
+	if !strings.Contains(diff, "uncommitted content") {
+		t.Errorf("diff should contain uncommitted content, got: %s", diff)
+	}
+}
+
+// ── runReviewAgent ────────────────────────────────────────────────────────────
+
+func TestRunReviewAgent_DiffPrependedToPrompt(t *testing.T) {
+	setupFakeClaude(t, "print_stdin")
+	out, err := runReviewAgent(context.Background(), "review this", "some diff content", t.TempDir(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "some diff content") {
+		t.Errorf("output should contain diff content, got: %q", out)
+	}
+	if strings.Contains(out, "review this") {
+		t.Errorf("output should not contain review prompt, got: %q", out)
+	}
+}
+
+func TestRunReviewAgent_EmptyDiffOmitsDiffBlock(t *testing.T) {
+	setupFakeClaude(t, "print_stdin")
+	out, err := runReviewAgent(context.Background(), "review this", "", t.TempDir(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out, "review this") {
+		t.Errorf("output should not contain review prompt, got: %q", out)
+	}
+	if strings.Contains(out, "```diff") {
+		t.Errorf("output should not contain diff block for empty diff, got: %q", out)
+	}
+}
+
+func TestRunReviewAgent_Timeout(t *testing.T) {
+	setupFakeClaude(t, "sleep")
+	_, err := runReviewAgent(context.Background(), "review prompt", "some diff", t.TempDir(), 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error for timed-out review agent")
+	}
+}
+
+// ── reviewDiff flag ───────────────────────────────────────────────────────────
+
+// simulateReviewDiffDecision exercises the real resolveReviewDiff decision.
+// Returns true if the review agent was invoked and produced output, false if the
+// review was skipped. Calls t.Fatalf if the review agent runs but returns an error.
+func simulateReviewDiffDecision(t *testing.T, cwd, baseCommit string, opts taskRunOpts) bool {
+	t.Helper()
+	diff, skip := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+	if skip {
+		return false
+	}
+	out, err := runReviewAgent(context.Background(), opts.reviewSkill, diff, cwd, opts.reviewTimeout)
+	if err != nil {
+		t.Fatalf("review agent failed: %v", err)
+	}
+	return out != ""
+}
+
+func TestReviewDiff_TrueSkipsReviewWhenDiffEmpty(t *testing.T) {
+	setupFakeClaude(t, "count_invocations")
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	// Clean repo → diff is empty; reviewDiff=true → review must be skipped.
+	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
+		reviewSkill:   "check the work",
+		reviewTimeout: 5 * time.Second,
+		reviewDiff:    true,
+	})
+	if called {
+		t.Error("review should be skipped when reviewDiff=true and diff is empty")
+	}
+}
+
+func TestReviewDiff_FalseRunsReviewWithoutDiff(t *testing.T) {
+	setupFakeClaude(t, "count_invocations")
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	// Clean repo → diff is empty; reviewDiff=false → review must still run.
+	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
+		reviewSkill:   "check the work",
+		reviewTimeout: 5 * time.Second,
+		reviewDiff:    false,
+	})
+	if !called {
+		t.Error("review should run when reviewDiff=false regardless of empty diff")
+	}
+}
+
+// ── review iteration loop ─────────────────────────────────────────────────────
+
+// simulateReviewLoop mirrors the reviewAttempts logic in watchForTaskCompletion.
+// It returns how many feedback rounds were sent before the loop exited.
+func simulateReviewLoop(t *testing.T, cwd string, maxIter int) int {
+	t.Helper()
+	reviewAttempts := 0
+	feedbackSent := 0
+	for {
+		out, err := runReviewAgent(context.Background(), "review prompt", "some diff", cwd, 5*time.Second)
+		if err != nil || out == "" {
+			break
+		}
+		if reviewAttempts < maxIter {
+			reviewAttempts++
+			feedbackSent++
+			continue // would send feedback to Claude and wait for next Stop
+		}
+		break // max iterations reached — exit anyway
+	}
+	return feedbackSent
+}
+
+func TestReviewLoop_StopsAtMaxIterations(t *testing.T) {
+	setupFakeClaude(t, "count_invocations")
+	dir := t.TempDir()
+
+	const maxIter = 3
+	feedbackSent := simulateReviewLoop(t, dir, maxIter)
+	if feedbackSent != maxIter {
+		t.Errorf("feedbackSent = %d, want %d", feedbackSent, maxIter)
+	}
+
+	// Verify the fake claude was called maxIter+1 times:
+	// maxIter sends that triggered a loop, plus 1 final call that hit the cap.
+	data, _ := os.ReadFile(filepath.Join(dir, ".review_counter"))
+	n := 0
+	fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+	if n != maxIter+1 {
+		t.Errorf("review agent called %d times, want %d", n, maxIter+1)
+	}
+}
+
+func TestReviewLoop_ExitsImmediatelyWhenNoFeedback(t *testing.T) {
+	setupFakeClaude(t, "no_change") // exits 0, prints nothing
+	dir := t.TempDir()
+
+	feedbackSent := simulateReviewLoop(t, dir, 3)
+	if feedbackSent != 0 {
+		t.Errorf("expected 0 feedback rounds for agent with no output, got %d", feedbackSent)
 	}
 }

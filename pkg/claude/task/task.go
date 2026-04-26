@@ -21,20 +21,33 @@ type TasksConfig struct {
 	MaxVerifyIterations int           `json:"max_verify_iterations,omitempty"`
 	VerifyTimeoutStr    string        `json:"verify_timeout,omitempty"`
 	VerifyTimeout       time.Duration `json:"-"`
+	ReviewSkill         string        `json:"review_skill,omitempty"`
+	MaxReviewIterations int           `json:"max_review_iterations,omitempty"`
+	ReviewTimeoutStr    string        `json:"review_timeout,omitempty"`
+	ReviewTimeout       time.Duration `json:"-"`
+	ReviewDiff          *bool         `json:"review_diff,omitempty"`
 }
 
 const defaultMaxVerifyIterations = 3
 const defaultVerifyTimeout = time.Minute
+const defaultMaxReviewIterations = 1
+const defaultReviewTimeout = 5 * time.Minute
 
-// TasksConfigPath returns the path to tasks.json in the given directory.
+// TasksConfigPath returns the path to .claude/tclaude/tasks.json in the given directory.
 func TasksConfigPath(dir string) string {
-	return filepath.Join(dir, "tasks.json")
+	return filepath.Join(dir, ".claude", "tclaude", "tasks.json")
 }
 
-// LoadTasksConfig reads tasks.json from the given directory.
+// LoadTasksConfig reads .claude/tclaude/tasks.json from the given directory.
 // Returns defaults if the file does not exist.
 func LoadTasksConfig(dir string) (TasksConfig, error) {
-	cfg := TasksConfig{MaxVerifyIterations: defaultMaxVerifyIterations}
+	cfg := TasksConfig{
+		MaxVerifyIterations: defaultMaxVerifyIterations,
+		VerifyTimeout:       defaultVerifyTimeout,
+		MaxReviewIterations: defaultMaxReviewIterations,
+		ReviewTimeout:       defaultReviewTimeout,
+		ReviewDiff:          new(true),
+	}
 	data, err := os.ReadFile(TasksConfigPath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -48,6 +61,9 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 	if cfg.MaxVerifyIterations <= 0 {
 		cfg.MaxVerifyIterations = defaultMaxVerifyIterations
 	}
+	if cfg.MaxReviewIterations <= 0 {
+		cfg.MaxReviewIterations = defaultMaxReviewIterations
+	}
 	if cfg.VerifyTimeoutStr == "" {
 		cfg.VerifyTimeout = defaultVerifyTimeout
 	} else {
@@ -56,7 +72,25 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 			return cfg, err
 		}
 	}
+	if cfg.ReviewTimeoutStr == "" {
+		cfg.ReviewTimeout = defaultReviewTimeout
+	} else {
+		cfg.ReviewTimeout, err = time.ParseDuration(cfg.ReviewTimeoutStr)
+		if err != nil {
+			return cfg, err
+		}
+	}
+	// nil only occurs when the JSON explicitly contains "review_diff": null; apply the default.
+	if cfg.ReviewDiff == nil {
+		cfg.ReviewDiff = new(true)
+	}
 	return cfg, nil
+}
+
+// reviewDiffEnabled returns true when a git diff should be included in the review.
+// Treats a nil pointer (e.g. TasksConfig constructed without calling LoadTasksConfig) as true.
+func (c TasksConfig) reviewDiffEnabled() bool {
+	return c.ReviewDiff == nil || *c.ReviewDiff
 }
 
 // Task represents a task to be done
@@ -97,7 +131,7 @@ func Cmd() *cobra.Command {
 		},
 		RunFunc: func(params *TaskParams, cmd *cobra.Command, args []string) {
 			if err := runList(&ListParams{Dir: params.Dir}); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},

@@ -290,7 +290,9 @@ func TestRunAddComma(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			subdir := filepath.Join(t.TempDir(), tt.name)
-			os.MkdirAll(subdir, 0755)
+			if err := os.MkdirAll(subdir, 0755); err != nil {
+				t.Fatalf("unable to create directory %s: %v", subdir, err)
+			}
 			params := &AddParams{Dir: subdir}
 			if err := runAdd(params, tt.args); err != nil {
 				t.Fatalf("runAdd failed: %v", err)
@@ -314,11 +316,11 @@ func TestRunAddComma(t *testing.T) {
 
 func TestRunAddPlanFlags(t *testing.T) {
 	tests := []struct {
-		name            string
-		args            []string
-		params          AddParams
-		wantPlanMode    bool
-		wantPlanAuto    bool
+		name         string
+		args         []string
+		params       AddParams
+		wantPlanMode bool
+		wantPlanAuto bool
 	}{
 		{
 			name:         "no flags",
@@ -391,6 +393,17 @@ func TestRunAddAppend(t *testing.T) {
 	}
 }
 
+func writeTasksConfig(t *testing.T, dir string, content string) {
+	t.Helper()
+	path := TasksConfigPath(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create tasks config dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write tasks config: %v", err)
+	}
+}
+
 func TestLoadTasksConfig(t *testing.T) {
 	t.Run("missing file returns defaults", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
@@ -407,7 +420,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("verify only", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"go test ./..."}`), 0644)
+		writeTasksConfig(t, dir, `{"verify":"go test ./..."}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -422,7 +435,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("verify and max iterations", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"make test","max_verify_iterations":5}`), 0644)
+		writeTasksConfig(t, dir, `{"verify":"make test","max_verify_iterations":5}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -437,7 +450,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("zero max_verify_iterations falls back to default", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0}`), 0644)
+		writeTasksConfig(t, dir, `{"max_verify_iterations":0}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -449,7 +462,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("timeout", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0,"verify_timeout":"2m"}`), 0644)
+		writeTasksConfig(t, dir, `{"max_verify_iterations":0,"verify_timeout":"2m"}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -459,12 +472,111 @@ func TestLoadTasksConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("max_review_iterations default", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxReviewIterations != defaultMaxReviewIterations {
+			t.Errorf("MaxReviewIterations = %d, want %d", cfg.MaxReviewIterations, defaultMaxReviewIterations)
+		}
+	})
+
+	t.Run("max_review_iterations custom", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"max_review_iterations":3}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxReviewIterations != 3 {
+			t.Errorf("MaxReviewIterations = %d, want 3", cfg.MaxReviewIterations)
+		}
+	})
+
+	t.Run("zero max_review_iterations falls back to default", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"max_review_iterations":0}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxReviewIterations != defaultMaxReviewIterations {
+			t.Errorf("MaxReviewIterations = %d, want %d", cfg.MaxReviewIterations, defaultMaxReviewIterations)
+		}
+	})
+
+	t.Run("review_timeout default", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewTimeout != defaultReviewTimeout {
+			t.Errorf("ReviewTimeout = %v, want %v", cfg.ReviewTimeout, defaultReviewTimeout)
+		}
+	})
+
+	t.Run("review_timeout custom", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"review_timeout":"10m"}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewTimeout != 10*time.Minute {
+			t.Errorf("ReviewTimeout = %v, want 10m", cfg.ReviewTimeout)
+		}
+	})
+
+	t.Run("invalid review_timeout returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"review_timeout":"notaduratiokn"}`)
+		_, err := LoadTasksConfig(dir)
+		if err == nil {
+			t.Error("expected error for invalid review_timeout, got nil")
+		}
+	})
+
 	t.Run("invalid JSON returns error", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`not json`), 0644)
+		writeTasksConfig(t, dir, `not json`)
 		_, err := LoadTasksConfig(dir)
 		if err == nil {
 			t.Error("expected error for invalid JSON, got nil")
+		}
+	})
+
+	t.Run("review_diff defaults to true when absent", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewDiff == nil || !*cfg.ReviewDiff {
+			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
+		}
+	})
+
+	t.Run("review_diff false", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"review_diff":false}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewDiff == nil || *cfg.ReviewDiff {
+			t.Errorf("ReviewDiff = %v, want false", cfg.ReviewDiff)
+		}
+	})
+
+	t.Run("review_diff true explicit", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"review_diff":true}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewDiff == nil || !*cfg.ReviewDiff {
+			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
 		}
 	})
 }

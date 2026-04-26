@@ -89,7 +89,7 @@ func Send(sessionID, status, cwd, convTitle string) {
 		projectName = "unknown"
 	}
 
-	title := fmt.Sprintf("Claude: %s", status)
+	title := truncate(fmt.Sprintf("Claude: %s", status), notifyTitleMaxLen)
 
 	// Build body: ID | Project - conversation title
 	var body string
@@ -98,6 +98,7 @@ func Send(sessionID, status, cwd, convTitle string) {
 	} else {
 		body = fmt.Sprintf("%s | %s", shortID(sessionID), projectName)
 	}
+	body = truncate(body, notifyBodyMaxLen)
 
 	var err error
 
@@ -115,12 +116,28 @@ func Send(sessionID, status, cwd, convTitle string) {
 	}
 }
 
+const (
+	// D-Bus spec has no hard title limit, but some implementations truncate around 120 chars.
+	notifyTitleMaxLen = 120
+	notifyBodyMaxLen  = 1024
+)
+
 // shortID returns a shortened session ID for display.
 func shortID(id string) string {
 	if len(id) <= 8 {
 		return id
 	}
 	return id[:8]
+}
+
+// truncate shortens s to at most maxLen runes, appending … if cut.
+// Operates on runes to avoid splitting multi-byte characters.
+func truncate(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen || maxLen <= 0 {
+		return s
+	}
+	return string(runes[:maxLen-1]) + "…"
 }
 
 // runCustomCommand executes a custom notification command, passing notification
@@ -150,7 +167,7 @@ func runCustomCommand(cmdTemplate []string, sessionID, title, body string) error
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
-	cmd := executil.CommandContext(ctx, cmdTemplate[0], cmdTemplate[1:]...)
+	cmd := executil.CommandContextWithGrace(ctx, time.Second, cmdTemplate[0], cmdTemplate[1:]...)
 	cmd.Stdin = io.MultiReader(bytes.NewReader(jsonData), bytes.NewReader([]byte{'\n'}))
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
