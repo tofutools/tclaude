@@ -273,3 +273,7 @@ Claude's response describing what was done...
 - **Use descriptive titles** — Task titles become git commit messages, so keep them clear and concise.
 - **Start detached for long task lists** — Use `tclaude task run -d` and check back later. You'll get a notification when everything is done.
 - **Pass Claude flags** — Use `--` to forward flags like `--dangerously-skip-permissions` or `--allowedTools` for unattended execution.
+
+## Caveat
+
+Using the task runner with a Claude Pro or Max subscription might violate Anthropic's terms of service. Use at your own risk.  
