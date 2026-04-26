@@ -1,9 +1,11 @@
 package task
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -391,6 +393,17 @@ func TestRunAddAppend(t *testing.T) {
 	}
 }
 
+func writeTasksConfig(t *testing.T, dir string, content string) {
+	t.Helper()
+	path := TasksConfigPath(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create tasks config dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write tasks config: %v", err)
+	}
+}
+
 func TestLoadTasksConfig(t *testing.T) {
 	t.Run("missing file returns defaults", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
@@ -407,7 +420,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("verify only", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"go test ./..."}`), 0644)
+		writeTasksConfig(t, dir, `{"verify":"go test ./..."}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -422,7 +435,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("verify and max iterations", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"verify":"make test","max_verify_iterations":5}`), 0644)
+		writeTasksConfig(t, dir, `{"verify":"make test","max_verify_iterations":5}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -437,7 +450,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("zero max_verify_iterations falls back to default", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0}`), 0644)
+		writeTasksConfig(t, dir, `{"max_verify_iterations":0}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -449,7 +462,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("timeout", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_verify_iterations":0,"verify_timeout":"2m"}`), 0644)
+		writeTasksConfig(t, dir, `{"max_verify_iterations":0,"verify_timeout":"2m"}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -471,7 +484,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("max_review_iterations custom", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_review_iterations":3}`), 0644)
+		writeTasksConfig(t, dir, `{"max_review_iterations":3}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -483,7 +496,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("zero max_review_iterations falls back to default", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"max_review_iterations":0}`), 0644)
+		writeTasksConfig(t, dir, `{"max_review_iterations":0}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -505,7 +518,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("review_timeout custom", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"review_timeout":"10m"}`), 0644)
+		writeTasksConfig(t, dir, `{"review_timeout":"10m"}`)
 		cfg, err := LoadTasksConfig(dir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -517,7 +530,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("invalid review_timeout returns error", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`{"review_timeout":"notaduration"}`), 0644)
+		writeTasksConfig(t, dir, `{"review_timeout":"notaduration"}`)
 		_, err := LoadTasksConfig(dir)
 		if err == nil {
 			t.Error("expected error for invalid review_timeout, got nil")
@@ -526,10 +539,36 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("invalid JSON returns error", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(TasksConfigPath(dir), []byte(`not json`), 0644)
+		writeTasksConfig(t, dir, `not json`)
 		_, err := LoadTasksConfig(dir)
 		if err == nil {
 			t.Error("expected error for invalid JSON, got nil")
+		}
+	})
+
+	t.Run("legacy root tasks.json emits warning", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "tasks.json"), []byte(`{"verify":"./old.sh"}`), 0644); err != nil {
+			t.Fatalf("failed to write legacy tasks.json: %v", err)
+		}
+
+		var buf bytes.Buffer
+		legacyWarnWriter = &buf
+		legacyWarnOnce = sync.Once{}
+		t.Cleanup(func() {
+			legacyWarnWriter = os.Stderr
+			legacyWarnOnce = sync.Once{}
+		})
+
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.VerifyCmd != "" {
+			t.Errorf("VerifyCmd = %q, want empty (legacy file must not be loaded)", cfg.VerifyCmd)
+		}
+		if !strings.Contains(buf.String(), ".claude/tclaude/tasks.json") {
+			t.Errorf("expected warning mentioning .claude/tclaude/tasks.json, got: %q", buf.String())
 		}
 	})
 }

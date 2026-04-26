@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -32,12 +34,16 @@ const defaultVerifyTimeout = time.Minute
 const defaultMaxReviewIterations = 1
 const defaultReviewTimeout = 5 * time.Minute
 
-// TasksConfigPath returns the path to tasks.json in the given directory.
+// legacyWarnWriter is where the legacy-path warning is written; replaced in tests.
+var legacyWarnWriter io.Writer = os.Stderr
+var legacyWarnOnce sync.Once
+
+// TasksConfigPath returns the path to .claude/tclaude/tasks.json in the given directory.
 func TasksConfigPath(dir string) string {
-	return filepath.Join(dir, "tasks.json")
+	return filepath.Join(dir, ".claude", "tclaude", "tasks.json")
 }
 
-// LoadTasksConfig reads tasks.json from the given directory.
+// LoadTasksConfig reads .claude/tclaude/tasks.json from the given directory.
 // Returns defaults if the file does not exist.
 func LoadTasksConfig(dir string) (TasksConfig, error) {
 	cfg := TasksConfig{
@@ -49,6 +55,11 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 	data, err := os.ReadFile(TasksConfigPath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if _, legacyErr := os.Stat(filepath.Join(dir, "tasks.json")); legacyErr == nil {
+				legacyWarnOnce.Do(func() {
+					fmt.Fprintf(legacyWarnWriter, "warning: tasks.json found at project root but config is now read from .claude/tclaude/tasks.json — please move it\n")
+				})
+			}
 			return cfg, nil
 		}
 		return cfg, err

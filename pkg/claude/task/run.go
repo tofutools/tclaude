@@ -194,7 +194,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 
 	taskCfg, err := LoadTasksConfig(taskDir)
 	if err != nil {
-		return fmt.Errorf("failed to read tasks.json: %w", err)
+		return fmt.Errorf("failed to read .claude/tclaude/tasks.json: %w", err)
 	}
 
 	hasPermissionMode := slices.Contains(extraClaudeArgs, "--permission-mode")
