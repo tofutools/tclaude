@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -35,10 +33,6 @@ const defaultVerifyTimeout = time.Minute
 const defaultMaxReviewIterations = 1
 const defaultReviewTimeout = 5 * time.Minute
 
-// legacyWarnWriter is where the legacy-path warning is written; replaced in tests.
-var legacyWarnWriter io.Writer = os.Stderr
-var legacyWarnOnce sync.Once
-
 // TasksConfigPath returns the path to .claude/tclaude/tasks.json in the given directory.
 func TasksConfigPath(dir string) string {
 	return filepath.Join(dir, ".claude", "tclaude", "tasks.json")
@@ -47,22 +41,16 @@ func TasksConfigPath(dir string) string {
 // LoadTasksConfig reads .claude/tclaude/tasks.json from the given directory.
 // Returns defaults if the file does not exist.
 func LoadTasksConfig(dir string) (TasksConfig, error) {
-	defaultTrue := true
 	cfg := TasksConfig{
 		MaxVerifyIterations: defaultMaxVerifyIterations,
 		VerifyTimeout:       defaultVerifyTimeout,
 		MaxReviewIterations: defaultMaxReviewIterations,
 		ReviewTimeout:       defaultReviewTimeout,
-		ReviewDiff:          &defaultTrue,
+		ReviewDiff:          new(true),
 	}
 	data, err := os.ReadFile(TasksConfigPath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if _, legacyErr := os.Stat(filepath.Join(dir, "tasks.json")); legacyErr == nil {
-				legacyWarnOnce.Do(func() {
-					fmt.Fprintf(legacyWarnWriter, "warning: tasks.json found at project root but config is now read from .claude/tclaude/tasks.json — please move it\n")
-				})
-			}
 			return cfg, nil
 		}
 		return cfg, err
@@ -94,8 +82,7 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 	}
 	// nil only occurs when the JSON explicitly contains "review_diff": null; apply the default.
 	if cfg.ReviewDiff == nil {
-		t := true
-		cfg.ReviewDiff = &t
+		cfg.ReviewDiff = new(true)
 	}
 	return cfg, nil
 }
@@ -144,7 +131,7 @@ func Cmd() *cobra.Command {
 		},
 		RunFunc: func(params *TaskParams, cmd *cobra.Command, args []string) {
 			if err := runList(&ListParams{Dir: params.Dir}); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},

@@ -1,11 +1,9 @@
 package task
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -292,7 +290,9 @@ func TestRunAddComma(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			subdir := filepath.Join(t.TempDir(), tt.name)
-			os.MkdirAll(subdir, 0755)
+			if err := os.MkdirAll(subdir, 0755); err != nil {
+				t.Fatalf("unable to create directory %s: %v", subdir, err)
+			}
 			params := &AddParams{Dir: subdir}
 			if err := runAdd(params, tt.args); err != nil {
 				t.Fatalf("runAdd failed: %v", err)
@@ -530,7 +530,7 @@ func TestLoadTasksConfig(t *testing.T) {
 
 	t.Run("invalid review_timeout returns error", func(t *testing.T) {
 		dir := t.TempDir()
-		writeTasksConfig(t, dir, `{"review_timeout":"notaduration"}`)
+		writeTasksConfig(t, dir, `{"review_timeout":"notaduratiokn"}`)
 		_, err := LoadTasksConfig(dir)
 		if err == nil {
 			t.Error("expected error for invalid review_timeout, got nil")
@@ -577,32 +577,6 @@ func TestLoadTasksConfig(t *testing.T) {
 		}
 		if cfg.ReviewDiff == nil || !*cfg.ReviewDiff {
 			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
-		}
-	})
-
-	t.Run("legacy root tasks.json emits warning", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "tasks.json"), []byte(`{"verify":"./old.sh"}`), 0644); err != nil {
-			t.Fatalf("failed to write legacy tasks.json: %v", err)
-		}
-
-		var buf bytes.Buffer
-		legacyWarnWriter = &buf
-		legacyWarnOnce = sync.Once{}
-		t.Cleanup(func() {
-			legacyWarnWriter = os.Stderr
-			legacyWarnOnce = sync.Once{}
-		})
-
-		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.VerifyCmd != "" {
-			t.Errorf("VerifyCmd = %q, want empty (legacy file must not be loaded)", cfg.VerifyCmd)
-		}
-		if !strings.Contains(buf.String(), ".claude/tclaude/tasks.json") {
-			t.Errorf("expected warning mentioning .claude/tclaude/tasks.json, got: %q", buf.String())
 		}
 	})
 }

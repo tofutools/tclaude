@@ -589,7 +589,11 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						if r := []rune(reviewOutput); len(r) > 50 {
 							outputPreview = string(r[:50])
 						}
-						slog.Debug("review complete", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+						if reviewErr != nil {
+							slog.Warn("review error", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+						} else {
+							slog.Debug("review complete", "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+						}
 						if reviewErr == nil && reviewOutput != "" {
 							reviewAttempts++
 							os.Remove(signalPath)
