@@ -546,6 +546,40 @@ func TestLoadTasksConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("review_diff defaults to true when absent", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewDiff == nil || !*cfg.ReviewDiff {
+			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
+		}
+	})
+
+	t.Run("review_diff false", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"review_diff":false}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewDiff == nil || *cfg.ReviewDiff {
+			t.Errorf("ReviewDiff = %v, want false", cfg.ReviewDiff)
+		}
+	})
+
+	t.Run("review_diff true explicit", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"review_diff":true}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewDiff == nil || !*cfg.ReviewDiff {
+			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
+		}
+	})
+
 	t.Run("legacy root tasks.json emits warning", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "tasks.json"), []byte(`{"verify":"./old.sh"}`), 0644); err != nil {

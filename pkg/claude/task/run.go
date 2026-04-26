@@ -283,6 +283,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 			reviewPrompt:        taskCfg.ReviewPrompt,
 			maxReviewIterations: taskCfg.MaxReviewIterations,
 			reviewTimeout:       taskCfg.ReviewTimeout,
+			reviewDiff:          taskCfg.reviewDiffEnabled(),
 		}
 		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, excludeTaskFiles, opts)
 
@@ -404,6 +405,7 @@ type taskRunOpts struct {
 	reviewPrompt        string
 	maxReviewIterations int
 	reviewTimeout       time.Duration
+	reviewDiff          bool
 }
 
 // runClaude runs Claude Code interactively with the given prompt.
@@ -576,12 +578,8 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			}
 			if opts.reviewPrompt != "" {
 				if reviewAttempts < opts.maxReviewIterations {
-					diff, diffErr := getGitDiff(cwd, baseCommit)
-					if diffErr != nil {
-						slog.Warn("failed to get git diff, skipping review", "err", diffErr, "module", "task")
-					} else if diff == "" {
-						slog.Debug("skipping review: empty diff", "module", "task")
-					} else {
+					diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+					if !skipReview {
 						if ctx.Err() != nil {
 							return
 						}
@@ -678,6 +676,27 @@ func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Durat
 	cmd.Dir = cwd
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// resolveReviewDiff returns the diff to pass to the review agent and whether
+// the review should be skipped entirely.
+// When reviewDiff is false the review runs without any diff (skip=false, diff="").
+func resolveReviewDiff(cwd, baseCommit string, reviewDiff bool) (diff string, skip bool) {
+	if !reviewDiff {
+		slog.Debug("running review without diff", "module", "task")
+		return "", false
+	}
+	var err error
+	diff, err = getGitDiff(cwd, baseCommit)
+	if err != nil {
+		slog.Warn("failed to get git diff, skipping review", "err", err, "module", "task")
+		return "", true
+	}
+	if diff == "" {
+		slog.Debug("skipping review: empty diff", "module", "task")
+		return "", true
+	}
+	return diff, false
 }
 
 // getCurrentCommit returns the full SHA of HEAD.
@@ -795,7 +814,10 @@ func getGitDiff(cwd, baseCommit string) (string, error) {
 func runReviewAgent(ctx context.Context, reviewPrompt, diff, cwd string, timeout time.Duration) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	prompt := reviewPrompt + "\n```diff\n" + diff + "\n```\n"
+	prompt := reviewPrompt
+	if diff != "" {
+		prompt += "\n```diff\n" + diff + "\n```\n"
+	}
 	cmd := executil.CommandContext(timeoutCtx, "claude", "--print", "--permission-mode", "default")
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = cwd

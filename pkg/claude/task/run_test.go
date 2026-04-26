@@ -761,11 +761,73 @@ func TestRunReviewAgent_DiffPrependedToPrompt(t *testing.T) {
 	}
 }
 
+func TestRunReviewAgent_EmptyDiffOmitsDiffBlock(t *testing.T) {
+	setupFakeClaude(t, "print_stdin")
+	out, err := runReviewAgent(context.Background(), "review this", "", t.TempDir(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "review this") {
+		t.Errorf("output should contain review prompt, got: %q", out)
+	}
+	if strings.Contains(out, "```diff") {
+		t.Errorf("output should not contain diff block for empty diff, got: %q", out)
+	}
+}
+
 func TestRunReviewAgent_Timeout(t *testing.T) {
 	setupFakeClaude(t, "sleep")
 	_, err := runReviewAgent(context.Background(), "review prompt", "some diff", t.TempDir(), 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected error for timed-out review agent")
+	}
+}
+
+// ── reviewDiff flag ───────────────────────────────────────────────────────────
+
+// simulateReviewDiffDecision exercises the real resolveReviewDiff decision.
+// Returns true if the review agent was invoked and produced output, false if the
+// review was skipped. Calls t.Fatalf if the review agent runs but returns an error.
+func simulateReviewDiffDecision(t *testing.T, cwd, baseCommit string, opts taskRunOpts) bool {
+	t.Helper()
+	diff, skip := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+	if skip {
+		return false
+	}
+	out, err := runReviewAgent(context.Background(), opts.reviewPrompt, diff, cwd, opts.reviewTimeout)
+	if err != nil {
+		t.Fatalf("review agent failed: %v", err)
+	}
+	return out != ""
+}
+
+func TestReviewDiff_TrueSkipsReviewWhenDiffEmpty(t *testing.T) {
+	setupFakeClaude(t, "count_invocations")
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	// Clean repo → diff is empty; reviewDiff=true → review must be skipped.
+	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
+		reviewPrompt:  "check the work",
+		reviewTimeout: 5 * time.Second,
+		reviewDiff:    true,
+	})
+	if called {
+		t.Error("review should be skipped when reviewDiff=true and diff is empty")
+	}
+}
+
+func TestReviewDiff_FalseRunsReviewWithoutDiff(t *testing.T) {
+	setupFakeClaude(t, "count_invocations")
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	// Clean repo → diff is empty; reviewDiff=false → review must still run.
+	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
+		reviewPrompt:  "check the work",
+		reviewTimeout: 5 * time.Second,
+		reviewDiff:    false,
+	})
+	if !called {
+		t.Error("review should run when reviewDiff=false regardless of empty diff")
 	}
 }
 

@@ -27,6 +27,7 @@ type TasksConfig struct {
 	MaxReviewIterations int           `json:"max_review_iterations,omitempty"`
 	ReviewTimeoutStr    string        `json:"review_timeout,omitempty"`
 	ReviewTimeout       time.Duration `json:"-"`
+	ReviewDiff          *bool         `json:"review_diff,omitempty"`
 }
 
 const defaultMaxVerifyIterations = 3
@@ -46,11 +47,13 @@ func TasksConfigPath(dir string) string {
 // LoadTasksConfig reads .claude/tclaude/tasks.json from the given directory.
 // Returns defaults if the file does not exist.
 func LoadTasksConfig(dir string) (TasksConfig, error) {
+	defaultTrue := true
 	cfg := TasksConfig{
 		MaxVerifyIterations: defaultMaxVerifyIterations,
 		VerifyTimeout:       defaultVerifyTimeout,
 		MaxReviewIterations: defaultMaxReviewIterations,
 		ReviewTimeout:       defaultReviewTimeout,
+		ReviewDiff:          &defaultTrue,
 	}
 	data, err := os.ReadFile(TasksConfigPath(dir))
 	if err != nil {
@@ -89,7 +92,18 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 			return cfg, err
 		}
 	}
+	// nil only occurs when the JSON explicitly contains "review_diff": null; apply the default.
+	if cfg.ReviewDiff == nil {
+		t := true
+		cfg.ReviewDiff = &t
+	}
 	return cfg, nil
+}
+
+// reviewDiffEnabled returns true when a git diff should be included in the review.
+// Treats a nil pointer (e.g. TasksConfig constructed without calling LoadTasksConfig) as true.
+func (c TasksConfig) reviewDiffEnabled() bool {
+	return c.ReviewDiff == nil || *c.ReviewDiff
 }
 
 // Task represents a task to be done
