@@ -26,12 +26,18 @@ type TasksConfig struct {
 	ReviewTimeoutStr    string        `json:"review_timeout,omitempty"`
 	ReviewTimeout       time.Duration `json:"-"`
 	ReviewDiff          *bool         `json:"review_diff,omitempty"`
+	StuckTimeoutStr     string        `json:"stuck_timeout,omitempty"`
+	StuckTimeout        time.Duration `json:"-"`
+	MaxStuckNudges      int           `json:"max_stuck_nudges,omitempty"`
 }
 
 const defaultMaxVerifyIterations = 3
 const defaultVerifyTimeout = time.Minute
 const defaultMaxReviewIterations = 1
 const defaultReviewTimeout = 5 * time.Minute
+const defaultStuckTimeout = 5 * time.Minute
+const defaultMaxStuckNudges = 3
+const minStuckTimeout = 30 * time.Second
 
 // TasksConfigPath returns the path to .claude/tclaude/tasks.json in the given directory.
 func TasksConfigPath(dir string) string {
@@ -47,6 +53,8 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 		MaxReviewIterations: defaultMaxReviewIterations,
 		ReviewTimeout:       defaultReviewTimeout,
 		ReviewDiff:          new(true),
+		StuckTimeout:        defaultStuckTimeout,
+		MaxStuckNudges:      defaultMaxStuckNudges,
 	}
 	data, err := os.ReadFile(TasksConfigPath(dir))
 	if err != nil {
@@ -64,6 +72,9 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 	if cfg.MaxReviewIterations <= 0 {
 		cfg.MaxReviewIterations = defaultMaxReviewIterations
 	}
+	if cfg.MaxStuckNudges <= 0 {
+		cfg.MaxStuckNudges = defaultMaxStuckNudges
+	}
 	if cfg.VerifyTimeoutStr == "" {
 		cfg.VerifyTimeout = defaultVerifyTimeout
 	} else {
@@ -78,6 +89,21 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 		cfg.ReviewTimeout, err = time.ParseDuration(cfg.ReviewTimeoutStr)
 		if err != nil {
 			return cfg, err
+		}
+	}
+	if cfg.StuckTimeoutStr == "" {
+		cfg.StuckTimeout = defaultStuckTimeout
+	} else {
+		cfg.StuckTimeout, err = time.ParseDuration(cfg.StuckTimeoutStr)
+		if err != nil {
+			return cfg, err
+		}
+		// "0s" disables stuck detection entirely; any other value must be at least
+		// minStuckTimeout to avoid false positives during slow-but-healthy tool calls
+		// (e.g., long builds). The detector fires when no hook has updated state for
+		// the full timeout — short values will produce spurious "continue" nudges.
+		if cfg.StuckTimeout != 0 && cfg.StuckTimeout < minStuckTimeout {
+			return cfg, fmt.Errorf("stuck_timeout %v is below minimum %v (use 0s to disable)", cfg.StuckTimeout, minStuckTimeout)
 		}
 	}
 	// nil only occurs when the JSON explicitly contains "review_diff": null; apply the default.

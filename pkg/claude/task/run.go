@@ -284,6 +284,8 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 			maxReviewIterations: taskCfg.MaxReviewIterations,
 			reviewTimeout:       taskCfg.ReviewTimeout,
 			reviewDiff:          taskCfg.reviewDiffEnabled(),
+			stuckTimeout:        taskCfg.StuckTimeout,
+			maxStuckNudges:      taskCfg.MaxStuckNudges,
 		}
 		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, excludeTaskFiles, opts)
 
@@ -406,6 +408,8 @@ type taskRunOpts struct {
 	maxReviewIterations int
 	reviewTimeout       time.Duration
 	reviewDiff          bool
+	stuckTimeout        time.Duration
+	maxStuckNudges      int
 }
 
 // runClaude runs Claude Code interactively with the given prompt.
@@ -492,6 +496,27 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 	planAccepted := false
 	attempts := 0
 	reviewAttempts := 0
+
+	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
+	var lastContinueSent time.Time
+	stuckNudges := 0
+
+	// Poll at 1/10th of stuckTimeout (clamped 10s–1m) so we detect a stuck agent
+	// within one interval of the threshold without excessive polling.
+	// At the default 5m timeout this gives 30s. A nil channel disables the feature
+	// when stuckTimeout is zero or no session ID is available.
+	var stuckTickC <-chan time.Time
+	if opts.stuckTimeout > 0 && sessionID != "" {
+		interval := opts.stuckTimeout / 10
+		if interval < 10*time.Second {
+			interval = 10 * time.Second
+		} else if interval > time.Minute {
+			interval = time.Minute
+		}
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		stuckTickC = t.C
+	}
 
 	for {
 		if signalExists {
@@ -632,8 +657,44 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			if !ok {
 				return
 			}
+		case <-stuckTickC:
+			if !isAgentStuck(sessionID, opts.stuckTimeout) {
+				// Agent made progress since last check — reset so a recovery doesn't
+				// count against the nudge budget for a later stuck episode.
+				stuckNudges = 0
+			} else if lastContinueSent.IsZero() || time.Since(lastContinueSent) >= opts.stuckTimeout {
+				stuckNudges++
+				if stuckNudges > opts.maxStuckNudges {
+					slog.Warn("agent stuck after max nudges, giving up", "nudges", opts.maxStuckNudges, "module", "task")
+					sendNotification(sessionID, cwd, "stuck", fmt.Sprintf("Agent appears stuck after %d nudges", opts.maxStuckNudges))
+					stuckTickC = nil // disable further checks
+				} else {
+					slog.Warn("agent appears stuck, sending continue", "nudge", stuckNudges, "max", opts.maxStuckNudges, "module", "task")
+					sendTmuxMessage(tmuxSession, "continue")
+					lastContinueSent = time.Now()
+				}
+			}
 		}
 	}
+}
+
+// isAgentStuck returns true if the coding agent session has been in StatusWorking
+// for longer than stuckTimeout without any hook activity. Note that hooks do not
+// fire while a tool command is running, so a slow-but-healthy tool call (e.g.,
+// a long build) will also trigger this — the cost is a spurious "continue" nudge
+// that the agent will likely ignore.
+func isAgentStuck(sessionID string, stuckTimeout time.Duration) bool {
+	if sessionID == "" || stuckTimeout <= 0 {
+		return false
+	}
+	state, err := session.LoadSessionState(sessionID)
+	if err != nil || state == nil {
+		return false
+	}
+	if state.Status != session.StatusWorking {
+		return false
+	}
+	return time.Since(state.Updated) > stuckTimeout
 }
 
 // gracePeriod waits 5 seconds, watching for the signal file to be removed.
