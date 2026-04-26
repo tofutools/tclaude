@@ -312,7 +312,7 @@ func TestRunTaskLoop_SingleTaskCompletes(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, nil, false, false); err != nil {
+	if err := runTaskLoop(io.Discard, dir, dir, nil, false, false); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -346,7 +346,7 @@ func TestRunTaskLoop_ClaudeFails(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	err := runTaskLoop(io.Discard, dir, nil, false, false)
+	err := runTaskLoop(io.Discard, dir, dir, nil, false, false)
 	if err == nil {
 		t.Fatal("expected error from failing claude")
 	}
@@ -370,7 +370,7 @@ func TestRunTaskLoop_NoFileChanges(t *testing.T) {
 	}
 
 	// excludeTaskFiles=true so that writing empty TODO.md doesn't count as work.
-	err := runTaskLoop(io.Discard, dir, nil, false, true)
+	err := runTaskLoop(io.Discard, dir, dir, nil, false, true)
 	if err == nil {
 		t.Fatal("expected error when no files changed")
 	}
@@ -393,7 +393,7 @@ func TestRunTaskLoop_MultipleTasksSequential(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, nil, false, false); err != nil {
+	if err := runTaskLoop(io.Discard, dir, dir, nil, false, false); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -422,7 +422,7 @@ func TestRunTaskLoop_ExcludeTaskFiles(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, nil, false, true); err != nil {
+	if err := runTaskLoop(io.Discard, dir, dir, nil, false, true); err != nil {
 		t.Fatalf("runTaskLoop: %v", err)
 	}
 
@@ -437,6 +437,109 @@ func TestRunTaskLoop_ExcludeTaskFiles(t *testing.T) {
 	}
 	if !strings.Contains(committed, "result.txt") {
 		t.Errorf("result.txt should be committed; committed files:\n%s", committed)
+	}
+}
+
+func TestRunTaskLoop_SeparateTaskDir(t *testing.T) {
+	// Verifies that taskDir controls where task files are read from while cwd
+	// controls where Claude runs (and where git commits land).
+	setupTclaudeEnv(t)
+	cwd := t.TempDir()
+	taskDir := filepath.Join(cwd, "tasks")
+	if err := os.Mkdir(taskDir, 0755); err != nil {
+		t.Fatalf("mkdir taskDir: %v", err)
+	}
+	initGitRepo(t, cwd)
+	setupFakeClaude(t, "create_file") // writes result.txt into os.Getwd() (cwd)
+
+	if err := WriteTodoMD(TodoPath(taskDir), []Task{{Title: "Separate dir task", Prompt: "Do something"}}); err != nil {
+		t.Fatalf("WriteTodoMD: %v", err)
+	}
+
+	if err := runTaskLoop(io.Discard, cwd, taskDir, nil, false, false); err != nil {
+		t.Fatalf("runTaskLoop: %v", err)
+	}
+
+	// Task management files should be in taskDir.
+	remaining, _ := ParseTodoMD(TodoPath(taskDir))
+	if len(remaining) != 0 {
+		t.Errorf("expected empty TODO.md in taskDir, got %d tasks", len(remaining))
+	}
+	doneData, err := os.ReadFile(DonePath(taskDir))
+	if err != nil {
+		t.Fatalf("DONE.md should exist in taskDir: %v", err)
+	}
+	if !strings.Contains(string(doneData), "## Separate dir task") {
+		t.Error("DONE.md in taskDir missing task title")
+	}
+	// result.txt was created in cwd (where fake claude ran), and committed there.
+	if _, err := os.Stat(filepath.Join(cwd, "result.txt")); err != nil {
+		t.Errorf("result.txt should exist in cwd: %v", err)
+	}
+	// The commit should be on cwd's repo, not inside taskDir.
+	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git show: %v", err)
+	}
+	if !strings.Contains(string(out), "result.txt") {
+		t.Errorf("result.txt should be committed in cwd repo; got:\n%s", out)
+	}
+}
+
+func TestRunTaskLoop_ExternalTaskDir(t *testing.T) {
+	// taskDir is a completely separate temp directory outside the git repo.
+	// Verifies that git operations target cwd exclusively and that task files
+	// are written to and read from the external taskDir.
+	setupTclaudeEnv(t)
+	cwd := t.TempDir()
+	taskDir := t.TempDir() // independent — not under cwd
+	initGitRepo(t, cwd)
+	setupFakeClaude(t, "create_file") // writes result.txt into cwd
+
+	if err := WriteTodoMD(TodoPath(taskDir), []Task{{Title: "External dir task", Prompt: "Do something"}}); err != nil {
+		t.Fatalf("WriteTodoMD: %v", err)
+	}
+
+	if err := runTaskLoop(io.Discard, cwd, taskDir, nil, false, false); err != nil {
+		t.Fatalf("runTaskLoop: %v", err)
+	}
+
+	// Task management files must be in taskDir, not in the git repo.
+	remaining, _ := ParseTodoMD(TodoPath(taskDir))
+	if len(remaining) != 0 {
+		t.Errorf("expected empty TODO.md in taskDir, got %d tasks", len(remaining))
+	}
+	doneData, err := os.ReadFile(DonePath(taskDir))
+	if err != nil {
+		t.Fatalf("DONE.md should exist in taskDir: %v", err)
+	}
+	if !strings.Contains(string(doneData), "## External dir task") {
+		t.Error("DONE.md in taskDir missing task title")
+	}
+	// No task files should have leaked into cwd.
+	for _, name := range []string{"TODO.md", "DOING.md", "DONE.md"} {
+		if _, err := os.Stat(filepath.Join(cwd, name)); !os.IsNotExist(err) {
+			t.Errorf("%s should not exist in cwd", name)
+		}
+	}
+	// result.txt was committed in cwd's repo, not in taskDir.
+	if _, err := os.Stat(filepath.Join(cwd, "result.txt")); err != nil {
+		t.Errorf("result.txt should exist in cwd: %v", err)
+	}
+	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git show: %v", err)
+	}
+	if !strings.Contains(string(out), "result.txt") {
+		t.Errorf("result.txt should be committed in cwd repo; got:\n%s", out)
+	}
+	// taskDir should not be a git repo (sanity check that we never ran git there).
+	if _, err := os.Stat(filepath.Join(taskDir, ".git")); !os.IsNotExist(err) {
+		t.Error("taskDir should not have a .git directory")
 	}
 }
 

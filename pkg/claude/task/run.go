@@ -28,7 +28,7 @@ import (
 )
 
 type RunParams struct {
-	Dir      string `short:"C" long:"dir" optional:"true" help:"Directory to run tasks in (defaults to current directory)"`
+	Dir      string `short:"C" long:"dir" optional:"true" help:"Directory containing task files (defaults to current directory)"`
 	Detached bool   `short:"d" long:"detached" help:"Start detached (don't attach to session)"`
 	Watch    bool   `short:"w" long:"watch" help:"Watch for new tasks instead of exiting when TODO.md is empty"`
 	Compact  int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
@@ -61,12 +61,19 @@ Pass extra Claude flags after -- (e.g., -- --dangerously-skip-permissions).`,
 }
 
 func runRun(params *RunParams) error {
-	cwd, err := resolveDir(params.Dir)
+	// cwd is where Claude runs and git operates — always the actual working directory.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// taskDir is where TODO.md/DOING.md/DONE.md live; defaults to cwd when --dir is not given.
+	taskDir, err := resolveDir(params.Dir)
 	if err != nil {
 		return err
 	}
 
-	tasks, err := ParseTodoMD(TodoPath(cwd))
+	tasks, err := ParseTodoMD(TodoPath(taskDir))
 	if err != nil {
 		return fmt.Errorf("failed to read TODO.md: %w", err)
 	}
@@ -83,15 +90,16 @@ func runRun(params *RunParams) error {
 	excludeTaskFiles := params.Dir == "" && os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 
 	if os.Getenv("TCLAUDE_TASK_TMUX") != "" {
-		return runTaskLoop(os.Stdout, cwd, clcommon.ExtractClaudeExtraArgs(), params.Watch, excludeTaskFiles)
+		return runTaskLoop(os.Stdout, cwd, taskDir, clcommon.ExtractClaudeExtraArgs(), params.Watch, excludeTaskFiles)
 	}
 
 	// Run in tmux session
-	return runInTmux(cwd, params.Detached, params.Watch, excludeTaskFiles, params.Compact)
+	return runInTmux(cwd, taskDir, params.Detached, params.Watch, excludeTaskFiles, params.Compact)
 }
 
-// runInTmux starts the task runner inside a tmux session
-func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) error {
+// runInTmux starts the task runner inside a tmux session.
+// cwd is the working directory where Claude runs; taskDir is where task files live.
+func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool, compact int) error {
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return err
 	}
@@ -118,7 +126,8 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) 
 	}
 
 	envExports := clcommon.BuildEnvExports(additionalEnv)
-	runnerCmd := envExports + clcommon.DetectCmd() + " task run" + watchFlag + " -C " + clcommon.ShellQuoteArg(cwd)
+	// -C passes the task file directory; the pane's working dir (-c cwd) provides Claude's cwd.
+	runnerCmd := envExports + clcommon.DetectCmd() + " task run" + watchFlag + " -C " + clcommon.ShellQuoteArg(taskDir)
 
 	// Forward extra claude args through
 	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
@@ -162,6 +171,9 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) 
 
 	fmt.Printf("Task runner started in session %s\n", sessionID)
 	fmt.Printf("  Directory: %s\n", cwd)
+	if taskDir != cwd {
+		fmt.Printf("  Task files: %s\n", taskDir)
+	}
 
 	if detached {
 		fmt.Printf("\nAttach with: tclaude session attach %s\n", sessionID)
@@ -173,13 +185,14 @@ func runInTmux(cwd string, detached, watch, excludeTaskFiles bool, compact int) 
 }
 
 // runTaskLoop is the internal loop that runs tasks sequentially.
+// cwd is the working directory for Claude and git; taskDir is where task files live.
 // When watch is true, it waits for new tasks instead of exiting when TODO.md is empty.
-func runTaskLoop(out io.Writer, cwd string, extraClaudeArgs []string, watch, excludeTaskFiles bool) error {
-	todoPath := TodoPath(cwd)
-	doingPath := DoingPath(cwd)
-	donePath := DonePath(cwd)
+func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, watch, excludeTaskFiles bool) error {
+	todoPath := TodoPath(taskDir)
+	doingPath := DoingPath(taskDir)
+	donePath := DonePath(taskDir)
 
-	taskCfg, err := LoadTasksConfig(cwd)
+	taskCfg, err := LoadTasksConfig(taskDir)
 	if err != nil {
 		return fmt.Errorf("failed to read tasks.json: %w", err)
 	}
@@ -261,7 +274,17 @@ func runTaskLoop(out io.Writer, cwd string, extraClaudeArgs []string, watch, exc
 		}
 
 		// Run Claude Code interactively with the task prompt
-		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, task.PlanMode, task.PlanAutoAccept, taskCfg.VerifyCmd, taskCfg.MaxVerifyIterations, taskCfg.VerifyTimeout, taskCfg.ReviewPrompt, taskCfg.MaxReviewIterations, taskCfg.ReviewTimeout)
+		opts := taskRunOpts{
+			planMode:            task.PlanMode,
+			planAutoAccept:      task.PlanAutoAccept,
+			verifyCmd:           taskCfg.VerifyCmd,
+			verifyMaxRetries:    taskCfg.MaxVerifyIterations,
+			verifyTimeout:       taskCfg.VerifyTimeout,
+			reviewPrompt:        taskCfg.ReviewPrompt,
+			maxReviewIterations: taskCfg.MaxReviewIterations,
+			reviewTimeout:       taskCfg.ReviewTimeout,
+		}
+		report, sessionID, runErr := runClaude(cwd, task.Prompt, taskArgs, excludeTaskFiles, opts)
 
 		result := TaskResult{
 			Title:     task.Title,
@@ -372,6 +395,17 @@ func waitForTasks(out io.Writer, todoPath string, sigCh <-chan os.Signal) error 
 	}
 }
 
+type taskRunOpts struct {
+	planMode            bool
+	planAutoAccept      bool
+	verifyCmd           string
+	verifyMaxRetries    int
+	verifyTimeout       time.Duration
+	reviewPrompt        string
+	maxReviewIterations int
+	reviewTimeout       time.Duration
+}
+
 // runClaude runs Claude Code interactively with the given prompt.
 // Claude gets full terminal I/O — the user can approve permissions,
 // answer questions, etc. When the user types /exit or Claude exits,
@@ -384,7 +418,7 @@ func waitForTasks(out io.Writer, todoPath string, sigCh <-chan os.Signal) error 
 //
 // report string - Claude's last assistant message
 // sessionID string - Claude's session_id from hook
-func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration, reviewPrompt string, maxReviewIterations int, reviewTimeout time.Duration) (report string, sessionID string, err error) {
+func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, opts taskRunOpts) (report string, sessionID string, err error) {
 	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
@@ -403,10 +437,9 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 	// Start watcher for auto-continue in tmux mode
 	tmuxSession := os.Getenv("TCLAUDE_TASK_TMUX")
 	if tmuxSession != "" {
-		excludeTaskFiles := os.Getenv("TCLAUDE_TASK_EXPLICIT_DIR") == ""
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, planMode, planAutoAccept, verifyCmd, verifyMaxRetries, verifyTimeout, reviewPrompt, maxReviewIterations, reviewTimeout)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, opts)
 	}
 
 	err = cmd.Run()
@@ -428,7 +461,7 @@ func runClaude(cwd, prompt string, extraArgs []string, planMode, planAutoAccept 
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles, planMode, planAutoAccept bool, verifyCmd string, verifyMaxRetries int, verifyTimeout time.Duration, reviewPrompt string, maxReviewIterations int, reviewTimeout time.Duration) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles bool, opts taskRunOpts) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -469,14 +502,14 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				continue
 			}
 
-			if planMode {
+			if opts.planMode {
 				if taskSignal.Event == "PermissionRequest" && taskSignal.ToolName == "ExitPlanMode" {
 					slog.Debug("plan ready", "module", "task")
 
 					// Plan auto-accept before plan is accepted: wait specifically for
 					// the ExitPlanMode permission request, ignore everything else
 					// (including Stop events that fire when Claude finishes planning)
-					if planAutoAccept && !planAccepted {
+					if opts.planAutoAccept && !planAccepted {
 						slog.Debug("accepting plan", "module", "task")
 						planAccepted = true
 						sendTmuxEnter(tmuxSession)
@@ -502,21 +535,21 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				sendNotification(taskSignal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
-			if verifyCmd != "" {
+			if opts.verifyCmd != "" {
 				if ctx.Err() != nil {
 					return
 				}
-				output, verifyErr := runVerifyCmd(ctx, verifyCmd, cwd, verifyTimeout)
+				output, verifyErr := runVerifyCmd(ctx, opts.verifyCmd, cwd, opts.verifyTimeout)
 				attempts++
-				slog.Debug("verify attempt", "attempt", attempts, "max", verifyMaxRetries, "err", verifyErr, "module", "task")
+				slog.Debug("verify attempt", "attempt", attempts, "max", opts.verifyMaxRetries, "err", verifyErr, "module", "task")
 				if verifyErr != nil {
 					if ctx.Err() != nil {
 						return
 					}
-					if attempts <= verifyMaxRetries {
+					if attempts <= opts.verifyMaxRetries {
 						os.Remove(signalPath)
 						signalExists = false
-						msg := fmt.Sprintf("Verification failed (attempt %d/%d), please fix the issue and try again:\n```\n%s\n```\n", attempts, verifyMaxRetries, output)
+						msg := fmt.Sprintf("Verification failed (attempt %d/%d), please fix the issue and try again:\n```\n%s\n```\n", attempts, opts.verifyMaxRetries, output)
 						sendTmuxMessage(tmuxSession, msg)
 						sendTmuxEnter(tmuxSession)
 						continue
@@ -529,7 +562,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				}
 				slog.Debug("verify passed", "attempt", attempts)
 			}
-			if reviewPrompt != "" {
+			if opts.reviewPrompt != "" {
 				diff := getGitDiff(cwd)
 				if diff == "" {
 					slog.Debug("skipping review: empty diff", "module", "task")
@@ -537,15 +570,15 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 					if ctx.Err() != nil {
 						return
 					}
-					slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", maxReviewIterations, "module", "task")
-					reviewOutput, reviewErr := runReviewAgent(ctx, reviewPrompt, diff, cwd, reviewTimeout)
+					slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
+					reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewPrompt, diff, cwd, opts.reviewTimeout)
 					outputPreview := reviewOutput
 					if r := []rune(reviewOutput); len(r) > 50 {
 						outputPreview = string(r[:50])
 					}
 					slog.Debug("review complete", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
 					if reviewErr == nil && reviewOutput != "" {
-						if reviewAttempts < maxReviewIterations {
+						if reviewAttempts < opts.maxReviewIterations {
 							reviewAttempts++
 							os.Remove(signalPath)
 							signalExists = false
