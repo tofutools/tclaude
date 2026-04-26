@@ -726,6 +726,7 @@ func runReviewAgent(ctx context.Context, reviewPrompt, diff, cwd string, timeout
 	cmd := executil.CommandContext(timeoutCtx, "claude", "--print", "--permission-mode", "default")
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "TCLAUDE_IGNORE_HOOKS=true")
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
