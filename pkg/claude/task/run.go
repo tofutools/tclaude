@@ -204,29 +204,8 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	cfg, _ := config.Load()
-
 	for {
-		usage, err := usageapi.GetCached()
-		if usage == nil {
-			if err != nil {
-				slog.Warn("task run: unable to check rate limit", "error", err, "module", "task")
-			}
-			// Continue without rate limit check - usage data unavailable
-		} else {
-			if err != nil {
-				slog.Warn("task run: using stale usage cache", "error", err, "module", "task")
-			}
-			if usage.FiveHour != nil {
-				if usage.FiveHour.Pct > cfg.Tasks.FiveHourRateLimitPercentMaxUsed { // rate limited
-					resetsAt := usage.FiveHour.ResetsAt
-					slog.Debug("Waiting for 5 hour rate limit to reset", "time", resetsAt, "module", "task")
-					fmt.Fprintf(out, "Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
-					time.Sleep(time.Until(resetsAt.Add(10 * time.Second)))
-					fmt.Fprintf(out, "Rate limit reset, running tasks\n")
-				}
-			}
-		}
+		waitForRateLimit(context.Background(), out)
 
 		// Re-read TODO.md each iteration (in case it was modified externally)
 		tasks, err := ParseTodoMD(todoPath)
@@ -663,6 +642,9 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				// count against the nudge budget for a later stuck episode.
 				stuckNudges = 0
 			} else if lastContinueSent.IsZero() || time.Since(lastContinueSent) >= opts.stuckTimeout {
+				if waitForRateLimit(ctx, nil) {
+					return // context cancelled during rate-limit wait
+				}
 				stuckNudges++
 				if stuckNudges > opts.maxStuckNudges {
 					slog.Warn("agent stuck after max nudges, giving up", "nudges", opts.maxStuckNudges, "module", "task")
@@ -695,6 +677,41 @@ func isAgentStuck(sessionID string, stuckTimeout time.Duration) bool {
 		return false
 	}
 	return time.Since(state.Updated) > stuckTimeout
+}
+
+// waitForRateLimit checks the 5-hour rate limit and blocks until it resets when
+// needed. out receives user-facing progress messages when non-nil (used by the
+// main task loop); pass nil to suppress terminal output (used by the stuck-
+// detection goroutine, which communicates via slog instead).
+// Returns true if the context was cancelled during the wait.
+func waitForRateLimit(ctx context.Context, out io.Writer) bool {
+	cfg, _ := config.Load()
+	usage, err := usageapi.GetCached()
+	if usage == nil {
+		if err != nil {
+			slog.Warn("task run: unable to check rate limit", "error", err, "module", "task")
+		}
+		return false
+	}
+	if err != nil {
+		slog.Warn("task run: using stale usage cache", "error", err, "module", "task")
+	}
+	if usage.FiveHour != nil && usage.FiveHour.Pct > cfg.Tasks.FiveHourRateLimitPercentMaxUsed {
+		resetsAt := usage.FiveHour.ResetsAt
+		slog.Debug("Waiting for 5 hour rate limit to reset", "time", resetsAt, "module", "task")
+		if out != nil {
+			fmt.Fprintf(out, "Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
+		}
+		select {
+		case <-ctx.Done():
+			return true
+		case <-time.After(time.Until(resetsAt.Add(10 * time.Second))):
+		}
+		if out != nil {
+			fmt.Fprintf(out, "Rate limit reset, running tasks\n")
+		}
+	}
+	return false
 }
 
 // gracePeriod waits 5 seconds, watching for the signal file to be removed.
