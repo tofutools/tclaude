@@ -146,7 +146,7 @@ func setupTclaudeEnv(t *testing.T) {
 func TestHasTrackedChanges_Clean(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	if hasTrackedChanges(dir, false) {
+	if hasTrackedChanges(dir, false, "") {
 		t.Error("expected false for clean repo")
 	}
 }
@@ -159,7 +159,7 @@ func TestHasTrackedChanges_ModifiedTrackedFile(t *testing.T) {
 	gitRun(t, dir, "add", "file.txt")
 	gitRun(t, dir, "commit", "-m", "add file")
 	os.WriteFile(path, []byte("modified"), 0644)
-	if !hasTrackedChanges(dir, false) {
+	if !hasTrackedChanges(dir, false, "") {
 		t.Error("expected true for modified tracked file")
 	}
 }
@@ -168,7 +168,7 @@ func TestHasTrackedChanges_UntrackedFile(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
-	if !hasTrackedChanges(dir, false) {
+	if !hasTrackedChanges(dir, false, "") {
 		t.Error("expected true for untracked file")
 	}
 }
@@ -178,7 +178,7 @@ func TestHasTrackedChanges_OnlyTaskFilesExcluded(t *testing.T) {
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "DOING.md"), []byte("## t\n\np\n"), 0644)
-	if hasTrackedChanges(dir, true) {
+	if hasTrackedChanges(dir, true, "") {
 		t.Error("expected false when only task files present and excludeTaskFiles=true")
 	}
 }
@@ -188,8 +188,66 @@ func TestHasTrackedChanges_TaskAndOtherFilesExcluded(t *testing.T) {
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("work"), 0644)
-	if !hasTrackedChanges(dir, true) {
+	if !hasTrackedChanges(dir, true, "") {
 		t.Error("expected true when non-task file is also present")
+	}
+}
+
+func TestHasTrackedChanges_AgentCommit(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit := getCurrentCommit(dir)
+	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
+	gitRun(t, dir, "add", "result.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+	if !hasTrackedChanges(dir, false, baseCommit) {
+		t.Error("expected true when agent committed a file")
+	}
+}
+
+func TestHasTrackedChanges_AgentCommitOnlyTaskFiles(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit := getCurrentCommit(dir)
+	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte(""), 0644)
+	gitRun(t, dir, "add", "TODO.md")
+	gitRun(t, dir, "commit", "-m", "update tasks")
+	if hasTrackedChanges(dir, true, baseCommit) {
+		t.Error("expected false when agent only committed task files and excludeTaskFiles=true")
+	}
+}
+
+func TestHasTrackedChanges_AgentCommitNonTaskFile(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit := getCurrentCommit(dir)
+	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
+	gitRun(t, dir, "add", "TODO.md", "result.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+	if !hasTrackedChanges(dir, true, baseCommit) {
+		t.Error("expected true when agent committed result.txt alongside task files")
+	}
+}
+
+// ── getCurrentCommit ──────────────────────────────────────────────────────────
+
+func TestGetCurrentCommit_ValidRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	commit := getCurrentCommit(dir)
+	if commit == "" {
+		t.Fatal("expected non-empty commit hash for valid repo")
+	}
+	if len(commit) < 40 {
+		t.Errorf("expected hex SHA of at least 40 characters, got %q (len %d)", commit, len(commit))
+	}
+}
+
+func TestGetCurrentCommit_NotARepo(t *testing.T) {
+	dir := t.TempDir()
+	if commit := getCurrentCommit(dir); commit != "" {
+		t.Errorf("expected empty string for non-repo directory, got %q", commit)
 	}
 }
 
@@ -548,7 +606,7 @@ func TestRunTaskLoop_ExternalTaskDir(t *testing.T) {
 func TestGetGitDiff_CleanRepo(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	if diff := getGitDiff(dir); diff != "" {
+	if diff := getGitDiff(dir, ""); diff != "" {
 		t.Errorf("expected empty diff for clean repo, got %q", diff)
 	}
 }
@@ -561,7 +619,7 @@ func TestGetGitDiff_WithChanges(t *testing.T) {
 	gitRun(t, dir, "add", "file.txt")
 	gitRun(t, dir, "commit", "-m", "add file")
 	os.WriteFile(path, []byte("modified"), 0644)
-	diff := getGitDiff(dir)
+	diff := getGitDiff(dir, "")
 	if diff == "" {
 		t.Fatal("expected non-empty diff for modified file")
 	}
@@ -575,8 +633,47 @@ func TestGetGitDiff_UntrackedFileIgnored(t *testing.T) {
 	initGitRepo(t, dir)
 	// Untracked files don't appear in git diff HEAD
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
-	if diff := getGitDiff(dir); diff != "" {
+	if diff := getGitDiff(dir, ""); diff != "" {
 		t.Errorf("expected empty diff for untracked-only changes, got %q", diff)
+	}
+}
+
+func TestGetGitDiff_WithBaseCommit(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit := getCurrentCommit(dir)
+	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("agent output"), 0644)
+	gitRun(t, dir, "add", "result.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+	diff := getGitDiff(dir, baseCommit)
+	if diff == "" {
+		t.Fatal("expected non-empty diff when baseCommit predates a commit")
+	}
+	if !strings.Contains(diff, "agent output") {
+		t.Errorf("diff should contain committed content, got: %s", diff)
+	}
+}
+
+func TestGetGitDiff_WithBaseCommitAndUncommitted(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	baseCommit := getCurrentCommit(dir)
+
+	// Agent commits one file.
+	os.WriteFile(filepath.Join(dir, "committed.txt"), []byte("committed content"), 0644)
+	gitRun(t, dir, "add", "committed.txt")
+	gitRun(t, dir, "commit", "-m", "agent work")
+
+	// Then leaves another file modified but uncommitted.
+	os.WriteFile(filepath.Join(dir, "uncommitted.txt"), []byte("uncommitted content"), 0644)
+	gitRun(t, dir, "add", "uncommitted.txt")
+
+	diff := getGitDiff(dir, baseCommit)
+	if !strings.Contains(diff, "committed content") {
+		t.Errorf("diff should contain committed content, got: %s", diff)
+	}
+	if !strings.Contains(diff, "uncommitted content") {
+		t.Errorf("diff should contain uncommitted content, got: %s", diff)
 	}
 }
 

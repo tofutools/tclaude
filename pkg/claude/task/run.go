@@ -422,6 +422,9 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 	signalPath := session.TaskSignalPath(cwd)
 	os.Remove(signalPath) // clean up stale signal from previous run
 
+	// Snapshot HEAD so we can detect commits made by the agent during the task.
+	baseCommit := getCurrentCommit(cwd)
+
 	var args []string
 	args = append(args, extraArgs...)
 	args = append(args, "--")
@@ -439,7 +442,7 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 	if tmuxSession != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, opts)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, opts, baseCommit)
 	}
 
 	err = cmd.Run()
@@ -461,7 +464,7 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles bool, opts taskRunOpts) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles bool, opts taskRunOpts, baseCommit string) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -530,7 +533,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				signalExists = false
 				continue
 			}
-			if !hasTrackedChanges(cwd, excludeTaskFiles) {
+			if !hasTrackedChanges(cwd, excludeTaskFiles, baseCommit) {
 				slog.Debug("task produced no file changes", "event", taskSignal.Event, "module", "task")
 				sendNotification(taskSignal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
@@ -563,7 +566,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				slog.Debug("verify passed", "attempt", attempts)
 			}
 			if opts.reviewPrompt != "" {
-				diff := getGitDiff(cwd)
+				diff := getGitDiff(cwd, baseCommit)
 				if diff == "" {
 					slog.Debug("skipping review: empty diff", "module", "task")
 				} else {
@@ -665,20 +668,56 @@ func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Durat
 	return strings.TrimSpace(string(out)), err
 }
 
-// getGitDiff returns the output of git diff HEAD in cwd, or empty string on error.
-func getGitDiff(cwd string) string {
-	cmd := exec.Command("git", "diff", "HEAD")
+// getCurrentCommit returns the full SHA of HEAD, or empty string on error.
+func getCurrentCommit(cwd string) string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = cwd
 	out, err := cmd.Output()
 	if err != nil {
-		slog.Warn("git diff HEAD failed", "err", err, "module", "task")
+		slog.Debug("git rev-parse HEAD failed", "err", err, "module", "task")
 		return ""
 	}
 	return strings.TrimSpace(string(out))
 }
 
+// getGitDiff returns changes since baseCommit: all commits between baseCommit and HEAD
+// concatenated with any uncommitted working-tree edits (staged and unstaged vs HEAD).
+// Falls back to git diff HEAD when baseCommit is empty.
+// A file modified both by an agent commit and by a subsequent working-tree edit will
+// appear in both sections; this is intentional — the review agent sees the full picture.
+func getGitDiff(cwd, baseCommit string) string {
+	var parts []string
+
+	if baseCommit != "" {
+		// Committed changes since the task started.
+		cmd := exec.Command("git", "diff", baseCommit+"..HEAD")
+		cmd.Dir = cwd
+		if out, err := cmd.Output(); err == nil {
+			if s := strings.TrimSpace(string(out)); s != "" {
+				parts = append(parts, s)
+			}
+		} else {
+			slog.Warn("git diff committed changes failed", "err", err, "module", "task")
+		}
+	}
+
+	// Uncommitted working-tree changes vs HEAD.
+	cmd := exec.Command("git", "diff", "HEAD")
+	cmd.Dir = cwd
+	if out, err := cmd.Output(); err == nil {
+		if s := strings.TrimSpace(string(out)); s != "" {
+			parts = append(parts, s)
+		}
+	} else {
+		slog.Warn("git diff HEAD failed", "err", err, "module", "task")
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
 // runReviewAgent runs a non-interactive Claude review with the given prompt in cwd.
-// diff is the output of git diff HEAD, appended after reviewPrompt
+// diff covers all changes since the task's base commit (committed and uncommitted),
+// as produced by getGitDiff; it is appended after reviewPrompt.
 // Returns the review output and any error.
 func runReviewAgent(ctx context.Context, reviewPrompt, diff, cwd string, timeout time.Duration) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -703,9 +742,40 @@ func sendTmuxEnter(tmuxSession string) {
 	cmd.Run()
 }
 
-// hasTrackedChanges returns true if there are uncommitted changes to git-tracked
-// files, excluding task management files (TODO.md/DOING.md/DONE.md) when excludeTaskFiles is set.
-func hasTrackedChanges(cwd string, excludeTaskFiles bool) bool {
+// hasTrackedChanges returns true if any git-tracked files changed since baseCommit,
+// whether committed by the agent or left as uncommitted edits.
+// When excludeTaskFiles is set, TODO.md/DOING.md/DONE.md are ignored.
+func hasTrackedChanges(cwd string, excludeTaskFiles bool, baseCommit string) bool {
+	isTaskFile := func(path string) bool {
+		b := filepath.Base(path)
+		return b == "TODO.md" || b == "DOING.md" || b == "DONE.md"
+	}
+
+	// Check for new commits since the task started (agent committed its own changes).
+	// getCurrentCommit runs git rev-parse on every poll tick; if HEAD is stable this
+	// is a no-op fast-path, but it could be memoised if profiling ever surfaces it.
+	if baseCommit != "" {
+		currentCommit := getCurrentCommit(cwd)
+		if currentCommit != "" && currentCommit != baseCommit {
+			if !excludeTaskFiles {
+				return true
+			}
+			// Verify commits touched at least one non-task file.
+			cmd := exec.Command("git", "diff", "--name-only", baseCommit+"..HEAD")
+			cmd.Dir = cwd
+			out, err := cmd.Output()
+			if err != nil {
+				return true // can't determine which files were committed; assume real changes
+			}
+			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if f != "" && !isTaskFile(f) {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check for uncommitted changes.
 	statusCmd := exec.Command("git", "status", "--porcelain")
 	statusCmd.Dir = cwd
 	out, err := statusCmd.Output()
@@ -721,11 +791,8 @@ func hasTrackedChanges(cwd string, excludeTaskFiles bool) bool {
 		if idx := strings.Index(file, " -> "); idx >= 0 {
 			file = file[idx+4:]
 		}
-		if excludeTaskFiles {
-			base := filepath.Base(file)
-			if base == "TODO.md" || base == "DOING.md" || base == "DONE.md" {
-				continue
-			}
+		if excludeTaskFiles && isTaskFile(file) {
+			continue
 		}
 		return true
 	}
