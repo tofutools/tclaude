@@ -167,7 +167,7 @@ func runCustomCommand(cmdTemplate []string, sessionID, title, body string) error
 	defer cancel()
 
 	var stdout, stderr bytes.Buffer
-	cmd := executil.CommandContext(ctx, cmdTemplate[0], cmdTemplate[1:]...)
+	cmd := executil.CommandContextWithGrace(ctx, time.Second, cmdTemplate[0], cmdTemplate[1:]...)
 	cmd.Stdin = io.MultiReader(bytes.NewReader(jsonData), bytes.NewReader([]byte{'\n'}))
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
