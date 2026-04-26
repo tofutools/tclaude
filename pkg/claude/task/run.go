@@ -680,6 +680,63 @@ func getCurrentCommit(cwd string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// hasTrackedChanges returns true if any git-tracked files changed since baseCommit,
+// whether committed by the agent or left as uncommitted edits.
+// When excludeTaskFiles is set, TODO.md/DOING.md/DONE.md are ignored.
+func hasTrackedChanges(cwd string, excludeTaskFiles bool, baseCommit string) bool {
+	isTaskFile := func(path string) bool {
+		b := filepath.Base(path)
+		return b == "TODO.md" || b == "DOING.md" || b == "DONE.md"
+	}
+
+	// Check for new commits since the task started (agent committed its own changes).
+	// getCurrentCommit runs git rev-parse on every poll tick; if HEAD is stable this
+	// is a no-op fast-path, but it could be memoised if profiling ever surfaces it.
+	if baseCommit != "" {
+		currentCommit := getCurrentCommit(cwd)
+		if currentCommit != "" && currentCommit != baseCommit {
+			if !excludeTaskFiles {
+				return true
+			}
+			// Verify commits touched at least one non-task file.
+			cmd := exec.Command("git", "diff", "--name-only", baseCommit+"..HEAD")
+			cmd.Dir = cwd
+			out, err := cmd.Output()
+			if err != nil {
+				return true // can't determine which files were committed; assume real changes
+			}
+			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if f != "" && !isTaskFile(f) {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check for uncommitted changes.
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = cwd
+	out, err := statusCmd.Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		// Porcelain format: XY filename (or XY old -> new for renames)
+		file := strings.TrimSpace(line[2:])
+		if idx := strings.Index(file, " -> "); idx >= 0 {
+			file = file[idx+4:]
+		}
+		if excludeTaskFiles && isTaskFile(file) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // getGitDiff returns changes since baseCommit: all commits between baseCommit and HEAD
 // concatenated with any uncommitted working-tree edits (staged and unstaged vs HEAD).
 // Falls back to git diff HEAD when baseCommit is empty.
@@ -741,63 +798,6 @@ func sendTmuxMessage(tmuxSession, message string) {
 func sendTmuxEnter(tmuxSession string) {
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter")
 	cmd.Run()
-}
-
-// hasTrackedChanges returns true if any git-tracked files changed since baseCommit,
-// whether committed by the agent or left as uncommitted edits.
-// When excludeTaskFiles is set, TODO.md/DOING.md/DONE.md are ignored.
-func hasTrackedChanges(cwd string, excludeTaskFiles bool, baseCommit string) bool {
-	isTaskFile := func(path string) bool {
-		b := filepath.Base(path)
-		return b == "TODO.md" || b == "DOING.md" || b == "DONE.md"
-	}
-
-	// Check for new commits since the task started (agent committed its own changes).
-	// getCurrentCommit runs git rev-parse on every poll tick; if HEAD is stable this
-	// is a no-op fast-path, but it could be memoised if profiling ever surfaces it.
-	if baseCommit != "" {
-		currentCommit := getCurrentCommit(cwd)
-		if currentCommit != "" && currentCommit != baseCommit {
-			if !excludeTaskFiles {
-				return true
-			}
-			// Verify commits touched at least one non-task file.
-			cmd := exec.Command("git", "diff", "--name-only", baseCommit+"..HEAD")
-			cmd.Dir = cwd
-			out, err := cmd.Output()
-			if err != nil {
-				return true // can't determine which files were committed; assume real changes
-			}
-			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				if f != "" && !isTaskFile(f) {
-					return true
-				}
-			}
-		}
-	}
-
-	// Check for uncommitted changes.
-	statusCmd := exec.Command("git", "status", "--porcelain")
-	statusCmd.Dir = cwd
-	out, err := statusCmd.Output()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		// Porcelain format: XY filename (or XY old -> new for renames)
-		file := strings.TrimSpace(line[2:])
-		if idx := strings.Index(file, " -> "); idx >= 0 {
-			file = file[idx+4:]
-		}
-		if excludeTaskFiles && isTaskFile(file) {
-			continue
-		}
-		return true
-	}
-	return false
 }
 
 // gitCommitAll stages all changes and commits with the given message.
