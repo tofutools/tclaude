@@ -671,7 +671,9 @@ func runVerifyCmd(ctx context.Context, verifyCmd, cwd string, timeout time.Durat
 
 // getCurrentCommit returns the full SHA of HEAD, or empty string on error.
 func getCurrentCommit(cwd string) string {
-	cmd := exec.Command("git", "rev-parse", "HEAD")
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := executil.CommandContext(timeoutCtx, "git", "rev-parse", "HEAD")
 	cmd.Dir = cwd
 	out, err := cmd.Output()
 	if err != nil {
