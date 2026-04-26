@@ -280,7 +280,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 			verifyCmd:           taskCfg.VerifyCmd,
 			verifyMaxRetries:    taskCfg.MaxVerifyIterations,
 			verifyTimeout:       taskCfg.VerifyTimeout,
-			reviewPrompt:        taskCfg.ReviewPrompt,
+			reviewSkill:         taskCfg.ReviewSkill,
 			maxReviewIterations: taskCfg.MaxReviewIterations,
 			reviewTimeout:       taskCfg.ReviewTimeout,
 			reviewDiff:          taskCfg.reviewDiffEnabled(),
@@ -402,7 +402,7 @@ type taskRunOpts struct {
 	verifyCmd           string
 	verifyMaxRetries    int
 	verifyTimeout       time.Duration
-	reviewPrompt        string
+	reviewSkill         string
 	maxReviewIterations int
 	reviewTimeout       time.Duration
 	reviewDiff          bool
@@ -576,7 +576,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				}
 				slog.Debug("verify passed", "attempt", attempts)
 			}
-			if opts.reviewPrompt != "" {
+			if opts.reviewSkill != "" {
 				if reviewAttempts < opts.maxReviewIterations {
 					diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
 					if !skipReview {
@@ -584,7 +584,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 							return
 						}
 						slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
-						reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewPrompt, diff, cwd, opts.reviewTimeout)
+						reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewSkill, diff, cwd, opts.reviewTimeout)
 						outputPreview := reviewOutput
 						if r := []rune(reviewOutput); len(r) > 50 {
 							outputPreview = string(r[:50])
@@ -811,14 +811,14 @@ func getGitDiff(cwd, baseCommit string) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// runReviewAgent runs a non-interactive Claude review with the given prompt in cwd.
+// runReviewAgent runs a non-interactive Claude review with the given skill in cwd.
 // diff covers all changes since the task's base commit (committed and uncommitted),
-// as produced by getGitDiff; it is appended after reviewPrompt.
+// as produced by getGitDiff; it is appended after reviewSkill.
 // Returns the review output and any error.
-func runReviewAgent(ctx context.Context, reviewPrompt, diff, cwd string, timeout time.Duration) (string, error) {
+func runReviewAgent(ctx context.Context, reviewSkill, diff, cwd string, timeout time.Duration) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := executil.CommandContext(timeoutCtx, "claude", "--print", "--permission-mode", "default", "--", reviewPrompt)
+	cmd := executil.CommandContext(timeoutCtx, "claude", "--print", "--permission-mode", "default", "--", "/"+reviewSkill)
 	if diff != "" {
 		cmd.Stdin = strings.NewReader(diff)
 	}

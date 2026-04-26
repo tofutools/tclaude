@@ -794,7 +794,7 @@ func simulateReviewDiffDecision(t *testing.T, cwd, baseCommit string, opts taskR
 	if skip {
 		return false
 	}
-	out, err := runReviewAgent(context.Background(), opts.reviewPrompt, diff, cwd, opts.reviewTimeout)
+	out, err := runReviewAgent(context.Background(), opts.reviewSkill, diff, cwd, opts.reviewTimeout)
 	if err != nil {
 		t.Fatalf("review agent failed: %v", err)
 	}
@@ -807,7 +807,7 @@ func TestReviewDiff_TrueSkipsReviewWhenDiffEmpty(t *testing.T) {
 	initGitRepo(t, dir)
 	// Clean repo → diff is empty; reviewDiff=true → review must be skipped.
 	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
-		reviewPrompt:  "check the work",
+		reviewSkill:   "check the work",
 		reviewTimeout: 5 * time.Second,
 		reviewDiff:    true,
 	})
@@ -822,7 +822,7 @@ func TestReviewDiff_FalseRunsReviewWithoutDiff(t *testing.T) {
 	initGitRepo(t, dir)
 	// Clean repo → diff is empty; reviewDiff=false → review must still run.
 	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
-		reviewPrompt:  "check the work",
+		reviewSkill:   "check the work",
 		reviewTimeout: 5 * time.Second,
 		reviewDiff:    false,
 	})

@@ -21,7 +21,7 @@ type TasksConfig struct {
 	MaxVerifyIterations int           `json:"max_verify_iterations,omitempty"`
 	VerifyTimeoutStr    string        `json:"verify_timeout,omitempty"`
 	VerifyTimeout       time.Duration `json:"-"`
-	ReviewPrompt        string        `json:"review_prompt,omitempty"`
+	ReviewSkill         string        `json:"review_skill,omitempty"`
 	MaxReviewIterations int           `json:"max_review_iterations,omitempty"`
 	ReviewTimeoutStr    string        `json:"review_timeout,omitempty"`
 	ReviewTimeout       time.Duration `json:"-"`
