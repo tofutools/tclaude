@@ -818,12 +818,10 @@ func getGitDiff(cwd, baseCommit string) (string, error) {
 func runReviewAgent(ctx context.Context, reviewPrompt, diff, cwd string, timeout time.Duration) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	prompt := reviewPrompt
+	cmd := executil.CommandContext(timeoutCtx, "claude", "--print", "--permission-mode", "default", "--", reviewPrompt)
 	if diff != "" {
-		prompt += "\n```diff\n" + diff + "\n```\n"
+		cmd.Stdin = strings.NewReader(diff)
 	}
-	cmd := executil.CommandContext(timeoutCtx, "claude", "--print", "--permission-mode", "default")
-	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "TCLAUDE_IGNORE_HOOKS=true")
 	out, err := cmd.Output()

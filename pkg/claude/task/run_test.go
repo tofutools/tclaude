@@ -756,8 +756,8 @@ func TestRunReviewAgent_DiffPrependedToPrompt(t *testing.T) {
 	if !strings.Contains(out, "some diff content") {
 		t.Errorf("output should contain diff content, got: %q", out)
 	}
-	if !strings.Contains(out, "review this") {
-		t.Errorf("output should contain review prompt, got: %q", out)
+	if strings.Contains(out, "review this") {
+		t.Errorf("output should not contain review prompt, got: %q", out)
 	}
 }
 
@@ -767,8 +767,8 @@ func TestRunReviewAgent_EmptyDiffOmitsDiffBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "review this") {
-		t.Errorf("output should contain review prompt, got: %q", out)
+	if strings.Contains(out, "review this") {
+		t.Errorf("output should not contain review prompt, got: %q", out)
 	}
 	if strings.Contains(out, "```diff") {
 		t.Errorf("output should not contain diff block for empty diff, got: %q", out)
