@@ -6,7 +6,7 @@ Run a list of tasks sequentially with Claude Code, with automatic git commits an
 
 Define tasks in a `TODO.md` file at the root of your project (or in a custom directory with `-C`). Each task has a title and a prompt. When you run `tclaude task run`, tasks are executed one by one in a tmux session. After each task:
 
-1. Check if any files have changed, if not the user is notified, and the task runner waits for manual intervention.
+1. Check if any files have changed (including commits made by the agent during the task); if not, the user is notified and the task runner waits for manual intervention.
 2. All repository changes are committed to git (using the task title as the commit message)
 3. The task is removed from `TODO.md` and recorded in `DONE.md` with status info
 4. Claude Code's context is cleared (each task runs in a fresh session)
@@ -75,23 +75,58 @@ The session remains interactive throughout — you can still attach to approve p
 
 ## Project Configuration
 
-Optional project-level settings are stored in `tasks.json` alongside your `TODO.md`:
+> **Note:** The config file moved from `tasks.json` (project root) to `.claude/tclaude/tasks.json` in v0.0.117. Move your existing file if you have one.
+
+Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
 
 ```json
 {
   "verify": "go test ./...",
   "max_verify_iterations": 5,
-  "verify_timeout": "2m"
+  "verify_timeout": "2m",
+  "review_skill": "task-review",
+  "max_review_iterations": 3,
+  "review_timeout": "5m",
+  "review_diff": true
 }
 ```
 
-| Field                   | Description                                                                 |
-|-------------------------|-----------------------------------------------------------------------------|
-| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`) |
-| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                  |
-| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`) |
+| Field                    | Description                                                                                          |
+|--------------------------|------------------------------------------------------------------------------------------------------|
+| `verify`                 | Shell command run after each task to verify success (e.g. `go test ./...`)                          |
+| `max_verify_iterations`  | Max fix-and-retry attempts on verify failure (default: 3)                                            |
+| `verify_timeout`         | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)                        |
+| `review_skill`           | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`)                    |
+| `max_review_iterations`  | Max review-and-fix cycles per task (default: 1)                                                      |
+| `review_timeout`         | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                                         |
+| `review_diff`            | Whether to pass the git diff to the review agent (default: `true`)                                   |
+
+### Verify
 
 When a `verify` command is set, the task runner executes it after Claude finishes. If it fails, Claude is given the output and asked to fix the issue, then the command is re-run — up to `max_verify_iterations` times. If retries are exhausted, the task runner notifies the user and waits for manual intervention.
+
+### Review
+
+When `review_skill` is set, the task runner invokes that skill as an automated review agent after verify passes. The agent receives the git diff of all changes made during the task (committed and uncommitted). If the review returns feedback, it is sent to Claude as a prompt to address — then verify runs again, and if it passes, another review cycle begins. This continues up to `max_review_iterations` times.
+
+If the review returns no output (i.e. nothing to address), the review passes and the task completes normally. If `max_review_iterations` is exhausted with feedback still outstanding, the runner proceeds anyway — unlike verify exhaustion, it does not block for manual intervention.
+
+Set `review_diff: false` to run the review agent without passing a diff — useful for skills that read files or run commands directly rather than relying on the diff as input.
+
+To create a review skill, add a skill file under `.claude/skill/<skill-name>/SKILL.md`. For example:
+
+```markdown
+---
+name: task-review
+description: Review the diff when a task is finished.
+disable-model-invocation: true
+---
+
+You are an expert code reviewer. Analyze the following diff and provide a thorough
+code review. If there is nothing worth changing, do not output anything.
+```
+
+> **Note:** `disable-model-invocation: true` prevents the skill from triggering a model call when invoked interactively — where no diff is available and the skill would have nothing to review. The task runner always invokes the model by running `claude --print` with the diff regardless of this flag.
 
 ## Commands
 
@@ -163,6 +198,8 @@ When you run `tclaude task run`:
     - Claude Code launches interactively with the task prompt
     - You can attach to the session to approve permissions, answer questions, or monitor progress
     - When Claude is done, type `/exit` to finish the task
+    - If configured, the verify command runs; on failure Claude is asked to fix and retry
+    - If configured, the review skill runs; if it returns feedback Claude is asked to address it
     - The runner commits changes, updates tracking files, and starts the next task
 3. A notification is sent when all tasks are complete (or if a task fails)
 
