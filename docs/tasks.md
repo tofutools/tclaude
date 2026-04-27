@@ -85,19 +85,32 @@ Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
   "review_skill": "task-review",
   "max_review_iterations": 3,
   "review_timeout": "5m",
-  "review_diff": true
+  "review_diff": true,
+  "stuck_timeout": "5m",
+  "max_stuck_nudges": 3
 }
 ```
 
-| Field                   | Description                                                                      |
-|-------------------------|----------------------------------------------------------------------------------|
-| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`)       |
-| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                        |
-| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)      |
-| `review_skill`          | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`) |
-| `max_review_iterations` | Max review-and-fix cycles per task (default: 1)                                  |
-| `review_timeout`        | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                       |
-| `review_diff`           | Whether to pass the git diff to the review agent (default: `true`)               |
+| Field                   | Description                                                                                                                             |
+|-------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`)                                                              |
+| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                                                                               |
+| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)                                                             |
+| `review_skill`          | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`)                                                        |
+| `max_review_iterations` | Max review-and-fix cycles per task (default: 1)                                                                                         |
+| `review_timeout`        | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                                                                              |
+| `review_diff`           | Whether to pass the git diff to the review agent (default: `true`)                                                                      |
+| `stuck_timeout`         | How long Claude can be idle (no hook activity) before being considered stuck; set `"0s"` to disable (default: `"5m"`, minimum: `"30s"`) |
+| `max_stuck_nudges`      | Max "continue" nudges sent to a stuck agent before giving up (default: 3)                                                               |
+
+
+### Stuck Agent Detection
+
+When a task is running, the task runner monitors Claude's session state. If Claude stays in a working state without any hook activity for longer than `stuck_timeout` (default: 5 minutes), it is considered stuck. The runner then sends a `continue` message to the tmux session to prompt Claude to resume.
+
+This repeats up to `max_stuck_nudges` times (default: 3). If Claude is still stuck after all nudges are exhausted, a desktop notification is sent and stuck detection is disabled for the remainder of that task.
+
+**Note:** Hooks do not fire while a tool command is actively running (e.g., a long build or test). A slow-but-healthy tool call that exceeds `stuck_timeout` will trigger a spurious nudge. The agent will typically ignore it and continue normally. Set `stuck_timeout` to a value larger than your longest expected tool call to avoid this, or set `"0s"` to disable the feature entirely. The minimum allowed value is `"30s"`.
 
 ### Verify
 
