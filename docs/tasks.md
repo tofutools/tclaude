@@ -75,8 +75,6 @@ The session remains interactive throughout — you can still attach to approve p
 
 ## Project Configuration
 
-> **Note:** The config file moved from `tasks.json` (project root) to `.claude/tclaude/tasks.json` in v0.0.117. Move your existing file if you have one.
-
 Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
 
 ```json
@@ -91,15 +89,15 @@ Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
 }
 ```
 
-| Field                    | Description                                                                                          |
-|--------------------------|------------------------------------------------------------------------------------------------------|
-| `verify`                 | Shell command run after each task to verify success (e.g. `go test ./...`)                          |
-| `max_verify_iterations`  | Max fix-and-retry attempts on verify failure (default: 3)                                            |
-| `verify_timeout`         | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)                        |
-| `review_skill`           | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`)                    |
-| `max_review_iterations`  | Max review-and-fix cycles per task (default: 1)                                                      |
-| `review_timeout`         | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                                         |
-| `review_diff`            | Whether to pass the git diff to the review agent (default: `true`)                                   |
+| Field                   | Description                                                                      |
+|-------------------------|----------------------------------------------------------------------------------|
+| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`)       |
+| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                        |
+| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)      |
+| `review_skill`          | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`) |
+| `max_review_iterations` | Max review-and-fix cycles per task (default: 1)                                  |
+| `review_timeout`        | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                       |
+| `review_diff`           | Whether to pass the git diff to the review agent (default: `true`)               |
 
 ### Verify
 
@@ -255,7 +253,7 @@ Add input validation to the user registration endpoint.
 Validate email format, password strength, and required fields.
 Return appropriate error messages.
 
-</details>
+</details>                                                 k
 
 <details>
 <summary>Report</summary>
