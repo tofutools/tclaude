@@ -579,6 +579,92 @@ func TestLoadTasksConfig(t *testing.T) {
 			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
 		}
 	})
+
+	t.Run("stuck_timeout default", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.StuckTimeout != defaultStuckTimeout {
+			t.Errorf("StuckTimeout = %v, want %v", cfg.StuckTimeout, defaultStuckTimeout)
+		}
+	})
+
+	t.Run("stuck_timeout custom", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"stuck_timeout":"10m"}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.StuckTimeout != 10*time.Minute {
+			t.Errorf("StuckTimeout = %v, want 10m", cfg.StuckTimeout)
+		}
+	})
+
+	t.Run("stuck_timeout zero disables detection", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"stuck_timeout":"0s"}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.StuckTimeout != 0 {
+			t.Errorf("StuckTimeout = %v, want 0", cfg.StuckTimeout)
+		}
+	})
+
+	t.Run("stuck_timeout below minimum returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"stuck_timeout":"20s"}`)
+		_, err := LoadTasksConfig(dir)
+		if err == nil {
+			t.Error("expected error for stuck_timeout below minimum, got nil")
+		}
+	})
+
+	t.Run("invalid stuck_timeout returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"stuck_timeout":"notaduration"}`)
+		_, err := LoadTasksConfig(dir)
+		if err == nil {
+			t.Error("expected error for invalid stuck_timeout, got nil")
+		}
+	})
+
+	t.Run("max_stuck_nudges default", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxStuckNudges != defaultMaxStuckNudges {
+			t.Errorf("MaxStuckNudges = %d, want %d", cfg.MaxStuckNudges, defaultMaxStuckNudges)
+		}
+	})
+
+	t.Run("max_stuck_nudges custom", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"max_stuck_nudges":5}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxStuckNudges != 5 {
+			t.Errorf("MaxStuckNudges = %d, want 5", cfg.MaxStuckNudges)
+		}
+	})
+
+	t.Run("zero max_stuck_nudges falls back to default", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"max_stuck_nudges":0}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.MaxStuckNudges != defaultMaxStuckNudges {
+			t.Errorf("MaxStuckNudges = %d, want %d", cfg.MaxStuckNudges, defaultMaxStuckNudges)
+		}
+	})
 }
 
 func TestParseTodoMDNotFound(t *testing.T) {
