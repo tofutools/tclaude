@@ -204,8 +204,22 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	// Bridge sigCh into a context so waitForRateLimit (and any other
+	// ctx-aware waits) can be interrupted by Ctrl-C.
+	loopCtx, loopCancel := context.WithCancel(context.Background())
+	defer loopCancel()
+	go func() {
+		select {
+		case <-sigCh:
+			loopCancel()
+		case <-loopCtx.Done():
+		}
+	}()
+
 	for {
-		waitForRateLimit(context.Background(), out)
+		if waitForRateLimit(loopCtx, out) {
+			return fmt.Errorf("interrupted")
+		}
 
 		// Re-read TODO.md each iteration (in case it was modified externally)
 		tasks, err := ParseTodoMD(todoPath)
