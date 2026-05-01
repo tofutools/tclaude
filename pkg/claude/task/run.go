@@ -600,6 +600,9 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						if ctx.Err() != nil {
 							return
 						}
+						if ratelimit.WaitForRateLimit(ctx, nil) {
+							return // context cancelled during rate-limit wait
+						}
 						slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
 						reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewSkill, diff, cwd, opts.reviewTimeout)
 						outputPreview := reviewOutput

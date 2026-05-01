@@ -32,7 +32,7 @@ func WaitForRateLimit(ctx context.Context, out io.Writer) bool {
 	}
 	if usage.FiveHour != nil && usage.FiveHour.Pct > cfg.RateLimit.FiveHourPercentMaxUsed {
 		resetsAt := usage.FiveHour.ResetsAt
-		slog.Debug("Waiting for 5 hour rate limit to reset", "time", resetsAt)
+		slog.Info("Waiting for 5 hour rate limit to reset", "time", resetsAt)
 		if out != nil {
 			_, _ = fmt.Fprintf(out, "Waiting for 5 hour rate limit to reset at %v...\n", resetsAt.Local().Format("15:04"))
 		}
