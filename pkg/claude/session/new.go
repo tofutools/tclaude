@@ -110,7 +110,9 @@ func runNew(params *NewParams) error {
 		}
 	}()
 
-	ratelimit.WaitForRateLimit(ctx, os.Stdout)
+	if ratelimit.WaitForRateLimit(ctx, os.Stdout) {
+		return fmt.Errorf("interrupted")
+	}
 
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")
 	shortID := clcommon.ExtractIDFromCompletion(params.Resume)
