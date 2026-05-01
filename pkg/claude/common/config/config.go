@@ -14,7 +14,7 @@ type Config struct {
 	AutoCompactPercent *int                `json:"auto_compact_percent,omitempty"`
 	LogLevel           string              `json:"log_level,omitempty"`
 	RecordHooks        bool                `json:"record_hooks,omitempty"`
-	Tasks              *TasksConfig        `json:"tasks,omitempty"`
+	RateLimit          *RateLimitConfig    `json:"ratelimit,omitempty"`
 }
 
 // NotificationConfig holds settings for OS notifications.
@@ -25,9 +25,9 @@ type NotificationConfig struct {
 	NotificationCommand []string         `json:"notification_command,omitempty"`
 }
 
-// TasksConfig holds settings for task runner
-type TasksConfig struct {
-	FiveHourRateLimitPercentMaxUsed float64 `json:"five_hour_rate_limit_percent_max_used"`
+// RateLimitConfig holds settings for rate limit
+type RateLimitConfig struct {
+	FiveHourPercentMaxUsed float64 `json:"five_hour_percent_max_used"`
 }
 
 // TransitionRule defines a state transition that triggers a notification.
@@ -51,9 +51,7 @@ func DefaultConfig() *Config {
 			},
 			CooldownSeconds: 5,
 		},
-		Tasks: &TasksConfig{
-			FiveHourRateLimitPercentMaxUsed: 99.0,
-		},
+		RateLimit: nil,
 	}
 }
 
@@ -107,11 +105,11 @@ func Load() (*Config, error) {
 			config.Notifications.Transitions = DefaultConfig().Notifications.Transitions
 		}
 	}
-	if config.Tasks == nil {
-		config.Tasks = DefaultConfig().Tasks
-	} else if v := config.Tasks.FiveHourRateLimitPercentMaxUsed; v < 0 || v > 100 {
-		slog.Warn("Invalid tasks.five_hour_rate_limit_percent_max_used; using default", "value", v)
-		config.Tasks.FiveHourRateLimitPercentMaxUsed = DefaultConfig().Tasks.FiveHourRateLimitPercentMaxUsed
+	if config.RateLimit != nil {
+		if v := config.RateLimit.FiveHourPercentMaxUsed; v < 0 || v > 100 {
+			slog.Warn("Invalid ratelimit.five_hour_percent_max_used; using default", "value", v)
+			config.RateLimit.FiveHourPercentMaxUsed = 99.0
+		}
 	}
 
 	return &config, nil
