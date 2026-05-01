@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -92,7 +94,23 @@ func runNew(params *NewParams) error {
 		cwd = wd + "/" + cwd
 	}
 
-	ratelimit.WaitForRateLimit(context.Background(), os.Stdout)
+	// Set up signal handling for clean shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	// Bridge sigCh into a context so WaitForRateLimit can be interrupted by Ctrl-C.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	ratelimit.WaitForRateLimit(ctx, os.Stdout)
 
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")
 	shortID := clcommon.ExtractIDFromCompletion(params.Resume)
