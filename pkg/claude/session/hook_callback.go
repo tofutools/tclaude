@@ -137,6 +137,8 @@ func runHookCallback() error {
 
 	stopped := false
 
+	state.LastHook = time.Now()
+
 	// Update state based on hook event
 	switch input.HookEventName {
 	case "UserPromptSubmit":

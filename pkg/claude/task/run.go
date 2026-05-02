@@ -692,7 +692,10 @@ func isAgentStuck(sessionID string, stuckTimeout time.Duration) bool {
 	if state.Status != session.StatusWorking {
 		return false
 	}
-	return time.Since(state.Updated) > stuckTimeout
+	if state.LastHook.Before(state.Created) {
+		return false
+	}
+	return time.Since(state.LastHook) > stuckTimeout
 }
 
 // gracePeriod waits 5 seconds, watching for the signal file to be removed.

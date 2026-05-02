@@ -31,6 +31,7 @@ type SessionState struct {
 	SubagentCount int       `json:"subagentCount"`
 	Created       time.Time `json:"created"`
 	Updated       time.Time `json:"updated"`
+	LastHook      time.Time `json:"lastHook"`
 	Attached      int       `json:"-"` // Number of attached clients (runtime only, not persisted)
 }
 
@@ -132,6 +133,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		SubagentCount: s.SubagentCount,
 		CreatedAt:     s.Created,
 		UpdatedAt:     s.Updated,
+		LastHook:      s.LastHook,
 	}
 }
 
@@ -148,6 +150,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		SubagentCount: r.SubagentCount,
 		Created:       r.CreatedAt,
 		Updated:       r.UpdatedAt,
+		LastHook:      r.LastHook,
 	}
 }
 
