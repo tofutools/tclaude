@@ -171,6 +171,17 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 	return result, rows.Err()
 }
 
+// UpdateSessionLastHook writes only the last_hook column for a session,
+// leaving updated_at unchanged so watch-mode polling is not perturbed.
+func UpdateSessionLastHook(id string, t time.Time) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET last_hook = ? WHERE id = ?`, t.Format(time.RFC3339Nano), id)
+	return err
+}
+
 // UpdateContextPct stores the latest context window usage percentage for a session.
 func UpdateContextPct(sessionID string, pct float64) error {
 	db, err := Open()
