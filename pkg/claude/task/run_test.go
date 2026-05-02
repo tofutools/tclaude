@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // TestMain allows the test binary to act as a fake "claude" subprocess when
@@ -880,5 +881,115 @@ func TestReviewLoop_ExitsImmediatelyWhenNoFeedback(t *testing.T) {
 	feedbackSent := simulateReviewLoop(t, dir, 3)
 	if feedbackSent != 0 {
 		t.Errorf("expected 0 feedback rounds for agent with no output, got %d", feedbackSent)
+	}
+}
+
+// ── isAgentStuck ─────────────────────────────────────────────────────────────
+
+func saveTestSession(t *testing.T, id string, status string, created, lastHook time.Time) {
+	t.Helper()
+	s := &session.SessionState{
+		ID:       id,
+		Status:   status,
+		Created:  created,
+		LastHook: lastHook,
+	}
+	if err := session.SaveSessionState(s); err != nil {
+		t.Fatalf("SaveSessionState: %v", err)
+	}
+}
+
+func TestIsAgentStuck(t *testing.T) {
+	now := time.Now()
+	const timeout = 5 * time.Minute
+
+	tests := []struct {
+		name      string
+		sessionID string
+		timeout   time.Duration
+		setup     func(t *testing.T)
+		want      bool
+	}{
+		{
+			name:      "empty session ID",
+			sessionID: "",
+			timeout:   timeout,
+			want:      false,
+		},
+		{
+			name:      "zero timeout",
+			sessionID: "s1",
+			timeout:   0,
+			want:      false,
+		},
+		{
+			name:      "negative timeout",
+			sessionID: "s1",
+			timeout:   -time.Second,
+			want:      false,
+		},
+		{
+			name:      "session not in DB",
+			sessionID: "nonexistent",
+			timeout:   timeout,
+			setup:     func(t *testing.T) { setupTclaudeEnv(t) },
+			want:      false,
+		},
+		{
+			name:      "session not working",
+			sessionID: "s-idle",
+			timeout:   timeout,
+			setup: func(t *testing.T) {
+				setupTclaudeEnv(t)
+				saveTestSession(t, "s-idle", session.StatusIdle,
+					now.Add(-10*time.Minute), now.Add(-10*time.Minute))
+			},
+			want: false,
+		},
+		{
+			name:      "no hooks have fired yet (LastHook is zero)",
+			sessionID: "s-new",
+			timeout:   timeout,
+			setup: func(t *testing.T) {
+				setupTclaudeEnv(t)
+				saveTestSession(t, "s-new", session.StatusWorking,
+					now, time.Time{})
+			},
+			want: false,
+		},
+		{
+			name:      "working but hook fired recently",
+			sessionID: "s-active",
+			timeout:   timeout,
+			setup: func(t *testing.T) {
+				setupTclaudeEnv(t)
+				saveTestSession(t, "s-active", session.StatusWorking,
+					now.Add(-10*time.Minute), now.Add(-1*time.Minute))
+			},
+			want: false,
+		},
+		{
+			name:      "working and hook is stale",
+			sessionID: "s-stuck",
+			timeout:   timeout,
+			setup: func(t *testing.T) {
+				setupTclaudeEnv(t)
+				saveTestSession(t, "s-stuck", session.StatusWorking,
+					now.Add(-20*time.Minute), now.Add(-6*time.Minute))
+			},
+			want: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setup != nil {
+				tc.setup(t)
+			}
+			got := isAgentStuck(tc.sessionID, tc.timeout)
+			if got != tc.want {
+				t.Errorf("isAgentStuck(%q, %v) = %v, want %v", tc.sessionID, tc.timeout, got, tc.want)
+			}
+		})
 	}
 }
