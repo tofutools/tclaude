@@ -11,8 +11,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
 
-// WaitForRateLimit checks the 5-hour rate limit and blocks until it resets when
-// needed. out receives user-facing progress messages when non-nil; pass nil to suppress terminal output
+// WaitForRateLimit checks the 5-hour rate limit and blocks until it resets when needed.
+// out receives user-facing progress messages when non-nil; pass nil to suppress terminal output
 // Returns true if the context was cancelled during the wait.
 func WaitForRateLimit(ctx context.Context, out io.Writer) bool {
 	cfg, _ := config.Load()

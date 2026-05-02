@@ -18,12 +18,13 @@ import (
 )
 
 type NewParams struct {
-	Dir      string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
-	Resume   string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
-	Global   bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
-	Label    string `long:"label" optional:"true" help:"Custom label for the session"`
-	Detached bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
-	Compact  int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
+	Dir              string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
+	Resume           string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
+	Global           bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
+	Label            string `long:"label" optional:"true" help:"Custom label for the session"`
+	Detached         bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
+	Compact          int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
+	WaitForRateLimit bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for 5-hour rate limit to reset before starting session"`
 }
 
 func NewCmd() *cobra.Command {
@@ -110,8 +111,10 @@ func runNew(params *NewParams) error {
 		}
 	}()
 
-	if ratelimit.WaitForRateLimit(ctx, os.Stdout) {
-		return fmt.Errorf("interrupted")
+	if params.WaitForRateLimit {
+		if ratelimit.WaitForRateLimit(ctx, os.Stdout) {
+			return fmt.Errorf("interrupted")
+		}
 	}
 
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")
