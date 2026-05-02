@@ -361,7 +361,7 @@ func waitForTasks(ctx context.Context, out io.Writer, todoPath string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Fprintln(out, "\nReceived signal, stopping task watcher.")
+			fmt.Fprintln(out, "\nInterrupted, stopping task watcher.")
 			return fmt.Errorf("interrupted")
 		case event, ok := <-watcher.Events:
 			if !ok {
