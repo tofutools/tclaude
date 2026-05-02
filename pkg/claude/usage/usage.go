@@ -3,6 +3,7 @@ package usage
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -50,13 +51,13 @@ func runUsage(params *Params) error {
 	}
 
 	if resp.FiveHour != nil {
-		fmt.Printf("5-hour utilization:       %.1f%%\n", resp.FiveHour.Utilization)
+		fmt.Printf("5-hour utilization:       %.1f%%%s\n", resp.FiveHour.Utilization, fmtResets(resp.FiveHour.ResetsAt))
 	}
 	if resp.SevenDay != nil {
-		fmt.Printf("7-day utilization:        %.1f%%\n", resp.SevenDay.Utilization)
+		fmt.Printf("7-day utilization:        %.1f%%%s\n", resp.SevenDay.Utilization, fmtResets(resp.SevenDay.ResetsAt))
 	}
 	if resp.SevenDaySonnet != nil {
-		fmt.Printf("7-day sonnet utilization: %.1f%%\n", resp.SevenDaySonnet.Utilization)
+		fmt.Printf("7-day sonnet utilization: %.1f%%%s\n", resp.SevenDaySonnet.Utilization, fmtResets(resp.SevenDaySonnet.ResetsAt))
 	}
 	if resp.ExtraUsage != nil {
 		eu := resp.ExtraUsage
@@ -74,4 +75,23 @@ func runUsage(params *Params) error {
 	}
 
 	return nil
+}
+
+func fmtResets(resetsAt string) string {
+	if resetsAt == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, resetsAt)
+	if err != nil {
+		return ""
+	}
+	local := t.Local()
+	now := time.Now()
+	var date string
+	if local.Year() == now.Year() && local.YearDay() == now.YearDay() {
+		date = "today"
+	} else {
+		date = local.Format("2006-01-02")
+	}
+	return ", resets " + date + " " + local.Format("15:04")
 }

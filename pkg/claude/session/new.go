@@ -1,15 +1,19 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -88,6 +92,26 @@ func runNew(params *NewParams) error {
 	if cwd[0] != '/' {
 		wd, _ := os.Getwd()
 		cwd = wd + "/" + cwd
+	}
+
+	// Set up signal handling for clean shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	// Bridge sigCh into a context so WaitForRateLimit can be interrupted by Ctrl-C.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	if ratelimit.WaitForRateLimit(ctx, os.Stdout) {
+		return fmt.Errorf("interrupted")
 	}
 
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")

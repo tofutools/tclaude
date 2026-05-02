@@ -126,14 +126,13 @@ func setupTclaudeEnv(t *testing.T) {
 	db.ResetForTest()
 	t.Cleanup(func() { db.ResetForTest() })
 
-	// Write a minimal config: notifications off, sensible rate-limit default.
+	// Write a minimal config: notifications off
 	tclaudeDir := filepath.Join(home, ".tclaude")
 	if err := os.MkdirAll(tclaudeDir, 0755); err != nil {
 		t.Fatalf("create .tclaude dir: %v", err)
 	}
 	cfg := map[string]any{
 		"notifications": map[string]any{"enabled": false},
-		"tasks":         map[string]any{"five_hour_rate_limit_percent_max_used": 99.0},
 	}
 	data, _ := json.Marshal(cfg)
 	if err := os.WriteFile(filepath.Join(tclaudeDir, "config.json"), data, 0644); err != nil {
