@@ -137,6 +137,8 @@ func runHookCallback() error {
 
 	stopped := false
 
+	state.LastHook = time.Now()
+
 	// Update state based on hook event
 	switch input.HookEventName {
 	case "UserPromptSubmit":
@@ -197,6 +199,9 @@ func runHookCallback() error {
 				slog.Info("auto-compact state reset", "session_id", envSessionID, "module", "hooks")
 			}
 		}
+		if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
+			slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
+		}
 		return nil
 
 	case "Notification":
@@ -210,11 +215,17 @@ func runHookCallback() error {
 			state.StatusDetail = input.Message
 		default:
 			// Unknown notification type - log but don't update status
+			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
+				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
+			}
 			return nil
 		}
 
 	default:
 		// Unknown hook event - log but don't update status
+		if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
+			slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
+		}
 		return nil
 	}
 

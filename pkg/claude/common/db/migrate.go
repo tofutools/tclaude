@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 6
+const currentVersion = 7
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -55,6 +55,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 6 {
 		if err := migrateV5toV6(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 7 {
+		if err := migrateV6toV7(db); err != nil {
 			return err
 		}
 	}
@@ -207,6 +213,18 @@ func migrateV5toV6(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v5→v6: %w", err)
+	}
+	return nil
+}
+
+func migrateV6toV7(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN last_hook TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 7;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v6→v7: %w", err)
 	}
 	return nil
 }

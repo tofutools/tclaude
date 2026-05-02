@@ -230,7 +230,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 				break
 			}
 			// Watch mode: wait for tasks to appear
-			if err := waitForTasks(out, todoPath, sigCh); err != nil {
+			if err := waitForTasks(loopCtx, out, todoPath); err != nil {
 				return err
 			}
 			continue
@@ -334,8 +334,8 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 	return nil
 }
 
-// waitForTasks watches TODO.md using fsnotify until tasks appear or a signal is received.
-func waitForTasks(out io.Writer, todoPath string, sigCh <-chan os.Signal) error {
+// waitForTasks watches TODO.md using fsnotify until tasks appear or context is cancelled
+func waitForTasks(ctx context.Context, out io.Writer, todoPath string) error {
 	fmt.Fprintln(out, "\nWatching for new tasks in TODO.md... (Ctrl-C to stop)")
 
 	// Watch the directory containing TODO.md (file may not exist yet)
@@ -360,8 +360,8 @@ func waitForTasks(out io.Writer, todoPath string, sigCh <-chan os.Signal) error 
 
 	for {
 		select {
-		case <-sigCh:
-			fmt.Fprintln(out, "\nReceived signal, stopping task watcher.")
+		case <-ctx.Done():
+			fmt.Fprintln(out, "\nInterrupted, stopping task watcher.")
 			return fmt.Errorf("interrupted")
 		case event, ok := <-watcher.Events:
 			if !ok {
@@ -692,7 +692,10 @@ func isAgentStuck(sessionID string, stuckTimeout time.Duration) bool {
 	if state.Status != session.StatusWorking {
 		return false
 	}
-	return time.Since(state.Updated) > stuckTimeout
+	if state.LastHook.Before(state.Created) {
+		return false
+	}
+	return time.Since(state.LastHook) > stuckTimeout
 }
 
 // gracePeriod waits 5 seconds, watching for the signal file to be removed.
