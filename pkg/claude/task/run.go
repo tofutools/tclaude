@@ -216,7 +216,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 	}()
 
 	for {
-		if ratelimit.WaitForRateLimit(loopCtx, out) {
+		if ratelimit.WaitForRateLimit(loopCtx, out, "tasks", cwd) {
 			return fmt.Errorf("interrupted")
 		}
 
@@ -600,7 +600,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						if ctx.Err() != nil {
 							return
 						}
-						if ratelimit.WaitForRateLimit(ctx, nil) {
+						if ratelimit.WaitForRateLimit(ctx, nil, sessionID, cwd) {
 							return // context cancelled during rate-limit wait
 						}
 						slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
@@ -659,7 +659,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				stuckNudges = 0
 			} else if lastContinueSent.IsZero() || time.Since(lastContinueSent) >= opts.stuckTimeout {
 				slog.Debug("agent appears stuck", "timeout", opts.stuckTimeout, "module", "task")
-				if ratelimit.WaitForRateLimit(ctx, nil) {
+				if ratelimit.WaitForRateLimit(ctx, nil, sessionID, cwd) {
 					return // context cancelled during rate-limit wait
 				}
 				stuckNudges++
