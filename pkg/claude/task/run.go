@@ -669,6 +669,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 					stuckTickC = nil // disable further checks
 				} else {
 					slog.Warn("agent appears stuck, sending continue", "nudge", stuckNudges, "max", opts.maxStuckNudges, "module", "task")
+					sendTmuxEnter(tmuxSession)
 					sendTmuxMessage(tmuxSession, "continue")
 					lastContinueSent = time.Now()
 				}
