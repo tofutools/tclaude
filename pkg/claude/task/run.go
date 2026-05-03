@@ -191,7 +191,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 	doingPath := DoingPath(taskDir)
 	donePath := DonePath(taskDir)
 
-	taskCfg, err := LoadTasksConfig(taskDir)
+	taskCfg, err := LoadTasksConfig(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to read .claude/tclaude/tasks.json: %w", err)
 	}
