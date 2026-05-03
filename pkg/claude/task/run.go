@@ -596,6 +596,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			if opts.reviewSkill != "" {
 				if reviewAttempts < opts.maxReviewIterations {
 					diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+					// TODO check for changes since last review, skip review if no changes
 					if !skipReview {
 						if ctx.Err() != nil {
 							return
