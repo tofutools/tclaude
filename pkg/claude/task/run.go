@@ -658,12 +658,13 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				// count against the nudge budget for a later stuck episode.
 				stuckNudges = 0
 			} else if lastContinueSent.IsZero() || time.Since(lastContinueSent) >= opts.stuckTimeout {
+				slog.Debug("agent appears stuck", "timeout", opts.stuckTimeout, "module", "task")
 				if ratelimit.WaitForRateLimit(ctx, nil) {
 					return // context cancelled during rate-limit wait
 				}
 				stuckNudges++
 				if stuckNudges > opts.maxStuckNudges {
-					slog.Warn("agent stuck after max nudges, giving up", "nudges", opts.maxStuckNudges, "module", "task")
+					slog.Warn("agent appears stuck after max nudges, giving up", "nudges", opts.maxStuckNudges, "module", "task")
 					sendNotification(sessionID, cwd, "stuck", fmt.Sprintf("Agent appears stuck after %d nudges", opts.maxStuckNudges))
 					stuckTickC = nil // disable further checks
 				} else {
