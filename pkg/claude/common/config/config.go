@@ -107,11 +107,11 @@ func Load() (*Config, error) {
 		}
 	}
 	if config.RateLimit != nil {
-		if v := config.RateLimit.FiveHourPercentMaxUsed; v < 0 || v > 100 {
+		if v := config.RateLimit.FiveHourPercentMaxUsed; v <= 0 || v > 100 {
 			slog.Warn("Invalid ratelimit.five_hour_percent_max_used; using default", "value", v)
 			config.RateLimit.FiveHourPercentMaxUsed = 99.0
 		}
-		if v := config.RateLimit.SevenDayPercentMaxUsed; v < 0 || v > 100 {
+		if v := config.RateLimit.SevenDayPercentMaxUsed; v <= 0 || v > 100 {
 			slog.Warn("Invalid ratelimit.seven_day_percent_max_used; using default", "value", v)
 			config.RateLimit.SevenDayPercentMaxUsed = 99.9
 		}

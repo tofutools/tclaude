@@ -24,7 +24,7 @@ type NewParams struct {
 	Label            string `long:"label" optional:"true" help:"Custom label for the session"`
 	Detached         bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
 	Compact          int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
-	WaitForRateLimit bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for 5-hour rate limit to reset before starting session"`
+	WaitForRateLimit bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 }
 
 func NewCmd() *cobra.Command {
