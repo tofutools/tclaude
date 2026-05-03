@@ -111,12 +111,6 @@ func runNew(params *NewParams) error {
 		}
 	}()
 
-	if params.WaitForRateLimit {
-		if ratelimit.WaitForRateLimit(ctx, os.Stdout) {
-			return fmt.Errorf("interrupted")
-		}
-	}
-
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")
 	shortID := clcommon.ExtractIDFromCompletion(params.Resume)
 
@@ -154,6 +148,12 @@ func runNew(params *NewParams) error {
 		sessionID = params.Label
 	}
 	tmuxSession := sessionID
+
+	if params.WaitForRateLimit {
+		if ratelimit.WaitForRateLimit(ctx, os.Stdout, sessionID, cwd) {
+			return fmt.Errorf("interrupted")
+		}
+	}
 
 	// Build claude command with all environment variables forwarded
 	additionalEnv := map[string]string{
