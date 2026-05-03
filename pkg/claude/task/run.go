@@ -611,38 +611,38 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						currentDiffHash != lastReviewDiffHash
 					if !changedSinceReview {
 						slog.Info("skipping review: no changes since last review", "module", "task")
-					} else {
-						diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
-						if !skipReview {
-							if ctx.Err() != nil {
-								return
-							}
-							if ratelimit.WaitForRateLimit(ctx, nil, sessionID, cwd) {
-								return // context cancelled during rate-limit wait
-							}
-							slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
-							reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewSkill, diff, cwd, opts.reviewTimeout)
-							outputPreview := reviewOutput
-							if r := []rune(reviewOutput); len(r) > 50 {
-								outputPreview = string(r[:50])
-							}
-							if reviewErr != nil {
-								slog.Warn("review error", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
-							} else {
-								slog.Debug("review complete", "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
-							}
-							if reviewErr == nil && reviewOutput != "" {
-								reviewAttempts++
-								lastReviewCommit = currentCommit
-								lastReviewDiffHash = currentDiffHash
-								os.Remove(signalPath)
-								signalExists = false
-								msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
-								sendTmuxMessage(tmuxSession, msg)
-								sendTmuxEnter(tmuxSession)
-								attempts = 0 // reset verify attempts for post-review changes
-								continue
-							}
+						continue
+					}
+					diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+					if !skipReview {
+						if ctx.Err() != nil {
+							return
+						}
+						if ratelimit.WaitForRateLimit(ctx, nil, sessionID, cwd) {
+							return // context cancelled during rate-limit wait
+						}
+						slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
+						reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewSkill, diff, cwd, opts.reviewTimeout)
+						outputPreview := reviewOutput
+						if r := []rune(reviewOutput); len(r) > 50 {
+							outputPreview = string(r[:50])
+						}
+						if reviewErr != nil {
+							slog.Warn("review error", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+						} else {
+							slog.Debug("review complete", "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+						}
+						if reviewErr == nil && reviewOutput != "" {
+							reviewAttempts++
+							lastReviewCommit = currentCommit
+							lastReviewDiffHash = currentDiffHash
+							os.Remove(signalPath)
+							signalExists = false
+							msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
+							sendTmuxMessage(tmuxSession, msg)
+							sendTmuxEnter(tmuxSession)
+							attempts = 0 // reset verify attempts for post-review changes
+							continue
 						}
 					}
 				} else {

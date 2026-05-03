@@ -296,6 +296,68 @@ func TestGetCurrentCommit_NotARepo(t *testing.T) {
 	}
 }
 
+// ── uncommittedDiffHash ───────────────────────────────────────────────────────
+
+func TestUncommittedDiffHash_CleanRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	h, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h == "" {
+		t.Fatal("expected non-empty hash for clean repo")
+	}
+}
+
+func TestUncommittedDiffHash_Deterministic(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	h1, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	h2, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if h1 != h2 {
+		t.Errorf("same state produced different hashes: %q vs %q", h1, h2)
+	}
+}
+
+func TestUncommittedDiffHash_ChangesAfterModify(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	path := filepath.Join(dir, "file.txt")
+	os.WriteFile(path, []byte("original"), 0644)
+	gitRun(t, dir, "add", "file.txt")
+	gitRun(t, dir, "commit", "-m", "add file")
+
+	before, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("before modify: %v", err)
+	}
+
+	os.WriteFile(path, []byte("modified"), 0644)
+	after, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("after modify: %v", err)
+	}
+
+	if before == after {
+		t.Error("hash should change after modifying a tracked file")
+	}
+}
+
+func TestUncommittedDiffHash_NotARepo(t *testing.T) {
+	dir := t.TempDir()
+	_, err := uncommittedDiffHash(dir)
+	if err == nil {
+		t.Error("expected error for non-repo directory")
+	}
+}
+
 // ── runVerifyCmd ─────────────────────────────────────────────────────────────
 
 func TestRunVerifyCmd_Pass(t *testing.T) {
