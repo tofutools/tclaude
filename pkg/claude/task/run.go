@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -488,6 +489,8 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 	planAccepted := false
 	attempts := 0
 	reviewAttempts := 0
+	lastReviewCommit := baseCommit
+	lastReviewDiffHash := ""
 
 	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
 	var lastContinueSent time.Time
@@ -595,35 +598,51 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			}
 			if opts.reviewSkill != "" {
 				if reviewAttempts < opts.maxReviewIterations {
-					diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
-					// TODO check for changes since last review, skip review if no changes
-					if !skipReview {
-						if ctx.Err() != nil {
-							return
-						}
-						if ratelimit.WaitForRateLimit(ctx, nil, sessionID, cwd) {
-							return // context cancelled during rate-limit wait
-						}
-						slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
-						reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewSkill, diff, cwd, opts.reviewTimeout)
-						outputPreview := reviewOutput
-						if r := []rune(reviewOutput); len(r) > 50 {
-							outputPreview = string(r[:50])
-						}
-						if reviewErr != nil {
-							slog.Warn("review error", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
-						} else {
-							slog.Debug("review complete", "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
-						}
-						if reviewErr == nil && reviewOutput != "" {
-							reviewAttempts++
-							os.Remove(signalPath)
-							signalExists = false
-							msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
-							sendTmuxMessage(tmuxSession, msg)
-							sendTmuxEnter(tmuxSession)
-							attempts = 0 // reset verify attempts for post-review changes
-							continue
+					currentCommit, commitErr := getCurrentCommit(cwd)
+					if commitErr != nil {
+						slog.Warn("unable to get current commit", "err", commitErr, "module", "task")
+					}
+					currentDiffHash, diffErr := uncommittedDiffHash(cwd)
+					if diffErr != nil {
+						slog.Warn("unable to get working directory hash", "err", diffErr, "module", "task")
+					}
+					changedSinceReview := commitErr != nil || diffErr != nil ||
+						currentCommit != lastReviewCommit ||
+						currentDiffHash != lastReviewDiffHash
+					if !changedSinceReview {
+						slog.Info("skipping review: no changes since last review", "module", "task")
+					} else {
+						diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+						if !skipReview {
+							if ctx.Err() != nil {
+								return
+							}
+							if ratelimit.WaitForRateLimit(ctx, nil, sessionID, cwd) {
+								return // context cancelled during rate-limit wait
+							}
+							slog.Debug("reviewing", "attempt", reviewAttempts+1, "max", opts.maxReviewIterations, "module", "task")
+							reviewOutput, reviewErr := runReviewAgent(ctx, opts.reviewSkill, diff, cwd, opts.reviewTimeout)
+							outputPreview := reviewOutput
+							if r := []rune(reviewOutput); len(r) > 50 {
+								outputPreview = string(r[:50])
+							}
+							if reviewErr != nil {
+								slog.Warn("review error", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+							} else {
+								slog.Debug("review complete", "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
+							}
+							if reviewErr == nil && reviewOutput != "" {
+								reviewAttempts++
+								lastReviewCommit = currentCommit
+								lastReviewDiffHash = currentDiffHash
+								os.Remove(signalPath)
+								signalExists = false
+								msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
+								sendTmuxMessage(tmuxSession, msg)
+								sendTmuxEnter(tmuxSession)
+								attempts = 0 // reset verify attempts for post-review changes
+								continue
+							}
 						}
 					}
 				} else {
@@ -766,6 +785,20 @@ func resolveReviewDiff(cwd, baseCommit string, reviewDiff bool) (diff string, sk
 		return "", true
 	}
 	return diff, false
+}
+
+// uncommittedDiffHash returns a SHA-256 fingerprint of working-tree changes
+// (git diff HEAD) so the review loop can detect when an agent modifies files
+// without committing between passes.
+func uncommittedDiffHash(cwd string) (string, error) {
+	cmd := exec.Command("git", "diff", "HEAD")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff HEAD: %w", err)
+	}
+	h := sha256.Sum256(out)
+	return fmt.Sprintf("%x", h), nil
 }
 
 // getCurrentCommit returns the full SHA of HEAD.
