@@ -795,7 +795,9 @@ func resolveReviewDiff(cwd, baseCommit string, reviewDiff bool) (diff string, sk
 // (git diff HEAD) so the review loop can detect when an agent modifies files
 // without committing between passes.
 func uncommittedDiffHash(cwd string) (string, error) {
-	cmd := exec.Command("git", "diff", "HEAD")
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := executil.CommandContext(timeoutCtx, "git", "diff", "HEAD")
 	cmd.Dir = cwd
 	out, err := cmd.Output()
 	if err != nil {
