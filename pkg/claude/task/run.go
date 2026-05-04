@@ -609,11 +609,15 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 					changedSinceReview := commitErr != nil || diffErr != nil ||
 						currentCommit != lastReviewCommit ||
 						currentDiffHash != lastReviewDiffHash
+					skipReview := false
 					if !changedSinceReview {
 						slog.Info("skipping review: no changes since last review", "module", "task")
-						continue
+						skipReview = true
 					}
-					diff, skipReview := resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+					var diff string
+					if !skipReview {
+						diff, skipReview = resolveReviewDiff(cwd, baseCommit, opts.reviewDiff)
+					}
 					if !skipReview {
 						if ctx.Err() != nil {
 							return
