@@ -635,18 +635,18 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 							slog.Warn("review error", "err", reviewErr, "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
 						} else {
 							slog.Debug("review complete", "output_len", len(reviewOutput), "output", outputPreview, "module", "task")
-						}
-						if reviewErr == nil && reviewOutput != "" {
-							reviewAttempts++
 							lastReviewCommit = currentCommit
 							lastReviewDiffHash = currentDiffHash
-							os.Remove(signalPath)
-							signalExists = false
-							msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
-							sendTmuxMessage(tmuxSession, msg)
-							sendTmuxEnter(tmuxSession)
-							attempts = 0 // reset verify attempts for post-review changes
-							continue
+							if reviewOutput != "" {
+								reviewAttempts++
+								os.Remove(signalPath)
+								signalExists = false
+								msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
+								sendTmuxMessage(tmuxSession, msg)
+								sendTmuxEnter(tmuxSession)
+								attempts = 0 // reset verify attempts for post-review changes
+								continue
+							}
 						}
 					}
 				} else {
@@ -795,17 +795,19 @@ func resolveReviewDiff(cwd, baseCommit string, reviewDiff bool) (diff string, sk
 // (git diff HEAD plus untracked file paths and contents) so the review loop
 // can detect when an agent adds new-but-unstaged files between passes.
 func uncommittedDiffHash(cwd string) (string, error) {
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	diffCmd := executil.CommandContext(timeoutCtx, "git", "diff", "HEAD")
+	diffCtx, diffCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer diffCancel()
+	diffCmd := executil.CommandContext(diffCtx, "git", "diff", "HEAD")
 	diffCmd.Dir = cwd
 	diffOut, err := diffCmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git diff HEAD: %w", err)
 	}
 
-	lsCmd := executil.CommandContext(timeoutCtx, "git", "ls-files", "-o", "--exclude-standard")
+	lsCtx, lsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer lsCancel()
+
+	lsCmd := executil.CommandContext(lsCtx, "git", "ls-files", "-o", "-z", "--exclude-standard")
 	lsCmd.Dir = cwd
 	lsOut, err := lsCmd.Output()
 	if err != nil {
@@ -814,13 +816,18 @@ func uncommittedDiffHash(cwd string) (string, error) {
 
 	h := sha256.New()
 	h.Write(diffOut)
-	for _, rel := range strings.Split(strings.TrimSpace(string(lsOut)), "\n") {
+	for _, rel := range strings.Split(strings.TrimRight(string(lsOut), "\x00"), "\x00") {
 		if rel == "" {
 			continue
 		}
 		h.Write([]byte(rel))
-		content, err := os.ReadFile(filepath.Join(cwd, rel))
-		if err == nil {
+		filePath := filepath.Join(cwd, rel)
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			slog.Warn("unable to read file", "path", filePath, "module", "task")
+			// distinguish "unreadable/vanished" from "empty content"
+			h.Write([]byte("\x00err\x00"))
+		} else {
 			h.Write(content)
 		}
 	}
@@ -862,7 +869,9 @@ func hasTrackedChanges(cwd string, excludeTaskFiles bool, baseCommit string) (bo
 				return true, nil
 			}
 			// Verify commits touched at least one non-task file.
-			cmd := exec.Command("git", "diff", "--name-only", baseCommit+"..HEAD")
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cmd := executil.CommandContext(ctx, "git", "diff", "--name-only", baseCommit+"..HEAD")
 			cmd.Dir = cwd
 			out, err := cmd.Output()
 			if err != nil {
@@ -877,7 +886,9 @@ func hasTrackedChanges(cwd string, excludeTaskFiles bool, baseCommit string) (bo
 	}
 
 	// Check for uncommitted changes.
-	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer statusCancel()
+	statusCmd := executil.CommandContext(statusCtx, "git", "status", "--porcelain")
 	statusCmd.Dir = cwd
 	out, err := statusCmd.Output()
 	if err != nil {
@@ -910,7 +921,9 @@ func getGitDiff(cwd, baseCommit string) (string, error) {
 
 	if baseCommit != "" {
 		// Committed changes since the task started.
-		cmd := exec.Command("git", "diff", baseCommit+"..HEAD")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := executil.CommandContext(ctx, "git", "diff", baseCommit+"..HEAD")
 		cmd.Dir = cwd
 		out, err := cmd.Output()
 		if err != nil {
@@ -922,7 +935,9 @@ func getGitDiff(cwd, baseCommit string) (string, error) {
 	}
 
 	// Uncommitted working-tree changes vs HEAD.
-	cmd := exec.Command("git", "diff", "HEAD")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := executil.CommandContext(ctx, "git", "diff", "HEAD")
 	cmd.Dir = cwd
 	out, err := cmd.Output()
 	if err != nil {
