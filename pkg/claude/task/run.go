@@ -490,7 +490,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 	attempts := 0
 	reviewAttempts := 0
 	lastReviewCommit := baseCommit
-	lastReviewDiffHash := ""
+	lastReviewDiffHash := "" // "" ensures first-pass review always runs
 
 	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
 	var lastContinueSent time.Time
