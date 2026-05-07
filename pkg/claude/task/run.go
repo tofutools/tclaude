@@ -792,19 +792,39 @@ func resolveReviewDiff(cwd, baseCommit string, reviewDiff bool) (diff string, sk
 }
 
 // uncommittedDiffHash returns a SHA-256 fingerprint of working-tree changes
-// (git diff HEAD) so the review loop can detect when an agent modifies files
-// without committing between passes.
+// (git diff HEAD plus untracked file paths and contents) so the review loop
+// can detect when an agent adds new-but-unstaged files between passes.
 func uncommittedDiffHash(cwd string) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := executil.CommandContext(timeoutCtx, "git", "diff", "HEAD")
-	cmd.Dir = cwd
-	out, err := cmd.Output()
+
+	diffCmd := executil.CommandContext(timeoutCtx, "git", "diff", "HEAD")
+	diffCmd.Dir = cwd
+	diffOut, err := diffCmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git diff HEAD: %w", err)
 	}
-	h := sha256.Sum256(out)
-	return fmt.Sprintf("%x", h), nil
+
+	lsCmd := executil.CommandContext(timeoutCtx, "git", "ls-files", "-o", "--exclude-standard")
+	lsCmd.Dir = cwd
+	lsOut, err := lsCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-files: %w", err)
+	}
+
+	h := sha256.New()
+	h.Write(diffOut)
+	for _, rel := range strings.Split(strings.TrimSpace(string(lsOut)), "\n") {
+		if rel == "" {
+			continue
+		}
+		h.Write([]byte(rel))
+		content, err := os.ReadFile(filepath.Join(cwd, rel))
+		if err == nil {
+			h.Write(content)
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // getCurrentCommit returns the full SHA of HEAD.

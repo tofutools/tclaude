@@ -358,6 +358,48 @@ func TestUncommittedDiffHash_NotARepo(t *testing.T) {
 	}
 }
 
+func TestUncommittedDiffHash_ChangesWhenUntrackedFileAdded(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	before, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("before add: %v", err)
+	}
+
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("untracked"), 0644)
+	after, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("after add: %v", err)
+	}
+
+	if before == after {
+		t.Error("hash should change when an untracked file is added")
+	}
+}
+
+func TestUncommittedDiffHash_ChangesWhenUntrackedFileModified(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	path := filepath.Join(dir, "new.txt")
+	os.WriteFile(path, []byte("v1"), 0644)
+
+	before, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("before modify: %v", err)
+	}
+
+	os.WriteFile(path, []byte("v2"), 0644)
+	after, err := uncommittedDiffHash(dir)
+	if err != nil {
+		t.Fatalf("after modify: %v", err)
+	}
+
+	if before == after {
+		t.Error("hash should change when an untracked file's content changes")
+	}
+}
+
 // ── runVerifyCmd ─────────────────────────────────────────────────────────────
 
 func TestRunVerifyCmd_Pass(t *testing.T) {
