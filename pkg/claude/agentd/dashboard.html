@@ -163,6 +163,24 @@ details[open] > summary .group-actions { opacity: 1; }
   padding: 8px 12px; margin: 0 24px; border-radius: 0 0 4px 4px;
   color: #d29922; font-size: 12px;
 }
+.filter-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 12px 0;
+}
+.filter-bar input {
+  flex: 1; max-width: 360px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 6px 10px; font-size: 13px; color: #c9d1d9;
+  font-family: inherit;
+}
+.filter-bar input:focus { outline: none; border-color: #58a6ff; }
+.filter-bar .filter-count { font-size: 11px; color: #7d8590; }
+.filter-bar button.clear-filter {
+  background: transparent; border: none; color: #7d8590;
+  cursor: pointer; padding: 4px 8px; font-size: 12px;
+  font-family: inherit;
+}
+.filter-bar button.clear-filter:hover { color: #d4d4d4; }
 </style>
 </head>
 <body>
@@ -181,8 +199,22 @@ details[open] > summary .group-actions { opacity: 1; }
   <button data-tab="slugs">Slug registry</button>
 </nav>
 <main>
-  <section id="tab-groups" class="active"></section>
-  <section id="tab-agents"></section>
+  <section id="tab-groups" class="active">
+    <div class="filter-bar">
+      <input id="filter-groups" type="text" placeholder="Filter groups (matches group name + member alias/title)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-groups-count"></span>
+      <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
+    </div>
+    <div id="groups-list"></div>
+  </section>
+  <section id="tab-agents">
+    <div class="filter-bar">
+      <input id="filter-agents" type="text" placeholder="Filter agents (matches title + conv-id + group tags)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-agents-count"></span>
+      <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
+    </div>
+    <div id="agents-list"></div>
+  </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
 </main>
@@ -446,6 +478,77 @@ details[open] > summary .group-actions { opacity: 1; }
     el.classList.toggle('error', !!isError);
   }
 
+  // Last successful snapshot, kept so the filter inputs can re-render
+  // without a server roundtrip when the user types.
+  let lastSnapshot = null;
+
+  function filterGroups(groups, q) {
+    if (!q) return groups;
+    const needle = q.toLowerCase();
+    const out = [];
+    for (const g of groups) {
+      const nameHit = (g.name || '').toLowerCase().includes(needle);
+      const matchedMembers = (g.members || []).filter(m =>
+        ((m.alias || '').toLowerCase().includes(needle)) ||
+        ((m.title || '').toLowerCase().includes(needle)) ||
+        ((m.conv_id || '').toLowerCase().includes(needle))
+      );
+      if (nameHit) {
+        // Group name matched: keep all members so the user can see
+        // the whole group context.
+        out.push(g);
+      } else if (matchedMembers.length > 0) {
+        // Members matched: show only the matching subset.
+        out.push({ ...g, members: matchedMembers });
+      }
+    }
+    return out;
+  }
+
+  function filterAgents(agents, q) {
+    if (!q) return agents;
+    const needle = q.toLowerCase();
+    return agents.filter(a =>
+      ((a.title || '').toLowerCase().includes(needle)) ||
+      ((a.conv_id || '').toLowerCase().includes(needle)) ||
+      (a.groups || []).some(g => g.toLowerCase().includes(needle))
+    );
+  }
+
+  function renderGroupsTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-groups').value;
+    const filtered = filterGroups(lastSnapshot.groups || [], q);
+    $('#groups-list').innerHTML = renderGroups(filtered);
+    const total = (lastSnapshot.groups || []).length;
+    $('#filter-groups-count').textContent = q
+      ? `${filtered.length} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
+  }
+
+  function renderAgentsTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-agents').value;
+    const filtered = filterAgents(lastSnapshot.agents || [], q);
+    $('#agents-list').innerHTML = renderAgents(filtered);
+    const total = (lastSnapshot.agents || []).length;
+    $('#filter-agents-count').textContent = q
+      ? `${filtered.length} / ${total}` : `${total} agent${total === 1 ? '' : 's'}`;
+  }
+
+  function bindFilter(tab) {
+    const input = $(`#filter-${tab}`);
+    const clear = $(`#filter-${tab}-clear`);
+    const key = `tclaude.dash.filter.${tab}`;
+    input.value = localStorage.getItem(key) || '';
+    const onChange = () => {
+      const v = input.value;
+      if (v) localStorage.setItem(key, v); else localStorage.removeItem(key);
+      if (tab === 'groups') renderGroupsTab(); else renderAgentsTab();
+    };
+    input.addEventListener('input', onChange);
+    clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
+  }
+
   async function refresh() {
     try {
       const r = await fetch('/api/snapshot', { credentials: 'same-origin' });
@@ -454,9 +557,10 @@ details[open] > summary .group-actions { opacity: 1; }
         return;
       }
       const data = await r.json();
+      lastSnapshot = data;
       $('#meta').textContent = data.popup_base + ' · refreshed ' + new Date(data.generated_at).toLocaleTimeString();
-      $('#tab-groups').innerHTML = renderGroups(data.groups);
-      $('#tab-agents').innerHTML = renderAgents(data.agents);
+      renderGroupsTab();
+      renderAgentsTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
       showStatus('● live', false);
@@ -646,6 +750,8 @@ details[open] > summary .group-actions { opacity: 1; }
   bindCopy();
   bindDetailsPersistence();
   bindRowActions();
+  bindFilter('groups');
+  bindFilter('agents');
   refresh();
   setInterval(refresh, 5000);
 })();
