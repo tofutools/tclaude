@@ -24,6 +24,113 @@ type AgentGroupMember struct {
 	JoinedAt time.Time
 }
 
+// AgentPermission is a row in agent_permissions — a per-conv grant of
+// a permission slug. Lives in SQLite (rather than ~/.tclaude/config.json)
+// so the daemon can grant/revoke without JSON-file rewrites.
+// DefaultPermissions for *all* agents still live in config.json, since
+// those describe baseline trust the human curates explicitly.
+type AgentPermission struct {
+	ConvID    string
+	Slug      string
+	GrantedAt time.Time
+	GrantedBy string
+}
+
+// HasAgentPermissionRow checks whether (convID, slug) is granted in the
+// agent_permissions table. Used by the daemon's per-agent override
+// lookup. Errors propagate so the caller can refuse rather than silently
+// allow.
+func HasAgentPermissionRow(convID, slug string) (bool, error) {
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var n int
+	err = db.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE conv_id = ? AND slug = ?`,
+		convID, slug).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ListAgentPermissionsForConv returns every slug granted to this conv,
+// alphabetised. Returns an empty slice (not nil) for a conv with no grants.
+func ListAgentPermissionsForConv(convID string) ([]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT slug FROM agent_permissions WHERE conv_id = ? ORDER BY slug`, convID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListAllAgentPermissions returns the full grant table, grouped by conv-id.
+// Convs with no grants are absent from the map. Used by the dashboard /
+// permissions ls view.
+func ListAllAgentPermissions() (map[string][]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT conv_id, slug FROM agent_permissions ORDER BY conv_id, slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string][]string{}
+	for rows.Next() {
+		var c, s string
+		if err := rows.Scan(&c, &s); err != nil {
+			return nil, err
+		}
+		out[c] = append(out[c], s)
+	}
+	return out, rows.Err()
+}
+
+// GrantAgentPermission inserts (convID, slug). Idempotent — running
+// twice is a no-op. grantedBy is informational ("<human>" or a
+// granter's conv-id); empty is fine.
+func GrantAgentPermission(convID, slug, grantedBy string) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT OR IGNORE INTO agent_permissions
+		(conv_id, slug, granted_at, granted_by)
+		VALUES (?, ?, ?, ?)`,
+		convID, slug, time.Now().Format(time.RFC3339Nano), grantedBy)
+	return err
+}
+
+// RevokeAgentPermission removes a single (convID, slug). Idempotent.
+// Returns the number of rows deleted (0 if there was nothing to remove).
+func RevokeAgentPermission(convID, slug string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`DELETE FROM agent_permissions WHERE conv_id = ? AND slug = ?`, convID, slug)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // AgentMessage is a row in agent_messages. Body is stored inline.
 type AgentMessage struct {
 	ID          int64

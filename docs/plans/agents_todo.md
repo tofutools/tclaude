@@ -121,8 +121,6 @@ Open follow-ups:
   permission like `member.redesignate`).
 - Wildcard / pattern overrides (e.g. `"role:reviewer": [...]` instead
   of pinning to a single conv-id).
-- Inspect/edit permissions from the CLI (`tclaude agent permissions
-  ls|grant|revoke`) so the human doesn't have to hand-edit JSON.
 
 ### Agent self-service permissions (graduated trust)
 
@@ -348,29 +346,6 @@ Open questions:
 - How much richness does the tree need? Start with collapse/expand,
   add filtering and column sorts only if it gets heavy.
 
-### CLI for permissions
-
-Before (or alongside) the dashboard, the human should be able to
-inspect and edit permissions from the CLI without hand-editing
-`~/.tclaude/config.json`. Sketch:
-
-```
-tclaude agent permissions ls [--agent <conv|alias>] [--group <name>]
-tclaude agent permissions grant <conv|alias> <slug> [--group <name>]
-tclaude agent permissions revoke <conv|alias> <slug> [--group <name>]
-tclaude agent permissions slugs   # list known slugs + descriptions
-```
-
-`grant` / `revoke` rewrite the JSON in place (preserving comments
-where possible — or move config to a format that supports comments).
-`ls` joins the config with `agent_groups` / `agent_group_members` to
-show effective permissions per (agent, group) tuple, mirroring the
-dashboard's "Permissions view" but in the terminal.
-
-Same human-only gate as the existing groups mutators (or a new
-`permissions.grant` / `permissions.revoke` slug for graduated trust
-on this very feature — recursive, but the framework supports it).
-
 ### Delivery architecture (sandbox-aware)
 
 **Problem:** when a sandboxed agent calls `tclaude agent message …`, the
@@ -526,3 +501,18 @@ for now** — single-host first.
   section in `~/.tclaude/config.json` (defaults +
   per-conv-id/prefix/title overrides). Humans bypass the gate. Skill
   documents the command + how to grant the permission.
+- **Permissions CLI + storage split.** `tclaude agent permissions
+  ls|grant|revoke|slugs` — inspect and edit agent permissions without
+  hand-editing `~/.tclaude/config.json`. Targets are the magic word
+  `default` (the global defaults list, in config.json) or a conv
+  selector (UUID, prefix, title — resolves to the full conv-id). Per-
+  agent grants live in **SQLite** (table `agent_permissions`, schema
+  v9) — only the global defaults stay in config.json. Per-agent grants
+  ADD to defaults rather than replace them, so an agent's effective
+  set is `union(defaults, grants)`. Backed by daemon endpoints
+  `/v1/permissions[/slugs|/grant|/revoke]` and a single source-of-truth
+  slug registry (`self.rename`, `groups.create|rm`,
+  `member.add|remove|redesignate`, `permissions.grant|revoke`).
+  `grant` refuses unknown slugs. The `permissions.grant|revoke` slugs
+  are themselves permission-gated, so the framework is recursive —
+  humans bypass by default; no agent holds them out of the box.

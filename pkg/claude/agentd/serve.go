@@ -141,6 +141,10 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/inbox", handleInbox)
 	mux.HandleFunc("/v1/groups", handleGroups)
 	mux.HandleFunc("/v1/groups/", handleGroupByName)
+	mux.HandleFunc("/v1/permissions", handlePermissions)
+	mux.HandleFunc("/v1/permissions/slugs", handlePermissionsSlugs)
+	mux.HandleFunc("/v1/permissions/grant", handlePermissionsGrant)
+	mux.HandleFunc("/v1/permissions/revoke", handlePermissionsRevoke)
 	return logRequest(mux)
 }
 

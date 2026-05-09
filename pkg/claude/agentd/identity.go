@@ -16,6 +16,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -127,7 +128,16 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 	}
 	slog.Debug("requirePermission: resolved caller",
 		"conv", p.ConvID, "row_present", row != nil, "title", title, "perm", perm)
-	if !cfg.HasAgentPermission(p.ConvID, title, perm) {
+	// Per-agent grants live in SQLite (table agent_permissions);
+	// cfg only carries the global defaults list. Check the DB first,
+	// then fall back to defaults.
+	allowed := cfg.HasDefaultPermission(perm)
+	if !allowed {
+		if ok, err := db.HasAgentPermissionRow(p.ConvID, perm); err == nil && ok {
+			allowed = true
+		}
+	}
+	if !allowed {
 		// Permission denied. If the caller asked for a human-override
 		// popup (via X-Tclaude-Ask-Human: <duration>), open one and
 		// block on the decision. Timeout = deny, so a doomed agent can

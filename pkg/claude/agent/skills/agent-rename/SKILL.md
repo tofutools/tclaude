@@ -22,7 +22,9 @@ tclaude agentd serve   # in a non-sandboxed terminal
 
 ## Prerequisite: self.rename permission
 
-Self-rename is opt-in. The human grants it in
+Self-rename is opt-in. There are two ways to grant it:
+
+**Option 1 — globally for every agent.** Either edit
 `~/.tclaude/config.json`:
 
 ```json
@@ -33,21 +35,26 @@ Self-rename is opt-in. The human grants it in
 }
 ```
 
-Or, to grant it only to specific conversations:
+…or run:
 
-```json
-{
-  "agent": {
-    "permission_overrides": {
-      "<conv-id-or-prefix-or-title>": ["self.rename"]
-    }
-  }
-}
+```bash
+tclaude agent permissions grant default self.rename
 ```
 
+**Option 2 — only for one specific conversation.** This grant lives
+in SQLite (`agent_permissions`), not config.json. Run:
+
+```bash
+tclaude agent permissions grant <conv-id-or-alias> self.rename
+```
+
+(The CLI resolves the selector to a full conv-id and persists the
+grant under it. Per-agent grants ADD to the defaults; they don't
+replace them.)
+
 If you see `Error: caller is not granted permission "self.rename"`,
-the human has not opted in. Quote the JSON snippet above so they
-know exactly what to add.
+the human has not opted in. Quote one of the commands above so they
+know exactly what to run.
 
 ## Renaming
 

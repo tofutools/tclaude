@@ -21,49 +21,29 @@ type Config struct {
 
 // AgentConfig holds agent-coordination knobs (see agents_todo.md).
 //
-// DefaultPermissions are granted to every agent. PermissionOverrides
-// keys can be conv-ids (full or 8-char prefix) or current display
-// titles; the override list fully replaces the defaults for that conv.
+// DefaultPermissions are granted to every agent — baseline trust the
+// human curates by hand. Per-agent overrides used to live here too,
+// but moved to SQLite (table agent_permissions) in v9: the daemon
+// rewrites them through grant/revoke endpoints, and storing them in
+// JSON made round-tripping awkward (config.json is hand-edited for
+// log_level etc.). config keeps only what humans naturally write.
 //
 // Permission slugs are simple dotted strings, e.g. "self.rename",
 // "member.redesignate", "agent.spawn". Unknown slugs are ignored
 // (forward-compat: a user grants a permission a future build wires up).
 type AgentConfig struct {
-	DefaultPermissions   []string            `json:"default_permissions,omitempty"`
-	PermissionOverrides  map[string][]string `json:"permission_overrides,omitempty"`
+	DefaultPermissions []string `json:"default_permissions,omitempty"`
 }
 
-// HasAgentPermission returns true if the agent identified by convID is
-// permitted to exercise perm. The match runs:
-//  1. PermissionOverrides keyed by full conv-id
-//  2. PermissionOverrides keyed by 8-char prefix
-//  3. PermissionOverrides keyed by display title (caller may pass empty)
-//  4. DefaultPermissions
-//
-// A nil/empty AgentConfig grants nothing.
-func (c *Config) HasAgentPermission(convID, displayTitle, perm string) bool {
+// HasDefaultPermission reports whether perm is in the global defaults
+// list. Per-agent overrides live in SQLite and are checked separately
+// by the daemon's requirePermission — this method only covers the
+// defaults half of that lookup.
+func (c *Config) HasDefaultPermission(perm string) bool {
 	if c == nil || c.Agent == nil {
 		return false
 	}
-	a := c.Agent
-	if perms, ok := a.PermissionOverrides[convID]; ok {
-		return slugMatch(perms, perm)
-	}
-	if len(convID) >= 8 {
-		if perms, ok := a.PermissionOverrides[convID[:8]]; ok {
-			return slugMatch(perms, perm)
-		}
-	}
-	if displayTitle != "" {
-		if perms, ok := a.PermissionOverrides[displayTitle]; ok {
-			return slugMatch(perms, perm)
-		}
-	}
-	return slugMatch(a.DefaultPermissions, perm)
-}
-
-func slugMatch(perms []string, want string) bool {
-	return slices.Contains(perms, want)
+	return slices.Contains(c.Agent.DefaultPermissions, perm)
 }
 
 // NotificationConfig holds settings for OS notifications.

@@ -109,6 +109,64 @@ func TestAgentGroupMembershipAndShared(t *testing.T) {
 	}
 }
 
+func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
+	setupTestDB(t)
+
+	conv := "abcd1234-0000-0000-0000-000000000001"
+
+	// Empty initially.
+	if perms, err := ListAgentPermissionsForConv(conv); err != nil || len(perms) != 0 {
+		t.Fatalf("expected empty list, got %v err=%v", perms, err)
+	}
+	if ok, err := HasAgentPermissionRow(conv, "self.rename"); err != nil || ok {
+		t.Fatalf("expected no perm, got ok=%v err=%v", ok, err)
+	}
+
+	// Grant.
+	if err := GrantAgentPermission(conv, "self.rename", "<human>"); err != nil {
+		t.Fatalf("GrantAgentPermission: %v", err)
+	}
+	// Idempotent.
+	if err := GrantAgentPermission(conv, "self.rename", "<human>"); err != nil {
+		t.Fatalf("idempotent grant: %v", err)
+	}
+	if ok, err := HasAgentPermissionRow(conv, "self.rename"); err != nil || !ok {
+		t.Fatalf("expected perm, got ok=%v err=%v", ok, err)
+	}
+
+	// Multiple slugs sort correctly.
+	if err := GrantAgentPermission(conv, "member.add", ""); err != nil {
+		t.Fatal(err)
+	}
+	perms, err := ListAgentPermissionsForConv(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(perms) != 2 || perms[0] != "member.add" || perms[1] != "self.rename" {
+		t.Fatalf("expected sorted list [member.add self.rename], got %v", perms)
+	}
+
+	// Revoke.
+	n, err := RevokeAgentPermission(conv, "self.rename")
+	if err != nil || n != 1 {
+		t.Fatalf("RevokeAgentPermission: n=%d err=%v", n, err)
+	}
+	// Idempotent revoke returns 0.
+	n, err = RevokeAgentPermission(conv, "self.rename")
+	if err != nil || n != 0 {
+		t.Fatalf("idempotent revoke: n=%d err=%v", n, err)
+	}
+
+	// ListAllAgentPermissions sees the remaining slug.
+	all, err := ListAllAgentPermissions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all[conv]; len(got) != 1 || got[0] != "member.add" {
+		t.Fatalf("expected [member.add], got %v", got)
+	}
+}
+
 func TestAgentMessageInsertAndList(t *testing.T) {
 	setupTestDB(t)
 

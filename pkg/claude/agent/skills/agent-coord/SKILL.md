@@ -125,13 +125,28 @@ load that one when you need to rename, not this one.
   subcommands (`groups create|rm|add|remove|update-member`) are
   permission-gated. By default agents can't run them. Humans bypass
   the gate. Slugs: `groups.create`, `groups.rm`, `member.add`,
-  `member.remove`, `member.redesignate`. Granted via
-  `agent.default_permissions` or `agent.permission_overrides[<conv>]`
-  in `~/.tclaude/config.json`.
+  `member.remove`, `member.redesignate`.
 
-  **Ad-hoc human approval.** If you need an action just this once and
-  don't want to ask the human to edit JSON, every mutating command
-  takes `--ask-human <duration>`:
+  Permissions live in two places:
+  - **Defaults** — `agent.default_permissions` in
+    `~/.tclaude/config.json`. Granted to every agent.
+  - **Per-agent grants** — SQLite (`agent_permissions`), additive on
+    top of defaults. Managed via the CLI:
+
+    ```bash
+    tclaude agent permissions slugs                       # what slugs exist
+    tclaude agent permissions ls                          # everything
+    tclaude agent permissions ls <conv-or-alias>          # effective for one agent
+    tclaude agent permissions grant default <slug>        # add to defaults
+    tclaude agent permissions grant <conv> <slug>         # add per-agent
+    tclaude agent permissions revoke <conv> <slug>
+    ```
+
+    `grant`/`revoke` are themselves gated (slugs `permissions.grant` /
+    `permissions.revoke`) so by default only the human can run them.
+
+  **Ad-hoc human approval.** If you need an action just this once,
+  every mutating command takes `--ask-human <duration>`:
 
   ```bash
   tclaude agent groups create foo --ask-human 30s

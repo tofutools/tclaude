@@ -27,6 +27,7 @@ func Cmd() *cobra.Command {
 			replyCmd(),
 			groupsCmd(),
 			inboxCmd(),
+			permissionsCmd(),
 		},
 	}.ToCobra()
 }

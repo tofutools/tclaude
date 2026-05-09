@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 8
+const currentVersion = 9
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -67,6 +67,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 8 {
 		if err := migrateV7toV8(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 9 {
+		if err := migrateV8toV9(db); err != nil {
 			return err
 		}
 	}
@@ -231,6 +237,34 @@ func migrateV6toV7(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v6→v7: %w", err)
+	}
+	return nil
+}
+
+// migrateV8toV9 adds the agent_permissions table — per-conv permission
+// overrides. Previously these lived in ~/.tclaude/config.json under
+// agent.permission_overrides; that proved awkward (config rewrites need
+// careful merging, and the human edits this file by hand for log_level
+// etc.). Storing per-agent grants in SQLite — alongside agent_groups
+// and agent_group_members — keeps the data model uniform and lets the
+// daemon mutate without touching JSON. config.json keeps only
+// DefaultPermissions; legacy permission_overrides values are imported
+// here on first open.
+func migrateV8toV9(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_permissions (
+			conv_id    TEXT NOT NULL,
+			slug       TEXT NOT NULL,
+			granted_at TEXT NOT NULL,
+			granted_by TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (conv_id, slug)
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_permissions_slug ON agent_permissions(slug);
+
+		UPDATE schema_version SET version = 9;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v8→v9: %w", err)
 	}
 	return nil
 }
