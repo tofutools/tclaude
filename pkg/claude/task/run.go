@@ -526,7 +526,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 	}
 
 	var taskSignal session.TaskSignal
-	var firstTaskSignal *session.TaskSignal
+	var firstTaskSignal session.TaskSignal
 
 	for {
 		if signalExists {
@@ -587,8 +587,8 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				sendNotification(taskSignal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
 			}
-			if firstTaskSignal == nil {
-				firstTaskSignal = &taskSignal
+			if firstTaskSignal.Event == "" {
+				firstTaskSignal = taskSignal
 			}
 			if opts.verifyCmd != "" {
 				if ctx.Err() != nil {
@@ -675,9 +675,9 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				}
 			}
 			slog.Debug("exiting", "event", taskSignal.Event, "module", "task")
-			if firstTaskSignal != nil {
+			if firstTaskSignal.Event != "" {
 				select {
-				case resultCh <- *firstTaskSignal:
+				case resultCh <- firstTaskSignal:
 				default:
 				}
 			}
