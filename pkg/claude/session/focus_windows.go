@@ -26,6 +26,13 @@ func TryFocusAttachedSession(tmuxSession string) {
 	// No-op for external focus attempts
 }
 
+// TryFocusAttachedSessionWithID exists for cross-platform parity
+// with the Linux/WSL variant; native Windows is a no-op same as
+// the existing helper.
+func TryFocusAttachedSessionWithID(tmuxSession, _ string) {
+	TryFocusAttachedSession(tmuxSession)
+}
+
 // FocusOwnWindow attempts to focus the current process's console window.
 // This is called from within the session (via hooks) and should succeed
 // because Windows allows a process to focus its own windows.

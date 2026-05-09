@@ -16,6 +16,13 @@ func TryFocusAttachedSession(tmuxSession string) {
 	FocusTmuxSession(tmuxSession)
 }
 
+// TryFocusAttachedSessionWithID exists for cross-platform parity
+// with the Linux/WSL variant; on macOS the tty-based AppleScript
+// focus already works without the session ID, so we just delegate.
+func TryFocusAttachedSessionWithID(tmuxSession, _ string) {
+	TryFocusAttachedSession(tmuxSession)
+}
+
 // FocusTmuxSession focuses the terminal window running a specific tmux session.
 func FocusTmuxSession(tmuxSession string) bool {
 	debug := os.Getenv("TCLAUDE_DEBUG") != ""

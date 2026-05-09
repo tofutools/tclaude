@@ -27,11 +27,33 @@ func findPowerShell() string {
 
 // TryFocusAttachedSession attempts to focus the terminal window that has the session attached.
 func TryFocusAttachedSession(tmuxSession string) {
-	slog.Debug(fmt.Sprintf("TryFocusAttachedSession called for: %s", tmuxSession), "module", "focus")
+	TryFocusAttachedSessionWithID(tmuxSession, os.Getenv("TCLAUDE_SESSION_ID"))
+}
+
+// TryFocusAttachedSessionWithID is like TryFocusAttachedSession but
+// takes the tclaude session ID (label) explicitly. The session ID is
+// needed on WSL where the focus path searches Windows windows by the
+// "tclaude:<id>" title pattern that setTerminalTitle stamps on each
+// pane. Existing TryFocusAttachedSession reads the ID from
+// $TCLAUDE_SESSION_ID, which is correct when called from
+// `tclaude session focus` (CLI sets the env first) but not from the
+// daemon (env points at the daemon's own session, if any).
+func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
+	slog.Debug(fmt.Sprintf("TryFocusAttachedSessionWithID called for tmux=%s id=%s", tmuxSession, sessionID), "module", "focus")
 
 	if isWSL() {
-		slog.Debug("WSL detected, using Windows focus", "module", "focus")
-		focusWSLWindow()
+		slog.Debug("WSL detected, focusing by title pattern", "module", "focus")
+		// Skip the wsl.exe parent-tree walk (which is anchored at OUR
+		// pid, useless when the daemon is calling for another agent)
+		// and go straight to the title-pattern search — same path the
+		// notification-click flow uses successfully.
+		if sessionID != "" && focusWindowByTitlePattern(sessionID) {
+			return
+		}
+		// Fallback to opening a new WT window attached to the session.
+		if sessionID != "" {
+			focusWTTabByCycling(sessionID)
+		}
 		return
 	}
 

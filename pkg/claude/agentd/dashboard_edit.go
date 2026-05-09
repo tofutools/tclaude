@@ -81,7 +81,10 @@ func handleDashboardJumpAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
-	session.TryFocusAttachedSession(sess.TmuxSession)
+	// Pass the session ID explicitly so the WSL focus path can match
+	// "tclaude:<id>" titles. Plain TryFocusAttachedSession reads the
+	// id from $TCLAUDE_SESSION_ID, which the daemon doesn't set.
+	session.TryFocusAttachedSessionWithID(sess.TmuxSession, sess.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
