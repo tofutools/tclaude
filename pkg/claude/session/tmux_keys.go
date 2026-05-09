@@ -29,8 +29,8 @@ func ConfigureTmuxKeybindings() {
 
 	// Prefix-less (-n): Shift+Arrow to switch sessions
 	// #{session_name} is expanded by tmux to the current session name
-	clcommon.TmuxCommand("bind-key", "-n", "S-Right",
+	_ = clcommon.TmuxCommand("bind-key", "-n", "S-Right",
 		"run-shell", "-b", "TCLAUDE_SESSION_ID=#{session_name} tclaude session goto next 2>/dev/null").Run()
-	clcommon.TmuxCommand("bind-key", "-n", "S-Left",
+	_ = clcommon.TmuxCommand("bind-key", "-n", "S-Left",
 		"run-shell", "-b", "TCLAUDE_SESSION_ID=#{session_name} tclaude session goto prev 2>/dev/null").Run()
 }

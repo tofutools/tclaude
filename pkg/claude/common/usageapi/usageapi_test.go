@@ -143,10 +143,10 @@ func TestGetCached_BackoffAfterError(t *testing.T) {
 		return failFetch(token)
 	})
 
-	GetCached()
+	_, _ = GetCached()
 
 	// Second call should NOT fetch — backoff is active
-	GetCached()
+	_, _ = GetCached()
 
 	if fetchCount.Load() != 1 {
 		t.Errorf("expected 1 fetch during backoff, got %d", fetchCount.Load())
@@ -260,10 +260,10 @@ func TestGetCached_BackoffEvenWithoutStaleCache(t *testing.T) {
 	})
 
 	// First call fails, no stale cache
-	GetCached()
+	_, _ = GetCached()
 
 	// Second call should NOT fetch — backoff is active even without stale data
-	GetCached()
+	_, _ = GetCached()
 
 	if fetchCount.Load() != 1 {
 		t.Errorf("expected 1 fetch during backoff, got %d", fetchCount.Load())

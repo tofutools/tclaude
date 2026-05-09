@@ -115,7 +115,7 @@ func runList(params *ListParams) error {
 		}
 
 		// Determine indicator: ⚡ = attached tmux, ▷ = detached tmux, ◉ = non-tmux/dead tmux
-		indicator := "  "
+		var indicator string
 		tmuxAlive := state.TmuxSession != "" && IsTmuxSessionAlive(state.TmuxSession)
 		if !tmuxAlive {
 			indicator = " ◉"

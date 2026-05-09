@@ -286,12 +286,12 @@ func TestInstallHooks_PreservesNonTclaudeHooks(t *testing.T) {
 	// Read back and check
 	result, _ := os.ReadFile(settingsPath)
 	var settings map[string]json.RawMessage
-	json.Unmarshal(result, &settings)
+	_ = json.Unmarshal(result, &settings)
 	var hooks map[string]json.RawMessage
-	json.Unmarshal(settings["hooks"], &hooks)
+	_ = json.Unmarshal(settings["hooks"], &hooks)
 
 	var stopMatchers []HookMatcher
-	json.Unmarshal(hooks["Stop"], &stopMatchers)
+	_ = json.Unmarshal(hooks["Stop"], &stopMatchers)
 
 	customFound := false
 	tclaudeCount := 0
@@ -400,12 +400,14 @@ func TestCheckHooksInstalled_DetectsDuplicates(t *testing.T) {
 
 	// Double up the Stop hook
 	var stopMatchers []json.RawMessage
-	json.Unmarshal(hooks["Stop"], &stopMatchers)
+	_ = json.Unmarshal(hooks["Stop"], &stopMatchers)
 	stopMatchers = append(stopMatchers, stopMatchers[0])
 	hooks["Stop"], _ = json.Marshal(stopMatchers)
 	settings["hooks"], _ = json.Marshal(hooks)
 	output, _ := json.MarshalIndent(settings, "", "  ")
-	os.WriteFile(settingsPath, output, 0644)
+	if err := os.WriteFile(settingsPath, output, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Check should detect the duplicate
 	installed, _, needsRepair = CheckHooksInstalled()

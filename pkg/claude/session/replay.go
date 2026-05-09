@@ -50,7 +50,7 @@ func runReplay(file string, delay time.Duration) error {
 	if err != nil {
 		return fmt.Errorf("failed to open %s: %w", file, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	self, err := os.Executable()
 	if err != nil {
@@ -112,7 +112,7 @@ func runReplay(file string, delay time.Duration) error {
 		}
 	}
 
-	DeleteSessionState(sessionID)
+	_ = DeleteSessionState(sessionID)
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading file: %w", err)

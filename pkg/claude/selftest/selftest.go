@@ -100,8 +100,8 @@ func testCredentialsRoundTrip() error {
 	reserialized, _ := json.Marshal(blob)
 
 	var origMap, reserMap interface{}
-	json.Unmarshal(raw, &origMap)
-	json.Unmarshal(reserialized, &reserMap)
+	_ = json.Unmarshal(raw, &origMap)
+	_ = json.Unmarshal(reserialized, &reserMap)
 
 	origJSON, _ := json.MarshalIndent(origMap, "", "  ")
 	reserJSON, _ := json.MarshalIndent(reserMap, "", "  ")
@@ -112,7 +112,7 @@ func testCredentialsRoundTrip() error {
 
 	// Verify the token we got matches what's in the blob
 	var tokenStr string
-	json.Unmarshal(oauth["accessToken"], &tokenStr)
+	_ = json.Unmarshal(oauth["accessToken"], &tokenStr)
 	if tokenStr != token {
 		return fmt.Errorf("GetAccessToken() != blob accessToken")
 	}

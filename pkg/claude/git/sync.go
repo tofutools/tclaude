@@ -61,7 +61,7 @@ func runSync(params *SyncParams) error {
 			fmt.Printf("  (pull failed, trying reset to remote)\n")
 			fetchCmd := exec.Command("git", "fetch", "origin")
 			fetchCmd.Dir = syncDir
-			fetchCmd.Run()
+			_ = fetchCmd.Run()
 
 			// Reset to remote if we have uncommitted local changes in sync dir
 			// (this is safe because local source of truth is ~/.claude/projects)
@@ -69,7 +69,7 @@ func runSync(params *SyncParams) error {
 			if remoteBranch != "" {
 				resetCmd := exec.Command("git", "reset", "--hard", "origin/"+remoteBranch)
 				resetCmd.Dir = syncDir
-				resetCmd.Run()
+				_ = resetCmd.Run()
 			}
 		}
 	}
@@ -445,7 +445,7 @@ func findLocalEquivalent(canonicalName string, localDirs map[string]bool, config
 // Used for merging local conversations into sync directory
 func mergeProject(srcProject, dstProject string, params *SyncParams) error {
 	// Ensure dst project exists
-	os.MkdirAll(dstProject, 0755)
+	_ = os.MkdirAll(dstProject, 0755)
 
 	// Merge tombstones first (so we know what to skip)
 	// Load local tombstones (if any exist from previous syncs)
@@ -499,7 +499,7 @@ func mergeProject(srcProject, dstProject string, params *SyncParams) error {
 		// Check if file exists in destination
 		if _, err := os.Stat(dstPath); os.IsNotExist(err) {
 			// Source only - copy it
-			conv.CopyFile(srcPath, dstPath)
+			_ = conv.CopyFile(srcPath, dstPath)
 			continue
 		}
 
@@ -805,6 +805,6 @@ func updateUnprocessedSyncDirs(projectsDir, syncDir string) {
 		if err != nil {
 			continue
 		}
-		os.WriteFile(indexPath, data, 0644)
+		_ = os.WriteFile(indexPath, data, 0644)
 	}
 }

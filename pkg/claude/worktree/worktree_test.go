@@ -36,8 +36,8 @@ func setupTestRepo(t *testing.T) (repoPath string, worktreeDir string) {
 	}
 
 	// Configure git user for commits
-	exec.Command("git", "-C", repoPath, "config", "user.email", "test@example.com").Run()
-	exec.Command("git", "-C", repoPath, "config", "user.name", "Test User").Run()
+	_ = exec.Command("git", "-C", repoPath, "config", "user.email", "test@example.com").Run()
+	_ = exec.Command("git", "-C", repoPath, "config", "user.name", "Test User").Run()
 
 	// Create initial commit
 	testFile := filepath.Join(repoPath, "README.md")
@@ -60,7 +60,7 @@ func setupTestRepo(t *testing.T) (repoPath string, worktreeDir string) {
 	// Rename branch to main
 	cmd = exec.Command("git", "branch", "-M", "main")
 	cmd.Dir = repoPath
-	cmd.Run() // Ignore error if already main
+	_ = cmd.Run() // Ignore error if already main
 
 	return repoPath, parentDir
 }
@@ -75,7 +75,7 @@ func withWorkingDir(t *testing.T, dir string, fn func()) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("failed to chdir to %s: %v", dir, err)
 	}
-	defer os.Chdir(oldWd)
+	defer func() { _ = os.Chdir(oldWd) }()
 	fn()
 }
 
@@ -339,7 +339,7 @@ func TestGetBranchCompletions(t *testing.T) {
 		for _, branch := range []string{"feature-a", "feature-b", "bugfix-1"} {
 			cmd := exec.Command("git", "branch", branch)
 			cmd.Dir = repoPath
-			cmd.Run()
+			_ = cmd.Run()
 		}
 
 		completions := GetBranchCompletions()

@@ -252,7 +252,7 @@ func printHourHistogram(hourCounts map[string]int) {
 	hours := make([]int, 0, len(hourCounts))
 	for h := range hourCounts {
 		var hour int
-		fmt.Sscanf(h, "%d", &hour)
+		_, _ = fmt.Sscanf(h, "%d", &hour)
 		hours = append(hours, hour)
 	}
 	sort.Ints(hours)

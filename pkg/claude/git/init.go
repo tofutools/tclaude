@@ -59,7 +59,7 @@ func runInit(params *InitParams) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	cloneCmd := exec.Command("git", "clone", "--depth=1", params.RepoURL, tempDir)
 	cloneOutput, cloneErr := cloneCmd.CombinedOutput()
@@ -108,7 +108,7 @@ func runInit(params *InitParams) error {
 	if hasContent {
 		fmt.Printf("Remote has existing conversations. Cloning...\n")
 		// Remove our empty sync dir and clone properly
-		os.RemoveAll(syncDir)
+		_ = os.RemoveAll(syncDir)
 
 		fullClone := exec.Command("git", "clone", params.RepoURL, syncDir)
 		if output, err := fullClone.CombinedOutput(); err != nil {
@@ -168,7 +168,7 @@ func setupConfigSymlink(syncDir string) {
 			}
 		}
 		// Remove existing file/symlink to replace it
-		os.Remove(localConfig)
+		_ = os.Remove(localConfig)
 	}
 
 	// Create symlink

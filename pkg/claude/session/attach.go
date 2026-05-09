@@ -54,7 +54,7 @@ func runAttach(params *AttachParams) error {
 	// Check if session is alive
 	if !IsTmuxSessionAlive(state.TmuxSession) {
 		state.Status = StatusExited
-		SaveSessionState(state)
+		_ = SaveSessionState(state)
 		return fmt.Errorf("session %s has exited", state.ID)
 	}
 
@@ -84,7 +84,7 @@ func AttachToTmuxSession(tmuxSession string) int {
 // If forceAttach is true, detaches other clients before attaching (-d flag).
 func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	// Set TCLAUDE_SESSION_ID so focus functions can find our session
-	os.Setenv("TCLAUDE_SESSION_ID", sessionID)
+	_ = os.Setenv("TCLAUDE_SESSION_ID", sessionID)
 
 	// Set terminal title to include session ID (helps with window focus on WSL/Windows)
 	setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))

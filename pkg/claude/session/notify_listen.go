@@ -37,7 +37,7 @@ func runNotifyListen(sessionID, title, body string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to session bus: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Set up signal listeners BEFORE sending the notification to avoid races
 	if err := conn.AddMatchSignal(
