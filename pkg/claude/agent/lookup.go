@@ -108,11 +108,23 @@ func freshConvRow(convID string) *db.ConvIndexRow {
 // currentConvID returns the conv-id of the conversation invoking us. We
 // prefer Claude Code's per-pid session file (tracks `/clear` and `/resume`)
 // and fall back to the env var that tclaude sets at session launch.
+//
+// $TCLAUDE_SESSION_ID is sometimes set to the 8-char prefix rather than
+// the full UUID, so we expand prefixes via the DB before returning, so
+// downstream callers can rely on getting the canonical full ID.
 func currentConvID() (string, error) {
 	if id := readCCSessionID(); id != "" {
 		return id, nil
 	}
 	if id := os.Getenv("TCLAUDE_SESSION_ID"); id != "" {
+		// Already a full UUID? Take it.
+		if len(id) == 36 {
+			return id, nil
+		}
+		// Prefix → full UUID via the DB.
+		if row, err := db.FindConvIndexByPrefix(id); err == nil && row != nil {
+			return row.ConvID, nil
+		}
 		return id, nil
 	}
 	return "", fmt.Errorf("could not detect current conversation; pass an explicit conv ID")
