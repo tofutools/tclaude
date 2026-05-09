@@ -86,6 +86,7 @@ type watchModel struct {
 	entries        []SessionEntry
 	filtered       []SessionEntry                   // After search filter
 	activeSessions map[string]*session.SessionState // convID -> session
+	groupsByConv   map[string][]string              // convID -> group names; empty if no groups configured
 
 	// Navigation
 	cursor         int
@@ -753,6 +754,9 @@ func (m *watchModel) View() tea.View {
 		} else {
 			cells = []string{sessionMark, id, title, size, modified}
 		}
+		if m.hasGroups() {
+			cells = append(cells, strings.Join(m.groupsByConv[e.SessionID], ","))
+		}
 		if m.semanticMode {
 			score := ""
 			if s, ok := m.semanticScores[e.SessionID]; ok {
@@ -851,6 +855,28 @@ func (m *watchModel) setEntries(allEntries []SessionEntry) {
 	m.entries = allEntries
 	m.applySearchFilter()
 	m.refreshActiveSessions()
+	m.refreshGroups()
+}
+
+// refreshGroups reloads agent group memberships from the DB. Errors are
+// non-fatal — the worst that happens is the GROUPS column is empty.
+func (m *watchModel) refreshGroups() {
+	g, err := db.GroupNamesByConv()
+	if err != nil {
+		return
+	}
+	m.groupsByConv = g
+}
+
+// hasGroups reports whether any conv in the current entry list belongs to a
+// group. Used to decide whether to render the GROUPS column at all.
+func (m *watchModel) hasGroups() bool {
+	for _, e := range m.entries {
+		if len(m.groupsByConv[e.SessionID]) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Sorting (in-memory only) ---
@@ -1409,6 +1435,7 @@ func (m *watchModel) stopSession(state *session.SessionState) error {
 // --- Column definitions ---
 
 func (m *watchModel) columns() []table.Column {
+	showGroups := m.hasGroups()
 	if m.global {
 		cols := []table.Column{
 			{Header: "", Width: 2},
@@ -1417,6 +1444,9 @@ func (m *watchModel) columns() []table.Column {
 			{Header: "TITLE/PROMPT", MinWidth: 30, Weight: 0.6, Truncate: true, SortKey: "title"},
 			{Header: "SIZE", Width: 8, SortKey: "size"},
 			{Header: "MODIFIED", Width: 16, SortKey: "modified"},
+		}
+		if showGroups {
+			cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true})
 		}
 		if m.semanticMode {
 			cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})
@@ -1429,6 +1459,9 @@ func (m *watchModel) columns() []table.Column {
 		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"},
 		{Header: "SIZE", Width: 8, SortKey: "size"},
 		{Header: "MODIFIED", Width: 16, SortKey: "modified"},
+	}
+	if showGroups {
+		cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true})
 	}
 	if m.semanticMode {
 		cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})

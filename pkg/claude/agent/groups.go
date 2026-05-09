@@ -9,6 +9,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -55,6 +56,7 @@ type groupSummary struct {
 	Name    string `json:"name"`
 	Descr   string `json:"descr,omitempty"`
 	Members int    `json:"members"`
+	Online  int    `json:"online"`
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
@@ -78,9 +80,22 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no groups)")
 		return rcOK
 	}
+	tbl := table.New(
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "MEMBERS", Width: 7, Align: table.AlignRight},
+		table.Column{Header: "ONLINE", Width: 6, Align: table.AlignRight},
+		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.4, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, g := range groups {
-		fmt.Fprintf(stdout, "%-20s  %d members  %s\n", g.Name, g.Members, g.Descr)
+		tbl.AddRow(table.Row{Cells: []string{
+			g.Name,
+			fmt.Sprintf("%d", g.Members),
+			fmt.Sprintf("%d", g.Online),
+			g.Descr,
+		}})
 	}
+	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }
 
@@ -205,17 +220,26 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no members)")
 		return rcOK
 	}
+	tbl := table.New(
+		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
+		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
+		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, m := range members {
-		shortID := m.ConvID
-		if len(shortID) >= 8 {
-			shortID = shortID[:8]
-		}
 		alias := m.Alias
 		if alias == "" {
 			alias = m.Title
 		}
-		fmt.Fprintf(stdout, "%s  %-20s  %-15s  %s\n", shortID, alias, m.Role, m.Descr)
+		tbl.AddRow(table.Row{Cells: []string{
+			short(m.ConvID),
+			alias,
+			m.Role,
+			m.Descr,
+		}})
 	}
+	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }
 

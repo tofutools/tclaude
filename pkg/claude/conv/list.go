@@ -13,6 +13,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
@@ -150,8 +151,13 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 		return 0
 	}
 
+	// Pull group memberships so we can render a "Groups" column when any
+	// conv is in at least one group. Errors here are non-fatal — we just
+	// drop the column.
+	groupsByConv, _ := db.GroupNamesByConv()
+
 	// Display using table
-	RenderTable(stdout, allEntries, params.Global, params.Long, nil)
+	RenderTable(stdout, allEntries, params.Global, params.Long, nil, groupsByConv)
 
 	return 0
 }
@@ -191,9 +197,19 @@ func getTerminalWidth() int {
 	return 120 // default
 }
 
-// RenderTable renders a table of conversation entries
-// matchCounts is optional - if provided, adds a "Matches" column
-func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool, matchCounts []int) {
+// RenderTable renders a table of conversation entries.
+// matchCounts is optional - if provided, adds a "Matches" column.
+// groupsByConv is optional - if any conv has at least one group,
+// adds a "Groups" column. Pass nil or an empty map to skip.
+func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool, matchCounts []int, groupsByConv map[string][]string) {
+	showGroups := false
+	for _, e := range entries {
+		if len(groupsByConv[e.SessionID]) > 0 {
+			showGroups = true
+			break
+		}
+	}
+
 	t := table.NewWriter()
 	t.SetOutputMirror(stdout)
 	t.SetStyle(table.StyleLight)
@@ -214,6 +230,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	if matchCounts != nil {
 		header = append(header, "Matches")
 	}
+	if showGroups {
+		header = append(header, "Groups")
+	}
 	t.AppendHeader(header)
 
 	// Calculate fixed column widths
@@ -227,6 +246,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	}
 	if matchCounts != nil {
 		fixedWidth += 8 // Matches column
+	}
+	if showGroups {
+		fixedWidth += 20 // Groups column
 	}
 
 	// Prompt/Title gets remaining space
@@ -259,6 +281,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 		row = append(row, modified)
 		if matchCounts != nil {
 			row = append(row, matchCounts[i])
+		}
+		if showGroups {
+			row = append(row, strings.Join(groupsByConv[e.SessionID], ","))
 		}
 		t.AppendRow(row)
 	}

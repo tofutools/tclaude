@@ -133,8 +133,12 @@ func TestRunLookup(t *testing.T) {
 
 func TestRunWhoami_HumanFallback(t *testing.T) {
 	setupTestDB(t)
-	// No TCLAUDE_SESSION_ID, no CC ancestor (go test is run from a plain
-	// shell). Expect the <human> fallback rather than an error.
+	// Force findClaudePID to report no CC ancestor — the actual process tree
+	// may include one (e.g. when `go test` is run from inside Claude Code),
+	// but the test premise is "human shell, no ancestor".
+	prev := findClaudePID
+	findClaudePID = func() int { return 0 }
+	t.Cleanup(func() { findClaudePID = prev })
 	var stdout, stderr bytes.Buffer
 	rc := runWhoamiDirect(&stdout, &stderr)
 	if rc != rcOK {

@@ -11,6 +11,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -94,8 +95,16 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 		fmt.Fprintln(stdout, "(empty inbox)")
 		return rcOK
 	}
+	tbl := table.New(
+		table.Column{Header: "", Width: 1},
+		table.Column{Header: "ID", Width: 5, Align: table.AlignRight},
+		table.Column{Header: "FROM", Width: 8},
+		table.Column{Header: "GROUP", MinWidth: 6, Weight: 0.4, Truncate: true},
+		table.Column{Header: "SUBJECT", MinWidth: 10, Weight: 1.6, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, e := range out {
-		marker := "*" // unread
+		marker := "*"
 		if e.Read {
 			marker = " "
 		}
@@ -103,8 +112,15 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 		if subj == "" {
 			subj = e.Preview
 		}
-		fmt.Fprintf(stdout, "%s #%-4d %-8s  group=%-12s  %s\n", marker, e.ID, e.FromShort, e.Group, subj)
+		tbl.AddRow(table.Row{Cells: []string{
+			marker,
+			fmt.Sprintf("%d", e.ID),
+			e.FromShort,
+			e.Group,
+			subj,
+		}})
 	}
+	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }
 

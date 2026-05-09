@@ -534,6 +534,22 @@ type groupSummary struct {
 	Name    string `json:"name"`
 	Descr   string `json:"descr,omitempty"`
 	Members int    `json:"members"`
+	Online  int    `json:"online"`
+}
+
+// isConvOnline reports whether any tmux session registered for this conv-id
+// is currently alive. Same alive-check `nudgeIfAlive` uses for delivery.
+func isConvOnline(convID string) bool {
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return false
+	}
+	for _, c := range candidates {
+		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleGroups(w http.ResponseWriter, r *http.Request) {
@@ -548,7 +564,13 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		out := make([]groupSummary, 0, len(groups))
 		for _, g := range groups {
 			members, _ := db.ListAgentGroupMembers(g.ID)
-			out = append(out, groupSummary{Name: g.Name, Descr: g.Descr, Members: len(members)})
+			online := 0
+			for _, m := range members {
+				if isConvOnline(m.ConvID) {
+					online++
+				}
+			}
+			out = append(out, groupSummary{Name: g.Name, Descr: g.Descr, Members: len(members), Online: online})
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:

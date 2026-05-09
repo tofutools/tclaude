@@ -8,10 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -26,6 +28,11 @@ const (
 	rcIOFailure  = 4
 	rcAuth       = 5
 )
+
+// findClaudePID is the parent-process walker used to detect whether the
+// invoker has a Claude Code ancestor. Indirected through a variable so
+// tests can stub it (the test runner itself is usually a CC descendant).
+var findClaudePID = session.FindClaudePID
 
 // ErrAmbiguous is returned by ResolveSelector when the selector matches
 // more than one conversation. The caller should surface candidates.
@@ -301,7 +308,7 @@ func runWhoamiDirect(stdout, stderr io.Writer) int {
 	if err != nil {
 		// No conv-id resolvable. If there's no `claude` ancestor in the
 		// process tree, the invoker is the human — say so.
-		if session.FindClaudePID() == 0 {
+		if findClaudePID() == 0 {
 			fmt.Fprintln(stdout, HumanIdentity)
 			return rcOK
 		}
@@ -432,20 +439,28 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 		fmt.Fprintln(stdout, "(no peers — you are not in any groups, or your groups have no other members)")
 		return rcOK
 	}
+	tbl := table.New(
+		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
+		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
+		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, pe := range peers {
-		shortID := pe.ConvID
-		if len(shortID) >= 8 {
-			shortID = shortID[:8]
-		}
 		alias := pe.Alias
 		if alias == "" {
 			alias = pe.Title
 		}
-		fmt.Fprintf(stdout, "%s  %-20s  %-15s  groups=%v\n", shortID, alias, pe.Role, pe.Groups)
-		if pe.Descr != "" {
-			fmt.Fprintf(stdout, "          %s\n", pe.Descr)
-		}
+		tbl.AddRow(table.Row{Cells: []string{
+			short(pe.ConvID),
+			alias,
+			pe.Role,
+			strings.Join(pe.Groups, ","),
+			pe.Descr,
+		}})
 	}
+	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }
 

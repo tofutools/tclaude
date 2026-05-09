@@ -349,7 +349,7 @@ func RunSearchEmbeddings(params *SearchEmbeddingsParams, stdout, stderr *os.File
 	for i, r := range results {
 		entries[i] = r.Entry
 	}
-	RenderTable(stdout, entries, params.Global, params.Long, nil)
+	RenderTable(stdout, entries, params.Global, params.Long, nil, nil)
 
 	fmt.Fprintf(stdout, "\n%d result(s)\n", len(results))
 	return 0

@@ -192,7 +192,7 @@ func RunSearch(params *SearchParams, stdout, stderr *os.File) int {
 	}
 
 	// Display results using shared table renderer
-	RenderTable(stdout, entries, params.Global, params.Long, matchCounts)
+	RenderTable(stdout, entries, params.Global, params.Long, matchCounts, nil)
 
 	// Show context if requested
 	if params.Long || params.Context > 0 {

@@ -181,6 +181,35 @@ func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
 	return out, rows.Err()
 }
 
+// GroupNamesByConv returns a map from conv-id to its group names, alphabetised.
+// Convs not in any group are absent from the map. The query scans the whole
+// membership table (which is small — humans curate it manually), so callers
+// don't need to pass a conv list.
+func GroupNamesByConv() (map[string][]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT m.conv_id, g.name
+		FROM agent_group_members m
+		JOIN agent_groups g ON g.id = m.group_id
+		ORDER BY m.conv_id, g.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string][]string{}
+	for rows.Next() {
+		var conv, name string
+		if err := rows.Scan(&conv, &name); err != nil {
+			return nil, err
+		}
+		out[conv] = append(out[conv], name)
+	}
+	return out, rows.Err()
+}
+
 // SharedGroupsForConvs returns the groups containing both convs, ordered by
 // group name. Used by `agent message` to authorise sender→target.
 func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
