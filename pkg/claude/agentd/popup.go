@@ -360,7 +360,8 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 			t = "(unknown)"
 		}
 		targetRow = "\n  <dt>Target agent</dt><dd>" +
-			html.EscapeString(t) + " &lt;" + html.EscapeString(req.targetConvID) + "&gt;</dd>"
+			"<span class=\"name\">" + html.EscapeString(t) + "</span>" +
+			"<span class=\"id\">" + html.EscapeString(req.targetConvID) + "</span></dd>"
 	}
 
 	queryRow := ""
