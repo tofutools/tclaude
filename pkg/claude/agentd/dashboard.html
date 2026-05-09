@@ -122,8 +122,12 @@ details[open] > summary::before { content: "▼ "; }
     }
     return groups.map(g => {
       const members = g.members || [];
+      // Restore expanded state across the 5s polling re-renders by
+      // keying on group name. Persisted in localStorage so it
+      // survives a full page reload too.
+      const isOpen = localStorage.getItem('tclaude.dash.group.' + g.name) === '1';
       return `
-      <details>
+      <details data-group-key="${esc(g.name)}"${isOpen ? ' open' : ''}>
         <summary>
           <strong>${esc(g.name)}</strong>
           <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
@@ -278,9 +282,27 @@ details[open] > summary::before { content: "▼ "; }
     });
   }
 
+  // <details> only fires `toggle` on the element itself (not bubbling),
+  // so use a capturing listener at the document level rather than
+  // re-binding per-element after every render.
+  function bindDetailsPersistence() {
+    document.addEventListener('toggle', e => {
+      const d = e.target;
+      if (!(d instanceof HTMLDetailsElement)) return;
+      const key = d.getAttribute('data-group-key');
+      if (!key) return;
+      if (d.open) {
+        localStorage.setItem('tclaude.dash.group.' + key, '1');
+      } else {
+        localStorage.removeItem('tclaude.dash.group.' + key);
+      }
+    }, true);
+  }
+
   $('#refresh-link').addEventListener('click', e => { e.preventDefault(); refresh(); });
   bindTabs();
   bindCopy();
+  bindDetailsPersistence();
   refresh();
   setInterval(refresh, 5000);
 })();
