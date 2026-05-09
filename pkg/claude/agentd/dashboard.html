@@ -400,7 +400,7 @@ details[open] > summary .group-actions { opacity: 1; }
       <table>
         <thead>
           <tr>
-            <th></th><th>ID</th><th>Name</th><th>State</th><th>Last activity</th><th>CWD</th><th>Groups</th><th>Effective permissions</th>
+            <th></th><th>ID</th><th>Name</th><th>State</th><th>Last activity</th><th>CWD</th><th>Groups</th><th>Effective permissions</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -421,6 +421,7 @@ details[open] > summary .group-actions { opacity: 1; }
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
+              <td><div class="row-actions"><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -699,6 +700,21 @@ details[open] > summary .group-actions { opacity: 1; }
             });
             ok = r.ok;
             if (!ok) toast(`Grant owner failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'delete-agent': {
+            const confirmed = await confirmModal({
+              title: 'Permanently delete this agent?',
+              body: `Wipes the .jsonl conversation file from disk, drops the conv_index DB row, removes the entry from sessions-index.json, and writes a sync tombstone if sync is enabled. Same scope as \`tclaude conv rm\`. Existing group memberships and ownership rows are NOT auto-cleaned and will become orphaned.`,
+              meta: label,
+              okLabel: 'Delete forever',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Delete failed: ${await r.text()}`, true);
             break;
           }
           case 'delete-group': {

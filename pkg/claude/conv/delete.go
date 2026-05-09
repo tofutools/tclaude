@@ -10,6 +10,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -226,6 +227,60 @@ func findJSONLByPrefix(projectPath, idPrefix string) string {
 		return matches[0]
 	}
 	return ""
+}
+
+// DeleteConvByID is the I/O-free destructive core of the `conv rm`
+// flow, factored out so non-CLI callers (e.g. the agentd dashboard)
+// can wipe a conversation without going through stdout/stderr prompts.
+//
+// Looks the conv up in the conv_index DB, removes the .jsonl file,
+// removes any sibling conv directory, removes the entry from
+// sessions-index.json, drops the conv_index DB row, and writes a
+// tombstone for sync if syncutil is initialised.
+//
+// Idempotent on missing files. Returns an error if the conv is
+// unknown to the index DB (so callers can surface a 404).
+func DeleteConvByID(convID string) error {
+	row, err := db.GetConvIndex(convID)
+	if err != nil {
+		return fmt.Errorf("look up conv: %w", err)
+	}
+	if row == nil {
+		return fmt.Errorf("conv %s not found in index", convID)
+	}
+	fullID := row.ConvID
+	projectPath := filepath.Dir(row.FullPath)
+
+	if row.FullPath != "" {
+		if err := os.Remove(row.FullPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove jsonl: %w", err)
+		}
+	}
+	convDir := filepath.Join(projectPath, fullID)
+	if info, err := os.Stat(convDir); err == nil && info.IsDir() {
+		if err := os.RemoveAll(convDir); err != nil {
+			return fmt.Errorf("remove conv dir: %w", err)
+		}
+	}
+
+	if index, err := LoadSessionsIndex(projectPath); err == nil && index != nil {
+		if RemoveSessionByID(index, fullID) {
+			if err := SaveSessionsIndex(projectPath, index); err != nil {
+				return fmt.Errorf("save sessions-index: %w", err)
+			}
+		}
+	}
+
+	if err := db.DeleteConvIndex(fullID); err != nil {
+		return fmt.Errorf("drop conv_index row: %w", err)
+	}
+
+	if syncutil.IsInitialized() {
+		// Best-effort — sync tombstone failures shouldn't strand the
+		// already-deleted conv.
+		_ = AddTombstoneForProject(projectPath, fullID)
+	}
+	return nil
 }
 
 // AddTombstoneForProject adds a tombstone for a deleted session

@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/conv"
 )
 
 // Mutating endpoints for the dashboard. These live on the loopback
@@ -34,6 +35,46 @@ const dashboardGranter = "<human-dashboard>"
 // loopback mux. Called from registerDashboardRoutes.
 func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/groups/", handleDashboardGroupsAPI)
+	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
+}
+
+// handleDashboardAgentsAPI dispatches:
+//
+//	DELETE /api/agents/{conv}    → wipe the conversation (mirrors `tclaude conv rm`)
+//
+// Anything else returns 404.
+func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/agents/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "expected /api/agents/{conv}", http.StatusNotFound)
+		return
+	}
+	convSelector := parts[0]
+	if u, err := url.PathUnescape(convSelector); err == nil {
+		convSelector = u
+	}
+	if r.Method != http.MethodDelete {
+		http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
+		return
+	}
+	if len(parts) > 1 && parts[1] != "" {
+		http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
+		return
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := conv.DeleteConvByID(res.ConvID); err != nil {
+		http.Error(w, "delete conv: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleDashboardGroupsAPI dispatches:
