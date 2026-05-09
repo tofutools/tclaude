@@ -55,6 +55,7 @@ func initDashboardToken() {
 func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
+	registerDashboardEditRoutes(mux)
 }
 
 // handleDashboardRoot serves the HTML page. Sets the dashboard

@@ -619,6 +619,31 @@ home for membership editing):
    - Possible third: reincarnate / compact (manager-pattern
      verbs) once we want one-click lifecycle controls. Gated by
      the same `agent.<verb>` slug + owner-of-group rules.
+- **Per-group delete button** (in the group header, next to the
+  expand caret). Same confirmation-modal pattern as remove-from-
+  group / revoke-owner — the destruction here is harder to undo
+  (membership rows + owner rows + message history all gone) so the
+  modal should call out what's being lost. Calls `groups rm`.
+- **Jump-to-terminal button** on each member row (and probably
+  agent row). Reuse `session.TryFocusAttachedSession(tmuxSession)`
+  — the same focus mechanism the interactive `tclaude session ls
+  -w` and `conv ls -w` views already use to surface a session in
+  the user's terminal window. The dashboard already has the
+  agent's tmux_session in the snapshot (per dashboardMember.State
+  / dashboardAgent.State.cwd path); plumb it through to a new
+  `POST /api/jump/{tmux_session}` (or per-conv) that calls the
+  focus helper daemon-side. Per-platform behaviours: macOS uses
+  AppleScript, Linux uses wmctrl/i3-msg, Windows uses powershell
+  — already abstracted behind the helper's platform build tags.
+- **Deprecation labels / soft-hide for groups + agents.** Want a way
+  to keep something around for a bit before deleting permanently.
+  Sketch: a generic "label" field per group / per (group, member),
+  with `deprecated` (or `obsolete` / `archived` — bikeshed pending)
+  as a well-known value. Default dashboard view filters out
+  deprecated rows; a toggle reveals them. Same idea as gmail's
+  archive-vs-delete distinction. Open questions: per-group only or
+  per-agent too? One label or N? Stored in a new column or as a
+  free-form tags table?
 - **Add-member affordance in the group header.** A "+" button next
   to the group name opens a search overlay/popup listing
   candidates. Defaults to the agent set (members of any group +
@@ -650,24 +675,29 @@ Implementation notes for the interaction layer:
   the daemon's startup PID makes "another tab on the machine" attacks
   harder.
 
-**Optional: framework migration.** Vanilla JS works for v1 but every
-new feature (expand-state persistence, search, inline edits, "live"
-activity tab) means hand-rolling DOM diffing and event delegation,
-which adds up. **Consider migrating to React** (or Preact / Svelte)
-when v2 lands — they'd give us:
+**Framework migration — explicit check-in.** Vanilla JS worked for
+v1 (read-only, ~300 lines of inline JS). Every new feature so far
+(expand-state persistence in localStorage, owner badges, inline
+action buttons + confirm modal + toast) has added another chunk
+of imperative DOM-poking. Re-evaluate **before** adding any of:
 
-- Built-in state preservation across re-renders (no more
-  localStorage hacks for `<details>` open state).
-- Cleaner edit forms (controlled inputs, validation, optimistic
-  updates) for the inline grant/revoke + group mutators.
-- Component-level diffing so polling updates don't blow away
-  in-progress dialogs / search filters.
+- Drag/drop members between groups (real DnD wants component state)
+- The `+ add member` search overlay (live-filtered list, optimistic
+  updates)
+- Search/filter in the Groups view across many groups
+- Activity / inbox tab (live message stream)
 
-Trade-offs: a build step (vite + esbuild keeps it small), bigger
-embedded asset, more JS to audit. Probably worth it once we cross
-~5 features and ~700 lines of inline JS, and definitely worth it
-before adding a search box + filtered tree views. Decide as part of
-the v2 scope review; not a blocker.
+Candidates: React (familiar), Preact (smaller bundle, drop-in for
+React), Svelte (compiles away most runtime), Solid (fine-grained
+reactivity, reads close to vanilla). Build chain: vite +
+esbuild keeps the embedded asset small. Trade-offs: a build step
+in CI, bigger `//go:embed` blob, more JS to audit.
+
+Concrete trigger: when `pkg/claude/agentd/dashboard.html`'s `<script>`
+section crosses ~700 lines OR we want to add either of the above
+overlay/DnD features, do the migration FIRST so we don't pay the
+cost twice. Decide as part of the v2 scope review; not a blocker
+right now but worth resolving before the next big chunk of work.
 
 Open questions:
 

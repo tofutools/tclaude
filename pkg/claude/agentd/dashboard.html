@@ -95,6 +95,56 @@ details[open] > summary::before { content: "▼ "; }
 #status { font-size: 11px; color: #7d8590; }
 #status.error { color: #f85149; }
 .empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
+.row-actions {
+  display: inline-flex; gap: 4px; opacity: 0.4;
+}
+tr:hover .row-actions { opacity: 1; }
+.row-actions button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
+  font-family: inherit;
+}
+.row-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
+.row-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+.row-actions button.warn:hover { color: #d29922; border-color: #d29922; }
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.modal h3 { margin: 0 0 8px; font-size: 16px; color: #d4d4d4; }
+.modal p { margin: 8px 0; color: #c9d1d9; }
+.modal .modal-meta {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
+  color: #c9d1d9; margin: 8px 0;
+}
+.modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; padding: 6px 14px; font-size: 14px;
+  font-family: inherit;
+}
+.modal-buttons button.confirm-danger {
+  background: #4d1d1d; border-color: #f85149; color: #f85149;
+}
+.modal-buttons button.confirm-danger:hover { background: #f85149; color: #fff; }
+.modal-buttons button:hover { border-color: #58a6ff; }
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
+  border-radius: 4px; padding: 10px 14px; color: #c9d1d9;
+  font-size: 13px; max-width: 360px; z-index: 200;
+  opacity: 0; transform: translateY(8px); pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.toast.error { border-left-color: #f85149; }
 .banner {
   background: #1c2128; border: 1px solid #2a3340; border-left: 3px solid #d29922;
   padding: 8px 12px; margin: 0 24px; border-radius: 0 0 4px 4px;
@@ -109,7 +159,7 @@ details[open] > summary::before { content: "▼ "; }
   <span class="meta" style="margin-left:auto" id="status"></span>
 </header>
 <div class="banner">
-  Read-only view. Use the <code>tclaude agent</code> CLI for changes — every row has a "Copy CLI command" suggestion. <a href="#" id="refresh-link" style="color:#58a6ff">refresh now</a>
+  Inline edits available for member ownership and removal (hover a member row in the Groups tab). Other mutations still go through the <code>tclaude agent</code> CLI — every row has a "Copy CLI command" suggestion. <a href="#" id="refresh-link" style="color:#58a6ff">refresh now</a>
 </div>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
@@ -123,6 +173,18 @@ details[open] > summary::before { content: "▼ "; }
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
 </main>
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <h3 id="confirm-title"></h3>
+    <p id="confirm-body"></p>
+    <div class="modal-meta" id="confirm-meta"></div>
+    <div class="modal-buttons">
+      <button id="confirm-cancel">Cancel</button>
+      <button id="confirm-ok" class="confirm-danger"></button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
 <script>
 (function() {
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -191,6 +253,21 @@ details[open] > summary::before { content: "▼ "; }
     return esc(m.role || '');
   }
 
+  // memberActions renders the per-row action button cell. Two
+  // buttons per row:
+  //   - Toggle owner: revoke if currently owner, grant if not
+  //   - Remove from group (destructive)
+  // Both encode the group + conv via data-* attributes; the
+  // delegated click handler reads them and dispatches to the
+  // confirm modal + the right /api endpoint.
+  function memberActions(g, m) {
+    const ownerBtn = m.owner
+      ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
+      : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
+    const removeBtn = `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
+    return `<div class="row-actions">${ownerBtn}${removeBtn}</div>`;
+  }
+
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
   // Mirrors the session ls UPDATED column. Empty input → "" (no chip).
   function relTime(iso) {
@@ -233,7 +310,7 @@ details[open] > summary::before { content: "▼ "; }
           <table>
             <thead>
               <tr>
-                <th></th><th>ID</th><th>Alias / Title</th><th>State</th><th>Last</th><th>Role</th><th>Description</th>
+                <th></th><th>ID</th><th>Alias / Title</th><th>State</th><th>Last</th><th>Role</th><th>Description</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -255,6 +332,7 @@ details[open] > summary::before { content: "▼ "; }
                   <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
                   <td>${roleCell(m)}</td>
                   <td class="muted">${esc(m.descr || '')}</td>
+                  <td>${memberActions(g, m)}</td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -412,10 +490,127 @@ details[open] > summary::before { content: "▼ "; }
     }, true);
   }
 
+  // --- inline mutations: action buttons + confirm modal + toast ---
+
+  // confirmModal pops the confirmation overlay; resolves true on
+  // OK, false on Cancel / outside-click / Escape.
+  function confirmModal({title, body, meta, okLabel}) {
+    return new Promise(resolve => {
+      const overlay = $('#confirm-modal');
+      $('#confirm-title').textContent = title;
+      $('#confirm-body').textContent = body;
+      $('#confirm-meta').textContent = meta || '';
+      $('#confirm-meta').style.display = meta ? 'block' : 'none';
+      const okBtn = $('#confirm-ok');
+      okBtn.textContent = okLabel || 'Confirm';
+      const cancelBtn = $('#confirm-cancel');
+      const cleanup = (result) => {
+        overlay.classList.remove('show');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onOk = () => cleanup(true);
+      const onCancel = () => cleanup(false);
+      const onOverlay = (e) => { if (e.target === overlay) cleanup(false); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(false); };
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      okBtn.focus();
+    });
+  }
+
+  // toast shows a transient message in the bottom-right. error=true
+  // makes the left border red. Auto-dismisses after 3s.
+  let toastTimer = null;
+  function toast(message, error) {
+    const el = $('#toast');
+    el.textContent = message;
+    el.classList.toggle('error', !!error);
+    el.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  // bindRowActions delegates clicks on row-action buttons to the
+  // appropriate /api/groups/... call. After a successful mutation we
+  // re-fetch the snapshot so the badge / button state updates.
+  function bindRowActions() {
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const act = btn.getAttribute('data-act');
+      const group = btn.getAttribute('data-group');
+      const conv = btn.getAttribute('data-conv');
+      const label = btn.getAttribute('data-label') || conv;
+      try {
+        let ok = false;
+        switch (act) {
+          case 'remove-member': {
+            const confirmed = await confirmModal({
+              title: 'Remove member from group?',
+              body: 'This unsubscribes them from group messages and severs the manager-pattern path. Their conv keeps running.',
+              meta: `${label} → ${group}`,
+              okLabel: 'Remove',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(conv)}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Remove failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'grant-owner': {
+            // Granting owner is non-destructive; skip the confirm
+            // modal but still re-fetch on success.
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/owners`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ conv }),
+            });
+            ok = r.ok;
+            if (!ok) toast(`Grant owner failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'revoke-owner': {
+            const confirmed = await confirmModal({
+              title: 'Revoke owner status?',
+              body: 'They will lose the implicit power to manage other members of this group (message, reincarnate, compact, rename, clone). The membership row stays.',
+              meta: `${label} → ${group}`,
+              okLabel: 'Revoke',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(conv)}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Revoke failed: ${await r.text()}`, true);
+            break;
+          }
+          default:
+            return;
+        }
+        if (ok) {
+          toast(`${act.replace('-', ' ')}: ${label}`);
+          refresh();
+        }
+      } catch (err) {
+        toast(`Request failed: ${err && err.message || err}`, true);
+      }
+    });
+  }
+
   $('#refresh-link').addEventListener('click', e => { e.preventDefault(); refresh(); });
   bindTabs();
   bindCopy();
   bindDetailsPersistence();
+  bindRowActions();
   refresh();
   setInterval(refresh, 5000);
 })();
