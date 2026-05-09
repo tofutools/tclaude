@@ -309,7 +309,7 @@ func EnsureHooksInstalled(autoInstall bool, stdout, stderr *os.File) bool {
 	// The user already opted in to hook management; we're just keeping them consistent.
 	if needsRepair {
 		if err := InstallHooks(); err != nil {
-			_, _ = fmt.Fprintf(stderr, "Warning: Failed to repair stale hooks: %v\n", err)
+			fmt.Fprintf(stderr, "Warning: Failed to repair stale hooks: %v\n", err)
 		}
 		// Re-check after repair
 		installed, missing, _ = CheckHooksInstalled()
@@ -319,17 +319,17 @@ func EnsureHooksInstalled(autoInstall bool, stdout, stderr *os.File) bool {
 	}
 
 	if !autoInstall {
-		_, _ = fmt.Fprintf(stderr, "Warning: tclaude session hooks not installed in Claude settings.\n")
-		_, _ = fmt.Fprintf(stderr, "Missing hooks for: %v\n", missing)
-		_, _ = fmt.Fprintf(stderr, "Install with: tclaude setup\n\n")
+		fmt.Fprintf(stderr, "Warning: tclaude session hooks not installed in Claude settings.\n")
+		fmt.Fprintf(stderr, "Missing hooks for: %v\n", missing)
+		fmt.Fprintf(stderr, "Install with: tclaude setup\n\n")
 		return false
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Installing tclaude session hooks...\n")
+	fmt.Fprintf(stdout, "Installing tclaude session hooks...\n")
 	if err := InstallHooks(); err != nil {
-		_, _ = fmt.Fprintf(stderr, "Failed to install hooks: %v\n", err)
+		fmt.Fprintf(stderr, "Failed to install hooks: %v\n", err)
 		return false
 	}
-	_, _ = fmt.Fprintf(stdout, "Hooks installed successfully.\n\n")
+	fmt.Fprintf(stdout, "Hooks installed successfully.\n\n")
 	return true
 }
