@@ -24,11 +24,11 @@ import (
 const protocolVersion = "3"
 
 type Params struct {
-	Check             bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
-	Force             bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
-	AbsolutePaths     bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
-	Yes               bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
-	InstallAgentSkill bool `long:"install-agent-skill" help:"Install (or refresh) the agent-coord skill into ~/.claude/skills/. Idempotent; overwrites existing if present."`
+	Check              bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
+	Force              bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
+	AbsolutePaths      bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
+	Yes                bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
+	InstallAgentSkills bool `long:"install-agent-skills" help:"Install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
 }
 
 func Cmd() *cobra.Command {
@@ -58,11 +58,11 @@ func runSetup(params *Params) error {
 		statusbar.ReinitStatusLineCommand()
 	}
 
-	// --install-agent-skill is a focused operation; when present, skip
-	// the full setup flow and just (re)install the skill. Lets users
-	// refresh the skill on a new machine without re-running the rest.
-	if params.InstallAgentSkill {
-		return installAgentSkill()
+	// --install-agent-skills is a focused operation; when present, skip
+	// the full setup flow and just (re)install the bundled skills. Lets
+	// users refresh on a new machine without re-running the rest.
+	if params.InstallAgentSkills {
+		return installAgentSkills()
 	}
 
 	fmt.Println("Setting up tclaude integration...")
@@ -241,16 +241,18 @@ func runSetup(params *Params) error {
 	return nil
 }
 
-// installAgentSkill writes the bundled agent-coord skill into
-// ~/.claude/skills/agent-coord/. Idempotent: overwrites an existing
-// install. The CLI prints the destination so the user knows where to
-// look if they want to inspect or edit it locally.
-func installAgentSkill() error {
-	dst, err := agent.InstallSkill(true)
+// installAgentSkills writes the bundled agent-* skills into
+// ~/.claude/skills/<name>/. Idempotent: overwrites existing installs.
+// The CLI prints each destination so the user knows where to look if
+// they want to inspect or edit them locally.
+func installAgentSkills() error {
+	installed, err := agent.InstallSkills(true)
 	if err != nil {
-		return fmt.Errorf("install agent-coord skill: %w", err)
+		return fmt.Errorf("install agent skills: %w", err)
 	}
-	fmt.Printf("✓ Installed agent-coord skill at %s\n", dst)
+	for _, s := range installed {
+		fmt.Printf("✓ Installed %s skill at %s\n", s.Name, s.Path)
+	}
 	fmt.Println("  Run `tclaude agentd serve` (in a non-sandboxed shell) for live delivery.")
 	return nil
 }

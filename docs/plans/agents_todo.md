@@ -314,8 +314,8 @@ for now** — single-host first.
   current conv-id (tracks `/fork`/`/clear`/`/resume`).
 - **CLI requires daemon** — `tclaude agent …` no longer falls back to
   direct DB access; refuses loudly if `agentd` isn't running.
-- **Skill bundled** at `pkg/claude/agent/skills/agent-coord/SKILL.md`;
-  installable via `tclaude setup --install-agent-skill`.
+- **Skills bundled** under `pkg/claude/agent/skills/<name>/SKILL.md`;
+  installable via `tclaude setup --install-agent-skills`.
 
 ### Polish (post-#47, 2026-05)
 

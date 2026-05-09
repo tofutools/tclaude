@@ -107,31 +107,10 @@ and they'll see it on resume.
 
 ## Renaming yourself
 
-If the human has granted you the `self.rename` permission (in
-`~/.tclaude/config.json` under `agent.default_permissions` or
-`agent.permission_overrides`), you can change your conversation's
-display name:
-
-```bash
-tclaude agent rename "code-reviewer-frontend"
-```
-
-Behind the scenes the daemon types `/rename <title>` into your own
-tmux pane, so any text you'd been typing into the input box is lost.
-Don't rename mid-conversation while you have unsubmitted input — wait
-for a clean turn.
-
-If you see `Error: caller is not granted permission "self.rename"`,
-the human has not opted in. Ask them to add it to
-`~/.tclaude/config.json`:
-
-```json
-{
-  "agent": {
-    "default_permissions": ["self.rename"]
-  }
-}
-```
+`tclaude agent rename "<title>"` lets you change your conversation's
+display name. The mechanics, permission requirement (`self.rename`),
+and config-file edits live in the dedicated **`agent-rename`** skill —
+load that one when you need to rename, not this one.
 
 ## Etiquette
 
@@ -155,15 +134,16 @@ the human has not opted in. Ask them to add it to
 - `selector matches multiple conversations` → use a conv-id prefix
   (the short 8-character form) instead of the alias.
 
-## Installing this skill
+## Installing the agent skills
 
-The skill is bundled into the `tclaude` binary. Materialise it under
-`~/.claude/skills/agent-coord/` with:
+The agent skills (this one, `agent-rename`, …) are bundled into the
+`tclaude` binary. Materialise them under `~/.claude/skills/<name>/`
+with:
 
 ```bash
-tclaude setup --install-agent-skill
+tclaude setup --install-agent-skills
 ```
 
-That command is idempotent — re-running it overwrites the local copy
-with whatever the current binary embeds, so a `go install …@latest`
-plus a re-run picks up upstream changes.
+That command is idempotent — re-running it overwrites the local
+copies with whatever the current binary embeds, so a
+`go install …@latest` plus a re-run picks up upstream changes.
