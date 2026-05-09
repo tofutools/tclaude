@@ -275,7 +275,11 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 		slog.Warn("nudge failed (submit)", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}
-	_ = db.MarkAgentMessageDelivered(msgID)
+	// delivered_at is internal bookkeeping; the nudge itself already
+	// landed, so log on failure rather than failing the whole call.
+	if err := db.MarkAgentMessageDelivered(msgID); err != nil {
+		slog.Warn("failed to record delivered_at", "error", err, "msg_id", msgID)
+	}
 	return true
 }
 
@@ -407,7 +411,16 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("keep-unread") != "1" && m.ReadAt.IsZero() {
-		_ = db.MarkAgentMessageRead(id)
+		if err := db.MarkAgentMessageRead(id); err != nil {
+			// User asked us to mark read; if we can't, that's a real
+			// failure they should see — surface it instead of silently
+			// returning success and leaving the inbox in a confusing
+			// state. The body has already been computed; it's fine to
+			// fail before writing it.
+			writeError(w, http.StatusInternalServerError, "io",
+				fmt.Sprintf("failed to mark message %d as read: %v", id, err))
+			return
+		}
 	}
 	groupName := ""
 	if g, _ := groupByID(m.GroupID); g != nil {

@@ -167,7 +167,9 @@ func runMessageDirect(p *messageParams, d *messageDeps, body string, stdout, std
 					slog.Warn("failed to nudge target tmux session", "error", err, "session", sess.TmuxSession, "module", "agent")
 				} else {
 					delivered = true
-					_ = db.MarkAgentMessageDelivered(id)
+					if err := db.MarkAgentMessageDelivered(id); err != nil {
+						slog.Warn("failed to record delivered_at", "error", err, "msg_id", id, "module", "agent")
+					}
 				}
 			}
 		}
