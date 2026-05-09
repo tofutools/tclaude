@@ -15,6 +15,17 @@ type Config struct {
 	LogLevel           string              `json:"log_level,omitempty"`
 	RecordHooks        bool                `json:"record_hooks,omitempty"`
 	RateLimit          *RateLimitConfig    `json:"ratelimit,omitempty"`
+	Agent              *AgentConfig        `json:"agent,omitempty"`
+}
+
+// AgentConfig controls behaviour of the `tclaude agent` family of commands.
+type AgentConfig struct {
+	// AllowAgentMutateGroups, when true, lets agent-invoked tclaude calls
+	// modify group membership (`groups create|rm|add|remove`).
+	// Default false: only the human (no `claude` ancestor in the process
+	// tree) may mutate. Sending messages and listing groups/peers is
+	// always allowed regardless of this flag.
+	AllowAgentMutateGroups bool `json:"allow_agent_mutate_groups,omitempty"`
 }
 
 // NotificationConfig holds settings for OS notifications.

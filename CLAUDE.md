@@ -61,3 +61,8 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 - Session state is stored in SQLite with WAL mode for concurrent access from hook callbacks
 - Interactive list views (sessions, conversations) use bubbletea with the shared `table` package
 - The status bar command is hidden (`cmd.Hidden = true`) - it's invoked by Claude Code's statusline feature, not directly by users
+
+## Active design / TODO docs
+
+- `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
+- `docs/plans/agents_todo.md` — living TODO/DONE list for agent coordination work; keep updated as features ship.

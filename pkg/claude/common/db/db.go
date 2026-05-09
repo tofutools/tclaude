@@ -46,10 +46,13 @@ func Open() (*sql.DB, error) {
 			return
 		}
 
-		// Enable WAL mode and set busy timeout for concurrent access
+		// Enable WAL mode and set busy timeout for concurrent access.
+		// foreign_keys=ON is required for the agent_messages → agent_groups
+		// ON DELETE RESTRICT clause to actually fire.
 		for _, pragma := range []string{
 			"PRAGMA journal_mode=WAL",
 			"PRAGMA busy_timeout=5000",
+			"PRAGMA foreign_keys=ON",
 		} {
 			if _, err := globalDB.Exec(pragma); err != nil {
 				initErr = err
