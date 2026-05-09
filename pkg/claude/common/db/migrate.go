@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 11
+const currentVersion = 12
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -85,6 +85,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 11 {
 		if err := migrateV10toV11(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 12 {
+		if err := migrateV11toV12(db); err != nil {
 			return err
 		}
 	}
@@ -262,6 +268,31 @@ func migrateV6toV7(db *sql.DB) error {
 // daemon mutate without touching JSON. config.json keeps only
 // DefaultPermissions; legacy permission_overrides values are imported
 // here on first open.
+// migrateV11toV12 adds absolute token-count columns to sessions.
+// Claude Code's statusline JSON (v2.1.132+) exposes total_input_tokens,
+// total_output_tokens, and context_window_size; before that the same
+// fields existed but were cumulative session totals rather than the
+// last-API-response snapshot. Either way we just record whatever the
+// hook wrote on its most recent tick — no historical aggregation here.
+//
+// All three default to 0; rows that haven't been touched by the new
+// statusbar code yet just read back zero, which the consumer (the
+// agent context-info CLI / handler) treats as "unknown" and falls
+// back to the percentage-only display.
+func migrateV11toV12(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN tokens_input INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE sessions ADD COLUMN tokens_output INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE sessions ADD COLUMN context_window_size INTEGER NOT NULL DEFAULT 0;
+
+		UPDATE schema_version SET version = 12;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v11→v12: %w", err)
+	}
+	return nil
+}
+
 // migrateV10toV11 adds agent_group_owners — a per-group "owner" set
 // distinct from agent_group_members. An owner can send messages to
 // the group's members (and to the group via multicast) without being

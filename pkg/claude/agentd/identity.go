@@ -94,6 +94,8 @@ func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 // list in sync with the agent-coord skill / docs.
 const (
 	PermSelfRename        = "self.rename"
+	PermSelfCompact       = "self.compact"
+	PermSelfReincarnate   = "self.reincarnate"
 	PermGroupsCreate      = "groups.create"
 	PermGroupsRm          = "groups.rm"
 	PermGroupsStop        = "groups.stop"

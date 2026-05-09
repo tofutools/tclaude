@@ -14,26 +14,198 @@ ship or get scoped out. The detailed v1 design lives in
 
 ## NEXT (top priority)
 
-### Agent self-lifecycle: clear / compact / context-info
+### Agent reincarnate (replaces /clear for self-lifecycle)
 
-Mirror the existing `tclaude agent rename` pattern (which uses the
-daemon's `injectSlashCommand` helper to type a slash-command into the
-caller's own CC pane). Lets a long-running agent self-throttle on
-context pressure without the human babysitting.
+Why: CC's `/clear` rotates the conv ID, which orphans the agent's
+name, per-conv permission grants, and group memberships. We learned
+this the hard way after wiring `tclaude agent clear` to inject
+`/clear` — the agent loses its identity the moment it clears, which
+is almost never what a long-running agent wants. /compact preserves
+conv ID and is safe; /clear isn't.
 
-- `tclaude agent compact [follow-up...]` — daemon types `/compact`
-  Enter Enter, then send-keys the optional follow-up text so it
-  lands as the next prompt after compact settles. Slug
-  `self.compact` (human-only by default).
-- `tclaude agent clear [follow-up...]` — same pattern with `/clear`.
-  Slug `self.clear`.
-- `tclaude agent context-info` — read `sessions.context_pct` (already
-  populated by the hook callback) and emit `{ pct, tokens_used,
-  tokens_max }`. No slash-command injection. Read-only, no slug.
+Replacement design: `tclaude agent reincarnate [follow-up]`. The
+daemon does NOT call `/clear`. Instead it:
 
-Once shipped, an agent that holds `self.compact` can poll its own
-`context-info` and preemptively compact at e.g. 80% — no human
-intervention to keep long tasks running.
+1. Snapshots the calling agent's state from SQLite: group memberships
+   (with alias/role/descr per group), permission grants, group
+   ownerships, cwd from the sessions row.
+2. Spawns a fresh tclaude session in the same cwd
+   (`tclaude session new -d --global -C <cwd>`) and polls the
+   sessions table until the new conv-id materialises (same pattern
+   `groups spawn` already uses).
+3. Migrates the snapshotted state to the new conv-id: insert new
+   rows for the new conv, delete the old rows. Single transaction
+   so a partial failure doesn't leave both copies live.
+4. If a follow-up was provided: enqueue it as an `agent_messages`
+   row addressed to the new conv. The new agent's first turn will
+   see a `[system: new agent message #N for you. fetch with: tclaude
+   agent inbox read N]` nudge once it comes online and the flush
+   pipeline kicks in. (More reliable than tmux send-keys racing
+   against the new pane's startup.)
+5. Soft-stops the old conv by injecting `/exit` into its tmux pane
+   (same pattern as `groups stop` soft mode). Old CC closes cleanly;
+   the old tmux session goes away.
+6. Returns the new conv-id, label, and tmux session name to the
+   caller so the human (or whatever scripted the call) can attach.
+
+Permission slug: `self.reincarnate`. **Default: granted** — alongside
+`self.rename` and `self.compact`. Identity is preserved (groups,
+permissions, ownership migrate to the new conv), so the blast radius
+is bounded: a fresh CC instance gets started, the old one ends. We're
+trying it as a default-on capability and will tighten if we see
+abuse.
+
+Continuity is the project's responsibility, not the daemon's:
+- The agent must persist work-in-progress (decisions, plan, partial
+  results, file paths, next step) to disk *before* calling
+  reincarnate — typically a notes file or a TODO doc inside the
+  project being worked on. The daemon only migrates *identity*, not
+  *task state*.
+- The project's CLAUDE.md (or equivalent) should document where the
+  agent writes its progress, and how a freshly-reincarnated agent
+  reloads enough to continue. The skill points to this convention
+  but doesn't enforce it.
+
+What we don't migrate (v1):
+- CC's conversation title (set via `/rename` inside CC). Not in our
+  DB. The new agent can self-rename in its follow-up if it cares.
+- CC's actual message history. That's the whole point — fresh
+  context.
+
+Removed: `tclaude agent clear` and the `self.clear` permission slug.
+The literal `/clear` path is broken for any agent in a group or
+holding per-conv permissions (it orphans both), and reincarnate
+covers the legitimate use case. If a human really wants to inject
+`/clear` into a CC pane they can type it themselves.
+
+Follow-up improvements (separate items):
+- ~~**Auto-detach-and-reattach the human's terminal.**~~ **Shipped
+  (basic).** Daemon now runs `tmux list-clients -t <old>` and
+  `tmux switch-client -c <tty> -t <new>` for each client right
+  before injecting `/exit` on the old pane. Carry-over count
+  surfaced in the response as `switched_clients`. Verify:
+  reincarnate from an attached terminal, confirm the terminal lands
+  on the new tmux session without a manual attach, and confirm the
+  follow-up arrives in the now-attached pane.
+- **Investigate: stale terminal title after switch-client.** The
+  wrapper sets the OSC 0 window title once at attach time
+  (`pkg/claude/session/attach.go:90` → `setTerminalTitle("tclaude:<label>")`).
+  After `switch-client`, the terminal still advertises the old label,
+  which feeds `TryFocusAttachedSession` (used cross-session for
+  window focus). Cheap fix candidate: from the daemon, write a
+  fresh OSC sequence to the client's tty
+  (`printf '\033]0;tclaude:<newlabel>\007' > /dev/<tty>`) right
+  after the switch. Test path: focus heuristics
+  (`focus_*.go`, `goto.go`) before/after a reincarnate, see whether
+  they still find the terminal under the new label.
+- **Investigate: env coherence with the wrapper.** The
+  `tclaude attach` wrapper has `TCLAUDE_SESSION_ID=<old>` in its
+  process env (`attach.go:87`), but it's blocked on the
+  `tmux attach-session` subprocess for the duration. The canonical
+  source of truth is the env baked into each tmux session at
+  creation (`session/new.go:160`) plus the per-pane env propagated
+  by the tmux keybinds (`tmux_keys.go:33`), and CC + agent CLI both
+  read env from the *current* tmux session, not the wrapper. So in
+  theory the switch is clean. Confirm by reincarnating, then from
+  inside the new pane running: `echo $TCLAUDE_SESSION_ID`,
+  `tclaude agent whoami`, `tclaude session goto next` — all should
+  see the new identity. The wrapper's stale env only matters if
+  the human detaches and the wrapper resumes (it's about to exit
+  at that point anyway).
+- **Heavier alternative if the cheap fixes aren't enough:**
+  IPC-signal the foreground `tclaude attach` process to kill its
+  tmux subprocess and exec into a fresh `tclaude session attach
+  <new-label>`. That would rewrite both env *and* title naturally,
+  but adds a new wrapper-IPC channel. Defer unless the cheap path
+  shows a real regression.
+- Optional title preservation if we wire CC's title into our DB
+  (e.g. via a hook that captures it, or by parsing CC's conv jsonl).
+
+### Agent clone
+
+Sibling to `reincarnate`. Same identity-migration plumbing, but the
+old agent does NOT shut down and the new agent doesn't auto-start a
+task unless one is given. Use cases: forking a worker to try a
+parallel approach; standing up a duplicate so two agents can review
+a plan in parallel; archiving the current state and continuing in a
+sibling pane.
+
+Shape:
+
+```
+tclaude agent clone [follow-up] [--no-copy-conv]
+```
+
+- Default: copy the existing conv jsonl onto a freshly-minted conv-id
+  (we already have a basic copy hack — `tclaude conv copy` /
+  `convops`). This means the clone starts with the *same context* as
+  the original, just at a different conv-id. The follow-up prompt is
+  optional; if absent, the clone just sits at its prompt waiting.
+- `--no-copy-conv` for the cheaper path: blank context, identity
+  inherited only.
+- Old agent stays alive untouched.
+- Identity (groups, permissions, ownerships) is **copied, not
+  migrated** — both convs end up in the same groups with appropriate
+  alias suffixes (e.g. `-clone` or `-2`). Open question: should we
+  rename the original to disambiguate, or leave it alone? Probably
+  leave alone, but make the clone's alias differ.
+
+Permission: `self.clone` (default: granted). Same blast-radius story
+as reincarnate — bounded to one new instance per call, but doesn't
+take down the old one, so a runaway loop could fork unboundedly.
+Worth adding rate limiting (1 clone/min?) at the daemon if it shows
+up.
+
+Implementation reuses most of reincarnate's helpers: snapshot →
+spawn → migrate. The differences are: don't delete old rows during
+migration (it's a copy), optionally pre-seed the new conv's jsonl
+file from the old one before CC starts (or trigger
+`tclaude session new -r <new-id>` after copying), and skip the
+`/exit` injection at the end.
+
+### Cross-agent lifecycle (manager pattern)
+
+Today, `self.reincarnate` is self-targeted only — an agent can reset
+itself, nothing else. We want a **manager pattern**: an elevated
+agent (or group owner) can reincarnate / clone *other* agents.
+Concrete example: a `manager` agent watching `worker-1`, `worker-2`
+sees them stuck on rotted context and tells them "get some sleep" —
+the daemon reincarnates each worker with a follow-up that points
+them at the next batch of work.
+
+Permission model:
+
+- `self.<verb>` — operate on yourself only. (Today: `self.rename`,
+  `self.compact`, `self.reincarnate`.)
+- `agent.<verb>` — operate on *another* agent (target specified by
+  conv-id / alias / selector). New: `agent.reincarnate`,
+  `agent.clone`, plausibly `agent.compact` and `agent.rename` too.
+  Default: human-only. Granted to a manager agent explicitly.
+- **Group ownership grants implicit power** within the group. A
+  group owner can call any `agent.<verb>` against any member of a
+  group they own without needing the slug. (This mirrors how
+  `member.add` / `member.remove` already special-case owners.)
+
+Endpoints would be `/v1/agent/<conv>/reincarnate`,
+`/v1/agent/<conv>/clone`, etc. The handler resolves the target,
+checks `agent.<verb>` (or owner-of-shared-group), then runs the
+same orchestration with the target conv as the subject.
+
+Open questions:
+- Should `agent.<verb>` imply `self.<verb>` automatically, or are
+  they orthogonal? Probably orthogonal — being trusted to manage
+  others doesn't mean you should manage yourself (and vice versa).
+- Group-owner-implicit-power: does the owner need their conv to be
+  in the group, or is being in `agent_group_owners` sufficient?
+  Latter is simpler; align with the existing owner checks.
+- Audit: granted_by on the migrated rows should record the manager's
+  conv-id, not just `system:reincarnate`. Useful for "who killed my
+  agent" forensics.
+
+This is the right shape for delegation hierarchies: a top-level
+human-spawned manager can autonomously babysit a fleet of workers,
+respawning the ones that have rotted and freeing the human from the
+loop.
 
 ---
 
@@ -513,6 +685,19 @@ for now** — single-host first.
 ## DONE
 
 Short notes only — see `docs/agent.md` and the code for details.
+
+### Agent self-lifecycle (2026-05)
+
+- `tclaude agent compact [follow-up]` — daemon injects `/compact` into
+  caller's pane; optional follow-up queues as next prompt. Slug
+  `self.compact`.
+- `tclaude agent clear [follow-up]` — same with `/clear`. Slug
+  `self.clear`.
+- `tclaude agent context-info` — reads `sessions.context_pct` +
+  `compact_pending`. No slug (read-only).
+- New `agent-lifecycle` skill with thresholds (~50% on 1M context, ~75%
+  on 200k) and the "keep a navigable index, don't reload massive
+  context after compact" pattern.
 
 ### PR #47 — v1 agent coordination + agentd (2026-05)
 

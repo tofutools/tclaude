@@ -13,7 +13,7 @@ import (
 // ~/.claude/skills/ on demand, since `go install` strips the source tree
 // and we can't symlink something that's no longer on disk.
 //
-//go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md
+//go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md skills/agent-lifecycle/SKILL.md
 var skillsFS embed.FS
 
 // bundledSkills is the registry of skills shipped with tclaude. Add a new
@@ -22,6 +22,7 @@ var skillsFS embed.FS
 var bundledSkills = []string{
 	"agent-coord",
 	"agent-rename",
+	"agent-lifecycle",
 }
 
 // InstalledSkill describes a skill that was written to disk.

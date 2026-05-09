@@ -115,6 +115,8 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 		// Keep in sync with pkg/claude/agentd/permissions.go's registry.
 		slugs = []slugEntry{
 			{"self.rename", "Rename own conversation"},
+			{"self.compact", "Compact own conversation"},
+			{"self.reincarnate", "Replace self with fresh successor"},
 			{"groups.create", "Create new groups"},
 			{"groups.rm", "Delete groups"},
 			{"groups.stop", "Stop a group's running members"},

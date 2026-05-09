@@ -131,6 +131,18 @@ display name. The mechanics, permission requirement (`self.rename`),
 and config-file edits live in the dedicated **`agent-rename`** skill —
 load that one when you need to rename, not this one.
 
+## Managing your own context window
+
+Long-running agents can self-throttle on context pressure via
+`tclaude agent context-info`, `tclaude agent compact`, and
+`tclaude agent reincarnate`. Compact at ~50% on a 1M context window
+or ~75% on a 200k window to avoid context rot. Reincarnate is the
+heavier path that swaps you out for a fresh successor with the same
+identity. The mechanics, permission slugs (`self.compact` /
+`self.reincarnate`), disk-handoff convention, and follow-up etiquette
+live in the dedicated **`agent-lifecycle`** skill — load that one
+when you need to compact or reincarnate yourself, not this one.
+
 ## Etiquette
 
 - **One message, one purpose.** If you have multiple unrelated asks,

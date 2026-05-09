@@ -21,6 +21,9 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			whoamiCmd(),
 			renameCmd(),
+			compactCmd(),
+			reincarnateCmd(),
+			contextInfoCmd(),
 			lookupCmd(),
 			lsCmd(),
 			messageCmd(),

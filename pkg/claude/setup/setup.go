@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -20,15 +22,32 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
+// selfPermsForBundledSkills are the permission slugs the bundled
+// agent-* skills exercise. `tclaude setup --install-default-agent-permissions`
+// adds them to agent.default_permissions so the agent can use the
+// skills without each new conversation needing a manual grant. Kept
+// separate from --install-agent-skills so refreshing on-disk skill
+// files doesn't re-add slugs the human deliberately revoked.
+//
+// `self.clear` was removed from the slug registry entirely (along with
+// `tclaude agent clear`) because /clear rotates CC's conv ID and
+// orphans agent identity. Reincarnate replaces that path.
+var selfPermsForBundledSkills = []string{
+	"self.rename",
+	"self.compact",
+	"self.reincarnate",
+}
+
 // Protocol version - bump this when the handler needs to be re-registered
 const protocolVersion = "3"
 
 type Params struct {
-	Check              bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
-	Force              bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
-	AbsolutePaths      bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
-	Yes                bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
-	InstallAgentSkills bool `long:"install-agent-skills" help:"Install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
+	Check                       bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
+	Force                       bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
+	AbsolutePaths               bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
+	Yes                         bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
+	InstallAgentSkills          bool `long:"install-agent-skills" help:"Install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
+	InstallDefaultAgentPerms    bool `long:"install-default-agent-permissions" help:"Grant the self-targeted permission slugs the bundled agent-* skills exercise (self.rename, self.compact, self.reincarnate) as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 }
 
 func Cmd() *cobra.Command {
@@ -58,11 +77,23 @@ func runSetup(params *Params) error {
 		statusbar.ReinitStatusLineCommand()
 	}
 
-	// --install-agent-skills is a focused operation; when present, skip
-	// the full setup flow and just (re)install the bundled skills. Lets
-	// users refresh on a new machine without re-running the rest.
-	if params.InstallAgentSkills {
-		return installAgentSkills()
+	// --install-agent-skills and --install-default-agent-permissions
+	// are focused operations; when either is set, skip the full setup
+	// flow and just run the requested action(s). The two are kept
+	// separate so users can upgrade their on-disk skills without
+	// re-establishing default permission slugs they may have revoked.
+	if params.InstallAgentSkills || params.InstallDefaultAgentPerms {
+		if params.InstallAgentSkills {
+			if err := installAgentSkills(); err != nil {
+				return err
+			}
+		}
+		if params.InstallDefaultAgentPerms {
+			if err := installDefaultAgentPermissions(); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	fmt.Println("Setting up tclaude integration...")
@@ -254,6 +285,41 @@ func installAgentSkills() error {
 		fmt.Printf("✓ Installed %s skill at %s\n", s.Name, s.Path)
 	}
 	fmt.Println("  Run `tclaude agentd serve` (in a non-sandboxed shell) for live delivery.")
+	return nil
+}
+
+// installDefaultAgentPermissions adds the self-targeted permission
+// slugs the bundled agent-* skills exercise (self.rename, self.compact,
+// self.reincarnate) to agent.default_permissions in ~/.tclaude/config.json,
+// creating the section if missing. Idempotent — slugs already present
+// are silently skipped. The user explicitly opted in by passing the
+// flag; we don't prompt further.
+func installDefaultAgentPermissions() error {
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	if cfg.Agent == nil {
+		cfg.Agent = &config.AgentConfig{}
+	}
+	var added []string
+	for _, slug := range selfPermsForBundledSkills {
+		if !slices.Contains(cfg.Agent.DefaultPermissions, slug) {
+			cfg.Agent.DefaultPermissions = append(cfg.Agent.DefaultPermissions, slug)
+			added = append(added, slug)
+		}
+	}
+	if len(added) == 0 {
+		fmt.Println("✓ All bundled-skill default permissions already granted")
+		return nil
+	}
+	sort.Strings(cfg.Agent.DefaultPermissions)
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	for _, slug := range added {
+		fmt.Printf("✓ Granted default permission %s\n", slug)
+	}
 	return nil
 }
 

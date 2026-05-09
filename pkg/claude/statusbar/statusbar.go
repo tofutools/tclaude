@@ -47,7 +47,10 @@ type StatusLineInput struct {
 		CurrentDir string `json:"current_dir"`
 	} `json:"workspace"`
 	ContextWindow struct {
-		UsedPercentage *float64 `json:"used_percentage"`
+		UsedPercentage    *float64 `json:"used_percentage"`
+		TotalInputTokens  *int64   `json:"total_input_tokens"`
+		TotalOutputTokens *int64   `json:"total_output_tokens"`
+		ContextWindowSize *int64   `json:"context_window_size"`
 	} `json:"context_window"`
 	Cost struct {
 		TotalCostUSD float64 `json:"total_cost_usd"`
@@ -191,10 +194,22 @@ func run() error {
 		ctxPct = int(*input.ContextWindow.UsedPercentage)
 	}
 
-	// Store context percentage in DB for auto-compact feature
+	// Store context-window snapshot in DB for auto-compact + the agent
+	// context-info CLI. We persist whatever fields the statusline JSON
+	// gave us; absent fields land as 0 (DB default).
 	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
-		if err := db.UpdateContextPct(sessionID, float64(ctxPct)); err != nil {
-			slog.Warn("status-bar: failed to update context_pct", "error", err, "module", "hooks")
+		var tokIn, tokOut, winSize int64
+		if input.ContextWindow.TotalInputTokens != nil {
+			tokIn = *input.ContextWindow.TotalInputTokens
+		}
+		if input.ContextWindow.TotalOutputTokens != nil {
+			tokOut = *input.ContextWindow.TotalOutputTokens
+		}
+		if input.ContextWindow.ContextWindowSize != nil {
+			winSize = *input.ContextWindow.ContextWindowSize
+		}
+		if err := db.UpdateContextSnapshot(sessionID, float64(ctxPct), tokIn, tokOut, winSize); err != nil {
+			slog.Warn("status-bar: failed to update context snapshot", "error", err, "module", "hooks")
 		}
 	}
 

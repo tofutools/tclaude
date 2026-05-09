@@ -35,6 +35,14 @@ var permissionRegistry = []PermSlug{
 		Description: "Rename own conversation via /rename (tclaude agent rename)",
 	},
 	{
+		Slug:        PermSelfCompact,
+		Description: "Compact own conversation via /compact (tclaude agent compact)",
+	},
+	{
+		Slug:        PermSelfReincarnate,
+		Description: "Replace this agent with a fresh successor that inherits its identity (tclaude agent reincarnate)",
+	},
+	{
 		Slug:        PermGroupsCreate,
 		Description: "Create new agent groups (tclaude agent groups create)",
 	},

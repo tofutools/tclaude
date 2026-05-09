@@ -75,7 +75,7 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 			// /rename injector uses (see injectSlashCommand). CC closes
 			// the conversation cleanly; tmux session goes away when CC
 			// exits.
-			if injectSlashCommand(m.ConvID, "/exit") {
+			if injectSlashCommand(m.ConvID, "/exit", "") {
 				res.Action = "soft_stopped"
 			} else {
 				res.Action = "error"

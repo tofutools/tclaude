@@ -184,6 +184,115 @@ func TestMaxUpdatedAt(t *testing.T) {
 	}
 }
 
+func TestContextSnapshotRoundTrip(t *testing.T) {
+	setupTestDB(t)
+
+	s := &SessionRow{ID: "snap-001", CreatedAt: time.Now()}
+	if err := SaveSession(s); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	// Default values: all zero before the statusbar hook fires.
+	got, err := GetContextSnapshot("snap-001")
+	if err != nil {
+		t.Fatalf("GetContextSnapshot empty: %v", err)
+	}
+	if got.ContextPct != 0 || got.TokensInput != 0 || got.TokensOutput != 0 || got.ContextWindowSize != 0 {
+		t.Fatalf("default snapshot non-zero: %+v", got)
+	}
+
+	// Statusbar tick: write the full snapshot atomically.
+	if err := UpdateContextSnapshot("snap-001", 19.0, 180_000, 10_000, 1_000_000); err != nil {
+		t.Fatalf("UpdateContextSnapshot: %v", err)
+	}
+	got, err = GetContextSnapshot("snap-001")
+	if err != nil {
+		t.Fatalf("GetContextSnapshot populated: %v", err)
+	}
+	if got.ContextPct != 19.0 {
+		t.Errorf("ContextPct = %v, want 19", got.ContextPct)
+	}
+	if got.TokensInput != 180_000 {
+		t.Errorf("TokensInput = %v, want 180000", got.TokensInput)
+	}
+	if got.TokensOutput != 10_000 {
+		t.Errorf("TokensOutput = %v, want 10000", got.TokensOutput)
+	}
+	if got.ContextWindowSize != 1_000_000 {
+		t.Errorf("ContextWindowSize = %v, want 1000000", got.ContextWindowSize)
+	}
+
+	// Backwards-compat: UpdateContextPct still works alongside the
+	// snapshot fields. Writing pct alone shouldn't zero the abs fields.
+	if err := UpdateContextPct("snap-001", 21.5); err != nil {
+		t.Fatalf("UpdateContextPct: %v", err)
+	}
+	got, _ = GetContextSnapshot("snap-001")
+	if got.ContextPct != 21.5 {
+		t.Errorf("after pct-only update: ContextPct = %v, want 21.5", got.ContextPct)
+	}
+	if got.TokensInput != 180_000 {
+		t.Errorf("after pct-only update: TokensInput = %v, want 180000 (preserved)", got.TokensInput)
+	}
+}
+
+func TestCompactStateRoundTrip(t *testing.T) {
+	setupTestDB(t)
+
+	s := &SessionRow{ID: "ctx-001", CreatedAt: time.Now()}
+	if err := SaveSession(s); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	// Default values: 0/0 right after insert.
+	pct, pending, err := GetCompactState("ctx-001")
+	if err != nil {
+		t.Fatalf("GetCompactState: %v", err)
+	}
+	if pct != 0 || pending != 0 {
+		t.Fatalf("default state = (%v, %v), want (0, 0)", pct, pending)
+	}
+
+	// Update context_pct via the statusbar path.
+	if err := UpdateContextPct("ctx-001", 47.0); err != nil {
+		t.Fatalf("UpdateContextPct: %v", err)
+	}
+	pct, pending, _ = GetCompactState("ctx-001")
+	if pct != 47.0 || pending != 0 {
+		t.Fatalf("post-pct state = (%v, %v), want (47, 0)", pct, pending)
+	}
+
+	// Claim compact: first call wins, second is a no-op.
+	claimed, err := TryClaimCompact("ctx-001")
+	if err != nil {
+		t.Fatalf("TryClaimCompact: %v", err)
+	}
+	if !claimed {
+		t.Fatal("first TryClaimCompact should win")
+	}
+	pct, pending, _ = GetCompactState("ctx-001")
+	if pct != 47.0 || pending == 0 {
+		t.Fatalf("post-claim state = (%v, %v), want pct=47 pending>0", pct, pending)
+	}
+
+	again, err := TryClaimCompact("ctx-001")
+	if err != nil {
+		t.Fatalf("TryClaimCompact (re): %v", err)
+	}
+	if again {
+		t.Fatal("second TryClaimCompact must not win after a pending claim")
+	}
+
+	// ResetCompact wipes both fields back to zero.
+	if err := ResetCompact("ctx-001"); err != nil {
+		t.Fatalf("ResetCompact: %v", err)
+	}
+	pct, pending, _ = GetCompactState("ctx-001")
+	if pct != 0 || pending != 0 {
+		t.Fatalf("post-reset state = (%v, %v), want (0, 0)", pct, pending)
+	}
+}
+
 func TestNotifyState(t *testing.T) {
 	setupTestDB(t)
 

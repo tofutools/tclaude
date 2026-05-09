@@ -214,6 +214,51 @@ func UpdateContextPct(sessionID string, pct float64) error {
 	return err
 }
 
+// UpdateContextSnapshot stores the full last-API-response context-window
+// snapshot from Claude Code's statusline. Tokens come from the most
+// recent API response (input includes cache reads/writes), windowSize
+// is the model's actual context limit (200000 or 1000000) — no
+// reverse-engineering or per-model lookup needed once this is populated.
+//
+// All four fields are written together so a partial update can never
+// leave the row in a state where pct disagrees with abs counts.
+func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOutput, windowSize int64) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
+	return err
+}
+
+// ContextSnapshot is the full context-window state for a session.
+// Zero values mean "not populated yet" — caller should fall back to
+// the percentage-only display.
+type ContextSnapshot struct {
+	ContextPct        float64
+	TokensInput       int64
+	TokensOutput      int64
+	ContextWindowSize int64
+	CompactPending    float64
+}
+
+// GetContextSnapshot reads the full context-window state for a
+// session. Returns zero values when the row isn't found.
+func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
+	db, err := Open()
+	if err != nil {
+		return ContextSnapshot{}, err
+	}
+	var s ContextSnapshot
+	err = db.QueryRow(
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending
+		 FROM sessions WHERE id = ?`, sessionID).
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending)
+	return s, err
+}
+
 // TryClaimCompact atomically sets compact_pending to the current unix timestamp
 // if it is currently 0. Returns true if the claim was made (caller should send /compact).
 func TryClaimCompact(sessionID string) (bool, error) {

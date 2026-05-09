@@ -418,9 +418,18 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 
 // injectSlashCommand finds an alive tmux session for convID and types the
 // given slash-command line into its CC pane, followed by a submit Enter.
-// Returns true on successful delivery. Same two-step send-keys pattern
-// nudgeIfAlive uses.
-func injectSlashCommand(convID, line string) bool {
+// If followUp is non-empty, it is sent as a fresh prompt right after the
+// slash submit (text + Enter+Enter). Returns true on successful delivery.
+// Same two-step send-keys pattern nudgeIfAlive uses.
+//
+// Note: when used with /compact, the follow-up bytes queue in the pty
+// until CC resumes reading after the slash command settles. We don't
+// wait for the slash to complete — there's no clean way to detect it
+// without a hook. The follow-up may land in a still-busy textarea on
+// unlucky timing; agents that depend on tight ordering should poll
+// context-info and submit the follow-up themselves once compact has
+// resolved.
+func injectSlashCommand(convID, line, followUp string) bool {
 	candidates, err := db.FindSessionsByConvID(convID)
 	if err != nil {
 		return false
@@ -443,6 +452,16 @@ func injectSlashCommand(convID, line string) bool {
 	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
 		slog.Warn("slash-command inject failed (submit)", "error", err, "tmux", sess.TmuxSession)
 		return false
+	}
+	if followUp != "" {
+		if err := clcommon.TmuxCommand("send-keys", "-t", target, followUp, "Enter").Run(); err != nil {
+			slog.Warn("slash-command follow-up failed (text)", "error", err, "tmux", sess.TmuxSession)
+			return false
+		}
+		if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
+			slog.Warn("slash-command follow-up failed (submit)", "error", err, "tmux", sess.TmuxSession)
+			return false
+		}
 	}
 	return true
 }
@@ -489,7 +508,7 @@ func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 				"the allowed characters.")
 		return
 	}
-	if !injectSlashCommand(convID, "/rename "+body.Title) {
+	if !injectSlashCommand(convID, "/rename "+body.Title, "") {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
 			"caller has no live tmux session to inject /rename into")
 		return
@@ -499,6 +518,157 @@ func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 		"title":   body.Title,
 		"note":    "rename submitted via tmux send-keys; CC will write the new title on its next turn",
 	})
+}
+
+// handleWhoamiCompact injects `/compact` into the caller's own CC pane.
+// Optional follow-up text is queued as a fresh prompt right after.
+// Permission-gated on `self.compact`.
+func handleWhoamiCompact(w http.ResponseWriter, r *http.Request) {
+	handleSelfSlash(w, r, PermSelfCompact, "/compact", "compact")
+}
+
+// handleSelfSlash factors out self-targeted slash-command handlers like
+// /compact. Single user today, but kept generic so we don't churn the
+// signature when a future slash-and-followUp endpoint shows up.
+func handleSelfSlash(w http.ResponseWriter, r *http.Request, perm, slash, label string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	convID, ok := requirePermission(w, r, perm)
+	if !ok {
+		return
+	}
+	if convID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"this endpoint operates on the calling agent's own conversation; humans should use Claude Code's "+slash+" directly")
+		return
+	}
+	var body struct {
+		FollowUp string `json:"follow_up"`
+	}
+	// Empty body is fine; only decode if non-empty.
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+	}
+	body.FollowUp = strings.TrimSpace(body.FollowUp)
+	if body.FollowUp != "" && !isValidFollowUp(body.FollowUp) {
+		writeError(w, http.StatusBadRequest, "invalid_follow_up",
+			"REJECTED. Follow-up must be 1-4096 printable characters; tabs, newlines, "+
+				"and other control characters are not allowed (each newline would be "+
+				"treated as a submit by tmux send-keys, splitting the prompt). Strip "+
+				"control chars and resubmit.")
+		return
+	}
+	if !injectSlashCommand(convID, slash, body.FollowUp) {
+		writeError(w, http.StatusServiceUnavailable, "no_tmux",
+			"caller has no live tmux session to inject "+slash+" into")
+		return
+	}
+	resp := map[string]any{
+		"conv_id": convID,
+		"action":  label,
+		"note":    slash + " submitted via tmux send-keys; CC will process it on its next turn",
+	}
+	if body.FollowUp != "" {
+		resp["follow_up"] = body.FollowUp
+		resp["note"] = slash + " + follow-up submitted via tmux send-keys; the follow-up bytes queue in the pty until CC resumes reading after " + slash + " settles"
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// isValidFollowUp enforces follow-up prompt sanitization.
+//
+// Unlike rename titles (which need a hard charset gate against
+// keystroke-injection across agents), the follow-up is a free-form
+// prompt the agent submits to *itself* — there's no privilege
+// escalation surface, since the agent already runs in its own pane.
+//
+// We only reject control characters (newlines, tabs, NUL, etc.)
+// because each newline in tmux send-keys would land as a prompt-submit,
+// fragmenting the follow-up into multiple turns. Length is capped at
+// 4096 bytes to keep tmux invocations reasonable.
+func isValidFollowUp(s string) bool {
+	if s == "" || len(s) > 4096 {
+		return false
+	}
+	for _, r := range s {
+		if r == ' ' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// handleWhoamiContext returns the caller's own context-window state.
+// Read-only and self-targeted, so no permission gate — any agent can
+// introspect its own session. Returns 0/0 if the row hasn't been
+// populated yet (statusbar hook hasn't fired this session).
+//
+// Note: context_pct is keyed in SQLite by tclaude's session ID (the
+// label, not the conv-id) because the statusbar hook only knows
+// TCLAUDE_SESSION_ID at write time. So we resolve conv-id → session
+// row first, preferring an alive tmux session when multiple historical
+// rows share the same conv-id.
+func handleWhoamiContext(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
+		return
+	}
+	convID, ok := requireAgent(w, r)
+	if !ok {
+		return
+	}
+	candidates, _ := db.FindSessionsByConvID(convID)
+	var snap db.ContextSnapshot
+	var sessionID string
+	if sess := pickLiveOrLatest(candidates); sess != nil {
+		sessionID = sess.ID
+		if s, err := db.GetContextSnapshot(sess.ID); err == nil {
+			snap = s
+		}
+	}
+	resp := map[string]any{
+		"conv_id":             convID,
+		"session_id":          sessionID,
+		"context_pct":         snap.ContextPct,
+		"tokens_input":        snap.TokensInput,
+		"tokens_output":       snap.TokensOutput,
+		"context_window_size": snap.ContextWindowSize,
+		"compact_pending":     snap.CompactPending,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// pickLiveOrLatest returns the session row whose tmux pane is alive,
+// or — falling back — the row that comes first in the list (which
+// FindSessionsByConvID orders by updated_at DESC). nil when the list
+// is empty.
+func pickLiveOrLatest(candidates []*db.SessionRow) *db.SessionRow {
+	return pickWithLiveness(candidates, func(t string) bool {
+		return t != "" && session.IsTmuxSessionAlive(t)
+	})
+}
+
+// pickWithLiveness is the testable core of pickLiveOrLatest. The
+// liveness predicate is injected so unit tests can stub it without
+// reaching for tmux on the host.
+func pickWithLiveness(candidates []*db.SessionRow, isAlive func(string) bool) *db.SessionRow {
+	for _, c := range candidates {
+		if isAlive(c.TmuxSession) {
+			return c
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+	return nil
 }
 
 // isValidRenameTitle enforces the rename title charset. Hard cap at 64

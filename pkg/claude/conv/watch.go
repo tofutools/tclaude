@@ -1389,8 +1389,18 @@ func (m *watchModel) deleteConversation(conv *SessionEntry) error {
 	}
 
 	convFile := projectPath + "/" + conv.SessionID + ".jsonl"
-	if err := os.Remove(convFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to delete file: %w", err)
+	// Stat first so we don't surface remove-errors for files that
+	// were never there (e.g. a stale ProjectPath whose directory
+	// happens to exist but doesn't contain this conv). The bare
+	// os.Remove path raised "permission denied" / "read-only
+	// filesystem" on some sandboxed setups even when the file was
+	// absent — checking existence avoids that path entirely.
+	if _, err := os.Stat(convFile); err == nil {
+		if err := os.Remove(convFile); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete file: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	convDir := projectPath + "/" + conv.SessionID
