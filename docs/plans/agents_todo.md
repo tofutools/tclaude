@@ -15,13 +15,18 @@ ship or get scoped out. The detailed v1 design lives in
 ## TODO
 
 ### Session shortcuts
-- `tclaude --join-group <group>` — start a fresh session and auto-join the
-  given group on first message.
-- `tclaude --join-group <group> --agent-name <name> [--agent-role <role>]
-  [--agent-descr <text>]` — combine session creation, conv rename, group
-  join, and role assignment in one command.
-- Decide where the join happens: pre-launch (DB only) vs first-tick
-  (after the conv-id is known). Probably first-tick via a hook.
+- ~~Spawn-and-join in one command.~~ **Shipped** as
+  `tclaude agent spawn <group> [--alias …] [--role …] [--descr …]
+  [-C cwd]`. Daemon orchestrates: forks `tclaude session new -d
+  --global --label <random>`, polls SQLite for the new conv-id, then
+  adds it to the group. Permission slug `groups.spawn` (default:
+  human-only). Returns the attach command for the new tmux session.
+- Variant: `tclaude --join-group <group>` flag on the top-level
+  command (so `tclaude` itself starts an attached session that
+  auto-joins). Less useful than the daemon-orchestrated `agent spawn`
+  for parallel work, but still nice for the "I want to attach right
+  now" path. Open question: pre-launch (DB write before conv-id) vs.
+  first-tick (after the conv-id is known via a hook).
 
 ### Group lifecycle (spawn / stop / resume entire teams)
 
@@ -552,3 +557,7 @@ Short notes only — see `docs/agent.md` and the code for details.
   flush of any `delivered_at = ''` rows whenever a peer's conv-id
   resolves. Race-free via `ClaimAgentMessageDelivery` (atomic
   UPDATE..WHERE delivered_at = ''). Tested with concurrent flushers.
+- `tclaude agent spawn <group>`: fresh CC session + auto-join. Daemon
+  forks `session new -d --global --label <random>`, polls SQLite for
+  the new conv-id, then registers it in the group with optional
+  alias/role/descr. Slug `groups.spawn` (human-only by default).

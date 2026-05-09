@@ -51,6 +51,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Resume a group's offline members (tclaude agent groups resume)",
 	},
 	{
+		Slug:        PermGroupsSpawn,
+		Description: "Spawn a fresh CC session and add it to a group (tclaude agent spawn)",
+	},
+	{
 		Slug:        PermMemberAdd,
 		Description: "Add members to a group (tclaude agent groups add)",
 	},

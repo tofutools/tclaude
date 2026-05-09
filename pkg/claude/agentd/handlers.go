@@ -963,6 +963,14 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 		handleGroupResume(w, r, g)
 		return
 	}
+	if len(parts) >= 2 && parts[1] == "spawn" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+			return
+		}
+		handleGroupSpawn(w, r, g)
+		return
+	}
 
 	// /v1/groups/{name}/members[*]
 	if len(parts) >= 2 && parts[1] == "members" {

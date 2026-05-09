@@ -26,6 +26,7 @@ func Cmd() *cobra.Command {
 			messageCmd(),
 			replyCmd(),
 			groupsCmd(),
+			spawnCmd(),
 			inboxCmd(),
 			permissionsCmd(),
 			dashboardCmd(),
