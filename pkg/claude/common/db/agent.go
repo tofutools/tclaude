@@ -117,6 +117,45 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	return err
 }
 
+// UpdateAgentGroupMember patches non-nil fields on an existing member.
+// Pass a nil pointer for any field you don't want to change. Returns
+// (rowsAffected, error); 0 rows means no such (group, conv) pair.
+func UpdateAgentGroupMember(groupID int64, convID string, alias, role, descr *string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	sets := []string{}
+	args := []any{}
+	if alias != nil {
+		sets = append(sets, "alias = ?")
+		args = append(args, *alias)
+	}
+	if role != nil {
+		sets = append(sets, "role = ?")
+		args = append(args, *role)
+	}
+	if descr != nil {
+		sets = append(sets, "descr = ?")
+		args = append(args, *descr)
+	}
+	if len(sets) == 0 {
+		return 0, nil
+	}
+	args = append(args, groupID, convID)
+	q := "UPDATE agent_group_members SET " + sets[0]
+	for i := 1; i < len(sets); i++ {
+		q += ", " + sets[i]
+	}
+	q += " WHERE group_id = ? AND conv_id = ?"
+	res, err := db.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // RemoveAgentGroupMember removes a (group, conv) pair. Idempotent.
 func RemoveAgentGroupMember(groupID int64, convID string) error {
 	db, err := Open()

@@ -407,6 +407,7 @@ type peerEntry struct {
 	Alias  string   `json:"alias,omitempty"`
 	Role   string   `json:"role,omitempty"`
 	Descr  string   `json:"descr,omitempty"`
+	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
 }
 
@@ -440,6 +441,7 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 		return rcOK
 	}
 	tbl := table.New(
+		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 8},
 		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
@@ -453,6 +455,7 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 			alias = pe.Title
 		}
 		tbl.AddRow(table.Row{Cells: []string{
+			onlineMark(pe.Online),
 			short(pe.ConvID),
 			alias,
 			pe.Role,

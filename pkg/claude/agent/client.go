@@ -124,6 +124,11 @@ func DaemonDelete(path string, out any) error {
 	return daemonReq(http.MethodDelete, path, nil, out)
 }
 
+// DaemonPatch performs a PATCH with a JSON body.
+func DaemonPatch(path string, in, out any) error {
+	return daemonReq(http.MethodPatch, path, in, out)
+}
+
 func daemonReq(method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {

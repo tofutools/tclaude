@@ -244,3 +244,12 @@ func short(convID string) string {
 	}
 	return convID
 }
+
+// onlineMark returns the single-cell glyph used in agent ls / groups
+// members tables to flag online (live tmux session) conversations.
+func onlineMark(online bool) string {
+	if online {
+		return "●"
+	}
+	return ""
+}

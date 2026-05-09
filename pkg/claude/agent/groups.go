@@ -31,6 +31,7 @@ func groupsCmd() *cobra.Command {
 			groupsMembersCmd(),
 			groupsAddCmd(),
 			groupsRemoveCmd(),
+			groupsUpdateMemberCmd(),
 		},
 	}.ToCobra()
 }
@@ -197,6 +198,7 @@ type memberEntry struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
+	Online bool   `json:"online"`
 }
 
 func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
@@ -221,6 +223,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	tbl := table.New(
+		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 8},
 		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
@@ -233,6 +236,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 			alias = m.Title
 		}
 		tbl.AddRow(table.Row{Cells: []string{
+			onlineMark(m.Online),
 			short(m.ConvID),
 			alias,
 			m.Role,
@@ -316,5 +320,57 @@ func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Removed %s from group %q\n", p.Conv, p.Group)
+	return rcOK
+}
+
+// --- groups update-member ---
+
+type groupsUpdateMemberParams struct {
+	Group string `pos:"true" help:"Group name"`
+	Conv  string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	Alias string `long:"alias" short:"a" optional:"true" help:"New alias (pass empty string to clear)"`
+	Role  string `long:"role" short:"r" optional:"true" help:"New role label (pass empty string to clear)"`
+	Descr string `long:"descr" short:"d" optional:"true" help:"New description (pass empty string to clear)"`
+}
+
+func groupsUpdateMemberCmd() *cobra.Command {
+	return boa.CmdT[groupsUpdateMemberParams]{
+		Use:         "update-member",
+		Short:       "Edit alias/role/descr on an existing group member",
+		Long:        "Patch the alias, role, or descr of a member already in a group. Only the flags you pass are touched; pass an empty string (e.g. --alias='') to clear a field. Same human-only gate as `add`/`remove`.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *groupsUpdateMemberParams, cmd *cobra.Command, _ []string) {
+			os.Exit(runGroupsUpdateMember(p, cmd, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsUpdateMember(p *groupsUpdateMemberParams, cmd *cobra.Command, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	body := map[string]any{}
+	if cmd.Flags().Changed("alias") {
+		body["alias"] = p.Alias
+	}
+	if cmd.Flags().Changed("role") {
+		body["role"] = p.Role
+	}
+	if cmd.Flags().Changed("descr") {
+		body["descr"] = p.Descr
+	}
+	if len(body) == 0 {
+		fmt.Fprintf(stderr, "Error: at least one of --alias / --role / --descr is required\n")
+		return rcInvalidArg
+	}
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Group) + "/members/" + url.PathEscape(p.Conv)
+	if err := DaemonPatch(path, body, &resp); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "Updated %s in group %q\n", short(resp.ConvID), p.Group)
 	return rcOK
 }

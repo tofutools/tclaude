@@ -89,6 +89,7 @@ type peerEntry struct {
 	Alias  string   `json:"alias,omitempty"`
 	Role   string   `json:"role,omitempty"`
 	Descr  string   `json:"descr,omitempty"`
+	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
 }
 
@@ -128,6 +129,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 					Alias:  m.Alias,
 					Role:   m.Role,
 					Descr:  m.Descr,
+					Online: isConvOnline(m.ConvID),
 				}
 				byConv[m.ConvID] = pe
 			}
@@ -631,6 +633,12 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 			handleGroupMembersList(w, r, g)
 		case http.MethodPost:
 			handleGroupMembersAdd(w, r, g)
+		case http.MethodPatch:
+			if len(parts) < 3 || parts[2] == "" {
+				writeError(w, http.StatusBadRequest, "invalid_arg", "missing member id")
+				return
+			}
+			handleGroupMembersUpdate(w, r, g, parts[2])
 		case http.MethodDelete:
 			if len(parts) < 3 || parts[2] == "" {
 				writeError(w, http.StatusBadRequest, "invalid_arg", "missing member id")
@@ -638,7 +646,7 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 			}
 			handleGroupMembersRemove(w, r, g, parts[2])
 		default:
-			writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, or DELETE")
+			writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, PATCH, or DELETE")
 		}
 		return
 	}
@@ -665,6 +673,7 @@ type memberJSON struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
+	Online bool   `json:"online"`
 }
 
 func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
@@ -688,6 +697,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			Alias:  m.Alias,
 			Role:   m.Role,
 			Descr:  m.Descr,
+			Online: isConvOnline(m.ConvID),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -724,6 +734,43 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		Descr:   body.Descr,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+}
+
+// handleGroupMembersUpdate patches alias/role/descr on an existing member.
+// Only fields explicitly present in the request body are touched — pass
+// `null` (or omit) to leave a field unchanged. Same human-only gate as add.
+func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
+	if !requireHuman(w, r) {
+		return
+	}
+	var body struct {
+		Alias *string `json:"alias,omitempty"`
+		Role  *string `json:"role,omitempty"`
+		Descr *string `json:"descr,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if body.Alias == nil && body.Role == nil && body.Descr == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "at least one of alias/role/descr is required")
+		return
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Alias, body.Role, body.Descr)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "no such member in group")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})

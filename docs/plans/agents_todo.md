@@ -32,15 +32,14 @@ ship or get scoped out. The detailed v1 design lives in
 
 ### Discovery / state
 - `tclaude agent groups ls --state=online|offline` — filter by whether
-  members have a live tmux session right now.
+  members have a live tmux session right now. (Online count column
+  already shipped; this is just a filter on top.)
 - `tclaude agent ls --state=online|offline` — same filter, but for peers.
-- Add a `groups` column to `tclaude conv ls` (and `-w` watch mode), so the
-  user can search/sort/filter conversations by group and attach quickly.
-  Probably needs a join in the conv list query plus an extra column in the
-  bubbletea table. Useful even before all the messaging features are in
-  daily use.
+- Per-row online indicator on `agent ls` and `groups members` (e.g.
+  `●`/`○` or `yes`/`""` column). The `isConvOnline` helper used by
+  `groups ls` makes this trivial to extend.
 - Selectable filtering: pressing `g` in `conv ls -w` could open a fuzzy
-  group picker.
+  group picker. (Groups column itself is shipped.)
 
 ### Inbox & message UX
 - **Multicast / group broadcast.** Send one message to every member of
@@ -108,6 +107,59 @@ ship or get scoped out. The detailed v1 design lives in
   ```
   Same human-only gate as `add`/`remove`. Useful when an agent's purpose
   in a group shifts mid-flight, or when `--agent-name` was wrong.
+
+### Self-rename via agentd (HIGH PRIORITY)
+
+Agents can't invoke Claude Code's `/rename` slash command directly (the
+slash command runs inside the CC TUI, not via tools). Plumb it through
+`tclaude agentd` instead:
+
+- New endpoint, e.g. `POST /v1/whoami/rename` with `{"title": "..."}`,
+  identifies the caller via peer-cred and writes the new conversation
+  title via the same code path that backs Claude Code's `/rename` (or
+  by editing the conv-index row + nudging CC to re-read).
+- New CLI: `tclaude agent rename <new-title>` (or `tclaude agent
+  whoami --set-title <new-title>`). Agent-callable.
+- Permission-gated: by default, agents are NOT allowed to rename
+  themselves. The human opts in.
+
+This needs the **default agent permissions** mechanism below, since
+"can rename self" is the simplest case of an agent permission.
+
+### Default agent permissions in tclaude config
+
+Add an `agent` section to `~/.tclaude/config.json` (the existing
+tclaude config — see `pkg/claude/common/config`) that lists default
+permissions every new agent inherits. Sketch:
+
+```json
+{
+  "agent": {
+    "default_permissions": [
+      "self.rename",
+      "member.redesignate"
+    ],
+    "permission_overrides": {
+      "<conv-id-or-name>": ["self.rename", "agent.spawn"]
+    }
+  }
+}
+```
+
+When the daemon evaluates a permission for a caller, it checks
+per-conv overrides first, then defaults, then refuses. The
+`requireHuman()` gate becomes a special-case "no permission grants
+this; only absence of a CC ancestor does."
+
+The user-facing skill bundle should explain the relevant permission to
+the agent — either fold it into the existing `agent-coord` skill or
+ship a small companion skill (`agent-rename`) that documents
+`tclaude agent rename`. Probably folded in for now; split later if the
+list of self-service capabilities grows.
+
+This entry connects with "Agent self-service permissions (graduated
+trust)" below — same permission model, this is the first concrete
+permission we want to ship.
 
 ### Agent self-service permissions (graduated trust)
 
@@ -301,3 +353,16 @@ for now** — single-host first.
   direct DB access; refuses loudly if `agentd` isn't running.
 - **Skill bundled** at `pkg/claude/agent/skills/agent-coord/SKILL.md`;
   installable via `tclaude setup --install-agent-skill`.
+
+### Polish (post-#47, 2026-05)
+
+- **Common-table rendering for agent CLI lists.** `agent ls`,
+  `groups ls`, `groups members`, and `inbox ls` all render via
+  `pkg/claude/common/table` instead of ad-hoc `fmt.Fprintf`. JSON
+  output unchanged.
+- **Online member counts.** `groups ls` shows `MEMBERS` and `ONLINE`
+  side by side. `isConvOnline` factored out of `nudgeIfAlive`.
+- **Groups column on `conv ls` / `conv ls -w`.** Both list views grow
+  a "Groups" column when at least one conv is in any group, so you
+  can see group membership while picking a conversation. Backed by
+  `db.GroupNamesByConv()`.
