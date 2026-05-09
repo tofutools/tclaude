@@ -69,7 +69,9 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(groups)
+		if err := enc.Encode(groups); err != nil {
+			return rcIOFailure
+		}
 		return rcOK
 	}
 	if len(groups) == 0 {
@@ -194,7 +196,9 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(members)
+		if err := enc.Encode(members); err != nil {
+			return rcIOFailure
+		}
 		return rcOK
 	}
 	if len(members) == 0 {

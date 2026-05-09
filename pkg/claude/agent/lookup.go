@@ -423,7 +423,9 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(peers)
+		if err := enc.Encode(peers); err != nil {
+			return rcIOFailure
+		}
 		return rcOK
 	}
 	if len(peers) == 0 {

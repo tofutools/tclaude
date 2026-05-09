@@ -85,7 +85,9 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		if err := enc.Encode(out); err != nil {
+			return rcIOFailure
+		}
 		return rcOK
 	}
 	if len(out) == 0 {
@@ -230,7 +232,9 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	fmt.Fprintln(stdout, m.Body)
 
 	if !p.KeepUnread && m.ReadAt.IsZero() {
-		_ = db.MarkAgentMessageRead(id)
+		if err := db.MarkAgentMessageRead(id); err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to mark message %d as read: %v\n", id, err)
+		}
 	}
 	return rcOK
 }

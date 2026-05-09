@@ -414,8 +414,9 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 // knows the conv-id and doesn't want to enumerate the whole project dir
 // (e.g. `tclaude agent whoami` after a `/rename`).
 //
-// Returns the freshest row available; falls back to the cached row if the
-// rescan or refetch fails. Returns nil if the conv is unknown to the DB.
+// Returns the freshest row available; returns nil if the conv is unknown
+// to the DB or its underlying file has been deleted (in which case we
+// also evict the stale cache entry so callers don't keep resolving to it).
 func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 	row, _ := db.GetConvIndex(convID)
 	if row == nil {
@@ -426,6 +427,13 @@ func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 	}
 	info, err := os.Stat(row.FullPath)
 	if err != nil {
+		// File disappeared between the cache write and now (manual
+		// delete, log rotation, etc.). Drop the stale row so the next
+		// lookup doesn't resolve to a ghost conv.
+		if os.IsNotExist(err) {
+			_ = db.DeleteConvIndex(convID)
+			return nil
+		}
 		return row
 	}
 	if info.ModTime().Unix() <= row.FileMtime {

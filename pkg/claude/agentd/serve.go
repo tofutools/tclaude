@@ -48,13 +48,19 @@ func runServe(p *serveParams) error {
 	}
 	// Clean up any stale socket file from a crashed previous run. We don't
 	// want to clobber a live one — error out if something is already
-	// listening.
-	if _, err := os.Stat(sockPath); err == nil {
+	// listening — and we explicitly refuse to delete anything that isn't
+	// a Unix socket, in case a user pointed --socket at a regular file.
+	if fi, err := os.Lstat(sockPath); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("refusing to remove non-socket path %s", sockPath)
+		}
 		if c, derr := net.Dial("unix", sockPath); derr == nil {
 			_ = c.Close()
 			return fmt.Errorf("agentd is already listening on %s", sockPath)
 		}
-		_ = os.Remove(sockPath)
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale socket: %w", err)
+		}
 	}
 
 	ln, err := net.Listen("unix", sockPath)

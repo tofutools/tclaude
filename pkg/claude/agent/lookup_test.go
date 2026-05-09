@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,11 +23,28 @@ func setupTestDB(t *testing.T) {
 
 func upsertConvIndex(t *testing.T, convID, customTitle, summary, firstPrompt string) {
 	t.Helper()
+	// Materialise a placeholder .jsonl file at FullPath so that
+	// conv.RefreshConvIndexEntry's "file-missing → drop cached row"
+	// branch doesn't evict our test fixtures. The file's mtime is set
+	// to the same value we record on the row so the freshness check
+	// sees no rescan as needed.
+	dir := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	fullPath := filepath.Join(dir, convID+".jsonl")
+	if err := os.WriteFile(fullPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	mtime := time.Now().Unix()
+	if err := os.Chtimes(fullPath, time.Unix(mtime, 0), time.Unix(mtime, 0)); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
 	if err := db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      convID,
-		ProjectDir:  "/tmp/proj",
-		FullPath:    "/tmp/proj/" + convID + ".jsonl",
-		FileMtime:   time.Now().Unix(),
+		ProjectDir:  dir,
+		FullPath:    fullPath,
+		FileMtime:   mtime,
 		CustomTitle: customTitle,
 		Summary:     summary,
 		FirstPrompt: firstPrompt,

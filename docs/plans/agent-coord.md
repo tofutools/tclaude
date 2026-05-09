@@ -36,7 +36,7 @@ All under a new `tclaude agent` subcommand.
 
 ### Looking up other agents
 
-```
+```bash
 tclaude agent whoami
 tclaude agent lookup <name>      # name → conv-id (exit 1 if no match, 2 if ambiguous)
 tclaude agent ls                 # list agents reachable to me (= union of my groups)
@@ -51,7 +51,7 @@ canonical conv-id on success. Exit codes match `conv rename`: `0/1/2`.
 
 ### Sending a message
 
-```
+```bash
 tclaude agent message <target> "body text"
 tclaude agent message <target> --stdin
 tclaude agent message <target> --file path/to/body.md
@@ -71,12 +71,12 @@ Behaviour:
    in the `body` column. No separate inbox file.
 2. If the target has a live tmux session, inject a nudge via
    `tmux send-keys`:
-   ```
-   [system: new agent message #<id> from <from-alias> (<from-short>) in group <group>.
-   read it with: tclaude agent inbox read <id>; reply with: tclaude agent message <from-short> "..."]
+   ```text
+   [system: new agent message #<id> for you. fetch with: tclaude agent inbox read <id>]
    ```
    followed by Enter — same shape as `task/run.go` already uses for review
-   feedback.
+   feedback. Sender, subject, group, and Reply-To live in the fetched
+   message's headers, not in the bracket text.
 3. If the target has no live tmux session, exit `0` anyway and the message
    sits in the DB with `delivered_at` empty. When tclaude next starts a
    session for that conv-id (resume), it can flush undelivered nudges
@@ -87,7 +87,7 @@ target not in any group, refusing to send to self.
 
 ### Group management (human only)
 
-```
+```bash
 tclaude agent groups ls
 tclaude agent groups create <group-name> [--descr X]
 tclaude agent groups rm <group-name>
@@ -99,16 +99,14 @@ tclaude agent groups remove <group-name> <conv>
 `<conv>` accepts a conv-id, prefix, or current title (same resolver as
 `lookup`).
 
-The mutating subcommands (`create`/`rm`/`add`/`remove`) refuse when the
-process tree contains a `claude` (or `node`) ancestor — that's the
-robust "called from inside an agent" detector. Override precedence:
+The mutating subcommands (`create`/`rm`/`add`/`remove`) are gated
+**server-side** by the daemon: it inspects the connecting peer's
+process tree and refuses if any `claude`/`node` ancestor is present.
+The CLI no longer carries a client-side override flag — the daemon
+is the source of truth for who can mutate.
 
-1. `--allow-from-agent` (per-call, testing escape hatch)
-2. `agent.allow_agent_mutate_groups: true` in `~/.tclaude/config.json`
-3. Default: refuse
-
-`groups members` and `groups ls` stay open from inside an agent — that's
-how the agent finds peers.
+`groups members` and `groups ls` stay open from inside an agent —
+that's how the agent finds peers.
 
 ### What an agent sees
 
@@ -202,7 +200,7 @@ Caveats inherited from `pushRenameToTmux`:
 | Case | Behaviour |
 |---|---|
 | Target conv has never had a session (no DB row) | Resolve fails with "unknown target" |
-| Target's tmux session is dead | Persist message + write inbox file, exit 0 with warning |
+| Target's tmux session is dead | Persist message in `agent_messages`, exit 0 with `(queued; target not online)` |
 | Sender and target are the same conv | Refuse with "cannot message self" |
 | Same name resolves to two convs in different projects | Ambiguous, exit 2; require conv-id prefix |
 | Group deleted while message in flight | `ON DELETE RESTRICT` on `agent_messages` prevents the group from being deleted while messages reference it. We require the human to prune messages first |
@@ -219,9 +217,9 @@ Caveats inherited from `pushRenameToTmux`:
      Lifted from `conv/rename.go`'s resolver and made non-rename-specific.
    - `whoami.go` — current session detection (same `currentCCSessionID +
      $TCLAUDE_SESSION_ID` chain as rename)
-   - `message.go` — auth check, persist, write inbox file, tmux nudge
+   - `message.go` — auth check, persist row in `agent_messages`, tmux nudge
    - `groups.go` — group create/rm/add/remove/members/ls
-   - `inbox.go` — file path conventions + writer
+   - `inbox.go` — list / read entries (rows in `agent_messages` where `to_conv = me`)
 4. **`pkg/claude/claude.go`** — register `agent.Cmd()` in `SubCmds`.
 5. **`examples/skills/agent-coord/SKILL.md`** — tells the agent the
    `whoami` / `lookup` / `ls` / `message` flow and what to do when it

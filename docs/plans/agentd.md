@@ -43,10 +43,10 @@ session start instead of trusting environment variables.
 - Authenticated tokens for the human ("god" token). For now the human
   is whoever can reach the loopback socket — same trust boundary as
   the existing tclaude binary.
-- Migrating away from the current agent CLI. The CLI keeps working;
-  when `TCLAUDE_AGENT_URL` + `TCLAUDE_AGENT_TOKEN` are set, the CLI
-  becomes a thin HTTP client. Otherwise it falls back to direct DB
-  access (so test fixtures and ad-hoc human use don't need the daemon).
+- Migrating away from the current agent CLI. The CLI keeps working
+  and routes every call through the daemon over the well-known
+  Unix socket; when the socket isn't reachable, the CLI exits with
+  a clear error rather than falling back to direct DB writes.
 
 ## Transport
 
@@ -178,15 +178,19 @@ The daemon also re-validates tmux session names on a ticker (every
 issue where the DB row pointed to a tmux session that had since been
 recreated under a different name.
 
-## CLI fallback
+## CLI as thin client (no fallback)
 
-The existing `tclaude agent …` commands stay. When the binary detects
-`TCLAUDE_AGENT_URL` + `TCLAUDE_AGENT_TOKEN`, it goes through HTTP.
-Otherwise it falls back to the direct-DB path. This keeps:
+The existing `tclaude agent …` commands stay. When the daemon's
+Unix socket exists (`~/.tclaude/agentd.sock`, probed by
+`DaemonAvailable()`), the CLI sends an HTTP request over it.
+**There is no direct-DB fallback in production.** If the socket is
+unreachable, the CLI exits with `Error: tclaude agentd is not running.`
+That keeps the auth model honest: an agent can't bypass the daemon's
+peer-cred gate by happening to find the daemon down.
 
-- Unit tests working without a daemon.
-- The human's interactive use working out of the box.
-- A single binary surface for users who don't want the daemon.
+Tests for the CLI side exercise the `Direct` helper functions
+explicitly (decoupled from `DaemonAvailable`); DB-level CRUD is
+covered in `pkg/claude/common/db/agent_test.go`.
 
 ## How agents reach the daemon
 
