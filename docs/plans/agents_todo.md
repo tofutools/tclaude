@@ -12,6 +12,31 @@ ship or get scoped out. The detailed v1 design lives in
 
 ---
 
+## NEXT (top priority)
+
+### Agent self-lifecycle: clear / compact / context-info
+
+Mirror the existing `tclaude agent rename` pattern (which uses the
+daemon's `injectSlashCommand` helper to type a slash-command into the
+caller's own CC pane). Lets a long-running agent self-throttle on
+context pressure without the human babysitting.
+
+- `tclaude agent compact [follow-up...]` — daemon types `/compact`
+  Enter Enter, then send-keys the optional follow-up text so it
+  lands as the next prompt after compact settles. Slug
+  `self.compact` (human-only by default).
+- `tclaude agent clear [follow-up...]` — same pattern with `/clear`.
+  Slug `self.clear`.
+- `tclaude agent context-info` — read `sessions.context_pct` (already
+  populated by the hook callback) and emit `{ pct, tokens_used,
+  tokens_max }`. No slash-command injection. Read-only, no slug.
+
+Once shipped, an agent that holds `self.compact` can poll its own
+`context-info` and preemptively compact at e.g. 80% — no human
+intervention to keep long tasks running.
+
+---
+
 ## TODO
 
 ### Session shortcuts
