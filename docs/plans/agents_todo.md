@@ -150,9 +150,11 @@ existing `groups.*`/`member.*` model:
   per-recipient row table) plus a `cc_convs` list. The "from / to / cc /
   subject / body / read" mental model maps directly onto email and is
   intuitive for agents to reason about.
-- Optional Reply-To / In-Reply-To threading so an agent can quote what it
-  is replying to. Lightweight: just a nullable `parent_id` column on
-  `agent_messages`.
+- ~~In-Reply-To threading.~~ **Shipped.** `parent_id` column on
+  `agent_messages` (schema v10), auto-set on `reply`. `inbox read`
+  renders `In-Reply-To: <id> ("Subject")`. `inbox ls` prefixes
+  reply rows with `↳`. `parent_id` surfaced in `/v1/inbox` rows so
+  the dashboard can render thread arrows in v2.
 - On session resume, flush undelivered nudges (`delivered_at IS NULL`) so
   messages sent while the target was offline still get surfaced.
 - ~~`tclaude agent inbox prune --older-than 30d --read-only`~~ —
@@ -160,8 +162,6 @@ existing `groups.*`/`member.*` model:
   values plus `Nd`/`Nw`. `--read-only` restricts to messages the
   recipient has read. Caller-scoped: only deletes rows where
   from_conv or to_conv equals the calling agent's conv-id.
-- Conversation thread IDs surfaced to agents (so a reply can quote
-  the parent). v1 just records `from`/`to`/`group`.
 
 ### Authority / safety
 - v1 detector for mutating `groups create|rm|add|remove`: walk the parent
@@ -174,16 +174,6 @@ existing `groups.*`/`member.*` model:
 - Possible refinement: extend the same gate to other sensitive commands
   (e.g. spawning new sessions, killing groups via `groups stop`). Map
   command → required policy in config.
-
-### Membership maintenance
-- **Redesignate members in place.** Once the human has added an agent to
-  a group, the alias / role / descr should be editable without removing
-  and re-adding. Probably:
-  ```
-  tclaude agent groups update-member <group> <conv> [--alias …] [--role …] [--descr …]
-  ```
-  Same human-only gate as `add`/`remove`. Useful when an agent's purpose
-  in a group shifts mid-flight, or when `--agent-name` was wrong.
 
 ### Default agent permissions in tclaude config (v1 shipped)
 
@@ -551,3 +541,6 @@ Short notes only — see `docs/agent.md` and the code for details.
   caller-scoped delete of old `agent_messages` rows. Accepts day/
   week suffixes. Backed by `db.PruneAgentMessagesForConv` +
   `/v1/inbox/prune`.
+- Message threading (schema v10). `agent_messages.parent_id`
+  auto-set by `reply`. `inbox read` shows `In-Reply-To: <id>
+  ("subject")`. `inbox ls` prefixes replies with `↳`.

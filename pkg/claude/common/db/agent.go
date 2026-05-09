@@ -133,6 +133,7 @@ func RevokeAgentPermission(convID, slug string) (int64, error) {
 }
 
 // AgentMessage is a row in agent_messages. Body is stored inline.
+// ParentID is the message this one is a reply to, or 0 for top-of-thread.
 type AgentMessage struct {
 	ID          int64
 	GroupID     int64
@@ -140,6 +141,7 @@ type AgentMessage struct {
 	ToConv      string
 	Subject     string
 	Body        string
+	ParentID    int64
 	CreatedAt   time.Time
 	DeliveredAt time.Time
 	ReadAt      time.Time
@@ -411,10 +413,10 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 		m.CreatedAt = time.Now()
 	}
 	res, err := db.Exec(`INSERT INTO agent_messages
-		(group_id, from_conv, to_conv, subject, body,
+		(group_id, from_conv, to_conv, subject, body, parent_id,
 		 created_at, delivered_at, read_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.GroupID, m.FromConv, m.ToConv, m.Subject, m.Body,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.GroupID, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
 		m.CreatedAt.Format(time.RFC3339Nano),
 		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt))
 	if err != nil {
@@ -480,7 +482,7 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, subject, body,
+	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
 		created_at, delivered_at, read_at
 		FROM agent_messages WHERE id = ?`, id)
 	m, err := scanAgentMessage(row)
@@ -510,7 +512,7 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, subject, body,
+	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
 		created_at, delivered_at, read_at
 		FROM agent_messages WHERE ` + col + ` = ? ORDER BY created_at DESC`
 	args := []any{value}
@@ -582,7 +584,7 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
 	var createdAt, deliveredAt, readAt string
 	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
-		&m.Subject, &m.Body,
+		&m.Subject, &m.Body, &m.ParentID,
 		&createdAt, &deliveredAt, &readAt); err != nil {
 		return nil, err
 	}

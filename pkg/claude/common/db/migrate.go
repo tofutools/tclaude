@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 9
+const currentVersion = 10
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -73,6 +73,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 9 {
 		if err := migrateV8toV9(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 10 {
+		if err := migrateV9toV10(db); err != nil {
 			return err
 		}
 	}
@@ -250,6 +256,23 @@ func migrateV6toV7(db *sql.DB) error {
 // daemon mutate without touching JSON. config.json keeps only
 // DefaultPermissions; legacy permission_overrides values are imported
 // here on first open.
+// migrateV9toV10 adds agent_messages.parent_id for thread chaining.
+// Nullable-equivalent (default 0) since we never want a foreign-key
+// constraint here — pruning a parent shouldn't cascade-delete its
+// reply chain. parent_id = 0 means "top of thread."
+func migrateV9toV10(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_messages ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0;
+		CREATE INDEX IF NOT EXISTS idx_agent_messages_parent ON agent_messages(parent_id);
+
+		UPDATE schema_version SET version = 10;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v9→v10: %w", err)
+	}
+	return nil
+}
+
 func migrateV8toV9(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS agent_permissions (

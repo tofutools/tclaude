@@ -66,6 +66,7 @@ type inboxEntry struct {
 	CreatedAt string `json:"created_at"`
 	Read      bool   `json:"read"`
 	Delivered bool   `json:"delivered,omitempty"`
+	ParentID  int64  `json:"parent_id,omitempty"`
 }
 
 func runInboxLs(p *inboxLsParams, stdout, stderr io.Writer) int {
@@ -117,6 +118,12 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 		subj := e.Subject
 		if subj == "" {
 			subj = e.Preview
+		}
+		// Prefix replies with "↳ " so threads stand out at a glance.
+		// Cheap visual cue; the parent_id is in --json for tools that
+		// want to render the chain explicitly.
+		if e.ParentID > 0 {
+			subj = "↳ " + subj
 		}
 		tbl.AddRow(table.Row{Cells: []string{
 			marker,
@@ -256,16 +263,18 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		path += "?keep-unread=1"
 	}
 	var m struct {
-		ID        int64  `json:"id"`
-		From      string `json:"from"`
-		FromAlias string `json:"from_alias"`
-		To        string `json:"to"`
-		Group     string `json:"group"`
-		Subject   string `json:"subject"`
-		Body      string `json:"body"`
-		CreatedAt string `json:"created_at"`
-		ReplyTo   string `json:"reply_to"`
-		ReplyCmd  string `json:"reply_cmd"`
+		ID            int64  `json:"id"`
+		From          string `json:"from"`
+		FromAlias     string `json:"from_alias"`
+		To            string `json:"to"`
+		Group         string `json:"group"`
+		Subject       string `json:"subject"`
+		Body          string `json:"body"`
+		CreatedAt     string `json:"created_at"`
+		ReplyTo       string `json:"reply_to"`
+		ReplyCmd      string `json:"reply_cmd"`
+		InReplyTo     int64  `json:"in_reply_to,omitempty"`
+		ParentSubject string `json:"parent_subject,omitempty"`
 	}
 	if err := DaemonGet(path, &m); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -273,6 +282,16 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	}
 	fmt.Fprintln(stdout, "Headers:")
 	fmt.Fprintf(stdout, "  Message-ID: %d\n", m.ID)
+	if m.InReplyTo > 0 {
+		// Mirror RFC-5322's In-Reply-To header. If the parent's
+		// subject is known, surface it inline so the agent can
+		// orient itself without an extra `inbox read <parent_id>`.
+		if m.ParentSubject != "" {
+			fmt.Fprintf(stdout, "  In-Reply-To: %d (%q)\n", m.InReplyTo, m.ParentSubject)
+		} else {
+			fmt.Fprintf(stdout, "  In-Reply-To: %d\n", m.InReplyTo)
+		}
+	}
 	if m.FromAlias != "" {
 		fmt.Fprintf(stdout, "  From:       %s <%s>\n", m.FromAlias, m.From)
 	} else {

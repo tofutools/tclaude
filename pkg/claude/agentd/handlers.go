@@ -611,6 +611,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		ToConv:   orig.FromConv,
 		Subject:  subject,
 		Body:     body.Body,
+		ParentID: orig.ID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -668,7 +669,7 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	if g, _ := groupByID(m.GroupID); g != nil {
 		groupName = g.Name
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"id":         m.ID,
 		"from":       m.FromConv,
 		"from_alias": agent.AliasFor(m.GroupID, m.FromConv),
@@ -686,7 +687,19 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		// case. Agents in skills should prefer the `agent reply` command,
 		// which figures this out from the message ID.
 		"reply_cmd": fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID),
-	})
+	}
+	// In-Reply-To: only set on threaded messages so the renderer can
+	// hide the header for top-of-thread messages.
+	if m.ParentID > 0 {
+		resp["in_reply_to"] = m.ParentID
+		// Walk one step up so the reader can see the subject of the
+		// parent without an extra round-trip. Best-effort: a parent
+		// that's been pruned just yields no parent_subject.
+		if parent, err := db.GetAgentMessage(m.ParentID); err == nil && parent != nil {
+			resp["parent_subject"] = parent.Subject
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- /v1/inbox ---
@@ -707,6 +720,7 @@ type inboxItem struct {
 	CreatedAt string `json:"created_at"`
 	Read      bool   `json:"read"`
 	Delivered bool   `json:"delivered,omitempty"`
+	ParentID  int64  `json:"parent_id,omitempty"`
 }
 
 func handleInbox(w http.ResponseWriter, r *http.Request) {
@@ -756,6 +770,7 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 			Preview:   bodyPreview(m.Body),
 			CreatedAt: m.CreatedAt.Format(time.RFC3339),
 			Read:      !m.ReadAt.IsZero(),
+			ParentID:  m.ParentID,
 		}
 		if outbox {
 			item.To = m.ToConv
