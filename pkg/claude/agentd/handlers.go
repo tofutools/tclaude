@@ -244,16 +244,19 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "cannot message self")
 		return
 	}
-	shared, err := db.SharedGroupsForConvs(fromID, target.ConvID)
+	// Authorisation: shared-group OR sender owns a group containing
+	// target. Owner-as-non-member lets a coordinator agent address its
+	// teams without itself being a peer.
+	via, _, err := db.CanSenderReachTarget(fromID, target.ConvID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	if len(shared) == 0 {
-		writeError(w, http.StatusForbidden, "auth", "not in a shared group with target")
+	if via == nil {
+		writeError(w, http.StatusForbidden, "auth",
+			"no shared group with target and you do not own a group containing the target")
 		return
 	}
-	via := shared[0]
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  via.ID,
 		FromConv: fromID,
@@ -296,15 +299,23 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 			fmt.Sprintf("no group named %q", groupName))
 		return
 	}
-	// Sender must be a member to broadcast.
+	// Sender must be a member OR an owner of the group to broadcast.
 	senderMember, err := db.FindMemberInGroup(g.ID, fromID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	isOwner := false
 	if senderMember == nil {
+		isOwner, err = db.IsAgentGroupOwner(g.ID, fromID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+	}
+	if senderMember == nil && !isOwner {
 		writeError(w, http.StatusForbidden, "auth",
-			fmt.Sprintf("you are not a member of group %q", groupName))
+			fmt.Sprintf("you are not a member or owner of group %q", groupName))
 		return
 	}
 	members, err := db.ListAgentGroupMembers(g.ID)
@@ -591,20 +602,25 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 	if subject == "" && orig.Subject != "" {
 		subject = "Re: " + orig.Subject
 	}
-	// Authority check: the reply still has to be authorised by a shared
-	// group at send time. In practice the original message's group
-	// already proves they share one — but a member might have been
-	// removed since, and we want to honour that.
-	shared, err := db.SharedGroupsForConvs(myID, orig.FromConv)
+	// Reply path is open: if you received a message, you can reply
+	// to it regardless of current group membership. This lets a
+	// group owner address a member without being a peer themselves
+	// — the member can still reply. The shared-group rule still
+	// applies to *spontaneous* messages (handleMessages).
+	//
+	// Routing: keep the reply on the same group_id as the original,
+	// so threads stay coherent on the recipient's side even when
+	// shared membership has since dissolved.
+	via, err := db.GetAgentGroupByID(orig.GroupID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	if len(shared) == 0 {
-		writeError(w, http.StatusForbidden, "auth", "no shared group with sender; reply path closed")
+	if via == nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"original message references a group that no longer exists")
 		return
 	}
-	via := shared[0]
 	newID, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  via.ID,
 		FromConv: myID,
@@ -972,6 +988,25 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /v1/groups/{name}/owners[*]
+	if len(parts) >= 2 && parts[1] == "owners" {
+		switch r.Method {
+		case http.MethodGet:
+			handleGroupOwnersList(w, r, g)
+		case http.MethodPost:
+			handleGroupOwnersAdd(w, r, g)
+		case http.MethodDelete:
+			if len(parts) < 3 || parts[2] == "" {
+				writeError(w, http.StatusBadRequest, "invalid_arg", "missing owner conv-id")
+				return
+			}
+			handleGroupOwnersRemove(w, r, g, parts[2])
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, or DELETE")
+		}
+		return
+	}
+
 	// /v1/groups/{name}/members[*]
 	if len(parts) >= 2 && parts[1] == "members" {
 		switch r.Method {
@@ -1020,6 +1055,7 @@ type memberJSON struct {
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	Online bool   `json:"online"`
+	Owner  bool   `json:"owner,omitempty"`
 }
 
 func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
@@ -1028,8 +1064,19 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// Pre-load the owner set so we can tag any members who are also
+	// owners. Distinct-from-members owners are emitted as their own
+	// rows below so the list stays comprehensive.
+	ownerSet := map[string]bool{}
+	if owners, err := db.ListAgentGroupOwners(g.ID); err == nil {
+		for _, o := range owners {
+			ownerSet[o.ConvID] = true
+		}
+	}
+	memberSet := map[string]bool{}
 	out := make([]memberJSON, 0, len(members))
 	for _, m := range members {
+		memberSet[m.ConvID] = true
 		row, _ := db.GetConvIndex(m.ConvID)
 		title := "(unknown)"
 		if row != nil {
@@ -1044,9 +1091,132 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			Role:   m.Role,
 			Descr:  m.Descr,
 			Online: isConvOnline(m.ConvID),
+			Owner:  ownerSet[m.ConvID],
+		})
+	}
+	// Surface owners who aren't members so the list is comprehensive.
+	// They get an "owner" role tag and no alias/descr (those are
+	// member-scoped fields).
+	for ownerConv := range ownerSet {
+		if memberSet[ownerConv] {
+			continue
+		}
+		row, _ := db.GetConvIndex(ownerConv)
+		title := "(unknown)"
+		if row != nil {
+			if t := agent.DisplayTitle(row); t != "" {
+				title = t
+			}
+		}
+		out = append(out, memberJSON{
+			ConvID: ownerConv,
+			Title:  title,
+			Role:   "owner",
+			Online: isConvOnline(ownerConv),
+			Owner:  true,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+type ownerJSON struct {
+	ConvID    string `json:"conv_id"`
+	Title     string `json:"title"`
+	Online    bool   `json:"online"`
+	GrantedAt string `json:"granted_at,omitempty"`
+	GrantedBy string `json:"granted_by,omitempty"`
+}
+
+// handleGroupOwnersList returns the owner set for the group. Owners
+// can message members (and multicast) without being members of the
+// group themselves.
+func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	out := make([]ownerJSON, 0, len(owners))
+	for _, o := range owners {
+		row, _ := db.GetConvIndex(o.ConvID)
+		title := "(unknown)"
+		if row != nil {
+			if t := agent.DisplayTitle(row); t != "" {
+				title = t
+			}
+		}
+		entry := ownerJSON{
+			ConvID: o.ConvID,
+			Title:  title,
+			Online: isConvOnline(o.ConvID),
+		}
+		if !o.GrantedAt.IsZero() {
+			entry.GrantedAt = o.GrantedAt.Format(time.RFC3339)
+		}
+		entry.GrantedBy = o.GrantedBy
+		out = append(out, entry)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGroupOwnersAdd grants ownership of g to a conv. Permission-
+// gated on groups.own (default human-only). The granted_by column
+// records "" for human-issued grants and the agent's conv-id for
+// agent-issued ones.
+func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	grantedBy, ok := requirePermission(w, r, PermGroupsOwn)
+	if !ok {
+		return
+	}
+	var body struct {
+		Conv string `json:"conv"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if body.Conv == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "conv is required")
+		return
+	}
+	res, _, err := agent.ResolveSelector(body.Conv)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, grantedBy); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"group":   g.Name,
+		"conv_id": res.ConvID,
+	})
+}
+
+// handleGroupOwnersRemove revokes ownership. 404 when convID wasn't
+// an owner — distinct from "no such group" (which the dispatcher
+// catches). Permission-gated on groups.own.
+func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
+	if _, ok := requirePermission(w, r, PermGroupsOwn); !ok {
+		return
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	n, err := db.RemoveAgentGroupOwner(g.ID, res.ConvID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "not_found",
+			fmt.Sprintf("conv %s is not an owner of %q", res.ConvID, g.Name))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {

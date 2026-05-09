@@ -561,3 +561,13 @@ Short notes only — see `docs/agent.md` and the code for details.
   forks `session new -d --global --label <random>`, polls SQLite for
   the new conv-id, then registers it in the group with optional
   alias/role/descr. Slug `groups.spawn` (human-only by default).
+- Lookup fallback to `agent_group_members` for fresh-spawned convs
+  and per-group aliases. Existing refresh-on-miss still fires when
+  both conv_index and members miss.
+- Group owners (schema v11). `agent_group_owners` table; owners can
+  message a group's members and multicast without being members.
+  CLI: `groups owners`, `grant-owner`, `revoke-owner`. Slug
+  `groups.own` (human-only by default). `groups members` shows
+  `(owner)` tag for member-owners; pure-owners surface as their own
+  rows with role=owner. Reply path no longer requires shared-group
+  — if you received a message you can reply, even out-of-group.

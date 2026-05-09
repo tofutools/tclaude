@@ -187,6 +187,21 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	return g, err
 }
 
+// GetAgentGroupByID returns the group with the given primary key, or
+// nil if not found.
+func GetAgentGroupByID(id int64) (*AgentGroup, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := db.QueryRow(`SELECT id, name, descr, created_at FROM agent_groups WHERE id = ?`, id)
+	g, err := scanAgentGroup(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return g, err
+}
+
 // ListAgentGroups returns all groups, ordered by name.
 func ListAgentGroups() ([]*AgentGroup, error) {
 	db, err := Open()
@@ -452,6 +467,168 @@ func PruneAgentMessagesForConv(forConv string, olderThan time.Time, readOnly boo
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+// AgentGroupOwner is a row in agent_group_owners. Owners can message
+// a group's members and multicast to the group without being members
+// themselves. Distinct from membership so the "X is an owner but
+// not a peer" case is representable.
+type AgentGroupOwner struct {
+	GroupID   int64
+	ConvID    string
+	GrantedAt time.Time
+	GrantedBy string
+}
+
+// AddAgentGroupOwner records convID as an owner of groupID. Idempotent
+// (INSERT OR IGNORE). grantedBy is "" for human-issued grants, a
+// conv-id when an agent with permissions.grant did it.
+func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
+	if convID == "" {
+		return fmt.Errorf("conv_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(
+		`INSERT OR IGNORE INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
+		 VALUES (?, ?, ?, ?)`,
+		groupID, convID, time.Now().Format(time.RFC3339Nano), grantedBy)
+	return err
+}
+
+// RemoveAgentGroupOwner clears an ownership row. Returns the number
+// of rows removed (0 when convID wasn't an owner).
+func RemoveAgentGroupOwner(groupID int64, convID string) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(
+		`DELETE FROM agent_group_owners WHERE group_id = ? AND conv_id = ?`,
+		groupID, convID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// IsAgentGroupOwner returns true when (groupID, convID) is in
+// agent_group_owners.
+func IsAgentGroupOwner(groupID int64, convID string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var n int
+	err = d.QueryRow(
+		`SELECT COUNT(*) FROM agent_group_owners WHERE group_id = ? AND conv_id = ?`,
+		groupID, convID).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ListAgentGroupOwners returns every owner row for the given group,
+// most-recently-granted first.
+func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(
+		`SELECT group_id, conv_id, granted_at, granted_by
+		 FROM agent_group_owners WHERE group_id = ?
+		 ORDER BY granted_at DESC`,
+		groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentGroupOwner
+	for rows.Next() {
+		var o AgentGroupOwner
+		var grantedAt string
+		if err := rows.Scan(&o.GroupID, &o.ConvID, &grantedAt, &o.GrantedBy); err != nil {
+			return nil, err
+		}
+		o.GrantedAt = parseTimeOrZero(grantedAt)
+		out = append(out, &o)
+	}
+	return out, rows.Err()
+}
+
+// ListGroupsOwnedBy returns every group_id convID owns. Used by the
+// auth check that asks "is the sender an owner of any group the
+// target is a member of?".
+func ListGroupsOwnedBy(convID string) ([]int64, error) {
+	if convID == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT group_id FROM agent_group_owners WHERE conv_id = ?`, convID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// CanSenderReachTarget returns the routing group when a message from
+// senderID to targetID is authorised, plus a label describing the
+// reason (so callers can echo it back to the user). Returns
+// (nil, "", nil) when no path exists.
+//
+// Rules, in order of preference:
+//   - shared membership: pick the first group both belong to.
+//   - sender-as-owner: pick the first group the sender owns that
+//     also contains the target.
+func CanSenderReachTarget(senderID, targetID string) (*AgentGroup, string, error) {
+	shared, err := SharedGroupsForConvs(senderID, targetID)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(shared) > 0 {
+		return shared[0], "shared-group", nil
+	}
+	ownerGroups, err := ListGroupsOwnedBy(senderID)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(ownerGroups) == 0 {
+		return nil, "", nil
+	}
+	// Pick the first owned group that contains the target.
+	for _, gID := range ownerGroups {
+		members, err := ListAgentGroupMembers(gID)
+		if err != nil {
+			continue
+		}
+		for _, m := range members {
+			if m.ConvID == targetID {
+				g, err := GetAgentGroupByID(gID)
+				if err != nil || g == nil {
+					continue
+				}
+				return g, "owner-of-group", nil
+			}
+		}
+	}
+	return nil, "", nil
 }
 
 // FindAgentMembersBySelector returns every row whose alias or conv_id

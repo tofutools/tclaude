@@ -40,6 +40,9 @@ func groupsCmd() *cobra.Command {
 			groupsUpdateMemberCmd(),
 			groupsStopCmd(),
 			groupsResumeCmd(),
+			groupsOwnersCmd(),
+			groupsGrantOwnerCmd(),
+			groupsRevokeOwnerCmd(),
 		},
 	}.ToCobra()
 }
@@ -258,6 +261,7 @@ type memberEntry struct {
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	Online bool   `json:"online"`
+	Owner  bool   `json:"owner,omitempty"`
 }
 
 func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
@@ -294,11 +298,21 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		if alias == "" {
 			alias = m.Title
 		}
+		// Tag owners inline so the human can see at a glance who's
+		// privileged. A pure-owner (not a member) is surfaced by the
+		// daemon with role=="owner" already, so we only need to
+		// decorate the member case.
+		role := m.Role
+		if m.Owner && role != "" && role != "owner" {
+			role = role + " (owner)"
+		} else if m.Owner && role == "" {
+			role = "owner"
+		}
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(m.Online),
 			short(m.ConvID),
 			alias,
-			m.Role,
+			role,
 			m.Descr,
 		}})
 	}

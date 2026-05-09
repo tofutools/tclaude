@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 10
+const currentVersion = 11
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -79,6 +79,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 10 {
 		if err := migrateV9toV10(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 11 {
+		if err := migrateV10toV11(db); err != nil {
 			return err
 		}
 	}
@@ -256,6 +262,34 @@ func migrateV6toV7(db *sql.DB) error {
 // daemon mutate without touching JSON. config.json keeps only
 // DefaultPermissions; legacy permission_overrides values are imported
 // here on first open.
+// migrateV10toV11 adds agent_group_owners — a per-group "owner" set
+// distinct from agent_group_members. An owner can send messages to
+// the group's members (and to the group via multicast) without being
+// a member themselves. Useful for coordinator agents that orchestrate
+// teams without needing to be addressed as a peer.
+//
+// Distinct table (rather than a column on agent_group_members) so
+// "X is an owner but not a member" is representable. When an agent
+// is both, the UI shows them in the members list tagged "owner".
+func migrateV10toV11(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_group_owners (
+			group_id    INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			conv_id     TEXT NOT NULL,
+			granted_at  TEXT NOT NULL,
+			granted_by  TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (group_id, conv_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_group_owners_conv ON agent_group_owners(conv_id);
+
+		UPDATE schema_version SET version = 11;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v10→v11: %w", err)
+	}
+	return nil
+}
+
 // migrateV9toV10 adds agent_messages.parent_id for thread chaining.
 // Nullable-equivalent (default 0) since we never want a foreign-key
 // constraint here — pruning a parent shouldn't cascade-delete its

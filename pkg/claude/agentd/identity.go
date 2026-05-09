@@ -99,6 +99,7 @@ const (
 	PermGroupsStop        = "groups.stop"
 	PermGroupsResume      = "groups.resume"
 	PermGroupsSpawn       = "groups.spawn"
+	PermGroupsOwn         = "groups.own"
 	PermMemberAdd         = "member.add"
 	PermMemberRemove      = "member.remove"
 	PermMemberRedesignate = "member.redesignate"

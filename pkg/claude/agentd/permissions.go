@@ -55,6 +55,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Spawn a fresh CC session and add it to a group (tclaude agent spawn)",
 	},
 	{
+		Slug:        PermGroupsOwn,
+		Description: "Grant or revoke group ownership (tclaude agent groups grant-owner / revoke-owner)",
+	},
+	{
 		Slug:        PermMemberAdd,
 		Description: "Add members to a group (tclaude agent groups add)",
 	},

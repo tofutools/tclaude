@@ -245,6 +245,127 @@ func names(gs []*AgentGroup) []string {
 	return out
 }
 
+// TestAgentGroupOwnerCRUD covers the basic ownership round-trip:
+// add (idempotent), is-check, list, remove (count), list-by-conv.
+func TestAgentGroupOwnerCRUD(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("alpha", "")
+
+	if err := AddAgentGroupOwner(g, "boss", ""); err != nil {
+		t.Fatalf("AddAgentGroupOwner: %v", err)
+	}
+	// Idempotent — second call must not error.
+	if err := AddAgentGroupOwner(g, "boss", ""); err != nil {
+		t.Fatalf("AddAgentGroupOwner second: %v", err)
+	}
+
+	is, err := IsAgentGroupOwner(g, "boss")
+	if err != nil || !is {
+		t.Fatalf("IsAgentGroupOwner(g, boss) = %v %v, want true", is, err)
+	}
+	is, _ = IsAgentGroupOwner(g, "stranger")
+	if is {
+		t.Errorf("IsAgentGroupOwner(stranger) should be false")
+	}
+
+	owners, err := ListAgentGroupOwners(g)
+	if err != nil || len(owners) != 1 || owners[0].ConvID != "boss" {
+		t.Fatalf("ListAgentGroupOwners = %+v %v", owners, err)
+	}
+
+	groups, err := ListGroupsOwnedBy("boss")
+	if err != nil || len(groups) != 1 || groups[0] != g {
+		t.Fatalf("ListGroupsOwnedBy = %+v %v", groups, err)
+	}
+
+	n, err := RemoveAgentGroupOwner(g, "boss")
+	if err != nil || n != 1 {
+		t.Fatalf("RemoveAgentGroupOwner = %d %v, want 1", n, err)
+	}
+	// Second remove returns 0.
+	n, _ = RemoveAgentGroupOwner(g, "boss")
+	if n != 0 {
+		t.Errorf("second RemoveAgentGroupOwner = %d, want 0", n)
+	}
+}
+
+// TestCanSenderReachTarget exercises the auth helper that drives
+// `agent message`. Three interesting cases:
+//
+//   - shared membership: returns the shared group.
+//   - owner-of-target's-group: returns the owned group.
+//   - neither: returns nil.
+func TestCanSenderReachTarget(t *testing.T) {
+	setupTestDB(t)
+	alpha, _ := CreateAgentGroup("alpha", "")
+	beta, _ := CreateAgentGroup("beta", "")
+
+	// alice and bob both in alpha; carl alone in beta; dave is owner
+	// of beta but not a member.
+	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: beta, ConvID: "carl"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddAgentGroupOwner(beta, "dave", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Shared-group: alice → bob picks alpha.
+	via, reason, err := CanSenderReachTarget("alice", "bob")
+	if err != nil || via == nil {
+		t.Fatalf("alice→bob failed: %v %v %v", via, reason, err)
+	}
+	if via.Name != "alpha" || reason != "shared-group" {
+		t.Errorf("alice→bob via=%q reason=%q, want alpha/shared-group", via.Name, reason)
+	}
+
+	// Owner-of: dave (no membership) → carl (member of beta).
+	via, reason, err = CanSenderReachTarget("dave", "carl")
+	if err != nil || via == nil {
+		t.Fatalf("dave→carl failed: %v %v %v", via, reason, err)
+	}
+	if via.Name != "beta" || reason != "owner-of-group" {
+		t.Errorf("dave→carl via=%q reason=%q, want beta/owner-of-group", via.Name, reason)
+	}
+
+	// Neither: alice (not in beta, doesn't own it) → carl.
+	via, reason, err = CanSenderReachTarget("alice", "carl")
+	if err != nil {
+		t.Fatalf("alice→carl error: %v", err)
+	}
+	if via != nil {
+		t.Errorf("alice→carl should fail, got via=%q reason=%q", via.Name, reason)
+	}
+
+	// Stranger → stranger: also nil.
+	via, _, _ = CanSenderReachTarget("nobody", "nobody-else")
+	if via != nil {
+		t.Errorf("stranger→stranger should fail, got %+v", via)
+	}
+}
+
+// TestAgentGroupOwnerCascadesOnGroupDelete: deleting a group removes
+// its owner rows too (FK ON DELETE CASCADE).
+func TestAgentGroupOwnerCascadesOnGroupDelete(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("alpha", "")
+	if err := AddAgentGroupOwner(g, "boss", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteAgentGroup("alpha"); err != nil {
+		t.Fatalf("DeleteAgentGroup: %v", err)
+	}
+	owners, _ := ListGroupsOwnedBy("boss")
+	if len(owners) != 0 {
+		t.Errorf("owner rows should cascade-delete with the group, got %v", owners)
+	}
+}
+
 // TestAgentMessageThreading checks the parent_id round-trip through
 // insert / GetAgentMessage / list. parent_id = 0 stays 0 (top of
 // thread), and a non-zero value is preserved on read.
