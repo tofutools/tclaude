@@ -145,6 +145,66 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 	return err
 }
 
+// AgentCronRun is a row in agent_cron_runs — one entry per
+// scheduler-fire of a cron job. Lets `cron logs` show the recent
+// execution history without mining slog output.
+type AgentCronRun struct {
+	ID       int64
+	JobID    int64
+	FiredAt  time.Time
+	Status   string
+	ErrorMsg string
+}
+
+// InsertAgentCronRun appends one execution record. Returns the
+// row ID; in practice callers ignore it.
+func InsertAgentCronRun(r *AgentCronRun) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`INSERT INTO agent_cron_runs
+		(job_id, fired_at, status, error_msg)
+		VALUES (?, ?, ?, ?)`,
+		r.JobID, r.FiredAt.UTC().Format(time.RFC3339), r.Status, r.ErrorMsg)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListAgentCronRunsForJob returns the most-recent runs for one job,
+// newest first. limit caps the result set; pass 0 for "no limit".
+func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT id, job_id, fired_at, status, error_msg
+		FROM agent_cron_runs WHERE job_id = ? ORDER BY fired_at DESC`
+	args := []any{jobID}
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := d.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentCronRun
+	for rows.Next() {
+		var r AgentCronRun
+		var fired string
+		if err := rows.Scan(&r.ID, &r.JobID, &fired, &r.Status, &r.ErrorMsg); err != nil {
+			return nil, err
+		}
+		r.FiredAt = parseTimeOrZero(fired)
+		out = append(out, &r)
+	}
+	return out, rows.Err()
+}
+
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var j AgentCronJob
 	var enabled int

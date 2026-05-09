@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 13
+const currentVersion = 14
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -101,6 +101,45 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 14 {
+		if err := migrateV13toV14(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV13toV14 adds agent_cron_runs — execution history for the
+// cron scheduler. Each successful (or failed) fire adds a row, so
+// the dashboard / `cron logs` verb can show "last few runs" without
+// having to mine slog output. agent_cron_jobs.last_run_at /
+// last_run_status stay as denorm caches for the listing view (avoids
+// a sub-select on every list).
+//
+// fired_at is when the scheduler picked up the job; status mirrors
+// the LastRunStatus tags (ok / send_failed / no_target). error_msg
+// is the raw error string when status != ok, empty otherwise.
+//
+// FK on job_id with ON DELETE CASCADE so deleting a job purges its
+// history — no need for a separate cleanup pass.
+func migrateV13toV14(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_cron_runs (
+			id        INTEGER PRIMARY KEY AUTOINCREMENT,
+			job_id    INTEGER NOT NULL REFERENCES agent_cron_jobs(id) ON DELETE CASCADE,
+			fired_at  TEXT NOT NULL,
+			status    TEXT NOT NULL DEFAULT '',
+			error_msg TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_cron_runs_job
+			ON agent_cron_runs(job_id, fired_at DESC);
+
+		UPDATE schema_version SET version = 14;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v13→v14: %w", err)
+	}
 	return nil
 }
 

@@ -114,6 +114,55 @@ func TestAgentCronJob_DueLogic(t *testing.T) {
 	}
 }
 
+func TestAgentCronRun_InsertListCascade(t *testing.T) {
+	setupTestDB(t)
+
+	id, _ := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		IntervalSeconds: 60, Body: "x", Enabled: true,
+	})
+
+	// Three runs at distinct timestamps.
+	t0 := time.Now()
+	for i, dt := range []time.Duration{-2 * time.Hour, -1 * time.Hour, 0} {
+		_, err := InsertAgentCronRun(&AgentCronRun{
+			JobID:   id,
+			FiredAt: t0.Add(dt),
+			Status:  "ok",
+		})
+		if err != nil {
+			t.Fatalf("insert run %d: %v", i, err)
+		}
+	}
+
+	// Newest first.
+	runs, err := ListAgentCronRunsForJob(id, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs, got %d", len(runs))
+	}
+	if !runs[0].FiredAt.After(runs[1].FiredAt) || !runs[1].FiredAt.After(runs[2].FiredAt) {
+		t.Errorf("runs not sorted newest-first: %+v", runs)
+	}
+
+	// Limit truncates from the head (newest).
+	limited, _ := ListAgentCronRunsForJob(id, 2)
+	if len(limited) != 2 {
+		t.Errorf("limit=2 → got %d", len(limited))
+	}
+
+	// Cascade on job delete.
+	if err := DeleteAgentCronJob(id); err != nil {
+		t.Fatalf("delete job: %v", err)
+	}
+	after, _ := ListAgentCronRunsForJob(id, 0)
+	if len(after) != 0 {
+		t.Errorf("expected runs cascaded with job delete; got %d", len(after))
+	}
+}
+
 func TestAgentCronJob_DeleteAndEnable(t *testing.T) {
 	setupTestDB(t)
 

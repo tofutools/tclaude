@@ -31,6 +31,7 @@ func cronCmd() *cobra.Command {
 			cronLsCmd(),
 			cronAddCmd(),
 			cronRmCmd(),
+			cronLogsCmd(),
 		},
 	}.ToCobra()
 }
@@ -210,6 +211,67 @@ func runCronRm(p *cronRmParams, stdout, stderr io.Writer) int {
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Deleted cron job #%d\n", id)
+	return rcOK
+}
+
+// ---- logs ----
+
+type cronLogsParams struct {
+	ID    string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	Limit int    `long:"limit" optional:"true" help:"Max number of runs to return (default 25, max 1000)."`
+}
+
+func cronLogsCmd() *cobra.Command {
+	return boa.CmdT[cronLogsParams]{
+		Use:         "logs <id>",
+		Short:       "Show recent execution history for a cron job",
+		Long:        "Returns the most-recent fires for a job (newest first), one row per scheduler tick that picked it up. Visibility: caller must be owner, target, or owner of a group containing the target.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *cronLogsParams, _ *cobra.Command, _ []string) {
+			os.Exit(runCronLogs(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runCronLogs(p *cronLogsParams, stdout, stderr io.Writer) int {
+	id, err := strconv.ParseInt(strings.TrimSpace(p.ID), 10, 64)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: id must be an integer; got %q\n", p.ID)
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	path := "/v1/cron/" + strconv.FormatInt(id, 10) + "/logs"
+	if p.Limit > 0 {
+		path += "?limit=" + strconv.Itoa(p.Limit)
+	}
+	var resp struct {
+		Runs []struct {
+			ID       int64  `json:"id"`
+			JobID    int64  `json:"job_id"`
+			FiredAt  string `json:"fired_at"`
+			Status   string `json:"status"`
+			ErrorMsg string `json:"error_msg"`
+		} `json:"runs"`
+	}
+	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if len(resp.Runs) == 0 {
+		fmt.Fprintln(stdout, "(no runs yet)")
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "%-20s  %-12s  %s\n", "FIRED", "STATUS", "ERROR")
+	fmt.Fprintln(stdout, strings.Repeat("─", 60))
+	for _, run := range resp.Runs {
+		fired := run.FiredAt
+		if t, err := time.Parse(time.RFC3339, run.FiredAt); err == nil {
+			fired = t.Local().Format("2006-01-02 15:04:05")
+		}
+		fmt.Fprintf(stdout, "%-20s  %-12s  %s\n", fired, run.Status, run.ErrorMsg)
+	}
 	return rcOK
 }
 

@@ -85,9 +85,22 @@ func handleCronByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "expected /v1/cron/{id}")
 		return
 	}
-	id, err := strconv.ParseInt(rest, 10, 64)
+	parts := strings.SplitN(rest, "/", 2)
+	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "id must be an integer")
+		return
+	}
+	if len(parts) == 2 && parts[1] == "logs" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method", "GET")
+			return
+		}
+		handleCronLogs(w, r, id)
+		return
+	}
+	if len(parts) == 2 && parts[1] != "" {
+		writeError(w, http.StatusNotFound, "not_found", "unknown /v1/cron/{id}/"+parts[1])
 		return
 	}
 	switch r.Method {
@@ -96,6 +109,59 @@ func handleCronByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "DELETE")
 	}
+}
+
+type runJSON struct {
+	ID       int64  `json:"id"`
+	JobID    int64  `json:"job_id"`
+	FiredAt  string `json:"fired_at"`
+	Status   string `json:"status,omitempty"`
+	ErrorMsg string `json:"error_msg,omitempty"`
+}
+
+func handleCronLogs(w http.ResponseWriter, r *http.Request, id int64) {
+	job, err := db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "lookup: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	// Read access: same visibility rules as ListCron (own / target /
+	// group-owner). Humans always pass.
+	p := peerFromContext(r.Context())
+	if p.HasClaudeAncestor && !jobVisibleTo(job, p.ConvID) {
+		writeError(w, http.StatusForbidden, "permission",
+			"caller cannot view logs for this job (not the owner, target, or owner of a group containing the target)")
+		return
+	}
+	limit := 25
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	runs, err := db.ListAgentCronRunsForJob(id, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "list runs: "+err.Error())
+		return
+	}
+	out := make([]runJSON, 0, len(runs))
+	for _, run := range runs {
+		j := runJSON{
+			ID:       run.ID,
+			JobID:    run.JobID,
+			Status:   run.Status,
+			ErrorMsg: run.ErrorMsg,
+		}
+		if !run.FiredAt.IsZero() {
+			j.FiredAt = run.FiredAt.Format(time.RFC3339)
+		}
+		out = append(out, j)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": out})
 }
 
 func handleCronList(w http.ResponseWriter, r *http.Request) {

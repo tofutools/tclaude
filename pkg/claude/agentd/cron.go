@@ -58,6 +58,16 @@ func runCronTick(now time.Time) {
 		if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
 			slog.Warn("cron: stamp last_run_at failed", "job", j.ID, "error", err)
 		}
+		// Append a run-history row so `cron logs` can show "last
+		// few executions" without mining slog. Best-effort —
+		// failure here doesn't roll back the fire.
+		if _, err := db.InsertAgentCronRun(&db.AgentCronRun{
+			JobID:   j.ID,
+			FiredAt: now,
+			Status:  status,
+		}); err != nil {
+			slog.Warn("cron: insert run row failed", "job", j.ID, "error", err)
+		}
 	}
 }
 
