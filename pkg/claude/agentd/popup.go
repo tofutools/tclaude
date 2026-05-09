@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
 // startPopupServer binds 127.0.0.1:0 (random port) and runs a tiny
@@ -247,6 +249,23 @@ func renderApprovalDoneCallback(w http.ResponseWriter, approved bool) {
 // Best-effort: returns the underlying error so callers can log it, but
 // the request flow does not depend on browser launch (the human can
 // always paste the URL manually).
+//
+// On WSL we try harder than plain xdg-open: routing through Windows
+// avoids the libsecret/gnome-keyring prompts that fire when xdg-open
+// happens to resolve to a Linux browser inside the WSL distro. Order
+// is cmd.exe /c start → wslview → xdg-open.
+//
+//   - cmd.exe is the most direct interop: if /mnt/c/.../cmd.exe is
+//     reachable, the URL hands off to the Windows host browser with
+//     zero extra dependencies.
+//   - wslview (from the `wslu` package) does the same thing but its
+//     own self-check is broken on recent WSL2 kernels that load the
+//     binfmt entry as `WSLInterop-late` instead of `WSLInterop`, so
+//     it bails before opening anything. We still try it as a fallback
+//     in case cmd.exe isn't on /mnt/c/ (custom mount layouts).
+//   - xdg-open is the final fallback (and may still hit a Linux
+//     browser → keyring prompt; we accept that on hosts where neither
+//     of the above works).
 func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -255,7 +274,31 @@ func openBrowser(url string) error {
 	case "windows":
 		cmd = exec.Command("cmd", "/c", "start", "", url)
 	default:
+		if wsl.IsWSL() {
+			if cmdExe := findWindowsCmd(); cmdExe != "" {
+				cmd = exec.Command(cmdExe, "/c", "start", "", url)
+				break
+			}
+			if path, err := exec.LookPath("wslview"); err == nil {
+				cmd = exec.Command(path, url)
+				break
+			}
+		}
 		cmd = exec.Command("xdg-open", url)
 	}
 	return cmd.Start()
+}
+
+// findWindowsCmd locates cmd.exe on a mounted Windows drive when running
+// under WSL. Returns "" if not found.
+func findWindowsCmd() string {
+	for _, p := range []string{
+		"/mnt/c/Windows/System32/cmd.exe",
+		"/mnt/c/Windows/SysWOW64/cmd.exe",
+	} {
+		if _, err := exec.LookPath(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
