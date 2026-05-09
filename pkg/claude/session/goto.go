@@ -99,6 +99,7 @@ func runGoto(params *GotoParams) error {
 	}
 
 	target := clients[targetIdx]
+	//nolint:staticcheck // focusTTY has side effects on darwin/windows; the linux stub returns false.
 	focusTTY(target.tty)
 	return nil
 }
