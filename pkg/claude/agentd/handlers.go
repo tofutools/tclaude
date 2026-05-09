@@ -19,9 +19,10 @@ import (
 // --- /v1/whoami ---
 
 type whoamiResp struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title"`
-	Groups []string `json:"groups"`
+	IsHuman bool     `json:"is_human"`
+	ConvID  string   `json:"conv_id,omitempty"`
+	Title   string   `json:"title,omitempty"`
+	Groups  []string `json:"groups,omitempty"`
 }
 
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
@@ -29,23 +30,24 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	convID, ok := requireAgent(w, r)
-	if !ok {
+	p := peerFromContext(r.Context())
+	if p.ConvID == "" {
+		writeJSON(w, http.StatusOK, whoamiResp{IsHuman: true})
 		return
 	}
-	row := agent.FreshConvRow(convID)
+	row := agent.FreshConvRow(p.ConvID)
 	title := "(unnamed)"
 	if row != nil {
 		if t := agent.DisplayTitle(row); t != "" {
 			title = t
 		}
 	}
-	groups, _ := db.ListGroupsForConv(convID)
+	groups, _ := db.ListGroupsForConv(p.ConvID)
 	gs := make([]string, 0, len(groups))
 	for _, g := range groups {
 		gs = append(gs, g.Name)
 	}
-	writeJSON(w, http.StatusOK, whoamiResp{ConvID: convID, Title: title, Groups: gs})
+	writeJSON(w, http.StatusOK, whoamiResp{ConvID: p.ConvID, Title: title, Groups: gs})
 }
 
 // --- /v1/lookup ---

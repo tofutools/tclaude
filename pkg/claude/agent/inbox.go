@@ -62,6 +62,51 @@ type inboxEntry struct {
 }
 
 func runInboxLs(p *inboxLsParams, stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		return runInboxLsDaemon(p, stdout, stderr)
+	}
+	return runInboxLsDirect(p, stdout, stderr)
+}
+
+func runInboxLsDaemon(p *inboxLsParams, stdout, stderr io.Writer) int {
+	q := fmt.Sprintf("/v1/inbox?limit=%d", p.Limit)
+	if p.Unread {
+		q += "&unread=1"
+	}
+	var out []inboxEntry
+	if err := DaemonGet(q, &out); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	return renderInbox(p, out, stdout)
+}
+
+func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
+		return rcOK
+	}
+	if len(out) == 0 {
+		fmt.Fprintln(stdout, "(empty inbox)")
+		return rcOK
+	}
+	for _, e := range out {
+		marker := "*" // unread
+		if e.Read {
+			marker = " "
+		}
+		subj := e.Subject
+		if subj == "" {
+			subj = e.Preview
+		}
+		fmt.Fprintf(stdout, "%s #%-4d %-8s  group=%-12s  %s\n", marker, e.ID, e.FromShort, e.Group, subj)
+	}
+	return rcOK
+}
+
+func runInboxLsDirect(p *inboxLsParams, stdout, stderr io.Writer) int {
 	myID, err := currentConvID()
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -95,29 +140,7 @@ func runInboxLs(p *inboxLsParams, stdout, stderr io.Writer) int {
 			Read:      !m.ReadAt.IsZero(),
 		})
 	}
-
-	if p.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
-		return rcOK
-	}
-	if len(out) == 0 {
-		fmt.Fprintln(stdout, "(empty inbox)")
-		return rcOK
-	}
-	for _, e := range out {
-		marker := "*" // unread
-		if e.Read {
-			marker = " "
-		}
-		subj := e.Subject
-		if subj == "" {
-			subj = e.Preview
-		}
-		fmt.Fprintf(stdout, "%s #%-4d %-8s  group=%-12s  %s\n", marker, e.ID, e.FromShort, e.Group, subj)
-	}
-	return rcOK
+	return renderInbox(p, out, stdout)
 }
 
 // --- inbox read ---
@@ -144,6 +167,51 @@ func runInboxRead(p *inboxReadParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: invalid message ID %q\n", p.ID)
 		return rcInvalidArg
 	}
+	if DaemonAvailable() {
+		return runInboxReadDaemon(p, id, stdout, stderr)
+	}
+	return runInboxReadDirect(p, id, stdout, stderr)
+}
+
+func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) int {
+	path := fmt.Sprintf("/v1/messages/%d", id)
+	if p.KeepUnread {
+		path += "?keep-unread=1"
+	}
+	var m struct {
+		ID        int64  `json:"id"`
+		From      string `json:"from"`
+		FromAlias string `json:"from_alias"`
+		To        string `json:"to"`
+		Group     string `json:"group"`
+		Subject   string `json:"subject"`
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := DaemonGet(path, &m); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintln(stdout, "Headers:")
+	fmt.Fprintf(stdout, "  Message-ID: %d\n", m.ID)
+	if m.FromAlias != "" {
+		fmt.Fprintf(stdout, "  From:       %s <%s>\n", m.FromAlias, m.From)
+	} else {
+		fmt.Fprintf(stdout, "  From:       %s\n", m.From)
+	}
+	fmt.Fprintf(stdout, "  To:         %s\n", m.To)
+	fmt.Fprintf(stdout, "  Group:      %s\n", m.Group)
+	if m.Subject != "" {
+		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
+	}
+	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt)
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Body:")
+	fmt.Fprintln(stdout, m.Body)
+	return rcOK
+}
+
+func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) int {
 	myID, err := currentConvID()
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

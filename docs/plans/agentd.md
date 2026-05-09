@@ -216,12 +216,12 @@ matter — both end up as a `claude`/`node` process whose PID has a
    "no CC ancestor in process tree" callers (enforced server-side).
 4. ⏳ End-to-end manual demo: `tclaude agentd serve` running, two
    live CC sessions, send/receive a message, verify tmux nudge.
-5. ⏳ CLI fallback: when the socket exists, `tclaude agent …` becomes
-   a thin client. Otherwise it falls back to direct DB access (so
-   tests and ad-hoc human use don't need the daemon).
-6. ⏳ Cleanup of any token/registration code from the v0 design.
-   The `agent_tokens` table was scoped out before it was added to
-   the schema, so nothing to migrate.
+5. ✅ CLI thin client: when the socket exists, `tclaude agent …`
+   commands route through HTTP. Otherwise they fall back to direct
+   DB access (so tests and ad-hoc human use don't need the daemon).
+   `whoami`, `lookup`, `ls`, `message`, `inbox ls/read`, and all
+   `groups …` commands switch on `DaemonAvailable()`.
+6. ⏳ End-to-end manual demo (waiting on user to start the daemon).
 
 Demo after (4): `tclaude agentd serve` in one terminal, then
 `curl --unix-socket ~/.tclaude/agentd.sock http://_/v1/whoami` from

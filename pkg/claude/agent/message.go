@@ -66,6 +66,40 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 		return rcInvalidArg
 	}
 
+	if DaemonAvailable() {
+		return runMessageDaemon(p, body, stdout, stderr)
+	}
+	return runMessageDirect(p, d, body, stdout, stderr)
+}
+
+func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) int {
+	var resp struct {
+		ID        int64  `json:"id"`
+		Delivered bool   `json:"delivered"`
+		ViaGroup  string `json:"via_group"`
+	}
+	err := DaemonPost("/v1/messages", map[string]string{
+		"to":      p.Target,
+		"subject": p.Subject,
+		"body":    body,
+	}, &resp)
+	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
+		fmt.Fprintf(stderr, "%s\n", de.Msg)
+		return rcAmbiguous
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	state := "queued; target not online"
+	if resp.Delivered {
+		state = "delivered"
+	}
+	fmt.Fprintf(stdout, "Sent message #%d via group %q (%s)\n", resp.ID, resp.ViaGroup, state)
+	return rcOK
+}
+
+func runMessageDirect(p *messageParams, d *messageDeps, body string, stdout, stderr io.Writer) int {
 	fromID, err := currentConvID()
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

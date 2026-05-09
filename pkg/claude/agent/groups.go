@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -87,6 +88,41 @@ func groupsLsCmd() *cobra.Command {
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		return runGroupsLsDaemon(p, stdout, stderr)
+	}
+	return runGroupsLsDirect(p, stdout, stderr)
+}
+
+type groupSummary struct {
+	Name    string `json:"name"`
+	Descr   string `json:"descr,omitempty"`
+	Members int    `json:"members"`
+}
+
+func runGroupsLsDaemon(p *groupsLsParams, stdout, stderr io.Writer) int {
+	var groups []groupSummary
+	if err := DaemonGet("/v1/groups", &groups); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(groups)
+		return rcOK
+	}
+	if len(groups) == 0 {
+		fmt.Fprintln(stdout, "(no groups)")
+		return rcOK
+	}
+	for _, g := range groups {
+		fmt.Fprintf(stdout, "%-20s  %d members  %s\n", g.Name, g.Members, g.Descr)
+	}
+	return rcOK
+}
+
+func runGroupsLsDirect(p *groupsLsParams, stdout, stderr io.Writer) int {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -129,13 +165,16 @@ func groupsCreateCmd() *cobra.Command {
 }
 
 func runGroupsCreate(p *groupsCreateParams, stdout, stderr io.Writer) int {
-	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcAuth
-	}
 	if p.Name == "" {
 		fmt.Fprintf(stderr, "Error: group name is required\n")
 		return rcInvalidArg
+	}
+	if DaemonAvailable() {
+		return runGroupsCreateDaemon(p, stdout, stderr)
+	}
+	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcAuth
 	}
 	if existing, _ := db.GetAgentGroupByName(p.Name); existing != nil {
 		fmt.Fprintf(stderr, "Error: group %q already exists\n", p.Name)
@@ -147,6 +186,23 @@ func runGroupsCreate(p *groupsCreateParams, stdout, stderr io.Writer) int {
 		return rcIOFailure
 	}
 	fmt.Fprintf(stdout, "Created group %q (id=%d)\n", p.Name, id)
+	return rcOK
+}
+
+func runGroupsCreateDaemon(p *groupsCreateParams, stdout, stderr io.Writer) int {
+	var resp struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	err := DaemonPost("/v1/groups", map[string]string{
+		"name":  p.Name,
+		"descr": p.Descr,
+	}, &resp)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "Created group %q (id=%d)\n", resp.Name, resp.ID)
 	return rcOK
 }
 
@@ -169,13 +225,22 @@ func groupsRmCmd() *cobra.Command {
 }
 
 func runGroupsRm(p *groupsRmParams, stdout, stderr io.Writer) int {
-	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcAuth
-	}
 	if p.Name == "" {
 		fmt.Fprintf(stderr, "Error: group name is required\n")
 		return rcInvalidArg
+	}
+	if DaemonAvailable() {
+		err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Name), nil)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+		fmt.Fprintf(stdout, "Deleted group %q\n", p.Name)
+		return rcOK
+	}
+	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcAuth
 	}
 	g, err := db.GetAgentGroupByName(p.Name)
 	if err != nil {
@@ -221,6 +286,15 @@ type memberEntry struct {
 }
 
 func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		var members []memberEntry
+		err := DaemonGet("/v1/groups/"+url.PathEscape(p.Name)+"/members", &members)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+		return renderMembers(p, members, stdout)
+	}
 	g, err := db.GetAgentGroupByName(p.Name)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -252,6 +326,10 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 			Descr:  m.Descr,
 		})
 	}
+	return renderMembers(p, out, stdout)
+}
+
+func renderMembers(p *groupsMembersParams, out []memberEntry, stdout io.Writer) int {
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -263,15 +341,15 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	for _, m := range out {
-		short := m.ConvID
-		if len(short) >= 8 {
-			short = short[:8]
+		shortID := m.ConvID
+		if len(shortID) >= 8 {
+			shortID = shortID[:8]
 		}
 		alias := m.Alias
 		if alias == "" {
 			alias = m.Title
 		}
-		fmt.Fprintf(stdout, "%s  %-20s  %-15s  %s\n", short, alias, m.Role, m.Descr)
+		fmt.Fprintf(stdout, "%s  %-20s  %-15s  %s\n", shortID, alias, m.Role, m.Descr)
 	}
 	return rcOK
 }
@@ -299,6 +377,27 @@ func groupsAddCmd() *cobra.Command {
 }
 
 func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		var resp struct {
+			ConvID string `json:"conv_id"`
+		}
+		err := DaemonPost("/v1/groups/"+url.PathEscape(p.Group)+"/members", map[string]string{
+			"conv":  p.Conv,
+			"alias": p.Alias,
+			"role":  p.Role,
+			"descr": p.Descr,
+		}, &resp)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+		shortID := resp.ConvID
+		if len(shortID) >= 8 {
+			shortID = shortID[:8]
+		}
+		fmt.Fprintf(stdout, "Added %s to group %q (alias=%q role=%q)\n", shortID, p.Group, p.Alias, p.Role)
+		return rcOK
+	}
 	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcAuth
@@ -360,6 +459,15 @@ func groupsRemoveCmd() *cobra.Command {
 }
 
 func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Group)+"/members/"+url.PathEscape(p.Conv), nil)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+		fmt.Fprintf(stdout, "Removed %s from group %q\n", p.Conv, p.Group)
+		return rcOK
+	}
 	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcAuth

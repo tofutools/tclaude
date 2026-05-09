@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -267,6 +268,35 @@ func whoamiCmd() *cobra.Command {
 const HumanIdentity = "<human>"
 
 func runWhoami(stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		return runWhoamiDaemon(stdout, stderr)
+	}
+	return runWhoamiDirect(stdout, stderr)
+}
+
+func runWhoamiDaemon(stdout, stderr io.Writer) int {
+	var resp struct {
+		IsHuman bool   `json:"is_human"`
+		ConvID  string `json:"conv_id"`
+		Title   string `json:"title"`
+	}
+	if err := DaemonGet("/v1/whoami", &resp); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.IsHuman {
+		fmt.Fprintln(stdout, HumanIdentity)
+		return rcOK
+	}
+	title := resp.Title
+	if title == "" {
+		title = "(unnamed)"
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", resp.ConvID, title)
+	return rcOK
+}
+
+func runWhoamiDirect(stdout, stderr io.Writer) int {
 	id, err := currentConvID()
 	if err != nil {
 		// No conv-id resolvable. If there's no `claude` ancestor in the
@@ -307,6 +337,32 @@ func lookupCmd() *cobra.Command {
 }
 
 func runLookup(p *lookupParams, stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		return runLookupDaemon(p, stdout, stderr)
+	}
+	return runLookupDirect(p, stdout, stderr)
+}
+
+func runLookupDaemon(p *lookupParams, stdout, stderr io.Writer) int {
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	err := DaemonGet("/v1/lookup?selector="+url.QueryEscape(p.Selector), &resp)
+	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
+		// The daemon returns 409 with a candidates list. Surface the
+		// candidates the same way the direct path does.
+		fmt.Fprintf(stderr, "%s\n", de.Msg)
+		return rcAmbiguous
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintln(stdout, resp.ConvID)
+	return rcOK
+}
+
+func runLookupDirect(p *lookupParams, stdout, stderr io.Writer) int {
 	r, matches, err := resolveSelector(p.Selector)
 	if errors.Is(err, errAmbiguous) {
 		printAmbiguous(stderr, p.Selector, matches)
@@ -319,6 +375,7 @@ func runLookup(p *lookupParams, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, r.ConvID)
 	return rcOK
 }
+
 
 // --- ls (peers in my groups) ---
 
@@ -347,6 +404,50 @@ type peerEntry struct {
 }
 
 func runLs(p *lsParams, stdout, stderr io.Writer) int {
+	if DaemonAvailable() {
+		return runLsDaemon(p, stdout, stderr)
+	}
+	return runLsDirect(p, stdout, stderr)
+}
+
+func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
+	var peers []*peerEntry
+	if err := DaemonGet("/v1/peers", &peers); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	return renderPeers(p, peers, stdout)
+}
+
+func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(peers)
+		return rcOK
+	}
+	if len(peers) == 0 {
+		fmt.Fprintln(stdout, "(no peers — you are not in any groups, or your groups have no other members)")
+		return rcOK
+	}
+	for _, pe := range peers {
+		shortID := pe.ConvID
+		if len(shortID) >= 8 {
+			shortID = shortID[:8]
+		}
+		alias := pe.Alias
+		if alias == "" {
+			alias = pe.Title
+		}
+		fmt.Fprintf(stdout, "%s  %-20s  %-15s  groups=%v\n", shortID, alias, pe.Role, pe.Groups)
+		if pe.Descr != "" {
+			fmt.Fprintf(stdout, "          %s\n", pe.Descr)
+		}
+	}
+	return rcOK
+}
+
+func runLsDirect(p *lsParams, stdout, stderr io.Writer) int {
 	myID, err := currentConvID()
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -395,33 +496,6 @@ func runLs(p *lsParams, stdout, stderr io.Writer) int {
 	for _, pe := range byConv {
 		peers = append(peers, pe)
 	}
-
-	if p.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(peers)
-		return rcOK
-	}
-
-	if len(peers) == 0 {
-		fmt.Fprintln(stdout, "(no peers — you are not in any groups, or your groups have no other members)")
-		return rcOK
-	}
-
-	for _, pe := range peers {
-		short := pe.ConvID
-		if len(short) >= 8 {
-			short = short[:8]
-		}
-		alias := pe.Alias
-		if alias == "" {
-			alias = pe.Title
-		}
-		fmt.Fprintf(stdout, "%s  %-20s  %-15s  groups=%v\n", short, alias, pe.Role, pe.Groups)
-		if pe.Descr != "" {
-			fmt.Fprintf(stdout, "          %s\n", pe.Descr)
-		}
-	}
-	return rcOK
+	return renderPeers(p, peers, stdout)
 }
 
