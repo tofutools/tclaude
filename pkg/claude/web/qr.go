@@ -107,13 +107,13 @@ func startKeypressListener(showQR func()) func() {
 			case ' ':
 				showQR()
 			case 'q', 0x03: // q or Ctrl+C
-				syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+				_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
 				return
 			}
 		}
 	}()
 
 	return func() {
-		term.Restore(fd, oldState)
+		_ = term.Restore(fd, oldState)
 	}
 }

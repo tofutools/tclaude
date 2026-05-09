@@ -65,7 +65,7 @@ func runStatusCallback(params *StatusCallbackParams) error {
 	var hookInput HookInput
 	stdinData, err := io.ReadAll(os.Stdin)
 	if err == nil && len(stdinData) > 0 {
-		json.NewDecoder(bytes.NewReader(stdinData)).Decode(&hookInput)
+		_ = json.NewDecoder(bytes.NewReader(stdinData)).Decode(&hookInput)
 	}
 
 	// Debug logging - useful for troubleshooting hook issues

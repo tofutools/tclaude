@@ -203,7 +203,7 @@ func parseFirstPromptFromJSONL(projectPath, sessionID string) string {
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	// Large buffer for lines with embedded images/screenshots (can exceed 2MB)

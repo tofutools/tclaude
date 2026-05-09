@@ -32,8 +32,8 @@ func deleteCerts() error {
 	if err != nil {
 		return err
 	}
-	os.Remove(filepath.Join(dir, "cert.pem"))
-	os.Remove(filepath.Join(dir, "key.pem"))
+	_ = os.Remove(filepath.Join(dir, "cert.pem"))
+	_ = os.Remove(filepath.Join(dir, "key.pem"))
 	return nil
 }
 

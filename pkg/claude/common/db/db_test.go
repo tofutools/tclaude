@@ -221,8 +221,10 @@ func TestLegacyImport(t *testing.T) {
 
 	// Create legacy session files
 	sessDir := dir + "/.tclaude/claude-sessions"
-	os.MkdirAll(sessDir, 0755)
-	os.WriteFile(sessDir+"/abc12345.json", []byte(`{
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessDir+"/abc12345.json", []byte(`{
 		"id": "abc12345",
 		"tmuxSession": "abc12345",
 		"pid": 999,
@@ -231,16 +233,26 @@ func TestLegacyImport(t *testing.T) {
 		"status": "idle",
 		"created": "2025-01-01T00:00:00Z",
 		"updated": "2025-01-01T12:00:00Z"
-	}`), 0644)
+	}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	// Create .auto marker
-	os.WriteFile(sessDir+"/abc12345.auto", []byte("auto-registered"), 0644)
+	if err := os.WriteFile(sessDir+"/abc12345.auto", []byte("auto-registered"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	// Create legacy debug.log
-	os.WriteFile(sessDir+"/debug.log", []byte("old debug data\n"), 0644)
+	if err := os.WriteFile(sessDir+"/debug.log", []byte("old debug data\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create legacy notify state
 	notifyDir := dir + "/.tclaude/notify-state"
-	os.MkdirAll(notifyDir, 0755)
-	os.WriteFile(notifyDir+"/abc12345", []byte(""), 0644)
+	if err := os.MkdirAll(notifyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notifyDir+"/abc12345", []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Open triggers migration + import
 	_, err := Open()

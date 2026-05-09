@@ -45,7 +45,7 @@ func NewCmd() *cobra.Command {
 	cmd.Args = cobra.ArbitraryArgs
 
 	// Register completion for --resume flag
-	cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		// Check if -g flag is set (params may not be populated during completion)
 		global, _ := cmd.Flags().GetBool("global")
 		return clcommon.GetConversationCompletions(global), cobra.ShellCompDirectiveKeepOrder | cobra.ShellCompDirectiveNoFileComp
@@ -197,8 +197,8 @@ func runNew(params *NewParams) error {
 
 	// Configure tmux to set window title with our session ID
 	// This ensures the title persists and is visible for window focus
-	clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
-	clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
+	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
 
 	// Configure keybindings for session navigation (idempotent)
 	ConfigureTmuxKeybindings()

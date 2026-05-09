@@ -36,16 +36,16 @@ func fakeClaude() {
 	cwd, _ := os.Getwd()
 	switch os.Getenv("FAKE_CLAUDE_BEHAVIOR") {
 	case "create_file":
-		os.WriteFile(filepath.Join(cwd, "result.txt"), []byte("task done\n"), 0644)
+		_ = os.WriteFile(filepath.Join(cwd, "result.txt"), []byte("task done\n"), 0644)
 	case "create_unique_file":
 		// Append a new result file on each invocation using a counter file.
 		counterPath := filepath.Join(cwd, ".fake_counter")
 		data, _ := os.ReadFile(counterPath)
 		n := 0
-		fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+		_, _ = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
 		n++
-		os.WriteFile(counterPath, []byte(fmt.Sprintf("%d", n)), 0644)
-		os.WriteFile(filepath.Join(cwd, fmt.Sprintf("result_%d.txt", n)), []byte("done\n"), 0644)
+		_ = os.WriteFile(counterPath, []byte(fmt.Sprintf("%d", n)), 0644)
+		_ = os.WriteFile(filepath.Join(cwd, fmt.Sprintf("result_%d.txt", n)), []byte("done\n"), 0644)
 	case "fail":
 		os.Exit(1)
 	case "print_stdin":
@@ -57,9 +57,9 @@ func fakeClaude() {
 		counterPath := filepath.Join(cwd, ".review_counter")
 		data, _ := os.ReadFile(counterPath)
 		n := 0
-		fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+		_, _ = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
 		n++
-		os.WriteFile(counterPath, []byte(fmt.Sprintf("%d", n)), 0644)
+		_ = os.WriteFile(counterPath, []byte(fmt.Sprintf("%d", n)), 0644)
 		fmt.Print("has feedback")
 		// "no_change" and default: exit 0, touch nothing.
 	}
@@ -972,7 +972,7 @@ func TestReviewLoop_StopsAtMaxIterations(t *testing.T) {
 	// maxIter sends that triggered a loop, plus 1 final call that hit the cap.
 	data, _ := os.ReadFile(filepath.Join(dir, ".review_counter"))
 	n := 0
-	fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
 	if n != maxIter+1 {
 		t.Errorf("review agent called %d times, want %d", n, maxIter+1)
 	}

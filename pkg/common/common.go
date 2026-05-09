@@ -51,7 +51,7 @@ func ParseSize(s string) (int64, error) {
 	}
 
 	// Determine multiplier based on unit
-	var multiplier int64 = 1
+	var multiplier int64
 	switch {
 	case unit == "" || unit == "b":
 		multiplier = 1

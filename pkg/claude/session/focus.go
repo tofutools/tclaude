@@ -52,7 +52,7 @@ func runFocus(params *FocusParams) error {
 	// Check if session is alive
 	if !IsTmuxSessionAlive(state.TmuxSession) {
 		state.Status = StatusExited
-		SaveSessionState(state)
+		_ = SaveSessionState(state)
 		return fmt.Errorf("session %s has exited", state.ID)
 	}
 
@@ -60,7 +60,7 @@ func runFocus(params *FocusParams) error {
 	fmt.Printf("Focusing session %s...\n", state.ID)
 
 	// Set the session ID for other functions that may need it
-	os.Setenv("TCLAUDE_SESSION_ID", state.ID)
+	_ = os.Setenv("TCLAUDE_SESSION_ID", state.ID)
 
 	// Try to focus the terminal running this session
 	TryFocusAttachedSession(state.TmuxSession)

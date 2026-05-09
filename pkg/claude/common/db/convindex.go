@@ -70,7 +70,7 @@ func ListConvIndex(projectDir string) ([]*ConvIndexRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanConvIndexRows(rows)
 }
@@ -89,7 +89,7 @@ func ListAllConvIndex() ([]*ConvIndexRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanConvIndexRows(rows)
 }
@@ -123,7 +123,7 @@ func FindConvIndexByPrefix(prefix string) (*ConvIndexRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	results, err := scanConvIndexRows(rows)
 	if err != nil {

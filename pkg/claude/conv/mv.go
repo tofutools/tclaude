@@ -138,8 +138,8 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 		// Remove existing conversation files from destination
 		existingFile := filepath.Join(dstProjectPath, convID+".jsonl")
 		existingDir := filepath.Join(dstProjectPath, convID)
-		os.Remove(existingFile)
-		os.RemoveAll(existingDir)
+		_ = os.Remove(existingFile)
+		_ = os.RemoveAll(existingDir)
 		// Remove existing entry from destination index
 		RemoveSessionByID(dstIndex, convID)
 	}
@@ -154,7 +154,7 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 			fmt.Fprintf(stderr, "Error moving conversation file: %v\n", err)
 			return 1
 		}
-		os.Remove(srcConvFile)
+		_ = os.Remove(srcConvFile)
 	}
 
 	// Move conversation directory if it exists
@@ -167,7 +167,7 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 				fmt.Fprintf(stderr, "Error moving conversation directory: %v\n", err)
 				return 1
 			}
-			os.RemoveAll(srcConvDir)
+			_ = os.RemoveAll(srcConvDir)
 		}
 	}
 

@@ -332,19 +332,19 @@ func AppendDoneMD(path string, result TaskResult) error {
 	sb.WriteString("## ")
 	sb.WriteString(result.Title)
 	sb.WriteString("\n\n")
-	sb.WriteString(fmt.Sprintf("- **Status:** %s\n", result.Status))
-	sb.WriteString(fmt.Sprintf("- **Completed:** %s\n", result.Timestamp.Format("2006-01-02 15:04:05")))
+	fmt.Fprintf(&sb, "- **Status:** %s\n", result.Status)
+	fmt.Fprintf(&sb, "- **Completed:** %s\n", result.Timestamp.Format("2006-01-02 15:04:05"))
 	if result.SessionID != "" {
-		sb.WriteString(fmt.Sprintf("- **Session ID:** %s\n", result.SessionID))
+		fmt.Fprintf(&sb, "- **Session ID:** %s\n", result.SessionID)
 	}
 	if result.Commit != "" {
-		sb.WriteString(fmt.Sprintf("- **Commit:** %s\n", result.Commit))
+		fmt.Fprintf(&sb, "- **Commit:** %s\n", result.Commit)
 	}
 	if result.PlanFile != "" {
-		sb.WriteString(fmt.Sprintf("- **Plan:** %s\n", result.PlanFile))
+		fmt.Fprintf(&sb, "- **Plan:** %s\n", result.PlanFile)
 	}
 	if result.Error != "" {
-		sb.WriteString(fmt.Sprintf("- **Error:** %s\n", result.Error))
+		fmt.Fprintf(&sb, "- **Error:** %s\n", result.Error)
 	}
 
 	sb.WriteString("\n<details>\n<summary>Prompt</summary>\n\n")

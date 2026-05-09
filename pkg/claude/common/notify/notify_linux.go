@@ -34,7 +34,7 @@ func sendLinuxClickable(sessionID, title, body string) error {
 		return fmt.Errorf("failed to start notify listener: %w", err)
 	}
 	// Detach - don't wait for the listener process
-	go listener.Wait()
+	go func() { _ = listener.Wait() }()
 
 	return nil
 }
@@ -102,39 +102,4 @@ func escapeXML(s string) string {
 	s = strings.ReplaceAll(s, "'", "&apos;")
 	s = strings.ReplaceAll(s, "\"", "&quot;")
 	return s
-}
-
-// notifyWSL sends a Windows Toast notification via PowerShell from WSL (non-clickable fallback).
-func notifyWSL(title, body string) error {
-	psPath := wsl.FindPowerShell()
-	if psPath == "" {
-		return fmt.Errorf("powershell not found")
-	}
-
-	// Escape single quotes for PowerShell
-	title = strings.ReplaceAll(title, "'", "''")
-	body = strings.ReplaceAll(body, "'", "''")
-
-	// PowerShell script for Windows Toast notification
-	script := fmt.Sprintf(`
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-$template = @'
-<toast>
-  <visual>
-    <binding template="ToastText02">
-      <text id="1">%s</text>
-      <text id="2">%s</text>
-    </binding>
-  </visual>
-</toast>
-'@
-$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-$xml.LoadXml($template)
-$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('tclaude').Show($toast)
-`, title, body)
-
-	cmd := exec.Command(psPath, "-NoProfile", "-NonInteractive", "-Command", script)
-	return cmd.Run()
 }

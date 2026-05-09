@@ -65,7 +65,8 @@ func runSetup(params *Params) error {
 		fmt.Println("✓ tmux installed")
 	} else {
 		fmt.Println("✗ tmux not found (required for session management)")
-		if runtime.GOOS == "darwin" {
+		switch runtime.GOOS {
+		case "darwin":
 			if isBrewInstalled() {
 				if askYesNo("Install tmux via Homebrew?", true, params.Yes) {
 					fmt.Println("  Installing tmux...")
@@ -87,14 +88,14 @@ func runSetup(params *Params) error {
 				fmt.Println("\nPlease install tmux and run setup again.")
 				return nil
 			}
-		} else if runtime.GOOS == "linux" {
+		case "linux":
 			fmt.Println("  Install with your package manager:")
 			fmt.Println("    Ubuntu/Debian: sudo apt install tmux")
 			fmt.Println("    Fedora:        sudo dnf install tmux")
 			fmt.Println("    Arch:          sudo pacman -S tmux")
 			fmt.Println("\nPlease install tmux and run setup again.")
 			return nil
-		} else {
+		default:
 			fmt.Println("  Please install tmux for your platform.")
 			fmt.Println("\nPlease install tmux and run setup again.")
 			return nil

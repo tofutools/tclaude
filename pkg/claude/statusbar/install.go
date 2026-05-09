@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common"
 )
@@ -23,17 +22,6 @@ var StatusLineCommand = common.DetectCmd("status-bar")
 // Call this after changing common.SetAbsolutePaths().
 func ReinitStatusLineCommand() {
 	StatusLineCommand = common.DetectCmd("status-bar")
-}
-
-// isOurStatusBar returns true if the command is a tclaude status-bar command,
-// including absolute paths like /usr/local/bin/tclaude status-bar
-func isOurStatusBar(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return false
-	}
-	base := filepath.Base(fields[0])
-	return strings.HasSuffix(command, "status-bar") && (base == "tclaude")
 }
 
 // CheckInstalled checks if the current tclaude status-bar command is configured in Claude settings.

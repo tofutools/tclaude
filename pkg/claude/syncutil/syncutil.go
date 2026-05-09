@@ -95,9 +95,7 @@ func SaveConfig(config *SyncConfig) error {
 // e.g., "/home/alice/git/myproject" -> "/home/alice/git/myproject"
 func ProjectDirToPath(projectDir string) string {
 	// Remove leading dash and convert dashes to path separators
-	if strings.HasPrefix(projectDir, "-") {
-		projectDir = projectDir[1:]
-	}
+	projectDir = strings.TrimPrefix(projectDir, "-")
 	return "/" + strings.ReplaceAll(projectDir, "-", "/")
 }
 
@@ -106,9 +104,7 @@ func ProjectDirToPath(projectDir string) string {
 func PathToProjectDir(path string) string {
 	// Normalize path separators and remove leading slash
 	path = filepath.ToSlash(path)
-	if strings.HasPrefix(path, "/") {
-		path = path[1:]
-	}
+	path = strings.TrimPrefix(path, "/")
 	return "-" + strings.ReplaceAll(path, "/", "-")
 }
 

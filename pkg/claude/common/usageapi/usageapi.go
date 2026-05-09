@@ -292,7 +292,7 @@ func RefreshAccessToken() (string, error) {
 		slog.Warn("token refresh request failed", "error", err)
 		return "", fmt.Errorf("token refresh request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -466,7 +466,7 @@ func FetchRaw(token string) ([]byte, error) {
 		slog.Warn("usage API request failed", "error", err)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -353,7 +353,7 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 				}
 			}
 		case "UserPromptSubmit":
-			os.Remove(signalPath)
+			_ = os.Remove(signalPath)
 		}
 	}
 	return false

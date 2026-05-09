@@ -54,8 +54,12 @@ func TestAddTombstone_Duplicate(t *testing.T) {
 	dir := t.TempDir()
 
 	// Add same tombstone twice
-	AddTombstone(dir, "session-123")
-	AddTombstone(dir, "session-123")
+	if err := AddTombstone(dir, "session-123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddTombstone(dir, "session-123"); err != nil {
+		t.Fatal(err)
+	}
 
 	tombstones, _ := LoadTombstones(dir)
 	if len(tombstones.Entries) != 1 {

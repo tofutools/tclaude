@@ -288,7 +288,7 @@ func importLegacySessions(db *sql.DB, home string) bool {
 	if err != nil {
 		return false
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	imported := 0
 	for _, entry := range entries {
@@ -350,7 +350,7 @@ func importLegacyNotifyState(db *sql.DB, home string) bool {
 	if err != nil {
 		return false
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	imported := 0
 	for _, entry := range entries {

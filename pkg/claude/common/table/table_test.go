@@ -498,7 +498,7 @@ func TestTableSelectedRow(t *testing.T) {
 	tbl.SelectedIndex = 1
 	row := tbl.SelectedRow()
 	if row == nil {
-		t.Error("should return row when selected")
+		t.Fatal("should return row when selected")
 	}
 	if row.Cells[0] != "B" {
 		t.Errorf("selected row should be 'B', got %q", row.Cells[0])
