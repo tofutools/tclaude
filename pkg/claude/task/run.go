@@ -440,21 +440,31 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 	cmd.Stderr = os.Stderr
 
 	// Start watcher for auto-continue in tmux mode
+	var resultCh chan session.TaskSignal
 	tmuxSession := os.Getenv("TCLAUDE_TASK_TMUX")
 	if tmuxSession != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, opts, baseCommit)
+		resultCh = make(chan session.TaskSignal, 1)
+		go watchForTaskCompletion(ctx, signalPath, tmuxSession, cwd, excludeTaskFiles, opts, baseCommit, resultCh)
 	}
 
 	err = cmd.Run()
 
-	// Read report and session ID from signal file (written by Stop hook as JSON)
-	if data, readErr := os.ReadFile(signalPath); readErr == nil {
-		var taskSignal session.TaskSignal
-		if json.Unmarshal(data, &taskSignal) == nil {
-			report = taskSignal.Report
-			sessionID = taskSignal.SessionID
+	// In tmux mode the watcher goroutine captures the signal before verification/review
+	// retries (which may delete and rewrite the signal file); fall back to reading the
+	// signal file directly for non-tmux runs.
+	select {
+	case sig := <-resultCh:
+		report = sig.Report
+		sessionID = sig.SessionID
+	default:
+		if data, readErr := os.ReadFile(signalPath); readErr == nil {
+			var taskSignal session.TaskSignal
+			if json.Unmarshal(data, &taskSignal) == nil {
+				report = taskSignal.Report
+				sessionID = taskSignal.SessionID
+			}
 		}
 	}
 	os.Remove(signalPath)
@@ -466,7 +476,7 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 // /exit to the tmux session after a grace period. The grace period allows the
 // user to start typing (which triggers UserPromptSubmit, removing the signal
 // file) before auto-exit kicks in.
-func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles bool, opts taskRunOpts, baseCommit string) {
+func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd string, excludeTaskFiles bool, opts taskRunOpts, baseCommit string, resultCh chan<- session.TaskSignal) {
 	dir := filepath.Dir(signalPath)
 	base := filepath.Base(signalPath)
 
@@ -513,10 +523,12 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 		stuckTickC = t.C
 	}
 
+	var taskSignal session.TaskSignal
+	var firstTaskSignal *session.TaskSignal
+
 	for {
 		if signalExists {
 			// Read the signal to determine what triggered it
-			var taskSignal session.TaskSignal
 			if data, readErr := os.ReadFile(signalPath); readErr == nil {
 				json.Unmarshal(data, &taskSignal)
 			}
@@ -568,6 +580,9 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				slog.Debug("task produced no file changes", "event", taskSignal.Event, "module", "task")
 				sendNotification(taskSignal.SessionID, cwd, "waiting", "Task produced no file changes")
 				return
+			}
+			if firstTaskSignal == nil {
+				firstTaskSignal = &taskSignal
 			}
 			if opts.verifyCmd != "" {
 				if ctx.Err() != nil {
@@ -654,6 +669,12 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 				}
 			}
 			slog.Debug("exiting", "event", taskSignal.Event, "module", "task")
+			if firstTaskSignal != nil {
+				select {
+				case resultCh <- *firstTaskSignal:
+				default:
+				}
+			}
 			sendTmuxMessage(tmuxSession, "/exit")
 			return
 		}
