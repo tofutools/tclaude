@@ -253,8 +253,15 @@ func nudgeIfAlive(msgID int64, fromID, toID string, groupID int64, groupName, su
 		msgID, fromAlias, agent.ShortID(fromID), groupName, subjectClause, msgID, agent.ShortID(fromID),
 	)
 	target := sess.TmuxSession + ":0.0"
+	// Two-step send: the Enter in the first call lands as a newline inside
+	// CC's input textarea, so a second Enter is needed to actually submit.
+	// Same pattern as pkg/claude/task/run.go's sendTmuxMessage / sendTmuxEnter.
 	if err := clcommon.TmuxCommand("send-keys", "-t", target, nudge, "Enter").Run(); err != nil {
-		slog.Warn("nudge failed", "error", err, "tmux", sess.TmuxSession)
+		slog.Warn("nudge failed (text)", "error", err, "tmux", sess.TmuxSession)
+		return false
+	}
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
+		slog.Warn("nudge failed (submit)", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}
 	_ = db.MarkAgentMessageDelivered(msgID)
