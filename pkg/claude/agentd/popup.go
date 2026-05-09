@@ -66,6 +66,15 @@ type approvalRequest struct {
 	timeout         time.Duration
 	decision        chan bool          // approve=true, deny=false
 	extend          chan time.Duration // +N seconds — bounded extension so an unattended popup still eventually times out
+
+	// sessionToken is set on the first GET render and required on all
+	// POSTs (approve/deny/extend) for this approval. Stored as an
+	// HttpOnly, SameSite=Strict cookie. See handlePopupApprove for the
+	// threat model (defense-in-depth against drive-by CSRF and
+	// scraped-URL replay; does NOT close the same-user /proc-leakage
+	// path — that's a known limitation, see the cookie comment below).
+	mu           sync.Mutex
+	sessionToken string
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -173,8 +182,27 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
+		// On first render, mint a session token and set it as an
+		// HttpOnly SameSite=Strict cookie. Subsequent POSTs must
+		// echo it. Reused on refresh.
+		req.mu.Lock()
+		if req.sessionToken == "" {
+			req.sessionToken = newApprovalID() // reuse the random gen; same entropy
+		}
+		token := req.sessionToken
+		req.mu.Unlock()
+		http.SetCookie(w, &http.Cookie{
+			Name:     "tclaude_popup_" + req.id,
+			Value:    token,
+			Path:     "/approve/" + req.id,
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
 		renderApprovalPage(w, req)
 	case http.MethodPost:
+		if !checkPopupAuth(w, r, req) {
+			return
+		}
 		if len(parts) < 2 {
 			http.Error(w, "missing decision", http.StatusBadRequest)
 			return
@@ -360,6 +388,60 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 		html.EscapeString(req.id),
 		html.EscapeString(req.id),
 	)
+}
+
+// checkPopupAuth gates POSTs to the approval endpoints with two
+// cheap defense-in-depth checks:
+//
+//  1. The HttpOnly session cookie set on first GET must be present
+//     and match the stored token. Stops naive replay from a curl
+//     attacker who scraped the URL but never opened the page.
+//
+//  2. The Origin (or Referer if Origin is missing) must point at
+//     our own popup base URL. Stops drive-by CSRF from another tab.
+//
+// Caveats — this is NOT a complete fix. Specifically, a same-user
+// process that reads /proc/<browser launcher pid>/cmdline can
+// discover the URL, then issue a GET (which returns Set-Cookie),
+// then re-use the cookie on POST. That attacker has the same
+// privileges as the user already (they can also dial agentd.sock
+// directly), so the popup boundary doesn't close any new gap. We
+// treat same-user processes as in-scope-of-trust, document the
+// residual risk, and queue a more robust scheme (native dialogs or
+// a dashboard requiring a tray-icon click) as future work.
+func checkPopupAuth(w http.ResponseWriter, r *http.Request, req *approvalRequest) bool {
+	// Cookie check.
+	c, err := r.Cookie("tclaude_popup_" + req.id)
+	if err != nil || c.Value == "" {
+		http.Error(w, "missing popup session cookie; load the popup page first", http.StatusForbidden)
+		return false
+	}
+	req.mu.Lock()
+	expected := req.sessionToken
+	req.mu.Unlock()
+	if expected == "" || c.Value != expected {
+		http.Error(w, "popup session cookie does not match", http.StatusForbidden)
+		return false
+	}
+
+	// Origin / Referer check. Browser fetch() sends Origin; classic
+	// form posts only send Referer. Accept either as long as it
+	// points at our own popup base.
+	origin := r.Header.Get("Origin")
+	referer := r.Header.Get("Referer")
+	if origin == "" && referer == "" {
+		http.Error(w, "missing Origin and Referer", http.StatusForbidden)
+		return false
+	}
+	if origin != "" && !strings.HasPrefix(origin, popupBaseURL) {
+		http.Error(w, "Origin mismatch", http.StatusForbidden)
+		return false
+	}
+	if origin == "" && !strings.HasPrefix(referer, popupBaseURL) {
+		http.Error(w, "Referer mismatch", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // snapshotRequestBody reads the request body (up to maxBodyPreview
