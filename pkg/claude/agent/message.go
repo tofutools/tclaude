@@ -99,9 +99,12 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	// Multicast: per-recipient status. Recipients[] is set only for
-	// the group:<name> path; direct sends populate ID/Delivered.
-	if resp.Recipients != nil {
+	// Discriminate on the request, not the response. The daemon's
+	// Recipients slice gets `omitempty`'d when empty (single-member
+	// group), so checking response shape would misroute that case
+	// into the direct-send branch. The CLI knows what it sent.
+	isMulticast := strings.HasPrefix(p.Target, "group:")
+	if isMulticast {
 		if len(resp.Recipients) == 0 {
 			fmt.Fprintf(stdout, "No recipients in group %q (you're the only member); nothing sent.\n", resp.ViaGroup)
 			return rcOK
