@@ -327,7 +327,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 	}
 
 	fmt.Fprintf(out, "\n%s\n", strings.Repeat("=", 60))
-	_, _ = fmt.Fprintln(out, "All tasks completed!")
+	fmt.Fprintln(out, "All tasks completed!")
 	fmt.Fprintf(out, "%s\n", strings.Repeat("=", 60))
 
 	sendNotification("tasks", cwd, "completed", "All tasks completed!")
@@ -337,7 +337,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 
 // waitForTasks watches TODO.md using fsnotify until tasks appear or context is cancelled
 func waitForTasks(ctx context.Context, out io.Writer, todoPath string) error {
-	_, _ = fmt.Fprintln(out, "\nWatching for new tasks in TODO.md... (Ctrl-C to stop)")
+	fmt.Fprintln(out, "\nWatching for new tasks in TODO.md... (Ctrl-C to stop)")
 
 	// Watch the directory containing TODO.md (file may not exist yet)
 	dir := filepath.Dir(todoPath)
@@ -362,7 +362,7 @@ func waitForTasks(ctx context.Context, out io.Writer, todoPath string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			_, _ = fmt.Fprintln(out, "\nInterrupted, stopping task watcher.")
+			fmt.Fprintln(out, "\nInterrupted, stopping task watcher.")
 			return fmt.Errorf("interrupted")
 		case event, ok := <-watcher.Events:
 			if !ok {
@@ -518,7 +518,11 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			// Read the signal to determine what triggered it
 			var taskSignal session.TaskSignal
 			if data, readErr := os.ReadFile(signalPath); readErr == nil {
-				_ = json.Unmarshal(data, &taskSignal)
+				if err := json.Unmarshal(data, &taskSignal); err != nil {
+					slog.Warn("failed to parse task signal", "error", err, "path", signalPath, "module", "task")
+					signalExists = false
+					continue
+				}
 			}
 
 			slog.Debug("signal received", "signal", taskSignal, "module", "task")
@@ -967,16 +971,18 @@ func runReviewAgent(ctx context.Context, reviewSkill, diff, cwd string, timeout 
 	return strings.TrimSpace(string(out)), err
 }
 
-// sendTmuxMessage sends arbitrary text + Enter to the tmux session.
 func sendTmuxMessage(tmuxSession, message string) {
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, message, "Enter")
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		slog.Warn("failed to send tmux message", "session", tmuxSession, "error", err, "module", "task")
+	}
 }
 
-// sendTmuxEnter sends just an Enter keypress to the tmux session.
 func sendTmuxEnter(tmuxSession string) {
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter")
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		slog.Warn("failed to send tmux enter", "session", tmuxSession, "error", err, "module", "task")
+	}
 }
 
 // gitCommitAll stages all changes and commits with the given message.

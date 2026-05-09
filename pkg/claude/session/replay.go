@@ -112,8 +112,9 @@ func runReplay(file string, delay time.Duration) error {
 		}
 	}
 
-	_ = DeleteSessionState(sessionID)
-
+	if err := DeleteSessionState(sessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "[replay] warning: failed to delete session state %q: %v\n", sessionID, err)
+	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading file: %w", err)
 	}
