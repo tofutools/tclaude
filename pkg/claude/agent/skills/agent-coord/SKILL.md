@@ -143,8 +143,8 @@ load that one when you need to rename, not this one.
 - **Don't mutate group membership unless granted.** Mutating
   subcommands (`groups create|rm|add|remove|update-member`) are
   permission-gated. By default agents can't run them. Humans bypass
-  the gate. Slugs: `groups.create`, `groups.rm`, `member.add`,
-  `member.remove`, `member.redesignate`.
+  the gate. Slugs: `groups.create`, `groups.rm`, `groups.stop`,
+  `groups.resume`, `member.add`, `member.remove`, `member.redesignate`.
 
   Permissions live in two places:
   - **Defaults** — `agent.default_permissions` in

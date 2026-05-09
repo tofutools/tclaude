@@ -43,6 +43,14 @@ var permissionRegistry = []PermSlug{
 		Description: "Delete agent groups (tclaude agent groups rm)",
 	},
 	{
+		Slug:        PermGroupsStop,
+		Description: "Stop a group's running members (tclaude agent groups stop)",
+	},
+	{
+		Slug:        PermGroupsResume,
+		Description: "Resume a group's offline members (tclaude agent groups resume)",
+	},
+	{
 		Slug:        PermMemberAdd,
 		Description: "Add members to a group (tclaude agent groups add)",
 	},

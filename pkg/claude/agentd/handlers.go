@@ -866,6 +866,26 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /v1/groups/{name}/stop and /resume — bulk lifecycle ops over
+	// the group's members. Both are POST-only since they have side
+	// effects (tmux send-keys / kill-session / spawning subprocesses).
+	if len(parts) >= 2 && parts[1] == "stop" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+			return
+		}
+		handleGroupStop(w, r, g)
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "resume" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+			return
+		}
+		handleGroupResume(w, r, g)
+		return
+	}
+
 	// /v1/groups/{name}/members[*]
 	if len(parts) >= 2 && parts[1] == "members" {
 		switch r.Method {

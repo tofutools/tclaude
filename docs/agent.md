@@ -150,6 +150,8 @@ tclaude agent groups rm <group>                           # fails if any message
 tclaude agent groups add <group> <conv> [--alias N --role R --descr T]
 tclaude agent groups remove <group> <conv>
 tclaude agent groups update-member <group> <conv> [--alias N --role R --descr T]
+tclaude agent groups stop <group> [--force]                # soft /exit (or hard kill-session)
+tclaude agent groups resume <group>                        # spawn `tclaude session new -r` for offline members
 ```
 
 `update-member` only touches the flags you pass; pass `--alias=` (an
@@ -228,6 +230,8 @@ An agent's effective permission set is `union(defaults, grants)`.
 | `member.add`            | `tclaude agent groups add`                                |
 | `member.remove`         | `tclaude agent groups remove`                             |
 | `member.redesignate`    | `tclaude agent groups update-member`                      |
+| `groups.stop`           | `tclaude agent groups stop`                               |
+| `groups.resume`         | `tclaude agent groups resume`                             |
 | `permissions.grant`     | `tclaude agent permissions grant`                         |
 | `permissions.revoke`    | `tclaude agent permissions revoke`                        |
 

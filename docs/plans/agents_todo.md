@@ -48,22 +48,16 @@ that *act on* members in bulk.
   - Idempotent: spawning a group whose members are all already online
     is a no-op (useful as a "make sure my team is up" reconciliation).
 
-- `tclaude agent groups stop <group>` — gracefully end every member's
-  session. Implementation choices, in order of weight:
-  - **Soft**: post a "wrap up" nudge per member, mark group as
-    `stopping`, let agents `/exit` themselves.
-  - **Medium**: send `/exit` via tmux send-keys to each member's pane
-    (mirrors the inject mechanic agentd already uses for `/rename`).
-    Bounded wait, then escalate.
-  - **Hard**: tmux kill-session. Last resort; risks losing
-    unsubmitted input.
-  Probably ship soft+hard with a `--force` toggle. Membership is
-  preserved (so `resume` can bring everyone back).
+- ~~`tclaude agent groups stop <group>`~~ — **shipped**. Soft default
+  (inject `/exit` via tmux send-keys), `--force` does
+  `tmux kill-session`. Per-member result table. Membership preserved.
+  Permission slug `groups.stop`.
 
-- `tclaude agent groups resume <group>` — sugar over `spawn`: re-attach
-  any members that have a conv but no live session. Distinct from
-  `spawn` only in error semantics — `resume` errors if any member is
-  in the no-conv-yet state, since "resume" implies prior existence.
+- ~~`tclaude agent groups resume <group>`~~ — **shipped** for the
+  has-conv-but-dead-tmux case. Spawns
+  `tclaude session new -r <conv> -d --global` for each offline
+  member; idempotent. Permission slug `groups.resume`. The
+  no-conv-yet placeholder case is Phase B (templates).
 
 - `tclaude agent groups create <group> --team <template>` — bootstrap
   a group + initial members in one call. Template is JSON or a flag
@@ -590,6 +584,16 @@ for now** — single-host first.
   section in `~/.tclaude/config.json` (defaults +
   per-conv-id/prefix/title overrides). Humans bypass the gate. Skill
   documents the command + how to grant the permission.
+- **Group lifecycle Phase A: stop / resume.** `tclaude agent
+  groups stop <group> [--force]` and
+  `tclaude agent groups resume <group>` ship the smallest useful
+  slice of the team-orchestration TODO. Stop soft-injects `/exit`
+  via tmux send-keys (or `tmux kill-session` with `--force`). Resume
+  spawns `tclaude session new -r <conv> -d --global` for every
+  offline member with a known conv-id; idempotent. Permission slugs
+  `groups.stop` / `groups.resume`. Phase B (member templates,
+  fresh spawn for placeholder members, `--join-group` bootstrap)
+  deferred until we've proven the wake-the-team flow in real use.
 - **Browser dashboard (read-only v1).** Single-page UI served on the
   daemon's loopback port. Four tabs: Groups (expandable per-group
   member tables), Agents (one row per known conv with effective

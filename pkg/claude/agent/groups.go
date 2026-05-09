@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -37,6 +38,8 @@ func groupsCmd() *cobra.Command {
 			groupsAddCmd(),
 			groupsRemoveCmd(),
 			groupsUpdateMemberCmd(),
+			groupsStopCmd(),
+			groupsResumeCmd(),
 		},
 	}.ToCobra()
 }
@@ -361,6 +364,133 @@ func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Removed %s from group %q\n", p.Conv, p.Group)
+	return rcOK
+}
+
+// --- groups stop ---
+
+type groupsStopParams struct {
+	Name     string `pos:"true" help:"Group name"`
+	Force    bool   `long:"force" help:"Use tmux kill-session instead of soft /exit"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsStopCmd() *cobra.Command {
+	return boa.CmdT[groupsStopParams]{
+		Use:         "stop",
+		Short:       "End every member's running tmux session in a group",
+		Long:        "Soft-stops by default: injects `/exit` into each online member's CC pane via tmux send-keys. With --force, uses `tmux kill-session` (drops any unsubmitted input). Members already offline are skipped — stop is idempotent.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *groupsStopParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsStop(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsStop(p *groupsStopParams, stdout, stderr io.Writer) int {
+	if p.Name == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/stop"
+	if p.Force {
+		path += "?force=1"
+	}
+	return runGroupsLifecycle(path, ask, stdout, stderr)
+}
+
+// --- groups resume ---
+
+type groupsResumeParams struct {
+	Name     string `pos:"true" help:"Group name"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsResumeCmd() *cobra.Command {
+	return boa.CmdT[groupsResumeParams]{
+		Use:         "resume",
+		Short:       "Start a tclaude session for every offline member of a group",
+		Long:        "For each member with a known conv-id and no live tmux session, spawns `tclaude session new -r <conv> -d --global`. Members already online are skipped — resume is idempotent. Useful as a 'wake the team' reconciliation.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *groupsResumeParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsResume(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsResume(p *groupsResumeParams, stdout, stderr io.Writer) int {
+	if p.Name == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/resume"
+	return runGroupsLifecycle(path, ask, stdout, stderr)
+}
+
+// runGroupsLifecycle is shared between stop/resume — both endpoints
+// return the same per-member result shape, only the action label
+// changes.
+func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer) int {
+	var resp struct {
+		Group   string `json:"group"`
+		Action  string `json:"action"`
+		Members []struct {
+			ConvID  string `json:"conv_id"`
+			Alias   string `json:"alias,omitempty"`
+			Action  string `json:"action"`
+			Detail  string `json:"detail,omitempty"`
+			TmuxSes string `json:"tmux_session,omitempty"`
+		} `json:"members"`
+	}
+	opts := DaemonOpts{AskHuman: ask}
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, opts); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if len(resp.Members) == 0 {
+		fmt.Fprintf(stdout, "Group %q has no members.\n", resp.Group)
+		return rcOK
+	}
+	tbl := table.New(
+		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
+		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	for _, m := range resp.Members {
+		alias := m.Alias
+		if alias == "" {
+			alias = "(unnamed)"
+		}
+		tbl.AddRow(table.Row{Cells: []string{
+			short(m.ConvID), alias, m.Action, m.Detail,
+		}})
+	}
+	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
+	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }
 

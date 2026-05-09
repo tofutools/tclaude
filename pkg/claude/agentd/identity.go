@@ -88,6 +88,8 @@ const (
 	PermSelfRename        = "self.rename"
 	PermGroupsCreate      = "groups.create"
 	PermGroupsRm          = "groups.rm"
+	PermGroupsStop        = "groups.stop"
+	PermGroupsResume      = "groups.resume"
 	PermMemberAdd         = "member.add"
 	PermMemberRemove      = "member.remove"
 	PermMemberRedesignate = "member.redesignate"
