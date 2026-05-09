@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -120,11 +123,59 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 		title = agent.DisplayTitle(row)
 	}
 	if !cfg.HasAgentPermission(p.ConvID, title, perm) {
+		// Permission denied. If the caller asked for a human-override
+		// popup (via X-Tclaude-Ask-Human: <duration>), open one and
+		// block on the decision. Timeout = deny, so a doomed agent can
+		// never get stuck waiting forever.
+		if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
+			req := &approvalRequest{
+				id:        newApprovalID(),
+				perm:      perm,
+				convID:    p.ConvID,
+				convTitle: title,
+				method:    r.Method,
+				path:      r.URL.Path,
+				createdAt: time.Now(),
+				timeout:   timeout,
+				decision:  make(chan bool, 1),
+			}
+			if requestHumanApproval(req, popupBaseURL) {
+				return p.ConvID, true
+			}
+			writeError(w, http.StatusForbidden, "permission",
+				fmt.Sprintf("human declined or timed out after %s on permission %q", timeout, perm))
+			return "", false
+		}
 		writeError(w, http.StatusForbidden, "permission",
-			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json)", perm))
+			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json; or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)", perm))
 		return "", false
 	}
 	return p.ConvID, true
+}
+
+// parseAskHumanHeader reads the X-Tclaude-Ask-Human header. Empty/absent
+// => 0 (no popup). Bare integers are seconds; everything else is parsed
+// via time.ParseDuration. Hard cap at 300s — popups blocking longer than
+// that defeat the "agents don't get stuck" goal of having a timeout in
+// the first place.
+func parseAskHumanHeader(r *http.Request) time.Duration {
+	v := strings.TrimSpace(r.Header.Get("X-Tclaude-Ask-Human"))
+	if v == "" {
+		return 0
+	}
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		if d > 300*time.Second {
+			d = 300 * time.Second
+		}
+		return d
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		if n > 300 {
+			n = 300
+		}
+		return time.Duration(n) * time.Second
+	}
+	return 0
 }
 
 // convIDForPID walks up from pid to the nearest claude/node ancestor.

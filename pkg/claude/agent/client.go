@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,18 +39,29 @@ var (
 // fixed socket path.
 func httpClient() *http.Client {
 	clientOnce.Do(func() {
-		sock := SocketPath()
-		cachedHTTP = &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					var d net.Dialer
-					return d.DialContext(ctx, "unix", sock)
-				},
-			},
-		}
+		cachedHTTP = newUnixSocketClient(10 * time.Second)
 	})
 	return cachedHTTP
+}
+
+// httpClientWithTimeout builds a fresh http.Client with the given
+// timeout. Used by requests that need longer-than-default timeouts
+// (e.g. AskHuman-bearing requests waiting for a popup decision).
+func httpClientWithTimeout(timeout time.Duration) *http.Client {
+	return newUnixSocketClient(timeout)
+}
+
+func newUnixSocketClient(timeout time.Duration) *http.Client {
+	sock := SocketPath()
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", sock)
+			},
+		},
+	}
 }
 
 // DaemonAvailable returns true if a tclaude agentd is reachable on the
@@ -108,28 +121,66 @@ func (e *DaemonError) Error() string {
 	return fmt.Sprintf("agentd returned %d", e.Status)
 }
 
+// ParseAskHuman normalises a --ask-human flag value into a duration.
+// Accepts: "" (no popup), bare integers (seconds), or Go duration
+// strings ("30s", "2m"). Caps at 300s to match the daemon. Returns
+// (0, error) on malformed input.
+func ParseAskHuman(v string) (time.Duration, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, nil
+	}
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		if d > 300*time.Second {
+			d = 300 * time.Second
+		}
+		return d, nil
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		if n > 300 {
+			n = 300
+		}
+		return time.Duration(n) * time.Second, nil
+	}
+	return 0, fmt.Errorf("invalid --ask-human value %q (use seconds like 30 or duration like 30s)", v)
+}
+
+// DaemonOpts configures one daemon request. Default-zero is fine.
+type DaemonOpts struct {
+	// AskHuman, when > 0, sends the X-Tclaude-Ask-Human header and
+	// extends the per-request timeout so the daemon has room to wait
+	// for a human-approval popup decision. Capped daemon-side at 300s.
+	AskHuman time.Duration
+}
+
 // DaemonGet performs a GET against the daemon and decodes the JSON body
 // into out. Pass nil for out to ignore the response body.
 func DaemonGet(path string, out any) error {
-	return daemonReq(http.MethodGet, path, nil, out)
+	return daemonReq(http.MethodGet, path, nil, out, DaemonOpts{})
 }
 
 // DaemonPost performs a POST with a JSON body.
 func DaemonPost(path string, in, out any) error {
-	return daemonReq(http.MethodPost, path, in, out)
+	return daemonReq(http.MethodPost, path, in, out, DaemonOpts{})
 }
 
 // DaemonDelete performs a DELETE.
 func DaemonDelete(path string, out any) error {
-	return daemonReq(http.MethodDelete, path, nil, out)
+	return daemonReq(http.MethodDelete, path, nil, out, DaemonOpts{})
 }
 
 // DaemonPatch performs a PATCH with a JSON body.
 func DaemonPatch(path string, in, out any) error {
-	return daemonReq(http.MethodPatch, path, in, out)
+	return daemonReq(http.MethodPatch, path, in, out, DaemonOpts{})
 }
 
-func daemonReq(method, path string, in, out any) error {
+// DaemonRequest is the variadic-opts form. Use this from CLI commands
+// that need to attach AskHuman.
+func DaemonRequest(method, path string, in, out any, opts DaemonOpts) error {
+	return daemonReq(method, path, in, out, opts)
+}
+
+func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
@@ -146,7 +197,15 @@ func daemonReq(method, path string, in, out any) error {
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := httpClient().Do(req)
+	client := httpClient()
+	if opts.AskHuman > 0 {
+		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
+		// The default client has a short timeout; popup approvals can
+		// take up to 300s. Use a per-request client whose timeout is
+		// generous enough to outlive the daemon's wait.
+		client = httpClientWithTimeout(opts.AskHuman + 30*time.Second)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

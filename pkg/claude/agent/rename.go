@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -31,7 +32,8 @@ func renameCmd() *cobra.Command {
 }
 
 type renameParams struct {
-	Title string `pos:"true" help:"New conversation title (1-64 chars, [A-Za-z0-9_\\-\\[\\]{}() ] only; single spaces OK, no doubles)"`
+	Title    string `pos:"true" help:"New conversation title (1-64 chars, [A-Za-z0-9_\\-\\[\\]{}() ] only; single spaces OK, no doubles)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 // isValidRenameTitle mirrors the daemon-side check in handlers.go.
@@ -73,12 +75,20 @@ func runRename(p *renameParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	var resp struct {
 		ConvID string `json:"conv_id"`
 		Title  string `json:"title"`
 		Note   string `json:"note,omitempty"`
 	}
-	if err := DaemonPost("/v1/whoami/rename", map[string]string{"title": title}, &resp); err != nil {
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	if err := DaemonRequest(http.MethodPost, "/v1/whoami/rename", map[string]string{"title": title}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

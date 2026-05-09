@@ -194,26 +194,91 @@ Open questions:
 
 ### Web dashboard (browser UI)
 
-A long-running browser view served by `tclaude agentd` (probably under
-the existing Unix socket via a small reverse proxy, or just bind a
-loopback HTTP port that the human can open). Renders:
+A long-running browser view served by `tclaude agentd` on the same
+loopback port the approval popup uses (or a separate one). Goal: a
+GCP-IAM-style "who can do what to which resource" overview, plus
+live agent activity. Renders:
 
-- Live list of agents (online/offline, current group, last activity).
-- Open inboxes per conversation.
-- Pending approval requests with ack/approve/deny buttons (see HITL
-  flow above).
-- Group membership view + edit (human-only mutations).
+**Multiple perspectives, switchable from the top nav.**
 
-Reuse `/home/gigur/git/oh-shit-meeting` patterns for popup/ack/timeout
-behaviour. The same UI doubles as the approval frontend, so we don't
-need a separate popup library.
+- **Groups view** — root list of groups; expanding a group shows its
+  members with online indicator, alias/role/descr, and the group-
+  scoped permissions each holds. Search at the top filters by group
+  name / member alias / permission slug.
+- **Agents view** — root list of conversations (members of any
+  group + currently-online ones). Expanding an agent shows the
+  groups it's in, its global permissions, and its per-group
+  permission overrides. Same search box, scoped to the visible tree.
+- **Permissions view** — invert the previous two: list of permission
+  slugs, expanding shows every agent that holds it (globally or
+  per-group). Useful for "who can spawn agents right now?".
+- **Activity / inbox** — live list of agents (online/offline,
+  current group, last activity, unread inbox count). Pending
+  human-approval requests appear here with ack/approve/deny buttons
+  (same UI as the standalone popup, just inline).
+
+**Tree-style expand/collapse** for the first three views. Clicking a
+node expands it, clicking again collapses. Hover/click on a permission
+slug surfaces a tooltip/sidebar explaining what the slug authorises.
+
+**Indicators alongside each row**:
+
+- ● online / ○ offline
+- ⚡ attached / ▷ active session in tmux
+- inbox unread count
+- count of granted permissions (so you can see at a glance who's
+  privileged)
+
+**Edits.** The dashboard should be the easiest place for the human to
+grant/revoke permissions and group memberships. Buttons should call
+the same daemon endpoints the CLI uses (`groups create|rm|add|remove
+|update-member`, plus the new `permissions grant|revoke` once those
+ship — see "CLI for permissions" below). Auditable: every mutation
+shows up in a small activity log so the human knows what they
+changed and when.
+
+**Implementation:**
+
+- Static HTML+JS page served by the daemon (no SPA framework
+  necessary — htmx or vanilla JS keeps it lightweight).
+- Reuses the loopback port the approval popup already binds. Pages
+  fetch from `/v1/...` on the same origin (the daemon adds CORS
+  scoping if needed; same-origin on loopback is the simplest option).
+- Origin guard: only same-host. An ephemeral session cookie tied to
+  the daemon's startup PID makes "another tab on the machine" attacks
+  harder.
 
 Open questions:
-- Auth on a loopback port — do we need anything beyond "must be on
-  this machine"? Probably yes (same-origin attacks via other browser
-  tabs); some kind of ephemeral token per session opens.
-- Should the dashboard run only on demand (`tclaude agentd ui`) or
-  always when the daemon is up?
+
+- Should the dashboard run only on demand (`tclaude agentd ui` opens
+  it on the existing loopback port) or always when the daemon is up?
+  Probably always-on, since the approval popup is also served there
+  and we already pay the bind cost.
+- How much richness does the tree need? Start with collapse/expand,
+  add filtering and column sorts only if it gets heavy.
+
+### CLI for permissions
+
+Before (or alongside) the dashboard, the human should be able to
+inspect and edit permissions from the CLI without hand-editing
+`~/.tclaude/config.json`. Sketch:
+
+```
+tclaude agent permissions ls [--agent <conv|alias>] [--group <name>]
+tclaude agent permissions grant <conv|alias> <slug> [--group <name>]
+tclaude agent permissions revoke <conv|alias> <slug> [--group <name>]
+tclaude agent permissions slugs   # list known slugs + descriptions
+```
+
+`grant` / `revoke` rewrite the JSON in place (preserving comments
+where possible — or move config to a format that supports comments).
+`ls` joins the config with `agent_groups` / `agent_group_members` to
+show effective permissions per (agent, group) tuple, mirroring the
+dashboard's "Permissions view" but in the terminal.
+
+Same human-only gate as the existing groups mutators (or a new
+`permissions.grant` / `permissions.revoke` slug for graduated trust
+on this very feature — recursive, but the framework supports it).
 
 ### Delivery architecture (sandbox-aware)
 

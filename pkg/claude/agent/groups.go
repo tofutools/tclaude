@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 
@@ -107,8 +108,9 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 // --- groups create ---
 
 type groupsCreateParams struct {
-	Name  string `pos:"true" help:"Group name"`
-	Descr string `long:"descr" short:"d" optional:"true" help:"Optional description"`
+	Name     string `pos:"true" help:"Group name"`
+	Descr    string `long:"descr" short:"d" optional:"true" help:"Optional description"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsCreateCmd() *cobra.Command {
@@ -130,14 +132,22 @@ func runGroupsCreate(p *groupsCreateParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
 	var resp struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := DaemonPost("/v1/groups", map[string]string{
+	if err := DaemonRequest(http.MethodPost, "/v1/groups", map[string]string{
 		"name":  p.Name,
 		"descr": p.Descr,
-	}, &resp); err != nil {
+	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -148,7 +158,8 @@ func runGroupsCreate(p *groupsCreateParams, stdout, stderr io.Writer) int {
 // --- groups rm ---
 
 type groupsRmParams struct {
-	Name string `pos:"true" help:"Group name"`
+	Name     string `pos:"true" help:"Group name"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsRmCmd() *cobra.Command {
@@ -170,7 +181,15 @@ func runGroupsRm(p *groupsRmParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	if err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Name), nil); err != nil {
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	if err := DaemonRequest(http.MethodDelete, "/v1/groups/"+url.PathEscape(p.Name), nil, nil, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -254,11 +273,12 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 // --- groups add ---
 
 type groupsAddParams struct {
-	Group string `pos:"true" help:"Group name"`
-	Conv  string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
-	Alias string `long:"alias" short:"a" optional:"true" help:"Alias to use for this conv inside the group"`
-	Role  string `long:"role" short:"r" optional:"true" help:"Role label, e.g. 'lead', 'reviewer'"`
-	Descr string `long:"descr" short:"d" optional:"true" help:"Short description of this member"`
+	Group    string `pos:"true" help:"Group name"`
+	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	Alias    string `long:"alias" short:"a" optional:"true" help:"Alias to use for this conv inside the group"`
+	Role     string `long:"role" short:"r" optional:"true" help:"Role label, e.g. 'lead', 'reviewer'"`
+	Descr    string `long:"descr" short:"d" optional:"true" help:"Short description of this member"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsAddCmd() *cobra.Command {
@@ -276,15 +296,23 @@ func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
 	var resp struct {
 		ConvID string `json:"conv_id"`
 	}
-	if err := DaemonPost("/v1/groups/"+url.PathEscape(p.Group)+"/members", map[string]string{
+	if err := DaemonRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(p.Group)+"/members", map[string]string{
 		"conv":  p.Conv,
 		"alias": p.Alias,
 		"role":  p.Role,
 		"descr": p.Descr,
-	}, &resp); err != nil {
+	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -299,8 +327,9 @@ func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
 // --- groups remove ---
 
 type groupsRemoveParams struct {
-	Group string `pos:"true" help:"Group name"`
-	Conv  string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	Group    string `pos:"true" help:"Group name"`
+	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsRemoveCmd() *cobra.Command {
@@ -319,7 +348,15 @@ func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	if err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Group)+"/members/"+url.PathEscape(p.Conv), nil); err != nil {
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	if err := DaemonRequest(http.MethodDelete, "/v1/groups/"+url.PathEscape(p.Group)+"/members/"+url.PathEscape(p.Conv), nil, nil, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -330,11 +367,12 @@ func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
 // --- groups update-member ---
 
 type groupsUpdateMemberParams struct {
-	Group string `pos:"true" help:"Group name"`
-	Conv  string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
-	Alias string `long:"alias" short:"a" optional:"true" help:"New alias (pass empty string to clear)"`
-	Role  string `long:"role" short:"r" optional:"true" help:"New role label (pass empty string to clear)"`
-	Descr string `long:"descr" short:"d" optional:"true" help:"New description (pass empty string to clear)"`
+	Group    string `pos:"true" help:"Group name"`
+	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	Alias    string `long:"alias" short:"a" optional:"true" help:"New alias (pass empty string to clear)"`
+	Role     string `long:"role" short:"r" optional:"true" help:"New role label (pass empty string to clear)"`
+	Descr    string `long:"descr" short:"d" optional:"true" help:"New description (pass empty string to clear)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsUpdateMemberCmd() *cobra.Command {
@@ -353,6 +391,11 @@ func runGroupsUpdateMember(p *groupsUpdateMemberParams, cmd *cobra.Command, stdo
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	body := map[string]any{}
 	if cmd.Flags().Changed("alias") {
 		body["alias"] = p.Alias
@@ -367,11 +410,14 @@ func runGroupsUpdateMember(p *groupsUpdateMemberParams, cmd *cobra.Command, stdo
 		fmt.Fprintf(stderr, "Error: at least one of --alias / --role / --descr is required\n")
 		return rcInvalidArg
 	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
 	var resp struct {
 		ConvID string `json:"conv_id"`
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Group) + "/members/" + url.PathEscape(p.Conv)
-	if err := DaemonPatch(path, body, &resp); err != nil {
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

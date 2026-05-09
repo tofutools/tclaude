@@ -35,6 +35,12 @@ func serveCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// popupBaseURL is set during runServe once the loopback listener has
+// chosen a port. requestHumanApproval reads it to build the URL it
+// hands to xdg-open. Empty when no popup listener is up — in that
+// case ask-human flows return immediately denied.
+var popupBaseURL string
+
 func runServe(p *serveParams) error {
 	sockPath := p.Socket
 	if sockPath == "" {
@@ -86,10 +92,22 @@ func runServe(p *serveParams) error {
 		},
 	}
 
+	// Loopback HTTP listener for the human-approval popup (Phase B of
+	// the permission story). Bind :0 so we never collide with another
+	// daemon or app; the URL is derived from ln.Addr() and only fed to
+	// xdg-open, never persisted. Failure to bind is logged but does
+	// not abort startup — the rest of the daemon still works, just
+	// without --ask-human.
+	popupSrv, popupURL := startPopupServer()
+	popupBaseURL = popupURL
+
 	done := make(chan error, 1)
 	go func() {
-		slog.Info("agentd listening", "socket", sockPath)
+		slog.Info("agentd listening", "socket", sockPath, "popup", popupBaseURL)
 		fmt.Printf("tclaude agentd listening on %s\n", sockPath)
+		if popupBaseURL != "" {
+			fmt.Printf("  human-approval popup on %s\n", popupBaseURL)
+		}
 		done <- srv.Serve(ln)
 	}()
 
@@ -105,6 +123,9 @@ func runServe(p *serveParams) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
+		if popupSrv != nil {
+			_ = popupSrv.Shutdown(ctx)
+		}
 	}
 	return nil
 }

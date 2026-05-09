@@ -127,9 +127,21 @@ load that one when you need to rename, not this one.
   the gate. Slugs: `groups.create`, `groups.rm`, `member.add`,
   `member.remove`, `member.redesignate`. Granted via
   `agent.default_permissions` or `agent.permission_overrides[<conv>]`
-  in `~/.tclaude/config.json`. If you hit a 403 with one of these
-  slugs and you really need it, ask the human to grant it instead of
-  retrying — the answer won't change otherwise.
+  in `~/.tclaude/config.json`.
+
+  **Ad-hoc human approval.** If you need an action just this once and
+  don't want to ask the human to edit JSON, every mutating command
+  takes `--ask-human <duration>`:
+
+  ```bash
+  tclaude agent groups create foo --ask-human 30s
+  ```
+
+  This pops a browser window in front of the human with Approve / Deny
+  buttons. The CLI blocks until they click or the timeout fires.
+  **Timeout = Deny** so an unattended popup never silently grants. Cap
+  is 300s. If denied or timed out, accept the answer; don't retry in a
+  loop.
 
 ## Troubleshooting
 
