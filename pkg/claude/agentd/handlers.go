@@ -232,12 +232,26 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 //
 // This is the half that broke for sandboxed senders in v1: the daemon
 // owns the tmux side here, so the sender's sandbox is irrelevant.
+//
+// The DB can hold multiple session rows for the same conv_id (auto-register
+// creates new rows alongside stale ones from previous launches). We pick
+// the first one whose tmux session is actually alive, most-recent first.
 func nudgeIfAlive(msgID int64, fromID, toID string, groupID int64, groupName, subject string) bool {
-	sess, err := db.FindSessionByConvID(toID)
-	if err != nil || sess == nil || sess.TmuxSession == "" {
+	candidates, err := db.FindSessionsByConvID(toID)
+	if err != nil {
 		return false
 	}
-	if !session.IsTmuxSessionAlive(sess.TmuxSession) {
+	var sess *db.SessionRow
+	for _, c := range candidates {
+		if c.TmuxSession == "" {
+			continue
+		}
+		if session.IsTmuxSessionAlive(c.TmuxSession) {
+			sess = c
+			break
+		}
+	}
+	if sess == nil {
 		return false
 	}
 	fromAlias := agent.AliasFor(groupID, fromID)

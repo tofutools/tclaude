@@ -75,18 +75,40 @@ func ListSessions() ([]*SessionRow, error) {
 }
 
 // FindSessionByConvID finds a session by conversation ID using the index.
+// When multiple rows exist for the same conv_id (e.g. auto-register
+// created a new row alongside an old one with a different short id), we
+// return the most recently updated one.
 func FindSessionByConvID(convID string) (*SessionRow, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
-		auto_registered, created_at, updated_at, last_hook FROM sessions WHERE conv_id = ? LIMIT 1`, convID)
+		auto_registered, created_at, updated_at, last_hook FROM sessions WHERE conv_id = ?
+		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return s, err
+}
+
+// FindSessionsByConvID returns every row for the given conv_id, most
+// recently updated first. Used by the agent daemon to find a row whose
+// tmux session is actually alive when several stale rows coexist.
+func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
+		auto_registered, created_at, updated_at, last_hook FROM sessions WHERE conv_id = ?
+		ORDER BY updated_at DESC`, convID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSessions(rows)
 }
 
 // SessionExists checks whether a session with the given ID exists.
