@@ -407,6 +407,47 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 	return entries, nil
 }
 
+// RefreshConvIndexEntry returns the conv_index row for convID, rescanning
+// the underlying .jsonl file when its mtime is newer than the cached
+// FileMtime. Mirrors the per-file freshness check that LoadSessionsIndex
+// runs in its loop, but for a single conv — useful when a caller already
+// knows the conv-id and doesn't want to enumerate the whole project dir
+// (e.g. `tclaude agent whoami` after a `/rename`).
+//
+// Returns the freshest row available; returns nil if the conv is unknown
+// to the DB or its underlying file has been deleted (in which case we
+// also evict the stale cache entry so callers don't keep resolving to it).
+func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
+	row, _ := db.GetConvIndex(convID)
+	if row == nil {
+		return nil
+	}
+	if row.FullPath == "" {
+		return row
+	}
+	info, err := os.Stat(row.FullPath)
+	if err != nil {
+		// File disappeared between the cache write and now (manual
+		// delete, log rotation, etc.). Drop the stale row so the next
+		// lookup doesn't resolve to a ghost conv.
+		if os.IsNotExist(err) {
+			_ = db.DeleteConvIndex(convID)
+			return nil
+		}
+		return row
+	}
+	if info.ModTime().Unix() <= row.FileMtime {
+		return row
+	}
+	if ScanAndUpsertFile(row.FullPath) == nil {
+		return row
+	}
+	if refreshed, err := db.GetConvIndex(convID); err == nil && refreshed != nil {
+		return refreshed
+	}
+	return row
+}
+
 // ScanAndUpsertFile scans a single .jsonl conversation file and upserts the
 // result into the DB cache. The project dir is derived from the file's parent
 // directory. Returns the resulting SessionEntry, or nil if the file has no

@@ -1,0 +1,375 @@
+package db
+
+import (
+	"database/sql"
+	"errors"
+	"time"
+)
+
+// AgentGroup is a row in agent_groups.
+type AgentGroup struct {
+	ID        int64
+	Name      string
+	Descr     string
+	CreatedAt time.Time
+}
+
+// AgentGroupMember is a row in agent_group_members.
+type AgentGroupMember struct {
+	GroupID  int64
+	ConvID   string
+	Alias    string
+	Role     string
+	Descr    string
+	JoinedAt time.Time
+}
+
+// AgentMessage is a row in agent_messages. Body is stored inline.
+type AgentMessage struct {
+	ID          int64
+	GroupID     int64
+	FromConv    string
+	ToConv      string
+	Subject     string
+	Body        string
+	CreatedAt   time.Time
+	DeliveredAt time.Time
+	ReadAt      time.Time
+}
+
+// CreateAgentGroup inserts a new group. Returns the new group's ID.
+func CreateAgentGroup(name, descr string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`INSERT INTO agent_groups (name, descr, created_at) VALUES (?, ?, ?)`,
+		name, descr, time.Now().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// DeleteAgentGroup removes a group by name. Cascades to members; returns
+// an error if any messages still reference the group (ON DELETE RESTRICT).
+func DeleteAgentGroup(name string) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM agent_groups WHERE name = ?`, name)
+	return err
+}
+
+// GetAgentGroupByName returns the group with the given name, or nil if not
+// found.
+func GetAgentGroupByName(name string) (*AgentGroup, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := db.QueryRow(`SELECT id, name, descr, created_at FROM agent_groups WHERE name = ?`, name)
+	g, err := scanAgentGroup(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return g, err
+}
+
+// ListAgentGroups returns all groups, ordered by name.
+func ListAgentGroups() ([]*AgentGroup, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT id, name, descr, created_at FROM agent_groups ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*AgentGroup
+	for rows.Next() {
+		g, err := scanAgentGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// AddAgentGroupMember inserts (or replaces) a member in a group.
+func AddAgentGroupMember(m *AgentGroupMember) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	if m.JoinedAt.IsZero() {
+		m.JoinedAt = time.Now()
+	}
+	_, err = db.Exec(`INSERT OR REPLACE INTO agent_group_members
+		(group_id, conv_id, alias, role, descr, joined_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		m.GroupID, m.ConvID, m.Alias, m.Role, m.Descr,
+		m.JoinedAt.Format(time.RFC3339Nano))
+	return err
+}
+
+// RemoveAgentGroupMember removes a (group, conv) pair. Idempotent.
+func RemoveAgentGroupMember(groupID int64, convID string) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND conv_id = ?`,
+		groupID, convID)
+	return err
+}
+
+// ListAgentGroupMembers returns the members of a group, ordered by alias
+// then conv_id.
+func ListAgentGroupMembers(groupID int64) ([]*AgentGroupMember, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT group_id, conv_id, alias, role, descr, joined_at
+		FROM agent_group_members WHERE group_id = ? ORDER BY alias, conv_id`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*AgentGroupMember
+	for rows.Next() {
+		m, err := scanAgentGroupMember(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListGroupsForConv returns all groups that include the given conv_id,
+// ordered by group name.
+func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at
+		FROM agent_groups g
+		JOIN agent_group_members m ON m.group_id = g.id
+		WHERE m.conv_id = ?
+		ORDER BY g.name`, convID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*AgentGroup
+	for rows.Next() {
+		g, err := scanAgentGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// SharedGroupsForConvs returns the groups containing both convs, ordered by
+// group name. Used by `agent message` to authorise sender→target.
+func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at
+		FROM agent_groups g
+		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.conv_id = ?
+		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.conv_id = ?
+		ORDER BY g.name`, a, b)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*AgentGroup
+	for rows.Next() {
+		g, err := scanAgentGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// FindMemberInGroup returns the member entry for (group, conv) or nil if not
+// present.
+func FindMemberInGroup(groupID int64, convID string) (*AgentGroupMember, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := db.QueryRow(`SELECT group_id, conv_id, alias, role, descr, joined_at
+		FROM agent_group_members WHERE group_id = ? AND conv_id = ?`, groupID, convID)
+	m, err := scanAgentGroupMember(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return m, err
+}
+
+// InsertAgentMessage records a delivered message and returns its ID.
+func InsertAgentMessage(m *AgentMessage) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = time.Now()
+	}
+	res, err := db.Exec(`INSERT INTO agent_messages
+		(group_id, from_conv, to_conv, subject, body,
+		 created_at, delivered_at, read_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.GroupID, m.FromConv, m.ToConv, m.Subject, m.Body,
+		m.CreatedAt.Format(time.RFC3339Nano),
+		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// MarkAgentMessageDelivered sets delivered_at = now for the given message ID.
+func MarkAgentMessageDelivered(id int64) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE agent_messages SET delivered_at = ? WHERE id = ?`,
+		time.Now().Format(time.RFC3339Nano), id)
+	return err
+}
+
+// MarkAgentMessageRead sets read_at = now for the given message ID.
+func MarkAgentMessageRead(id int64) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE agent_messages SET read_at = ? WHERE id = ?`,
+		time.Now().Format(time.RFC3339Nano), id)
+	return err
+}
+
+// GetAgentMessage returns a single message by ID, or nil if not found.
+func GetAgentMessage(id int64) (*AgentMessage, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, subject, body,
+		created_at, delivered_at, read_at
+		FROM agent_messages WHERE id = ?`, id)
+	m, err := scanAgentMessage(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return m, err
+}
+
+// ListAgentMessagesForConv returns the most recent messages for a recipient.
+// limit <= 0 means "no limit".
+func ListAgentMessagesForConv(toConv string, limit int) ([]*AgentMessage, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT id, group_id, from_conv, to_conv, subject, body,
+		created_at, delivered_at, read_at
+		FROM agent_messages WHERE to_conv = ? ORDER BY created_at DESC`
+	args := []any{toConv}
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func formatTimeOrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339Nano)
+}
+
+func parseTimeOrZero(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// rowScanner abstracts *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
+	var g AgentGroup
+	var createdAt string
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &createdAt); err != nil {
+		return nil, err
+	}
+	g.CreatedAt = parseTimeOrZero(createdAt)
+	return &g, nil
+}
+
+func scanAgentGroupMember(s rowScanner) (*AgentGroupMember, error) {
+	var m AgentGroupMember
+	var joinedAt string
+	if err := s.Scan(&m.GroupID, &m.ConvID, &m.Alias, &m.Role, &m.Descr, &joinedAt); err != nil {
+		return nil, err
+	}
+	m.JoinedAt = parseTimeOrZero(joinedAt)
+	return &m, nil
+}
+
+func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
+	var m AgentMessage
+	var createdAt, deliveredAt, readAt string
+	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
+		&m.Subject, &m.Body,
+		&createdAt, &deliveredAt, &readAt); err != nil {
+		return nil, err
+	}
+	m.CreatedAt = parseTimeOrZero(createdAt)
+	m.DeliveredAt = parseTimeOrZero(deliveredAt)
+	m.ReadAt = parseTimeOrZero(readAt)
+	return &m, nil
+}

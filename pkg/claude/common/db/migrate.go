@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 7
+const currentVersion = 8
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -61,6 +61,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 7 {
 		if err := migrateV6toV7(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 8 {
+		if err := migrateV7toV8(db); err != nil {
 			return err
 		}
 	}
@@ -225,6 +231,47 @@ func migrateV6toV7(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v6→v7: %w", err)
+	}
+	return nil
+}
+
+func migrateV7toV8(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_groups (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			name        TEXT NOT NULL UNIQUE,
+			descr       TEXT NOT NULL DEFAULT '',
+			created_at  TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS agent_group_members (
+			group_id    INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			conv_id     TEXT NOT NULL,
+			alias       TEXT NOT NULL DEFAULT '',
+			role        TEXT NOT NULL DEFAULT '',
+			descr       TEXT NOT NULL DEFAULT '',
+			joined_at   TEXT NOT NULL,
+			PRIMARY KEY (group_id, conv_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_group_members_conv ON agent_group_members(conv_id);
+
+		CREATE TABLE IF NOT EXISTS agent_messages (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE RESTRICT,
+			from_conv    TEXT NOT NULL,
+			to_conv      TEXT NOT NULL,
+			subject      TEXT NOT NULL DEFAULT '',
+			body         TEXT NOT NULL DEFAULT '',
+			created_at   TEXT NOT NULL,
+			delivered_at TEXT NOT NULL DEFAULT '',
+			read_at      TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_messages_to_conv ON agent_messages(to_conv, created_at);
+
+		UPDATE schema_version SET version = 8;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v7→v8: %w", err)
 	}
 	return nil
 }

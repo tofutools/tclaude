@@ -41,22 +41,14 @@ func Open() (*sql.DB, error) {
 			return
 		}
 
-		globalDB, initErr = sql.Open("sqlite", dbPath)
+		// PRAGMAs in the DSN are applied on every new pooled connection.
+		// `foreign_keys` in particular is per-connection in SQLite, so a
+		// one-shot db.Exec wouldn't survive when the pool opens new
+		// connections under load.
+		dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+		globalDB, initErr = sql.Open("sqlite", dsn)
 		if initErr != nil {
 			return
-		}
-
-		// Enable WAL mode and set busy timeout for concurrent access
-		for _, pragma := range []string{
-			"PRAGMA journal_mode=WAL",
-			"PRAGMA busy_timeout=5000",
-		} {
-			if _, err := globalDB.Exec(pragma); err != nil {
-				initErr = err
-				_ = globalDB.Close()
-				globalDB = nil
-				return
-			}
 		}
 
 		initErr = migrate(globalDB)

@@ -6,6 +6,8 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	claudegit "github.com/tofutools/tclaude/pkg/claude/git"
@@ -41,6 +43,8 @@ func Cmd() *cobra.Command {
 			selftest.Cmd(),
 			web.Cmd(),
 			task.Cmd(),
+			agent.Cmd(),
+			agentd.Cmd(),
 		},
 		RunFunc: func(params *session.NewParams, cmd *cobra.Command, args []string) {
 			if err := session.RunNew(params); err != nil {
