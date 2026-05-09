@@ -461,7 +461,9 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 	default:
 		if data, readErr := os.ReadFile(signalPath); readErr == nil {
 			var taskSignal session.TaskSignal
-			if json.Unmarshal(data, &taskSignal) == nil {
+			if err := json.Unmarshal(data, &taskSignal); err != nil {
+				slog.Warn("failed to parse task signal", "error", err, "path", signalPath, "module", "task")
+			} else {
 				report = taskSignal.Report
 				sessionID = taskSignal.SessionID
 			}
