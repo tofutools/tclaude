@@ -61,6 +61,17 @@ ship or get scoped out. The detailed v1 design lives in
   group picker.
 
 ### Inbox & message UX
+- **Multicast / group broadcast.** Send one message to every member of
+  a group. Two reasonable shapes:
+  - `tclaude agent message group:<name> "..."` — selector prefix
+    `group:` triggers fan-out.
+  - `tclaude agent broadcast <group> "..."` — explicit verb.
+  Implementation: daemon inserts one row per recipient (skipping the
+  sender), nudges only live tmux panes that aren't the sender's. The
+  sender's row stays out of their own inbox (we don't echo). Replies
+  go back to the sender as a normal direct message; "reply-all" is a
+  follow-up.
+
 - **Interactive mailbox inspector**: `tclaude agent mailbox <conv> -w` (or
   some better verb — possibly `inbox watch`, `mail`, etc.). Lists mails
   with sender/subject/date, lets the user select one to read, marks read

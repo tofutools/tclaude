@@ -109,7 +109,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	mux.HandleFunc("/v1/messages", handleMessages)
-	mux.HandleFunc("/v1/messages/", handleMessageByID)
+	mux.HandleFunc("/v1/messages/", handleMessageByIDOrReply)
 	mux.HandleFunc("/v1/inbox", handleInbox)
 	mux.HandleFunc("/v1/groups", handleGroups)
 	mux.HandleFunc("/v1/groups/", handleGroupByName)

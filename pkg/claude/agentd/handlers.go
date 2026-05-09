@@ -223,7 +223,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	delivered := nudgeIfAlive(id, fromID, target.ConvID, via.ID, via.Name, req.Subject)
+	delivered := nudgeIfAlive(id, target.ConvID)
 	writeJSON(w, http.StatusOK, sendResp{ID: id, Delivered: delivered, ViaGroup: via.Name})
 }
 
@@ -236,7 +236,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 // The DB can hold multiple session rows for the same conv_id (auto-register
 // creates new rows alongside stale ones from previous launches). We pick
 // the first one whose tmux session is actually alive, most-recent first.
-func nudgeIfAlive(msgID int64, fromID, toID string, groupID int64, groupName, subject string) bool {
+func nudgeIfAlive(msgID int64, toID string) bool {
 	candidates, err := db.FindSessionsByConvID(toID)
 	if err != nil {
 		return false
@@ -254,17 +254,14 @@ func nudgeIfAlive(msgID int64, fromID, toID string, groupID int64, groupName, su
 	if sess == nil {
 		return false
 	}
-	fromAlias := agent.AliasFor(groupID, fromID)
-	if fromAlias == "" {
-		fromAlias = "(unnamed)"
-	}
-	subjectClause := ""
-	if subject != "" {
-		subjectClause = fmt.Sprintf(" subject=%q", subject)
-	}
+	// Minimal nudge: just announce the message. Sender, subject, group,
+	// reply addressing — all of that lives in the message itself, fetched
+	// via `tclaude agent inbox read <id>`. Keeping the bracket text terse
+	// avoids leaking ephemeral details (short conv-id prefixes,
+	// alias-of-the-moment) into the receiver's transcript.
 	nudge := fmt.Sprintf(
-		"[system: new agent message #%d from %s (%s) in group %q.%s read with: tclaude agent inbox read %d. reply with: tclaude agent message %s \"...\".]",
-		msgID, fromAlias, agent.ShortID(fromID), groupName, subjectClause, msgID, agent.ShortID(fromID),
+		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
+		msgID, msgID,
 	)
 	target := sess.TmuxSession + ":0.0"
 	// Two-step send: the Enter in the first call lands as a newline inside
@@ -282,7 +279,100 @@ func nudgeIfAlive(msgID int64, fromID, toID string, groupID int64, groupName, su
 	return true
 }
 
-// --- /v1/messages/{id} (GET) ---
+// --- /v1/messages/{id} (GET) and /v1/messages/{id}/reply (POST) ---
+
+// handleMessageByIDOrReply dispatches between the message-fetch and
+// reply endpoints based on path suffix.
+func handleMessageByIDOrReply(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/messages/")
+	if rest == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "missing message id")
+		return
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 2 && parts[1] == "reply" {
+		handleMessageReply(w, r, parts[0])
+		return
+	}
+	handleMessageByID(w, r)
+}
+
+// handleMessageReply lets the recipient of a message reply without
+// having to look up the sender's conv-id themselves. The daemon resolves
+// it from the original message row, validates that the caller is the
+// recipient, and routes the reply through the same send path as
+// /v1/messages.
+func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	myID, ok := requireAgent(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid id")
+		return
+	}
+	orig, err := db.GetAgentMessage(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if orig == nil {
+		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no message #%d", id))
+		return
+	}
+	if orig.ToConv != myID {
+		writeError(w, http.StatusForbidden, "auth", "you are not the recipient of this message")
+		return
+	}
+	var body struct {
+		Subject string `json:"subject,omitempty"`
+		Body    string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if strings.TrimSpace(body.Body) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
+		return
+	}
+	subject := body.Subject
+	if subject == "" && orig.Subject != "" {
+		subject = "Re: " + orig.Subject
+	}
+	// Authority check: the reply still has to be authorised by a shared
+	// group at send time. In practice the original message's group
+	// already proves they share one — but a member might have been
+	// removed since, and we want to honour that.
+	shared, err := db.SharedGroupsForConvs(myID, orig.FromConv)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if len(shared) == 0 {
+		writeError(w, http.StatusForbidden, "auth", "no shared group with sender; reply path closed")
+		return
+	}
+	via := shared[0]
+	newID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:  via.ID,
+		FromConv: myID,
+		ToConv:   orig.FromConv,
+		Subject:  subject,
+		Body:     body.Body,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	delivered := nudgeIfAlive(newID, orig.FromConv)
+	writeJSON(w, http.StatusOK, sendResp{ID: newID, Delivered: delivered, ViaGroup: via.Name})
+}
 
 func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -332,6 +422,15 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		"subject":    m.Subject,
 		"body":       m.Body,
 		"created_at": m.CreatedAt.Format(time.RFC3339),
+		// Reply-To is the conv-id to address when replying. Same as
+		// `from` today; broken out so clients have an obvious affordance
+		// and so we can support distinct reply-to addresses later
+		// (e.g. shared-inbox aliases) without breaking the wire format.
+		"reply_to": m.FromConv,
+		// Reply-Cmd is a ready-to-paste shell command for the human-friendly
+		// case. Agents in skills should prefer the `agent reply` command,
+		// which figures this out from the message ID.
+		"reply_cmd": fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID),
 	})
 }
 

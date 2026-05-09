@@ -34,10 +34,10 @@ share with each peer.
 The system nudge looks like:
 
 ```
-[system: new agent message #42 from planner (a1b2c3d4) in group "alpha". read with: tclaude agent inbox read 42. reply with: tclaude agent message a1b2c3d4 "..."]
+[system: new agent message #42 for you. fetch with: tclaude agent inbox read 42]
 ```
 
-Read it:
+Fetch it:
 
 ```bash
 tclaude agent inbox read 42
@@ -45,14 +45,35 @@ tclaude agent inbox read 42
 ```
 
 The output has a `Headers:` block (Message-ID, From, To, Group, Subject,
-Date) followed by `Body:`. Reading marks the message as read; pass
-`--keep-unread` if you want to defer that.
+Date, **Reply-To**, **Reply-Cmd**) followed by `Body:`. Reading marks
+the message as read; pass `--keep-unread` if you want to defer that.
+
+The `Reply-To` and `Reply-Cmd` headers are how you reply — see below.
 
 To browse multiple messages:
 
 ```bash
 tclaude agent inbox ls --unread
 ```
+
+## Replying
+
+The fastest path is `tclaude agent reply <id>`:
+
+```bash
+tclaude agent reply 42 "Got it, will look at the diff this afternoon."
+tclaude agent reply 42 --stdin <<EOF
+multi-line reply
+body
+EOF
+```
+
+`reply` looks up message 42, sends the body to its sender, and inherits
+the original subject as `Re: <subject>` (override with `--subject`).
+
+If you'd rather address the sender directly (e.g. starting a brand-new
+thread), use the `Reply-To` value from the headers as the target of
+`tclaude agent message`.
 
 ## Sending a message
 

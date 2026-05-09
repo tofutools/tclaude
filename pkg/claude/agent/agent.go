@@ -23,6 +23,7 @@ func Cmd() *cobra.Command {
 			lookupCmd(),
 			lsCmd(),
 			messageCmd(),
+			replyCmd(),
 			groupsCmd(),
 			inboxCmd(),
 		},

@@ -187,6 +187,8 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		Subject   string `json:"subject"`
 		Body      string `json:"body"`
 		CreatedAt string `json:"created_at"`
+		ReplyTo   string `json:"reply_to"`
+		ReplyCmd  string `json:"reply_cmd"`
 	}
 	if err := DaemonGet(path, &m); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -205,6 +207,12 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt)
+	if m.ReplyTo != "" {
+		fmt.Fprintf(stdout, "  Reply-To:   %s\n", m.ReplyTo)
+	}
+	if m.ReplyCmd != "" {
+		fmt.Fprintf(stdout, "  Reply-Cmd:  %s\n", m.ReplyCmd)
+	}
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Body:")
 	fmt.Fprintln(stdout, m.Body)
@@ -252,6 +260,8 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(stdout, "  Reply-To:   %s\n", m.FromConv)
+	fmt.Fprintf(stdout, "  Reply-Cmd:  tclaude agent reply %d \"<your reply body>\"\n", m.ID)
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Body:")
 	fmt.Fprintln(stdout, m.Body)
