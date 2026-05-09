@@ -27,6 +27,7 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 - 🧠 **Semantic Search** - Find conversations by meaning using local embeddings (Ollama)
 - ⚡ **Session Indicators** - Know which conversations have active sessions (⚡ attached, ○ active)
 - ⚙️ **Task Management** - Run multiple tasks automatically
+- 🤝 **Agent Coordination** - Cross-session messaging and permission-gated self-service via `tclaude agent` + `agentd`
 
 ## Installation
 
@@ -107,6 +108,7 @@ Session watch also supports:
 
 - [Session Management](sessions.md) - Detailed session commands
 - [Conversation Management](conversations.md) - Detailed conversation commands
+- [Agent Coordination](agent.md) - Cross-session messaging and self-service via `tclaude agent` + `agentd`
 - [Git Worktrees](worktrees.md) - Parallel development with multiple branches
 - [OS Notifications](notifications.md) - Get notified when sessions need attention
 - [Status Bar](status-bar.md) - Rich status bar for Claude Code's statusline
