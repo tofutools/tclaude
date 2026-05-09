@@ -38,6 +38,33 @@ import (
 
 const cloneAliasSuffix = "-clone"
 
+// uniqueCloneAlias returns base if no member of groupID already uses
+// it, otherwise appends `-2`, `-3`, … until a free slot is found.
+// Lookup error → return base unchanged (best-effort; the daemon's
+// INSERT-OR-REPLACE on (group_id, conv_id) means a stale alias is
+// the worst case, not a write failure).
+func uniqueCloneAlias(groupID int64, base string) string {
+	members, err := db.ListAgentGroupMembers(groupID)
+	if err != nil {
+		return base
+	}
+	taken := map[string]bool{}
+	for _, m := range members {
+		if m.Alias != "" {
+			taken[m.Alias] = true
+		}
+	}
+	if !taken[base] {
+		return base
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+}
+
 // handleWhoamiClone handles POST /v1/whoami/clone (self path).
 // Gated on self.clone (default-granted alongside self.compact /
 // self.reincarnate). Delegates to runCloneOrchestration with
@@ -236,12 +263,13 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 	}
 	copied := []string{}
 	for _, m := range oldMembers {
-		alias := m.Alias
-		if alias != "" {
-			alias = alias + cloneAliasSuffix
+		base := m.Alias
+		if base == "" {
+			base = strings.TrimPrefix(cloneAliasSuffix, "-")
 		} else {
-			alias = strings.TrimPrefix(cloneAliasSuffix, "-")
+			base = base + cloneAliasSuffix
 		}
+		alias := uniqueCloneAlias(m.GroupID, base)
 		newMember := &db.AgentGroupMember{
 			GroupID: m.GroupID,
 			ConvID:  newConv,

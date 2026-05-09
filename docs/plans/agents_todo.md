@@ -133,13 +133,12 @@ pattern). Both routed through the existing
 
 #### Open follow-ups
 
-- **Alias collision.** v1 just appends `-clone` to the original's
-  alias. If a clone-of-a-clone is made, the suffix becomes
-  `foo-clone-clone`; if two clones of the same original exist
-  briefly, both get `foo-clone` and the INSERT-OR-REPLACE on
-  (group_id, conv_id) keeps each row distinct (separate conv_id) but
-  the alias clashes inside the group's table. Want auto-increment
-  to `-clone-2`, `-clone-3` if a collision is detected.
+- ~~**Alias collision auto-increment.**~~ **Shipped.** A clone whose
+  computed `<orig>-clone` alias already exists in the same group
+  gets `-2`, `-3`, etc. appended until free. Doesn't help with the
+  `foo-clone-clone` chain (the base of a clone-of-a-clone is
+  whatever the parent already had); the increment kicks in when
+  multiple clones of the same original collide in a single group.
 - **Rate limiting.** A runaway loop can fork unboundedly since the
   original isn't taken down. Worth adding 1-clone-per-minute at the
   daemon if it shows up in practice.
