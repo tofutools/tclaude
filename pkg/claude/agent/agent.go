@@ -28,6 +28,7 @@ func Cmd() *cobra.Command {
 			groupsCmd(),
 			inboxCmd(),
 			permissionsCmd(),
+			dashboardCmd(),
 		},
 	}.ToCobra()
 }

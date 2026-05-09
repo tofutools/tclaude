@@ -34,6 +34,12 @@ func startPopupServer() (*http.Server, string) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/approve/", handlePopupApprove)
+	// Dashboard rides on the same loopback listener — both views are
+	// human-only, both want one stable URL we can hand to the tray
+	// icon's "Open dashboard" action. Token + cookie auth pinned to
+	// popupBaseURL gates /api/* the same way popup approval does.
+	initDashboardToken()
+	registerDashboardRoutes(mux)
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,

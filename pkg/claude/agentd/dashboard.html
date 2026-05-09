@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tclaude agent dashboard</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  background: #0f1419;
+  color: #d4d4d4;
+}
+header {
+  padding: 16px 24px 12px;
+  border-bottom: 1px solid #2a3340;
+  background: #161b22;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header .meta { color: #7d8590; font-size: 12px; }
+nav { display: flex; gap: 4px; padding: 0 24px; background: #161b22; border-bottom: 1px solid #2a3340; }
+nav button {
+  background: none; border: none; color: #7d8590; padding: 10px 16px;
+  cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent;
+}
+nav button.active { color: #d4d4d4; border-bottom-color: #58a6ff; }
+nav button:hover { color: #d4d4d4; }
+main { padding: 16px 24px; }
+section { display: none; }
+section.active { display: block; }
+table { border-collapse: collapse; width: 100%; }
+table th, table td {
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3340;
+  vertical-align: top;
+}
+table th { color: #7d8590; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+table tr:hover { background: #161b22; }
+.online { color: #3fb950; }
+.offline { color: #484f58; }
+.id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
+.alias { font-weight: 600; }
+.title { color: #d4d4d4; }
+.slug { font-family: ui-monospace, monospace; font-size: 12px; }
+.muted { color: #7d8590; }
+details { margin: 4px 0; }
+details > summary {
+  cursor: pointer; padding: 6px 0; list-style: none;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "▶ "; color: #7d8590; font-size: 10px; }
+details[open] > summary::before { content: "▼ "; }
+.subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
+.tag {
+  display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
+  background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
+  border-radius: 12px; font-size: 11px; font-family: ui-monospace, monospace;
+}
+.tag.default { border-color: #1f6feb; color: #58a6ff; }
+.copy-cmd {
+  display: block; margin-top: 8px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
+  color: #c9d1d9; cursor: pointer;
+  white-space: nowrap; overflow-x: auto;
+}
+.copy-cmd:hover { border-color: #58a6ff; }
+.copy-cmd::before { content: "$ "; color: #7d8590; }
+#status { font-size: 11px; color: #7d8590; }
+#status.error { color: #f85149; }
+.empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
+.banner {
+  background: #1c2128; border: 1px solid #2a3340; border-left: 3px solid #d29922;
+  padding: 8px 12px; margin: 0 24px; border-radius: 0 0 4px 4px;
+  color: #d29922; font-size: 12px;
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🤝 tclaude agent dashboard</h1>
+  <span class="meta" id="meta">loading…</span>
+  <span class="meta" style="margin-left:auto" id="status"></span>
+</header>
+<div class="banner">
+  Read-only view. Use the <code>tclaude agent</code> CLI for changes — every row has a "Copy CLI command" suggestion. <a href="#" id="refresh-link" style="color:#58a6ff">refresh now</a>
+</div>
+<nav>
+  <button class="active" data-tab="groups">Groups</button>
+  <button data-tab="agents">Agents</button>
+  <button data-tab="permissions">Permissions</button>
+  <button data-tab="slugs">Slug registry</button>
+</nav>
+<main>
+  <section id="tab-groups" class="active"></section>
+  <section id="tab-agents"></section>
+  <section id="tab-permissions"></section>
+  <section id="tab-slugs"></section>
+</main>
+<script>
+(function() {
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function shortId(id) { return (id || '').slice(0, 8); }
+  function onlineDot(online) {
+    return online
+      ? '<span class="online" title="online">●</span>'
+      : '<span class="offline" title="offline">○</span>';
+  }
+
+  function renderGroups(groups) {
+    if (!groups || !groups.length) {
+      return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
+    }
+    return groups.map(g => `
+      <details>
+        <summary>
+          <strong>${esc(g.name)}</strong>
+          <span class="muted">— ${g.members.length} members, ${g.online} online</span>
+          ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
+        </summary>
+        <div class="subtable">
+          ${g.members.length === 0 ? '<div class="muted">(no members yet)</div>' : `
+          <table>
+            <thead>
+              <tr>
+                <th></th><th>ID</th><th>Alias / Title</th><th>Role</th><th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${g.members.map(m => `
+                <tr>
+                  <td>${onlineDot(m.online)}</td>
+                  <td class="id">${esc(shortId(m.conv_id))}</td>
+                  <td>
+                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}</div>
+                    ${m.alias && m.title ? `<div class="title muted">${esc(m.title)}</div>` : ''}
+                  </td>
+                  <td>${esc(m.role || '')}</td>
+                  <td class="muted">${esc(m.descr || '')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`}
+          <code class="copy-cmd" data-copy="tclaude agent groups members ${g.name}">tclaude agent groups members ${esc(g.name)}</code>
+        </div>
+      </details>
+    `).join('');
+  }
+
+  function renderAgents(agents) {
+    if (!agents || !agents.length) {
+      return '<div class="empty">No agents in any group yet.</div>';
+    }
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th></th><th>ID</th><th>Name</th><th>Groups</th><th>Effective permissions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${agents.map(a => `
+            <tr>
+              <td>${onlineDot(a.online)}</td>
+              <td class="id">${esc(shortId(a.conv_id))}</td>
+              <td><span class="alias">${esc(a.title)}</span></td>
+              <td>${(a.groups || []).map(g => `<span class="tag">${esc(g)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
+              <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderPermissions(perm, agents) {
+    const titleByConv = Object.fromEntries((agents || []).map(a => [a.conv_id, a.title]));
+    const grants = perm.grants || {};
+    const defaults = perm.defaults || [];
+    return `
+      <h3 style="margin-top:0">Defaults <span class="muted" style="font-size:11px">— granted to every agent (config.json)</span></h3>
+      ${defaults.length === 0
+        ? '<div class="empty">No defaults set. Grant with: <code>tclaude agent permissions grant default &lt;slug&gt;</code></div>'
+        : `<div>${defaults.map(s => `<span class="tag default slug">${esc(s)}</span>`).join(' ')}</div>`}
+      <h3>Per-agent grants <span class="muted" style="font-size:11px">— additive on top of defaults (SQLite agent_permissions)</span></h3>
+      ${Object.keys(grants).length === 0
+        ? '<div class="empty">No per-agent grants yet. Grant with: <code>tclaude agent permissions grant &lt;conv&gt; &lt;slug&gt;</code></div>'
+        : `<table>
+            <thead><tr><th>ID</th><th>Title</th><th>Granted slugs</th></tr></thead>
+            <tbody>
+              ${Object.entries(grants).map(([k, slugs]) => `
+                <tr>
+                  <td class="id">${esc(shortId(k))}</td>
+                  <td class="alias">${esc(titleByConv[k] || '(unknown)')}</td>
+                  <td>${slugs.map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`}
+    `;
+  }
+
+  function renderSlugs(slugs) {
+    if (!slugs || !slugs.length) return '<div class="empty">No slugs registered.</div>';
+    return `
+      <table>
+        <thead><tr><th>Slug</th><th>Description</th></tr></thead>
+        <tbody>
+          ${slugs.map(s => `
+            <tr>
+              <td><span class="slug">${esc(s.slug)}</span></td>
+              <td>${esc(s.description || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function showStatus(text, isError) {
+    const el = $('#status');
+    el.textContent = text;
+    el.classList.toggle('error', !!isError);
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/snapshot', { credentials: 'same-origin' });
+      if (!r.ok) {
+        showStatus('snapshot failed: HTTP ' + r.status, true);
+        return;
+      }
+      const data = await r.json();
+      $('#meta').textContent = data.popup_base + ' · refreshed ' + new Date(data.generated_at).toLocaleTimeString();
+      $('#tab-groups').innerHTML = renderGroups(data.groups);
+      $('#tab-agents').innerHTML = renderAgents(data.agents);
+      $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
+      $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
+      showStatus('● live', false);
+    } catch (e) {
+      showStatus('snapshot failed: ' + (e.message || e), true);
+    }
+  }
+
+  function bindTabs() {
+    $$('nav button').forEach(b => {
+      b.addEventListener('click', () => {
+        $$('nav button').forEach(x => x.classList.toggle('active', x === b));
+        $$('main section').forEach(s => {
+          s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab);
+        });
+      });
+    });
+  }
+
+  function bindCopy() {
+    document.addEventListener('click', e => {
+      const t = e.target.closest('[data-copy]');
+      if (!t) return;
+      const cmd = t.getAttribute('data-copy');
+      navigator.clipboard?.writeText(cmd).then(() => {
+        const orig = t.textContent;
+        t.textContent = '✓ copied: ' + cmd;
+        setTimeout(() => { t.textContent = orig; }, 1200);
+      }).catch(() => {});
+    });
+  }
+
+  $('#refresh-link').addEventListener('click', e => { e.preventDefault(); refresh(); });
+  bindTabs();
+  bindCopy();
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

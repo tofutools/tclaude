@@ -106,7 +106,8 @@ func runServe(p *serveParams) error {
 		slog.Info("agentd listening", "socket", sockPath, "popup", popupBaseURL)
 		fmt.Printf("tclaude agentd listening on %s\n", sockPath)
 		if popupBaseURL != "" {
-			fmt.Printf("  human-approval popup on %s\n", popupBaseURL)
+			fmt.Printf("  human-approval popup on %s/approve/<id>\n", popupBaseURL)
+			fmt.Printf("  agent dashboard on        %s/\n", popupBaseURL)
 		}
 		done <- srv.Serve(ln)
 	}()
@@ -132,6 +133,7 @@ func runServe(p *serveParams) error {
 
 func buildMux() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/info", handleInfo)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)
 	mux.HandleFunc("/v1/lookup", handleLookup)

@@ -375,10 +375,17 @@ Implementation notes:
 
 ### Web dashboard (browser UI)
 
-A long-running browser view served by `tclaude agentd` on the same
-loopback port the approval popup uses (or a separate one). Goal: a
-GCP-IAM-style "who can do what to which resource" overview, plus
-live agent activity. Renders:
+**v1 is shipped** — a read-only single-page dashboard served on the
+same loopback port the approval popup uses. Tabs: Groups, Agents,
+Permissions, Slug registry. Polls `/api/snapshot` every 5s. Auth
+via per-process HttpOnly + SameSite=Strict cookie + Origin/Referer
+pinned to the popup base URL (same threat model as the popup;
+documented same-user /proc-leak limitation still applies).
+
+Open it with `tclaude agent dashboard` (or `dashboard --print` to
+just emit the URL). Daemon discovers the URL via `/v1/info`.
+
+Pending follow-ups for v2+ (the GCP-IAM-style edits view):
 
 **Multiple perspectives, switchable from the top nav.**
 
@@ -563,6 +570,17 @@ for now** — single-host first.
   section in `~/.tclaude/config.json` (defaults +
   per-conv-id/prefix/title overrides). Humans bypass the gate. Skill
   documents the command + how to grant the permission.
+- **Browser dashboard (read-only v1).** Single-page UI served on the
+  daemon's loopback port. Four tabs: Groups (expandable per-group
+  member tables), Agents (one row per known conv with effective
+  permissions and group memberships), Permissions (defaults +
+  per-agent grants), Slug registry. Polls `/api/snapshot` every 5s.
+  Auth: per-process HttpOnly + SameSite=Strict cookie set on `GET /`,
+  required + Origin/Referer pinned for `/api/*`. Same threat model
+  as the existing popup — same-user `/proc` leak still open.
+  `tclaude agent dashboard` opens the URL; `--print` returns it.
+  Read-only on purpose: edits (grant/revoke from inline buttons) are
+  v2 once we've shaken out the layout.
 - **Multicast / group broadcast.** `tclaude agent message
   group:<name> "..."` fans out to every member of the named group
   except the sender. Daemon inserts one row per recipient under the

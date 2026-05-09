@@ -171,6 +171,21 @@ tclaude agent permissions revoke <conv|alias> <slug>
 
 See **Permission model** below for the full picture.
 
+### dashboard
+
+```bash
+tclaude agent dashboard               # open the browser dashboard
+tclaude agent dashboard --print       # print the URL only
+```
+
+A read-only single-page UI served on the daemon's loopback port —
+the same one the human-approval popup binds. Four tabs: Groups,
+Agents, Permissions, Slug registry. Polls a single `/api/snapshot`
+endpoint every 5 seconds. All edits go through the CLI (each row
+includes a "copy CLI command" button). Auth: per-process
+HttpOnly + SameSite=Strict cookie set on first GET, required for
+`/api/*` calls; same threat model as the popup.
+
 ### rename
 
 ```bash

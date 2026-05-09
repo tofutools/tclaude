@@ -16,6 +16,25 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+// --- /v1/info ---
+
+// handleInfo returns daemon-wide constants the CLI needs to discover
+// at runtime — currently just the popup base URL so `tclaude agent
+// dashboard` can open it without hard-coding the random port.
+//
+// Open to anyone: no identity required, no permission gate. Loopback
+// URLs aren't sensitive on their own; the auth-gated endpoints
+// (popup approve, dashboard /api) sit behind cookies.
+func handleInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"popup_base_url": popupBaseURL,
+	})
+}
+
 // --- /v1/whoami ---
 
 type whoamiResp struct {
