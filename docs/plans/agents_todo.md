@@ -23,12 +23,115 @@ ship or get scoped out. The detailed v1 design lives in
 - Decide where the join happens: pre-launch (DB only) vs first-tick
   (after the conv-id is known). Probably first-tick via a hook.
 
-### Group lifecycle
-- `tclaude agent groups stop <group>` — gracefully end all sessions in a
-  group. Open question: send `/exit` via tmux, or just kill the tmux
-  sessions, or post a "wrap up" nudge and let agents finish.
+### Group lifecycle (spawn / stop / resume entire teams)
+
+The big idea: a **group is a persistent team** the human (or a
+trusted agent) can spawn on demand, suspend, and resume. This is the
+load-bearing UX for "delegate this batch of work to a code-reviewer +
+test-runner + integration-runner team, then come back later."
+
+The membership table already exists; what's missing is operations
+that *act on* members in bulk.
+
+- `tclaude agent groups spawn <group>` — for each member of the group,
+  start (or re-attach) a `tclaude` session running CC, register it
+  against that member's `conv_id`, and place its tmux pane in a known
+  state. Two cases per member:
+  - **Has a live conv** with a dead tmux session → resume into a fresh
+    tmux session with that conv-id (we already have
+    `tclaude session resume`).
+  - **No conv yet** (member added but never spawned) → start a fresh
+    CC session, capture the conv-id on first hook, and overwrite the
+    placeholder member row's conv_id. Open question: do we let the
+    human pre-fill `member.role` / `member.descr` and pass them as a
+    bootstrap prompt the spawning agent receives on first turn?
+  - Idempotent: spawning a group whose members are all already online
+    is a no-op (useful as a "make sure my team is up" reconciliation).
+
+- `tclaude agent groups stop <group>` — gracefully end every member's
+  session. Implementation choices, in order of weight:
+  - **Soft**: post a "wrap up" nudge per member, mark group as
+    `stopping`, let agents `/exit` themselves.
+  - **Medium**: send `/exit` via tmux send-keys to each member's pane
+    (mirrors the inject mechanic agentd already uses for `/rename`).
+    Bounded wait, then escalate.
+  - **Hard**: tmux kill-session. Last resort; risks losing
+    unsubmitted input.
+  Probably ship soft+hard with a `--force` toggle. Membership is
+  preserved (so `resume` can bring everyone back).
+
+- `tclaude agent groups resume <group>` — sugar over `spawn`: re-attach
+  any members that have a conv but no live session. Distinct from
+  `spawn` only in error semantics — `resume` errors if any member is
+  in the no-conv-yet state, since "resume" implies prior existence.
+
+- `tclaude agent groups create <group> --team <template>` — bootstrap
+  a group + initial members in one call. Template is JSON or a flag
+  bundle:
+  ```
+  tclaude agent groups create reviewer-team \
+    --member alias=lead,role=tech-lead,descr="...",cwd=. \
+    --member alias=tester,role=test-runner,descr="..."
+  ```
+  Each member starts in the `no-conv-yet` placeholder state until
+  `groups spawn` is called.
+
 - `tclaude agent groups archive <group>` — soft-delete (so message
-  history stays queryable but membership is sealed).
+  history stays queryable but membership is sealed). Distinct from
+  `stop`: archive freezes the membership too. Probably implies
+  `stop --force` first.
+
+- **Per-row online filters** (already in the Discovery section but
+  worth restating here) so `groups ls --state=offline` surfaces
+  groups whose teams aren't currently running — natural input to
+  "which teams need spawning?".
+
+**Permission slugs to add** (so all of this is delegatable to agents,
+not just human-only). All gated by default — consistent with the
+existing `groups.*`/`member.*` model:
+
+- `agent.spawn` — start a new tclaude/CC session for a conv (or for
+  a placeholder member). The single most powerful slug we'd add: an
+  agent that holds it can effectively run code on the human's
+  machine via CC. Default: nobody.
+- `agent.stop` — terminate another conv's session (tmux exit / kill).
+- `agent.resume` — re-attach a previously-stopped session.
+- `groups.spawn` — bulk version of `agent.spawn` over a group's
+  members. Holding `groups.spawn` implies holding `agent.spawn` for
+  every conv in groups the agent can see (or we keep them
+  independent — design choice).
+- `groups.stop` / `groups.resume` — bulk versions, scoped to a
+  group.
+- `groups.archive` — soft-delete a group. Lower-blast-radius than
+  `groups.rm` since the messages stay.
+
+**Recommended UX progression for the human**:
+1. Manage teams from the CLI: `groups create --team`, `groups
+   spawn`, `groups stop`. Reads like docker-compose for agents.
+2. Eventually do the same from the dashboard (one-click spawn /
+   stop a team, pending-approval queue inline).
+3. Grant a *coordinator agent* `groups.spawn`/`groups.stop` so it
+   can manage subordinate teams without bothering the human (with
+   `--ask-human` as the off-ramp for one-off escalations).
+
+**Open questions:**
+- How do member rows survive across spawn cycles? If we want
+  conv-id stability (so `permissions grant <conv> ...` keeps
+  working across spawns), we have to track a "logical member id"
+  separately from the conv-id, or accept that re-spawning a
+  no-conv-yet member produces a brand-new conv. Probably the
+  latter: members are templates; conv-ids are runtime state.
+- Should `stop` be reversible (`resume` brings the same conv-ids
+  back) or "kill and recreate"? Reversible is much nicer for the
+  human ("I want to suspend this team for an hour"); recreate is
+  simpler.
+- Where do we store team templates? If `--member alias=...,role=...`
+  flags get cumbersome, a `~/.tclaude/teams/<name>.toml` directory
+  would feel natural — same shape as docker-compose / k8s manifests.
+- Bootstrap prompts (the message a freshly-spawned member sees as
+  its first `[system: ...]` nudge) need a home. Probably a
+  per-member optional `bootstrap_prompt` column that gets injected
+  on first `agent.spawn`.
 
 ### Discovery / state
 - `tclaude agent groups ls --state=online|offline` — filter by whether
