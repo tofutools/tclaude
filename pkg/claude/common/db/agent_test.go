@@ -349,6 +349,36 @@ func TestCanSenderReachTarget(t *testing.T) {
 	}
 }
 
+// TestAgentGroupOwner_AutoOwnAfterCreate: documents the daemon's
+// auto-own behavior at the DB primitive level. The handler calls
+// CreateAgentGroup followed by AddAgentGroupOwner with the creator's
+// conv-id; this test confirms the same sequence yields a group whose
+// creator can immediately reach members it adds.
+func TestAgentGroupOwner_AutoOwnAfterCreate(t *testing.T) {
+	setupTestDB(t)
+	creator := "ab887fe0"
+
+	id, err := CreateAgentGroup("auto-own-team", "")
+	if err != nil {
+		t.Fatalf("CreateAgentGroup: %v", err)
+	}
+	if err := AddAgentGroupOwner(id, creator, creator); err != nil {
+		t.Fatalf("AddAgentGroupOwner: %v", err)
+	}
+	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: id, ConvID: "peer"}); err != nil {
+		t.Fatalf("AddAgentGroupMember: %v", err)
+	}
+
+	via, reason, err := CanSenderReachTarget(creator, "peer")
+	if err != nil || via == nil {
+		t.Fatalf("creator→peer should reach via owner-of-group: via=%+v reason=%q err=%v",
+			via, reason, err)
+	}
+	if reason != "owner-of-group" {
+		t.Errorf("reason = %q, want owner-of-group", reason)
+	}
+}
+
 // TestAgentGroupOwnerCascadesOnGroupDelete: deleting a group removes
 // its owner rows too (FK ON DELETE CASCADE).
 func TestAgentGroupOwnerCascadesOnGroupDelete(t *testing.T) {

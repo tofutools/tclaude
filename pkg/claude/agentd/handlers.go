@@ -910,7 +910,8 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
-		if _, ok := requirePermission(w, r, PermGroupsCreate); !ok {
+		creator, ok := requirePermission(w, r, PermGroupsCreate)
+		if !ok {
 			return
 		}
 		var body struct {
@@ -933,6 +934,17 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
+		}
+		// Auto-grant ownership to the creator. Skipped for the human
+		// path (creator == "") since humans don't have a conv-id; the
+		// human is implicitly above the permission system anyway.
+		// Failure here is logged but doesn't unwind the create — the
+		// human can grant ownership manually if needed.
+		if creator != "" {
+			if err := db.AddAgentGroupOwner(id, creator, creator); err != nil {
+				slog.Warn("groups create: auto-grant owner failed",
+					"group", body.Name, "creator", creator, "error", err)
+			}
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": body.Name})
 	default:

@@ -571,3 +571,6 @@ Short notes only — see `docs/agent.md` and the code for details.
   `(owner)` tag for member-owners; pure-owners surface as their own
   rows with role=owner. Reply path no longer requires shared-group
   — if you received a message you can reply, even out-of-group.
+  Auto-own-on-create: an agent that creates a group becomes its
+  owner automatically (skipped for human creator since humans bypass
+  the permission system).
