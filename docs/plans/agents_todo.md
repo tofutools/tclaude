@@ -128,13 +128,6 @@ existing `groups.*`/`member.*` model:
   on first `agent.spawn`.
 
 ### Discovery / state
-- `tclaude agent groups ls --state=online|offline` — filter by whether
-  members have a live tmux session right now. (Online count column
-  already shipped; this is just a filter on top.)
-- `tclaude agent ls --state=online|offline` — same filter, but for peers.
-- Per-row online indicator on `agent ls` and `groups members` (e.g.
-  `●`/`○` or `yes`/`""` column). The `isConvOnline` helper used by
-  `groups ls` makes this trivial to extend.
 - Selectable filtering: pressing `g` in `conv ls -w` could open a fuzzy
   group picker. (Groups column itself is shipped.)
 
@@ -552,3 +545,5 @@ Short notes only — see `docs/agent.md` and the code for details.
 - `tclaude agent inbox sent` (outbox view). Lists this conv's
   outgoing messages with per-recipient delivery + read state.
   Backed by `db.ListAgentMessagesFromConv` + `/v1/inbox?outbox=1`.
+- `--state=online|offline` filter on `agent ls` and `agent groups ls`.
+  Tab-completion offers the two values with descriptions.

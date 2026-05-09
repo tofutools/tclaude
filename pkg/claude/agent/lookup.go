@@ -391,7 +391,8 @@ func runLookupDirect(p *lookupParams, stdout, stderr io.Writer) int {
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
-	JSON bool `long:"json" help:"Output JSON"`
+	State string `long:"state" optional:"true" help:"Filter: online | offline"`
+	JSON  bool   `long:"json" help:"Output JSON"`
 }
 
 func lsCmd() *cobra.Command {
@@ -399,6 +400,10 @@ func lsCmd() *cobra.Command {
 		Use:         "ls",
 		Short:       "List agents reachable to me (members of my groups)",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *lsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.State).SetAlternativesFunc(completeStateFilterValues)
+			return nil
+		},
 		RunFunc: func(p *lsParams, _ *cobra.Command, _ []string) {
 			os.Exit(runLs(p, os.Stdout, os.Stderr))
 		},
@@ -416,6 +421,10 @@ type peerEntry struct {
 }
 
 func runLs(p *lsParams, stdout, stderr io.Writer) int {
+	if _, _, err := parseStateFilter(p.State); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -427,6 +436,16 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 	if err := DaemonGet("/v1/peers", &peers); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	wantOnline, applyState, _ := parseStateFilter(p.State)
+	if applyState {
+		filtered := make([]*peerEntry, 0, len(peers))
+		for _, pe := range peers {
+			if pe.Online == wantOnline {
+				filtered = append(filtered, pe)
+			}
+		}
+		peers = filtered
 	}
 	return renderPeers(p, peers, stdout)
 }

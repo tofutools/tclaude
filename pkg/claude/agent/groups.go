@@ -47,7 +47,8 @@ func groupsCmd() *cobra.Command {
 // --- groups ls ---
 
 type groupsLsParams struct {
-	JSON bool `long:"json" help:"Output JSON"`
+	State string `long:"state" optional:"true" help:"Filter: online (any member online) | offline (no member online)"`
+	JSON  bool   `long:"json" help:"Output JSON"`
 }
 
 func groupsLsCmd() *cobra.Command {
@@ -55,6 +56,10 @@ func groupsLsCmd() *cobra.Command {
 		Use:         "ls",
 		Short:       "List all groups",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsLsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.State).SetAlternativesFunc(completeStateFilterValues)
+			return nil
+		},
 		RunFunc: func(p *groupsLsParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsLs(p, os.Stdout, os.Stderr))
 		},
@@ -69,6 +74,11 @@ type groupSummary struct {
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
+	wantOnline, applyState, err := parseStateFilter(p.State)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -76,6 +86,15 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 	if err := DaemonGet("/v1/groups", &groups); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	if applyState {
+		filtered := make([]groupSummary, 0, len(groups))
+		for _, g := range groups {
+			if (g.Online > 0) == wantOnline {
+				filtered = append(filtered, g)
+			}
+		}
+		groups = filtered
 	}
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
