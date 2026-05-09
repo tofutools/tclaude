@@ -696,7 +696,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
-		if !requireHuman(w, r) {
+		if _, ok := requirePermission(w, r, PermGroupsCreate); !ok {
 			return
 		}
 		var body struct {
@@ -774,7 +774,7 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 	// /v1/groups/{name}
 	switch r.Method {
 	case http.MethodDelete:
-		if !requireHuman(w, r) {
+		if _, ok := requirePermission(w, r, PermGroupsRm); !ok {
 			return
 		}
 		if err := db.DeleteAgentGroup(name); err != nil {
@@ -824,7 +824,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 }
 
 func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if !requireHuman(w, r) {
+	if _, ok := requirePermission(w, r, PermMemberAdd); !ok {
 		return
 	}
 	var body struct {
@@ -861,9 +861,9 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 
 // handleGroupMembersUpdate patches alias/role/descr on an existing member.
 // Only fields explicitly present in the request body are touched — pass
-// `null` (or omit) to leave a field unchanged. Same human-only gate as add.
+// `null` (or omit) to leave a field unchanged. Gated on member.redesignate.
 func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if !requireHuman(w, r) {
+	if _, ok := requirePermission(w, r, PermMemberRedesignate); !ok {
 		return
 	}
 	var body struct {
@@ -897,7 +897,7 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 }
 
 func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if !requireHuman(w, r) {
+	if _, ok := requirePermission(w, r, PermMemberRemove); !ok {
 		return
 	}
 	res, _, err := agent.ResolveSelector(convSelector)

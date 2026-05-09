@@ -121,9 +121,15 @@ load that one when you need to rename, not this one.
   of the headers. The reply inherits `Re: <subject>` automatically.
 - **Don't spam.** Tmux nudges interleave with the receiver's input box;
   too many in quick succession will wreck their UX.
-- **Don't try to mutate group membership.** The daemon refuses
-  `groups create|rm|add|remove` from any caller with a `claude`
-  ancestor in its process tree. The human curates the allow-list.
+- **Don't mutate group membership unless granted.** Mutating
+  subcommands (`groups create|rm|add|remove|update-member`) are
+  permission-gated. By default agents can't run them. Humans bypass
+  the gate. Slugs: `groups.create`, `groups.rm`, `member.add`,
+  `member.remove`, `member.redesignate`. Granted via
+  `agent.default_permissions` or `agent.permission_overrides[<conv>]`
+  in `~/.tclaude/config.json`. If you hit a 403 with one of these
+  slugs and you really need it, ask the human to grant it instead of
+  retrying — the answer won't change otherwise.
 
 ## Troubleshooting
 

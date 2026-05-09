@@ -13,16 +13,20 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// groupsCmd is `tclaude agent groups …`. The daemon enforces "the human is
-// the only mutator" by inspecting peer credentials on each call: callers
-// from inside a Claude Code session (with a `claude`/`node` ancestor in
-// the pid tree) get 403 on POST/DELETE endpoints; callers without one
-// (the human running tclaude from a plain shell) succeed.
+// groupsCmd is `tclaude agent groups …`. Mutating subcommands (create,
+// rm, add, remove, update-member) are gated by the daemon on a per-action
+// permission slug — humans (no CC ancestor) always pass; agents must
+// hold the matching slug in `agent.default_permissions` or
+// `agent.permission_overrides[<conv>]` in `~/.tclaude/config.json`.
+//
+// Slugs: groups.create, groups.rm, member.add, member.remove,
+// member.redesignate. Read-only subcommands (`ls`, `members`) are open
+// to any caller.
 func groupsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "groups",
 		Short:       "Manage agent groups (allow-listed who can talk to whom)",
-		Long:        "Group membership is human-controlled: agents can `ls` and `members`; create/rm/add/remove are gated server-side on the absence of a Claude Code ancestor in the caller's process tree.",
+		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json. Slugs: groups.create, groups.rm, member.add, member.remove, member.redesignate.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			groupsLsCmd(),

@@ -27,9 +27,9 @@ type peerKey struct{}
 //     be read.
 //   - HasClaudeAncestor is true iff a claude/node ancestor was observed
 //     anywhere in the pid tree, regardless of session-file readability.
-//     This is what `requireHuman` actually checks: the human is a
-//     positive assertion (PID known AND no CC ancestor), not the
-//     absence of a successful conv-id resolution.
+//     This is what `requirePermission` checks: humans (no CC ancestor)
+//     bypass permission checks; agents with a CC ancestor must hold
+//     the requested slug to pass.
 type peer struct {
 	PID               int
 	ConvID            string
@@ -75,31 +75,17 @@ func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return p.ConvID, true
 }
 
-// requireHuman gates mutating endpoints to the local human only. We
-// require *both* a known PID and the absence of any claude/node
-// ancestor in the caller's process tree. This is a positive
-// "definitely human" assertion: an agent whose per-pid session file is
-// missing/unreadable still has a CC ancestor and is therefore *not*
-// the human, even though `ConvID` is empty in that case.
-func requireHuman(w http.ResponseWriter, r *http.Request) bool {
-	p := peerFromContext(r.Context())
-	if p.PID == 0 {
-		writeError(w, http.StatusUnauthorized, "auth",
-			"could not determine peer PID; refusing to grant human privileges")
-		return false
-	}
-	if p.HasClaudeAncestor {
-		msg := "this endpoint is restricted to the human"
-		if p.ConvID != "" {
-			msg = fmt.Sprintf("%s (caller is conv %s)", msg, p.ConvID)
-		} else {
-			msg += " (caller has a Claude Code ancestor in its pid tree)"
-		}
-		writeError(w, http.StatusForbidden, "auth", msg)
-		return false
-	}
-	return true
-}
+// Permission slugs are simple dotted strings the daemon accepts in
+// `agent.default_permissions` / `agent.permission_overrides`. Keep this
+// list in sync with the agent-coord skill / docs.
+const (
+	PermSelfRename        = "self.rename"
+	PermGroupsCreate      = "groups.create"
+	PermGroupsRm          = "groups.rm"
+	PermMemberAdd         = "member.add"
+	PermMemberRemove      = "member.remove"
+	PermMemberRedesignate = "member.redesignate"
+)
 
 // requirePermission gates an endpoint behind a named agent permission.
 //
