@@ -231,6 +231,12 @@ func freshConvRow(convID string) *db.ConvIndexRow {
 // $TCLAUDE_SESSION_ID is sometimes set to the 8-char prefix rather than
 // the full UUID, so we expand prefixes via the DB before returning, so
 // downstream callers can rely on getting the canonical full ID.
+//
+// Final fallback: ask the daemon via /v1/whoami. The daemon resolves
+// identity from the Unix socket's peer credentials (host PID), which
+// works even when our process tree is hidden by a sandbox PID
+// namespace (e.g. bwrap with --unshare-pid). Cheap roundtrip — the
+// daemon is local and the lookup is one query.
 func currentConvID() (string, error) {
 	if id := readCCSessionID(); id != "" {
 		return id, nil
@@ -246,7 +252,35 @@ func currentConvID() (string, error) {
 		}
 		return id, nil
 	}
+	if id := whoamiViaDaemon(); id != "" {
+		return id, nil
+	}
 	return "", fmt.Errorf("could not detect current conversation; pass an explicit conv ID")
+}
+
+// whoamiViaDaemon asks the running agentd "who am I?" via peer-cred.
+// Returns "" if the daemon isn't running, or the caller is a human
+// (no Claude ancestor from the daemon's view), or any other failure.
+// Side-effect-free for the not-running case so command-line tools
+// don't error on hosts without agentd.
+//
+// Indirected through a variable so tests can stub it (the test runner
+// itself shouldn't reach a real daemon).
+var whoamiViaDaemon = func() string {
+	if SocketPath() == "" {
+		return ""
+	}
+	var resp struct {
+		IsHuman bool   `json:"is_human"`
+		ConvID  string `json:"conv_id"`
+	}
+	if err := DaemonGet("/v1/whoami", &resp); err != nil {
+		return ""
+	}
+	if resp.IsHuman {
+		return ""
+	}
+	return resp.ConvID
 }
 
 // readCCSessionID walks up to the parent CC pid and reads
