@@ -52,6 +52,12 @@ The daemon binds two sockets:
 - `127.0.0.1:<random>` — loopback HTTP for the human-approval popup
   (only used when an agent passes `--ask-human`).
 
+By default `agentd serve` also adds a system tray icon (Open
+dashboard, Reinstall agent skills, Open config, Quit). On hosts
+without a tray host (WSL, headless servers, pure Wayland) the icon
+silently doesn't appear — the daemon still works. Pass `--no-tray`
+to skip the tray entirely.
+
 ## Quick start
 
 ```bash

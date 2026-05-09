@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
+	"fyne.io/systray"
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -19,6 +21,7 @@ import (
 
 type serveParams struct {
 	Socket string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
+	NoTray bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts."`
 }
 
 func serveCmd() *cobra.Command {
@@ -101,7 +104,10 @@ func runServe(p *serveParams) error {
 	popupSrv, popupURL := startPopupServer()
 	popupBaseURL = popupURL
 
-	done := make(chan error, 1)
+	// Both the Unix-socket server and the popup server run in
+	// goroutines so the main goroutine is free for the tray loop
+	// (systray needs the main thread on every supported platform).
+	serveErrCh := make(chan error, 1)
 	go func() {
 		slog.Info("agentd listening", "socket", sockPath, "popup", popupBaseURL)
 		fmt.Printf("tclaude agentd listening on %s\n", sockPath)
@@ -109,26 +115,67 @@ func runServe(p *serveParams) error {
 			fmt.Printf("  human-approval popup on %s/approve/<id>\n", popupBaseURL)
 			fmt.Printf("  agent dashboard on        %s/\n", popupBaseURL)
 		}
-		done <- srv.Serve(ln)
+		serveErrCh <- srv.Serve(ln)
 	}()
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	select {
-	case err := <-done:
-		if err != nil && err != http.ErrServerClosed {
-			return err
+	quit := newQuitter()
+
+	// Translate any of: SIGINT/SIGTERM, the socket server dying,
+	// "Quit" from the tray menu, into a single shutdown signal.
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		select {
+		case <-sig:
+			slog.Info("agentd received shutdown signal")
+		case err := <-serveErrCh:
+			if err != nil && err != http.ErrServerClosed {
+				slog.Error("agentd socket server failed", "error", err)
+			}
 		}
-	case <-sig:
-		slog.Info("agentd shutting down")
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-		if popupSrv != nil {
-			_ = popupSrv.Shutdown(ctx)
-		}
+		quit.signal()
+	}()
+
+	if p.NoTray {
+		// Legacy / headless path: just block on shutdown.
+		<-quit.ch
+	} else {
+		// Tray path: when shutdown is requested for any reason
+		// (signal, server error, tray Quit), call systray.Quit() to
+		// unblock systray.Run on the main goroutine.
+		go func() {
+			<-quit.ch
+			systray.Quit()
+		}()
+		runTrayBlocking(trayConfig{
+			SocketPath:   sockPath,
+			PopupBaseURL: popupBaseURL,
+		}, quit.signal)
+	}
+
+	// Graceful shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+	if popupSrv != nil {
+		_ = popupSrv.Shutdown(ctx)
 	}
 	return nil
+}
+
+// quitter funnels multiple shutdown sources (signal, tray, server
+// error) into one idempotent close on the quit channel.
+type quitter struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func newQuitter() *quitter {
+	return &quitter{ch: make(chan struct{})}
+}
+
+func (q *quitter) signal() {
+	q.once.Do(func() { close(q.ch) })
 }
 
 func buildMux() http.Handler {

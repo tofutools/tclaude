@@ -315,57 +315,22 @@ doesn't close the existing one. Future work to actually fix this:
   browsers still need *some* URL, and any URL has to land in argv
   somewhere. Marginal win.
 
-### System tray icon
+### System tray icon — v2 follow-ups
 
-A long-running tray icon for `tclaude agentd` so the human can see at
-a glance whether the daemon is up, and reach the dashboard / common
-actions in one click. Inspired directly by `/home/gigur/git/oh-shit-meeting`'s
-systray (uses `fyne.io/systray`, pure-Go on Windows, gracefully no-ops
-on hosts without a tray host like WSL or some GNOME setups).
+V1 shipped (see DONE). Open follow-ups:
 
-Indicators (icon colour or overlay):
-
-- **Green** — daemon up, no pending work.
-- **Yellow** — daemon up, **pending human approval popup** (the
-  approval flow we just shipped). Same idea as oh-shit-meeting's
-  yellow-when-action-needed.
-- **Red** — daemon down (or about to go down).
-- **Flashing** — unread agent inbox messages on any conv (configurable
-  threshold; flash is loud, so probably opt-in).
-
-Menu items:
-
-- **Open dashboard** → opens `popupBaseURL/` (the loopback HTTP root)
-  in the browser. Same `openBrowser` helper popup.go already has.
-- **Pending approvals (N)** — submenu listing currently-waiting
-  approval requests; clicking one re-opens its `/approve/{id}` page.
-  Useful when the auto-opened browser tab got buried.
-- **Reinstall agent skills** → runs the same code path as
-  `tclaude setup --install-agent-skills` so the human can refresh
-  bundled skills after a `go install …@latest` without dropping to a
-  shell.
-- **Open ~/.tclaude/config.json** → launch `xdg-open` /
-  `open` / `start` on the config file. Convenient for editing
-  permissions until the dashboard's edit UI lands.
-- **Show socket / popup port info** — small disabled menu items that
-  show `agentd.sock` path and the popup base URL, for copy-paste.
-- **Quit** → graceful daemon shutdown (the existing SIGTERM path).
-
-Implementation notes:
-
-- The `agentd serve` process runs the tray loop on its main goroutine
-  (systray needs the main thread). The HTTP servers move to
-  goroutines (they already are).
-- Cross-platform: macOS/Windows have native trays;
-  `fyne.io/systray` works on both. Linux varies — works on Plasma /
-  most XFCE / some GNOME, no-ops on WSL or pure Wayland sessions.
-  Document the support matrix.
-- Add a `--no-tray` flag to `tclaude agentd serve` for environments
-  where the tray dep is undesired (CI, headless Docker, etc.). Tray
-  is opt-out, not opt-in, since the whole point is "daemon visible
-  by default."
-- Optional bonus: tray click doubles as "focus most-recent dashboard
-  tab" — same window-focus tricks the WSL notifications already use.
+- **Yellow on pending approval** — flip icon to yellow while a
+  `--ask-human` popup is awaiting decision; back to green on
+  approve/deny/timeout.
+- **Red on daemon down / shutting down**.
+- **Flashing on unread inbox** — opt-in (loud).
+- **Pending approvals submenu** — list waiting requests; click re-opens
+  `/approve/{id}` (helps when the auto-opened tab got buried).
+- **Tray-mediated approve** — pair with the popup so Approve/Deny also
+  requires a tray click within N seconds (kills the residual /proc
+  cmdline-scrape attack).
+- **Focus dashboard tab on icon click** — same window-focus tricks the
+  WSL notifications already use.
 
 ### Web dashboard (browser UI)
 
@@ -532,104 +497,57 @@ for now** — single-host first.
 
 ## DONE
 
+Short notes only — see `docs/agent.md` and the code for details.
+
 ### PR #47 — v1 agent coordination + agentd (2026-05)
 
-- **`tclaude agent` CLI**
-  - `whoami`, `lookup <name>`, `ls`
-  - `message <target> <body>` (with `--stdin` / `--file`, optional `--subject`)
-  - `groups create|rm|ls|members|add|remove`
-  - `inbox ls|read` (with `mailbox`/`mail` aliases)
-  - `reply <id>` — looks up sender from message, inherits `Re: <subject>`
-- **DB schema v8** — tables `agent_groups`, `agent_group_members`,
-  `agent_messages` (`from_conv`, `to_conv`, `subject`, `body`,
-  `created_at`, `delivered_at`, `read_at`).
-- **Tmux nudge** via `send-keys` when target session is alive; queued
-  otherwise.
-- **Group-shared enforcement** — daemon refuses messages between peers
-  who don't share a group.
-- **Mutating-groups gate** — daemon walks PID tree; refuses
-  `groups create|rm|add|remove` if a `claude`/`node` ancestor is found.
-  (Note: the originally-planned `agent.allow_agent_mutate_groups` config
-  override and `--allow-from-agent` flag were not shipped — gate is
-  absolute. Re-evaluate if we want agents to self-onboard.)
-- **`tclaude agentd serve`** daemon — foreground HTTP over Unix domain
-  socket with peer-cred identity (no tokens). Reads peer PID, walks to
-  `claude`/`node` ancestor, reads `~/.claude/sessions/<pid>.json` for
-  current conv-id (tracks `/fork`/`/clear`/`/resume`).
-- **CLI requires daemon** — `tclaude agent …` no longer falls back to
-  direct DB access; refuses loudly if `agentd` isn't running.
-- **Skills bundled** under `pkg/claude/agent/skills/<name>/SKILL.md`;
-  installable via `tclaude setup --install-agent-skills`.
+- `tclaude agent` CLI: `whoami`, `lookup`, `ls`, `message`, `groups
+  create|rm|ls|members|add|remove`, `inbox ls|read`, `reply`.
+- DB schema v8: `agent_groups`, `agent_group_members`, `agent_messages`.
+- Tmux send-keys nudge when target online; queued otherwise.
+- Group-shared enforcement — peers must share a group to message.
+- Mutating-groups gate — refuses if a `claude`/`node` ancestor is
+  found. Absolute (no `--allow-from-agent` shipped).
+- `tclaude agentd serve` — Unix-socket HTTP, peer-cred identity.
+- CLI requires daemon (no DB fallback).
+- Skills bundled under `pkg/claude/agent/skills/`; installable via
+  `tclaude setup --install-agent-skills`.
 
 ### Polish (post-#47, 2026-05)
 
-- **Common-table rendering for agent CLI lists.** `agent ls`,
-  `groups ls`, `groups members`, and `inbox ls` all render via
-  `pkg/claude/common/table` instead of ad-hoc `fmt.Fprintf`. JSON
-  output unchanged.
-- **Online member counts.** `groups ls` shows `MEMBERS` and `ONLINE`
-  side by side. `isConvOnline` factored out of `nudgeIfAlive`.
-- **Groups column on `conv ls` / `conv ls -w`.** Both list views grow
-  a "Groups" column when at least one conv is in any group, so you
-  can see group membership while picking a conversation. Backed by
-  `db.GroupNamesByConv()`.
-- **Per-row ONLINE indicator.** `agent ls` and `groups members` now
-  show a leading ● glyph for peers with a live tmux session.
-- **`groups update-member`.** Redesignate alias/role/descr in place.
-  Same human-only gate as add/remove. Empty string clears a field.
-- **Self-rename via agentd + permission framework.** `tclaude agent
-  rename "<title>"` injects `/rename <title>` into the caller's own CC
-  pane via tmux send-keys. Permission-gated on `self.rename`. The
-  daemon ships a `requirePermission()` helper backed by an `agent`
-  section in `~/.tclaude/config.json` (defaults +
-  per-conv-id/prefix/title overrides). Humans bypass the gate. Skill
-  documents the command + how to grant the permission.
-- **Group lifecycle Phase A: stop / resume.** `tclaude agent
-  groups stop <group> [--force]` and
-  `tclaude agent groups resume <group>` ship the smallest useful
-  slice of the team-orchestration TODO. Stop soft-injects `/exit`
-  via tmux send-keys (or `tmux kill-session` with `--force`). Resume
-  spawns `tclaude session new -r <conv> -d --global` for every
-  offline member with a known conv-id; idempotent. Permission slugs
-  `groups.stop` / `groups.resume`. Phase B (member templates,
-  fresh spawn for placeholder members, `--join-group` bootstrap)
-  deferred until we've proven the wake-the-team flow in real use.
-- **Browser dashboard (read-only v1).** Single-page UI served on the
-  daemon's loopback port. Four tabs: Groups (expandable per-group
-  member tables), Agents (one row per known conv with effective
-  permissions and group memberships), Permissions (defaults +
-  per-agent grants), Slug registry. Polls `/api/snapshot` every 5s.
-  Auth: per-process HttpOnly + SameSite=Strict cookie set on `GET /`,
-  required + Origin/Referer pinned for `/api/*`. Same threat model
-  as the existing popup — same-user `/proc` leak still open.
-  `tclaude agent dashboard` opens the URL; `--print` returns it.
-  Read-only on purpose: edits (grant/revoke from inline buttons) are
-  v2 once we've shaken out the layout.
-- **Multicast / group broadcast.** `tclaude agent message
-  group:<name> "..."` fans out to every member of the named group
-  except the sender. Daemon inserts one row per recipient under the
-  same group_id and nudges every online member's tmux pane. Sender
-  must be a member of the group to broadcast. CLI prints a per-
-  recipient summary (delivered vs queued). Replies come back as
-  normal direct messages — there is no automatic "reply-all" today.
-- **User-facing docs.** `docs/agent.md` covers the agent feature
-  end-to-end: identity model, command reference, permission model
-  with the storage split (config defaults vs SQLite per-agent
-  grants), `--ask-human` popup flow, bundled skills,
-  troubleshooting. Linked from `docs/index.md`'s navbar and Features
-  list. Design docs under `docs/plans/` stay where they are.
-- **Permissions CLI + storage split.** `tclaude agent permissions
-  ls|grant|revoke|slugs` — inspect and edit agent permissions without
-  hand-editing `~/.tclaude/config.json`. Targets are the magic word
-  `default` (the global defaults list, in config.json) or a conv
-  selector (UUID, prefix, title — resolves to the full conv-id). Per-
-  agent grants live in **SQLite** (table `agent_permissions`, schema
-  v9) — only the global defaults stay in config.json. Per-agent grants
-  ADD to defaults rather than replace them, so an agent's effective
-  set is `union(defaults, grants)`. Backed by daemon endpoints
-  `/v1/permissions[/slugs|/grant|/revoke]` and a single source-of-truth
-  slug registry (`self.rename`, `groups.create|rm`,
-  `member.add|remove|redesignate`, `permissions.grant|revoke`).
-  `grant` refuses unknown slugs. The `permissions.grant|revoke` slugs
-  are themselves permission-gated, so the framework is recursive —
-  humans bypass by default; no agent holds them out of the box.
+- `pkg/claude/common/table` rendering across agent list views.
+- `groups ls` MEMBERS + ONLINE columns.
+- Groups column on `conv ls` / `conv ls -w`.
+- ONLINE indicator on `agent ls` and `groups members`.
+- `groups update-member` (alias/role/descr in place).
+- Self-rename: `tclaude agent rename "<title>"`, slug `self.rename`,
+  `requirePermission()` framework with config defaults + overrides.
+- Group lifecycle Phase A: `groups stop` (soft `/exit`, `--force`
+  kill-session) / `groups resume` (spawn detached `tclaude session
+  new -r <conv> -d --global`). Slugs `groups.stop`/`groups.resume`.
+- Browser dashboard v1 (read-only): Groups / Agents / Permissions /
+  Slugs tabs, polls `/api/snapshot` every 5s, opens via
+  `tclaude agent dashboard`.
+- Multicast: `tclaude agent message group:<name> "..."` fan-out.
+- User-facing docs: `docs/agent.md` + navbar entry.
+- Permissions CLI + storage split: `tclaude agent permissions
+  ls|grant|revoke|slugs`. Defaults in config.json; per-agent grants
+  in SQLite (`agent_permissions`, schema v9). Effective set =
+  `union(defaults, grants)`. Recursive: `permissions.grant|revoke`
+  slugs gate the mutators.
+- Agent state on dashboard (idle/working/awaiting/exited) mirroring
+  `session/list.go` colours; `<details>` open state persisted in
+  localStorage across polls.
+- Shell autocompletions across `tclaude agent(d)` — group names,
+  conv selectors (with title descriptions), permission slugs,
+  message targets (`group:` prefix), inbox message IDs,
+  `--ask-human` durations. Wired via boa
+  `InitFuncCtx`+`SetAlternativesFunc`.
+- System tray icon v1 (`fyne.io/systray`). Menu: Open dashboard,
+  Reinstall agent skills, Open config.json, copy-paste rows for
+  socket + popup URL, Quit. `--no-tray` opt-out for headless. Runs
+  on main goroutine; signal/server-error/Quit converge on a single
+  shutdown path. Linux/Windows pure-Go; macOS uses cgo (goreleaser
+  splits builds: CGO_ENABLED=0 for linux/windows, =1 for darwin).
+  Yellow/red/flashing indicators + pending-approvals submenu
+  deferred to v2.

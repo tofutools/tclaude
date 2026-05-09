@@ -5,20 +5,34 @@ before:
     - go mod tidy
 
 builds:
-  - main: .
+  # Linux/Windows: pure Go, no cgo. fyne.io/systray uses D-Bus
+  # (StatusNotifierItem) on Linux and syscall on Windows, so the
+  # tray icon works without a C toolchain.
+  - id: tclaude-no-cgo
+    main: .
     binary: tclaude
     env:
       - CGO_ENABLED=0
     goos:
       - linux
       - windows
-      - darwin
     goarch:
       - amd64
       - arm64
-    ignore:
-      - goos: darwin
-        goarch: amd64
+  # macOS: fyne.io/systray binds Cocoa via cgo, so darwin builds
+  # need CGO_ENABLED=1. CI runs darwin builds on a macos-latest
+  # runner where xcrun's clang is available, so the native build
+  # links cleanly. amd64 is intentionally skipped (Apple Silicon
+  # only).
+  - id: tclaude-darwin
+    main: .
+    binary: tclaude
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - arm64
 
 archives:
   - format: tar.gz

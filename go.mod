@@ -6,6 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.3
+	fyne.io/systray v1.12.1
 	github.com/GiGurra/boa v1.0.25
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.10.0
