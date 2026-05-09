@@ -427,14 +427,34 @@ changed and when.
 
 **Implementation:**
 
-- Static HTML+JS page served by the daemon (no SPA framework
-  necessary — htmx or vanilla JS keeps it lightweight).
+- v1 ships as static HTML+JS embedded via `//go:embed` (one HTML
+  file, vanilla JS, polls `/api/snapshot` every 5s). Lightweight,
+  no build step, ~290 lines.
 - Reuses the loopback port the approval popup already binds. Pages
   fetch from `/v1/...` on the same origin (the daemon adds CORS
   scoping if needed; same-origin on loopback is the simplest option).
 - Origin guard: only same-host. An ephemeral session cookie tied to
   the daemon's startup PID makes "another tab on the machine" attacks
   harder.
+
+**Optional: framework migration.** Vanilla JS works for v1 but every
+new feature (expand-state persistence, search, inline edits, "live"
+activity tab) means hand-rolling DOM diffing and event delegation,
+which adds up. **Consider migrating to React** (or Preact / Svelte)
+when v2 lands — they'd give us:
+
+- Built-in state preservation across re-renders (no more
+  localStorage hacks for `<details>` open state).
+- Cleaner edit forms (controlled inputs, validation, optimistic
+  updates) for the inline grant/revoke + group mutators.
+- Component-level diffing so polling updates don't blow away
+  in-progress dialogs / search filters.
+
+Trade-offs: a build step (vite + esbuild keeps it small), bigger
+embedded asset, more JS to audit. Probably worth it once we cross
+~5 features and ~700 lines of inline JS, and definitely worth it
+before adding a search box + filtered tree views. Decide as part of
+the v2 scope review; not a blocker.
 
 Open questions:
 
