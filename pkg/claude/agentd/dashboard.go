@@ -162,12 +162,13 @@ type dashboardMember struct {
 }
 
 type dashboardAgent struct {
-	ConvID    string     `json:"conv_id"`
-	Title     string     `json:"title"`
-	Online    bool       `json:"online"`
-	State     agentState `json:"state"`
-	Groups    []string   `json:"groups"`
-	Effective []string   `json:"effective"` // perms = union(defaults, per-conv grants)
+	ConvID       string     `json:"conv_id"`
+	Title        string     `json:"title"`
+	Online       bool       `json:"online"`
+	State        agentState `json:"state"`
+	Groups       []string   `json:"groups"`
+	OwnedGroups  []string   `json:"owned_groups"` // subset of Groups the agent owns; UI tags these distinctly
+	Effective    []string   `json:"effective"`    // perms = union(defaults, per-conv grants)
 }
 
 // agentState mirrors what `tclaude session ls` shows: status from the
@@ -253,8 +254,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			State:  stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
-			Groups:    []string{},
-			Effective: []string{},
+			Groups:      []string{},
+			OwnedGroups: []string{},
+			Effective:   []string{},
 		}
 		agentRows[convID] = a
 		return a
@@ -313,6 +315,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			a := addAgent(m.ConvID)
 			a.Groups = append(a.Groups, g.Name)
+			if ownerSet[m.ConvID] {
+				a.OwnedGroups = append(a.OwnedGroups, g.Name)
+			}
 		}
 		// Surface owners who aren't members so the list stays
 		// comprehensive. Same shape as the CLI:
@@ -342,6 +347,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			// "what groups can this conv see?" matches reality.
 			a := addAgent(ownerConv)
 			a.Groups = append(a.Groups, g.Name)
+			a.OwnedGroups = append(a.OwnedGroups, g.Name)
 		}
 		out.Groups = append(out.Groups, dg)
 	}
@@ -373,6 +379,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(merged)
 		a.Effective = merged
 		sort.Strings(a.Groups)
+		sort.Strings(a.OwnedGroups)
 		out.Agents = append(out.Agents, *a)
 	}
 	sort.Slice(out.Agents, func(i, j int) bool {

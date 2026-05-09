@@ -164,6 +164,20 @@ details[open] > summary::before { content: "▼ "; }
     return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
   }
 
+  // groupTagsCell renders the Groups column on the Agents view. Each
+  // group becomes a tag; groups the agent owns get an "owner" badge
+  // appended to the tag so the manager-vs-member distinction is
+  // visible at a glance.
+  function groupTagsCell(a) {
+    const groups = a.groups || [];
+    if (!groups.length) return '<span class="muted">(none)</span>';
+    const owned = new Set(a.owned_groups || []);
+    return groups.map(g => {
+      const ownBadge = owned.has(g) ? '<span class="owner-badge">owner</span>' : '';
+      return `<span class="tag">${esc(g)}${ownBadge}</span>`;
+    }).join(' ');
+  }
+
   // roleCell renders the role column for a member row. Mirrors the CLI:
   // members who are also owners get an "owner" badge; pure-owners
   // (role==="owner" set by the daemon) show the badge alone.
@@ -279,7 +293,7 @@ details[open] > summary::before { content: "▼ "; }
               </td>
               <td><span class="last-hook">${esc(lh)}</span></td>
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
-              <td>${(a.groups || []).map(g => `<span class="tag">${esc(g)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
+              <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
             </tr>`;
           }).join('')}
