@@ -574,9 +574,16 @@ func handleWhoamiCompact(w http.ResponseWriter, r *http.Request) {
 	handleSelfSlash(w, r, PermSelfCompact, "/compact", "compact")
 }
 
+// handleAgentCompact injects `/compact` into ANOTHER agent's CC pane.
+// Routed via handleAgentByConv (the dispatcher resolves targetConv from
+// the URL). Auth: agent.compact slug OR caller is owner of a group
+// containing target. Same body shape as the self variant.
+func handleAgentCompact(w http.ResponseWriter, r *http.Request, targetConv string) {
+	handleAgentSlash(w, r, PermAgentCompact, targetConv, "/compact", "compact")
+}
+
 // handleSelfSlash factors out self-targeted slash-command handlers like
-// /compact. Single user today, but kept generic so we don't churn the
-// signature when a future slash-and-followUp endpoint shows up.
+// /compact.
 func handleSelfSlash(w http.ResponseWriter, r *http.Request, perm, slash, label string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -588,13 +595,35 @@ func handleSelfSlash(w http.ResponseWriter, r *http.Request, perm, slash, label 
 	}
 	if convID == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"this endpoint operates on the calling agent's own conversation; humans should use Claude Code's "+slash+" directly")
+			"this endpoint operates on the calling agent's own conversation; humans should use Claude Code's "+slash+" directly, or use POST /v1/agent/{conv}/"+strings.TrimPrefix(slash, "/")+" to act on another agent")
 		return
 	}
+	runSlashOrchestration(w, r, convID, convID, slash, label)
+}
+
+// handleAgentSlash is the cross-agent counterpart to handleSelfSlash.
+// Auth via requireCrossAgentPermission (slug OR owner-of-group).
+func handleAgentSlash(w http.ResponseWriter, r *http.Request, perm, targetConv, slash, label string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, perm, targetConv)
+	if !ok {
+		return
+	}
+	runSlashOrchestration(w, r, targetConv, caller, slash, label)
+}
+
+// runSlashOrchestration validates the optional follow_up body, injects
+// the slash command into the target's pane, and writes the JSON
+// response. caller is recorded in the response for cross-agent calls
+// so the audit trail has both sides; for self the value is the same as
+// target.
+func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, caller, slash, label string) {
 	var body struct {
 		FollowUp string `json:"follow_up"`
 	}
-	// Empty body is fine; only decode if non-empty.
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -610,15 +639,18 @@ func handleSelfSlash(w http.ResponseWriter, r *http.Request, perm, slash, label 
 				"control chars and resubmit.")
 		return
 	}
-	if !injectSlashCommand(convID, slash, body.FollowUp) {
+	if !injectSlashCommand(target, slash, body.FollowUp) {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"caller has no live tmux session to inject "+slash+" into")
+			"target conv "+short8(target)+" has no live tmux session to inject "+slash+" into")
 		return
 	}
 	resp := map[string]any{
-		"conv_id": convID,
+		"conv_id": target,
 		"action":  label,
 		"note":    slash + " submitted via tmux send-keys; CC will process it on its next turn",
+	}
+	if caller != "" && caller != target {
+		resp["caller_conv"] = caller
 	}
 	if body.FollowUp != "" {
 		resp["follow_up"] = body.FollowUp

@@ -160,6 +160,41 @@ func TestHandleAgentByConv_BadPath(t *testing.T) {
 	}
 }
 
+func TestHandleAgentByConv_KnownVerbsRoute(t *testing.T) {
+	// Both supported verbs should resolve and reach their handler
+	// (which will then 503 because there's no live tmux session in
+	// the test, but the dispatcher routing itself succeeds).
+	setupTestDB(t)
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w",
+	})
+	// Grant manager the slug for both verbs so we get past auth.
+	if err := db.GrantAgentPermission("manager", PermAgentReincarnate, "<test>"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := db.GrantAgentPermission("manager", PermAgentCompact, "<test>"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	for _, verb := range []string{"reincarnate", "compact"} {
+		t.Run(verb, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/v1/agent/w/"+verb, nil)
+			r = r.WithContext(context.WithValue(r.Context(), peerKey{},
+				&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
+			handleAgentByConv(w, r)
+			// Anything other than 404 or 401/403 means the dispatcher
+			// routed the request to a real handler.
+			if w.Code == http.StatusNotFound {
+				t.Errorf("verb %q should be recognised; got 404 body=%s", verb, w.Body.String())
+			}
+			if w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden {
+				t.Errorf("verb %q auth check failed; got %d body=%s", verb, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandleAgentByConv_UnknownVerb(t *testing.T) {
 	setupTestDB(t)
 	// Seed a conv so the selector resolves.

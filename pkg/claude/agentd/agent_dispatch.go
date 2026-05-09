@@ -41,6 +41,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 	switch verb {
 	case "reincarnate":
 		handleAgentReincarnate(w, r, res.ConvID)
+	case "compact":
+		handleAgentCompact(w, r, res.ConvID)
 	default:
 		writeError(w, http.StatusNotFound, "not_found",
 			"unknown verb "+verb+" for /v1/agent/{selector}/...")

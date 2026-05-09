@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -30,26 +31,33 @@ import (
 
 type compactParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"Optional follow-up prompt to submit after /compact lands (quote multi-word strings)"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	Target   string `long:"target" optional:"true" help:"Compact ANOTHER agent's pane instead of self. Selector: alias, full conv-id, or 8+-char prefix. Requires the agent.compact permission, or being an owner of a group containing the target."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
 func compactCmd() *cobra.Command {
 	return boa.CmdT[compactParams]{
 		Use:   "compact",
-		Short: "Compact the current conversation (requires self.compact permission)",
-		Long: "Asks tclaude agentd to inject `/compact` into the caller's own CC pane. " +
+		Short: "Compact a conversation (self by default, or another with --target)",
+		Long: "Asks tclaude agentd to inject `/compact` into a CC pane. " +
+			"By default the target is the calling agent itself (requires the " +
+			"`self.compact` permission). Use --target <selector> to compact ANOTHER " +
+			"agent — the manager pattern (requires `agent.compact`, or being an " +
+			"owner of a group containing the target). " +
+			"\n\n" +
 			"An optional follow-up prompt is queued as the next turn after compact " +
 			"settles — the bytes wait in the pty until CC resumes reading. Note: " +
 			"there's no clean way for the daemon to know exactly when /compact " +
 			"completes, so the follow-up may land in a still-busy textarea on " +
-			"unlucky timing. Requires the `self.compact` permission.",
+			"unlucky timing.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *compactParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *compactParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSelfSlash(p.FollowUp, p.AskHuman, "/v1/whoami/compact", "compact", os.Stdout, os.Stderr))
+			os.Exit(runSlashWithOptionalTarget(p.FollowUp, p.Target, p.AskHuman, "compact", os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
@@ -90,6 +98,56 @@ func isValidFollowUp(s string) bool {
 		}
 	}
 	return true
+}
+
+// runSlashWithOptionalTarget dispatches to either the self endpoint
+// (/v1/whoami/{verb}) or the cross-agent endpoint (/v1/agent/{target}/{verb})
+// based on whether target is set. The cross-agent path doesn't honour
+// --ask-human (manager pattern is opt-in via explicit slug grants).
+func runSlashWithOptionalTarget(followUp, target, askHuman, label string, stdout, stderr io.Writer) int {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return runSelfSlash(followUp, askHuman, "/v1/whoami/"+label, label, stdout, stderr)
+	}
+	if askHuman != "" {
+		fmt.Fprintln(stderr, "Error: --ask-human is only supported when targeting self; cross-agent calls require an explicit slug grant or group ownership.")
+		return rcInvalidArg
+	}
+	followUp = strings.TrimSpace(followUp)
+	if followUp != "" && !isValidFollowUp(followUp) {
+		fmt.Fprintln(stderr, "Error: REJECTED. Follow-up must be 1-4096 printable characters; control")
+		fmt.Fprintln(stderr, "characters (newlines, tabs, etc.) are not allowed because each newline")
+		fmt.Fprintln(stderr, "would be treated as a separate prompt-submit by tmux send-keys.")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	body := map[string]string{}
+	if followUp != "" {
+		body["follow_up"] = followUp
+	}
+	var resp struct {
+		ConvID     string `json:"conv_id"`
+		CallerConv string `json:"caller_conv,omitempty"`
+		Action     string `json:"action"`
+		FollowUp   string `json:"follow_up,omitempty"`
+		Note       string `json:"note,omitempty"`
+	}
+	path := "/v1/agent/" + url.PathEscape(target) + "/" + label
+	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.FollowUp != "" {
+		fmt.Fprintf(stdout, "Submitted /%s + follow-up to %s (caller %s)\n", label, short(resp.ConvID), short(resp.CallerConv))
+	} else {
+		fmt.Fprintf(stdout, "Submitted /%s to %s (caller %s)\n", label, short(resp.ConvID), short(resp.CallerConv))
+	}
+	if resp.Note != "" {
+		fmt.Fprintf(stdout, "Note: %s\n", resp.Note)
+	}
+	return rcOK
 }
 
 func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writer) int {

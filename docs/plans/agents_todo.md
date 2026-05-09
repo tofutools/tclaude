@@ -199,20 +199,28 @@ agent_permissions / agent_group_owners audit columns alone.
 - Skill (`agent-lifecycle`) updated with the manager-pattern
   section.
 
+#### Shipped also (2026-05)
+
+- ~~`agent.compact`~~ + `tclaude agent compact --target` CLI.
+  Mirrors `agent.reincarnate`: same dispatcher, same auth model
+  (slug OR owner-of-group), reuses `injectSlashCommand` on the
+  target's pane. Self/cross paths share `runSlashOrchestration`.
+  Slug `agent.compact`, default human-only.
+
 #### Follow-ups (still TODO)
 
-- **`agent.compact` / `agent.rename`.** Same shape as
-  `agent.reincarnate`: extend `handleAgentByConv` with new verbs,
-  add the slug, route to a target-aware handler. Lighter-weight
-  than reincarnate (just slash-injection on the target's pane), so
-  no migration plumbing needed.
+- **`agent.rename`.** Same shape as `agent.compact` — slash
+  injection of `/rename <title>` on the target's pane. The title
+  charset gate already lives in `handleWhoamiRename`; lift it into
+  a shared helper before adding the cross-agent verb so both paths
+  reject identical inputs.
 - **`agent.clone`** — depends on `tclaude agent clone` itself
   shipping first (see "Agent clone" item below).
 - **X-Tclaude-Ask-Human on cross-agent endpoints.** Today
   `requireCrossAgentPermission` doesn't honor the popup header
   (manager pattern is opt-in via explicit grants). Re-evaluate if a
-  use case appears — e.g. a manager that wants to reincarnate a
-  peer it doesn't normally manage.
+  use case appears — e.g. a manager that wants to act on a peer it
+  doesn't normally manage.
 - **Open question — orthogonal vs. implication.** Today
   `agent.<verb>` and `self.<verb>` are orthogonal (granting one
   doesn't grant the other). Keeping them split for now; revisit if
