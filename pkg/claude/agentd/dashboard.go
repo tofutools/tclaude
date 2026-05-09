@@ -241,7 +241,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := agentRows[convID]; ok {
 			return existing
 		}
-		row, _ := db.GetConvIndex(convID)
+		row := agent.FreshConvRow(convID)
 		title := "(unknown)"
 		if row != nil {
 			if t := agent.DisplayTitle(row); t != "" {
@@ -293,7 +293,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		memberSet := map[string]bool{}
 		for _, m := range members {
 			memberSet[m.ConvID] = true
-			row, _ := db.GetConvIndex(m.ConvID)
+			row := agent.FreshConvRow(m.ConvID)
 			title := "(unknown)"
 			if row != nil {
 				if t := agent.DisplayTitle(row); t != "" {
@@ -327,7 +327,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			if memberSet[ownerConv] {
 				continue
 			}
-			row, _ := db.GetConvIndex(ownerConv)
+			row := agent.FreshConvRow(ownerConv)
 			title := "(unknown)"
 			if row != nil {
 				if t := agent.DisplayTitle(row); t != "" {
