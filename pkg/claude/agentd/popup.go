@@ -1,10 +1,13 @@
 package agentd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -47,15 +50,17 @@ func startPopupServer() (*http.Server, string) {
 // embedded into the HTML page; all values must be HTML-escaped before
 // rendering.
 type approvalRequest struct {
-	id        string
-	perm      string
-	convID    string
-	convTitle string
-	method    string
-	path      string
-	createdAt time.Time
-	timeout   time.Duration
-	decision  chan bool // approve=true, deny=false
+	id          string
+	perm        string
+	convID      string
+	convTitle   string
+	method      string
+	path        string
+	rawQuery    string // URL query string (without the '?'), if any
+	bodyPreview string // request body, JSON-prettified when possible
+	createdAt   time.Time
+	timeout     time.Duration
+	decision    chan bool // approve=true, deny=false
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -181,11 +186,17 @@ const approvalPageTemplate = `<!doctype html>
 <meta charset="utf-8">
 <title>tclaude agent approval</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 4em auto; padding: 0 1em; }
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 4em auto; padding: 0 1em; }
   h1 { margin-bottom: 0.2em; }
+  h2 { font-size: 1em; margin-top: 1.4em; margin-bottom: 0.4em; color: #444; }
   .meta { color: #555; font-size: 0.9em; margin-bottom: 1.5em; }
   .meta dt { font-weight: bold; }
   .meta dd { margin-left: 0; margin-bottom: 0.4em; font-family: ui-monospace, monospace; }
+  pre.body {
+    background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px;
+    padding: 0.8em 1em; font-family: ui-monospace, monospace; font-size: 0.85em;
+    white-space: pre-wrap; word-break: break-word; max-height: 22em; overflow-y: auto;
+  }
   form { display: inline; }
   button { font-size: 1.1em; padding: 0.6em 1.4em; margin-right: 0.4em; cursor: pointer; }
   .approve { background: #2c7a39; color: white; border: 1px solid #1f5c2a; }
@@ -199,7 +210,7 @@ const approvalPageTemplate = `<!doctype html>
   <dt>Permission</dt><dd>%s</dd>
   <dt>Caller (conv-id)</dt><dd>%s</dd>
   <dt>Caller (title)</dt><dd>%s</dd>
-  <dt>Endpoint</dt><dd>%s %s</dd>
+  <dt>Endpoint</dt><dd>%s %s</dd>%s%s
   <dt>Timeout</dt><dd>%s (auto-deny if unattended)</dd>
 </dl>
 <form action="/approve/%s/approve" method="post">
@@ -220,16 +231,73 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 	if title == "" {
 		title = "(unnamed)"
 	}
+
+	queryRow := ""
+	if req.rawQuery != "" {
+		queryRow = "\n  <dt>Query</dt><dd>" + html.EscapeString(req.rawQuery) + "</dd>"
+	}
+
+	bodyRow := ""
+	if req.bodyPreview != "" {
+		bodyRow = "\n  <dt>Body</dt><dd><pre class=\"body\">" + html.EscapeString(req.bodyPreview) + "</pre></dd>"
+	}
+
 	fmt.Fprintf(w, approvalPageTemplate,
 		html.EscapeString(req.perm),
 		html.EscapeString(req.convID),
 		html.EscapeString(title),
 		html.EscapeString(req.method),
 		html.EscapeString(req.path),
+		queryRow,
+		bodyRow,
 		html.EscapeString(req.timeout.String()),
 		html.EscapeString(req.id),
 		html.EscapeString(req.id),
 	)
+}
+
+// snapshotRequestBody reads the request body (up to maxBodyPreview
+// bytes), JSON-prettifies it when it parses, and replaces r.Body with
+// a fresh reader so the downstream handler still receives the same
+// bytes. Returns the preview string ("" if no body).
+//
+// Bodies above the cap are truncated and marked. The handler will
+// also see the truncated bytes — fine for our use, since the agent
+// CLI never sends >64KiB to mutating endpoints today.
+func snapshotRequestBody(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+	const maxBodyPreview = 64 * 1024
+	buf, err := io.ReadAll(io.LimitReader(r.Body, maxBodyPreview+1))
+	_ = r.Body.Close()
+	if err != nil {
+		r.Body = io.NopCloser(bytes.NewReader(nil))
+		return ""
+	}
+	truncated := false
+	if len(buf) > maxBodyPreview {
+		buf = buf[:maxBodyPreview]
+		truncated = true
+	}
+	r.Body = io.NopCloser(bytes.NewReader(buf))
+	if len(buf) == 0 {
+		return ""
+	}
+	// Prettify JSON if it parses; otherwise show raw.
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, buf, "", "  "); err == nil {
+		out := pretty.String()
+		if truncated {
+			out += "\n…[truncated]"
+		}
+		return out
+	}
+	out := string(buf)
+	if truncated {
+		out += "\n…[truncated]"
+	}
+	return out
 }
 
 func renderApprovalDoneCallback(w http.ResponseWriter, approved bool) {

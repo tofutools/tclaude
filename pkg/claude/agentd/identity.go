@@ -128,16 +128,23 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 		// block on the decision. Timeout = deny, so a doomed agent can
 		// never get stuck waiting forever.
 		if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
+			// Snapshot the body now so the popup can show what's being
+			// approved. snapshotRequestBody replaces r.Body with a
+			// fresh reader so the downstream handler still gets the
+			// same bytes after we approve.
+			bodyPreview := snapshotRequestBody(r)
 			req := &approvalRequest{
-				id:        newApprovalID(),
-				perm:      perm,
-				convID:    p.ConvID,
-				convTitle: title,
-				method:    r.Method,
-				path:      r.URL.Path,
-				createdAt: time.Now(),
-				timeout:   timeout,
-				decision:  make(chan bool, 1),
+				id:          newApprovalID(),
+				perm:        perm,
+				convID:      p.ConvID,
+				convTitle:   title,
+				method:      r.Method,
+				path:        r.URL.Path,
+				rawQuery:    r.URL.RawQuery,
+				bodyPreview: bodyPreview,
+				createdAt:   time.Now(),
+				timeout:     timeout,
+				decision:    make(chan bool, 1),
 			}
 			if requestHumanApproval(req, popupBaseURL) {
 				return p.ConvID, true
