@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -63,7 +64,8 @@ type approvalRequest struct {
 	targetConvTitle string // resolved display title for targetConvID
 	createdAt       time.Time
 	timeout         time.Duration
-	decision        chan bool // approve=true, deny=false
+	decision        chan bool          // approve=true, deny=false
+	extend          chan time.Duration // +N seconds — bounded extension so an unattended popup still eventually times out
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -102,11 +104,30 @@ func requestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		"id", req.id, "perm", req.perm, "conv", req.convID,
 		"path", req.path, "timeout", req.timeout, "url", url)
 
-	select {
-	case d := <-req.decision:
-		return d
-	case <-time.After(req.timeout):
-		return false
+	// timer fires the auto-deny. "+N" extensions reset it so the human
+	// can buy more time mid-review without leaving the popup unattended
+	// indefinitely.
+	timer := time.NewTimer(req.timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case d := <-req.decision:
+			return d
+		case d := <-req.extend:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(d)
+			slog.Info("popup: timeout extended",
+				"id", req.id, "perm", req.perm, "by", d)
+		case <-timer.C:
+			slog.Info("popup: timeout fired (auto-deny)",
+				"id", req.id, "perm", req.perm)
+			return false
+		}
 	}
 }
 
@@ -159,25 +180,44 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		decision := parts[1]
-		var ok bool
 		switch decision {
 		case "approve":
-			ok = true
+			select {
+			case req.decision <- true:
+			default:
+			}
+			renderApprovalDoneCallback(w, true)
 		case "deny":
-			ok = false
+			select {
+			case req.decision <- false:
+			default:
+			}
+			renderApprovalDoneCallback(w, false)
+		case "extend":
+			// Resets the auto-deny timer; bounded so an unattended
+			// popup still eventually times out. Default +5 minutes;
+			// caller can pass ?secs=N (capped at 300 to match the
+			// daemon's overall AskHuman ceiling).
+			extendBy := 5 * time.Minute
+			if v := r.URL.Query().Get("secs"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					if n > 300 {
+						n = 300
+					}
+					extendBy = time.Duration(n) * time.Second
+				}
+			}
+			select {
+			case req.extend <- extendBy:
+			default:
+				// Already an extend in flight; idempotent no-op.
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprintf(w, "+%s\n", extendBy)
 		default:
-			http.Error(w, "decision must be approve or deny", http.StatusBadRequest)
+			http.Error(w, "decision must be approve, deny, or extend", http.StatusBadRequest)
 			return
 		}
-		// Non-blocking send so a duplicate click after the channel was
-		// already read can't deadlock — request goroutine has already
-		// returned and removed the entry, but our local copy of req
-		// still has a buffered chan.
-		select {
-		case req.decision <- ok:
-		default:
-		}
-		renderApprovalDoneCallback(w, ok)
 	default:
 		http.Error(w, "GET or POST", http.StatusMethodNotAllowed)
 	}
@@ -194,7 +234,10 @@ const approvalPageTemplate = `<!doctype html>
   h2 { font-size: 1em; margin-top: 1.4em; margin-bottom: 0.4em; color: #444; }
   .meta { color: #555; font-size: 0.9em; margin-bottom: 1.5em; }
   .meta dt { font-weight: bold; }
-  .meta dd { margin-left: 0; margin-bottom: 0.4em; font-family: ui-monospace, monospace; }
+  .meta dd { margin-left: 0; margin-bottom: 0.6em; }
+  .name { font-weight: 600; color: #222; }
+  .id   { font-family: ui-monospace, monospace; color: #777; font-size: 0.85em; display: block; }
+  .mono { font-family: ui-monospace, monospace; }
   pre.body {
     background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px;
     padding: 0.8em 1em; font-family: ui-monospace, monospace; font-size: 0.85em;
@@ -204,16 +247,20 @@ const approvalPageTemplate = `<!doctype html>
   button { font-size: 1.1em; padding: 0.6em 1.4em; margin-right: 0.4em; cursor: pointer; }
   .approve { background: #2c7a39; color: white; border: 1px solid #1f5c2a; }
   .deny    { background: #b03a2e; color: white; border: 1px solid #862c22; }
+  .extend  { background: #4d6fb3; color: white; border: 1px solid #345088; }
+  .extend:disabled { background: #aaa; border-color: #888; cursor: default; }
   .hint    { color: #777; font-size: 0.85em; margin-top: 1em; }
+  .countdown { font-family: ui-monospace, monospace; font-weight: bold; color: #b03a2e; }
+  .countdown.paused { color: #2c7a39; }
 </style>
 </head>
 <body>
 <h1>Agent wants permission</h1>
 <dl class="meta">
-  <dt>Permission</dt><dd>%s</dd>
-  <dt>Requester</dt><dd>%s &lt;%s&gt;</dd>%s%s
-  <dt>Endpoint</dt><dd>%s %s</dd>%s%s
-  <dt>Timeout</dt><dd>%s (auto-deny if unattended)</dd>
+  <dt>Permission</dt><dd class="mono">%s</dd>
+  <dt>Requester</dt><dd><span class="name">%s</span><span class="id">%s</span></dd>%s%s
+  <dt>Endpoint</dt><dd class="mono">%s %s</dd>%s%s
+  <dt>Timeout</dt><dd>auto-deny in <span id="countdown" class="countdown">%ds</span></dd>
 </dl>
 <form action="/approve/%s/approve" method="post">
   <button class="approve" autofocus>Approve</button>
@@ -221,8 +268,47 @@ const approvalPageTemplate = `<!doctype html>
 <form action="/approve/%s/deny" method="post">
   <button class="deny">Deny</button>
 </form>
+<button id="extend-btn" class="extend" type="button" data-id="%s">+5min</button>
 <p class="hint">This popup was opened by <code>tclaude agentd</code>
-on this machine. If you didn't expect it, click Deny.</p>
+on this machine. If you didn't expect it, click Deny. Use <strong>+5min</strong>
+to push the auto-deny back if you need more time to read.</p>
+<script>
+(function() {
+  const id = document.getElementById('extend-btn').dataset.id;
+  const cd = document.getElementById('countdown');
+  let remaining = parseInt(cd.textContent, 10);
+  let lastTick = Date.now();
+  function render() {
+    if (remaining <= 0) { cd.textContent = 'TIMED OUT'; return; }
+    cd.textContent = remaining + 's';
+  }
+  setInterval(function() {
+    const now = Date.now();
+    if (now - lastTick >= 1000) {
+      remaining -= Math.floor((now - lastTick) / 1000);
+      lastTick = now;
+      render();
+    }
+  }, 200);
+  document.getElementById('extend-btn').addEventListener('click', function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.textContent = 'extending…';
+    fetch('/approve/' + id + '/extend?secs=300', {method: 'POST'})
+      .then(function(r) { return r.text(); })
+      .then(function() {
+        remaining += 300;
+        cd.classList.add('paused');
+        render();
+        btn.textContent = '+5min';
+        btn.disabled = false;
+      })
+      .catch(function() {
+        btn.textContent = 'extend failed';
+      });
+  });
+})();
+</script>
 </body>
 </html>
 `
@@ -269,7 +355,8 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 		html.EscapeString(req.path),
 		queryRow,
 		bodyRow,
-		html.EscapeString(req.timeout.String()),
+		int(req.timeout.Seconds()),
+		html.EscapeString(req.id),
 		html.EscapeString(req.id),
 		html.EscapeString(req.id),
 	)

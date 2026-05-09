@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -120,9 +121,12 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 	}
 	cfg, _ := config.Load()
 	title := ""
-	if row := agent.FreshConvRow(p.ConvID); row != nil {
+	row := agent.FreshConvRow(p.ConvID)
+	if row != nil {
 		title = agent.DisplayTitle(row)
 	}
+	slog.Debug("requirePermission: resolved caller",
+		"conv", p.ConvID, "row_present", row != nil, "title", title, "perm", perm)
 	if !cfg.HasAgentPermission(p.ConvID, title, perm) {
 		// Permission denied. If the caller asked for a human-override
 		// popup (via X-Tclaude-Ask-Human: <duration>), open one and
@@ -150,6 +154,7 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 				createdAt:       time.Now(),
 				timeout:         timeout,
 				decision:        make(chan bool, 1),
+				extend:          make(chan time.Duration, 1),
 			}
 			if requestHumanApproval(req, popupBaseURL) {
 				return p.ConvID, true
