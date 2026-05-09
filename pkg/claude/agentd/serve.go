@@ -112,6 +112,7 @@ func runServe(p *serveParams) error {
 func buildMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/whoami", handleWhoami)
+	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	mux.HandleFunc("/v1/messages", handleMessages)

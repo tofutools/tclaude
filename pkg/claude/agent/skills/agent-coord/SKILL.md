@@ -105,6 +105,34 @@ If the target has a live tmux session, they get a system nudge on their
 next turn. If they're offline, the message stays queued in their inbox
 and they'll see it on resume.
 
+## Renaming yourself
+
+If the human has granted you the `self.rename` permission (in
+`~/.tclaude/config.json` under `agent.default_permissions` or
+`agent.permission_overrides`), you can change your conversation's
+display name:
+
+```bash
+tclaude agent rename "code-reviewer-frontend"
+```
+
+Behind the scenes the daemon types `/rename <title>` into your own
+tmux pane, so any text you'd been typing into the input box is lost.
+Don't rename mid-conversation while you have unsubmitted input — wait
+for a clean turn.
+
+If you see `Error: caller is not granted permission "self.rename"`,
+the human has not opted in. Ask them to add it to
+`~/.tclaude/config.json`:
+
+```json
+{
+  "agent": {
+    "default_permissions": ["self.rename"]
+  }
+}
+```
+
 ## Etiquette
 
 - **One message, one purpose.** If you have multiple unrelated asks,

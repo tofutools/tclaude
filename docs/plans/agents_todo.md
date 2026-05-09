@@ -108,58 +108,21 @@ ship or get scoped out. The detailed v1 design lives in
   Same human-only gate as `add`/`remove`. Useful when an agent's purpose
   in a group shifts mid-flight, or when `--agent-name` was wrong.
 
-### Self-rename via agentd (HIGH PRIORITY)
+### Default agent permissions in tclaude config (v1 shipped)
 
-Agents can't invoke Claude Code's `/rename` slash command directly (the
-slash command runs inside the CC TUI, not via tools). Plumb it through
-`tclaude agentd` instead:
+V1 is in: `~/.tclaude/config.json` accepts an `agent` section with
+`default_permissions` and `permission_overrides[conv|prefix|title]`.
+The daemon's `requirePermission()` consults overrides → defaults →
+refuses. Humans (no CC ancestor) bypass the check entirely.
 
-- New endpoint, e.g. `POST /v1/whoami/rename` with `{"title": "..."}`,
-  identifies the caller via peer-cred and writes the new conversation
-  title via the same code path that backs Claude Code's `/rename` (or
-  by editing the conv-index row + nudging CC to re-read).
-- New CLI: `tclaude agent rename <new-title>` (or `tclaude agent
-  whoami --set-title <new-title>`). Agent-callable.
-- Permission-gated: by default, agents are NOT allowed to rename
-  themselves. The human opts in.
-
-This needs the **default agent permissions** mechanism below, since
-"can rename self" is the simplest case of an agent permission.
-
-### Default agent permissions in tclaude config
-
-Add an `agent` section to `~/.tclaude/config.json` (the existing
-tclaude config — see `pkg/claude/common/config`) that lists default
-permissions every new agent inherits. Sketch:
-
-```json
-{
-  "agent": {
-    "default_permissions": [
-      "self.rename",
-      "member.redesignate"
-    ],
-    "permission_overrides": {
-      "<conv-id-or-name>": ["self.rename", "agent.spawn"]
-    }
-  }
-}
-```
-
-When the daemon evaluates a permission for a caller, it checks
-per-conv overrides first, then defaults, then refuses. The
-`requireHuman()` gate becomes a special-case "no permission grants
-this; only absence of a CC ancestor does."
-
-The user-facing skill bundle should explain the relevant permission to
-the agent — either fold it into the existing `agent-coord` skill or
-ship a small companion skill (`agent-rename`) that documents
-`tclaude agent rename`. Probably folded in for now; split later if the
-list of self-service capabilities grows.
-
-This entry connects with "Agent self-service permissions (graduated
-trust)" below — same permission model, this is the first concrete
-permission we want to ship.
+Open follow-ups:
+- More granular gates on the existing `groups …` mutating endpoints
+  (currently absolute via `requireHuman`; want them to also accept a
+  permission like `member.redesignate`).
+- Wildcard / pattern overrides (e.g. `"role:reviewer": [...]` instead
+  of pinning to a single conv-id).
+- Inspect/edit permissions from the CLI (`tclaude agent permissions
+  ls|grant|revoke`) so the human doesn't have to hand-edit JSON.
 
 ### Agent self-service permissions (graduated trust)
 
@@ -366,3 +329,14 @@ for now** — single-host first.
   a "Groups" column when at least one conv is in any group, so you
   can see group membership while picking a conversation. Backed by
   `db.GroupNamesByConv()`.
+- **Per-row ONLINE indicator.** `agent ls` and `groups members` now
+  show a leading ● glyph for peers with a live tmux session.
+- **`groups update-member`.** Redesignate alias/role/descr in place.
+  Same human-only gate as add/remove. Empty string clears a field.
+- **Self-rename via agentd + permission framework.** `tclaude agent
+  rename "<title>"` injects `/rename <title>` into the caller's own CC
+  pane via tmux send-keys. Permission-gated on `self.rename`. The
+  daemon ships a `requirePermission()` helper backed by an `agent`
+  section in `~/.tclaude/config.json` (defaults +
+  per-conv-id/prefix/title overrides). Humans bypass the gate. Skill
+  documents the command + how to grant the permission.

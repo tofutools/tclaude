@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -97,6 +99,46 @@ func requireHuman(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+// requirePermission gates an endpoint behind a named agent permission.
+//
+// Humans (no claude ancestor) always pass. Agents pass only when the
+// active config grants them perm via DefaultPermissions or
+// PermissionOverrides[<conv-id|prefix|title>]. On denial the response
+// is 403 with the permission slug in the message body so the caller
+// can explain to its user what to grant.
+//
+// Returns (convID, true) on success — convID is "" for the human path,
+// the resolved conv-id for an agent. On failure the response is
+// already written; the caller just returns.
+func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (string, bool) {
+	p := peerFromContext(r.Context())
+	if p.PID == 0 {
+		writeError(w, http.StatusUnauthorized, "auth",
+			"could not determine peer PID; refusing to evaluate permission")
+		return "", false
+	}
+	if !p.HasClaudeAncestor {
+		// The human is implicitly allowed everything.
+		return "", true
+	}
+	if p.ConvID == "" {
+		writeError(w, http.StatusForbidden, "auth",
+			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate permission")
+		return "", false
+	}
+	cfg, _ := config.Load()
+	title := ""
+	if row := agent.FreshConvRow(p.ConvID); row != nil {
+		title = agent.DisplayTitle(row)
+	}
+	if !cfg.HasAgentPermission(p.ConvID, title, perm) {
+		writeError(w, http.StatusForbidden, "permission",
+			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json)", perm))
+		return "", false
+	}
+	return p.ConvID, true
 }
 
 // convIDForPID walks up from pid to the nearest claude/node ancestor.

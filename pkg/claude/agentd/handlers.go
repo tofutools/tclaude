@@ -285,6 +285,78 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 	return true
 }
 
+// injectSlashCommand finds an alive tmux session for convID and types the
+// given slash-command line into its CC pane, followed by a submit Enter.
+// Returns true on successful delivery. Same two-step send-keys pattern
+// nudgeIfAlive uses.
+func injectSlashCommand(convID, line string) bool {
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return false
+	}
+	var sess *db.SessionRow
+	for _, c := range candidates {
+		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
+			sess = c
+			break
+		}
+	}
+	if sess == nil {
+		return false
+	}
+	target := sess.TmuxSession + ":0.0"
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, line, "Enter").Run(); err != nil {
+		slog.Warn("slash-command inject failed (text)", "error", err, "tmux", sess.TmuxSession)
+		return false
+	}
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
+		slog.Warn("slash-command inject failed (submit)", "error", err, "tmux", sess.TmuxSession)
+		return false
+	}
+	return true
+}
+
+// handleWhoamiRename injects `/rename <title>` into the caller's own CC
+// pane. Permission-gated on `self.rename`.
+func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	convID, ok := requirePermission(w, r, "self.rename")
+	if !ok {
+		return
+	}
+	if convID == "" {
+		// The human is the caller — refuse with a clearer hint than 403.
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"this endpoint renames the calling agent's own conversation; humans should use Claude Code's /rename directly")
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	body.Title = strings.TrimSpace(body.Title)
+	if body.Title == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "title is required")
+		return
+	}
+	if !injectSlashCommand(convID, "/rename "+body.Title) {
+		writeError(w, http.StatusServiceUnavailable, "no_tmux",
+			"caller has no live tmux session to inject /rename into")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conv_id": convID,
+		"title":   body.Title,
+		"note":    "rename submitted via tmux send-keys; CC will write the new title on its next turn",
+	})
+}
+
 // --- /v1/messages/{id} (GET) and /v1/messages/{id}/reply (POST) ---
 
 // handleMessageByIDOrReply dispatches between the message-fetch and
