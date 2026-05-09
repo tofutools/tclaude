@@ -1,23 +1,24 @@
 ---
 name: agent-lifecycle
-description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, and `tclaude agent reincarnate [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` is the heavier path: the daemon spawns a fresh CC instance, migrates your identity (groups, permissions, ownerships) onto the new conv-id, and soft-stops the old one. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot. Manager pattern: `tclaude agent compact --target <peer> [follow-up]` and `tclaude agent reincarnate --target <peer> [follow-up]` act on ANOTHER agent (requires the matching `agent.compact` / `agent.reincarnate` slug, OR being an owner of a group containing the target).
+description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate [follow-up]`, and `tclaude agent clone [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` replaces self with a fresh CC instance that inherits identity. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
 
 You have three commands for managing your own context window:
 
-| Command                                   | What it does                                                                                       |
-|-------------------------------------------|----------------------------------------------------------------------------------------------------|
-| `tclaude agent context-info`              | Print the current context_pct + any pending /compact claim                                         |
-| `tclaude agent compact [follow-up]`       | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued.     |
-| `tclaude agent reincarnate [follow-up]`   | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership) |
+| Command                                            | What it does                                                                                                                              |
+|----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| `tclaude agent context-info`                       | Print the current context_pct + any pending /compact claim                                                                                |
+| `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued.                                            |
+| `tclaude agent reincarnate [follow-up]`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership)                                      |
+| `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (with `-clone` alias suffix) and, by default, conv history. |
 
 `context-info` is read-only and self-targeted, so no permission slug.
-`compact` and `reincarnate` are gated on `self.compact` and
-`self.reincarnate` respectively. Both are default-granted by
-`tclaude setup --install-default-agent-permissions` — see "Permission
-setup" below.
+`compact`, `reincarnate`, and `clone` are gated on `self.compact`,
+`self.reincarnate`, and `self.clone` respectively. All three are
+default-granted by `tclaude setup --install-default-agent-permissions`
+— see "Permission setup" below.
 
 The absolute token estimate (`~470k of ~1.0M`) assumes a **1M context
 window** — the percentage is the authoritative signal that Claude Code
@@ -42,7 +43,7 @@ Either way, **don't wait until auto-compact triggers**. By then you're
 already deep into the rotted regime. Pre-empt it: poll
 `context-info`, and run `compact` once you're near your threshold.
 
-## Compact vs. reincarnate
+## Compact vs. reincarnate vs. clone
 
 - `compact` — CC summarises the prior turns and replaces them with a
   short recap. **Default choice** for "I want to keep going on the
@@ -59,6 +60,19 @@ already deep into the rotted regime. Pre-empt it: poll
     a wrong direction.
   - You're at the very tail of the context window and even a compact
     won't buy enough headroom.
+- `clone` — fork instead of replace. Original keeps running; the
+  clone spawns alongside as a sibling that inherits identity (with a
+  `-clone` alias suffix in shared groups) and, by default, the same
+  conv jsonl. Use when:
+  - You want to **try a parallel approach** without losing the
+    current one — the original keeps your line of investigation, the
+    clone explores the alternative.
+  - You want to **archive the current state** while continuing from a
+    known-good point — clone for the archive, keep working in the
+    original.
+  - You want to **stand up a peer in the same role** — pair with
+    `--no-copy-conv` for a fresh-context sibling that inherits group
+    memberships only.
 
 ## Persisting work *before* reincarnating
 
@@ -246,7 +260,7 @@ reincarnate needs) that you can't. Same architecture as
 
 ## Manager pattern: act on ANOTHER agent
 
-Both `tclaude agent reincarnate` and `tclaude agent compact` accept
+All three lifecycle verbs (`compact`, `reincarnate`, `clone`) accept
 an optional `--target <selector>` that swaps the action onto a peer
 instead of yourself. The selector is the same alias / conv-id /
 8+-char prefix the rest of `tclaude agent` accepts.
@@ -259,9 +273,15 @@ tclaude agent compact --target worker-1 "keep going on the failing test"
 # inherits the worker's identity and picks up at a known checkpoint.
 tclaude agent reincarnate --target worker-1 \
   "rotted on the auth refactor; reload /tmp/auth-notes.md and pick up where you left off"
+
+# Fork: stand up a sibling worker (with the same context, by default)
+# without disturbing the original. Useful for "try a parallel approach
+# while keeping the current one alive."
+tclaude agent clone --target worker-1 \
+  "explore the no-prepared-statement branch while worker-1 keeps the prepared-statement path"
 ```
 
-Auth model (same for both verbs): the caller passes if EITHER
+Auth model (same for all three verbs): the caller passes if EITHER
 
 - they hold the matching `agent.<verb>` slug (default human-only —
   granted via `tclaude agent permissions grant <caller> agent.<verb>`),

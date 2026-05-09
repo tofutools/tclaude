@@ -111,47 +111,42 @@ Follow-up improvements (separate items):
 - Optional title preservation if we wire CC's title into our DB
   (e.g. via a hook that captures it, or by parsing CC's conv jsonl).
 
-### Agent clone
+### Agent clone — shipped (2026-05)
 
-Sibling to `reincarnate`. Same identity-migration plumbing, but the
-old agent does NOT shut down and the new agent doesn't auto-start a
-task unless one is given. Use cases: forking a worker to try a
-parallel approach; standing up a duplicate so two agents can review
-a plan in parallel; archiving the current state and continuing in a
-sibling pane.
+`tclaude agent clone [follow-up] [--no-copy-conv] [--target <peer>]`
+ships. Reuses reincarnate's snapshot pass; differs in three ways:
 
-Shape:
+- **Identity copied, not migrated.** Original keeps every group
+  membership, permission grant, and ownership. Clone gets a copy
+  with a `-clone` alias suffix per group.
+- **Conv jsonl copy is the default.** Uses `convops.CopyConversationToPath`
+  to fork the existing conversation history onto a freshly-minted
+  conv-id, then `tclaude session new -r <new-conv>` so CC loads
+  the cloned conversation. `--no-copy-conv` flips to blank context.
+- **No `/exit` on the original.** Both are running after the call.
 
-```
-tclaude agent clone [follow-up] [--no-copy-conv]
-```
+Slugs: `self.clone` (default-granted alongside `self.compact` /
+`self.reincarnate` via `tclaude setup --install-default-agent-permissions`)
+and `agent.clone` (default human-only; cross-agent / manager
+pattern). Both routed through the existing
+`runCloneOrchestration` helper for the self/cross split.
 
-- Default: copy the existing conv jsonl onto a freshly-minted conv-id
-  (we already have a basic copy hack — `tclaude conv copy` /
-  `convops`). This means the clone starts with the *same context* as
-  the original, just at a different conv-id. The follow-up prompt is
-  optional; if absent, the clone just sits at its prompt waiting.
-- `--no-copy-conv` for the cheaper path: blank context, identity
-  inherited only.
-- Old agent stays alive untouched.
-- Identity (groups, permissions, ownerships) is **copied, not
-  migrated** — both convs end up in the same groups with appropriate
-  alias suffixes (e.g. `-clone` or `-2`). Open question: should we
-  rename the original to disambiguate, or leave it alone? Probably
-  leave alone, but make the clone's alias differ.
+#### Open follow-ups
 
-Permission: `self.clone` (default: granted). Same blast-radius story
-as reincarnate — bounded to one new instance per call, but doesn't
-take down the old one, so a runaway loop could fork unboundedly.
-Worth adding rate limiting (1 clone/min?) at the daemon if it shows
-up.
-
-Implementation reuses most of reincarnate's helpers: snapshot →
-spawn → migrate. The differences are: don't delete old rows during
-migration (it's a copy), optionally pre-seed the new conv's jsonl
-file from the old one before CC starts (or trigger
-`tclaude session new -r <new-id>` after copying), and skip the
-`/exit` injection at the end.
+- **Alias collision.** v1 just appends `-clone` to the original's
+  alias. If a clone-of-a-clone is made, the suffix becomes
+  `foo-clone-clone`; if two clones of the same original exist
+  briefly, both get `foo-clone` and the INSERT-OR-REPLACE on
+  (group_id, conv_id) keeps each row distinct (separate conv_id) but
+  the alias clashes inside the group's table. Want auto-increment
+  to `-clone-2`, `-clone-3` if a collision is detected.
+- **Rate limiting.** A runaway loop can fork unboundedly since the
+  original isn't taken down. Worth adding 1-clone-per-minute at the
+  daemon if it shows up in practice.
+- **--no-copy-conv polish.** Today the no-copy path uses the same
+  poll-for-new-conv-id loop as reincarnate; CC has to mint the
+  conv-id before identity can be copied. Hopefully fast enough; if
+  it ever grows slow, consider pre-seeding a placeholder row.
 
 ### Cross-agent lifecycle (manager pattern)
 
@@ -210,11 +205,12 @@ agent_permissions / agent_group_owners audit columns alone.
   shape; charset gate hoisted into a shared
   `runRenameOrchestration` helper used by both self and cross
   paths. Slug `agent.rename`, default human-only.
+- ~~`agent.clone`~~ + `tclaude agent clone --target` CLI. Routed
+  through `runCloneOrchestration` (the same body the self path
+  uses). Slug `agent.clone`, default human-only.
 
 #### Follow-ups (still TODO)
 
-- **`agent.clone`** — depends on `tclaude agent clone` itself
-  shipping first (see "Agent clone" item below).
 - **X-Tclaude-Ask-Human on cross-agent endpoints.** Today
   `requireCrossAgentPermission` doesn't honor the popup header
   (manager pattern is opt-in via explicit grants). Re-evaluate if a

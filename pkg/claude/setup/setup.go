@@ -36,6 +36,7 @@ var selfPermsForBundledSkills = []string{
 	"self.rename",
 	"self.compact",
 	"self.reincarnate",
+	"self.clone",
 }
 
 // Protocol version - bump this when the handler needs to be re-registered
@@ -47,7 +48,7 @@ type Params struct {
 	AbsolutePaths               bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
 	Yes                         bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
 	InstallAgentSkills          bool `long:"install-agent-skills" help:"Install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
-	InstallDefaultAgentPerms    bool `long:"install-default-agent-permissions" help:"Grant the self-targeted permission slugs the bundled agent-* skills exercise (self.rename, self.compact, self.reincarnate) as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
+	InstallDefaultAgentPerms    bool `long:"install-default-agent-permissions" help:"Grant the self-targeted permission slugs the bundled agent-* skills exercise (self.rename, self.compact, self.reincarnate, self.clone) as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 }
 
 func Cmd() *cobra.Command {

@@ -23,6 +23,7 @@ func Cmd() *cobra.Command {
 			renameCmd(),
 			compactCmd(),
 			reincarnateCmd(),
+			cloneCmd(),
 			contextInfoCmd(),
 			lookupCmd(),
 			lsCmd(),
