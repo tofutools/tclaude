@@ -117,6 +117,52 @@ func TestDashboardEdit_RevokeOwner_NotAnOwner(t *testing.T) {
 	}
 }
 
+func TestDashboardEdit_DeleteGroup(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+	_ = db.AddAgentGroupOwner(gID, "worker", "<test>")
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodDelete, "/api/groups/team", "")
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body.String())
+	}
+	g, _ := db.GetAgentGroupByName("team")
+	if g != nil {
+		t.Errorf("expected group deleted; still exists: %+v", g)
+	}
+}
+
+func TestDashboardEdit_DeleteGroup_NotFound(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodDelete, "/api/groups/nope", "")
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestDashboardEdit_DeleteGroup_WrongMethod(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	_, _ = db.CreateAgentGroup("team", "")
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/groups/team", "")
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
 func TestDashboardEdit_NoCookieRefused(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

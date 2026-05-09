@@ -619,11 +619,12 @@ home for membership editing):
    - Possible third: reincarnate / compact (manager-pattern
      verbs) once we want one-click lifecycle controls. Gated by
      the same `agent.<verb>` slug + owner-of-group rules.
-- **Per-group delete button** (in the group header, next to the
-  expand caret). Same confirmation-modal pattern as remove-from-
-  group / revoke-owner — the destruction here is harder to undo
-  (membership rows + owner rows + message history all gone) so the
-  modal should call out what's being lost. Calls `groups rm`.
+- ~~**Per-group delete button**~~ — **shipped.** Header button (hover-
+  reveal, full opacity when expanded) → confirm modal → `DELETE
+  /api/groups/{name}` → `db.DeleteAgentGroup`. The DB helper has
+  `ON DELETE RESTRICT` on `agent_messages`, so the modal warns the
+  user to clear the inbox first; backend returns 409 on constraint
+  failure and the toast surfaces the error.
 - **Jump-to-terminal button** on each member row (and probably
   agent row). Reuse `session.TryFocusAttachedSession(tmuxSession)`
   — the same focus mechanism the interactive `tclaude session ls

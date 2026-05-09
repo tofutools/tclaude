@@ -38,6 +38,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 
 // handleDashboardGroupsAPI dispatches:
 //
+//	DELETE /api/groups/{name}                   → delete group
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
 //	POST   /api/groups/{name}/owners            → grant owner (body: {conv})
 //	DELETE /api/groups/{name}/owners/{conv}     → revoke owner
@@ -49,8 +50,8 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	rest := strings.TrimPrefix(r.URL.Path, "/api/groups/")
 	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) < 2 || parts[0] == "" {
-		http.Error(w, "expected /api/groups/{name}/{members|owners}[/{conv}]", http.StatusNotFound)
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "expected /api/groups/{name}[/{members|owners}[/{conv}]]", http.StatusNotFound)
 		return
 	}
 	groupName := parts[0]
@@ -64,6 +65,14 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if g == nil {
 		http.Error(w, "no such group "+groupName, http.StatusNotFound)
+		return
+	}
+	if len(parts) == 1 {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
+			return
+		}
+		dashboardDeleteGroup(w, groupName)
 		return
 	}
 	switch parts[1] {
@@ -99,6 +108,15 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "unknown endpoint /api/groups/{name}/"+parts[1], http.StatusNotFound)
 	}
+}
+
+func dashboardDeleteGroup(w http.ResponseWriter, name string) {
+	if err := db.DeleteAgentGroup(name); err != nil {
+		// ON DELETE RESTRICT on agent_messages; surface as 409.
+		http.Error(w, "delete group: "+err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {

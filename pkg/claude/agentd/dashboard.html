@@ -107,6 +107,19 @@ tr:hover .row-actions { opacity: 1; }
 .row-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
 .row-actions button.danger:hover { color: #f85149; border-color: #f85149; }
 .row-actions button.warn:hover { color: #d29922; border-color: #d29922; }
+.group-actions {
+  display: inline-flex; gap: 4px; margin-left: 8px;
+  opacity: 0.4; transition: opacity 0.15s ease;
+}
+details > summary:hover .group-actions,
+details[open] > summary .group-actions { opacity: 1; }
+.group-actions button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
+  font-family: inherit;
+}
+.group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6);
   display: none; align-items: center; justify-content: center; z-index: 100;
@@ -304,6 +317,9 @@ tr:hover .row-actions { opacity: 1; }
           <strong>${esc(g.name)}</strong>
           <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
+          <span class="group-actions">
+            <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
+          </span>
         </summary>
         <div class="subtable">
           ${members.length === 0 ? '<div class="muted">(no members yet)</div>' : `
@@ -544,6 +560,9 @@ tr:hover .row-actions { opacity: 1; }
     document.addEventListener('click', async (e) => {
       const btn = e.target.closest('[data-act]');
       if (!btn) return;
+      // Buttons may live inside <summary>, where the default click
+      // action is to toggle the details. Stop that.
+      e.preventDefault();
       const act = btn.getAttribute('data-act');
       const group = btn.getAttribute('data-group');
       const conv = btn.getAttribute('data-conv');
@@ -576,6 +595,22 @@ tr:hover .row-actions { opacity: 1; }
             });
             ok = r.ok;
             if (!ok) toast(`Grant owner failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'delete-group': {
+            const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);
+            const confirmed = await confirmModal({
+              title: 'Delete group?',
+              body: `This drops the group plus all ${memberCount} membership row(s) and any owner grants. The conversations themselves keep running. Will fail if the group still has any messages — clear the inbox first.`,
+              meta: group,
+              okLabel: 'Delete group',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Delete failed: ${await r.text()}`, true);
             break;
           }
           case 'revoke-owner': {
