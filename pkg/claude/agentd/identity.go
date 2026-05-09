@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -133,18 +134,22 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 			// fresh reader so the downstream handler still gets the
 			// same bytes after we approve.
 			bodyPreview := snapshotRequestBody(r)
+			targetGroup, targetConvID, targetConvTitle := extractApprovalTargets(r, bodyPreview)
 			req := &approvalRequest{
-				id:          newApprovalID(),
-				perm:        perm,
-				convID:      p.ConvID,
-				convTitle:   title,
-				method:      r.Method,
-				path:        r.URL.Path,
-				rawQuery:    r.URL.RawQuery,
-				bodyPreview: bodyPreview,
-				createdAt:   time.Now(),
-				timeout:     timeout,
-				decision:    make(chan bool, 1),
+				id:              newApprovalID(),
+				perm:            perm,
+				convID:          p.ConvID,
+				convTitle:       title,
+				method:          r.Method,
+				path:            r.URL.Path,
+				rawQuery:        r.URL.RawQuery,
+				bodyPreview:     bodyPreview,
+				targetGroup:     targetGroup,
+				targetConvID:    targetConvID,
+				targetConvTitle: targetConvTitle,
+				createdAt:       time.Now(),
+				timeout:         timeout,
+				decision:        make(chan bool, 1),
 			}
 			if requestHumanApproval(req, popupBaseURL) {
 				return p.ConvID, true
@@ -158,6 +163,57 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 		return "", false
 	}
 	return p.ConvID, true
+}
+
+// extractApprovalTargets parses the request URL + JSON body to surface
+// the action's target group / target conv-id, so the popup can show
+// the human concrete names rather than "Endpoint: PATCH /v1/groups/foo/members/abcd".
+//
+// Returns (groupName, targetConvID, targetConvTitle). Empty strings
+// when there's nothing useful to display (e.g. /v1/whoami/rename has
+// no group and no separate target — the requester is the target).
+func extractApprovalTargets(r *http.Request, bodyPreview string) (group, targetConvID, targetConvTitle string) {
+	const groupsPrefix = "/v1/groups/"
+	if strings.HasPrefix(r.URL.Path, groupsPrefix) {
+		rest := strings.TrimPrefix(r.URL.Path, groupsPrefix)
+		parts := strings.SplitN(rest, "/", 3)
+		if len(parts) >= 1 && parts[0] != "" {
+			if g, err := url.PathUnescape(parts[0]); err == nil {
+				group = g
+			} else {
+				group = parts[0]
+			}
+		}
+		// /v1/groups/{name}/members/{conv} => target is parts[2].
+		if len(parts) >= 3 && parts[1] == "members" && parts[2] != "" {
+			selector := parts[2]
+			if u, err := url.PathUnescape(selector); err == nil {
+				selector = u
+			}
+			if res, _, err := agent.ResolveSelector(selector); err == nil {
+				targetConvID = res.ConvID
+				if res.Row != nil {
+					targetConvTitle = agent.DisplayTitle(res.Row)
+				}
+			}
+		}
+	}
+	// POST /v1/groups/{name}/members carries the target conv in the JSON
+	// body's "conv" field. Parse the snapshot we already buffered.
+	if targetConvID == "" && r.Method == http.MethodPost && bodyPreview != "" {
+		var body struct {
+			Conv string `json:"conv"`
+		}
+		if err := json.Unmarshal([]byte(bodyPreview), &body); err == nil && body.Conv != "" {
+			if res, _, err := agent.ResolveSelector(body.Conv); err == nil {
+				targetConvID = res.ConvID
+				if res.Row != nil {
+					targetConvTitle = agent.DisplayTitle(res.Row)
+				}
+			}
+		}
+	}
+	return group, targetConvID, targetConvTitle
 }
 
 // parseAskHumanHeader reads the X-Tclaude-Ask-Human header. Empty/absent

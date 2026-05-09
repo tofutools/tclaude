@@ -50,17 +50,20 @@ func startPopupServer() (*http.Server, string) {
 // embedded into the HTML page; all values must be HTML-escaped before
 // rendering.
 type approvalRequest struct {
-	id          string
-	perm        string
-	convID      string
-	convTitle   string
-	method      string
-	path        string
-	rawQuery    string // URL query string (without the '?'), if any
-	bodyPreview string // request body, JSON-prettified when possible
-	createdAt   time.Time
-	timeout     time.Duration
-	decision    chan bool // approve=true, deny=false
+	id              string
+	perm            string
+	convID          string // requester
+	convTitle       string // requester's display title
+	method          string
+	path            string
+	rawQuery        string // URL query string (without the '?'), if any
+	bodyPreview     string // request body, JSON-prettified when possible
+	targetGroup     string // populated for actions on a specific group
+	targetConvID    string // populated for actions on a specific other conv
+	targetConvTitle string // resolved display title for targetConvID
+	createdAt       time.Time
+	timeout         time.Duration
+	decision        chan bool // approve=true, deny=false
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -208,8 +211,7 @@ const approvalPageTemplate = `<!doctype html>
 <h1>Agent wants permission</h1>
 <dl class="meta">
   <dt>Permission</dt><dd>%s</dd>
-  <dt>Caller (conv-id)</dt><dd>%s</dd>
-  <dt>Caller (title)</dt><dd>%s</dd>
+  <dt>Requester</dt><dd>%s &lt;%s&gt;</dd>%s%s
   <dt>Endpoint</dt><dd>%s %s</dd>%s%s
   <dt>Timeout</dt><dd>%s (auto-deny if unattended)</dd>
 </dl>
@@ -227,9 +229,24 @@ on this machine. If you didn't expect it, click Deny.</p>
 
 func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	title := req.convTitle
-	if title == "" {
-		title = "(unnamed)"
+	requesterTitle := req.convTitle
+	if requesterTitle == "" {
+		requesterTitle = "(unnamed)"
+	}
+
+	groupRow := ""
+	if req.targetGroup != "" {
+		groupRow = "\n  <dt>Group</dt><dd>" + html.EscapeString(req.targetGroup) + "</dd>"
+	}
+
+	targetRow := ""
+	if req.targetConvID != "" {
+		t := req.targetConvTitle
+		if t == "" {
+			t = "(unknown)"
+		}
+		targetRow = "\n  <dt>Target agent</dt><dd>" +
+			html.EscapeString(t) + " &lt;" + html.EscapeString(req.targetConvID) + "&gt;</dd>"
 	}
 
 	queryRow := ""
@@ -244,8 +261,10 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 
 	fmt.Fprintf(w, approvalPageTemplate,
 		html.EscapeString(req.perm),
+		html.EscapeString(requesterTitle),
 		html.EscapeString(req.convID),
-		html.EscapeString(title),
+		groupRow,
+		targetRow,
 		html.EscapeString(req.method),
 		html.EscapeString(req.path),
 		queryRow,
