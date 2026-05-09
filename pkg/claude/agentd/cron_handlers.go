@@ -91,16 +91,25 @@ func handleCronByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "id must be an integer")
 		return
 	}
-	if len(parts) == 2 && parts[1] == "logs" {
-		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "method", "GET")
-			return
+	if len(parts) == 2 {
+		switch parts[1] {
+		case "logs":
+			if r.Method != http.MethodGet {
+				writeError(w, http.StatusMethodNotAllowed, "method", "GET")
+				return
+			}
+			handleCronLogs(w, r, id)
+		case "enable":
+			handleCronSetEnabled(w, r, id, true)
+		case "disable":
+			handleCronSetEnabled(w, r, id, false)
+		case "run-now":
+			handleCronRunNow(w, r, id)
+		case "":
+			writeError(w, http.StatusMethodNotAllowed, "method", "DELETE")
+		default:
+			writeError(w, http.StatusNotFound, "not_found", "unknown /v1/cron/{id}/"+parts[1])
 		}
-		handleCronLogs(w, r, id)
-		return
-	}
-	if len(parts) == 2 && parts[1] != "" {
-		writeError(w, http.StatusNotFound, "not_found", "unknown /v1/cron/{id}/"+parts[1])
 		return
 	}
 	switch r.Method {
@@ -109,6 +118,65 @@ func handleCronByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "DELETE")
 	}
+}
+
+func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enabled bool) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
+		return
+	}
+	job, err := db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "lookup: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronWrite(w, r, job.TargetConv); !ok {
+		return
+	}
+	if err := db.SetAgentCronJobEnabled(id, enabled); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
+		return
+	}
+	job, err := db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "lookup: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronWrite(w, r, job.TargetConv); !ok {
+		return
+	}
+	now := time.Now()
+	status := fireCronJob(job, now)
+	if err := db.UpdateAgentCronJobLastRun(id, now, status); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "stamp: "+err.Error())
+		return
+	}
+	// Run-history insert is best-effort: the fire already succeeded,
+	// and the denorm last_run_status gives callers their primary
+	// signal. Don't 500 the response just because we couldn't append
+	// the audit row.
+	_, _ = db.InsertAgentCronRun(&db.AgentCronRun{
+		JobID:   id,
+		FiredAt: now,
+		Status:  status,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"status": status})
 }
 
 type runJSON struct {

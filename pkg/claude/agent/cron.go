@@ -32,6 +32,9 @@ func cronCmd() *cobra.Command {
 			cronAddCmd(),
 			cronRmCmd(),
 			cronLogsCmd(),
+			cronEnableCmd(),
+			cronDisableCmd(),
+			cronRunNowCmd(),
 		},
 	}.ToCobra()
 }
@@ -211,6 +214,95 @@ func runCronRm(p *cronRmParams, stdout, stderr io.Writer) int {
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Deleted cron job #%d\n", id)
+	return rcOK
+}
+
+// ---- enable / disable / run-now ----
+
+type cronIDOnlyParams struct {
+	ID string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+}
+
+func cronEnableCmd() *cobra.Command {
+	return boa.CmdT[cronIDOnlyParams]{
+		Use:         "enable <id>",
+		Short:       "Re-enable a previously disabled cron job",
+		Long:        "Flips enabled=true. Does NOT touch last_run_at, so re-enabling a paused job doesn't fire immediately if it ran recently.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
+			os.Exit(runCronEnable(p, true, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func cronDisableCmd() *cobra.Command {
+	return boa.CmdT[cronIDOnlyParams]{
+		Use:         "disable <id>",
+		Short:       "Pause a cron job without deleting it",
+		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
+			os.Exit(runCronEnable(p, false, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func cronRunNowCmd() *cobra.Command {
+	return boa.CmdT[cronIDOnlyParams]{
+		Use:         "run-now <id>",
+		Short:       "Fire a cron job immediately (without waiting for the next tick)",
+		Long:        "Manually triggers one fire. Useful for testing a freshly-added job or for a one-off nudge between regular runs. Updates last_run_at + appends a row to the run history.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
+			os.Exit(runCronRunNow(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runCronEnable(p *cronIDOnlyParams, enabled bool, stdout, stderr io.Writer) int {
+	id, err := strconv.ParseInt(strings.TrimSpace(p.ID), 10, 64)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: id must be an integer; got %q\n", p.ID)
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	verb := "enable"
+	if !enabled {
+		verb = "disable"
+	}
+	path := "/v1/cron/" + strconv.FormatInt(id, 10) + "/" + verb
+	if err := DaemonRequest(http.MethodPost, path, nil, nil, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if enabled {
+		fmt.Fprintf(stdout, "Enabled cron job #%d\n", id)
+	} else {
+		fmt.Fprintf(stdout, "Disabled cron job #%d\n", id)
+	}
+	return rcOK
+}
+
+func runCronRunNow(p *cronIDOnlyParams, stdout, stderr io.Writer) int {
+	id, err := strconv.ParseInt(strings.TrimSpace(p.ID), 10, 64)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: id must be an integer; got %q\n", p.ID)
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	path := "/v1/cron/" + strconv.FormatInt(id, 10) + "/run-now"
+	var resp struct {
+		Status string `json:"status"`
+	}
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "Fired cron job #%d (status: %s)\n", id, resp.Status)
 	return rcOK
 }
 
