@@ -150,11 +150,9 @@ existing `groups.*`/`member.*` model:
     debugging/auditing view).
   - `tclaude agent mailbox` (no arg) — current conversation's inbox,
     intended to be invoked by a running agent that just got nudged.
-- Each conv now has an implicit inbox (rows in `agent_messages` where
-  `to_conv = me`). `tclaude agent inbox ls` and `inbox read <id>` are the
-  v1 readers. Conversations also keep an outbox view of their own sent
-  messages — currently only via direct DB query; surface as
-  `inbox sent`.
+- ~~Surface outbox via `inbox sent`.~~ **Shipped.** `tclaude agent
+  inbox sent` lists this conv's outgoing messages with delivery +
+  read status from the recipient's side. JSON via `--json`.
 - Multi-recipient messages: add `to_convs` (or normalise to a
   per-recipient row table) plus a `cc_convs` list. The "from / to / cc /
   subject / body / read" mental model maps directly onto email and is
@@ -551,3 +549,6 @@ Short notes only — see `docs/agent.md` and the code for details.
   splits builds: CGO_ENABLED=0 for linux/windows, =1 for darwin).
   Yellow/red/flashing indicators + pending-approvals submenu
   deferred to v2.
+- `tclaude agent inbox sent` (outbox view). Lists this conv's
+  outgoing messages with per-recipient delivery + read state.
+  Backed by `db.ListAgentMessagesFromConv` + `/v1/inbox?outbox=1`.

@@ -463,14 +463,27 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 // ListAgentMessagesForConv returns the most recent messages for a recipient.
 // limit <= 0 means "no limit".
 func ListAgentMessagesForConv(toConv string, limit int) ([]*AgentMessage, error) {
+	return listAgentMessagesByCol("to_conv", toConv, limit)
+}
+
+// ListAgentMessagesFromConv returns the most recent messages a given
+// conv-id sent (the "outbox" view). Symmetric with ListAgentMessagesForConv.
+func ListAgentMessagesFromConv(fromConv string, limit int) ([]*AgentMessage, error) {
+	return listAgentMessagesByCol("from_conv", fromConv, limit)
+}
+
+// listAgentMessagesByCol shares the read/scan path between the inbox
+// and outbox queries. col must be a literal column name (`to_conv` or
+// `from_conv`), never user input — it's interpolated into SQL.
+func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, subject, body,
 		created_at, delivered_at, read_at
-		FROM agent_messages WHERE to_conv = ? ORDER BY created_at DESC`
-	args := []any{toConv}
+		FROM agent_messages WHERE ` + col + ` = ? ORDER BY created_at DESC`
+	args := []any{value}
 	if limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, limit)

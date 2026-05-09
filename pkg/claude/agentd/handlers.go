@@ -691,15 +691,22 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 
 // --- /v1/inbox ---
 
+// inboxItem is the row shape returned by /v1/inbox. From/FromShort
+// are populated for received messages (the inbox view); To/ToShort
+// + Delivered are populated for sent messages (the outbox view, when
+// ?outbox=1 is set). Unused fields omit themselves via omitempty.
 type inboxItem struct {
 	ID        int64  `json:"id"`
-	From      string `json:"from"`
-	FromShort string `json:"from_short"`
+	From      string `json:"from,omitempty"`
+	FromShort string `json:"from_short,omitempty"`
+	To        string `json:"to,omitempty"`
+	ToShort   string `json:"to_short,omitempty"`
 	Group     string `json:"group"`
 	Subject   string `json:"subject,omitempty"`
 	Preview   string `json:"preview,omitempty"`
 	CreatedAt string `json:"created_at"`
 	Read      bool   `json:"read"`
+	Delivered bool   `json:"delivered,omitempty"`
 }
 
 func handleInbox(w http.ResponseWriter, r *http.Request) {
@@ -718,7 +725,15 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	unreadOnly := r.URL.Query().Get("unread") == "1" || r.URL.Query().Get("unread") == "true"
-	msgs, err := db.ListAgentMessagesForConv(myID, limit)
+	outbox := r.URL.Query().Get("outbox") == "1" || r.URL.Query().Get("outbox") == "true"
+
+	var msgs []*db.AgentMessage
+	var err error
+	if outbox {
+		msgs, err = db.ListAgentMessagesFromConv(myID, limit)
+	} else {
+		msgs, err = db.ListAgentMessagesForConv(myID, limit)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -734,16 +749,23 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 		if unreadOnly && !m.ReadAt.IsZero() {
 			continue
 		}
-		out = append(out, inboxItem{
+		item := inboxItem{
 			ID:        m.ID,
-			From:      m.FromConv,
-			FromShort: agent.ShortID(m.FromConv),
 			Group:     groupNames[m.GroupID],
 			Subject:   m.Subject,
 			Preview:   bodyPreview(m.Body),
 			CreatedAt: m.CreatedAt.Format(time.RFC3339),
 			Read:      !m.ReadAt.IsZero(),
-		})
+		}
+		if outbox {
+			item.To = m.ToConv
+			item.ToShort = agent.ShortID(m.ToConv)
+			item.Delivered = !m.DeliveredAt.IsZero()
+		} else {
+			item.From = m.FromConv
+			item.FromShort = agent.ShortID(m.FromConv)
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -22,6 +22,7 @@ func inboxCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			inboxLsCmd(),
+			inboxSentCmd(),
 			inboxReadCmd(),
 		},
 	}.ToCobra()
@@ -53,13 +54,16 @@ func inboxLsCmd() *cobra.Command {
 
 type inboxEntry struct {
 	ID        int64  `json:"id"`
-	From      string `json:"from"`
-	FromShort string `json:"from_short"`
+	From      string `json:"from,omitempty"`
+	FromShort string `json:"from_short,omitempty"`
+	To        string `json:"to,omitempty"`
+	ToShort   string `json:"to_short,omitempty"`
 	Group     string `json:"group"`
 	Subject   string `json:"subject,omitempty"`
 	Preview   string `json:"preview,omitempty"`
 	CreatedAt string `json:"created_at"`
 	Read      bool   `json:"read"`
+	Delivered bool   `json:"delivered,omitempty"`
 }
 
 func runInboxLs(p *inboxLsParams, stdout, stderr io.Writer) int {
@@ -122,6 +126,92 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
+}
+
+// --- inbox sent ---
+
+type inboxSentParams struct {
+	Limit int  `long:"limit" short:"n" help:"Max number of messages to show" default:"20"`
+	JSON  bool `long:"json" help:"Output JSON"`
+}
+
+func inboxSentCmd() *cobra.Command {
+	return boa.CmdT[inboxSentParams]{
+		Use:         "sent",
+		Short:       "List messages this conversation has sent (outbox)",
+		Long:        "Outbox view: messages this conv-id is the sender of, most recent first. Shows delivery + read state from the recipient's side.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *inboxSentParams, _ *cobra.Command, _ []string) {
+			os.Exit(runInboxSent(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runInboxSent(p *inboxSentParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	q := fmt.Sprintf("/v1/inbox?limit=%d&outbox=1", p.Limit)
+	var out []inboxEntry
+	if err := DaemonGet(q, &out); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	return renderOutbox(p, out, stdout)
+}
+
+func renderOutbox(p *inboxSentParams, out []inboxEntry, stdout io.Writer) int {
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			return rcIOFailure
+		}
+		return rcOK
+	}
+	if len(out) == 0 {
+		fmt.Fprintln(stdout, "(no sent messages)")
+		return rcOK
+	}
+	// Status column collapses delivered/read into a single 3-char glyph
+	// so the row stays narrow:
+	//   "···" = queued (not delivered yet, target offline at send time)
+	//   "→··" = delivered, recipient hasn't read it
+	//   "→✓·" = delivered + recipient read
+	tbl := table.New(
+		table.Column{Header: "ST", Width: 3},
+		table.Column{Header: "ID", Width: 5, Align: table.AlignRight},
+		table.Column{Header: "TO", Width: 8},
+		table.Column{Header: "GROUP", MinWidth: 6, Weight: 0.4, Truncate: true},
+		table.Column{Header: "SUBJECT", MinWidth: 10, Weight: 1.6, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	for _, e := range out {
+		subj := e.Subject
+		if subj == "" {
+			subj = e.Preview
+		}
+		tbl.AddRow(table.Row{Cells: []string{
+			outboxStatusGlyph(e),
+			fmt.Sprintf("%d", e.ID),
+			e.ToShort,
+			e.Group,
+			subj,
+		}})
+	}
+	fmt.Fprintln(stdout, tbl.Render())
+	return rcOK
+}
+
+func outboxStatusGlyph(e inboxEntry) string {
+	switch {
+	case e.Read:
+		return "→✓·"
+	case e.Delivered:
+		return "→··"
+	default:
+		return "···"
+	}
 }
 
 // --- inbox read ---
