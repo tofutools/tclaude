@@ -52,15 +52,44 @@ know exactly what to add.
 ## Renaming
 
 ```bash
-tclaude agent rename "code-reviewer-frontend"
+tclaude agent rename "code reviewer frontend"
 ```
-
-Quotes are optional unless your title contains spaces — easier to
-just always quote.
 
 The new title is what `tclaude agent ls`, `tclaude conv ls`, and the
 agent-coord routing layer all use to identify you. Pick something
 descriptive of your current role, not your model.
+
+### Title charset (strict)
+
+Titles are restricted to **`[A-Za-z0-9_\-\[\]{}() ]`, 1–64
+characters**, with these extra rules:
+
+- **Single ASCII spaces only.** Consecutive spaces (`"  "`) are
+  rejected. Tabs, newlines, NBSP, etc. are rejected.
+- **No slashes, quotes, punctuation outside the brackets/parens**, no
+  unicode, no control characters.
+
+This is a hard security constraint enforced by the daemon, not a
+style preference: the title becomes literal `tmux send-keys` input,
+so anything in it would land in the input box. A permissive charset
+would let an agent sneak a newline + another `/<command>` into a
+"rename" and execute arbitrary slash commands.
+
+Examples that work:
+
+```bash
+tclaude agent rename code-reviewer-frontend
+tclaude agent rename code_reviewer_frontend
+tclaude agent rename "code reviewer frontend"
+tclaude agent rename "[reviewer] frontend"
+tclaude agent rename "reviewer(frontend)"
+```
+
+Anything else is rejected with `invalid_title` (HTTP 400) — both
+client-side (fast fail) and daemon-side (the actual gate). The error
+body says **REJECTED** explicitly so you know not to retry with a
+similar title; pick a different one that uses only the allowed
+characters.
 
 ## What can go wrong
 

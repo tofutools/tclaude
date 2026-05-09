@@ -318,6 +318,12 @@ func injectSlashCommand(convID, line string) bool {
 
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC
 // pane. Permission-gated on `self.rename`.
+//
+// Title is restricted to [A-Za-z0-9_-]+ (min 1, max 64 chars) to prevent
+// keystroke-injection. Since the title becomes literal send-keys input,
+// anything in it (newlines, slashes, control chars) lands in the input
+// box; a permissive title would let a permitted agent execute arbitrary
+// slash commands by sneaking a newline + another `/<cmd>` in.
 func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -341,8 +347,15 @@ func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Title = strings.TrimSpace(body.Title)
-	if body.Title == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "title is required")
+	if !isValidRenameTitle(body.Title) {
+		writeError(w, http.StatusBadRequest, "invalid_title",
+			"REJECTED. Title must be 1-64 characters from [A-Za-z0-9_-[]{}() ]. "+
+				"Single ASCII spaces are allowed; consecutive spaces, tabs, newlines, "+
+				"slashes, quotes, and unicode are NOT allowed and will not be allowed. "+
+				"This is a hard security gate against keystroke injection (the title becomes "+
+				"literal tmux send-keys input) — it is not a style preference, not configurable, "+
+				"and not bypassable. Do not retry with a similar title; pick one that uses only "+
+				"the allowed characters.")
 		return
 	}
 	if !injectSlashCommand(convID, "/rename "+body.Title) {
@@ -355,6 +368,41 @@ func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 		"title":   body.Title,
 		"note":    "rename submitted via tmux send-keys; CC will write the new title on its next turn",
 	})
+}
+
+// isValidRenameTitle enforces the rename title charset. Hard cap at 64
+// chars (CC display titles get truncated anyway, and longer is just
+// asking for keystroke-injection edge cases).
+//
+// Allowed: [A-Za-z0-9_\-\[\]{}() ]. Single ASCII spaces are allowed
+// for readability ("code reviewer"), but consecutive spaces and any
+// other whitespace (tabs, newlines, NBSP, etc.) are rejected. Caller
+// should TrimSpace before calling so leading/trailing spaces don't
+// sneak past either.
+//
+// Anything that could let `tmux send-keys` interpret a control
+// sequence — newlines, slashes, quotes, tabs — stays out.
+func isValidRenameTitle(t string) bool {
+	if t == "" || len(t) > 64 {
+		return false
+	}
+	if strings.Contains(t, "  ") {
+		return false
+	}
+	for _, r := range t {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		case r == '[' || r == ']' || r == '{' || r == '}':
+		case r == '(' || r == ')':
+		case r == ' ':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // --- /v1/messages/{id} (GET) and /v1/messages/{id}/reply (POST) ---

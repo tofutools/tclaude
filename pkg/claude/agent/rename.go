@@ -31,13 +31,43 @@ func renameCmd() *cobra.Command {
 }
 
 type renameParams struct {
-	Title string `pos:"true" help:"New conversation title"`
+	Title string `pos:"true" help:"New conversation title (1-64 chars, [A-Za-z0-9_\\-\\[\\]{}() ] only; single spaces OK, no doubles)"`
+}
+
+// isValidRenameTitle mirrors the daemon-side check in handlers.go.
+// Kept in sync deliberately: the daemon is the actual security boundary,
+// but we want a fast local error before sending a doomed request.
+func isValidRenameTitle(t string) bool {
+	if t == "" || len(t) > 64 {
+		return false
+	}
+	if strings.Contains(t, "  ") {
+		return false
+	}
+	for _, r := range t {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		case r == '[' || r == ']' || r == '{' || r == '}':
+		case r == '(' || r == ')':
+		case r == ' ':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func runRename(p *renameParams, stdout, stderr io.Writer) int {
 	title := strings.TrimSpace(p.Title)
-	if title == "" {
-		fmt.Fprintf(stderr, "Error: title is required\n")
+	if !isValidRenameTitle(title) {
+		fmt.Fprintln(stderr, "Error: REJECTED. Title must be 1-64 characters from [A-Za-z0-9_-[]{}() ].")
+		fmt.Fprintln(stderr, "Single ASCII spaces are allowed; consecutive spaces, tabs, newlines, slashes,")
+		fmt.Fprintln(stderr, "quotes, and unicode are NOT allowed and will not be allowed.")
+		fmt.Fprintln(stderr, "This is a hard security gate against keystroke injection — not a style preference.")
+		fmt.Fprintln(stderr, "Do not retry with a similar title; pick one that uses only the allowed characters.")
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {

@@ -269,6 +269,36 @@ in [`agentd.md`](agentd.md).
 
 **Status:** shipped in PR #47 (see DONE section below).
 
+### Documentation
+
+- **`docs/agent.md` (or split into `agent.md` + `agentd.md`)** — a
+  user-facing reference for the agent coordination feature. Currently
+  there is `agent-coord.md` and `agentd.md` under `docs/plans/`, but
+  those are *design* docs, not user docs, and `docs/index.md`'s
+  "Documentation" navbar doesn't link to them. Audience: someone who
+  wants to *use* the feature, not someone reviewing the design.
+  Should cover:
+  - What the agent feature does (cross-session messaging,
+    permission-gated self-service via agentd).
+  - Quick-start: starting `tclaude agentd serve`, creating a group,
+    adding agents, sending messages.
+  - The full `tclaude agent …` command reference (whoami, lookup, ls,
+    message, reply, inbox, groups …, rename).
+  - The permission model (`agent.default_permissions` /
+    `permission_overrides` in `~/.tclaude/config.json`) with the
+    list of recognised permission slugs as we add them.
+  - The bundled skills (`agent-coord`, `agent-rename`, …) and
+    `tclaude setup --install-agent-skills`.
+  - Troubleshooting: "agentd not running", "not in a shared group",
+    "selector matches multiple conversations", "no_tmux".
+- Add a navbar entry in `docs/index.md` under the
+  `## Documentation` list: `- [Agent Coordination](agent.md) -
+  Cross-session messaging and self-service via tclaude agent +
+  agentd`. Place near the top alongside Session/Conversation
+  management since this is core surface area now.
+- Probably also surface the feature in the "Features" bullet list
+  near the top of `docs/index.md`.
+
 ### Cross-machine (far future)
 
 When/if we ever want to span hosts: federate `tclaude agentd` instances
