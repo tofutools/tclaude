@@ -161,9 +161,20 @@ func whoamiCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// HumanIdentity is what whoami prints when the invocation is not from
+// inside a Claude Code session — i.e. the coordinating human running
+// tclaude directly from a shell.
+const HumanIdentity = "<human>"
+
 func runWhoami(stdout, stderr io.Writer) int {
 	id, err := currentConvID()
 	if err != nil {
+		// No conv-id resolvable. If there's no `claude` ancestor in the
+		// process tree, the invoker is the human — say so.
+		if session.FindClaudePID() == 0 {
+			fmt.Fprintln(stdout, HumanIdentity)
+			return rcOK
+		}
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
