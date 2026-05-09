@@ -42,6 +42,10 @@ type resolved struct {
 //
 // `.` and `-` resolve to the current session via $TCLAUDE_SESSION_ID, with
 // the parent CC pid file as fallback.
+//
+// On a miss, we do a global rescan of `~/.claude/projects/*` and try once
+// more so brand-new convs (or convs that were just renamed) get picked up
+// without requiring a manual `tclaude conv ls -g` first.
 func resolveSelector(selector string) (*resolved, []*resolved, error) {
 	if selector == "" {
 		return nil, nil, fmt.Errorf("selector is required")
@@ -55,6 +59,18 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 		selector = id
 	}
 
+	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) {
+		return r, matches, err
+	}
+
+	// Cache miss. Refresh the index across all projects and try again.
+	refreshAllProjects()
+	return tryResolve(selector)
+}
+
+// tryResolve runs the cached lookup chain (UUID → prefix → title) without
+// touching disk beyond the SQLite cache.
+func tryResolve(selector string) (*resolved, []*resolved, error) {
 	// 1) full UUID match
 	if row, err := db.GetConvIndex(selector); err == nil && row != nil {
 		return &resolved{convID: row.ConvID, row: row}, nil, nil
@@ -83,6 +99,25 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 		return nil, matches, errAmbiguous
 	}
 	return nil, nil, fmt.Errorf("no conversation matches %q", selector)
+}
+
+// refreshAllProjects walks ~/.claude/projects/* and runs the same
+// LoadSessionsIndex pass that `conv ls -g` does, picking up new convs
+// and applying the per-file mtime check to refresh stale ones. Errors
+// are intentionally swallowed — the caller will surface a clearer
+// "no conversation matches" if the second tryResolve still fails.
+func refreshAllProjects() {
+	projectsDir := conv.ClaudeProjectsDir()
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		_, _ = conv.LoadSessionsIndex(filepath.Join(projectsDir, e.Name()))
+	}
 }
 
 // displayTitle returns the title we treat as the agent's name: custom title
