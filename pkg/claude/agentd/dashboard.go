@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // dashboardHTML is the entire single-page UI. Lives in its own file so
@@ -144,20 +145,62 @@ type dashboardGroup struct {
 }
 
 type dashboardMember struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
-	Online bool   `json:"online"`
+	ConvID string      `json:"conv_id"`
+	Title  string      `json:"title"`
+	Alias  string      `json:"alias,omitempty"`
+	Role   string      `json:"role,omitempty"`
+	Descr  string      `json:"descr,omitempty"`
+	Online bool        `json:"online"`
+	State  agentState  `json:"state"`
 }
 
 type dashboardAgent struct {
-	ConvID    string   `json:"conv_id"`
-	Title     string   `json:"title"`
-	Online    bool     `json:"online"`
-	Groups    []string `json:"groups"`
-	Effective []string `json:"effective"` // perms = union(defaults, per-conv grants)
+	ConvID    string     `json:"conv_id"`
+	Title     string     `json:"title"`
+	Online    bool       `json:"online"`
+	State     agentState `json:"state"`
+	Groups    []string   `json:"groups"`
+	Effective []string   `json:"effective"` // perms = union(defaults, per-conv grants)
+}
+
+// agentState mirrors what `tclaude session ls` shows: status from the
+// hook callbacks (idle / working / awaiting_*), last hook timestamp,
+// the agent's cwd, and subagent count. Empty string fields when no
+// live session row exists for the conv.
+type agentState struct {
+	Status        string `json:"status,omitempty"`
+	StatusDetail  string `json:"status_detail,omitempty"`
+	SubagentCount int    `json:"subagent_count,omitempty"`
+	LastHook      string `json:"last_hook,omitempty"`
+	Cwd           string `json:"cwd,omitempty"`
+}
+
+// stateForConv looks up the most-recent live tmux session row for this
+// conv-id and returns its hook-tracked state. Falls back to the
+// most-recent row when no session is alive — that gives us a useful
+// "exited at last_hook" rendering for offline agents.
+func stateForConv(convID string) agentState {
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil || len(rows) == 0 {
+		return agentState{}
+	}
+	pick := rows[0] // already sorted most-recent first
+	for _, r := range rows {
+		if r.TmuxSession != "" && session.IsTmuxSessionAlive(r.TmuxSession) {
+			pick = r
+			break
+		}
+	}
+	out := agentState{
+		Status:        pick.Status,
+		StatusDetail:  pick.StatusDetail,
+		SubagentCount: pick.SubagentCount,
+		Cwd:           pick.Cwd,
+	}
+	if !pick.LastHook.IsZero() {
+		out.LastHook = pick.LastHook.Format(time.RFC3339)
+	}
+	return out
 }
 
 // handleDashboardSnapshot returns one JSON blob covering everything
@@ -200,6 +243,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ConvID: convID,
 			Title:  title,
 			Online: isConvOnline(convID),
+			State:  stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
 			Groups:    []string{},
@@ -244,6 +288,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				Role:   m.Role,
 				Descr:  m.Descr,
 				Online: online,
+				State:  stateForConv(m.ConvID),
 			})
 			if online {
 				dg.Online++
