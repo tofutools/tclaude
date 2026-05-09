@@ -117,6 +117,105 @@ func TestResolveSelector_NotFound(t *testing.T) {
 	}
 }
 
+// TestResolveSelector_ByGroupAlias covers the v2 fallback: a conv that
+// only lives in agent_group_members (no conv_index row, e.g. fresh
+// from `agent spawn`) is findable by its per-group alias.
+func TestResolveSelector_ByGroupAlias(t *testing.T) {
+	setupTestDB(t)
+	g, _ := db.CreateAgentGroup("alpha", "")
+	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: g, ConvID: "f6c6e261-deaf-bead-cafe-feedfacefeed",
+		Alias: "second-banana", Role: "builder",
+	}); err != nil {
+		t.Fatalf("AddAgentGroupMember: %v", err)
+	}
+
+	r, _, err := resolveSelector("second-banana")
+	if err != nil {
+		t.Fatalf("resolveSelector: %v", err)
+	}
+	if r.ConvID != "f6c6e261-deaf-bead-cafe-feedfacefeed" {
+		t.Errorf("conv_id = %q, want freshly-spawned uuid", r.ConvID)
+	}
+	if r.Row != nil {
+		t.Errorf("Row should be nil for non-indexed conv, got %+v", r.Row)
+	}
+}
+
+// TestResolveSelector_ByGroupConvPrefix covers the same fallback for
+// the conv-id prefix path — `agent message f6c6e261 ...` should work
+// even before the conv shows up in conv_index.
+func TestResolveSelector_ByGroupConvPrefix(t *testing.T) {
+	setupTestDB(t)
+	g, _ := db.CreateAgentGroup("alpha", "")
+	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: g, ConvID: "f6c6e261-deaf-bead-cafe-feedfacefeed",
+		Alias: "x",
+	}); err != nil {
+		t.Fatalf("AddAgentGroupMember: %v", err)
+	}
+
+	r, _, err := resolveSelector("f6c6e261")
+	if err != nil {
+		t.Fatalf("resolveSelector: %v", err)
+	}
+	if r.ConvID != "f6c6e261-deaf-bead-cafe-feedfacefeed" {
+		t.Errorf("conv_id = %q, want freshly-spawned uuid", r.ConvID)
+	}
+}
+
+// TestResolveSelector_GroupAliasAmbiguous: same alias in two groups
+// for two different convs is genuinely ambiguous.
+func TestResolveSelector_GroupAliasAmbiguous(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("alpha", "")
+	g2, _ := db.CreateAgentGroup("beta", "")
+	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: g1, ConvID: "11111111-1111-1111-1111-111111111111", Alias: "dup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: g2, ConvID: "22222222-2222-2222-2222-222222222222", Alias: "dup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, matches, err := resolveSelector("dup")
+	if !errors.Is(err, errAmbiguous) {
+		t.Fatalf("expected errAmbiguous, got %v matches=%d", err, len(matches))
+	}
+	if len(matches) != 2 {
+		t.Errorf("expected 2 distinct matches, got %d", len(matches))
+	}
+}
+
+// TestResolveSelector_PrefersConvIndexOverMembers: when both have
+// the conv, conv_index hit short-circuits the chain so we still get
+// the .Row populated.
+func TestResolveSelector_PrefersConvIndexOverMembers(t *testing.T) {
+	setupTestDB(t)
+	convID := "abcd1234-2222-3333-4444-555555555555"
+	upsertConvIndex(t, convID, "indexed-title", "", "")
+
+	g, _ := db.CreateAgentGroup("alpha", "")
+	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: g, ConvID: convID, Alias: "alias-only",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A conv-index hit on the prefix returns the Row; we don't fall
+	// through to the agent_group_members step.
+	r, _, err := resolveSelector("abcd1234")
+	if err != nil {
+		t.Fatalf("resolveSelector: %v", err)
+	}
+	if r.Row == nil {
+		t.Error("expected conv_index row on prefix hit, got nil")
+	}
+}
+
 func TestRunLookup(t *testing.T) {
 	setupTestDB(t)
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")

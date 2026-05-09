@@ -84,8 +84,9 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 	return tryResolve(selector)
 }
 
-// tryResolve runs the cached lookup chain (UUID → prefix → title) without
-// touching disk beyond the SQLite cache.
+// tryResolve runs the cached lookup chain (UUID → prefix → title →
+// group-member alias/prefix) without touching disk beyond the SQLite
+// cache.
 func tryResolve(selector string) (*resolved, []*resolved, error) {
 	// 1) full UUID match
 	if row, err := db.GetConvIndex(selector); err == nil && row != nil {
@@ -114,6 +115,37 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 	if len(matches) > 1 {
 		return nil, matches, errAmbiguous
 	}
+
+	// 4) fallback to agent_group_members so per-group aliases (e.g.
+	//    `tclaude agent message reviewer "..."`) work, and so freshly-
+	//    spawned convs are findable before their .jsonl gets scanned
+	//    into conv_index.
+	//
+	//    Distinct by conv_id: an agent can be a member of multiple
+	//    groups under different aliases, but it's still one conv. If
+	//    the same alias points at different convs across groups,
+	//    that's genuinely ambiguous and we surface it.
+	if mem, err := db.FindAgentMembersBySelector(selector); err == nil && len(mem) > 0 {
+		seen := map[string]bool{}
+		var unique []*resolved
+		for _, m := range mem {
+			if seen[m.ConvID] {
+				continue
+			}
+			seen[m.ConvID] = true
+			// Prefer to attach the conv-index row when it exists so
+			// downstream renderers can show titles.
+			row, _ := db.GetConvIndex(m.ConvID)
+			unique = append(unique, &resolved{ConvID: m.ConvID, Row: row})
+		}
+		if len(unique) == 1 {
+			return unique[0], nil, nil
+		}
+		if len(unique) > 1 {
+			return nil, unique, errAmbiguous
+		}
+	}
+
 	return nil, nil, fmt.Errorf("no conversation matches %q", selector)
 }
 

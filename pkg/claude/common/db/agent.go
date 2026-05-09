@@ -454,6 +454,51 @@ func PruneAgentMessagesForConv(forConv string, olderThan time.Time, readOnly boo
 	return n, nil
 }
 
+// FindAgentMembersBySelector returns every row whose alias or conv_id
+// matches the selector. Used as a fallback by the agent CLI's target
+// resolver: a conv that was just added to a group via spawn lives in
+// agent_group_members before its .jsonl is scanned into conv_index, so
+// the conv_index-only resolver can't find it.
+//
+// Match rules:
+//   - exact alias (case-sensitive)
+//   - exact conv_id
+//   - prefix on conv_id (8+ chars typed, like the rest of tclaude)
+//
+// Returns rows in the order seen; the caller is responsible for
+// deduping by conv_id and reporting ambiguity.
+func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
+	if selector == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT group_id, conv_id, alias, role, descr, joined_at
+		FROM agent_group_members
+		WHERE alias = ?
+		   OR conv_id = ?
+		   OR conv_id LIKE ?
+		ORDER BY joined_at DESC`
+	rows, err := d.Query(q, selector, selector, selector+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentGroupMember
+	for rows.Next() {
+		var m AgentGroupMember
+		var joined string
+		if err := rows.Scan(&m.GroupID, &m.ConvID, &m.Alias, &m.Role, &m.Descr, &joined); err != nil {
+			return nil, err
+		}
+		m.JoinedAt = parseTimeOrZero(joined)
+		out = append(out, &m)
+	}
+	return out, rows.Err()
+}
+
 // MarkAgentMessageDelivered sets delivered_at = now for the given message ID.
 func MarkAgentMessageDelivered(id int64) error {
 	db, err := Open()
