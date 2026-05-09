@@ -77,6 +77,12 @@ details[open] > summary::before { content: "▼ "; }
   border-radius: 12px; font-size: 11px; font-family: ui-monospace, monospace;
 }
 .tag.default { border-color: #1f6feb; color: #58a6ff; }
+.owner-badge {
+  display: inline-block; padding: 1px 6px; margin-left: 4px;
+  background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;
+  border-radius: 10px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
 .copy-cmd {
   display: block; margin-top: 8px;
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -158,6 +164,19 @@ details[open] > summary::before { content: "▼ "; }
     return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
   }
 
+  // roleCell renders the role column for a member row. Mirrors the CLI:
+  // members who are also owners get an "owner" badge; pure-owners
+  // (role==="owner" set by the daemon) show the badge alone.
+  function roleCell(m) {
+    if (m.owner) {
+      if (!m.role || m.role === 'owner') {
+        return '<span class="owner-badge">owner</span>';
+      }
+      return `${esc(m.role)} <span class="owner-badge">owner</span>`;
+    }
+    return esc(m.role || '');
+  }
+
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
   // Mirrors the session ls UPDATED column. Empty input → "" (no chip).
   function relTime(iso) {
@@ -220,7 +239,7 @@ details[open] > summary::before { content: "▼ "; }
                     ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
                   </td>
                   <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
-                  <td>${esc(m.role || '')}</td>
+                  <td>${roleCell(m)}</td>
                   <td class="muted">${esc(m.descr || '')}</td>
                 </tr>`;
               }).join('')}

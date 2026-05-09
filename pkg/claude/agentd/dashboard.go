@@ -144,14 +144,21 @@ type dashboardGroup struct {
 	Online  int               `json:"online"`
 }
 
+// dashboardMember.Owner mirrors the memberJSON convention from
+// /v1/groups/{name}/members:
+//   - true on a member row → that member is also a group owner
+//     (rendered as a badge alongside the role).
+//   - true on a row with Role=="owner" and no alias/descr → a
+//     pure owner who isn't a member (so the list stays comprehensive).
 type dashboardMember struct {
-	ConvID string      `json:"conv_id"`
-	Title  string      `json:"title"`
-	Alias  string      `json:"alias,omitempty"`
-	Role   string      `json:"role,omitempty"`
-	Descr  string      `json:"descr,omitempty"`
-	Online bool        `json:"online"`
-	State  agentState  `json:"state"`
+	ConvID string     `json:"conv_id"`
+	Title  string     `json:"title"`
+	Alias  string     `json:"alias,omitempty"`
+	Role   string     `json:"role,omitempty"`
+	Descr  string     `json:"descr,omitempty"`
+	Online bool       `json:"online"`
+	Owner  bool       `json:"owner,omitempty"`
+	State  agentState `json:"state"`
 }
 
 type dashboardAgent struct {
@@ -272,7 +279,17 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
+		// Pre-load the owner set so we can tag members who are also
+		// owners. Mirrors handleGroupMembersList in handlers.go.
+		ownerSet := map[string]bool{}
+		if owners, err := db.ListAgentGroupOwners(g.ID); err == nil {
+			for _, o := range owners {
+				ownerSet[o.ConvID] = true
+			}
+		}
+		memberSet := map[string]bool{}
 		for _, m := range members {
+			memberSet[m.ConvID] = true
 			row, _ := db.GetConvIndex(m.ConvID)
 			title := "(unknown)"
 			if row != nil {
@@ -288,12 +305,42 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				Role:   m.Role,
 				Descr:  m.Descr,
 				Online: online,
+				Owner:  ownerSet[m.ConvID],
 				State:  stateForConv(m.ConvID),
 			})
 			if online {
 				dg.Online++
 			}
 			a := addAgent(m.ConvID)
+			a.Groups = append(a.Groups, g.Name)
+		}
+		// Surface owners who aren't members so the list stays
+		// comprehensive. Same shape as the CLI:
+		// role="owner", no alias/descr.
+		for ownerConv := range ownerSet {
+			if memberSet[ownerConv] {
+				continue
+			}
+			row, _ := db.GetConvIndex(ownerConv)
+			title := "(unknown)"
+			if row != nil {
+				if t := agent.DisplayTitle(row); t != "" {
+					title = t
+				}
+			}
+			online := isConvOnline(ownerConv)
+			dg.Members = append(dg.Members, dashboardMember{
+				ConvID: ownerConv,
+				Title:  title,
+				Role:   "owner",
+				Online: online,
+				Owner:  true,
+				State:  stateForConv(ownerConv),
+			})
+			// Pure-owners are reachable via this group too — surface
+			// the group on the agent's row in the Agents view so
+			// "what groups can this conv see?" matches reality.
+			a := addAgent(ownerConv)
 			a.Groups = append(a.Groups, g.Name)
 		}
 		out.Groups = append(out.Groups, dg)

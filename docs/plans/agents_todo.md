@@ -557,11 +557,10 @@ Pending follow-ups for v2+ (the GCP-IAM-style edits view):
 - **Groups view** — root list of groups; expanding a group shows its
   members with online indicator, alias/role/descr, and the group-
   scoped permissions each holds. Search at the top filters by group
-  name / member alias / permission slug. **Show owners explicitly**
-  (a separate sub-row or badge on member rows that are also owners,
-  plus pure-owner rows so owners-not-members aren't invisible).
-  Backed by `db.ListAgentGroupOwners`; the data is already there,
-  the dashboard just doesn't render it.
+  name / member alias / permission slug. ~~Owner rendering~~
+  **shipped (2026-05)**: members who are also owners get an "owner"
+  badge in the role column; pure-owners surface as their own rows.
+  Mirrors the CLI convention (`groups members`).
 - **Agents view** — root list of conversations (members of any
   group + currently-online ones). Expanding an agent shows the
   groups it's in, its global permissions, and its per-group
