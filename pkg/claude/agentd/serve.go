@@ -104,6 +104,12 @@ func runServe(p *serveParams) error {
 	popupSrv, popupURL := startPopupServer()
 	popupBaseURL = popupURL
 
+	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
+	// and stops when the daemon-wide quit channel closes.
+	cronStop := make(chan struct{})
+	defer close(cronStop)
+	startCronScheduler(cronStop)
+
 	// Both the Unix-socket server and the popup server run in
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).
@@ -200,6 +206,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/permissions/slugs", handlePermissionsSlugs)
 	mux.HandleFunc("/v1/permissions/grant", handlePermissionsGrant)
 	mux.HandleFunc("/v1/permissions/revoke", handlePermissionsRevoke)
+	mux.HandleFunc("/v1/cron", handleCron)
+	mux.HandleFunc("/v1/cron/", handleCronByID)
 	return logRequest(mux)
 }
 

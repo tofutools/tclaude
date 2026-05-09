@@ -110,6 +110,8 @@ const (
 	PermMemberAdd         = "member.add"
 	PermMemberRemove      = "member.remove"
 	PermMemberRedesignate = "member.redesignate"
+	PermSelfSchedule      = "self.schedule"
+	PermAgentSchedule     = "agent.schedule"
 )
 
 // requirePermission gates an endpoint behind a named agent permission.

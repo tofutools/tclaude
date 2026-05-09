@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 12
+const currentVersion = 13
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -95,6 +95,54 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 13 {
+		if err := migrateV12toV13(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV12toV13 adds agent_cron_jobs — recurring scheduled jobs
+// the agentd scheduler fires on a wall-clock interval. v1 supports
+// interval-only schedules (e.g. every 10 minutes); cron expressions
+// can be added later as a separate column without migration churn.
+//
+// owner_conv records who created the job (for audit + display in
+// the dashboard); target_conv is who the message lands on. group_id
+// is the routing path for delivery — when set, the job inserts an
+// agent_messages row so the existing flush nudge pipeline picks it
+// up; when 0, the scheduler falls back to direct send-keys.
+//
+// last_run_at unset (zero time) → "never run, due immediately".
+// On every successful fire we set last_run_at = now (NOT now -
+// missed-intervals); skipping catch-ups means a daemon restart
+// after a long offline period doesn't replay 50 messages at once.
+func migrateV12toV13(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_cron_jobs (
+			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			name             TEXT NOT NULL DEFAULT '',
+			owner_conv       TEXT NOT NULL,
+			target_conv      TEXT NOT NULL,
+			group_id         INTEGER NOT NULL DEFAULT 0,
+			interval_seconds INTEGER NOT NULL,
+			subject          TEXT NOT NULL DEFAULT '',
+			body             TEXT NOT NULL DEFAULT '',
+			enabled          INTEGER NOT NULL DEFAULT 1,
+			created_at       TEXT NOT NULL,
+			last_run_at      TEXT NOT NULL DEFAULT '',
+			last_run_status  TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_cron_jobs_owner ON agent_cron_jobs(owner_conv);
+		CREATE INDEX IF NOT EXISTS idx_agent_cron_jobs_target ON agent_cron_jobs(target_conv);
+
+		UPDATE schema_version SET version = 13;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v12→v13: %w", err)
+	}
 	return nil
 }
 

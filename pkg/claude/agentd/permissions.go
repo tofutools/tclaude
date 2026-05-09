@@ -106,6 +106,14 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermPermissionsRevoke,
 		Description: "Revoke agent permissions (tclaude agent permissions revoke)",
 	},
+	{
+		Slug:        PermSelfSchedule,
+		Description: "Manage own scheduled cron jobs — list / add / remove (tclaude agent cron). Default-granted, mirroring the self-lifecycle slugs.",
+	},
+	{
+		Slug:        PermAgentSchedule,
+		Description: "Manage ANOTHER agent's scheduled cron jobs (tclaude agent cron --target). Group owners can manage cron jobs on members of groups they own without this slug.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

@@ -37,6 +37,7 @@ var selfPermsForBundledSkills = []string{
 	"self.compact",
 	"self.reincarnate",
 	"self.clone",
+	"self.schedule",
 }
 
 // Protocol version - bump this when the handler needs to be re-registered

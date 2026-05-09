@@ -33,6 +33,7 @@ func Cmd() *cobra.Command {
 			spawnCmd(),
 			inboxCmd(),
 			permissionsCmd(),
+			cronCmd(),
 			dashboardCmd(),
 		},
 	}.ToCobra()
