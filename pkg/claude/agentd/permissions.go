@@ -43,6 +43,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Replace this agent with a fresh successor that inherits its identity (tclaude agent reincarnate)",
 	},
 	{
+		Slug:        PermAgentReincarnate,
+		Description: "Reincarnate ANOTHER agent (tclaude agent reincarnate --target). Group owners can reincarnate members of groups they own without this slug.",
+	},
+	{
 		Slug:        PermGroupsCreate,
 		Description: "Create new agent groups (tclaude agent groups create)",
 	},

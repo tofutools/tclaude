@@ -61,30 +61,60 @@ const reincarnateAliveTimeout = 60 * time.Second
 // keystrokes can land mid-render.
 const reincarnateReadyDelay = 1 * time.Second
 
-// handleWhoamiReincarnate is the orchestration. POST-only,
-// permission-gated on self.reincarnate (default-granted).
+// handleWhoamiReincarnate handles POST /v1/whoami/reincarnate (self
+// path). Gated on self.reincarnate (default-granted). Delegates to
+// runReincarnationOrchestration with target == caller.
 func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	oldConv, ok := requirePermission(w, r, PermSelfReincarnate)
+	caller, ok := requirePermission(w, r, PermSelfReincarnate)
 	if !ok {
 		return
 	}
-	if oldConv == "" {
+	if caller == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"this endpoint operates on the calling agent's own conversation; humans should manage CC sessions directly")
+			"this endpoint operates on the calling agent's own conversation; humans should manage CC sessions directly, or use POST /v1/agent/{conv}/reincarnate to reincarnate another agent")
 		return
 	}
+	followUp, ok := decodeReincarnateFollowUp(w, r)
+	if !ok {
+		return
+	}
+	runReincarnationOrchestration(w, caller, caller, followUp)
+}
 
+// handleAgentReincarnate handles POST /v1/agent/{conv}/reincarnate
+// (cross-agent path). Gated on agent.reincarnate OR group-owner-of-target.
+// Routed via handleAgentByConv, which has already resolved targetConv.
+func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, targetConv)
+	if !ok {
+		return
+	}
+	followUp, ok := decodeReincarnateFollowUp(w, r)
+	if !ok {
+		return
+	}
+	runReincarnationOrchestration(w, targetConv, caller, followUp)
+}
+
+// decodeReincarnateFollowUp parses + validates the optional follow_up
+// body field. Returns (followUp, true) on success; on failure the error
+// response is already written and the caller should return.
+func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var body struct {
 		FollowUp string `json:"follow_up"`
 	}
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return
+			return "", false
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
@@ -93,22 +123,38 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 			"REJECTED. Follow-up must be 1-4096 printable characters; tabs, newlines, "+
 				"and other control characters are not allowed (each newline would be "+
 				"treated as a submit by tmux send-keys, splitting the prompt).")
-		return
+		return "", false
 	}
+	return body.FollowUp, true
+}
 
-	// 1. Snapshot old conv state. We require an alive tmux session for
-	// the caller — that's the cwd source and the target of the final
-	// /exit injection. Should always be the case since the perm check
-	// already established the caller is an agent.
-	oldSess := pickAliveSession(oldConv)
+// runReincarnationOrchestration is the target-agnostic body shared by
+// the self and cross-agent endpoints.
+//
+//   - target is the conv being reincarnated (its identity migrates onto
+//     the new conv-id, its tmux pane is /exit-ed at the end).
+//   - caller is the conv that triggered the reincarnation (recorded in
+//     the audit trail as `system:reincarnate:by=<caller>` for cross-agent,
+//     plain `system:reincarnate` when caller == target). It's also the
+//     handoff message's FromConv so the new agent sees who asked it to
+//     pick up.
+//   - followUp is an optional first-turn prompt; empty means "just
+//     reincarnate, no handoff message".
+//
+// Writes the JSON response (or error) directly to w.
+func runReincarnationOrchestration(w http.ResponseWriter, target, caller, followUp string) {
+	// 1. Snapshot target conv state. We require an alive tmux session
+	// for the target — that's the cwd source and the target of the
+	// final /exit injection.
+	oldSess := pickAliveSession(target)
 	if oldSess == nil {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"caller has no live tmux session; can't reincarnate without a cwd to spawn into")
+			"target conv "+short8(target)+" has no live tmux session; can't reincarnate without a cwd to spawn into (try `tclaude agent groups resume` first if it's offline)")
 		return
 	}
 	cwd := oldSess.Cwd
 
-	oldGroups, err := db.ListGroupsForConv(oldConv)
+	oldGroups, err := db.ListGroupsForConv(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot groups: "+err.Error())
@@ -116,7 +162,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	}
 	oldMembers := make([]*db.AgentGroupMember, 0, len(oldGroups))
 	for _, g := range oldGroups {
-		m, err := db.FindMemberInGroup(g.ID, oldConv)
+		m, err := db.FindMemberInGroup(g.ID, target)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io",
 				"snapshot membership: "+err.Error())
@@ -127,14 +173,14 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	oldPerms, err := db.ListAgentPermissionsForConv(oldConv)
+	oldPerms, err := db.ListAgentPermissionsForConv(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot perms: "+err.Error())
 		return
 	}
 
-	oldOwnedIDs, err := db.ListGroupsOwnedBy(oldConv)
+	oldOwnedIDs, err := db.ListGroupsOwnedBy(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot ownerships: "+err.Error())
@@ -178,7 +224,10 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	// fix), and full rollback would be more harmful than leaving the
 	// new agent partially provisioned.
 	migrated := []string{}
-	const granter = "system:reincarnate"
+	granter := "system:reincarnate"
+	if caller != target {
+		granter = "system:reincarnate:by=" + caller
+	}
 
 	for _, m := range oldMembers {
 		newMember := &db.AgentGroupMember{
@@ -192,7 +241,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("reincarnate: add new member failed", "group", m.GroupID, "error", err)
 			continue
 		}
-		if err := db.RemoveAgentGroupMember(m.GroupID, oldConv); err != nil {
+		if err := db.RemoveAgentGroupMember(m.GroupID, target); err != nil {
 			slog.Warn("reincarnate: remove old member failed", "group", m.GroupID, "error", err)
 		}
 		migrated = append(migrated, fmt.Sprintf("group:%d", m.GroupID))
@@ -203,7 +252,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("reincarnate: grant new perm failed", "slug", slug, "error", err)
 			continue
 		}
-		if _, err := db.RevokeAgentPermission(oldConv, slug); err != nil {
+		if _, err := db.RevokeAgentPermission(target, slug); err != nil {
 			slog.Warn("reincarnate: revoke old perm failed", "slug", slug, "error", err)
 		}
 		migrated = append(migrated, "perm:"+slug)
@@ -214,7 +263,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("reincarnate: add new owner failed", "group", gID, "error", err)
 			continue
 		}
-		if _, err := db.RemoveAgentGroupOwner(gID, oldConv); err != nil {
+		if _, err := db.RemoveAgentGroupOwner(gID, target); err != nil {
 			slog.Warn("reincarnate: remove old owner failed", "group", gID, "error", err)
 		}
 		migrated = append(migrated, fmt.Sprintf("owner:%d", gID))
@@ -233,15 +282,19 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	//     deliver via the existing flush nudge pipeline once the
 	//     pane is alive.
 	//   - solo (no group) → direct tmux send-keys into the new pane.
+	//
+	// FromConv is the caller (manager for cross-agent; same as old
+	// self for self-reincarnate) so the new agent sees who handed it
+	// the work.
 	var msgID int64
-	if body.FollowUp != "" {
+	if followUp != "" {
 		if len(oldMembers) > 0 {
 			id, err := db.InsertAgentMessage(&db.AgentMessage{
 				GroupID:  oldMembers[0].GroupID,
-				FromConv: oldConv,
+				FromConv: caller,
 				ToConv:   newConv,
 				Subject:  "reincarnation handoff",
-				Body:     body.FollowUp,
+				Body:     followUp,
 			})
 			if err != nil {
 				slog.Warn("reincarnate: insert handoff message failed", "error", err)
@@ -250,23 +303,26 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 				go deliverHandoffViaFlush(newConv)
 			}
 		} else {
-			go injectFollowUpDirect(newConv, body.FollowUp)
+			go injectFollowUpDirect(newConv, followUp)
 		}
 	}
 
 	// 7. Soft-stop the old conv. Best-effort — if the old pane is
 	// already gone (somehow), we still consider the reincarnation
 	// successful.
-	_ = injectSlashCommand(oldConv, "/exit", "")
+	_ = injectSlashCommand(target, "/exit", "")
 
 	resp := map[string]any{
-		"old_conv":         oldConv,
+		"old_conv":         target,
 		"new_conv":         newConv,
 		"label":            label,
 		"tmux_session":     newTmux,
 		"attach_cmd":       "tclaude session attach " + label,
 		"migrated":         migrated,
 		"switched_clients": switchedClients,
+	}
+	if caller != target {
+		resp["caller_conv"] = caller
 	}
 	carry := ""
 	switch switchedClients {
@@ -277,19 +333,19 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	default:
 		carry = fmt.Sprintf("%d tmux clients carried over to the new session", switchedClients)
 	}
-	if body.FollowUp != "" {
-		resp["follow_up"] = body.FollowUp
+	if followUp != "" {
+		resp["follow_up"] = followUp
 		if msgID > 0 {
 			resp["message_id"] = msgID
 			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; follow-up queued as message #%d for %s",
-				short8(oldConv), carry, msgID, short8(newConv))
+				short8(target), carry, msgID, short8(newConv))
 		} else {
 			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; follow-up will be injected into %s once its pane is ready",
-				short8(oldConv), carry, short8(newConv))
+				short8(target), carry, short8(newConv))
 		}
 	} else {
 		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new %s is up at %s",
-			short8(oldConv), carry, short8(newConv), newTmux)
+			short8(target), carry, short8(newConv), newTmux)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

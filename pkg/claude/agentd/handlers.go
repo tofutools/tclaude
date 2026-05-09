@@ -112,21 +112,40 @@ type peerEntry struct {
 	Groups []string `json:"groups"`
 }
 
+// handlePeers returns the conversations the caller can see.
+//
+// Two passes:
+//
+//  1. **Group members.** Agent caller → members of every group the
+//     caller is in. Human caller → members of every known group
+//     (humans aren't scoped by group membership — they see the full
+//     picture and can reach anyone).
+//  2. **Online ungrouped agents.** Conv-sessions whose tmux is alive
+//     and which weren't already surfaced by pass 1. Caller (when
+//     known) is excluded. This makes `tclaude agent ls` reflect
+//     "what's running right now" rather than "what's been added to
+//     a group", which was the user's frequent paper-cut.
 func handlePeers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	myID, ok := requireAgent(w, r)
-	if !ok {
-		return
+	p := peerFromContext(r.Context())
+	myID := p.ConvID
+
+	var groups []*db.AgentGroup
+	var err error
+	if myID == "" {
+		groups, err = db.ListAgentGroups()
+	} else {
+		groups, err = db.ListGroupsForConv(myID)
 	}
-	groups, err := db.ListGroupsForConv(myID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
 	byConv := map[string]*peerEntry{}
+	// Pass 1: group members.
 	for _, g := range groups {
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		for _, m := range members {
@@ -153,6 +172,34 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				byConv[m.ConvID] = pe
 			}
 			pe.Groups = append(pe.Groups, g.Name)
+		}
+	}
+	// Pass 2: online conv-sessions that aren't already represented.
+	// We iterate the sessions table directly (cheaper than fanning
+	// out isConvOnline per row) and check tmux liveness inline.
+	if sessions, err := db.ListSessions(); err == nil {
+		for _, s := range sessions {
+			if s.ConvID == "" || s.ConvID == myID {
+				continue
+			}
+			if _, exists := byConv[s.ConvID]; exists {
+				continue
+			}
+			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
+				continue
+			}
+			row, _ := db.GetConvIndex(s.ConvID)
+			title := "(unknown)"
+			if row != nil {
+				if t := agent.DisplayTitle(row); t != "" {
+					title = t
+				}
+			}
+			byConv[s.ConvID] = &peerEntry{
+				ConvID: s.ConvID,
+				Title:  title,
+				Online: true,
+			}
 		}
 	}
 	out := make([]*peerEntry, 0, len(byConv))

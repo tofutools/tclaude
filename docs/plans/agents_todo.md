@@ -155,47 +155,68 @@ file from the old one before CC starts (or trigger
 
 ### Cross-agent lifecycle (manager pattern)
 
-Today, `self.reincarnate` is self-targeted only — an agent can reset
-itself, nothing else. We want a **manager pattern**: an elevated
-agent (or group owner) can reincarnate / clone *other* agents.
-Concrete example: a `manager` agent watching `worker-1`, `worker-2`
-sees them stuck on rotted context and tells them "get some sleep" —
-the daemon reincarnates each worker with a follow-up that points
-them at the next batch of work.
+The **manager pattern**: an elevated agent (or group owner) can act
+on *other* agents — typical use is a manager watching workers,
+reincarnating ones whose context has rotted with a follow-up
+pointing them at the next batch of work.
 
 Permission model:
 
 - `self.<verb>` — operate on yourself only. (Today: `self.rename`,
   `self.compact`, `self.reincarnate`.)
 - `agent.<verb>` — operate on *another* agent (target specified by
-  conv-id / alias / selector). New: `agent.reincarnate`,
-  `agent.clone`, plausibly `agent.compact` and `agent.rename` too.
-  Default: human-only. Granted to a manager agent explicitly.
-- **Group ownership grants implicit power** within the group. A
-  group owner can call any `agent.<verb>` against any member of a
-  group they own without needing the slug. (This mirrors how
-  `member.add` / `member.remove` already special-case owners.)
+  conv-id / alias / selector). Default: human-only. Granted to a
+  manager agent explicitly.
+- **Group ownership grants implicit power.** A group owner can call
+  any `agent.<verb>` against any member of a group they own without
+  needing the slug. Mirrors how `member.add` / `member.remove`
+  already special-case owners; concretely powered by
+  `ownerOfGroupContaining(caller, target)` in
+  `pkg/claude/agentd/agent_dispatch.go`.
 
-Endpoints would be `/v1/agent/<conv>/reincarnate`,
-`/v1/agent/<conv>/clone`, etc. The handler resolves the target,
-checks `agent.<verb>` (or owner-of-shared-group), then runs the
-same orchestration with the target conv as the subject.
+Endpoints follow `/v1/agent/{selector}/{verb}`. The dispatcher
+resolves the selector via `agent.ResolveSelector`, then routes to
+the per-verb handler which calls `requireCrossAgentPermission` and
+runs the same orchestration with the target conv as the subject.
 
-Open questions:
-- Should `agent.<verb>` imply `self.<verb>` automatically, or are
-  they orthogonal? Probably orthogonal — being trusted to manage
-  others doesn't mean you should manage yourself (and vice versa).
-- Group-owner-implicit-power: does the owner need their conv to be
-  in the group, or is being in `agent_group_owners` sufficient?
-  Latter is simpler; align with the existing owner checks.
-- Audit: granted_by on the migrated rows should record the manager's
-  conv-id, not just `system:reincarnate`. Useful for "who killed my
-  agent" forensics.
+Audit: cross-agent migrations record `granted_by` as
+`system:reincarnate:by=<caller-conv>` (vs plain `system:reincarnate`
+for self), so "who killed my agent" forensics work from the
+agent_permissions / agent_group_owners audit columns alone.
 
-This is the right shape for delegation hierarchies: a top-level
-human-spawned manager can autonomously babysit a fleet of workers,
-respawning the ones that have rotted and freeing the human from the
-loop.
+#### Shipped (2026-05)
+
+- ~~`agent.reincarnate` slug + `/v1/agent/{conv}/reincarnate`
+  endpoint~~. Reincarnate orchestration extracted into a shared
+  helper (`runReincarnationOrchestration`) so self and cross-agent
+  paths share the same migration / spawn / soft-stop logic.
+- ~~Group-owner implicit power~~ via
+  `ownerOfGroupContaining`.
+- ~~Handoff message FromConv set to the caller~~, so the new agent
+  sees who asked it to pick up the work and can reply directly.
+- ~~CLI `--target` flag~~ on `tclaude agent reincarnate`. Empty →
+  self path; non-empty → cross-agent path.
+- Skill (`agent-lifecycle`) updated with the manager-pattern
+  section.
+
+#### Follow-ups (still TODO)
+
+- **`agent.compact` / `agent.rename`.** Same shape as
+  `agent.reincarnate`: extend `handleAgentByConv` with new verbs,
+  add the slug, route to a target-aware handler. Lighter-weight
+  than reincarnate (just slash-injection on the target's pane), so
+  no migration plumbing needed.
+- **`agent.clone`** — depends on `tclaude agent clone` itself
+  shipping first (see "Agent clone" item below).
+- **X-Tclaude-Ask-Human on cross-agent endpoints.** Today
+  `requireCrossAgentPermission` doesn't honor the popup header
+  (manager pattern is opt-in via explicit grants). Re-evaluate if a
+  use case appears — e.g. a manager that wants to reincarnate a
+  peer it doesn't normally manage.
+- **Open question — orthogonal vs. implication.** Today
+  `agent.<verb>` and `self.<verb>` are orthogonal (granting one
+  doesn't grant the other). Keeping them split for now; revisit if
+  it turns out managers always also want self-management.
 
 ---
 
@@ -528,7 +549,11 @@ Pending follow-ups for v2+ (the GCP-IAM-style edits view):
 - **Groups view** — root list of groups; expanding a group shows its
   members with online indicator, alias/role/descr, and the group-
   scoped permissions each holds. Search at the top filters by group
-  name / member alias / permission slug.
+  name / member alias / permission slug. **Show owners explicitly**
+  (a separate sub-row or badge on member rows that are also owners,
+  plus pure-owner rows so owners-not-members aren't invisible).
+  Backed by `db.ListAgentGroupOwners`; the data is already there,
+  the dashboard just doesn't render it.
 - **Agents view** — root list of conversations (members of any
   group + currently-online ones). Expanding an agent shows the
   groups it's in, its global permissions, and its per-group

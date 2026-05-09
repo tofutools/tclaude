@@ -1,6 +1,6 @@
 ---
 name: agent-lifecycle
-description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, and `tclaude agent reincarnate [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` is the heavier path: the daemon spawns a fresh CC instance, migrates your identity (groups, permissions, ownerships) onto the new conv-id, and soft-stops the old one. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot.
+description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, and `tclaude agent reincarnate [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` is the heavier path: the daemon spawns a fresh CC instance, migrates your identity (groups, permissions, ownerships) onto the new conv-id, and soft-stops the old one. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot. Manager pattern: `tclaude agent reincarnate --target <peer> [follow-up]` reincarnates ANOTHER agent (requires the `agent.reincarnate` slug, OR being an owner of a group containing the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
@@ -243,3 +243,42 @@ daemon owns the tmux side and is outside your sandbox, so it can do
 the keystroke injection (and the cross-pane orchestration that
 reincarnate needs) that you can't. Same architecture as
 `agent-rename`.
+
+## Manager pattern: reincarnate ANOTHER agent
+
+`tclaude agent reincarnate` accepts an optional `--target <selector>`
+that swaps the action onto a peer instead of yourself. The selector is
+the same alias / conv-id / 8+-char prefix the rest of `tclaude agent`
+accepts. Concrete shape:
+
+```bash
+tclaude agent reincarnate --target worker-1 \
+  "rotted on the auth refactor; reload /tmp/auth-notes.md and pick up where you left off"
+```
+
+Auth model: the caller passes if EITHER
+
+- they hold the `agent.reincarnate` slug (default human-only — granted
+  via `tclaude agent permissions grant <caller> agent.reincarnate`), OR
+- they own at least one group that contains the target (mirrors how
+  `tclaude agent message` already special-cases group owners).
+
+When the call succeeds the response includes `caller_conv` so the
+target's audit trail records who reincarnated it. The handoff message
+uses **your conv-id** as the sender, not the target's old conv —
+that way the new agent sees `In-Reply-To` pointing at you and can
+reply directly.
+
+Notes vs. self-reincarnate:
+
+- The target must have an alive tmux session — if it's offline,
+  `tclaude agent groups resume` it first.
+- `--ask-human` is **not** honored on cross-agent calls; the manager
+  pattern is opt-in via explicit grants, not a popup escape hatch.
+- Disk-handoff convention (persist task state before reincarnating)
+  applies to the TARGET, not you. As manager you should make sure the
+  worker has somewhere to dump notes, ideally before sending it the
+  reincarnate request — the simplest pattern is to message the worker
+  `"checkpoint your state to /tmp/<task>-notes.md"` first, wait, then
+  reincarnate with a follow-up that says `"reload /tmp/<task>-notes.md
+  and continue"`.

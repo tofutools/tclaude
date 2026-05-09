@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -24,17 +25,23 @@ import (
 
 type reincarnateParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"Optional first-turn prompt for the new agent. Quote multi-word strings."`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: alias, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
 func reincarnateCmd() *cobra.Command {
 	return boa.CmdT[reincarnateParams]{
 		Use:   "reincarnate",
-		Short: "Replace this agent with a fresh successor that inherits its identity",
-		Long: "Spawns a fresh CC instance and migrates the calling agent's identity " +
+		Short: "Replace this agent (or another, with --target) with a fresh successor that inherits its identity",
+		Long: "Spawns a fresh CC instance and migrates the target agent's identity " +
 			"(group memberships, per-conv permission grants, group ownerships) onto " +
 			"the new conv-id. The old conversation is then soft-stopped. The new " +
 			"agent comes up with a clean context window but the same identity. " +
+			"\n\n" +
+			"By default the target is the calling agent itself (self-reincarnate). " +
+			"Use --target <selector> to reincarnate ANOTHER agent — the manager " +
+			"pattern. Cross-agent calls require the agent.reincarnate permission, " +
+			"OR the caller being an owner of a group containing the target. " +
 			"\n\n" +
 			"Persist any task state to disk *before* calling — the daemon migrates " +
 			"identity, not work. The skill (agent-lifecycle) explains the disk-handoff " +
@@ -43,23 +50,24 @@ func reincarnateCmd() *cobra.Command {
 			"An optional follow-up prompt is delivered to the new agent via the " +
 			"existing message-flush nudge pipeline (when the agent is in at least " +
 			"one group) or, for solo agents, by direct keystroke injection into the " +
-			"freshly-spawned pane. " +
-			"\n\n" +
-			"Requires the `self.reincarnate` permission (default-granted alongside " +
-			"self.rename and self.compact).",
+			"freshly-spawned pane. For cross-agent reincarnations the FromConv on " +
+			"the handoff message is the caller, so the new agent sees who asked it " +
+			"to pick up the work.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *reincarnateParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *reincarnateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReincarnate(p.FollowUp, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runReincarnate(p.FollowUp, p.Target, p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runReincarnate(followUp, askHuman string, stdout, stderr io.Writer) int {
+func runReincarnate(followUp, target, askHuman string, stdout, stderr io.Writer) int {
 	followUp = strings.TrimSpace(followUp)
+	target = strings.TrimSpace(target)
 	if followUp != "" && !isValidFollowUp(followUp) {
 		fmt.Fprintln(stderr, "Error: REJECTED. Follow-up must be 1-4096 printable characters; control")
 		fmt.Fprintln(stderr, "characters (newlines, tabs, etc.) are not allowed because each newline")
@@ -74,6 +82,13 @@ func runReincarnate(followUp, askHuman string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
+	if ask > 0 && target != "" {
+		// Cross-agent path doesn't honour X-Tclaude-Ask-Human (see
+		// requireCrossAgentPermission). Surface that here so the caller
+		// doesn't think they have an escape hatch.
+		fmt.Fprintln(stderr, "Error: --ask-human is only supported when reincarnating self; cross-agent calls require an explicit slug grant or group ownership.")
+		return rcInvalidArg
+	}
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
@@ -81,22 +96,32 @@ func runReincarnate(followUp, askHuman string, stdout, stderr io.Writer) int {
 	if followUp != "" {
 		body["follow_up"] = followUp
 	}
-	var resp struct {
-		OldConv     string   `json:"old_conv"`
-		NewConv     string   `json:"new_conv"`
-		Label       string   `json:"label"`
-		TmuxSession string   `json:"tmux_session"`
-		AttachCmd   string   `json:"attach_cmd"`
-		Migrated    []string `json:"migrated"`
-		FollowUp    string   `json:"follow_up,omitempty"`
-		MessageID   int64    `json:"message_id,omitempty"`
-		Note        string   `json:"note,omitempty"`
+	path := "/v1/whoami/reincarnate"
+	if target != "" {
+		path = "/v1/agent/" + url.PathEscape(target) + "/reincarnate"
 	}
-	if err := DaemonRequest(http.MethodPost, "/v1/whoami/reincarnate", body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+	var resp struct {
+		OldConv        string   `json:"old_conv"`
+		NewConv        string   `json:"new_conv"`
+		CallerConv     string   `json:"caller_conv,omitempty"`
+		Label          string   `json:"label"`
+		TmuxSession    string   `json:"tmux_session"`
+		AttachCmd      string   `json:"attach_cmd"`
+		Migrated       []string `json:"migrated"`
+		FollowUp       string   `json:"follow_up,omitempty"`
+		MessageID      int64    `json:"message_id,omitempty"`
+		Note           string   `json:"note,omitempty"`
+	}
+	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Reincarnated %s -> %s\n", short(resp.OldConv), short(resp.NewConv))
+	if resp.CallerConv != "" {
+		fmt.Fprintf(stdout, "Reincarnated %s -> %s (called by %s)\n",
+			short(resp.OldConv), short(resp.NewConv), short(resp.CallerConv))
+	} else {
+		fmt.Fprintf(stdout, "Reincarnated %s -> %s\n", short(resp.OldConv), short(resp.NewConv))
+	}
 	if resp.AttachCmd != "" {
 		fmt.Fprintf(stdout, "  attach: %s\n", resp.AttachCmd)
 	}
