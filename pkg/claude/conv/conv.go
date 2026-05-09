@@ -53,6 +53,7 @@ func Cmd() *cobra.Command {
 			ResumeCmd(),
 			CpCmd(),
 			MvCmd(),
+			RenameCmd(),
 			DeleteCmd(),
 			PruneEmptyCmd(),
 		},
@@ -249,6 +250,7 @@ type jsonlMessage struct {
 	GitBranch   string `json:"gitBranch"`
 	Summary     string `json:"summary"`     // For type="summary" messages
 	CustomTitle string `json:"customTitle"` // For type="custom-title" messages
+	AgentName   string `json:"agentName"`   // For type="agent-name" messages (CC UI display name)
 	Message     struct {
 		Role    string `json:"role"`
 		Content any    `json:"content"` // Can be string or array
@@ -285,6 +287,7 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var firstTimestamp string
+	var sawCustomTitle bool
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -310,9 +313,21 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 			entry.GitBranch = msg.GitBranch
 		}
 
-		// Capture custom title (written by Claude Code after the first exchange)
-		if msg.Type == "custom-title" && msg.CustomTitle != "" {
+		// Capture custom title. CC's `/title` writes paired `custom-title` and
+		// `agent-name` lines, but a live CC instance keeps re-emitting its
+		// cached in-memory `agent-name` even after we (or `/title` itself)
+		// updated the file. So `agent-name` is unreliable while a session is
+		// running. Prefer `custom-title` and fall back to `agent-name` only
+		// if no custom-title was ever written. Last-write-wins within each
+		// category. Empty string is treated as a clear (from `--strip`).
+		switch msg.Type {
+		case "custom-title":
 			entry.CustomTitle = msg.CustomTitle
+			sawCustomTitle = true
+		case "agent-name":
+			if !sawCustomTitle {
+				entry.CustomTitle = msg.AgentName
+			}
 		}
 
 		// Capture summary (keep last one seen)
@@ -334,10 +349,8 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 			}
 		}
 
-		// Stop early only if we have ALL the fields we care about
-		if entry.CustomTitle != "" && entry.Summary != "" && entry.FirstPrompt != "" && entry.ProjectPath != "" {
-			break
-		}
+		// No early break: scan to end so the last `custom-title` wins (matches
+		// Claude Code's append-only model and `tclaude conv rename`).
 	}
 
 	if firstTimestamp == "" {
