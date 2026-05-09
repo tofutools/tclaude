@@ -1,6 +1,6 @@
 ---
 name: agent-rename
-description: Rename your own Claude Code conversation via `tclaude agent rename "<title>"`. The slash command `/rename` runs inside the CC TUI so you can't call it directly; tclaude agentd injects it into your tmux pane on your behalf, gated on the `self.rename` permission. Use when the user asks you to rename the conversation/session/agent, or when you decide to give yourself a clearer name (e.g. after taking on a new role in a group).
+description: Rename your own Claude Code conversation via `tclaude agent rename "<title>"`. The slash command `/rename` runs inside the CC TUI so you can't call it directly; tclaude agentd injects it into your tmux pane on your behalf, gated on the `self.rename` permission. Use when the user asks you to rename the conversation/session/agent, or when you decide to give yourself a clearer name (e.g. after taking on a new role in a group). Manager pattern: `tclaude agent rename "<title>" --target <peer>` renames ANOTHER agent (requires the `agent.rename` slug, OR being an owner of a group containing the target).
 ---
 
 # Renaming yourself
@@ -126,6 +126,28 @@ would treat it as plain text, not a command. The daemon owns the
 tmux side and is outside your sandbox, so it can do the keystroke
 injection that you can't.
 
+## Manager pattern: rename ANOTHER agent
+
+`tclaude agent rename` accepts an optional `--target <selector>`
+that swaps the action onto a peer instead of yourself. Useful when
+spawning a worker into a role and you want its tab/title to reflect
+that role from the outside:
+
+```bash
+tclaude agent rename "auth-refactor-worker" --target worker-1
+```
+
+Auth model: the caller passes if EITHER
+
+- they hold the `agent.rename` slug (default human-only — granted
+  via `tclaude agent permissions grant <caller> agent.rename`), OR
+- they own at least one group that contains the target.
+
+Same charset gate applies. The response includes `caller_conv` so
+the audit trail records who renamed it. `--ask-human` is **not**
+honored on the cross-agent path — manager pattern is opt-in via
+explicit grants.
+
 ## Etiquette
 
 - One rename per session is usually enough. Picking a name and
@@ -135,3 +157,7 @@ injection that you can't.
   don't rename repeatedly to "tune" the title.
 - The human can always rename you back via plain `/rename` at any
   time — defer to their choice if there's a conflict.
+- For the cross-agent path: don't rename peers without a clear
+  reason. The target's identity (especially if it's already
+  speaking to the human in chat) shouldn't shift under their
+  feet.

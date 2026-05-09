@@ -51,6 +51,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Compact ANOTHER agent's context window (tclaude agent compact --target). Group owners can compact members of groups they own without this slug.",
 	},
 	{
+		Slug:        PermAgentRename,
+		Description: "Rename ANOTHER agent (tclaude agent rename --target). Group owners can rename members of groups they own without this slug.",
+	},
+	{
 		Slug:        PermGroupsCreate,
 		Description: "Create new agent groups (tclaude agent groups create)",
 	},

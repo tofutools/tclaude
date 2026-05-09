@@ -98,6 +98,7 @@ const (
 	PermSelfReincarnate   = "self.reincarnate"
 	PermAgentReincarnate  = "agent.reincarnate"
 	PermAgentCompact      = "agent.compact"
+	PermAgentRename       = "agent.rename"
 	PermGroupsCreate      = "groups.create"
 	PermGroupsRm          = "groups.rm"
 	PermGroupsStop        = "groups.stop"

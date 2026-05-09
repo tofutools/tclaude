@@ -526,16 +526,38 @@ func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	convID, ok := requirePermission(w, r, "self.rename")
+	convID, ok := requirePermission(w, r, PermSelfRename)
 	if !ok {
 		return
 	}
 	if convID == "" {
-		// The human is the caller — refuse with a clearer hint than 403.
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"this endpoint renames the calling agent's own conversation; humans should use Claude Code's /rename directly")
+			"this endpoint renames the calling agent's own conversation; humans should use Claude Code's /rename directly, or use POST /v1/agent/{conv}/rename to rename another agent")
 		return
 	}
+	runRenameOrchestration(w, r, convID, convID)
+}
+
+// handleAgentRename injects `/rename <title>` into ANOTHER agent's CC
+// pane. Routed via handleAgentByConv. Auth: agent.rename slug OR caller
+// is owner of a group containing target.
+func handleAgentRename(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentRename, targetConv)
+	if !ok {
+		return
+	}
+	runRenameOrchestration(w, r, targetConv, caller)
+}
+
+// runRenameOrchestration validates the title charset, injects
+// `/rename <title>` into the target's pane, and writes the JSON
+// response. caller is recorded in the response when distinct from
+// target so the audit trail has both sides.
+func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, caller string) {
 	var body struct {
 		Title string `json:"title"`
 	}
@@ -555,16 +577,20 @@ func handleWhoamiRename(w http.ResponseWriter, r *http.Request) {
 				"the allowed characters.")
 		return
 	}
-	if !injectSlashCommand(convID, "/rename "+body.Title, "") {
+	if !injectSlashCommand(target, "/rename "+body.Title, "") {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"caller has no live tmux session to inject /rename into")
+			"target conv "+short8(target)+" has no live tmux session to inject /rename into")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"conv_id": convID,
+	resp := map[string]any{
+		"conv_id": target,
 		"title":   body.Title,
 		"note":    "rename submitted via tmux send-keys; CC will write the new title on its next turn",
-	})
+	}
+	if caller != "" && caller != target {
+		resp["caller_conv"] = caller
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleWhoamiCompact injects `/compact` into the caller's own CC pane.

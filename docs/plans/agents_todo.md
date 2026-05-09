@@ -206,14 +206,13 @@ agent_permissions / agent_group_owners audit columns alone.
   (slug OR owner-of-group), reuses `injectSlashCommand` on the
   target's pane. Self/cross paths share `runSlashOrchestration`.
   Slug `agent.compact`, default human-only.
+- ~~`agent.rename`~~ + `tclaude agent rename --target` CLI. Same
+  shape; charset gate hoisted into a shared
+  `runRenameOrchestration` helper used by both self and cross
+  paths. Slug `agent.rename`, default human-only.
 
 #### Follow-ups (still TODO)
 
-- **`agent.rename`.** Same shape as `agent.compact` — slash
-  injection of `/rename <title>` on the target's pane. The title
-  charset gate already lives in `handleWhoamiRename`; lift it into
-  a shared helper before adding the cross-agent verb so both paths
-  reject identical inputs.
 - **`agent.clone`** — depends on `tclaude agent clone` itself
   shipping first (see "Agent clone" item below).
 - **X-Tclaude-Ask-Human on cross-agent endpoints.** Today
@@ -592,6 +591,54 @@ the same daemon endpoints the CLI uses (`groups create|rm|add|remove
 ship — see "CLI for permissions" below). Auditable: every mutation
 shows up in a small activity log so the human knows what they
 changed and when.
+
+**Direct-manipulation interactions in the Groups view** (the natural
+home for membership editing):
+
+- **Drag-and-drop members between groups.** Drag a member row from
+  group A and drop it on group B's header → moves the conv (POST add
+  to B + DELETE from A, in that order so the conv is never groupless
+  mid-drag). Drop targets pulse on hover so the action is
+  discoverable.
+- **Ctrl+drag = copy/multi-membership.** Holding Ctrl while dropping
+  pops a small choice menu:
+   1. Add to the new group (dual membership; the conv is now in
+      both A and B).
+   2. Clone the agent and add the clone to B (uses `agent clone`
+      once that ships; the original stays in A untouched, the
+      clone joins B).
+   3. (open question — better idea?) Maybe "spawn a fresh
+      sibling into B" as a third option, useful when copy-the-conv
+      isn't what you want but you do want a peer in the same role.
+  Default action without Ctrl is the move (current behaviour with
+  drop targets).
+- **Per-member action buttons.** Far-right (or far-left) cell on
+  each member row gets icon buttons:
+   - Toggle owner: grant-owner / revoke-owner depending on current
+     state. Uses `groups grant-owner` / `revoke-owner`.
+   - Remove from group: confirmation modal (destructive), calls
+     `groups remove`.
+   - Possible third: reincarnate / compact (manager-pattern
+     verbs) once we want one-click lifecycle controls. Gated by
+     the same `agent.<verb>` slug + owner-of-group rules.
+- **Add-member affordance in the group header.** A "+" button next
+  to the group name opens a search overlay/popup listing
+  candidates. Defaults to the agent set (members of any group +
+  online conv-sessions); a "include all conversations" checkbox
+  expands the list to every conv-id we know about. Selecting one
+  calls `groups add` against the current group.
+
+Implementation notes for the interaction layer:
+
+- Drag/drop is the natural moment to consider a real framework.
+  Vanilla DnD with HTML5 drag events works but needs careful
+  ghost-image handling and drop-zone hover state. React-DnD or
+  Solid's reactive model would carry more weight as edit features
+  grow.
+- The action buttons need a confirmation modal pattern (at least
+  for "remove from group" and "revoke owner" — anything that loses
+  state). Same pattern can serve the future "permissions revoke"
+  action in the Permissions view.
 
 **Implementation:**
 
