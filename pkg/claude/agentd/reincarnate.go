@@ -5,12 +5,86 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// reincarnateSuffixRegex matches a trailing `-reincarnate-<digits>`
+// (mirrors cloneSuffixRegex). Used so reincarnating a previously-
+// reincarnated agent bumps N rather than nesting suffixes —
+// `worker-reincarnate-3` reincarnates to `worker-reincarnate-4`,
+// not `worker-reincarnate-3-reincarnate-1`.
+var reincarnateSuffixRegex = regexp.MustCompile(`^(.*?)-reincarnate-\d+$`)
+
+// uniqueReincarnateTitle picks the new instance's CC title in the
+// pattern `<base>-reincarnate-<N>` (or `reincarnate-<N>` when the
+// previous instance had no title). base is prevTitle with any
+// existing `-reincarnate-<digits>` stripped.
+//
+// N is the smallest integer such that no row in conv_index already
+// uses `<base>-reincarnate-<N>` as its custom_title. Lookup error →
+// fall back to N=1.
+func uniqueReincarnateTitle(prevTitle string) string {
+	base := prevTitle
+	if m := reincarnateSuffixRegex.FindStringSubmatch(base); m != nil {
+		base = m[1]
+	}
+	prefix := "reincarnate-"
+	if base != "" {
+		prefix = base + "-reincarnate-"
+	}
+	used := scanReincarnateSuffixes(prefix)
+	for n := 1; ; n++ {
+		if !used[n] {
+			return prefix + strconv.Itoa(n)
+		}
+	}
+}
+
+// scanReincarnateSuffixes walks every conv_index row and returns the
+// set of integers N where some custom_title equals `<prefix><N>`.
+// Used by uniqueReincarnateTitle to pick the smallest free N.
+func scanReincarnateSuffixes(prefix string) map[int]bool {
+	used := map[int]bool{}
+	rows, err := db.ListAllConvIndex()
+	if err != nil {
+		return used
+	}
+	for _, r := range rows {
+		if !strings.HasPrefix(r.CustomTitle, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(r.CustomTitle, prefix)
+		n, err := strconv.Atoi(suffix)
+		if err != nil {
+			continue
+		}
+		used[n] = true
+	}
+	return used
+}
+
+// waitForConvAlive polls for newConv's tmux pane to come online,
+// then sleeps reincarnateReadyDelay so CC's TUI is ready to accept
+// keystrokes. Returns true if the pane became alive within
+// reincarnateAliveTimeout, false otherwise.
+func waitForConvAlive(newConv string) bool {
+	deadline := time.Now().Add(reincarnateAliveTimeout)
+	for time.Now().Before(deadline) {
+		if isConvOnline(newConv) {
+			time.Sleep(reincarnateReadyDelay)
+			return true
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return false
+}
 
 // `tclaude agent reincarnate` — replace the calling agent with a fresh
 // CC instance that inherits its identity (groups, per-conv permission
@@ -38,9 +112,10 @@ import (
 //
 // Identity is preserved; task state is *not* migrated — the agent is
 // expected to persist work-in-progress to disk before calling, per
-// the agent-lifecycle skill. Conversation title (set via /rename
-// inside CC) is also not migrated; the new agent can self-rename in
-// its follow-up.
+// the agent-lifecycle skill. Conversation title is auto-renamed to
+// `<prev>-reincarnate-<N>` (smallest free N globally across
+// conv_index.custom_title); the rename is injected BEFORE the
+// follow-up so the new pane shows the proper title from the start.
 
 // reincarnateSpawnTimeout caps how long we wait for the new tclaude
 // session's conv-id to materialise. Mirrors handleGroupSpawn's
@@ -277,37 +352,45 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 	// response is the fallback.
 	switchedClients := switchTmuxClients(oldSess.TmuxSession, newTmux)
 
-	// 6. Deliver the follow-up. Two paths:
-	//   - new conv has at least one group → enqueue agent_messages,
-	//     deliver via the existing flush nudge pipeline once the
-	//     pane is alive.
-	//   - solo (no group) → direct tmux send-keys into the new pane.
-	//
-	// FromConv is the caller (manager for cross-agent; same as old
-	// self for self-reincarnate) so the new agent sees who handed it
-	// the work.
+	// 6. Compute the new instance's CC title — `<prev>-reincarnate-<N>`,
+	// global N across all conv_index rows. Done here (before /exit on
+	// the old pane below) so the lookup of prevTitle still resolves
+	// cleanly. Uses agent.FreshConvRow so a freshly-injected /rename
+	// on the old conv is picked up before we mint the suffix.
+	prevTitle := ""
+	if row := agent.FreshConvRow(target); row != nil {
+		prevTitle = agent.DisplayTitle(row)
+	}
+	newTitle := uniqueReincarnateTitle(prevTitle)
+
+	// 7. Queue the follow-up message (if any) BEFORE the post-spawn
+	// goroutine runs — gets the row written so the rename can land
+	// first and the message delivery picks it up next. Solo path
+	// has no row to queue; the goroutine below sends the text
+	// directly after the rename.
 	var msgID int64
-	if followUp != "" {
-		if len(oldMembers) > 0 {
-			id, err := db.InsertAgentMessage(&db.AgentMessage{
-				GroupID:  oldMembers[0].GroupID,
-				FromConv: caller,
-				ToConv:   newConv,
-				Subject:  "reincarnation handoff",
-				Body:     followUp,
-			})
-			if err != nil {
-				slog.Warn("reincarnate: insert handoff message failed", "error", err)
-			} else {
-				msgID = id
-				go deliverHandoffViaFlush(newConv)
-			}
+	if followUp != "" && len(oldMembers) > 0 {
+		id, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:  oldMembers[0].GroupID,
+			FromConv: caller,
+			ToConv:   newConv,
+			Subject:  "reincarnation handoff",
+			Body:     followUp,
+		})
+		if err != nil {
+			slog.Warn("reincarnate: insert handoff message failed", "error", err)
 		} else {
-			go injectFollowUpDirect(newConv, followUp)
+			msgID = id
 		}
 	}
 
-	// 7. Soft-stop the old conv. Best-effort — if the old pane is
+	// 8. Post-spawn injection: wait for alive → /rename → follow-up.
+	// Single goroutine so ordering is deterministic — without this,
+	// rename and follow-up race and the user briefly sees the wrong
+	// title in the new pane.
+	go runReincarnatePostSpawn(newConv, newTitle, followUp, len(oldMembers) > 0)
+
+	// 9. Soft-stop the old conv. Best-effort — if the old pane is
 	// already gone (somehow), we still consider the reincarnation
 	// successful.
 	_ = injectSlashCommand(target, "/exit", "")
@@ -315,6 +398,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 	resp := map[string]any{
 		"old_conv":         target,
 		"new_conv":         newConv,
+		"new_title":        newTitle,
 		"label":            label,
 		"tmux_session":     newTmux,
 		"attach_cmd":       "tclaude session attach " + label,
@@ -337,17 +421,73 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 		resp["follow_up"] = followUp
 		if msgID > 0 {
 			resp["message_id"] = msgID
-			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; follow-up queued as message #%d for %s",
-				short8(target), carry, msgID, short8(newConv))
+			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive message #%d",
+				short8(target), carry, newTitle, msgID)
 		} else {
-			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; follow-up will be injected into %s once its pane is ready",
-				short8(target), carry, short8(newConv))
+			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive the follow-up directly",
+				short8(target), carry, newTitle)
 		}
 	} else {
-		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new %s is up at %s",
-			short8(target), carry, short8(newConv), newTmux)
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new %s is up at %s and will be /renamed to %q",
+			short8(target), carry, short8(newConv), newTmux, newTitle)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// runReincarnatePostSpawn is the single goroutine that handles
+// post-spawn injection in deterministic order: wait-for-alive →
+// /rename → follow-up. Renaming first means the new pane's CC
+// title shows the proper `<prev>-reincarnate-<N>` immediately,
+// before any work output starts streaming.
+//
+// Always called even when followUp == "" (the rename still needs
+// to happen). Skips rename when newTitle == "" (defensive — should
+// not happen in practice since uniqueReincarnateTitle always
+// returns a non-empty string).
+func runReincarnatePostSpawn(newConv, newTitle, followUp string, hasGroup bool) {
+	if !waitForConvAlive(newConv) {
+		slog.Warn("reincarnate: new conv never came online; rename + handoff abandoned", "conv", newConv)
+		return
+	}
+	if newTitle != "" {
+		if !injectSlashCommand(newConv, "/rename "+newTitle, "") {
+			slog.Warn("reincarnate: rename injection failed", "conv", newConv, "title", newTitle)
+		}
+		// Gap so CC has time to process the rename slash command
+		// before we type the follow-up. Without this the follow-up
+		// keystrokes can land in the rename's still-open prompt.
+		time.Sleep(reincarnateReadyDelay)
+	}
+	if followUp == "" {
+		return
+	}
+	if hasGroup {
+		// agent_messages row was already inserted before this
+		// goroutine fired; flush picks it up via the normal nudge
+		// pipeline.
+		flush(newConv, realFlushSender)
+		return
+	}
+	// Solo (no group) follow-up: direct send-keys, mirroring
+	// injectFollowUpDirect's tmux pattern. The pane is already
+	// alive (waitForConvAlive returned true) so no second wait.
+	sess := pickAliveSession(newConv)
+	if sess == nil {
+		slog.Warn("reincarnate: solo follow-up — pane went away between rename and send", "conv", newConv)
+		return
+	}
+	target := sess.TmuxSession + ":0.0"
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, followUp).Run(); err != nil {
+		slog.Warn("reincarnate: solo follow-up text send failed", "error", err, "tmux", sess.TmuxSession)
+		return
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
+		slog.Warn("reincarnate: solo follow-up submit failed", "error", err, "tmux", sess.TmuxSession)
+		return
+	}
+	time.Sleep(200 * time.Millisecond)
+	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 }
 
 // deliverHandoffViaFlush waits for the new pane to come online, then
