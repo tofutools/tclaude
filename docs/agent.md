@@ -1,5 +1,16 @@
 # Agent Coordination 🤝
 
+> **BETA / EXPERIMENTAL**
+>
+> The agent feature is under active development. Commands, flags,
+> permission slugs, the daemon wire format, and the SQLite schema may
+> all change without notice. Per-agent permission grants are stored in
+> a v9 schema table (`agent_permissions`) which has not been
+> field-tested across upgrades. **Don't build automation against this
+> yet that you can't readily migrate.** See
+> [`docs/plans/agents_todo.md`](plans/agents_todo.md) for what's still
+> in flight.
+
 Cross-session messaging and self-service capabilities between Claude
 Code conversations on the same machine, gated by a permission model the
 human curates.
