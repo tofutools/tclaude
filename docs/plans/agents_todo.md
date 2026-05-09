@@ -155,8 +155,12 @@ existing `groups.*`/`member.*` model:
   renders `In-Reply-To: <id> ("Subject")`. `inbox ls` prefixes
   reply rows with `↳`. `parent_id` surfaced in `/v1/inbox` rows so
   the dashboard can render thread arrows in v2.
-- On session resume, flush undelivered nudges (`delivered_at IS NULL`) so
-  messages sent while the target was offline still get surfaced.
+- ~~Flush undelivered nudges when a conv comes back online.~~
+  **Shipped.** Identity middleware kicks a debounced (5s/conv)
+  background flush whenever it resolves a peer's conv-id. The
+  flush walks `delivered_at = ''` rows for that recipient,
+  atomically claims each one, and sends the bracketed nudge.
+  Concurrent flushes are race-free via `db.ClaimAgentMessageDelivery`.
 - ~~`tclaude agent inbox prune --older-than 30d --read-only`~~ —
   **shipped.** Required `--older-than` accepts time.ParseDuration
   values plus `Nd`/`Nw`. `--read-only` restricts to messages the
@@ -544,3 +548,7 @@ Short notes only — see `docs/agent.md` and the code for details.
 - Message threading (schema v10). `agent_messages.parent_id`
   auto-set by `reply`. `inbox read` shows `In-Reply-To: <id>
   ("subject")`. `inbox ls` prefixes replies with `↳`.
+- Flush-on-online: identity middleware kicks a debounced background
+  flush of any `delivered_at = ''` rows whenever a peer's conv-id
+  resolves. Race-free via `ClaimAgentMessageDelivery` (atomic
+  UPDATE..WHERE delivered_at = ''). Tested with concurrent flushers.

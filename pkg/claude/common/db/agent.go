@@ -465,6 +465,64 @@ func MarkAgentMessageDelivered(id int64) error {
 	return err
 }
 
+// ListUndeliveredAgentMessagesFor returns messages addressed to toConv
+// whose delivered_at is still empty, oldest first. Used by the flush-
+// on-online path so messages queued while the recipient was offline
+// get nudged when they come back.
+func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
+	if toConv == "" {
+		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
+		created_at, delivered_at, read_at
+		FROM agent_messages
+		WHERE to_conv = ? AND delivered_at = ''
+		ORDER BY created_at ASC`
+	rows, err := db.Query(q, toConv)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ClaimAgentMessageDelivery atomically marks a message as delivered
+// IF it wasn't already. Returns true when this caller won the race —
+// in that case the caller is responsible for actually delivering the
+// nudge. Returns false (with no error) when another goroutine got
+// there first; the caller must NOT re-deliver.
+//
+// This is the concurrency primitive that makes the flush-on-online
+// path safe: every request that resolves to a conv-id can speculatively
+// flush, and only one delivery path will fire per message.
+func ClaimAgentMessageDelivery(id int64) (bool, error) {
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := db.Exec(
+		`UPDATE agent_messages SET delivered_at = ?
+		 WHERE id = ? AND delivered_at = ''`,
+		time.Now().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
 // MarkAgentMessageRead sets read_at = now for the given message ID.
 func MarkAgentMessageRead(id int64) error {
 	db, err := Open()

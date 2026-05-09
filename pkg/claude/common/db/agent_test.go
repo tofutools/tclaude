@@ -374,6 +374,108 @@ func TestPruneAgentMessagesForConv(t *testing.T) {
 	}
 }
 
+// TestListUndeliveredAgentMessagesFor covers the queue read used by
+// the flush-on-online path: returns only undelivered messages addressed
+// to the given conv, in oldest-first order.
+func TestListUndeliveredAgentMessagesFor(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("alpha", "")
+
+	// Create three messages addressed to "me", in known order.
+	id1, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	id2, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "second",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	id3, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "third",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mark id2 delivered. Should be excluded.
+	if err := MarkAgentMessageDelivered(id2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a message to a different conv. Should be excluded.
+	if _, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "x", ToConv: "y", Body: "noise",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := ListUndeliveredAgentMessagesFor("me")
+	if err != nil {
+		t.Fatalf("ListUndeliveredAgentMessagesFor: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 undelivered, got %d", len(out))
+	}
+	if out[0].ID != id1 || out[1].ID != id3 {
+		t.Errorf("expected oldest-first [%d, %d], got [%d, %d]",
+			id1, id3, out[0].ID, out[1].ID)
+	}
+
+	// Empty toConv must short-circuit to nil (no SQL).
+	out, err = ListUndeliveredAgentMessagesFor("")
+	if err != nil || out != nil {
+		t.Errorf("empty toConv: got %v, %v; want nil, nil", out, err)
+	}
+}
+
+// TestClaimAgentMessageDelivery validates the race-safe claim
+// primitive: first claim returns true, subsequent claims return
+// false without error.
+func TestClaimAgentMessageDelivery(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("alpha", "")
+
+	id, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "queued",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ClaimAgentMessageDelivery(id)
+	if err != nil || !got {
+		t.Fatalf("first claim: got=%v err=%v, want true/nil", got, err)
+	}
+
+	// Second claim must lose: the row is no longer delivered_at = ''.
+	got, err = ClaimAgentMessageDelivery(id)
+	if err != nil || got {
+		t.Fatalf("second claim: got=%v err=%v, want false/nil", got, err)
+	}
+
+	// And delivered_at must be populated.
+	m, err := GetAgentMessage(id)
+	if err != nil || m == nil {
+		t.Fatalf("GetAgentMessage: %v %+v", err, m)
+	}
+	if m.DeliveredAt.IsZero() {
+		t.Errorf("delivered_at should be set after a successful claim")
+	}
+
+	// Claiming an already-delivered or unknown row must return false
+	// (not error) so the flush goroutine can keep going.
+	got, err = ClaimAgentMessageDelivery(99999)
+	if err != nil || got {
+		t.Errorf("nonexistent id: got=%v err=%v, want false/nil", got, err)
+	}
+}
+
 // TestListAgentMessagesFromConv covers the outbox direction: rows
 // from a given sender, most recent first.
 func TestListAgentMessagesFromConv(t *testing.T) {

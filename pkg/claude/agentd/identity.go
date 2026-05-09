@@ -55,6 +55,11 @@ func peerFromContext(ctx context.Context) *peer {
 // withIdentity is the per-request middleware that resolves the connecting
 // peer's PID, walks the process tree to a claude/node ancestor, reads its
 // per-pid session file, and attaches the result to the request context.
+//
+// Resolving a non-empty conv-id also opportunistically flushes any
+// nudges queued for this conv while it was offline. The flush is
+// debounced per-conv and runs on its own goroutine, so chatty agents
+// don't pay any latency on the request that triggered it.
 func withIdentity(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := &peer{}
@@ -63,6 +68,9 @@ func withIdentity(h http.Handler) http.Handler {
 				p.PID = pid
 				p.ConvID, p.HasClaudeAncestor = convIDForPID(pid)
 			}
+		}
+		if p.ConvID != "" {
+			maybeFlushUndelivered(p.ConvID)
 		}
 		ctx := context.WithValue(r.Context(), peerKey{}, p)
 		h.ServeHTTP(w, r.WithContext(ctx))
