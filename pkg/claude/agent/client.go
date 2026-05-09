@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+
 // SocketPath is the well-known location for the tclaude agentd Unix socket.
 // Mirrors agentd.SocketPath but lives here to avoid an import cycle —
 // agentd already depends on agent for shared helpers, so agent can't depend
@@ -51,8 +52,10 @@ func httpClient() *http.Client {
 }
 
 // DaemonAvailable returns true if a tclaude agentd is reachable on the
-// well-known socket. Used by CLI commands to decide whether to route
-// through the daemon or fall back to direct DB access.
+// well-known socket. CLI commands route through the daemon; if it's not
+// running, they exit with a clear error pointing the user at
+// `tclaude agentd serve`. The direct-DB code paths still exist for
+// tests, but production CLI invocations always go through the daemon.
 func DaemonAvailable() bool {
 	sock := SocketPath()
 	if sock == "" {
@@ -68,6 +71,26 @@ func DaemonAvailable() bool {
 	_ = conn.Close()
 	return true
 }
+
+// daemonRequiredMsg is the user-facing error when the CLI is invoked but
+// the daemon isn't reachable. Centralised so the wording is consistent.
+const daemonRequiredMsg = "tclaude agentd is not running.\n" +
+	"Start it from a non-sandboxed shell with: tclaude agentd serve"
+
+// RequireDaemonOrExit writes a clear "daemon not running" message to
+// stderr and returns rcIOFailure if the daemon isn't reachable. CLI
+// entry points use this as a precondition so we never silently fall
+// back to direct DB writes — that path is for tests only and lets
+// sandboxed agents bypass the daemon's auth gating if the socket
+// happens to be down.
+func RequireDaemonOrExit(stderr io.Writer) int {
+	if DaemonAvailable() {
+		return rcOK
+	}
+	fmt.Fprintln(stderr, "Error: "+daemonRequiredMsg)
+	return rcIOFailure
+}
+
 
 // DaemonError represents a non-2xx response from the daemon. Callers can
 // inspect Code to map back to CLI exit codes.

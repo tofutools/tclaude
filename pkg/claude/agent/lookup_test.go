@@ -103,7 +103,7 @@ func TestRunLookup(t *testing.T) {
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")
 
 	var stdout, stderr bytes.Buffer
-	rc := runLookup(&lookupParams{Selector: "planner"}, &stdout, &stderr)
+	rc := runLookupDirect(&lookupParams{Selector: "planner"}, &stdout, &stderr)
 	if rc != rcOK {
 		t.Fatalf("runLookup rc = %d, stderr = %s", rc, stderr.String())
 	}
@@ -117,7 +117,7 @@ func TestRunWhoami_HumanFallback(t *testing.T) {
 	// No TCLAUDE_SESSION_ID, no CC ancestor (go test is run from a plain
 	// shell). Expect the <human> fallback rather than an error.
 	var stdout, stderr bytes.Buffer
-	rc := runWhoami(&stdout, &stderr)
+	rc := runWhoamiDirect(&stdout, &stderr)
 	if rc != rcOK {
 		t.Fatalf("rc = %d, stderr = %q", rc, stderr.String())
 	}
@@ -132,7 +132,7 @@ func TestRunWhoami_KnownConv(t *testing.T) {
 	t.Setenv("TCLAUDE_SESSION_ID", "abcd1234-2222-3333-4444-555555555555")
 
 	var stdout, stderr bytes.Buffer
-	rc := runWhoami(&stdout, &stderr)
+	rc := runWhoamiDirect(&stdout, &stderr)
 	if rc != rcOK {
 		t.Fatalf("rc = %d, stderr = %q", rc, stderr.String())
 	}
@@ -148,7 +148,7 @@ func TestRunLookup_Ambiguous(t *testing.T) {
 	upsertConvIndex(t, "22222222-2222-3333-4444-555555555555", "", "", "dup")
 
 	var stdout, stderr bytes.Buffer
-	rc := runLookup(&lookupParams{Selector: "dup"}, &stdout, &stderr)
+	rc := runLookupDirect(&lookupParams{Selector: "dup"}, &stdout, &stderr)
 	if rc != rcAmbiguous {
 		t.Fatalf("runLookup rc = %d", rc)
 	}

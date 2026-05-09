@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -10,20 +9,19 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// groupsCmd is `tclaude agent groups …`. The mutating subcommands refuse
-// when invoked from inside an agent (heuristic: $TCLAUDE_SESSION_ID is set
-// AND the resolved current conv-id is already a group member).
+// groupsCmd is `tclaude agent groups …`. The daemon enforces "the human is
+// the only mutator" by inspecting peer credentials on each call: callers
+// from inside a Claude Code session (with a `claude`/`node` ancestor in
+// the pid tree) get 403 on POST/DELETE endpoints; callers without one
+// (the human running tclaude from a plain shell) succeed.
 func groupsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "groups",
 		Short:       "Manage agent groups (allow-listed who can talk to whom)",
-		Long:        "Group membership is human-controlled: agents can `ls` and `members`, but cannot create/rm/add/remove unless --allow-from-agent is passed.",
+		Long:        "Group membership is human-controlled: agents can `ls` and `members`; create/rm/add/remove are gated server-side on the absence of a Claude Code ancestor in the caller's process tree.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			groupsLsCmd(),
@@ -34,40 +32,6 @@ func groupsCmd() *cobra.Command {
 			groupsRemoveCmd(),
 		},
 	}.ToCobra()
-}
-
-// refuseIfAgent gates the mutating `groups …` subcommands. Returns nil if
-// allowed, or an error explaining why not.
-//
-// Detection: walk the process tree looking for a `claude` (or `node`)
-// ancestor. If one exists, this invocation is coming from inside an agent
-// session, which by default cannot mutate group membership.
-//
-// Override precedence:
-//
-//  1. Per-command --allow-from-agent flag (testing escape hatch)
-//  2. ~/.tclaude/config.json: `agent.allow_agent_mutate_groups: true`
-//  3. Default: refuse
-func refuseIfAgent(allowFromAgent bool) error {
-	if allowFromAgent {
-		return nil
-	}
-	if !calledFromAgent() {
-		return nil
-	}
-	cfg, _ := config.Load()
-	if cfg != nil && cfg.Agent != nil && cfg.Agent.AllowAgentMutateGroups {
-		return nil
-	}
-	return errors.New("refusing to mutate group membership from inside a Claude Code session; " +
-		"set agent.allow_agent_mutate_groups=true in ~/.tclaude/config.json or pass --allow-from-agent to override")
-}
-
-// calledFromAgent returns true if any ancestor process is `claude` (or
-// `node`, since Claude Code runs as node). Uses the same walker as
-// session.FindClaudePID.
-func calledFromAgent() bool {
-	return session.FindClaudePID() != 0
 }
 
 // --- groups ls ---
@@ -87,20 +51,16 @@ func groupsLsCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		return runGroupsLsDaemon(p, stdout, stderr)
-	}
-	return runGroupsLsDirect(p, stdout, stderr)
-}
-
 type groupSummary struct {
 	Name    string `json:"name"`
 	Descr   string `json:"descr,omitempty"`
 	Members int    `json:"members"`
 }
 
-func runGroupsLsDaemon(p *groupsLsParams, stdout, stderr io.Writer) int {
+func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
 	var groups []groupSummary
 	if err := DaemonGet("/v1/groups", &groups); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -122,35 +82,11 @@ func runGroupsLsDaemon(p *groupsLsParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
-func runGroupsLsDirect(p *groupsLsParams, stdout, stderr io.Writer) int {
-	groups, err := db.ListAgentGroups()
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	if p.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(groups)
-		return rcOK
-	}
-	if len(groups) == 0 {
-		fmt.Fprintln(stdout, "(no groups)")
-		return rcOK
-	}
-	for _, g := range groups {
-		members, _ := db.ListAgentGroupMembers(g.ID)
-		fmt.Fprintf(stdout, "%-20s  %d members  %s\n", g.Name, len(members), g.Descr)
-	}
-	return rcOK
-}
-
 // --- groups create ---
 
 type groupsCreateParams struct {
-	Name            string `pos:"true" help:"Group name"`
-	Descr           string `long:"descr" short:"d" optional:"true" help:"Optional description"`
-	AllowFromAgent  bool   `long:"allow-from-agent" help:"Allow this command to run from inside an agent session (testing escape hatch)"`
+	Name  string `pos:"true" help:"Group name"`
+	Descr string `long:"descr" short:"d" optional:"true" help:"Optional description"`
 }
 
 func groupsCreateCmd() *cobra.Command {
@@ -169,36 +105,17 @@ func runGroupsCreate(p *groupsCreateParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: group name is required\n")
 		return rcInvalidArg
 	}
-	if DaemonAvailable() {
-		return runGroupsCreateDaemon(p, stdout, stderr)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcAuth
-	}
-	if existing, _ := db.GetAgentGroupByName(p.Name); existing != nil {
-		fmt.Fprintf(stderr, "Error: group %q already exists\n", p.Name)
-		return rcInvalidArg
-	}
-	id, err := db.CreateAgentGroup(p.Name, p.Descr)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	fmt.Fprintf(stdout, "Created group %q (id=%d)\n", p.Name, id)
-	return rcOK
-}
-
-func runGroupsCreateDaemon(p *groupsCreateParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	err := DaemonPost("/v1/groups", map[string]string{
+	if err := DaemonPost("/v1/groups", map[string]string{
 		"name":  p.Name,
 		"descr": p.Descr,
-	}, &resp)
-	if err != nil {
+	}, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -209,8 +126,7 @@ func runGroupsCreateDaemon(p *groupsCreateParams, stdout, stderr io.Writer) int 
 // --- groups rm ---
 
 type groupsRmParams struct {
-	Name           string `pos:"true" help:"Group name"`
-	AllowFromAgent bool   `long:"allow-from-agent" help:"Allow this command to run from inside an agent session"`
+	Name string `pos:"true" help:"Group name"`
 }
 
 func groupsRmCmd() *cobra.Command {
@@ -229,31 +145,12 @@ func runGroupsRm(p *groupsRmParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: group name is required\n")
 		return rcInvalidArg
 	}
-	if DaemonAvailable() {
-		err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Name), nil)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return MapDaemonErrorToRC(err)
-		}
-		fmt.Fprintf(stdout, "Deleted group %q\n", p.Name)
-		return rcOK
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
+	if err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Name), nil); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcAuth
-	}
-	g, err := db.GetAgentGroupByName(p.Name)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	if g == nil {
-		fmt.Fprintf(stderr, "Error: no such group %q\n", p.Name)
-		return rcNotFound
-	}
-	if err := db.DeleteAgentGroup(p.Name); err != nil {
-		fmt.Fprintf(stderr, "Error: %v (likely there are messages referencing this group; prune them first)\n", err)
-		return rcIOFailure
+		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Deleted group %q\n", p.Name)
 	return rcOK
@@ -286,61 +183,25 @@ type memberEntry struct {
 }
 
 func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		var members []memberEntry
-		err := DaemonGet("/v1/groups/"+url.PathEscape(p.Name)+"/members", &members)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return MapDaemonErrorToRC(err)
-		}
-		return renderMembers(p, members, stdout)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	g, err := db.GetAgentGroupByName(p.Name)
-	if err != nil {
+	var members []memberEntry
+	if err := DaemonGet("/v1/groups/"+url.PathEscape(p.Name)+"/members", &members); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
+		return MapDaemonErrorToRC(err)
 	}
-	if g == nil {
-		fmt.Fprintf(stderr, "Error: no such group %q\n", p.Name)
-		return rcNotFound
-	}
-	members, err := db.ListAgentGroupMembers(g.ID)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	out := make([]memberEntry, 0, len(members))
-	for _, m := range members {
-		row, _ := db.GetConvIndex(m.ConvID)
-		title := "(unknown)"
-		if row != nil {
-			if t := displayTitle(row); t != "" {
-				title = t
-			}
-		}
-		out = append(out, memberEntry{
-			ConvID: m.ConvID,
-			Title:  title,
-			Alias:  m.Alias,
-			Role:   m.Role,
-			Descr:  m.Descr,
-		})
-	}
-	return renderMembers(p, out, stdout)
-}
-
-func renderMembers(p *groupsMembersParams, out []memberEntry, stdout io.Writer) int {
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		_ = enc.Encode(members)
 		return rcOK
 	}
-	if len(out) == 0 {
+	if len(members) == 0 {
 		fmt.Fprintln(stdout, "(no members)")
 		return rcOK
 	}
-	for _, m := range out {
+	for _, m := range members {
 		shortID := m.ConvID
 		if len(shortID) >= 8 {
 			shortID = shortID[:8]
@@ -357,12 +218,11 @@ func renderMembers(p *groupsMembersParams, out []memberEntry, stdout io.Writer) 
 // --- groups add ---
 
 type groupsAddParams struct {
-	Group          string `pos:"true" help:"Group name"`
-	Conv           string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
-	Alias          string `long:"alias" short:"a" optional:"true" help:"Alias to use for this conv inside the group"`
-	Role           string `long:"role" short:"r" optional:"true" help:"Role label, e.g. 'lead', 'reviewer'"`
-	Descr          string `long:"descr" short:"d" optional:"true" help:"Short description of this member"`
-	AllowFromAgent bool   `long:"allow-from-agent" help:"Allow this command to run from inside an agent session"`
+	Group string `pos:"true" help:"Group name"`
+	Conv  string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	Alias string `long:"alias" short:"a" optional:"true" help:"Alias to use for this conv inside the group"`
+	Role  string `long:"role" short:"r" optional:"true" help:"Role label, e.g. 'lead', 'reviewer'"`
+	Descr string `long:"descr" short:"d" optional:"true" help:"Short description of this member"`
 }
 
 func groupsAddCmd() *cobra.Command {
@@ -377,73 +237,34 @@ func groupsAddCmd() *cobra.Command {
 }
 
 func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		var resp struct {
-			ConvID string `json:"conv_id"`
-		}
-		err := DaemonPost("/v1/groups/"+url.PathEscape(p.Group)+"/members", map[string]string{
-			"conv":  p.Conv,
-			"alias": p.Alias,
-			"role":  p.Role,
-			"descr": p.Descr,
-		}, &resp)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return MapDaemonErrorToRC(err)
-		}
-		shortID := resp.ConvID
-		if len(shortID) >= 8 {
-			shortID = shortID[:8]
-		}
-		fmt.Fprintf(stdout, "Added %s to group %q (alias=%q role=%q)\n", shortID, p.Group, p.Alias, p.Role)
-		return rcOK
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	if err := DaemonPost("/v1/groups/"+url.PathEscape(p.Group)+"/members", map[string]string{
+		"conv":  p.Conv,
+		"alias": p.Alias,
+		"role":  p.Role,
+		"descr": p.Descr,
+	}, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcAuth
+		return MapDaemonErrorToRC(err)
 	}
-	g, err := db.GetAgentGroupByName(p.Group)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
+	shortID := resp.ConvID
+	if len(shortID) >= 8 {
+		shortID = shortID[:8]
 	}
-	if g == nil {
-		fmt.Fprintf(stderr, "Error: no such group %q\n", p.Group)
-		return rcNotFound
-	}
-	r, matches, err := resolveSelector(p.Conv)
-	if errors.Is(err, errAmbiguous) {
-		printAmbiguous(stderr, p.Conv, matches)
-		return rcAmbiguous
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcNotFound
-	}
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g.ID,
-		ConvID:  r.ConvID,
-		Alias:   p.Alias,
-		Role:    p.Role,
-		Descr:   p.Descr,
-	}); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	short := r.ConvID
-	if len(short) >= 8 {
-		short = short[:8]
-	}
-	fmt.Fprintf(stdout, "Added %s to group %q (alias=%q role=%q)\n", short, p.Group, p.Alias, p.Role)
+	fmt.Fprintf(stdout, "Added %s to group %q (alias=%q role=%q)\n", shortID, p.Group, p.Alias, p.Role)
 	return rcOK
 }
 
 // --- groups remove ---
 
 type groupsRemoveParams struct {
-	Group          string `pos:"true" help:"Group name"`
-	Conv           string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
-	AllowFromAgent bool   `long:"allow-from-agent" help:"Allow this command to run from inside an agent session"`
+	Group string `pos:"true" help:"Group name"`
+	Conv  string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
 }
 
 func groupsRemoveCmd() *cobra.Command {
@@ -459,45 +280,13 @@ func groupsRemoveCmd() *cobra.Command {
 }
 
 func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Group)+"/members/"+url.PathEscape(p.Conv), nil)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error: %v\n", err)
-			return MapDaemonErrorToRC(err)
-		}
-		fmt.Fprintf(stdout, "Removed %s from group %q\n", p.Conv, p.Group)
-		return rcOK
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	if err := refuseIfAgent(p.AllowFromAgent); err != nil {
+	if err := DaemonDelete("/v1/groups/"+url.PathEscape(p.Group)+"/members/"+url.PathEscape(p.Conv), nil); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcAuth
+		return MapDaemonErrorToRC(err)
 	}
-	g, err := db.GetAgentGroupByName(p.Group)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	if g == nil {
-		fmt.Fprintf(stderr, "Error: no such group %q\n", p.Group)
-		return rcNotFound
-	}
-	r, matches, err := resolveSelector(p.Conv)
-	if errors.Is(err, errAmbiguous) {
-		printAmbiguous(stderr, p.Conv, matches)
-		return rcAmbiguous
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcNotFound
-	}
-	if err := db.RemoveAgentGroupMember(g.ID, r.ConvID); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-	short := r.ConvID
-	if len(short) >= 8 {
-		short = short[:8]
-	}
-	fmt.Fprintf(stdout, "Removed %s from group %q\n", short, p.Group)
+	fmt.Fprintf(stdout, "Removed %s from group %q\n", p.Conv, p.Group)
 	return rcOK
 }

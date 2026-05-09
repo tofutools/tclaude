@@ -40,11 +40,11 @@ func TestRunMessage_HappyPath(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	rc := runMessage(&messageParams{
+	rc := runMessageDirect(&messageParams{
 		Target:  "reviewer",
 		Body:    "hello there",
 		Subject: "ping",
-	}, deps, &stdout, &stderr, strings.NewReader(""))
+	}, deps, "hello there", &stdout, &stderr)
 	if rc != rcOK {
 		t.Fatalf("rc = %d, stderr = %q", rc, stderr.String())
 	}
@@ -92,11 +92,11 @@ func TestRunMessage_RefusesWithoutSharedGroup(t *testing.T) {
 	t.Setenv("TCLAUDE_SESSION_ID", "aaaaaaaa-2222-3333-4444-555555555555")
 
 	var stdout, stderr bytes.Buffer
-	rc := runMessage(&messageParams{
+	rc := runMessageDirect(&messageParams{
 		Target: "reviewer",
 		Body:   "hello",
-	}, &messageDeps{nudge: func(string, string) error { return nil }},
-		&stdout, &stderr, strings.NewReader(""))
+	}, &messageDeps{nudge: func(string, string) error { return nil }}, "hello",
+		&stdout, &stderr)
 	if rc != rcAuth {
 		t.Fatalf("rc = %d (want %d), stderr = %q", rc, rcAuth, stderr.String())
 	}
@@ -112,11 +112,11 @@ func TestRunMessage_RefusesSelfMessage(t *testing.T) {
 	t.Setenv("TCLAUDE_SESSION_ID", "aaaaaaaa-2222-3333-4444-555555555555")
 
 	var stdout, stderr bytes.Buffer
-	rc := runMessage(&messageParams{
+	rc := runMessageDirect(&messageParams{
 		Target: "planner",
 		Body:   "hi self",
-	}, &messageDeps{nudge: func(string, string) error { return nil }},
-		&stdout, &stderr, strings.NewReader(""))
+	}, &messageDeps{nudge: func(string, string) error { return nil }}, "hi self",
+		&stdout, &stderr)
 	if rc != rcInvalidArg {
 		t.Fatalf("rc = %d (want %d)", rc, rcInvalidArg)
 	}
@@ -181,7 +181,7 @@ func TestRunInboxRead_RefusesWrongRecipient(t *testing.T) {
 	t.Setenv("TCLAUDE_SESSION_ID", "cccccccc-2222-3333-4444-555555555555")
 
 	var stdout, stderr bytes.Buffer
-	rc := runInboxRead(&inboxReadParams{ID: itoa(id)}, &stdout, &stderr)
+	rc := runInboxReadDirect(&inboxReadParams{ID: itoa(id)}, id, &stdout, &stderr)
 	if rc != rcAuth {
 		t.Fatalf("rc = %d (want %d), stderr = %q", rc, rcAuth, stderr.String())
 	}

@@ -66,10 +66,11 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 		return rcInvalidArg
 	}
 
-	if DaemonAvailable() {
-		return runMessageDaemon(p, body, stdout, stderr)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	return runMessageDirect(p, d, body, stdout, stderr)
+	_ = d // direct path is exercised by tests via runMessageDirect.
+	return runMessageDaemon(p, body, stdout, stderr)
 }
 
 func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) int {

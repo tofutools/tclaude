@@ -1,23 +1,34 @@
 ---
 name: agent-coord
-description: Coordinate with other Claude Code conversations via `tclaude agent`. Use when you have been put in a group with peer agents and need to look them up, send them messages, or read messages they sent you. Triggered by a `[system: new agent message #...]` line appearing in your conversation, or when the user explicitly asks you to talk to another agent.
+description: Coordinate with other Claude Code conversations via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human starts it; you don't). Use when you've been put in a group with peer agents and need to look them up, send them messages, or read messages they sent you. Triggered by a `[system: new agent message #...]` line appearing in your conversation, or when the user explicitly asks you to talk to another agent.
 ---
 
 # Coordinating with other agents
 
 You can talk to other Claude Code conversations on this machine through
-`tclaude agent`. Identity comes from the conversation's display name —
-the same one `tclaude conv ls` shows. The human controls who can talk to
-whom by maintaining named **groups**: you can only message peers who are
-in a group with you.
+`tclaude agent`. Every command goes through a daemon (`tclaude agentd
+serve`) which the human starts once per machine. Your identity is
+resolved from the connecting socket peer's PID — no tokens to manage,
+and `/fork` keeps working because the daemon re-reads your current
+conv-id on every call.
+
+The human controls who can talk to whom by maintaining named **groups**;
+you can only message peers who are in a group with you.
 
 ## When to invoke
 
-- A `[system: new agent message #<n> from <alias> in group "<name>" …]`
-  line appeared in your conversation. **Read the message first**, then
-  decide whether to reply.
+- A `[system: new agent message #<n> for you. fetch with: tclaude
+  agent inbox read <n>]` line appeared in your conversation. **Read the
+  message first**, then decide whether to reply.
 - The user asked you to coordinate with another agent (e.g. "ask the
   reviewer agent what they think").
+
+## Prerequisite: daemon must be running
+
+If you see `Error: tclaude agentd is not running.`, ask the human to
+start it (`tclaude agentd serve` in a non-sandboxed terminal). Without
+it the CLI deliberately refuses to fall back to direct DB access — that
+keeps the auth model honest.
 
 ## Discovering peers
 
@@ -98,23 +109,23 @@ and they'll see it on resume.
 
 - **One message, one purpose.** If you have multiple unrelated asks,
   send separate messages with distinct subjects.
-- **Quote what you're replying to** in the body. v1 has no thread IDs;
-  the receiver only knows it's from you.
+- **Use `agent reply <id>`** for replies — the daemon resolves the
+  sender from the message ID, so you don't need to copy conv-ids out
+  of the headers. The reply inherits `Re: <subject>` automatically.
 - **Don't spam.** Tmux nudges interleave with the receiver's input box;
   too many in quick succession will wreck their UX.
-- **Don't try to mutate group membership.** `tclaude agent groups
-  create|rm|add|remove` refuses by default when invoked from inside an
-  agent. The human curates the allow-list.
+- **Don't try to mutate group membership.** The daemon refuses
+  `groups create|rm|add|remove` from any caller with a `claude`
+  ancestor in its process tree. The human curates the allow-list.
 
 ## Troubleshooting
 
-- `not in a shared group` → ask the human to add you and the peer to the
-  same group.
+- `Error: tclaude agentd is not running.` → ask the human to start
+  the daemon. The CLI no longer falls back to direct DB access.
+- `not in a shared group` → ask the human to add you and the peer to
+  the same group.
 - `selector matches multiple conversations` → use a conv-id prefix
   (the short 8-character form) instead of the alias.
-- `could not detect current conversation` → `$TCLAUDE_SESSION_ID` was
-  not propagated and the parent CC pid file is unreadable. Pass an
-  explicit conv-id rather than relying on `.`.
 
 ## Installing this skill
 

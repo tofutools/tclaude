@@ -62,10 +62,10 @@ type inboxEntry struct {
 }
 
 func runInboxLs(p *inboxLsParams, stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		return runInboxLsDaemon(p, stdout, stderr)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	return runInboxLsDirect(p, stdout, stderr)
+	return runInboxLsDaemon(p, stdout, stderr)
 }
 
 func runInboxLsDaemon(p *inboxLsParams, stdout, stderr io.Writer) int {
@@ -106,43 +106,6 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 	return rcOK
 }
 
-func runInboxLsDirect(p *inboxLsParams, stdout, stderr io.Writer) int {
-	myID, err := currentConvID()
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcNotFound
-	}
-	msgs, err := db.ListAgentMessagesForConv(myID, p.Limit)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-
-	groupNameByID := map[int64]string{}
-	groups, _ := db.ListAgentGroups()
-	for _, g := range groups {
-		groupNameByID[g.ID] = g.Name
-	}
-
-	var out []inboxEntry
-	for _, m := range msgs {
-		if p.Unread && !m.ReadAt.IsZero() {
-			continue
-		}
-		out = append(out, inboxEntry{
-			ID:        m.ID,
-			From:      m.FromConv,
-			FromShort: short(m.FromConv),
-			Group:     groupNameByID[m.GroupID],
-			Subject:   m.Subject,
-			Preview:   preview(m.Body),
-			CreatedAt: m.CreatedAt.Format(time.RFC3339),
-			Read:      !m.ReadAt.IsZero(),
-		})
-	}
-	return renderInbox(p, out, stdout)
-}
-
 // --- inbox read ---
 
 type inboxReadParams struct {
@@ -167,10 +130,10 @@ func runInboxRead(p *inboxReadParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: invalid message ID %q\n", p.ID)
 		return rcInvalidArg
 	}
-	if DaemonAvailable() {
-		return runInboxReadDaemon(p, id, stdout, stderr)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	return runInboxReadDirect(p, id, stdout, stderr)
+	return runInboxReadDaemon(p, id, stdout, stderr)
 }
 
 func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) int {
@@ -285,11 +248,3 @@ func groupByID(id int64) (*db.AgentGroup, error) {
 	return nil, nil
 }
 
-func preview(body string) string {
-	const max = 80
-	r := []rune(body)
-	if len(r) <= max {
-		return body
-	}
-	return string(r[:max]) + "…"
-}

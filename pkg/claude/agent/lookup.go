@@ -268,10 +268,10 @@ func whoamiCmd() *cobra.Command {
 const HumanIdentity = "<human>"
 
 func runWhoami(stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		return runWhoamiDaemon(stdout, stderr)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	return runWhoamiDirect(stdout, stderr)
+	return runWhoamiDaemon(stdout, stderr)
 }
 
 func runWhoamiDaemon(stdout, stderr io.Writer) int {
@@ -337,10 +337,10 @@ func lookupCmd() *cobra.Command {
 }
 
 func runLookup(p *lookupParams, stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		return runLookupDaemon(p, stdout, stderr)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	return runLookupDirect(p, stdout, stderr)
+	return runLookupDaemon(p, stdout, stderr)
 }
 
 func runLookupDaemon(p *lookupParams, stdout, stderr io.Writer) int {
@@ -404,10 +404,10 @@ type peerEntry struct {
 }
 
 func runLs(p *lsParams, stdout, stderr io.Writer) int {
-	if DaemonAvailable() {
-		return runLsDaemon(p, stdout, stderr)
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
 	}
-	return runLsDirect(p, stdout, stderr)
+	return runLsDaemon(p, stdout, stderr)
 }
 
 func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
@@ -447,55 +447,4 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	return rcOK
 }
 
-func runLsDirect(p *lsParams, stdout, stderr io.Writer) int {
-	myID, err := currentConvID()
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcNotFound
-	}
-	groups, err := db.ListGroupsForConv(myID)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcIOFailure
-	}
-
-	// Aggregate peers across groups.
-	byConv := map[string]*peerEntry{}
-	for _, g := range groups {
-		members, err := db.ListAgentGroupMembers(g.ID)
-		if err != nil {
-			continue
-		}
-		for _, m := range members {
-			if m.ConvID == myID {
-				continue
-			}
-			pe, ok := byConv[m.ConvID]
-			if !ok {
-				row, _ := db.GetConvIndex(m.ConvID)
-				title := "(unknown)"
-				if row != nil {
-					if t := displayTitle(row); t != "" {
-						title = t
-					}
-				}
-				pe = &peerEntry{
-					ConvID: m.ConvID,
-					Title:  title,
-					Alias:  m.Alias,
-					Role:   m.Role,
-					Descr:  m.Descr,
-				}
-				byConv[m.ConvID] = pe
-			}
-			pe.Groups = append(pe.Groups, g.Name)
-		}
-	}
-
-	peers := make([]*peerEntry, 0, len(byConv))
-	for _, pe := range byConv {
-		peers = append(peers, pe)
-	}
-	return renderPeers(p, peers, stdout)
-}
 
