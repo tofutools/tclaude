@@ -43,8 +43,8 @@ func TestResolveSelector_ByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveSelector: %v", err)
 	}
-	if r.convID != "11111111-2222-3333-4444-555555555555" {
-		t.Fatalf("convID = %q", r.convID)
+	if r.ConvID != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("convID = %q", r.ConvID)
 	}
 }
 
@@ -56,8 +56,8 @@ func TestResolveSelector_ByPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveSelector: %v", err)
 	}
-	if !strings.HasPrefix(r.convID, "abcd1234") {
-		t.Fatalf("convID = %q", r.convID)
+	if !strings.HasPrefix(r.ConvID, "abcd1234") {
+		t.Fatalf("convID = %q", r.ConvID)
 	}
 }
 
@@ -70,8 +70,8 @@ func TestResolveSelector_ByTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveSelector: %v", err)
 	}
-	if !strings.HasPrefix(r.convID, "11111111") {
-		t.Fatalf("convID = %q", r.convID)
+	if !strings.HasPrefix(r.ConvID, "11111111") {
+		t.Fatalf("convID = %q", r.ConvID)
 	}
 }
 

@@ -106,7 +106,67 @@ ship or get scoped out. The detailed v1 design lives in
   (e.g. spawning new sessions, killing groups via `groups stop`). Map
   command → required policy in config.
 
-### Cross-machine
+### Delivery architecture (sandbox-aware)
+
+**Problem:** when a sandboxed agent calls `tclaude agent message …`, the
+DB write succeeds (because `~/.tclaude/db.sqlite` is allow-listed) but
+the *tmux nudge* requires hitting `/tmp/tmux-…/tclaude` — a socket the
+sender's sandbox typically blocks. The message is persisted but the
+target sees nothing until they run `inbox ls` themselves. Same problem
+applies to any cross-cutting concern (process-tree walks, lookups by
+file path, etc.): they only work if the per-agent sandbox happens to
+allow them.
+
+The user-facing symptom is `(queued; target not online)` even when the
+target's tmux session is very much alive.
+
+**Three possible directions, in order of weight:**
+
+1. **Hook-based lazy nudge (lightest).** Use the hook callback already
+   wired up via `tclaude setup`. On any inbound hook
+   (`PostToolUse`/`Notification`/etc.) the *receiver* checks for
+   `agent_messages` rows where `to_conv = me` and `delivered_at IS NULL`,
+   and the hook process (running in CC's environment, not the sender's
+   sandbox) does the tmux send-keys to its own pane. No daemon.
+   Latency = "next time the receiver does anything", which is usually
+   sub-second. Best risk/reward for v1.
+
+2. **`tclaude agentd` daemon.** A long-lived process started by
+   `tclaude setup` (launchd on macOS, systemd user unit on Linux). Lives
+   outside any agent sandbox. Watches `agent_messages.delivered_at IS
+   NULL` (poll or SQLite hook), resolves target → tmux pane, sends the
+   nudge, marks delivered. Could also handle: garbage-collecting dead
+   session rows, refreshing tmux session names when CC restarts,
+   exposing a richer query API. Cost: a new process to monitor, install,
+   and reason about.
+
+3. **Daemon over a Unix socket as the single agent API.** Instead of
+   each `tclaude agent …` writing to SQLite directly, the CLI talks to
+   the daemon over a socket, and the daemon owns DB + tmux + permission
+   gating. Strongest authority story (the daemon decides who can talk to
+   whom) but biggest rewrite — every existing agent CLI path goes
+   through IPC. Aligns with "we can't always be aware of what sessions
+   we're allowed to talk to": that lookup happens daemon-side, where it
+   has the full picture.
+
+**Decision:** foreground daemon, `tclaude agentd serve`. After a
+discussion about `/fork` and inheritable env vars, the transport
+pivoted from loopback HTTP+token to **HTTP over a Unix domain
+socket** with **peer-cred identity** (no tokens). The daemon reads
+the connecting peer's PID, walks to a `claude`/`node` ancestor, and
+reads `~/.claude/sessions/<pid>.json` for the *current* conv-id —
+which automatically tracks `/fork`/`/clear`/`/resume`. Full design
+in [`agentd.md`](agentd.md).
+
+### Cross-machine (far future)
+
+When/if we ever want to span hosts: federate `tclaude agentd` instances
+over the network. Each host's daemon owns its local conv pool and proxies
+messages destined for remote convs to the appropriate peer daemon. Keeps
+the per-host peer-cred identity model intact. **Explicitly out of scope
+for now** — single-host first.
+
+### (legacy) Cross-machine
 - For now everything is keyed off the local SQLite + filesystem inbox. A
   future variant could publish messages over the existing `git` sync
   channel (`pkg/claude/git`) so agents on different machines can talk.

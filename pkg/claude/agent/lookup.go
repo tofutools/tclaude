@@ -26,15 +26,23 @@ const (
 	rcAuth       = 5
 )
 
-// errAmbiguous is returned by resolveSelector when the selector matches more
-// than one conversation. The caller should print candidates and exit 2.
-var errAmbiguous = errors.New("selector matches multiple conversations")
+// ErrAmbiguous is returned by ResolveSelector when the selector matches
+// more than one conversation. The caller should surface candidates.
+var ErrAmbiguous = errors.New("selector matches multiple conversations")
 
-// resolved is a minimal handle to a conversation reachable by a selector.
-type resolved struct {
-	convID string
-	row    *db.ConvIndexRow // may be nil if conv not yet indexed
+// errAmbiguous is the package-internal alias kept for the existing CLI
+// callers, which compare against this sentinel.
+var errAmbiguous = ErrAmbiguous
+
+// Resolved is a minimal handle to a conversation reachable by a selector.
+// Exported so the daemon (pkg/claude/agentd) can reuse the resolver.
+type Resolved struct {
+	ConvID string
+	Row    *db.ConvIndexRow // may be nil if conv not yet indexed
 }
+
+// resolved is the package-private alias used by existing CLI code.
+type resolved = Resolved
 
 // resolveSelector turns a free-form string (UUID, prefix, or current title)
 // into a single conv-id. Search is global (any project) by default — agent
@@ -73,12 +81,12 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 func tryResolve(selector string) (*resolved, []*resolved, error) {
 	// 1) full UUID match
 	if row, err := db.GetConvIndex(selector); err == nil && row != nil {
-		return &resolved{convID: row.ConvID, row: row}, nil, nil
+		return &resolved{ConvID: row.ConvID, Row: row}, nil, nil
 	}
 
 	// 2) prefix match (uniqueness enforced by db.FindConvIndexByPrefix)
 	if row, err := db.FindConvIndexByPrefix(selector); err == nil && row != nil {
-		return &resolved{convID: row.ConvID, row: row}, nil, nil
+		return &resolved{ConvID: row.ConvID, Row: row}, nil, nil
 	}
 
 	// 3) match by current display title (custom > summary > first prompt)
@@ -89,7 +97,7 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 	var matches []*resolved
 	for _, r := range rows {
 		if displayTitle(r) == selector {
-			matches = append(matches, &resolved{convID: r.ConvID, row: r})
+			matches = append(matches, &resolved{ConvID: r.ConvID, Row: r})
 		}
 	}
 	if len(matches) == 1 {
@@ -118,6 +126,42 @@ func refreshAllProjects() {
 		}
 		_, _ = conv.LoadSessionsIndex(filepath.Join(projectsDir, e.Name()))
 	}
+}
+
+// ResolveSelector is the daemon-friendly entry point that mirrors the
+// internal resolveSelector. Returns (resolved, candidates, err) where err
+// may be ErrAmbiguous with candidates populated.
+func ResolveSelector(selector string) (*Resolved, []*Resolved, error) {
+	return resolveSelector(selector)
+}
+
+// CurrentConvID returns the conv-id of the conversation invoking the
+// caller, expanded to a full UUID via the DB if necessary. Exported for
+// callers outside this package.
+func CurrentConvID() (string, error) {
+	return currentConvID()
+}
+
+// DisplayTitle is the exported alias of displayTitle so other packages
+// can render agent names consistently.
+func DisplayTitle(r *db.ConvIndexRow) string {
+	return displayTitle(r)
+}
+
+// FreshConvRow refreshes a single conv's index row before returning it.
+func FreshConvRow(convID string) *db.ConvIndexRow {
+	return freshConvRow(convID)
+}
+
+// ShortID truncates a conv-id to the first 8 hex chars.
+func ShortID(convID string) string {
+	return short(convID)
+}
+
+// AliasFor returns the recorded alias for (groupID, convID), or the conv's
+// display title, or "".
+func AliasFor(groupID int64, convID string) string {
+	return aliasFor(groupID, convID)
 }
 
 // displayTitle returns the title we treat as the agent's name: custom title
@@ -194,10 +238,10 @@ func printAmbiguous(out io.Writer, selector string, matches []*resolved) {
 	fmt.Fprintf(out, "Error: selector %q matches %d conversations:\n", selector, len(matches))
 	for _, m := range matches {
 		title := ""
-		if m.row != nil {
-			title = displayTitle(m.row)
+		if m.Row != nil {
+			title = displayTitle(m.Row)
 		}
-		fmt.Fprintf(out, "  %s  %s\n", m.convID[:8], title)
+		fmt.Fprintf(out, "  %s  %s\n", m.ConvID[:8], title)
 	}
 	fmt.Fprintf(out, "Disambiguate by ID prefix.\n")
 }
@@ -272,7 +316,7 @@ func runLookup(p *lookupParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
-	fmt.Fprintln(stdout, r.convID)
+	fmt.Fprintln(stdout, r.ConvID)
 	return rcOK
 }
 

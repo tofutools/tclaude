@@ -65,4 +65,5 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 ## Active design / TODO docs
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
+- `docs/plans/agentd.md` — design for `tclaude agentd` HTTP daemon (token-per-session, out-of-sandbox tmux delivery).
 - `docs/plans/agents_todo.md` — living TODO/DONE list for agent coordination work; keep updated as features ship.

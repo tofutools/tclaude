@@ -38,9 +38,9 @@ type messageDeps struct {
 type messageParams struct {
 	Target  string `pos:"true" help:"Target conv: UUID, prefix, or current title"`
 	Body    string `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
-	Subject string `long:"subject" short:"s" help:"Optional subject line"`
+	Subject string `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
 	Stdin   bool   `long:"stdin" help:"Read body from stdin"`
-	File    string `long:"file" short:"f" help:"Read body from a file"`
+	File    string `long:"file" short:"f" optional:"true" help:"Read body from a file"`
 }
 
 func messageCmd() *cobra.Command {
@@ -81,19 +81,19 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
-	if target.convID == fromID {
+	if target.ConvID == fromID {
 		fmt.Fprintf(stderr, "Error: cannot message self\n")
 		return rcInvalidArg
 	}
 
 	// Authorisation: must share at least one group.
-	shared, err := db.SharedGroupsForConvs(fromID, target.convID)
+	shared, err := db.SharedGroupsForConvs(fromID, target.ConvID)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure
 	}
 	if len(shared) == 0 {
-		fmt.Fprintf(stderr, "Error: not in a shared group with target %s\n", short(target.convID))
+		fmt.Fprintf(stderr, "Error: not in a shared group with target %s\n", short(target.ConvID))
 		return rcAuth
 	}
 	via := shared[0] // first by name; deterministic per design
@@ -102,7 +102,7 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  via.ID,
 		FromConv: fromID,
-		ToConv:   target.convID,
+		ToConv:   target.ConvID,
 		Subject:  p.Subject,
 		Body:     body,
 	})
@@ -114,7 +114,7 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 	// Nudge target's tmux pane if it has a live session.
 	delivered := false
 	if d != nil && d.nudge != nil {
-		if sess, err := db.FindSessionByConvID(target.convID); err == nil && sess != nil && sess.TmuxSession != "" {
+		if sess, err := db.FindSessionByConvID(target.ConvID); err == nil && sess != nil && sess.TmuxSession != "" {
 			if session.IsTmuxSessionAlive(sess.TmuxSession) {
 				fromAlias := aliasFor(via.ID, fromID)
 				if fromAlias == "" {
@@ -139,9 +139,9 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 	}
 
 	if delivered {
-		fmt.Fprintf(stdout, "Sent message #%d to %s via group %q (delivered)\n", id, short(target.convID), via.Name)
+		fmt.Fprintf(stdout, "Sent message #%d to %s via group %q (delivered)\n", id, short(target.ConvID), via.Name)
 	} else {
-		fmt.Fprintf(stdout, "Sent message #%d to %s via group %q (queued; target not online)\n", id, short(target.convID), via.Name)
+		fmt.Fprintf(stdout, "Sent message #%d to %s via group %q (queued; target not online)\n", id, short(target.ConvID), via.Name)
 	}
 	return rcOK
 }

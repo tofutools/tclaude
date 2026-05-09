@@ -113,7 +113,7 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 
 type groupsCreateParams struct {
 	Name            string `pos:"true" help:"Group name"`
-	Descr           string `long:"descr" short:"d" help:"Optional description"`
+	Descr           string `long:"descr" short:"d" optional:"true" help:"Optional description"`
 	AllowFromAgent  bool   `long:"allow-from-agent" help:"Allow this command to run from inside an agent session (testing escape hatch)"`
 }
 
@@ -281,9 +281,9 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 type groupsAddParams struct {
 	Group          string `pos:"true" help:"Group name"`
 	Conv           string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
-	Alias          string `long:"alias" short:"a" help:"Alias to use for this conv inside the group"`
-	Role           string `long:"role" short:"r" help:"Role label, e.g. 'lead', 'reviewer'"`
-	Descr          string `long:"descr" short:"d" help:"Short description of this member"`
+	Alias          string `long:"alias" short:"a" optional:"true" help:"Alias to use for this conv inside the group"`
+	Role           string `long:"role" short:"r" optional:"true" help:"Role label, e.g. 'lead', 'reviewer'"`
+	Descr          string `long:"descr" short:"d" optional:"true" help:"Short description of this member"`
 	AllowFromAgent bool   `long:"allow-from-agent" help:"Allow this command to run from inside an agent session"`
 }
 
@@ -323,7 +323,7 @@ func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
 	}
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g.ID,
-		ConvID:  r.convID,
+		ConvID:  r.ConvID,
 		Alias:   p.Alias,
 		Role:    p.Role,
 		Descr:   p.Descr,
@@ -331,7 +331,7 @@ func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure
 	}
-	short := r.convID
+	short := r.ConvID
 	if len(short) >= 8 {
 		short = short[:8]
 	}
@@ -382,11 +382,11 @@ func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
-	if err := db.RemoveAgentGroupMember(g.ID, r.convID); err != nil {
+	if err := db.RemoveAgentGroupMember(g.ID, r.ConvID); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure
 	}
-	short := r.convID
+	short := r.ConvID
 	if len(short) >= 8 {
 		short = short[:8]
 	}
