@@ -102,12 +102,15 @@ group acts as an allow-list.
 ### message / reply
 
 ```bash
-# send
+# direct
 tclaude agent message <peer> "your message text"
 tclaude agent message <peer> --subject "ack" --stdin <<EOF
 multi-line body
 EOF
 tclaude agent message <peer> --file plan.md
+
+# broadcast to every member of a group except yourself
+tclaude agent message group:reviewer-team "PR #42 ready for eyes"
 
 # reply (looks up the sender from the original message id; no need to
 # copy conv-ids out of the headers)
@@ -115,10 +118,13 @@ tclaude agent reply <id> "got it"
 tclaude agent reply <id> --subject "Re: not the default" "..."
 ```
 
-Sender and target must share a group, otherwise the daemon refuses
-with `not in a shared group`. If the target's tmux session is alive
-they get a system-style nudge; otherwise the message queues in their
-inbox until they `inbox ls`.
+For direct messages the sender and target must share a group,
+otherwise the daemon refuses with `not in a shared group`. For
+multicast (`group:<name>` target), the sender must be a member of
+that group. If the target's tmux session is alive they get a
+system-style nudge; otherwise the message queues in their inbox
+until they `inbox ls`. Replies to a multicast come back as normal
+direct messages — there is no automatic "reply-all".
 
 ### inbox
 

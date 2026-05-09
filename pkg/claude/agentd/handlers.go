@@ -163,11 +163,28 @@ type sendReq struct {
 	Body    string `json:"body"`
 }
 
+// sendResp carries the result of either a direct send or a group
+// fan-out. For direct messages the top-level fields (ID, Delivered)
+// are populated and Recipients is nil. For multicast (To prefixed
+// with "group:") ID/Delivered are zero values and Recipients lists
+// one entry per non-sender member.
 type sendResp struct {
-	ID        int64  `json:"id"`
-	Delivered bool   `json:"delivered"`
-	ViaGroup  string `json:"via_group"`
+	ID         int64       `json:"id,omitempty"`
+	Delivered  bool        `json:"delivered,omitempty"`
+	ViaGroup   string      `json:"via_group"`
+	Recipients []recipient `json:"recipients,omitempty"`
 }
+
+type recipient struct {
+	ConvID    string `json:"conv_id"`
+	Alias     string `json:"alias,omitempty"`
+	MessageID int64  `json:"message_id"`
+	Delivered bool   `json:"delivered"`
+}
+
+// multicastPrefix marks a multicast target. `to: "group:reviewer-team"`
+// fans out to every member of that group except the sender.
+const multicastPrefix = "group:"
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -185,6 +202,10 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
+		return
+	}
+	if strings.HasPrefix(req.To, multicastPrefix) {
+		handleMulticast(w, fromID, &req)
 		return
 	}
 	target, matches, err := agent.ResolveSelector(req.To)
@@ -227,6 +248,86 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	delivered := nudgeIfAlive(id, target.ConvID)
 	writeJSON(w, http.StatusOK, sendResp{ID: id, Delivered: delivered, ViaGroup: via.Name})
+}
+
+// handleMulticast fans out req.Body to every member of the named group
+// except the sender. Auth: the sender must be a member of the target
+// group (we don't allow strangers to broadcast in). Each recipient
+// gets its own agent_messages row + tmux nudge if online; replies
+// from any recipient go back to the sender as a normal direct
+// message via the original group.
+//
+// Returns 200 with recipients=[] and via_group set (idempotent
+// success) when the group is empty save for the sender.
+func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
+	groupName := strings.TrimPrefix(req.To, multicastPrefix)
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"multicast target is empty; expected 'group:<name>'")
+		return
+	}
+	g, err := db.GetAgentGroupByName(groupName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if g == nil {
+		writeError(w, http.StatusNotFound, "not_found",
+			fmt.Sprintf("no group named %q", groupName))
+		return
+	}
+	// Sender must be a member to broadcast.
+	senderMember, err := db.FindMemberInGroup(g.ID, fromID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if senderMember == nil {
+		writeError(w, http.StatusForbidden, "auth",
+			fmt.Sprintf("you are not a member of group %q", groupName))
+		return
+	}
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	out := sendResp{ViaGroup: g.Name, Recipients: []recipient{}}
+	for _, m := range members {
+		if m.ConvID == fromID {
+			continue
+		}
+		id, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:  g.ID,
+			FromConv: fromID,
+			ToConv:   m.ConvID,
+			Subject:  req.Subject,
+			Body:     req.Body,
+		})
+		if err != nil {
+			// Don't abort the whole broadcast on one DB error; record
+			// it and continue. The sender sees per-recipient status
+			// in the response and can retry the failures explicitly.
+			slog.Warn("multicast: insert failed",
+				"group", g.Name, "to", m.ConvID, "error", err)
+			out.Recipients = append(out.Recipients, recipient{
+				ConvID:    m.ConvID,
+				Alias:     m.Alias,
+				MessageID: 0,
+				Delivered: false,
+			})
+			continue
+		}
+		delivered := nudgeIfAlive(id, m.ConvID)
+		out.Recipients = append(out.Recipients, recipient{
+			ConvID:    m.ConvID,
+			Alias:     m.Alias,
+			MessageID: id,
+			Delivered: delivered,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // nudgeIfAlive looks up the target's tmux session and, if alive, sends

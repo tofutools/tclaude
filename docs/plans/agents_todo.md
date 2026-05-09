@@ -145,17 +145,6 @@ existing `groups.*`/`member.*` model:
   group picker. (Groups column itself is shipped.)
 
 ### Inbox & message UX
-- **Multicast / group broadcast.** Send one message to every member of
-  a group. Two reasonable shapes:
-  - `tclaude agent message group:<name> "..."` — selector prefix
-    `group:` triggers fan-out.
-  - `tclaude agent broadcast <group> "..."` — explicit verb.
-  Implementation: daemon inserts one row per recipient (skipping the
-  sender), nudges only live tmux panes that aren't the sender's. The
-  sender's row stays out of their own inbox (we don't echo). Replies
-  go back to the sender as a normal direct message; "reply-all" is a
-  follow-up.
-
 - **Interactive mailbox inspector**: `tclaude agent mailbox <conv> -w` (or
   some better verb — possibly `inbox watch`, `mail`, etc.). Lists mails
   with sender/subject/date, lets the user select one to read, marks read
@@ -574,6 +563,13 @@ for now** — single-host first.
   section in `~/.tclaude/config.json` (defaults +
   per-conv-id/prefix/title overrides). Humans bypass the gate. Skill
   documents the command + how to grant the permission.
+- **Multicast / group broadcast.** `tclaude agent message
+  group:<name> "..."` fans out to every member of the named group
+  except the sender. Daemon inserts one row per recipient under the
+  same group_id and nudges every online member's tmux pane. Sender
+  must be a member of the group to broadcast. CLI prints a per-
+  recipient summary (delivered vs queued). Replies come back as
+  normal direct messages — there is no automatic "reply-all" today.
 - **User-facing docs.** `docs/agent.md` covers the agent feature
   end-to-end: identity model, command reference, permission model
   with the storage split (config defaults vs SQLite per-agent

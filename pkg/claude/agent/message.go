@@ -36,7 +36,7 @@ type messageDeps struct {
 }
 
 type messageParams struct {
-	Target  string `pos:"true" help:"Target conv: UUID, prefix, or current title"`
+	Target  string `pos:"true" help:"Target conv (UUID/prefix/title) OR 'group:<name>' to broadcast to every member"`
 	Body    string `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
 	Subject string `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
 	Stdin   bool   `long:"stdin" help:"Read body from stdin"`
@@ -45,10 +45,11 @@ type messageParams struct {
 
 func messageCmd() *cobra.Command {
 	return boa.CmdT[messageParams]{
-		Use:         "message",
-		Aliases:     []string{"msg", "send"},
-		Short:       "Send a message to another agent in a shared group",
-		Long:        "Persists the message in SQLite and, if the target has a live tmux session, injects a `[system: …]` nudge so the receiving agent sees it on its next turn.",
+		Use:     "message",
+		Aliases: []string{"msg", "send"},
+		Short:   "Send a message to another agent (or 'group:<name>' to broadcast)",
+		Long: "Persists the message in SQLite and, if the target has a live tmux session, injects a `[system: …]` nudge so the receiving agent sees it on its next turn. " +
+			"Targets prefixed with 'group:' fan out: one row per non-sender member, nudge each one online. The sender must be a member of the group to broadcast.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *messageParams, _ *cobra.Command, _ []string) {
 			os.Exit(runMessage(p, &messageDeps{nudge: defaultNudge}, os.Stdout, os.Stderr, os.Stdin))
@@ -75,9 +76,15 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 
 func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) int {
 	var resp struct {
-		ID        int64  `json:"id"`
-		Delivered bool   `json:"delivered"`
-		ViaGroup  string `json:"via_group"`
+		ID         int64  `json:"id,omitempty"`
+		Delivered  bool   `json:"delivered,omitempty"`
+		ViaGroup   string `json:"via_group"`
+		Recipients []struct {
+			ConvID    string `json:"conv_id"`
+			Alias     string `json:"alias,omitempty"`
+			MessageID int64  `json:"message_id"`
+			Delivered bool   `json:"delivered"`
+		} `json:"recipients,omitempty"`
 	}
 	err := DaemonPost("/v1/messages", map[string]string{
 		"to":      p.Target,
@@ -91,6 +98,34 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	// Multicast: per-recipient status. Recipients[] is set only for
+	// the group:<name> path; direct sends populate ID/Delivered.
+	if resp.Recipients != nil {
+		if len(resp.Recipients) == 0 {
+			fmt.Fprintf(stdout, "No recipients in group %q (you're the only member); nothing sent.\n", resp.ViaGroup)
+			return rcOK
+		}
+		delivered := 0
+		for _, rcp := range resp.Recipients {
+			if rcp.Delivered {
+				delivered++
+			}
+		}
+		fmt.Fprintf(stdout, "Broadcast to group %q: %d recipients (%d delivered, %d queued).\n",
+			resp.ViaGroup, len(resp.Recipients), delivered, len(resp.Recipients)-delivered)
+		for _, rcp := range resp.Recipients {
+			alias := rcp.Alias
+			if alias == "" {
+				alias = "(unnamed)"
+			}
+			state := "queued"
+			if rcp.Delivered {
+				state = "delivered"
+			}
+			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)\n", rcp.MessageID, short(rcp.ConvID), alias, state)
+		}
+		return rcOK
 	}
 	state := "queued; target not online"
 	if resp.Delivered {

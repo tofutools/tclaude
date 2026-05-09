@@ -105,6 +105,25 @@ If the target has a live tmux session, they get a system nudge on their
 next turn. If they're offline, the message stays queued in their inbox
 and they'll see it on resume.
 
+## Broadcasting to a whole group
+
+Prefix the target with `group:` to fan out to every member of that
+group except yourself:
+
+```bash
+tclaude agent message group:reviewer-team "Heads up: PR #42 ready"
+tclaude agent message group:reviewer-team --subject "review" --file plan.md
+```
+
+You must be a member of the group to broadcast. The CLI prints a
+per-recipient summary (delivered vs queued) so you can see who got
+the nudge. Replies come back as normal direct messages — there's
+no automatic "reply-all".
+
+**Use sparingly.** Each member's tmux pane gets the same nudge, so
+broadcasting is the load-bearing equivalent of a chat-wide mention.
+Prefer direct messages for one-to-one conversations.
+
 ## Renaming yourself
 
 `tclaude agent rename "<title>"` lets you change your conversation's
