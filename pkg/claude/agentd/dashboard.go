@@ -200,6 +200,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ConvID: convID,
 			Title:  title,
 			Online: isConvOnline(convID),
+			// init non-nil so JSON serializes [] not null;
+			// the dashboard's JS does .length / .map without a guard.
+			Groups:    []string{},
+			Effective: []string{},
 		}
 		agentRows[convID] = a
 		return a
@@ -216,8 +220,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
 
+	// Initialise slices empty (not nil) so JSON serializes [] instead
+	// of null — the dashboard's JS does .length on members directly,
+	// which would crash on null.
+	out.Groups = []dashboardGroup{}
+	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		for _, m := range members {
 			row, _ := db.GetConvIndex(m.ConvID)

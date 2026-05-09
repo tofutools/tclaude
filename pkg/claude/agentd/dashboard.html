@@ -120,15 +120,17 @@ details[open] > summary::before { content: "▼ "; }
     if (!groups || !groups.length) {
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
     }
-    return groups.map(g => `
+    return groups.map(g => {
+      const members = g.members || [];
+      return `
       <details>
         <summary>
           <strong>${esc(g.name)}</strong>
-          <span class="muted">— ${g.members.length} members, ${g.online} online</span>
+          <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
         </summary>
         <div class="subtable">
-          ${g.members.length === 0 ? '<div class="muted">(no members yet)</div>' : `
+          ${members.length === 0 ? '<div class="muted">(no members yet)</div>' : `
           <table>
             <thead>
               <tr>
@@ -136,7 +138,7 @@ details[open] > summary::before { content: "▼ "; }
               </tr>
             </thead>
             <tbody>
-              ${g.members.map(m => `
+              ${members.map(m => `
                 <tr>
                   <td>${onlineDot(m.online)}</td>
                   <td class="id">${esc(shortId(m.conv_id))}</td>
@@ -153,7 +155,8 @@ details[open] > summary::before { content: "▼ "; }
           <code class="copy-cmd" data-copy="tclaude agent groups members ${g.name}">tclaude agent groups members ${esc(g.name)}</code>
         </div>
       </details>
-    `).join('');
+    `;
+    }).join('');
   }
 
   function renderAgents(agents) {
