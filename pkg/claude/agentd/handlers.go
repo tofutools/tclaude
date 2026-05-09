@@ -443,16 +443,8 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
 		msgID, msgID,
 	)
-	target := sess.TmuxSession + ":0.0"
-	// Two-step send: the Enter in the first call lands as a newline inside
-	// CC's input textarea, so a second Enter is needed to actually submit.
-	// Same pattern as pkg/claude/task/run.go's sendTmuxMessage / sendTmuxEnter.
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, nudge, "Enter").Run(); err != nil {
-		slog.Warn("nudge failed (text)", "error", err, "tmux", sess.TmuxSession)
-		return false
-	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("nudge failed (submit)", "error", err, "tmux", sess.TmuxSession)
+	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
+		slog.Warn("nudge failed", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}
 	// delivered_at is internal bookkeeping; the nudge itself already
@@ -466,8 +458,7 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 // injectSlashCommand finds an alive tmux session for convID and types the
 // given slash-command line into its CC pane, followed by a submit Enter.
 // If followUp is non-empty, it is sent as a fresh prompt right after the
-// slash submit (text + Enter+Enter). Returns true on successful delivery.
-// Same two-step send-keys pattern nudgeIfAlive uses.
+// slash submit. Returns true on successful delivery.
 //
 // Note: when used with /compact, the follow-up bytes queue in the pty
 // until CC resumes reading after the slash command settles. We don't
@@ -492,25 +483,45 @@ func injectSlashCommand(convID, line, followUp string) bool {
 		return false
 	}
 	target := sess.TmuxSession + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, line, "Enter").Run(); err != nil {
-		slog.Warn("slash-command inject failed (text)", "error", err, "tmux", sess.TmuxSession)
-		return false
-	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("slash-command inject failed (submit)", "error", err, "tmux", sess.TmuxSession)
+	if err := injectTextAndSubmit(target, line); err != nil {
+		slog.Warn("slash-command inject failed", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}
 	if followUp != "" {
-		if err := clcommon.TmuxCommand("send-keys", "-t", target, followUp, "Enter").Run(); err != nil {
-			slog.Warn("slash-command follow-up failed (text)", "error", err, "tmux", sess.TmuxSession)
-			return false
-		}
-		if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-			slog.Warn("slash-command follow-up failed (submit)", "error", err, "tmux", sess.TmuxSession)
+		if err := injectTextAndSubmit(target, followUp); err != nil {
+			slog.Warn("slash-command follow-up failed", "error", err, "tmux", sess.TmuxSession)
 			return false
 		}
 	}
 	return true
+}
+
+// injectTextAndSubmit types `text` into a CC pane and submits it as a
+// fresh prompt. Splits the text and the submit Enter into separate
+// `send-keys` calls with a 500 ms gap so CC's bracketed-paste mode
+// can't coalesce the trailing Enter into a paste-newline — when that
+// happens, the text gets pasted into the input box but never submitted.
+// (We learned this the hard way during reincarnate's handoff nudge:
+// rename worked, the [system: new agent message ...] text appeared
+// in the prompt, and neither Enter actually submitted because both
+// arrived back-to-back during the same paste-mode window. 200 ms was
+// enough in casual testing; 500 ms is the safety margin for slower
+// terminals / heavier load.)
+//
+// The trailing Enter is sent twice (belt-and-suspenders); the second
+// is a no-op if the first already submitted. Caller must have verified
+// the tmux pane is alive.
+func injectTextAndSubmit(tmuxTarget, text string) error {
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, text).Run(); err != nil {
+		return fmt.Errorf("send-keys text: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run(); err != nil {
+		return fmt.Errorf("send-keys submit: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	_ = clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run()
+	return nil
 }
 
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC

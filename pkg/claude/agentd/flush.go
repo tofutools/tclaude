@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -101,8 +100,9 @@ func realFlushSender(m *db.AgentMessage) bool {
 }
 
 // sendNudgeBracket finds an alive tmux session for toConv and sends
-// the bracketed nudge for msgID. Shared between the flush path and
-// (a future) refactor of nudgeIfAlive.
+// the bracketed nudge for msgID. Shares injectTextAndSubmit with
+// nudgeIfAlive / injectSlashCommand — see that helper for why the
+// text and the submit Enter are split with a sleep.
 //
 // Caller is responsible for marking delivered_at; this function
 // only does the tmux work.
@@ -128,13 +128,8 @@ func sendNudgeBracket(toConv string, msgID int64) bool {
 		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
 		msgID, msgID,
 	)
-	target := sess.TmuxSession + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, nudge, "Enter").Run(); err != nil {
-		slog.Warn("nudge bracket failed (text)", "error", err, "tmux", sess.TmuxSession)
-		return false
-	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("nudge bracket failed (submit)", "error", err, "tmux", sess.TmuxSession)
+	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
+		slog.Warn("nudge bracket failed", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}
 	return true

@@ -355,10 +355,13 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 	// 6. Compute the new instance's CC title — `<prev>-reincarnate-<N>`,
 	// global N across all conv_index rows. Done here (before /exit on
 	// the old pane below) so the lookup of prevTitle still resolves
-	// cleanly. Uses agent.FreshConvRow so a freshly-injected /rename
-	// on the old conv is picked up before we mint the suffix.
+	// cleanly. FreshConvRowAt scans the parent's .jsonl when conv_index
+	// has no row for it — required for back-to-back reincarnations
+	// where the parent itself was just spawned and never indexed yet
+	// (otherwise prevTitle would be "" and we'd produce `reincarnate-1`
+	// instead of `<parent>-reincarnate-N`).
 	prevTitle := ""
-	if row := agent.FreshConvRow(target); row != nil {
+	if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
 		prevTitle = agent.DisplayTitle(row)
 	}
 	newTitle := uniqueReincarnateTitle(prevTitle)
@@ -481,12 +484,13 @@ func runReincarnatePostSpawn(newConv, newTitle, followUp string, hasGroup bool) 
 		slog.Warn("reincarnate: solo follow-up text send failed", "error", err, "tmux", sess.TmuxSession)
 		return
 	}
-	time.Sleep(200 * time.Millisecond)
+	// 500ms gap — paste-mode coalescing safety; see injectTextAndSubmit.
+	time.Sleep(500 * time.Millisecond)
 	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
 		slog.Warn("reincarnate: solo follow-up submit failed", "error", err, "tmux", sess.TmuxSession)
 		return
 	}
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 }
 
@@ -535,15 +539,15 @@ func injectFollowUpDirect(newConv, followUp string) {
 		slog.Warn("reincarnate: solo follow-up text send failed", "error", err, "tmux", sess.TmuxSession)
 		return
 	}
-	// Small gap so the text and the submit Enter arrive in separate
+	// 500ms gap so the text and the submit Enter arrive in separate
 	// reads on CC's side; otherwise the trailing Enter risks being
-	// treated as a paste-newline.
-	time.Sleep(200 * time.Millisecond)
+	// treated as a paste-newline. Same as injectTextAndSubmit.
+	time.Sleep(500 * time.Millisecond)
 	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
 		slog.Warn("reincarnate: solo follow-up submit failed", "error", err, "tmux", sess.TmuxSession)
 		return
 	}
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	// Belt-and-suspenders second Enter — same pattern injectSlashCommand
 	// uses; harmless if the first one already submitted.
 	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()

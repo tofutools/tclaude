@@ -216,6 +216,84 @@ func TestResolveSelector_PrefersConvIndexOverMembers(t *testing.T) {
 	}
 }
 
+// TestFreshConvRowAt_ScansJSONLOnMissingRow covers the reincarnate
+// fast-path: a freshly-spawned conv has no conv_index row yet, but the
+// .jsonl on disk already has the custom-title written by `/rename`.
+// FreshConvRow alone returns nil; FreshConvRowAt with the cwd derives
+// the project path, scans the .jsonl, and produces the row.
+//
+// Regression: without this path, back-to-back reincarnations produced
+// names like `reincarnate-1` instead of `<parent>-reincarnate-N`
+// because prevTitle silently resolved to "".
+func TestFreshConvRowAt_ScansJSONLOnMissingRow(t *testing.T) {
+	setupTestDB(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	cwd := "/home/u/myproj"
+	convID := "12345678-1234-1234-1234-123456789012"
+
+	projectDir := filepath.Join(home, ".claude", "projects", "-home-u-myproj")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	fixture := strings.Join([]string{
+		`{"type":"user","sessionId":"` + convID + `","timestamp":"2026-05-10T01:00:00Z","cwd":"/home/u/myproj","message":{"role":"user","content":"hi"}}`,
+		`{"type":"custom-title","customTitle":"my-agent","sessionId":"` + convID + `"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(projectDir, convID+".jsonl"), []byte(fixture), 0o600); err != nil {
+		t.Fatalf("write jsonl: %v", err)
+	}
+
+	row := FreshConvRowAt(convID, cwd)
+	if row == nil {
+		t.Fatal("FreshConvRowAt returned nil; expected row from .jsonl scan")
+	}
+	if row.CustomTitle != "my-agent" {
+		t.Errorf("CustomTitle = %q, want %q", row.CustomTitle, "my-agent")
+	}
+}
+
+// TestFreshConvRowAt_CacheHitWinsOverDiskWalk: once the row is in the
+// cache, the cwd-derived disk walk is short-circuited entirely. We can
+// verify by passing a bogus cwd — if FreshConvRowAt walked the disk it
+// would scan nothing and overwrite our cached row.
+func TestFreshConvRowAt_CacheHitWinsOverDiskWalk(t *testing.T) {
+	setupTestDB(t)
+	convID := "abcd1234-2222-3333-4444-555555555555"
+	upsertConvIndex(t, convID, "cached", "", "")
+
+	row := FreshConvRowAt(convID, "/no/such/dir")
+	if row == nil {
+		t.Fatal("FreshConvRowAt returned nil for cached row")
+	}
+	if row.CustomTitle != "cached" {
+		t.Errorf("CustomTitle = %q, want %q (disk walk should not have fired)", row.CustomTitle, "cached")
+	}
+}
+
+// TestFreshConvRowAt_EmptyCwdReturnsNil: with neither a cached row nor
+// a cwd we have no way to find the .jsonl, so we return nil — the
+// reincarnate caller will fall back to the prefix-less title.
+func TestFreshConvRowAt_EmptyCwdReturnsNil(t *testing.T) {
+	setupTestDB(t)
+	row := FreshConvRowAt("11111111-1111-1111-1111-111111111111", "")
+	if row != nil {
+		t.Errorf("expected nil with empty cwd + no cache, got %+v", row)
+	}
+}
+
+// TestFreshConvRowAt_NoFileNoRow: known cwd but the .jsonl doesn't
+// exist there → ScanAndUpsertFile is a no-op and we return nil.
+func TestFreshConvRowAt_NoFileNoRow(t *testing.T) {
+	setupTestDB(t)
+	row := FreshConvRowAt("99999999-9999-9999-9999-999999999999", "/home/u/empty")
+	if row != nil {
+		t.Errorf("expected nil for missing conv + missing file, got %+v", row)
+	}
+}
+
 func TestRunLookup(t *testing.T) {
 	setupTestDB(t)
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")

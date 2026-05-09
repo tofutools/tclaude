@@ -193,6 +193,34 @@ func FreshConvRow(convID string) *db.ConvIndexRow {
 	return freshConvRow(convID)
 }
 
+// FreshConvRowAt is FreshConvRow with a cwd hint. When the conv has no
+// conv_index row yet (freshly-spawned by reincarnate / clone, never
+// touched by `tclaude conv ls` or the watch model), we derive the
+// .jsonl path from cwd + convID and scan it directly so callers can
+// still read CustomTitle. Returns nil if neither the cache nor the
+// derived path produced data.
+//
+// Why this exists: reincarnate's prevTitle lookup used to call
+// FreshConvRow on the parent and silently get nil when the parent's
+// conv-id had never been indexed — producing names like `reincarnate-1`
+// instead of `<parent-name>-reincarnate-N`. The cwd from the parent's
+// session row is the missing piece.
+func FreshConvRowAt(convID, cwd string) *db.ConvIndexRow {
+	if row := freshConvRow(convID); row != nil {
+		return row
+	}
+	if cwd == "" {
+		return nil
+	}
+	projectPath := conv.GetClaudeProjectPath(cwd)
+	if projectPath == "" {
+		return nil
+	}
+	jsonlPath := filepath.Join(projectPath, convID+".jsonl")
+	conv.ScanAndUpsertFile(jsonlPath)
+	return freshConvRow(convID)
+}
+
 // ShortID truncates a conv-id to the first 8 hex chars.
 func ShortID(convID string) string {
 	return short(convID)
