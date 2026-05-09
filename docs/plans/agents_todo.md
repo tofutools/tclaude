@@ -192,6 +192,58 @@ Open questions:
   message body, the proposed group/member change) so the human can
   see what they're approving? Almost certainly yes.
 
+### System tray icon
+
+A long-running tray icon for `tclaude agentd` so the human can see at
+a glance whether the daemon is up, and reach the dashboard / common
+actions in one click. Inspired directly by `/home/gigur/git/oh-shit-meeting`'s
+systray (uses `fyne.io/systray`, pure-Go on Windows, gracefully no-ops
+on hosts without a tray host like WSL or some GNOME setups).
+
+Indicators (icon colour or overlay):
+
+- **Green** — daemon up, no pending work.
+- **Yellow** — daemon up, **pending human approval popup** (the
+  approval flow we just shipped). Same idea as oh-shit-meeting's
+  yellow-when-action-needed.
+- **Red** — daemon down (or about to go down).
+- **Flashing** — unread agent inbox messages on any conv (configurable
+  threshold; flash is loud, so probably opt-in).
+
+Menu items:
+
+- **Open dashboard** → opens `popupBaseURL/` (the loopback HTTP root)
+  in the browser. Same `openBrowser` helper popup.go already has.
+- **Pending approvals (N)** — submenu listing currently-waiting
+  approval requests; clicking one re-opens its `/approve/{id}` page.
+  Useful when the auto-opened browser tab got buried.
+- **Reinstall agent skills** → runs the same code path as
+  `tclaude setup --install-agent-skills` so the human can refresh
+  bundled skills after a `go install …@latest` without dropping to a
+  shell.
+- **Open ~/.tclaude/config.json** → launch `xdg-open` /
+  `open` / `start` on the config file. Convenient for editing
+  permissions until the dashboard's edit UI lands.
+- **Show socket / popup port info** — small disabled menu items that
+  show `agentd.sock` path and the popup base URL, for copy-paste.
+- **Quit** → graceful daemon shutdown (the existing SIGTERM path).
+
+Implementation notes:
+
+- The `agentd serve` process runs the tray loop on its main goroutine
+  (systray needs the main thread). The HTTP servers move to
+  goroutines (they already are).
+- Cross-platform: macOS/Windows have native trays;
+  `fyne.io/systray` works on both. Linux varies — works on Plasma /
+  most XFCE / some GNOME, no-ops on WSL or pure Wayland sessions.
+  Document the support matrix.
+- Add a `--no-tray` flag to `tclaude agentd serve` for environments
+  where the tray dep is undesired (CI, headless Docker, etc.). Tray
+  is opt-out, not opt-in, since the whole point is "daemon visible
+  by default."
+- Optional bonus: tray click doubles as "focus most-recent dashboard
+  tab" — same window-focus tricks the WSL notifications already use.
+
 ### Web dashboard (browser UI)
 
 A long-running browser view served by `tclaude agentd` on the same
