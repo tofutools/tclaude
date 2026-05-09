@@ -25,6 +25,12 @@ func renameCmd() *cobra.Command {
 		Short:       "Rename the current conversation (requires self.rename permission)",
 		Long:        "Asks tclaude agentd to inject `/rename <title>` into the caller's own CC pane. Requires the `self.rename` permission, granted by the human via agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *renameParams, _ *cobra.Command) error {
+			// Title is brand-new content; only the --ask-human flag has
+			// meaningful suggestions.
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *renameParams, _ *cobra.Command, _ []string) {
 			os.Exit(runRename(p, os.Stdout, os.Stderr))
 		},

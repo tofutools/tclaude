@@ -148,29 +148,44 @@ func pickAliveSession(convID string) *db.SessionRow {
 }
 
 // spawnDetachedTclaudeResume runs `tclaude session new -r <conv> -d
-// --global` as a fully-detached subprocess. The daemon doesn't wait —
-// the launched session manages itself, registers via hooks, and we
-// see it appear in subsequent `groups members` output.
+// --global` as a fully-detached subprocess.
 //
-// We deliberately don't capture stdout/stderr; the subprocess is
-// long-lived and any output would just accumulate. Errors only
-// surface if the exec.Start() itself fails (binary missing, etc.).
+// Detachment story:
+//   - `tclaude session new -d` only means "don't attach this terminal
+//     to the new tmux session." The wrapper still runs in foreground
+//     and inherits whatever stdio its parent gave it.
+//   - We explicitly null stdio so nothing leaks back into the
+//     daemon's logs.
+//   - detachSpawn (unix-only) sets Setsid so the wrapper has its own
+//     session and process group — no controlling tty inherited from
+//     the daemon, and on daemon exit the wrapper gets reparented to
+//     init/PID 1 cleanly.
+//   - The actual CC process is parented to the long-running tmux
+//     server (because `tclaude session new -d` shells out to
+//     `tmux new-session -d ...` which forks the command as a child of
+//     the tmux server, not of the caller). So the CC process never
+//     has *us* in its ancestry chain — important so it doesn't trip
+//     CC's own process-ownership / sandbox checks via parent walks.
+//
+// Errors only surface if exec.Start() itself fails (binary missing
+// from PATH, etc.).
 func spawnDetachedTclaudeResume(convID, cwd string) error {
 	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
 	}
 	cmd := exec.Command("tclaude", args...)
-	// Detach completely — no stdio inheritance, no PG attachment, so
-	// the subprocess survives daemon restart cleanly.
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	pid := cmd.Process.Pid
-	// Reap the process when it finishes so we don't leak zombies.
+	// Reap the wrapper when it finishes so we don't leak zombies. The
+	// wrapper exits quickly (after `tmux new-session -d` returns); the
+	// real CC process keeps running under the tmux server.
 	go func() {
 		if err := cmd.Wait(); err != nil {
 			slog.Debug("resume subprocess exited",

@@ -337,6 +337,10 @@ func lookupCmd() *cobra.Command {
 		Use:         "lookup",
 		Short:       "Resolve an agent name (or ID prefix) to a full conversation ID",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *lookupParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
+			return nil
+		},
 		RunFunc: func(p *lookupParams, _ *cobra.Command, _ []string) {
 			os.Exit(runLookup(p, os.Stdout, os.Stderr))
 		},

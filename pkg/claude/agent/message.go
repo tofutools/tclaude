@@ -51,6 +51,10 @@ func messageCmd() *cobra.Command {
 		Long: "Persists the message in SQLite and, if the target has a live tmux session, injects a `[system: …]` nudge so the receiving agent sees it on its next turn. " +
 			"Targets prefixed with 'group:' fan out: one row per non-sender member, nudge each one online. The sender must be a member of the group to broadcast.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *messageParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeMessageTargets)
+			return nil
+		},
 		RunFunc: func(p *messageParams, _ *cobra.Command, _ []string) {
 			os.Exit(runMessage(p, &messageDeps{nudge: defaultNudge}, os.Stdout, os.Stderr, os.Stdin))
 		},

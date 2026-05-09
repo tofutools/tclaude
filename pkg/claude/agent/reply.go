@@ -26,6 +26,10 @@ func replyCmd() *cobra.Command {
 		Short:       "Reply to a message in your inbox by ID",
 		Long:        "Looks up the message, sends the body to its sender (Reply-To), and inherits a 'Re: <subject>' unless --subject is given.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *replyParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.ID).SetAlternativesFunc(completeInboxMessageIDs)
+			return nil
+		},
 		RunFunc: func(p *replyParams, _ *cobra.Command, _ []string) {
 			os.Exit(runReply(p, os.Stdout, os.Stderr, os.Stdin))
 		},

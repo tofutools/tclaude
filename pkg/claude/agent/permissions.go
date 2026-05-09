@@ -77,6 +77,10 @@ func permissionsLsCmd() *cobra.Command {
 		Use:         "ls",
 		Short:       "List defaults and overrides (or effective perms for one target)",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *permissionsLsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completePermissionTargets)
+			return nil
+		},
 		RunFunc: func(p *permissionsLsParams, _ *cobra.Command, _ []string) {
 			os.Exit(runPermissionsLs(p, os.Stdout, os.Stderr))
 		},
@@ -275,6 +279,12 @@ func permissionsGrantCmd() *cobra.Command {
 		Use:         "grant",
 		Short:       "Grant a permission slug to defaults or a specific agent",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *permissionsGrantParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completePermissionTargets)
+			boa.GetParamT(ctx, &p.Slug).SetAlternativesFunc(completePermissionSlugs)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *permissionsGrantParams, _ *cobra.Command, _ []string) {
 			os.Exit(runPermissionsMutate("/v1/permissions/grant", "Granted", p.Target, p.Slug, p.AskHuman, os.Stdout, os.Stderr))
 		},
@@ -294,6 +304,12 @@ func permissionsRevokeCmd() *cobra.Command {
 		Use:         "revoke",
 		Short:       "Revoke a permission slug from defaults or a specific agent",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *permissionsRevokeParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completePermissionTargets)
+			boa.GetParamT(ctx, &p.Slug).SetAlternativesFunc(completePermissionSlugs)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *permissionsRevokeParams, _ *cobra.Command, _ []string) {
 			os.Exit(runPermissionsMutate("/v1/permissions/revoke", "Revoked", p.Target, p.Slug, p.AskHuman, os.Stdout, os.Stderr))
 		},

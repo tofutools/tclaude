@@ -136,6 +136,10 @@ func inboxReadCmd() *cobra.Command {
 		Use:         "read",
 		Short:       "Print a message body and mark it read",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *inboxReadParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.ID).SetAlternativesFunc(completeInboxMessageIDs)
+			return nil
+		},
 		RunFunc: func(p *inboxReadParams, _ *cobra.Command, _ []string) {
 			os.Exit(runInboxRead(p, os.Stdout, os.Stderr))
 		},

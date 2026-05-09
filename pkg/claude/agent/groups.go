@@ -121,6 +121,11 @@ func groupsCreateCmd() *cobra.Command {
 		Use:         "create",
 		Short:       "Create a new group",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsCreateParams, _ *cobra.Command) error {
+			// `Name` is brand-new on create; no value-completion to offer.
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *groupsCreateParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsCreate(p, os.Stdout, os.Stderr))
 		},
@@ -170,6 +175,11 @@ func groupsRmCmd() *cobra.Command {
 		Use:         "rm",
 		Short:       "Delete a group (fails if any messages still reference it)",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsRmParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *groupsRmParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsRm(p, os.Stdout, os.Stderr))
 		},
@@ -212,6 +222,10 @@ func groupsMembersCmd() *cobra.Command {
 		Use:         "members",
 		Short:       "List members of a group",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsMembersParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			return nil
+		},
 		RunFunc: func(p *groupsMembersParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsMembers(p, os.Stdout, os.Stderr))
 		},
@@ -289,6 +303,12 @@ func groupsAddCmd() *cobra.Command {
 		Use:         "add",
 		Short:       "Add a conversation to a group",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsAddParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Conv).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *groupsAddParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsAdd(p, os.Stdout, os.Stderr))
 		},
@@ -341,6 +361,12 @@ func groupsRemoveCmd() *cobra.Command {
 		Short:       "Remove a conversation from a group",
 		Aliases:     []string{"rm-member"},
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsRemoveParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Conv).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *groupsRemoveParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsRemove(p, os.Stdout, os.Stderr))
 		},
@@ -381,6 +407,11 @@ func groupsStopCmd() *cobra.Command {
 		Short:       "End every member's running tmux session in a group",
 		Long:        "Soft-stops by default: injects `/exit` into each online member's CC pane via tmux send-keys. With --force, uses `tmux kill-session` (drops any unsubmitted input). Members already offline are skipped — stop is idempotent.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsStopParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *groupsStopParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsStop(p, os.Stdout, os.Stderr))
 		},
@@ -423,6 +454,11 @@ func groupsResumeCmd() *cobra.Command {
 		Short:       "Start a tclaude session for every offline member of a group",
 		Long:        "For each member with a known conv-id and no live tmux session, spawns `tclaude session new -r <conv> -d --global`. Members already online are skipped — resume is idempotent. Useful as a 'wake the team' reconciliation.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsResumeParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *groupsResumeParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsResume(p, os.Stdout, os.Stderr))
 		},
@@ -511,6 +547,12 @@ func groupsUpdateMemberCmd() *cobra.Command {
 		Short:       "Edit alias/role/descr on an existing group member",
 		Long:        "Patch the alias, role, or descr of a member already in a group. Only the flags you pass are touched; pass an empty string (e.g. --alias='') to clear a field. Same human-only gate as `add`/`remove`.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsUpdateMemberParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Conv).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *groupsUpdateMemberParams, cmd *cobra.Command, _ []string) {
 			os.Exit(runGroupsUpdateMember(p, cmd, os.Stdout, os.Stderr))
 		},
