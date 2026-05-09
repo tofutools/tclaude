@@ -80,44 +80,34 @@ covers the legitimate use case. If a human really wants to inject
 
 Follow-up improvements (separate items):
 - ~~**Auto-detach-and-reattach the human's terminal.**~~ **Shipped
-  (basic).** Daemon now runs `tmux list-clients -t <old>` and
-  `tmux switch-client -c <tty> -t <new>` for each client right
-  before injecting `/exit` on the old pane. Carry-over count
-  surfaced in the response as `switched_clients`. Verify:
-  reincarnate from an attached terminal, confirm the terminal lands
-  on the new tmux session without a manual attach, and confirm the
-  follow-up arrives in the now-attached pane.
-- **Investigate: stale terminal title after switch-client.** The
-  wrapper sets the OSC 0 window title once at attach time
-  (`pkg/claude/session/attach.go:90` → `setTerminalTitle("tclaude:<label>")`).
-  After `switch-client`, the terminal still advertises the old label,
-  which feeds `TryFocusAttachedSession` (used cross-session for
-  window focus). Cheap fix candidate: from the daemon, write a
-  fresh OSC sequence to the client's tty
-  (`printf '\033]0;tclaude:<newlabel>\007' > /dev/<tty>`) right
-  after the switch. Test path: focus heuristics
-  (`focus_*.go`, `goto.go`) before/after a reincarnate, see whether
-  they still find the terminal under the new label.
-- **Investigate: env coherence with the wrapper.** The
-  `tclaude attach` wrapper has `TCLAUDE_SESSION_ID=<old>` in its
-  process env (`attach.go:87`), but it's blocked on the
-  `tmux attach-session` subprocess for the duration. The canonical
-  source of truth is the env baked into each tmux session at
-  creation (`session/new.go:160`) plus the per-pane env propagated
-  by the tmux keybinds (`tmux_keys.go:33`), and CC + agent CLI both
-  read env from the *current* tmux session, not the wrapper. So in
-  theory the switch is clean. Confirm by reincarnating, then from
-  inside the new pane running: `echo $TCLAUDE_SESSION_ID`,
-  `tclaude agent whoami`, `tclaude session goto next` — all should
-  see the new identity. The wrapper's stale env only matters if
-  the human detaches and the wrapper resumes (it's about to exit
-  at that point anyway).
-- **Heavier alternative if the cheap fixes aren't enough:**
-  IPC-signal the foreground `tclaude attach` process to kill its
-  tmux subprocess and exec into a fresh `tclaude session attach
-  <new-label>`. That would rewrite both env *and* title naturally,
-  but adds a new wrapper-IPC channel. Defer unless the cheap path
-  shows a real regression.
+  + verified (test #2, 2026-05).** Daemon runs `tmux list-clients
+  -t <old>` and `tmux switch-client -c <tty> -t <new>` for each
+  client right before injecting `/exit` on the old pane. Carry-over
+  count surfaced in the response as `switched_clients`. End-to-end
+  test from an attached terminal confirmed: terminal lands on the
+  new pane without a manual attach, and the follow-up nudge
+  arrives in the now-attached pane.
+- ~~**Investigate: stale terminal title after switch-client.**~~
+  **Closed — not a bug (test #2).** Empirically the title DID
+  refresh to the new session label after `switch-client`, so the
+  WSL title-based notification path kept working. The earlier
+  worry that the wrapper's `setTerminalTitle("tclaude:<label>")`
+  (`pkg/claude/session/attach.go:90`) would freeze the title was
+  unfounded — tmux owns the title per-session and refreshes it on
+  switch. No daemon-side OSC rewrite needed.
+- ~~**Investigate: env coherence with the wrapper.**~~ **Closed
+  — verified clean (test #2).** From inside the freshly-switched
+  pane: `echo $TCLAUDE_SESSION_ID` returned the new label,
+  `tclaude agent whoami` resolved to the new conv-id, and
+  `tclaude session ls` showed the new session as the active row.
+  The wrapper's stale `TCLAUDE_SESSION_ID` in its blocked-on-tmux
+  process env doesn't leak — tmux session env (baked at
+  `session/new.go:160`, propagated by `tmux_keys.go:33`) is the
+  canonical source for everything that runs inside the new pane.
+- **Heavier alternative if a regression appears:** IPC-signal the
+  foreground `tclaude attach` process to kill its tmux subprocess
+  and exec into a fresh `tclaude session attach <new-label>`. Not
+  needed today; keep on the shelf in case the cheap path breaks.
 - Optional title preservation if we wire CC's title into our DB
   (e.g. via a hook that captures it, or by parsing CC's conv jsonl).
 
