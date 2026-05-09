@@ -53,7 +53,7 @@ func prepare(bind string, port int, user, pass, tmuxSession string, useTLS bool)
 	if useTLS {
 		tlsConfig, fingerprint, err := loadOrGenerateCert()
 		if err != nil {
-			ln.Close()
+			_ = ln.Close()
 			return nil, fmt.Errorf("failed to generate TLS certificate: %w", err)
 		}
 		fmt.Printf("  fingerprint: %s\n", fingerprint)
@@ -72,7 +72,7 @@ func (ps *preparedServer) serve() error {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 		fmt.Println("\nShutting down...")
-		ps.server.Close()
+		_ = ps.server.Close()
 	}()
 
 	return ps.server.Serve(ps.listener)
@@ -105,7 +105,7 @@ func basicAuth(user, pass string) func(http.HandlerFunc) http.HandlerFunc {
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(indexHTML))
+	_, _ = w.Write([]byte(indexHTML))
 }
 
 // resizeMsg is sent from the browser when the terminal is resized
@@ -126,13 +126,13 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 			return
 		}
 		defer func() {
-			conn.Close()
+			_ = conn.Close()
 			slog.Info("client disconnected", "remote", addr)
 		}()
 
 		// Set window-size to latest so the most recently active client
 		// dictates the size - avoids dots filling the phone screen
-		clcommon.TmuxCommand("set-option", "-t", tmuxSession, "window-size", "latest").Run()
+		_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "window-size", "latest").Run()
 
 		// Spawn tmux attach in a PTY
 		cmd := clcommon.TmuxCommand("attach-session", "-t", tmuxSession)
@@ -141,13 +141,13 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 		ptmx, err := pty.Start(cmd)
 		if err != nil {
 			slog.Error("pty start failed", "error", err)
-			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Error: %v\r\n", err)))
+			_ = conn.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "Error: %v\r\n", err))
 			return
 		}
 		defer func() {
-			ptmx.Close()
-			cmd.Process.Signal(syscall.SIGHUP)
-			cmd.Wait()
+			_ = ptmx.Close()
+			_ = cmd.Process.Signal(syscall.SIGHUP)
+			_ = cmd.Wait()
 		}()
 
 		var wg sync.WaitGroup
@@ -176,7 +176,7 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 				msgType, data, err := conn.ReadMessage()
 				if err != nil {
 					// Client disconnected - detach from tmux cleanly
-					ptmx.Close()
+					_ = ptmx.Close()
 					return
 				}
 
@@ -185,7 +185,7 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 					var msg resizeMsg
 					if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
 						if msg.Cols > 0 && msg.Rows > 0 {
-							pty.Setsize(ptmx, &pty.Winsize{
+							_ = pty.Setsize(ptmx, &pty.Winsize{
 								Cols: uint16(msg.Cols),
 								Rows: uint16(msg.Rows),
 							})
@@ -195,7 +195,7 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 				}
 
 				// Regular input
-				ptmx.Write(data)
+				_, _ = ptmx.Write(data)
 			}
 		}()
 

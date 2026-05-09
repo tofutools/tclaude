@@ -1,21 +1,14 @@
 package common
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
 
 func TestBuildEnvExports(t *testing.T) {
-	// Set some test environment variables
-	os.Setenv("TEST_VAR1", "value1")
-	os.Setenv("TEST_VAR2", "value with spaces")
-	os.Setenv("TEST_VAR3", "value'with'quotes")
-	defer func() {
-		os.Unsetenv("TEST_VAR1")
-		os.Unsetenv("TEST_VAR2")
-		os.Unsetenv("TEST_VAR3")
-	}()
+	t.Setenv("TEST_VAR1", "value1")
+	t.Setenv("TEST_VAR2", "value with spaces")
+	t.Setenv("TEST_VAR3", "value'with'quotes")
 
 	tests := []struct {
 		name       string

@@ -53,7 +53,7 @@ func Open() (*sql.DB, error) {
 		} {
 			if _, err := globalDB.Exec(pragma); err != nil {
 				initErr = err
-				globalDB.Close()
+				_ = globalDB.Close()
 				globalDB = nil
 				return
 			}
@@ -61,7 +61,7 @@ func Open() (*sql.DB, error) {
 
 		initErr = migrate(globalDB)
 		if initErr != nil {
-			globalDB.Close()
+			_ = globalDB.Close()
 			globalDB = nil
 		}
 	})
@@ -84,7 +84,7 @@ func Close() {
 // Must only be called from tests.
 func ResetForTest() {
 	if globalDB != nil {
-		globalDB.Close()
+		_ = globalDB.Close()
 		globalDB = nil
 	}
 	once = sync.Once{}

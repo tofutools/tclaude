@@ -1,0 +1,26 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - (*os.File).Close
+        - (*database/sql.Rows).Close
+        - (io.ReadCloser).Close
+        - (net.Listener).Close
+        - (net.Conn).Close
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

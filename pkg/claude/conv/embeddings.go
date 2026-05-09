@@ -68,7 +68,7 @@ func (c *OllamaClient) embedRaw(input any) (*ollamaEmbedResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ollama request failed (is Ollama running?): %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result ollamaEmbedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -181,7 +181,7 @@ func chunkConversationContent(filePath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)

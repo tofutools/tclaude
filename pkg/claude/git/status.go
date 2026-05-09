@@ -52,7 +52,7 @@ func runStatus(_ *StatusParams) error {
 	remoteCmd.Dir = syncDir
 	remoteCmd.Stdout = os.Stdout
 	remoteCmd.Stderr = os.Stderr
-	remoteCmd.Run()
+	_ = remoteCmd.Run()
 
 	fmt.Println()
 

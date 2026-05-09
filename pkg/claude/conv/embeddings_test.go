@@ -65,7 +65,7 @@ func newMockOllama(t *testing.T, dims int, contextLimit int) *httptest.Server {
 		for _, text := range texts {
 			if contextLimit > 0 && len(text) > contextLimit {
 				w.WriteHeader(http.StatusOK) // Ollama returns 200 with error in body, or 400
-				json.NewEncoder(w).Encode(map[string]string{
+				_ = json.NewEncoder(w).Encode(map[string]string{
 					"error": "the input length exceeds the context length",
 				})
 				return
@@ -77,7 +77,7 @@ func newMockOllama(t *testing.T, dims int, contextLimit int) *httptest.Server {
 			embeddings = append(embeddings, fakeEmbedding(text, dims))
 		}
 
-		json.NewEncoder(w).Encode(ollamaEmbedResponse{
+		_ = json.NewEncoder(w).Encode(ollamaEmbedResponse{
 			Embeddings:      embeddings,
 			PromptEvalCount: len(texts[0]) / 4,
 		})

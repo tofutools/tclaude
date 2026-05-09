@@ -47,7 +47,7 @@ func ListAllEmbeddings() ([]*EmbeddingRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanEmbeddingRows(rows)
 }
@@ -64,7 +64,7 @@ func ListEmbeddingsForConv(convID string) ([]*EmbeddingRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanEmbeddingRows(rows)
 }
@@ -115,7 +115,7 @@ func ListEmbeddedConvIDs() (map[string]time.Time, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]time.Time)
 	for rows.Next() {
@@ -145,7 +145,7 @@ func ListEmbeddedConvIDsForProject(projectDir string) (map[string]time.Time, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]time.Time)
 	for rows.Next() {
@@ -170,7 +170,7 @@ func ListEmbeddingModels() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var models []string
 	for rows.Next() {

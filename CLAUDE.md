@@ -12,11 +12,11 @@ and a custom status bar.
 go build ./...                    # Build all packages
 go test ./...                     # Run all tests
 go test ./pkg/claude/conv/...     # Run tests for a specific package
-go vet ./...                      # Lint
+golangci-lint run ./...           # Lint
 go install .                      # Install locally
 ```
 
-CI runs `go test ./...` and `go vet ./...` across Linux, macOS, and Windows (amd64 + arm64).
+CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and Windows (amd64 + arm64).
 
 ## Architecture
 

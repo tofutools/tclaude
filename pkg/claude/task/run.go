@@ -347,7 +347,7 @@ func waitForTasks(ctx context.Context, out io.Writer, todoPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file watcher: %w", err)
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	if err := watcher.Add(dir); err != nil {
 		return fmt.Errorf("failed to watch directory %s: %w", dir, err)
@@ -419,7 +419,7 @@ type taskRunOpts struct {
 // sessionID string - Claude's session_id from hook
 func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, opts taskRunOpts) (report string, sessionID string, err error) {
 	signalPath := session.TaskSignalPath(cwd)
-	os.Remove(signalPath) // clean up stale signal from previous run
+	_ = os.Remove(signalPath) // clean up stale signal from previous run
 
 	// Snapshot HEAD so we can detect commits made by the agent during the task.
 	baseCommit, err := getCurrentCommit(cwd)
@@ -457,7 +457,7 @@ func runClaude(cwd, prompt string, extraArgs []string, excludeTaskFiles bool, op
 			sessionID = taskSignal.SessionID
 		}
 	}
-	os.Remove(signalPath)
+	_ = os.Remove(signalPath)
 
 	return report, sessionID, err
 }
@@ -474,7 +474,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 	if err != nil {
 		return // silently fall back to no auto-exit
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	if err := watcher.Add(dir); err != nil {
 		return
@@ -518,7 +518,11 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 			// Read the signal to determine what triggered it
 			var taskSignal session.TaskSignal
 			if data, readErr := os.ReadFile(signalPath); readErr == nil {
-				json.Unmarshal(data, &taskSignal)
+				if err := json.Unmarshal(data, &taskSignal); err != nil {
+					slog.Warn("failed to parse task signal", "error", err, "path", signalPath, "module", "task")
+					signalExists = false
+					continue
+				}
 			}
 
 			slog.Debug("signal received", "signal", taskSignal, "module", "task")
@@ -581,7 +585,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 						return
 					}
 					if attempts <= opts.verifyMaxRetries {
-						os.Remove(signalPath)
+						_ = os.Remove(signalPath)
 						signalExists = false
 						msg := fmt.Sprintf("Verification failed (attempt %d/%d), please fix the issue and try again:\n```\n%s\n```\n", attempts, opts.verifyMaxRetries, output)
 						sendTmuxMessage(tmuxSession, msg)
@@ -639,7 +643,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 							lastReviewDiffHash = currentDiffHash
 							if reviewOutput != "" {
 								reviewAttempts++
-								os.Remove(signalPath)
+								_ = os.Remove(signalPath)
 								signalExists = false
 								msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
 								sendTmuxMessage(tmuxSession, msg)
@@ -967,16 +971,18 @@ func runReviewAgent(ctx context.Context, reviewSkill, diff, cwd string, timeout 
 	return strings.TrimSpace(string(out)), err
 }
 
-// sendTmuxMessage sends arbitrary text + Enter to the tmux session.
 func sendTmuxMessage(tmuxSession, message string) {
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, message, "Enter")
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		slog.Warn("failed to send tmux message", "session", tmuxSession, "error", err, "module", "task")
+	}
 }
 
-// sendTmuxEnter sends just an Enter keypress to the tmux session.
 func sendTmuxEnter(tmuxSession string) {
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter")
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		slog.Warn("failed to send tmux enter", "session", tmuxSession, "error", err, "module", "task")
+	}
 }
 
 // gitCommitAll stages all changes and commits with the given message.

@@ -107,7 +107,7 @@ func killMultiple(params *KillParams) error {
 		}
 		fmt.Print("\nContinue? [y/N]: ")
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		if response != "y" && response != "Y" {
 			fmt.Println("Aborted")
 			return nil

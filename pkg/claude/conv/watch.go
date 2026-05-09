@@ -179,7 +179,7 @@ func newWorktreeInput() textinput.Model {
 	ti.SetStyles(s)
 	ti.Validate = func(s string) error {
 		for _, c := range s {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '/') {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' && c != '/' {
 				return fmt.Errorf("invalid branch character: %c", c)
 			}
 		}
@@ -1076,7 +1076,7 @@ func (m *watchModel) closeWatcher() {
 		m.fsCloseCh = nil
 	}
 	if m.watcher != nil {
-		m.watcher.Close()
+		_ = m.watcher.Close()
 		m.watcher = nil
 	}
 }
@@ -1603,7 +1603,7 @@ func RunConvWatchMode(global bool, since, before string) error {
 		}
 
 		if result.FocusOnly {
-			os.Setenv("TCLAUDE_SESSION_ID", result.FocusSessionID)
+			_ = os.Setenv("TCLAUDE_SESSION_ID", result.FocusSessionID)
 			session.TryFocusAttachedSession(result.TmuxSession)
 			continue
 		}

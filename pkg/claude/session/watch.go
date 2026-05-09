@@ -262,18 +262,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
-					if m.confirmMode == confirmKill {
+					switch m.confirmMode {
+					case confirmKill:
 						state := m.sessions[m.cursor]
 						_ = killSession(state)
 						m.confirmMode = confirmNone
 						m = m.refreshSessions()
-					} else if m.confirmMode == confirmAttachForce {
+					case confirmAttachForce:
 						m.shouldAttach = m.sessions[m.cursor].TmuxSession
 						m.shouldAttachID = m.sessions[m.cursor].ID
 						m.forceAttach = true
 						m.confirmMode = confirmNone
 						return m, tea.Quit
-					} else if m.confirmMode == confirmDetach {
+					case confirmDetach:
 						state := m.sessions[m.cursor]
 						_ = DetachSessionClients(state.TmuxSession)
 						m.confirmMode = confirmNone
@@ -537,7 +538,7 @@ func (m model) View() tea.View {
 		if len(m.allSessions) == 0 {
 			b.WriteString("  No active sessions")
 			if len(m.statusFilter) > 0 {
-				b.WriteString(fmt.Sprintf(" (filter: %s)", strings.Join(m.statusFilter, ", ")))
+				fmt.Fprintf(&b, " (filter: %s)", strings.Join(m.statusFilter, ", "))
 			}
 			b.WriteString("\n")
 		} else {
@@ -570,7 +571,7 @@ func (m model) View() tea.View {
 		}
 
 		// Add attached/type indicator
-		attachedMark := "  "
+		var attachedMark string
 		tmuxAlive := state.TmuxSession != "" && IsTmuxSessionAlive(state.TmuxSession)
 		if !tmuxAlive {
 			attachedMark = " ◉" // Non-tmux or dead tmux (in-terminal, can't attach)
@@ -846,7 +847,7 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 
 		// Focus only - just focus the window and return to watch mode
 		if result.FocusOnly {
-			os.Setenv("TCLAUDE_SESSION_ID", result.SessionID)
+			_ = os.Setenv("TCLAUDE_SESSION_ID", result.SessionID)
 			TryFocusAttachedSession(result.TmuxSession)
 			continue
 		}

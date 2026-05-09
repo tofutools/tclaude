@@ -39,11 +39,11 @@ func AddCmd() *cobra.Command {
 	}.ToCobra()
 
 	// Register completions
-	cmd.RegisterFlagCompletionFunc("from-branch", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc("from-branch", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return GetBranchCompletions(), cobra.ShellCompDirectiveNoFileComp
 	})
 
-	cmd.RegisterFlagCompletionFunc("from-conv", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc("from-conv", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		global, _ := cmd.Flags().GetBool("global")
 		return clcommon.GetConversationCompletions(global), cobra.ShellCompDirectiveKeepOrder | cobra.ShellCompDirectiveNoFileComp
 	})

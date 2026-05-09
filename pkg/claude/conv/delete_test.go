@@ -91,8 +91,8 @@ func TestRunDelete_NotInIndex_DeletesFiles(t *testing.T) {
 
 	stdout, _ := os.CreateTemp(t.TempDir(), "stdout")
 	stderr, _ := os.CreateTemp(t.TempDir(), "stderr")
-	defer stdout.Close()
-	defer stderr.Close()
+	defer func() { _ = stdout.Close() }()
+	defer func() { _ = stderr.Close() }()
 
 	// Call the delete logic directly on the temp dir
 	// We can't use RunDelete because it resolves projectPath from cwd,

@@ -105,7 +105,7 @@ func TestFindSessionByID(t *testing.T) {
 	// Test exact match
 	entry, idx := FindSessionByID(index, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	if entry == nil || idx != 0 {
-		t.Error("Exact match failed")
+		t.Fatal("Exact match failed")
 	}
 	if entry.FirstPrompt != "First" {
 		t.Errorf("Wrong entry returned: %q", entry.FirstPrompt)
