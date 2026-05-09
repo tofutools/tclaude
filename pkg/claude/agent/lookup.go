@@ -11,6 +11,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -96,6 +97,14 @@ func displayTitle(r *db.ConvIndexRow) string {
 	return r.FirstPrompt
 }
 
+// freshConvRow returns the conv_index row for convID, rescanning the
+// underlying .jsonl when its mtime is newer than the cached row. The actual
+// freshness check lives in conv.RefreshConvIndexEntry — same pattern that
+// LoadSessionsIndex uses on every `conv ls`.
+func freshConvRow(convID string) *db.ConvIndexRow {
+	return conv.RefreshConvIndexEntry(convID)
+}
+
 // currentConvID returns the conv-id of the conversation invoking us. We
 // prefer Claude Code's per-pid session file (tracks `/clear` and `/resume`)
 // and fall back to the env var that tclaude sets at session launch.
@@ -178,7 +187,7 @@ func runWhoami(stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
-	row, _ := db.GetConvIndex(id)
+	row := freshConvRow(id)
 	title := "(unnamed)"
 	if row != nil {
 		if t := displayTitle(row); t != "" {
