@@ -133,12 +133,15 @@ pattern). Both routed through the existing
 
 #### Open follow-ups
 
-- ~~**Alias collision auto-increment.**~~ **Shipped.** A clone whose
-  computed `<orig>-clone` alias already exists in the same group
-  gets `-2`, `-3`, etc. appended until free. Doesn't help with the
-  `foo-clone-clone` chain (the base of a clone-of-a-clone is
-  whatever the parent already had); the increment kicks in when
-  multiple clones of the same original collide in a single group.
+- ~~**Alias scheme: always `-clone-<N>`.**~~ **Shipped.** Every
+  clone gets `<base>-clone-<N>` (or `clone-<N>` when the original
+  had no alias), where N is the smallest integer free across all
+  group_member rows system-wide. Clone-of-a-clone strips the
+  existing `-clone-<digits>` suffix before recomputing, so
+  `worker-clone-3` clones to `worker-clone-N` (bumped) rather than
+  `worker-clone-3-clone-1` (nested). Counter is global, not per-
+  group, so the same clone gets the same alias across every group
+  it inherits.
 - **Rate limiting.** A runaway loop can fork unboundedly since the
   original isn't taken down. Worth adding 1-clone-per-minute at the
   daemon if it shows up in practice.

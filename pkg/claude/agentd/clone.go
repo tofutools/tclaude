@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,33 +38,71 @@ import (
 // each clone has its own conv_id, so the clobber is alias-scoped
 // only — the rows themselves are distinct).
 
-const cloneAliasSuffix = "-clone"
+// cloneSuffixRegex matches a trailing `-clone-<digits>` so we can
+// strip it from a clone-of-a-clone's base before computing the next
+// suffix. Anchored at end; greedy lazy on the base (`.*?`) so
+// `worker-clone-3` → base `worker`, not `worker-clone` + suffix `3`.
+var cloneSuffixRegex = regexp.MustCompile(`^(.*?)-clone-\d+$`)
 
-// uniqueCloneAlias returns base if no member of groupID already uses
-// it, otherwise appends `-2`, `-3`, … until a free slot is found.
-// Lookup error → return base unchanged (best-effort; the daemon's
-// INSERT-OR-REPLACE on (group_id, conv_id) means a stale alias is
-// the worst case, not a write failure).
-func uniqueCloneAlias(groupID int64, base string) string {
-	members, err := db.ListAgentGroupMembers(groupID)
+// uniqueCloneAlias computes the clone's per-group alias. The format
+// is ALWAYS `<base>-clone-<N>` (or `clone-<N>` when the original had
+// no alias in this group). base is origAlias with any existing
+// `-clone-<digits>` stripped, so a clone-of-a-clone bumps N rather
+// than nesting suffixes (`worker-clone-3` clones to `worker-clone-4`,
+// not `worker-clone-3-clone-1`).
+//
+// N is chosen globally — the smallest integer such that
+// `<base>-clone-<N>` doesn't appear as the alias of any
+// agent_group_members row anywhere. This intentionally does NOT
+// scope by group: the same clone uses the same alias across every
+// group it inherits, and parallel clones of the same original each
+// pick distinct N's regardless of which groups they're added to.
+//
+// Lookup error → fall back to N=1 (best-effort).
+func uniqueCloneAlias(origAlias string) string {
+	base := origAlias
+	if m := cloneSuffixRegex.FindStringSubmatch(base); m != nil {
+		base = m[1]
+	}
+	prefix := "clone-"
+	if base != "" {
+		prefix = base + "-clone-"
+	}
+	used := scanCloneSuffixesGlobal(prefix)
+	for n := 1; ; n++ {
+		if !used[n] {
+			return prefix + strconv.Itoa(n)
+		}
+	}
+}
+
+// scanCloneSuffixesGlobal walks every group's members and returns the
+// set of integers N where some alias equals `<prefix><N>`. Used by
+// uniqueCloneAlias to pick the smallest free N.
+func scanCloneSuffixesGlobal(prefix string) map[int]bool {
+	used := map[int]bool{}
+	groups, err := db.ListAgentGroups()
 	if err != nil {
-		return base
+		return used
 	}
-	taken := map[string]bool{}
-	for _, m := range members {
-		if m.Alias != "" {
-			taken[m.Alias] = true
+	for _, g := range groups {
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			continue
+		}
+		for _, m := range members {
+			if !strings.HasPrefix(m.Alias, prefix) {
+				continue
+			}
+			suffix := strings.TrimPrefix(m.Alias, prefix)
+			n, err := strconv.Atoi(suffix)
+			if err != nil {
+				continue
+			}
+			used[n] = true
 		}
 	}
-	if !taken[base] {
-		return base
-	}
-	for i := 2; ; i++ {
-		candidate := fmt.Sprintf("%s-%d", base, i)
-		if !taken[candidate] {
-			return candidate
-		}
-	}
+	return used
 }
 
 // handleWhoamiClone handles POST /v1/whoami/clone (self path).
@@ -263,13 +303,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 	}
 	copied := []string{}
 	for _, m := range oldMembers {
-		base := m.Alias
-		if base == "" {
-			base = strings.TrimPrefix(cloneAliasSuffix, "-")
-		} else {
-			base = base + cloneAliasSuffix
-		}
-		alias := uniqueCloneAlias(m.GroupID, base)
+		alias := uniqueCloneAlias(m.Alias)
 		newMember := &db.AgentGroupMember{
 			GroupID: m.GroupID,
 			ConvID:  newConv,
