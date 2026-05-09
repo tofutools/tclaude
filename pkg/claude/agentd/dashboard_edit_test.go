@@ -201,6 +201,43 @@ func TestDashboardEdit_DeleteAgent_MissingConv(t *testing.T) {
 	}
 }
 
+func TestDashboardEdit_Jump_NoLiveSession(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	// No conv with this id has been indexed — resolver fails first.
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/jump/00000000-1111-2222-3333-444444444444", "")
+	handleDashboardJumpAPI(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestDashboardEdit_Jump_WrongMethod(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodGet, "/api/jump/00000000-1111-2222-3333-444444444444", "")
+	handleDashboardJumpAPI(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestDashboardEdit_Jump_MissingConv(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/jump/", "")
+	handleDashboardJumpAPI(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
 func TestDashboardEdit_NoCookieRefused(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

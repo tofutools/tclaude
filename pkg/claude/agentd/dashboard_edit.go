@@ -9,6 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Mutating endpoints for the dashboard. These live on the loopback
@@ -36,6 +37,52 @@ const dashboardGranter = "<human-dashboard>"
 func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/groups/", handleDashboardGroupsAPI)
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
+	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
+}
+
+// handleDashboardJumpAPI dispatches:
+//
+//	POST /api/jump/{conv}    → focus the agent's tmux-attached terminal
+//
+// Resolves the conv to its alive tmux session row daemon-side and
+// calls session.TryFocusAttachedSession (per-platform: AppleScript /
+// wmctrl / PowerShell). Best-effort — the helper logs but doesn't
+// return errors; we 204 on dispatch and 404 only when the conv has
+// no live session at all.
+func handleDashboardJumpAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/jump/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "expected /api/jump/{conv}", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if len(parts) > 1 && parts[1] != "" {
+		http.Error(w, "unknown subpath /api/jump/{conv}/"+parts[1], http.StatusNotFound)
+		return
+	}
+	convSelector := parts[0]
+	if u, err := url.PathUnescape(convSelector); err == nil {
+		convSelector = u
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	sess := pickAliveSession(res.ConvID)
+	if sess == nil {
+		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
+		return
+	}
+	session.TryFocusAttachedSession(sess.TmuxSession)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleDashboardAgentsAPI dispatches:

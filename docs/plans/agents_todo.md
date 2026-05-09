@@ -625,17 +625,12 @@ home for membership editing):
   `ON DELETE RESTRICT` on `agent_messages`, so the modal warns the
   user to clear the inbox first; backend returns 409 on constraint
   failure and the toast surfaces the error.
-- **Jump-to-terminal button** on each member row (and probably
-  agent row). Reuse `session.TryFocusAttachedSession(tmuxSession)`
-  — the same focus mechanism the interactive `tclaude session ls
-  -w` and `conv ls -w` views already use to surface a session in
-  the user's terminal window. The dashboard already has the
-  agent's tmux_session in the snapshot (per dashboardMember.State
-  / dashboardAgent.State.cwd path); plumb it through to a new
-  `POST /api/jump/{tmux_session}` (or per-conv) that calls the
-  focus helper daemon-side. Per-platform behaviours: macOS uses
-  AppleScript, Linux uses wmctrl/i3-msg, Windows uses powershell
-  — already abstracted behind the helper's platform build tags.
+- ~~**Jump-to-terminal button**~~ — **shipped.** `POST /api/jump/{conv}`
+  resolves the conv to its alive tmux session row daemon-side and
+  calls `session.TryFocusAttachedSession`. UI shows a "focus"
+  button per row (Agents tab + Groups members), only when the
+  agent is online. Non-destructive, no confirm modal — fire +
+  toast.
 - **Deprecation labels / soft-hide for groups + agents.** Want a way
   to keep something around for a bit before deleting permanently.
   Sketch: a generic "label" field per group / per (group, member),

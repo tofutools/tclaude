@@ -306,11 +306,14 @@ details[open] > summary .group-actions { opacity: 1; }
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
+    const focusBtn = m.online
+      ? `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Focus this agent's terminal window">focus</button>`
+      : '';
     const ownerBtn = m.owner
       ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
       : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
     const removeBtn = `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
-    return `<div class="row-actions">${ownerBtn}${removeBtn}</div>`;
+    return `<div class="row-actions">${focusBtn}${ownerBtn}${removeBtn}</div>`;
   }
 
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
@@ -421,7 +424,7 @@ details[open] > summary .group-actions { opacity: 1; }
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions"><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${a.online ? `<button data-act="jump" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Focus this agent's terminal window">focus</button>` : ''}<button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -701,6 +704,18 @@ details[open] > summary .group-actions { opacity: 1; }
             ok = r.ok;
             if (!ok) toast(`Grant owner failed: ${await r.text()}`, true);
             break;
+          }
+          case 'jump': {
+            // Non-destructive; no confirm modal, just fire-and-toast.
+            const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Jump failed: ${await r.text()}`, true);
+            // Skip the default refresh — focusing doesn't change any
+            // dashboard state and the user just left the window.
+            if (ok) toast(`focused: ${label}`);
+            return;
           }
           case 'delete-agent': {
             const confirmed = await confirmModal({
