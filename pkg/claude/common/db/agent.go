@@ -132,6 +132,22 @@ func RevokeAgentPermission(convID, slug string) (int64, error) {
 	return n, nil
 }
 
+// RevokeAllAgentPermissionsForConv drops every per-conv permission
+// row for convID. Bulk cleanup variant for the conv-delete path.
+// Idempotent — returns the number of rows removed.
+func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`DELETE FROM agent_permissions WHERE conv_id = ?`, convID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // AgentMessage is a row in agent_messages. Body is stored inline.
 // ParentID is the message this one is a reply to, or 0 for top-of-thread.
 type AgentMessage struct {
@@ -312,6 +328,24 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 	_, err = db.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND conv_id = ?`,
 		groupID, convID)
 	return err
+}
+
+// RemoveAllAgentGroupMembershipsForConv drops every membership row
+// referencing convID, regardless of group. Used by the conv-delete
+// path so the dashboard's agent listing doesn't keep showing
+// orphaned (unknown) entries after the underlying conversation is
+// wiped. Idempotent — returns the number of rows removed.
+func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`DELETE FROM agent_group_members WHERE conv_id = ?`, convID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // ListAgentGroupMembers returns the members of a group, ordered by alias
@@ -530,6 +564,23 @@ func RemoveAgentGroupOwner(groupID int64, convID string) (int64, error) {
 	res, err := d.Exec(
 		`DELETE FROM agent_group_owners WHERE group_id = ? AND conv_id = ?`,
 		groupID, convID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// RemoveAllAgentGroupOwnershipsForConv drops every ownership row
+// referencing convID, regardless of group. Bulk cleanup variant for
+// the conv-delete path. Idempotent — returns the number of rows
+// removed.
+func RemoveAllAgentGroupOwnershipsForConv(convID string) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`DELETE FROM agent_group_owners WHERE conv_id = ?`, convID)
 	if err != nil {
 		return 0, err
 	}

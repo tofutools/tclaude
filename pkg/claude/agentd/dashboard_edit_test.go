@@ -163,17 +163,51 @@ func TestDashboardEdit_DeleteGroup_WrongMethod(t *testing.T) {
 	}
 }
 
-func TestDashboardEdit_DeleteAgent_NotFound(t *testing.T) {
+func TestDashboardEdit_DeleteAgent_OrphanCleanup(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	// No conv with this id has been indexed; the resolver should fail
-	// before DeleteConvByID gets called.
+	// Simulate the bug: an agent whose conv-index row is gone (e.g.
+	// previously deleted via `conv rm`) but whose membership /
+	// ownership / permission rows are still in the DB. The dashboard
+	// shows it as "(unknown)" and the user clicks delete to clean it
+	// up. Endpoint should accept the raw UUID, skip the conv wipe
+	// (it's already gone), and drop the orphan rows.
+	const orphanConv = "ab887fe0-3816-4a8f-a2f4-1c2607405f9e"
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: orphanConv, Alias: "ghost"})
+	_ = db.AddAgentGroupOwner(gID, orphanConv, "<test>")
+	_ = db.GrantAgentPermission(orphanConv, "self.clone", "<test>")
+
 	w := httptest.NewRecorder()
-	r := dashboardRequest(http.MethodDelete, "/api/agents/00000000-1111-2222-3333-444444444444", "")
+	r := dashboardRequest(http.MethodDelete, "/api/agents/"+orphanConv, "")
+	handleDashboardAgentsAPI(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("orphan delete: status = %d, want 204; body=%s", w.Code, w.Body.String())
+	}
+	if members, _ := db.ListAgentGroupMembers(gID); len(members) != 0 {
+		t.Errorf("expected membership row dropped; got %d", len(members))
+	}
+	if owners, _ := db.ListAgentGroupOwners(gID); len(owners) != 0 {
+		t.Errorf("expected ownership row dropped; got %d", len(owners))
+	}
+	if perms, _ := db.ListAgentPermissionsForConv(orphanConv); len(perms) != 0 {
+		t.Errorf("expected permission rows dropped; got %d", len(perms))
+	}
+}
+
+func TestDashboardEdit_DeleteAgent_RejectsNonUUIDInput(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	// Defence-in-depth: the orphan-cleanup path only accepts UUID-
+	// shaped input, so a junk selector that doesn't resolve gets a
+	// 404 instead of running DELETE WHERE conv_id = '<arbitrary>'.
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodDelete, "/api/agents/not-a-uuid", "")
 	handleDashboardAgentsAPI(w, r)
 	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+		t.Errorf("non-UUID input: status = %d, want 404", w.Code)
 	}
 }
 

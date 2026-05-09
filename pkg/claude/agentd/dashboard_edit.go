@@ -87,9 +87,22 @@ func handleDashboardJumpAPI(w http.ResponseWriter, r *http.Request) {
 
 // handleDashboardAgentsAPI dispatches:
 //
-//	DELETE /api/agents/{conv}    → wipe the conversation (mirrors `tclaude conv rm`)
+//	DELETE /api/agents/{conv}    → wipe the conversation + orphan-clean
 //
-// Anything else returns 404.
+// Behaviour:
+//   - If the conv still exists in conv_index, runs conv.DeleteConvByID
+//     (unlinks .jsonl, drops conv_index row, strips sessions-index.json,
+//     writes sync tombstone).
+//   - Always: drops every agent_group_members / agent_group_owners /
+//     agent_permissions row referencing this conv-id, so the dashboard
+//     listing actually drops the row instead of leaving a "(unknown)"
+//     ghost. Without this, a re-delete attempt would 404 in the
+//     resolver (no conv-index row to match) and the entry would be
+//     un-removable.
+//
+// Accepts either the resolver-friendly selector (if the agent still
+// exists) or a raw UUID-shaped conv-id (for cleaning up orphans whose
+// conv-index row is already gone).
 func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -112,16 +125,73 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 		return
 	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
+
+	// Try to resolve normally; if it works we get a canonical
+	// conv-id. If the resolver fails (no conv-index row, no
+	// membership row pointing to this conv), accept the raw input as
+	// long as it's UUID-shaped — needed for cleaning up orphan
+	// owner/permission rows whose conv-index is already gone. The
+	// raw path is gated on shape so we don't blindly run
+	// DELETE WHERE conv_id = '<arbitrary>'.
+	var convID string
+	if res, _, err := agent.ResolveSelector(convSelector); err == nil {
+		convID = res.ConvID
+	} else if looksLikeConvID(convSelector) {
+		convID = convSelector
+	} else {
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	if err := conv.DeleteConvByID(res.ConvID); err != nil {
+
+	// DeleteConvByID is a no-op on missing conv-index rows, so we
+	// run it unconditionally — caller doesn't need to know whether
+	// the underlying file is still there.
+	if err := conv.DeleteConvByID(convID); err != nil {
 		http.Error(w, "delete conv: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Always clean orphan rows. Errors are surfaced as 500 — these
+	// are pure DB DELETE-by-conv-id operations and shouldn't fail
+	// in practice.
+	if _, err := db.RemoveAllAgentGroupMembershipsForConv(convID); err != nil {
+		http.Error(w, "drop memberships: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := db.RemoveAllAgentGroupOwnershipsForConv(convID); err != nil {
+		http.Error(w, "drop ownerships: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := db.RevokeAllAgentPermissionsForConv(convID); err != nil {
+		http.Error(w, "drop permissions: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// looksLikeConvID is a cheap sanity check for raw conv-id input on
+// the orphan-cleanup path. Only allows the canonical UUID shape
+// (8-4-4-4-12 hex with dashes). Avoids blindly running DELETE WHERE
+// conv_id = ? against unsanitised user input — defence-in-depth on
+// top of the dashboard's auth/origin check.
+func looksLikeConvID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+			if !isHex {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // handleDashboardGroupsAPI dispatches:

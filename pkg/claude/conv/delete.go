@@ -238,15 +238,17 @@ func findJSONLByPrefix(projectPath, idPrefix string) string {
 // sessions-index.json, drops the conv_index DB row, and writes a
 // tombstone for sync if syncutil is initialised.
 //
-// Idempotent on missing files. Returns an error if the conv is
-// unknown to the index DB (so callers can surface a 404).
+// Idempotent — no-op (returns nil) when the conv is unknown to the
+// index DB. Lets orphan-cleanup callers (e.g. dashboard delete on a
+// "(unknown)" agent) run this unconditionally without first proving
+// the row exists.
 func DeleteConvByID(convID string) error {
 	row, err := db.GetConvIndex(convID)
 	if err != nil {
 		return fmt.Errorf("look up conv: %w", err)
 	}
 	if row == nil {
-		return fmt.Errorf("conv %s not found in index", convID)
+		return nil
 	}
 	fullID := row.ConvID
 	projectPath := filepath.Dir(row.FullPath)
