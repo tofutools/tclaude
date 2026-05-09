@@ -112,8 +112,7 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 
 func dashboardDeleteGroup(w http.ResponseWriter, name string) {
 	if err := db.DeleteAgentGroup(name); err != nil {
-		// ON DELETE RESTRICT on agent_messages; surface as 409.
-		http.Error(w, "delete group: "+err.Error(), http.StatusConflict)
+		http.Error(w, "delete group: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -1,7 +1,6 @@
 package db
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -223,18 +222,21 @@ func TestAgentMessageInsertAndList(t *testing.T) {
 		t.Error("read_at should be set")
 	}
 
-	// Deleting a group while messages reference it must fail
-	// (ON DELETE RESTRICT).
-	if err := DeleteAgentGroup("alpha"); err == nil {
-		t.Fatal("expected DeleteAgentGroup to fail because messages reference the group")
-	} else if !strings.Contains(strings.ToLower(err.Error()), "foreign") &&
-		!strings.Contains(strings.ToLower(err.Error()), "constraint") {
-		// modernc/sqlite returns "FOREIGN KEY constraint failed" — we
-		// just want any constraint-shaped error.
-		t.Logf("delete error message: %v", err)
+	// Deleting a group cascades through membership/ownership AND
+	// purges any lingering messages (the helper opens a transaction
+	// to bypass the agent_messages ON DELETE RESTRICT FK).
+	if err := DeleteAgentGroup("alpha"); err != nil {
+		t.Fatalf("DeleteAgentGroup with messages still present: %v", err)
 	}
-
-	_ = id2
+	for _, mid := range []int64{id1, id2} {
+		got, err := GetAgentMessage(mid)
+		if err != nil {
+			t.Fatalf("GetAgentMessage(%d) after delete: %v", mid, err)
+		}
+		if got != nil {
+			t.Errorf("expected message %d purged with the group; still present: %+v", mid, got)
+		}
+	}
 }
 
 func names(gs []*AgentGroup) []string {

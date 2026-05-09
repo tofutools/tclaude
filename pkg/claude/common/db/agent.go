@@ -161,15 +161,37 @@ func CreateAgentGroup(name, descr string) (int64, error) {
 	return res.LastInsertId()
 }
 
-// DeleteAgentGroup removes a group by name. Cascades to members; returns
-// an error if any messages still reference the group (ON DELETE RESTRICT).
+// DeleteAgentGroup removes a group by name. Cascades to membership +
+// ownership rows (ON DELETE CASCADE in schema) and explicitly purges
+// the group's message history first within a single transaction
+// (the agent_messages FK is ON DELETE RESTRICT, so a bare DELETE of
+// the parent group fails when any messages still reference it).
+//
+// No-op if the group doesn't exist.
 func DeleteAgentGroup(name string) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`DELETE FROM agent_groups WHERE name = ?`, name)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var gID int64
+	if err := tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, name).Scan(&gID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_messages WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetAgentGroupByName returns the group with the given name, or nil if not

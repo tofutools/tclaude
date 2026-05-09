@@ -601,7 +601,7 @@ details[open] > summary .group-actions { opacity: 1; }
             const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);
             const confirmed = await confirmModal({
               title: 'Delete group?',
-              body: `This drops the group plus all ${memberCount} membership row(s) and any owner grants. The conversations themselves keep running. Will fail if the group still has any messages — clear the inbox first.`,
+              body: `This drops the group plus all ${memberCount} membership row(s), any owner grants, and the entire group message history. The conversations themselves keep running.`,
               meta: group,
               okLabel: 'Delete group',
             });
