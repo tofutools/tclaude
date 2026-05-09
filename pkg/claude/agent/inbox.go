@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -24,6 +25,7 @@ func inboxCmd() *cobra.Command {
 			inboxLsCmd(),
 			inboxSentCmd(),
 			inboxReadCmd(),
+			inboxPruneCmd(),
 		},
 	}.ToCobra()
 	// `mailbox` is the longer-form term we're standardising on (matches the
@@ -360,5 +362,72 @@ func groupByID(id int64) (*db.AgentGroup, error) {
 		}
 	}
 	return nil, nil
+}
+
+// --- inbox prune ---
+
+type inboxPruneParams struct {
+	OlderThan string `long:"older-than" help:"Delete messages older than this duration (e.g. 30d, 2w, 12h). Required."`
+	ReadOnly  bool   `long:"read-only" help:"Only delete messages the recipient has read"`
+}
+
+func inboxPruneCmd() *cobra.Command {
+	return boa.CmdT[inboxPruneParams]{
+		Use:   "prune",
+		Short: "Delete old messages from this conversation's mail history",
+		Long: "Removes agent_messages rows older than --older-than that this conv " +
+			"is the sender or recipient of. Use --read-only to keep unread messages.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *inboxPruneParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.OlderThan).SetAlternativesFunc(completePruneDurations)
+			return nil
+		},
+		RunFunc: func(p *inboxPruneParams, _ *cobra.Command, _ []string) {
+			os.Exit(runInboxPrune(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func completePruneDurations(_ *cobra.Command, _ []string, toComplete string) []string {
+	suggestions := []string{"7d", "30d", "90d", "1w", "4w", "12w"}
+	out := []string{}
+	for _, s := range suggestions {
+		if strings.HasPrefix(s, toComplete) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func runInboxPrune(p *inboxPruneParams, stdout, stderr io.Writer) int {
+	if p.OlderThan == "" {
+		fmt.Fprintln(stderr, "Error: --older-than is required (e.g. 30d, 2w, 12h)")
+		return rcInvalidArg
+	}
+	d, err := parseDurationDays(p.OlderThan)
+	if err != nil || d <= 0 {
+		fmt.Fprintf(stderr, "Error: invalid --older-than %q (try 30d, 2w, 12h)\n", p.OlderThan)
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	body := map[string]any{
+		"older_than_seconds": int64(d / time.Second),
+		"read_only":          p.ReadOnly,
+	}
+	var resp struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := DaemonPost("/v1/inbox/prune", body, &resp); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	scope := "all"
+	if p.ReadOnly {
+		scope = "read-only"
+	}
+	fmt.Fprintf(stdout, "Pruned %d %s message(s) older than %s\n", resp.Deleted, scope, d)
+	return rcOK
 }
 

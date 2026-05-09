@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -40,4 +41,28 @@ func completeStateFilterValues(_ *cobra.Command, _ []string, toComplete string) 
 		}
 	}
 	return out
+}
+
+// parseDurationDays accepts everything time.ParseDuration accepts plus
+// "<n>d" and "<n>w" for days and weeks. Mirrors session/prune.go's
+// parseDuration; duplicated here rather than re-exporting because the
+// session package depends on a different internal context.
+func parseDurationDays(s string) (time.Duration, error) {
+	if len(s) > 1 {
+		suffix := s[len(s)-1]
+		prefix := s[:len(s)-1]
+		switch suffix {
+		case 'w', 'W':
+			var weeks int
+			if _, err := fmt.Sscanf(prefix, "%d", &weeks); err == nil && weeks >= 0 {
+				return time.Duration(weeks) * 7 * 24 * time.Hour, nil
+			}
+		case 'd', 'D':
+			var days int
+			if _, err := fmt.Sscanf(prefix, "%d", &days); err == nil && days >= 0 {
+				return time.Duration(days) * 24 * time.Hour, nil
+			}
+		}
+	}
+	return time.ParseDuration(s)
 }

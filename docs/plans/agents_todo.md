@@ -155,11 +155,11 @@ existing `groups.*`/`member.*` model:
   `agent_messages`.
 - On session resume, flush undelivered nudges (`delivered_at IS NULL`) so
   messages sent while the target was offline still get surfaced.
-- `tclaude agent inbox prune --older-than 30d --read-only` — delete
-  `agent_messages` rows whose `read_at` is set and older than the
-  cutoff. **TODO:** until this exists, message rows accumulate forever
-  in SQLite. Bodies are short, so this is fine for a long while, but
-  the option should exist.
+- ~~`tclaude agent inbox prune --older-than 30d --read-only`~~ —
+  **shipped.** Required `--older-than` accepts time.ParseDuration
+  values plus `Nd`/`Nw`. `--read-only` restricts to messages the
+  recipient has read. Caller-scoped: only deletes rows where
+  from_conv or to_conv equals the calling agent's conv-id.
 - Conversation thread IDs surfaced to agents (so a reply can quote
   the parent). v1 just records `from`/`to`/`group`.
 
@@ -547,3 +547,7 @@ Short notes only — see `docs/agent.md` and the code for details.
   Backed by `db.ListAgentMessagesFromConv` + `/v1/inbox?outbox=1`.
 - `--state=online|offline` filter on `agent ls` and `agent groups ls`.
   Tab-completion offers the two values with descriptions.
+- `tclaude agent inbox prune --older-than <dur> [--read-only]` —
+  caller-scoped delete of old `agent_messages` rows. Accepts day/
+  week suffixes. Backed by `db.PruneAgentMessagesForConv` +
+  `/v1/inbox/prune`.

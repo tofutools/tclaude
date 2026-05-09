@@ -770,6 +770,47 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// --- /v1/inbox/prune ---
+//
+// POST { "older_than_seconds": <int>, "read_only": <bool> } returns
+// { "deleted": <int> } and removes agent_messages rows older than
+// that the caller is the sender or recipient of. read_only restricts
+// to messages the recipient has read.
+//
+// We take the cutoff as a number of seconds from the daemon's "now"
+// rather than an absolute timestamp so the CLI can stay simple
+// (parse the duration locally, send the result) and the daemon
+// never has to deal with parsing day/week suffixes.
+func handleInboxPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	myID, ok := requireAgent(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		OlderThanSeconds int64 `json:"older_than_seconds"`
+		ReadOnly         bool  `json:"read_only"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	if req.OlderThanSeconds <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid", "older_than_seconds must be positive")
+		return
+	}
+	cutoff := time.Now().Add(-time.Duration(req.OlderThanSeconds) * time.Second)
+	deleted, err := db.PruneAgentMessagesForConv(myID, cutoff, req.ReadOnly)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": deleted})
+}
+
 func bodyPreview(s string) string {
 	const max = 80
 	r := []rune(s)

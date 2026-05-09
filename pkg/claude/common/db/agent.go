@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -420,6 +421,35 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// PruneAgentMessagesForConv deletes agent_messages rows older than
+// olderThan that this conv is either the sender or recipient of.
+// When readOnly is true, only rows the recipient has read are
+// deleted (i.e. read_at is non-empty in the row's stored format).
+// Returns the number of rows removed.
+func PruneAgentMessagesForConv(forConv string, olderThan time.Time, readOnly bool) (int64, error) {
+	if forConv == "" {
+		return 0, fmt.Errorf("forConv required")
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	cutoff := olderThan.Format(time.RFC3339Nano)
+	q := `DELETE FROM agent_messages
+		WHERE (from_conv = ? OR to_conv = ?)
+		  AND created_at < ?`
+	args := []any{forConv, forConv, cutoff}
+	if readOnly {
+		q += ` AND read_at != ''`
+	}
+	res, err := d.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // MarkAgentMessageDelivered sets delivered_at = now for the given message ID.
