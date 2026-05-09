@@ -221,7 +221,7 @@ Caveats inherited from `pushRenameToTmux`:
    - `groups.go` — group create/rm/add/remove/members/ls
    - `inbox.go` — list / read entries (rows in `agent_messages` where `to_conv = me`)
 4. **`pkg/claude/claude.go`** — register `agent.Cmd()` in `SubCmds`.
-5. **`examples/skills/agent-coord/SKILL.md`** — tells the agent the
+5. **`pkg/claude/agent/skills/agent-coord/SKILL.md`** — tells the agent the
    `whoami` / `lookup` / `ls` / `message` flow and what to do when it
    sees the bracketed system nudge.
 6. **Tests**:

@@ -26,7 +26,7 @@ ship or get scoped out. The detailed v1 design lives in
     contains a `claude` ancestor; overridable via
     `agent.allow_agent_mutate_groups` in config or per-call
     `--allow-from-agent`.
-  - Example skill `examples/skills/agent-coord/SKILL.md`
+  - Skill bundled in the binary at `pkg/claude/agent/skills/agent-coord/SKILL.md`; install via `tclaude setup --install-agent-skill`
 
 ---
 

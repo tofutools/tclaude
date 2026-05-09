@@ -129,6 +129,13 @@ and they'll see it on resume.
 
 ## Installing this skill
 
+The skill is bundled into the `tclaude` binary. Materialise it under
+`~/.claude/skills/agent-coord/` with:
+
 ```bash
-ln -s "$(pwd)/examples/skills/agent-coord" ~/.claude/skills/agent-coord
+tclaude setup --install-agent-skill
 ```
+
+That command is idempotent — re-running it overwrites the local copy
+with whatever the current binary embeds, so a `go install …@latest`
+plus a re-run picks up upstream changes.

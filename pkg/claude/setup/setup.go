@@ -11,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
@@ -23,10 +24,11 @@ import (
 const protocolVersion = "3"
 
 type Params struct {
-	Check         bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
-	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
-	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
-	Yes           bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
+	Check             bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
+	Force             bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
+	AbsolutePaths     bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
+	Yes               bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
+	InstallAgentSkill bool `long:"install-agent-skill" help:"Install (or refresh) the agent-coord skill into ~/.claude/skills/. Idempotent; overwrites existing if present."`
 }
 
 func Cmd() *cobra.Command {
@@ -54,6 +56,13 @@ func runSetup(params *Params) error {
 		clcommon.SetAbsolutePaths(true)
 		session.ReinitHookCommand()
 		statusbar.ReinitStatusLineCommand()
+	}
+
+	// --install-agent-skill is a focused operation; when present, skip
+	// the full setup flow and just (re)install the skill. Lets users
+	// refresh the skill on a new machine without re-running the rest.
+	if params.InstallAgentSkill {
+		return installAgentSkill()
 	}
 
 	fmt.Println("Setting up tclaude integration...")
@@ -229,6 +238,20 @@ func runSetup(params *Params) error {
 	fmt.Println("\n=== Setup Complete ===")
 	fmt.Println("You can verify with: tclaude setup --check")
 
+	return nil
+}
+
+// installAgentSkill writes the bundled agent-coord skill into
+// ~/.claude/skills/agent-coord/. Idempotent: overwrites an existing
+// install. The CLI prints the destination so the user knows where to
+// look if they want to inspect or edit it locally.
+func installAgentSkill() error {
+	dst, err := agent.InstallSkill(true)
+	if err != nil {
+		return fmt.Errorf("install agent-coord skill: %w", err)
+	}
+	fmt.Printf("✓ Installed agent-coord skill at %s\n", dst)
+	fmt.Println("  Run `tclaude agentd serve` (in a non-sandboxed shell) for live delivery.")
 	return nil
 }
 
