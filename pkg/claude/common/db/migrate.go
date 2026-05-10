@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 16
+const currentVersion = 17
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -119,6 +119,46 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 17 {
+		if err := migrateV16toV17(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV16toV17 adds conv_index.archived_at — a soft-delete /
+// expired flag for individual conversations. Mirrors
+// agent_groups.archived_at (schema v16) so the same "archived"
+// semantics apply to both groups and convs.
+//
+// Reincarnate writes this column on the OLD conv after spawning the
+// successor (alongside the cosmetic /rename injection that adds the
+// `-x` title suffix). Manual archive (`tclaude conv archive
+// <selector>`, future verb) will set this column directly without
+// renaming the title.
+//
+// Empty string = active. Non-empty (RFC3339 timestamp) = archived.
+// Indexed so the eventual `WHERE archived_at = ''` filter on
+// listing endpoints stays cheap as the table grows.
+//
+// Crucially: UpsertConvIndex does NOT include archived_at in its ON
+// CONFLICT update, so a routine .jsonl rescan never clobbers the
+// archived state. The column changes only via the dedicated
+// SetConvIndexArchived setter.
+func migrateV16toV17(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE conv_index
+			ADD COLUMN archived_at TEXT NOT NULL DEFAULT '';
+		CREATE INDEX IF NOT EXISTS idx_conv_index_archived
+			ON conv_index(archived_at);
+
+		UPDATE schema_version SET version = 17;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v16→v17: %w", err)
+	}
 	return nil
 }
 

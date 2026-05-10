@@ -124,6 +124,53 @@ func TestIsArchivedTitle(t *testing.T) {
 	}
 }
 
+// TestSessionEntry_IsArchived_PrefersColumn covers the canonical
+// archived signal: the `ArchivedAt` field (sourced from
+// `conv_index.archived_at`). When set, IsArchived returns true even
+// if the title doesn't have the `-x` suffix — the column survives
+// renames, rescans, etc.
+func TestSessionEntry_IsArchived_PrefersColumn(t *testing.T) {
+	cases := []struct {
+		name      string
+		entry     SessionEntry
+		wantArchd bool
+	}{
+		{
+			name:      "column set, no -x suffix",
+			entry:     SessionEntry{CustomTitle: "worker-r-1", ArchivedAt: "2026-05-10T12:00:00Z"},
+			wantArchd: true,
+		},
+		{
+			name:      "column empty, -x suffix legacy",
+			entry:     SessionEntry{CustomTitle: "worker-x"},
+			wantArchd: true,
+		},
+		{
+			name:      "both set",
+			entry:     SessionEntry{CustomTitle: "worker-x", ArchivedAt: "2026-05-10T12:00:00Z"},
+			wantArchd: true,
+		},
+		{
+			name:      "neither — active",
+			entry:     SessionEntry{CustomTitle: "worker"},
+			wantArchd: false,
+		},
+		{
+			name:      "no title, no column",
+			entry:     SessionEntry{FirstPrompt: "hello"},
+			wantArchd: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.entry.IsArchived(); got != tc.wantArchd {
+				t.Errorf("IsArchived() = %v, want %v (entry=%+v)",
+					got, tc.wantArchd, tc.entry)
+			}
+		})
+	}
+}
+
 func TestPathToProjectDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows - path handling differs")

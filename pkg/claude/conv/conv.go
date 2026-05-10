@@ -202,6 +202,10 @@ func scanReason(cached *db.ConvIndexRow, forceRescan bool) string {
 
 // dbRowToEntry converts a DB row to a SessionEntry.
 func dbRowToEntry(r *db.ConvIndexRow, fileSize int64) SessionEntry {
+	archived := ""
+	if !r.ArchivedAt.IsZero() {
+		archived = r.ArchivedAt.Format(time.RFC3339Nano)
+	}
 	return SessionEntry{
 		SessionID:    r.ConvID,
 		FullPath:     r.FullPath,
@@ -216,6 +220,7 @@ func dbRowToEntry(r *db.ConvIndexRow, fileSize int64) SessionEntry {
 		ProjectPath:  r.ProjectPath,
 		IsSidechain:  r.IsSidechain,
 		FileSize:     fileSize,
+		ArchivedAt:   archived,
 	}
 }
 

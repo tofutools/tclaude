@@ -419,20 +419,28 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 	// title in the new pane.
 	go runReincarnatePostSpawn(newConv, newTitle, followUp, len(oldMembers) > 0)
 
-	// 9. Mark the old conv as expired with a `-x` suffix on its
-	// title, then soft-stop. The rename writes a custom-title record
-	// to the old conv's .jsonl before /exit closes the pane, so any
-	// later scan picks up the new "<prev>-x" name (the watch model /
-	// FreshConvRow refreshes on mtime). This way the dashboard /
-	// `conv ls` can render dead-but-still-on-disk convs distinctly
-	// from live ones — they're expired and replaced by their
-	// `-r-<N>` successor (recorded in agent_conv_succession).
-	// Mnemonic: `-x` = expired.
+	// 9. Mark the old conv as archived (soft-deleted), then soft-stop.
 	//
-	// Skip the rename when prevTitle is empty (no original title to
-	// suffix) or when the old title already ends in `-x` (idempotent
-	// in case of a redo). Best-effort — both injections are
-	// best-effort; failure here doesn't abort reincarnation.
+	// Two writes happen here, in this order:
+	//
+	//   a. Stamp `conv_index.archived_at = now` on the old conv
+	//      (canonical signal — survives renames, tool-poking, etc.).
+	//      Listing surfaces filter on this column primarily.
+	//   b. Inject `/rename <prevTitle>-x` into the old pane, writing
+	//      a custom-title record to the .jsonl before /exit closes
+	//      the pane. Cosmetic UX cue so the dead conv shows up as
+	//      `<prev>-x` in tmux pane titles + tools that read .jsonl
+	//      directly. The watch model / FreshConvRow refresh picks
+	//      it up on mtime.
+	//
+	// Either write failing is non-fatal — the other still gives
+	// listing surfaces a way to detect the archived state. Idempotent:
+	// the rename skips when prevTitle is empty or already ends in
+	// `-x`; the column stamp is a single UPDATE.
+	if err := db.SetConvIndexArchived(target, true); err != nil {
+		slog.Warn("reincarnate: stamp archived_at failed",
+			"old", target, "error", err)
+	}
 	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
 		_ = injectSlashCommand(target, "/rename "+prevTitle+"-x", "")
 	}

@@ -148,28 +148,26 @@ Follow-up improvements (separate items):
   the same `applySearchFilter` / `rebuildSemanticFiltered` pass.
   Status-line message confirms the toggle on every press; help
   screen lists the binding under Actions.
-- **Make "expired" an explicit DB status, not just a title suffix.**
-  The current implementation infers expired from
-  `HasSuffix(CustomTitle, "-x")`. Two problems with this:
-  1. **False positives.** If a user legitimately names a conv
-     `unix-port` (or anything ending `-x`), it disappears from
-     `conv ls` with no obvious explanation. The connection
-     between "title ends with -x" and "filtered out" isn't
-     discoverable.
-  2. **Couples the marker to the rename mechanism.** Today we
-     have to inject `/rename <prev>-x` into the dying pane to
-     write the marker; if /rename fails (pane is busy / already
-     gone), we silently lose the mark.
-  Better: an explicit boolean column on `conv_index` (or a
-  separate `agent_expired_convs` table) that reincarnate writes
-  directly. The title rename can still happen as a UX cue, but
-  the marker is the column. `IsExpired()` reads the column;
-  filter logic stays the same. Migrate existing `-x` titles into
-  the column on first read so the changeover is invisible.
-  Open question: should expired convs also get filtered out of
-  `conv ls -g` semantic search results regardless of the toggle?
-  Probably yes, since a user explicitly searching "show me
-  history" will type `e` if they want them.
+- ~~**Explicit DB column for archived state, not just title suffix.**~~
+  — **shipped (2026-05).** Schema v17 adds
+  `conv_index.archived_at TEXT`. Reincarnate now stamps the column
+  directly on the old conv (alongside the cosmetic `/rename
+  <prev>-x` injection — the column is canonical, the title suffix
+  is the visible UX cue). `(*SessionEntry).IsArchived()` checks the
+  column FIRST (preferred) and falls back to the title suffix for
+  legacy convs that pre-date the column. `UpsertConvIndex`
+  deliberately omits archived_at from its ON CONFLICT update so a
+  routine .jsonl rescan never clobbers the flag. Helper
+  `db.SetConvIndexArchived(convID, archived)` is the canonical
+  write path; a future `tclaude conv archive <selector>` verb will
+  call it directly without any rename.
+
+  Open follow-up: surface the column in the dashboard tabs (Groups
+  / Agents) so archived convs are visually distinct (greyed out /
+  faded) when the user explicitly opts in to view them. Today the
+  dashboard doesn't filter at all — but reincarnate also strips
+  groups + permissions on the old conv, so archived convs don't
+  appear in the Groups/Agents tabs by construction.
 - Open follow-up: dashboard tabs (Groups / Agents). Reincarnate
   already removes expired convs from groups + permissions, so they
   don't appear in the dashboard's snapshot today — verified by

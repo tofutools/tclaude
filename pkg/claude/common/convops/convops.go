@@ -26,6 +26,12 @@ type SessionEntry struct {
 	ProjectPath  string `json:"projectPath"`
 	IsSidechain  bool   `json:"isSidechain"`
 	FileSize     int64  `json:"-"` // Populated at load time, not persisted in index
+	// ArchivedAt is the canonical archived signal sourced from
+	// `conv_index.archived_at`. RFC3339 timestamp string when archived,
+	// empty when active. Populated at load time from the DB row;
+	// `IsArchived()` checks this column first, with the `-x` title
+	// suffix as a fallback for legacy convs that pre-date the column.
+	ArchivedAt string `json:"-"`
 }
 
 // DisplayTitle returns the best available title for display
@@ -59,8 +65,14 @@ func IsArchivedTitle(customTitle string) bool {
 	return strings.HasSuffix(customTitle, "-x")
 }
 
-// IsArchived is a SessionEntry shorthand for IsArchivedTitle.
+// IsArchived is the canonical archived check on a SessionEntry. Reads
+// the conv_index.archived_at column (preferred) and falls back to
+// the title-suffix marker for legacy convs that pre-date schema v17.
+// Either signal is enough to mark the conv as archived.
 func (e *SessionEntry) IsArchived() bool {
+	if e.ArchivedAt != "" {
+		return true
+	}
 	return IsArchivedTitle(e.CustomTitle)
 }
 

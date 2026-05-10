@@ -22,6 +22,15 @@ type ConvIndexRow struct {
 	ProjectPath  string // Working directory path
 	IsSidechain  bool
 	IndexedAt    time.Time
+	ArchivedAt   time.Time // zero = active; non-zero = archived (soft-deleted)
+}
+
+// IsArchived reports whether this conv has been soft-deleted via
+// reincarnation or a future manual `conv archive` verb. Listing
+// surfaces (conv ls) hide archived rows by default; the title-suffix
+// fallback (`-x`) covers convs that pre-date the column.
+func (r *ConvIndexRow) IsArchived() bool {
+	return !r.ArchivedAt.IsZero()
 }
 
 // UpsertConvIndex inserts or updates a conversation index entry.
@@ -65,7 +74,8 @@ func ListConvIndex(projectDir string) ([]*ConvIndexRow, error) {
 
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
-		created, modified, git_branch, project_path, is_sidechain, indexed_at
+		created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		archived_at
 		FROM conv_index WHERE project_dir = ?`, projectDir)
 	if err != nil {
 		return nil, err
@@ -84,7 +94,8 @@ func ListAllConvIndex() ([]*ConvIndexRow, error) {
 
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
-		created, modified, git_branch, project_path, is_sidechain, indexed_at
+		created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		archived_at
 		FROM conv_index`)
 	if err != nil {
 		return nil, err
@@ -103,7 +114,8 @@ func GetConvIndex(convID string) (*ConvIndexRow, error) {
 
 	row := db.QueryRow(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
-		created, modified, git_branch, project_path, is_sidechain, indexed_at
+		created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		archived_at
 		FROM conv_index WHERE conv_id = ?`, convID)
 
 	return scanConvIndexRow(row)
@@ -118,7 +130,8 @@ func FindConvIndexByPrefix(prefix string) (*ConvIndexRow, error) {
 
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
-		created, modified, git_branch, project_path, is_sidechain, indexed_at
+		created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		archived_at
 		FROM conv_index WHERE conv_id LIKE ? || '%'`, prefix)
 	if err != nil {
 		return nil, err
@@ -203,17 +216,49 @@ func scanConvIndexRows(rows *sql.Rows) ([]*ConvIndexRow, error) {
 func scanOneConvIndex(s interface{ Scan(...any) error }) (*ConvIndexRow, error) {
 	var r ConvIndexRow
 	var sidechain int
-	var indexedAt string
+	var indexedAt, archivedAt string
 	err := s.Scan(&r.ConvID, &r.ProjectDir, &r.FullPath, &r.FileMtime, &r.FileSize,
 		&r.FirstPrompt, &r.Summary, &r.CustomTitle, &r.MessageCount,
 		&r.Created, &r.Modified, &r.GitBranch, &r.ProjectPath,
-		&sidechain, &indexedAt)
+		&sidechain, &indexedAt, &archivedAt)
 	if err != nil {
 		return nil, err
 	}
 	r.IsSidechain = sidechain != 0
 	r.IndexedAt, _ = time.Parse(time.RFC3339Nano, indexedAt)
+	if archivedAt != "" {
+		r.ArchivedAt, _ = time.Parse(time.RFC3339Nano, archivedAt)
+	}
 	return &r, nil
+}
+
+// SetConvIndexArchived stamps or clears the archived_at column on a
+// single conv row. Doesn't touch any other column — UpsertConvIndex
+// (the routine .jsonl-scan path) deliberately omits archived_at from
+// its ON CONFLICT update so the archived flag survives every
+// rescan. Used by the reincarnate orchestrator and the (future)
+// manual `conv archive` verb.
+//
+// Returns sql.ErrNoRows if no row matches convID.
+func SetConvIndexArchived(convID string, archived bool) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	val := ""
+	if archived {
+		val = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	res, err := d.Exec(`UPDATE conv_index SET archived_at = ? WHERE conv_id = ?`,
+		val, convID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func scanConvIndexRow(row *sql.Row) (*ConvIndexRow, error) {
