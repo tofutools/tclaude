@@ -39,7 +39,7 @@ func TestJoinGroupRejectsConflictingFlags(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runJoinGroup(&tc.params)
+			err := RunJoinGroup(&tc.params)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}

@@ -9,10 +9,10 @@ import (
 )
 
 func init() {
-	session.JoinGroupHandler = runJoinGroup
+	session.JoinGroupHandler = RunJoinGroup
 }
 
-// runJoinGroup implements `tclaude --join-group <group>` (and the
+// RunJoinGroup implements `tclaude --join-group <group>` (and the
 // equivalent flag on `tclaude session new`).
 //
 // Spawns a fresh CC session via the daemon's existing groups-spawn
@@ -22,7 +22,7 @@ func init() {
 //
 // Permission: same `groups.spawn` slug as `agent spawn` (default
 // human-only). Humans bypass the permission check entirely.
-func runJoinGroup(params *session.NewParams) error {
+func RunJoinGroup(params *session.NewParams) error {
 	if params.Resume != "" {
 		return fmt.Errorf("--join-group cannot be combined with --resume (spawn always creates a fresh session)")
 	}
@@ -46,13 +46,7 @@ func runJoinGroup(params *session.NewParams) error {
 		"cwd":             cwd,
 		"timeout_seconds": 30,
 	}
-	var resp struct {
-		Group       string `json:"group"`
-		ConvID      string `json:"conv_id"`
-		Label       string `json:"label"`
-		TmuxSession string `json:"tmux_session"`
-		AttachCmd   string `json:"attach_cmd"`
-	}
+	var resp SpawnResponse
 	path := "/v1/groups/" + params.JoinGroup + "/spawn"
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		return fmt.Errorf("spawn into group %q: %w", params.JoinGroup, err)
