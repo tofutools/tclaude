@@ -13,6 +13,14 @@ design see `docs/plans/agent-coord.md`. For the daemon design see
 
 ## 2026-05 (recent commits)
 
+- **`conv ls -w` group filter**. New `f` key in normal mode opens a
+  group-name input; Enter applies, Esc clears. Composes with `/`
+  search and `x` archived toggle as three independent filter passes
+  (entry must pass all). Status line + header indicate active filter
+  ("Group: [alpha]" or "Search: [...] + Group: [alpha]"). Help screen
+  updated. Unit tests added: `TestApplyGroupFilter_*` (filters,
+  composes-with-search, empty-shows-all, case-insensitive),
+  `TestMatchesGroupFilter` (table-driven predicate verification).
 - **`groups create --member` spawn-on-create**. Repeatable
   `--member alias=...,role=...,descr=...,cwd=...` flag bootstraps a
   team in one call. CLI parses + validates up-front (typo aborts

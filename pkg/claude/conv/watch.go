@@ -101,6 +101,14 @@ type watchModel struct {
 	worktreeInput   textinput.Model
 	worktreeFocused bool
 
+	// Group filter — narrows the visible rows to convs that are members
+	// of the named group. Composes with the text search and the archived
+	// toggle. groupFilter is the committed value (empty = no filter);
+	// groupFilterInput is the focused input where the user types.
+	groupFilterInput   textinput.Model
+	groupFilterFocused bool
+	groupFilter        string
+
 	// Semantic search
 	semanticChecking       bool
 	semanticFocused        bool
@@ -227,6 +235,7 @@ func initialWatchModel(global bool, since, before string) watchModel {
 		activeSessions:   make(map[string]*session.SessionState),
 		searchInput:      newSearchInput(),
 		worktreeInput:    newWorktreeInput(),
+		groupFilterInput: newSearchInput(),
 		semanticInput:    newSemanticInput(),
 		global:           global,
 		projectPath:      cwd,
@@ -423,6 +432,63 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Handle group-filter input mode. Press `f` from normal mode to
+		// open it. Typing committed via Enter; Esc clears + blurs.
+		// Composes with searchInput / archived toggle on apply.
+		if m.groupFilterFocused {
+			switch msg.String() {
+			case "esc", "ctrl+c":
+				if m.groupFilterInput.Value() != "" {
+					m.groupFilterInput.SetValue("")
+				} else {
+					m.groupFilterFocused = false
+					m.groupFilterInput.Blur()
+					if m.groupFilter != "" {
+						m.groupFilter = ""
+						if m.semanticMode {
+							m.rebuildSemanticFiltered()
+						} else {
+							m.applySearchFilter()
+						}
+						m.statusMsg = "group filter cleared"
+					}
+				}
+			case "enter":
+				m.groupFilter = strings.TrimSpace(m.groupFilterInput.Value())
+				m.groupFilterFocused = false
+				m.groupFilterInput.Blur()
+				if m.semanticMode {
+					m.rebuildSemanticFiltered()
+				} else {
+					m.applySearchFilter()
+				}
+				if m.groupFilter == "" {
+					m.statusMsg = "group filter cleared"
+				} else {
+					m.statusMsg = "filtering by group: " + m.groupFilter
+				}
+			case "up":
+				m.groupFilterFocused = false
+				m.groupFilterInput.Blur()
+				if m.cursor > 0 {
+					m.cursor--
+					m.ensureCursorVisible()
+				}
+			case "down":
+				m.groupFilterFocused = false
+				m.groupFilterInput.Blur()
+				if m.cursor < len(m.filtered)-1 {
+					m.cursor++
+					m.ensureCursorVisible()
+				}
+			default:
+				var cmd tea.Cmd
+				m.groupFilterInput, cmd = m.groupFilterInput.Update(msg)
+				return m, cmd
+			}
+			return m, nil
+		}
+
 		// Handle worktree branch input mode
 		if m.worktreeFocused {
 			switch msg.String() {
@@ -458,6 +524,15 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.searchInput.Value() != "" {
 				m.searchInput.SetValue("")
 				m.applySearchFilter()
+			} else if m.groupFilter != "" {
+				// Same priority order as the search clear: a single Esc
+				// dismisses the topmost filter, then a second Esc opens
+				// the quit confirm. Group filter takes precedence over
+				// quit-confirm so a user with an active filter doesn't
+				// accidentally start quitting.
+				m.groupFilter = ""
+				m.applySearchFilter()
+				m.statusMsg = "group filter cleared"
 			} else {
 				m.confirmMode = watchConfirmQuit
 			}
@@ -465,6 +540,16 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearSemanticMode()
 			m.searchFocused = true
 			m.searchInput.Focus()
+		case "f":
+			// Open the group-name input. Composes with the existing
+			// search bar and archived toggle so the user can stack
+			// filters: text search across all columns, group narrows to
+			// a specific membership, archived toggle reveals -x rows.
+			// Pre-fills with the current filter so reopening shows what
+			// was active.
+			m.groupFilterInput.SetValue(m.groupFilter)
+			m.groupFilterFocused = true
+			m.groupFilterInput.Focus()
 		case "s":
 			m.semanticChecking = true
 			return m, m.semanticPreCheck()
@@ -707,10 +792,18 @@ func (m *watchModel) View() tea.View {
 	} else if m.searchFocused {
 		b.WriteString(wSearchStyle.Render("Search: "))
 		b.WriteString(m.searchInput.View())
+	} else if m.groupFilterFocused {
+		b.WriteString(wSearchStyle.Render("Group: "))
+		b.WriteString(m.groupFilterInput.View())
 	} else if m.searchInput.Value() != "" {
 		b.WriteString(wSearchStyle.Render("Search: [" + m.searchInput.Value() + "]"))
+		if m.groupFilter != "" {
+			b.WriteString(wSearchStyle.Render(" + Group: [" + m.groupFilter + "]"))
+		}
+	} else if m.groupFilter != "" {
+		b.WriteString(wSearchStyle.Render("Group: [" + m.groupFilter + "]"))
 	} else {
-		b.WriteString(wHelpStyle.Render("/ to search"))
+		b.WriteString(wHelpStyle.Render("/ to search • f to filter by group"))
 	}
 
 	// Show count
@@ -1322,14 +1415,16 @@ func (m *watchModel) applySearchFilter() {
 	searchVal := m.searchInput.Value()
 	query := strings.ToLower(searchVal)
 
-	// Compose two filters:
+	// Compose three independent filters:
 	//   1. Hide archived (-x) entries unless m.showArchived is on. Reincarnated
 	//      old convs persist on disk for history, but listing them by
 	//      default just clutters the table — toggle with `x`.
 	//   2. The text-search filter (matchesSearch).
-	// When neither filter is active we can short-circuit to a slice
+	//   3. The group filter (matchesGroupFilter) — when set, only convs
+	//      whose membership list includes that group pass.
+	// When no filter is active we can short-circuit to a slice
 	// reference, avoiding the allocation.
-	if query == "" && m.showArchived {
+	if query == "" && m.showArchived && m.groupFilter == "" {
 		m.filtered = m.entries
 		return
 	}
@@ -1342,6 +1437,9 @@ func (m *watchModel) applySearchFilter() {
 		if query != "" && !m.matchesSearch(e, query) {
 			continue
 		}
+		if m.groupFilter != "" && !m.matchesGroupFilter(e) {
+			continue
+		}
 		m.filtered = append(m.filtered, e)
 	}
 
@@ -1351,10 +1449,29 @@ func (m *watchModel) applySearchFilter() {
 	m.viewportOffset = 0
 }
 
+// matchesGroupFilter returns true when the active groupFilter is empty
+// (no filter) OR e is a member of a group named by m.groupFilter.
+// Comparison is case-insensitive — group names are case-sensitive at
+// the DB layer but most users won't remember the exact casing when
+// typing into the picker.
+func (m *watchModel) matchesGroupFilter(e SessionEntry) bool {
+	if m.groupFilter == "" {
+		return true
+	}
+	target := strings.ToLower(m.groupFilter)
+	for _, gname := range m.groupsByConv[e.SessionID] {
+		if strings.ToLower(gname) == target {
+			return true
+		}
+	}
+	return false
+}
+
 // rebuildSemanticFiltered reconstructs the filtered list from entries matching
 // saved semantic scores, sorted by similarity descending. The archived-filter
-// toggle (`e`) applies here too — semantic results for archived convs stay
-// hidden until the user opts in.
+// toggle and the group filter both apply here too — semantic results for
+// archived convs stay hidden until the user opts in, and the group filter
+// narrows in the same way it does for plain text search.
 func (m *watchModel) rebuildSemanticFiltered() {
 	m.filtered = m.filtered[:0]
 	for _, e := range m.entries {
@@ -1362,6 +1479,9 @@ func (m *watchModel) rebuildSemanticFiltered() {
 			continue
 		}
 		if !m.showArchived && e.IsArchived() {
+			continue
+		}
+		if m.groupFilter != "" && !m.matchesGroupFilter(e) {
 			continue
 		}
 		m.filtered = append(m.filtered, e)
@@ -1555,7 +1675,8 @@ func (m *watchModel) renderHelpView() string {
 	b.WriteString(wHeaderStyle.Render("  Search"))
 	b.WriteString("\n")
 	b.WriteString("    /         Start search\n")
-	b.WriteString("    esc       Clear search / exit search mode\n")
+	b.WriteString("    f         Filter by group name (composes with /)\n")
+	b.WriteString("    esc       Clear search/group / exit input mode\n")
 	b.WriteString("    ^U        Clear search input\n")
 	b.WriteString("\n")
 

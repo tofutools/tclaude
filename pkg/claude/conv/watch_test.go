@@ -249,6 +249,153 @@ func TestApplySearchFilter_CaseInsensitive(t *testing.T) {
 	}
 }
 
+// --- Group filter tests ---
+
+// groupFilter narrows the visible rows to convs whose membership list
+// includes the named group. Composes with the text search and the
+// archived toggle as three independent passes.
+func TestApplyGroupFilter_FiltersByGroupName(t *testing.T) {
+	m := &watchModel{
+		entries: []SessionEntry{
+			{SessionID: "a", FirstPrompt: "x"},
+			{SessionID: "b", FirstPrompt: "y"},
+			{SessionID: "c", FirstPrompt: "z"},
+		},
+		groupsByConv: map[string][]string{
+			"a": {"alpha", "shared"},
+			"b": {"beta"},
+			"c": {"alpha"},
+		},
+		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
+	}
+
+	m.groupFilter = "alpha"
+	m.applySearchFilter()
+
+	if len(m.filtered) != 2 {
+		t.Fatalf("expected 2 matches for group=alpha, got %d", len(m.filtered))
+	}
+	gotIDs := map[string]bool{m.filtered[0].SessionID: true, m.filtered[1].SessionID: true}
+	if !gotIDs["a"] || !gotIDs["c"] {
+		t.Errorf("expected a and c in filter result, got %+v", gotIDs)
+	}
+}
+
+// Group names compare case-insensitively at the filter layer — DB
+// stores them case-sensitively but the picker user shouldn't have to
+// reproduce exact casing.
+func TestApplyGroupFilter_CaseInsensitive(t *testing.T) {
+	m := &watchModel{
+		entries: []SessionEntry{
+			{SessionID: "a"},
+		},
+		groupsByConv: map[string][]string{
+			"a": {"Alpha-Team"},
+		},
+		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
+	}
+
+	m.groupFilter = "alpha-TEAM"
+	m.applySearchFilter()
+
+	if len(m.filtered) != 1 {
+		t.Fatalf("expected case-insensitive match, got %d", len(m.filtered))
+	}
+}
+
+// Group filter and search filter compose: an entry must pass BOTH to
+// appear. Pins the bug class where one filter would shadow the other.
+func TestApplyGroupFilter_ComposesWithSearch(t *testing.T) {
+	m := &watchModel{
+		entries: []SessionEntry{
+			{SessionID: "a", FirstPrompt: "fix login"},
+			{SessionID: "b", FirstPrompt: "fix login"},
+			{SessionID: "c", FirstPrompt: "add feature"},
+		},
+		groupsByConv: map[string][]string{
+			"a": {"alpha"},
+			"b": {"beta"},
+			"c": {"alpha"},
+		},
+		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
+	}
+
+	// search "login" matches a + b; group "alpha" matches a + c.
+	// Intersection: just a.
+	m.searchInput.SetValue("login")
+	m.groupFilter = "alpha"
+	m.applySearchFilter()
+
+	if len(m.filtered) != 1 {
+		t.Fatalf("expected intersection (login AND alpha) to yield 1, got %d", len(m.filtered))
+	}
+	if m.filtered[0].SessionID != "a" {
+		t.Errorf("expected entry a, got %s", m.filtered[0].SessionID)
+	}
+}
+
+// Empty groupFilter passes every entry through (the filter is opt-in).
+func TestApplyGroupFilter_EmptyShowsAll(t *testing.T) {
+	m := &watchModel{
+		entries: []SessionEntry{
+			{SessionID: "a"},
+			{SessionID: "b"},
+		},
+		groupsByConv: map[string][]string{
+			"a": {"alpha"},
+		},
+		activeSessions: make(map[string]*SessionState),
+		searchInput:    newSearchInput(),
+	}
+
+	m.groupFilter = ""
+	m.applySearchFilter()
+
+	if len(m.filtered) != 2 {
+		t.Fatalf("empty group filter should pass all entries, got %d", len(m.filtered))
+	}
+}
+
+// matchesGroupFilter is the core predicate used by both
+// applySearchFilter and rebuildSemanticFiltered. Verify it directly so
+// regressions surface independent of the surrounding filter pipeline.
+func TestMatchesGroupFilter(t *testing.T) {
+	m := &watchModel{
+		groupsByConv: map[string][]string{
+			"a": {"alpha", "shared"},
+			"b": {"beta"},
+		},
+	}
+
+	cases := []struct {
+		name   string
+		filter string
+		entry  SessionEntry
+		want   bool
+	}{
+		{"empty filter passes anything", "", SessionEntry{SessionID: "a"}, true},
+		{"empty filter passes empty membership", "", SessionEntry{SessionID: "x"}, true},
+		{"matching primary group", "alpha", SessionEntry{SessionID: "a"}, true},
+		{"matching secondary group", "shared", SessionEntry{SessionID: "a"}, true},
+		{"non-matching group", "beta", SessionEntry{SessionID: "a"}, false},
+		{"case-insensitive match", "ALPHA", SessionEntry{SessionID: "a"}, true},
+		{"unknown conv id", "alpha", SessionEntry{SessionID: "x"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m.groupFilter = tc.filter
+			got := m.matchesGroupFilter(tc.entry)
+			if got != tc.want {
+				t.Errorf("matchesGroupFilter(filter=%q, entry=%s) = %v, want %v",
+					tc.filter, tc.entry.SessionID, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestApplySearchFilter_ResetsCursorWhenOutOfBounds(t *testing.T) {
 	m := &watchModel{
 		entries: []SessionEntry{
