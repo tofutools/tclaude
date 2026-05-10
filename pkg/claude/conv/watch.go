@@ -905,7 +905,7 @@ func (m *watchModel) hasGroups() bool {
 // sortInPlace sorts the given slice using current sort state (or default modified desc).
 func (m *watchModel) sortInPlace(entries []SessionEntry) {
 	if m.sort.Key != "" {
-		sortConvEntriesByKey(entries, m.sort.Key, m.sort.Direction)
+		sortConvEntriesByKey(entries, m.sort.Key, m.sort.Direction, m.groupsByConv)
 	} else {
 		sortEntriesByModifiedDesc(entries)
 	}
@@ -1339,7 +1339,7 @@ func (m *watchModel) applySearchFilter() {
 		if !m.showArchived && e.IsArchived() {
 			continue
 		}
-		if query != "" && !matchesSearch(e, query) {
+		if query != "" && !m.matchesSearch(e, query) {
 			continue
 		}
 		m.filtered = append(m.filtered, e)
@@ -1371,12 +1371,26 @@ func (m *watchModel) rebuildSemanticFiltered() {
 	})
 }
 
-func matchesSearch(e SessionEntry, query string) bool {
-	return strings.Contains(strings.ToLower(e.DisplayTitle()), query) ||
+// matchesSearch returns true when query (already lower-cased) is a
+// substring of any of: the display title, first prompt, project
+// path, git branch, session id, or any group name the conv belongs
+// to. Group membership is looked up from the model's groupsByConv
+// snapshot — same source the GROUPS column renders from, so what's
+// visible in the column is what's searchable.
+func (m *watchModel) matchesSearch(e SessionEntry, query string) bool {
+	if strings.Contains(strings.ToLower(e.DisplayTitle()), query) ||
 		strings.Contains(strings.ToLower(e.FirstPrompt), query) ||
 		strings.Contains(strings.ToLower(e.ProjectPath), query) ||
 		strings.Contains(strings.ToLower(e.GitBranch), query) ||
-		strings.Contains(strings.ToLower(e.SessionID), query)
+		strings.Contains(strings.ToLower(e.SessionID), query) {
+		return true
+	}
+	for _, gname := range m.groupsByConv[e.SessionID] {
+		if strings.Contains(strings.ToLower(gname), query) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Session state ---
@@ -1495,7 +1509,7 @@ func (m *watchModel) columns() []table.Column {
 			{Header: "MODIFIED", Width: 16, SortKey: "modified"},
 		}
 		if showGroups {
-			cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true})
+			cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true, SortKey: "groups"})
 		}
 		if m.semanticMode {
 			cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})
@@ -1510,7 +1524,7 @@ func (m *watchModel) columns() []table.Column {
 		{Header: "MODIFIED", Width: 16, SortKey: "modified"},
 	}
 	if showGroups {
-		cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true})
+		cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true, SortKey: "groups"})
 	}
 	if m.semanticMode {
 		cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})
@@ -1727,7 +1741,7 @@ func RunConvWatchMode(global bool, since, before string) error {
 
 // --- Sorting (package-level helpers) ---
 
-func sortConvEntriesByKey(entries []SessionEntry, key string, dir table.SortDirection) {
+func sortConvEntriesByKey(entries []SessionEntry, key string, dir table.SortDirection, groupsByConv map[string][]string) {
 	if key == "" || len(entries) < 2 {
 		return
 	}
@@ -1744,6 +1758,13 @@ func sortConvEntriesByKey(entries []SessionEntry, key string, dir table.SortDire
 			less = entries[i].FileSize < entries[j].FileSize
 		case "modified":
 			less = entries[i].Modified < entries[j].Modified
+		case "groups":
+			// Sort by the same comma-joined string the cell renders, so
+			// what the user sees lines up with the order. Convs with no
+			// groups get the empty string and naturally cluster at one
+			// end of the list (top in asc, bottom in desc).
+			less = strings.ToLower(strings.Join(groupsByConv[entries[i].SessionID], ",")) <
+				strings.ToLower(strings.Join(groupsByConv[entries[j].SessionID], ","))
 		default:
 			return false
 		}
