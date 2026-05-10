@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -321,9 +322,24 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 	if caller != target {
 		granter = "system:clone:by=" + caller
 	}
+	// Resolve the original's display title once so per-group alias
+	// derivations can fall back to it when the original member row
+	// has no alias set. Without this fallback, a clone of a conv
+	// that's been added to a group without an alias gets generic
+	// `c-1` instead of the parent's name. Best-effort — empty string
+	// just means uniqueCloneAlias falls back to its existing
+	// "no-base" behaviour (`c-N`).
+	originalTitle := ""
+	if row := agent.FreshConvRowResolved(target); row != nil {
+		originalTitle = agent.DisplayTitle(row)
+	}
 	copied := []string{}
 	for _, m := range oldMembers {
-		alias := uniqueCloneAlias(m.Alias)
+		base := m.Alias
+		if base == "" {
+			base = originalTitle
+		}
+		alias := uniqueCloneAlias(base)
 		newMember := &db.AgentGroupMember{
 			GroupID: m.GroupID,
 			ConvID:  newConv,
@@ -354,7 +370,32 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 		copied = append(copied, fmt.Sprintf("owner:%d", gID))
 	}
 
-	// 4. Optional follow-up. Same shape as reincarnate: enqueue an
+	// 4. Pick the rename target. Use the first computed clone alias —
+	// for the common single-group case this is the only one anyway,
+	// and for multi-group clones tmux/dashboard only displays one
+	// title at a time. Skipped when no membership rows landed (which
+	// is rare and points at a deeper failure that already logged
+	// above). Without this, a freshly-spawned clone has no startup
+	// write and ends up as an orphan if no one ever messages it —
+	// same trap that bit `tclaude agent spawn` before bc7ec81.
+	cloneAlias := ""
+	for _, c := range copied {
+		if !strings.HasPrefix(c, "group:") {
+			continue
+		}
+		var gid int64
+		_, _ = fmt.Sscanf(c, "group:%d", &gid)
+		if gid == 0 {
+			continue
+		}
+		if m, err := db.FindMemberInGroup(gid, newConv); err == nil && m != nil && m.Alias != "" {
+			cloneAlias = m.Alias
+			break
+		}
+	}
+	go runClonePostInit(newConv, cloneAlias, target, caller)
+
+	// 5. Optional follow-up. Same shape as reincarnate: enqueue an
 	// agent_messages row when there's at least one shared group,
 	// otherwise direct send-keys into the new pane. FromConv is the
 	// caller (original for self-clone, manager for cross-clone), so
@@ -414,4 +455,39 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 			short8(newConv), short8(target))
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// runClonePostInit fires asynchronously after a successful clone. It
+// waits for the new pane to come online and injects /rename to the
+// computed clone alias, materialising the .jsonl with a meaningful
+// title. Same purpose as runSpawnPostInit, just for the clone path —
+// the original used to silently leave clones unrenamed (so they
+// showed up as "(unknown)" with whatever conv-id-derived label tmux
+// picked) and unrecoverable when never used.
+//
+// Skips when alias is empty or fails the rename charset gate.
+// Failures log; never bubble — the clone already succeeded as far as
+// the caller is concerned.
+func runClonePostInit(newConv, alias, target, caller string) {
+	if !waitForConvAlive(newConv) {
+		slog.Warn("clone: new conv never came online; rename abandoned", "conv", newConv)
+		return
+	}
+	if alias == "" || !isValidRenameTitle(alias) {
+		if alias != "" {
+			slog.Warn("clone: alias not a valid rename title; skipping /rename",
+				"conv", newConv, "alias", alias)
+		}
+		return
+	}
+	// Note: no welcome message here. Reincarnate's flow already injects
+	// a handoff via the agent_messages flush path when followUp is set,
+	// and same for clone — the orchestration above wrote a clone-handoff
+	// row that the flush path will deliver. Spawn doesn't go through
+	// that path so it gets a synthetic welcome from runSpawnPostInit;
+	// clone doesn't need one. The /rename alone is enough to materialise
+	// the .jsonl.
+	if !injectSlashCommand(newConv, "/rename "+alias, "") {
+		slog.Warn("clone: /rename injection failed", "conv", newConv, "alias", alias)
+	}
 }
