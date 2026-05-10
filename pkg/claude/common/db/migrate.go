@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 14
+const currentVersion = 15
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -107,6 +107,54 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 15 {
+		if err := migrateV14toV15(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV14toV15 adds agent_conv_succession — a forward-pointing
+// chain old_conv_id → new_conv_id captured every time we replace one
+// conv with a fresh one (today: reincarnate; future: clone-replace).
+//
+// Why: reincarnate eagerly migrates groups / permissions / ownership
+// from the old conv to the new one, but other surfaces hold stable
+// conv-id references that we can't always rewrite at migration time
+// — cron jobs, historical inbox rows, the user typing an old conv-id
+// at the CLI. The succession table lets a resolver walk forward from
+// any historical id to the current live conv.
+//
+// Shape:
+//   - old_conv_id is the PRIMARY KEY: a conv can only succeed once.
+//     If a chain forms (A→B→C), each row stores its direct successor;
+//     ResolveLatestConv walks the chain.
+//   - new_conv_id is indexed so reverse lookups ("what predecessors
+//     does this conv have?") are cheap.
+//   - reason is a short tag — `reincarnate`, `clone-replace` (future).
+//   - succeeded_at is the wall-clock time the migration ran.
+//
+// We do NOT cascade-delete: keeping the row even after the new conv
+// is gone is what makes "tclaude conv resume <old-id>" still
+// resolvable from a forensic/log-spelunking angle.
+func migrateV14toV15(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_conv_succession (
+			old_conv_id   TEXT PRIMARY KEY,
+			new_conv_id   TEXT NOT NULL,
+			reason        TEXT NOT NULL DEFAULT '',
+			succeeded_at  TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_conv_succession_new
+			ON agent_conv_succession(new_conv_id);
+
+		UPDATE schema_version SET version = 15;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v14→v15: %w", err)
+	}
 	return nil
 }
 
