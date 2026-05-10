@@ -92,6 +92,13 @@ type approvalRegistry struct {
 
 var approvals = &approvalRegistry{pending: map[string]*approvalRequest{}}
 
+// RequestHumanApprovalImpl is the indirection point for
+// requestHumanApproval so flow tests can stub the popup decision
+// without spawning a browser. Production assigns realRequestHumanApproval
+// (the inline body below); tests replace it via t.Cleanup-restored
+// assignment.
+var RequestHumanApprovalImpl = realRequestHumanApproval
+
 // requestHumanApproval blocks until the human approves, denies, or
 // timeout fires. Returns true on approve, false on deny/timeout.
 //
@@ -100,6 +107,10 @@ var approvals = &approvalRegistry{pending: map[string]*approvalRequest{}}
 // http://127.0.0.1:<port>/approve/{id}) renders the page and writes
 // back to the channel on user click.
 func requestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
+	return RequestHumanApprovalImpl(req, popupBaseURL)
+}
+
+func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	approvals.mu.Lock()
 	approvals.pending[req.id] = req
 	approvals.mu.Unlock()

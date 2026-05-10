@@ -13,6 +13,16 @@ design see `docs/plans/agent-coord.md`. For the daemon design see
 
 ## 2026-05 (recent commits)
 
+- **Cross-agent X-Tclaude-Ask-Human popup escape hatch**.
+  `requireCrossAgentPermission` now honors the popup header as a
+  last-chance branch when slug + ownership both fail. Mirrors the
+  self-targeted path; payload surfaces caller + target + perm slug
+  so the popup can render "<caller> wants to <verb> <target>".
+  Three flow scenarios pinned via `RequestHumanApprovalImpl`
+  indirection (no real browser needed):
+  no-header-still-refuses, header-and-approval-allows-call (200 +
+  succession row recorded), header-and-denial-still-refuses (403,
+  no orchestration runs).
 - **`tclaude agent inbox watch` interactive mailbox v1**. New
   bubbletea TUI under `pkg/claude/agent/inbox_watch.go`. Auto-
   refreshes the list every 3s; up/down/k/j to navigate, g/G to

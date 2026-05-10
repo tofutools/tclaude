@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -60,7 +61,7 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 }
 
 // requireCrossAgentPermission gates a cross-agent endpoint. The caller
-// passes if EITHER:
+// passes if ANY of:
 //
 //   - they hold the slug `perm` (granted via config defaults or
 //     per-conv SQLite grants — same dual-source check as
@@ -68,16 +69,22 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 //   - they own at least one group that contains targetConv (mirrors
 //     the owner-implicit-power semantics already used for messaging
 //     in db.CanSenderReachTarget)
+//   - they sent X-Tclaude-Ask-Human: <duration> AND the human
+//     approves the cross-agent action via the loopback popup before
+//     the timeout expires (same escape hatch the self-targeted
+//     endpoints honor)
 //
 // Humans (no claude ancestor) always pass — same convention as
 // requirePermission. Returns (callerConvID, ok); callerConvID is ""
 // for humans, the agent's conv-id otherwise. On failure the error
 // response is already written.
 //
-// Note: this does NOT honor X-Tclaude-Ask-Human. Cross-agent
-// management is opt-in via explicit slug grants; the popup escape
-// hatch belongs on the self-targeted endpoints. Revisit if a real
-// use case appears.
+// The popup is the manager-pattern escape hatch: a manager that
+// doesn't normally manage a particular peer can ask the human for
+// one-off escalation rather than forcing the human to issue a
+// permanent slug grant. The popup surfaces who's calling, what the
+// target is, and which perm slug is being requested so the human
+// can make an informed decision.
 func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string) (string, bool) {
 	p := peerFromContext(r.Context())
 	if p.PID == 0 {
@@ -103,8 +110,48 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	if ownerOfGroupContaining(p.ConvID, targetConv) {
 		return p.ConvID, true
 	}
+
+	// Last chance: human-approval popup. Same shape as the
+	// self-targeted path in requirePermission, with the cross-agent
+	// target surfaced so the popup can render
+	// "<caller> wants to <verb> <target>". Timeout = deny.
+	if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
+		bodyPreview := snapshotRequestBody(r)
+		callerTitle := ""
+		if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
+			callerTitle = agent.DisplayTitle(row)
+		}
+		targetTitle := ""
+		if row := agent.FreshConvRowResolved(targetConv); row != nil {
+			targetTitle = agent.DisplayTitle(row)
+		}
+		req := &approvalRequest{
+			id:              newApprovalID(),
+			perm:            perm,
+			convID:          p.ConvID,
+			convTitle:       callerTitle,
+			method:          r.Method,
+			path:            r.URL.Path,
+			rawQuery:        r.URL.RawQuery,
+			bodyPreview:     bodyPreview,
+			targetConvID:    targetConv,
+			targetConvTitle: targetTitle,
+			createdAt:       time.Now(),
+			timeout:         timeout,
+			decision:        make(chan bool, 1),
+			extend:          make(chan time.Duration, 1),
+		}
+		if requestHumanApproval(req, popupBaseURL) {
+			return p.ConvID, true
+		}
+		writeError(w, http.StatusForbidden, "permission",
+			fmt.Sprintf("human declined or timed out after %s on cross-agent permission %q for target %s",
+				timeout, perm, short8(targetConv)))
+		return "", false
+	}
+
 	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of any group containing it (grant via `tclaude agent permissions grant %s %s`, or add caller as owner of a shared group)",
+		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of any group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of a shared group, or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)",
 			perm, short8(targetConv), perm, short8(p.ConvID)))
 	return "", false
 }

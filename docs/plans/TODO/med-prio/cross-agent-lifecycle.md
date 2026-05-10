@@ -24,19 +24,14 @@ Shipped (2026-05):
   `run<Verb>Orchestration` helpers.
 - Group-owner implicit power.
 - Handoff message FromConv = caller.
+- **X-Tclaude-Ask-Human on cross-agent endpoints.**
+  `requireCrossAgentPermission` honors the popup header as a
+  last-chance escape hatch when the slug + ownership checks both
+  fail. The popup payload surfaces the caller, the target, and the
+  perm slug so the human can decide informedly.
 
 ## Open
 
-- **X-Tclaude-Ask-Human on cross-agent endpoints.** Today
-  `requireCrossAgentPermission` doesn't honor the popup header
-  (manager pattern is opt-in via explicit grants).
-  `pkg/claude/agentd/agent_dispatch.go:77-80` documents the gap.
-  Re-evaluate when a use case appears — e.g. a manager that wants to
-  act on a peer it doesn't normally manage with one-off escalation.
-  Scope: ~10 lines: call `parseAskHumanHeader` in
-  `requireCrossAgentPermission` and route to the existing popup logic.
-  Design question: should approval show it's a cross-agent request
-  ("Agent X wants to reincarnate Agent Y")?
 - **Orthogonal vs. implication.** Today `agent.<verb>` and
   `self.<verb>` are orthogonal — granting one doesn't grant the other.
   Revisit if managers always also want self-management.
