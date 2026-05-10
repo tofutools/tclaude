@@ -56,17 +56,6 @@ every check), but a long-running daemon's table grows. The
 just needs a cron job to call it. Slot into the existing
 `agent_cron_jobs` runner.
 
-## Test coverage (v2)
-
-In addition to the v1 6 flow tests:
-
-- **Dashboard panel** (cookie-auth list + revoke endpoints).
-
-## Files (when implementing)
-
-- `pkg/claude/agentd/dashboard.html` — new "Sudo" tab + per-row
-  indicator (consumes the already-shipped snapshot fields)
-
 ## Cross-references
 
 - [`DONE/agent-sudo-elevation-v1.md`](../../DONE/agent-sudo-elevation-v1.md)
