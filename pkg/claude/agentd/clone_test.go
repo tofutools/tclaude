@@ -124,3 +124,40 @@ func TestUniqueCloneAlias_LegacyAliasesDoNotReserveNewN(t *testing.T) {
 		t.Errorf("legacy aliases must not reserve new N: got %q, want %q", got, "worker-c-1")
 	}
 }
+
+// TestUniqueCloneAlias_NumericSuffixInBaseName covers the same
+// gotcha as the reincarnate side: aliases like `worker-1`,
+// `worker-2` (common when humans hand-name multiple workers) must
+// NOT have their trailing `-N` mistaken for a `-c-N` suffix. The
+// regex requires `-c-` or `-clone-` literal between the base and
+// the digits, so `worker-1` (just `dash + digit`) doesn't match
+// and the base stays whole.
+func TestUniqueCloneAlias_NumericSuffixInBaseName(t *testing.T) {
+	setupTestDB(t)
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "a", Alias: "worker-1"})
+
+	// Cloning worker-1: the "1" stays as part of the base.
+	got := uniqueCloneAlias("worker-1")
+	if got != "worker-1-c-1" {
+		t.Errorf("worker-1 first clone: got %q, want %q",
+			got, "worker-1-c-1")
+	}
+
+	// After one clone, the next bump anchors on `worker-1`. Mirroring
+	// the reincarnate test: register the prior clone, then ask again.
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "b", Alias: "worker-1-c-1"})
+	got = uniqueCloneAlias("worker-1-c-1")
+	if got != "worker-1-c-2" {
+		t.Errorf("worker-1 second clone: got %q, want %q",
+			got, "worker-1-c-2")
+	}
+
+	// worker-2's namespace is independent from worker-1's.
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "c", Alias: "worker-2"})
+	got = uniqueCloneAlias("worker-2")
+	if got != "worker-2-c-1" {
+		t.Errorf("worker-2 first clone: got %q, want %q",
+			got, "worker-2-c-1")
+	}
+}

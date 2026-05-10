@@ -122,3 +122,40 @@ func TestUniqueReincarnateTitle_LegacyTitlesDoNotReserveNewN(t *testing.T) {
 			got, "worker-r-1")
 	}
 }
+
+// TestUniqueReincarnateTitle_NumericSuffixInBaseName covers the
+// gotcha: titles like `worker-1`, `worker-2` (common when humans
+// hand-name multiple workers) must NOT have their trailing `-N`
+// mistaken for a `-r-N` suffix. The regex requires `-r-` or
+// `-reincarnate-` literal between the base and the digits, so
+// `worker-1` (just `dash + digit`) doesn't match and the base
+// stays whole. Each numbered worker gets its own independent
+// `-r-N` counter.
+func TestUniqueReincarnateTitle_NumericSuffixInBaseName(t *testing.T) {
+	setupTestDB(t)
+
+	// First reincarnation of worker-1 keeps the "1" as part of the base.
+	got := uniqueReincarnateTitle("worker-1")
+	if got != "worker-1-r-1" {
+		t.Errorf("worker-1 first reincarnation: got %q, want %q",
+			got, "worker-1-r-1")
+	}
+
+	// After one reincarnation: the "-r-1" IS recognised and stripped, so
+	// the next bump still anchors on `worker-1` as base.
+	upsertCustomTitle(t, "a", "worker-1-r-1")
+	got = uniqueReincarnateTitle("worker-1-r-1")
+	if got != "worker-1-r-2" {
+		t.Errorf("worker-1 second reincarnation: got %q, want %q",
+			got, "worker-1-r-2")
+	}
+
+	// worker-2's namespace is independent from worker-1's. The
+	// `worker-1-r-1` row sitting in the DB doesn't reserve N=1 for
+	// `worker-2-r-N`.
+	got = uniqueReincarnateTitle("worker-2")
+	if got != "worker-2-r-1" {
+		t.Errorf("worker-2 first reincarnation: got %q, want %q",
+			got, "worker-2-r-1")
+	}
+}
