@@ -433,6 +433,99 @@ existing `groups.*`/`member.*` model:
 - Selectable filtering: pressing `g` in `conv ls -w` could open a fuzzy
   group picker. (Groups column itself is shipped.)
 
+### Context nudges (opt-in)
+
+- **Periodic "consider reincarnating" nudge.** As an agent's context
+  fills (30%, 40%, …, 90%), the daemon nudges the agent with a low-
+  pressure note like "context at the next checkpoint — see `agent
+  context-info` and consider whether reincarnating fits your current
+  plan". The goal is to surface the choice into the agent's workflow
+  *before* it runs out of room, without forcing it to reincarnate
+  mid-task. Already-reincarnating agents and agents that just
+  reincarnated should not get pinged.
+- **Opt-in.** Configured per-agent (or default) in
+  `~/.tclaude/config.json` (probably under an `agent.context_nudge`
+  block). Three knobs:
+  - `enabled` (bool) — default off so the nudge doesn't surprise
+    anyone running daemon for the first time.
+  - `min_pct` (int) — first threshold to fire at (default 30 or 50;
+    decide once we've actually felt the cadence).
+  - `interval_pct` (int) — step between subsequent nudges (default
+    10). Combined with min_pct this defines 30, 40, 50, … 90 as the
+    nudge points.
+- **Transport — explore back-channel first.** Regular agent messages
+  work but pollute the receiver's inbox + `inbox ls` view, which is
+  the wrong shape for an ambient "tap on the shoulder". Things to
+  explore before falling back to messages:
+  - **CC hooks.** `tclaude setup` already wires a hook into
+    `~/.claude/settings.json`. Could the daemon emit a
+    side-channel signal (a hidden file the hook polls, a Unix
+    socket the hook reads on its next invocation, …) that the hook
+    converts into a transient `[system: …]` line without writing
+    anything to `agent_messages`? The advantage: the receiver only
+    sees the nudge in their transcript, never in inbox surfaces;
+    the daemon never has to poke tmux directly for these
+    background pings. The challenge: hooks fire on
+    PostToolUse/Notification, not on a timer — we'd need an
+    existing hook firing soon enough after the threshold crosses.
+  - **Skill-side pull.** Have the agent's status-bar skill
+    consult the daemon for "should I be nudged?" on every
+    statusline update. The skill prints the nudge inline rather
+    than the daemon pushing it. Bypasses the hook timing issue
+    entirely; still respects opt-in.
+  - **tmux send-keys with a sentinel marker.** Same delivery path
+    as agent_messages but with a marker that the receiver's
+    `inbox ls` filters out. Cheapest to ship; downside is that
+    the marker leaks into the transcript and pollutes scrollback.
+- **Regular agent_messages as a fallback.** If none of the
+  back-channel options shake out cleanly, ship via the existing
+  message path with a distinguishing subject (e.g. `__context_nudge`)
+  so receivers can filter.
+- **Avoid double-firing.** Whatever transport: record per-conv the
+  highest threshold last fired so a brief context fluctuation around
+  a boundary doesn't ping twice.
+
+### File system event source
+
+- **fsnotify-based live .jsonl monitor in agentd.** Hypothesis: CC
+  rewrites the `.jsonl` immediately on `/rename` (and on every turn
+  generally), so a filesystem watcher on `~/.claude/projects/...`
+  would let the daemon detect title changes / new conv files / etc.
+  in real time — replacing the current poll + scan-on-read pattern.
+  - **Validate first.** Before building anything, hook a transient
+    fsnotify watcher up to a single project dir during a normal
+    session. Confirm `/rename` produces an immediate `Write` event
+    (and that the new title is in the file at that moment, not on
+    the *next* turn). If the write is buffered until end-of-turn,
+    the watcher is less useful and we keep poll-on-read.
+  - **Use case 1: rename propagation.** Reincarnate's
+    `uniqueReincarnateTitle` reads the parent's CustomTitle from
+    conv_index; a watcher would push fresh values into conv_index
+    without waiting for `tclaude conv ls` or the watch model.
+  - **Use case 2: dashboard live-refresh.** Title / context-pct
+    changes show up in the dashboard without a refresh.
+  - **Use case 3: cheap "new conv spawned" detection.** Replaces
+    the polling loop in handleGroupSpawn / handleReincarnate that
+    waits for the new `.jsonl` to appear.
+  - **Library.** `github.com/fsnotify/fsnotify` (cross-platform,
+    Go-native). One watcher per `~/.claude/projects/<sanitised>`
+    dir, started lazily when the daemon first sees a request
+    referencing that project — avoids holding watchers on long-
+    archived projects.
+  - **Resource ceiling.** fsnotify on Linux uses inotify watches,
+    capped per-user (`fs.inotify.max_user_watches`). Cap our
+    watchers at e.g. 64 active project dirs, evict LRU.
+
+### Spawn UX
+
+- **`tclaude agent spawn` should default cwd to the caller's cwd, not
+  the daemon's.** Today the new agent inherits whatever directory the
+  daemon was started in, which is almost never what the human wants
+  when they type `agent spawn` from a project tree. Fix is small: the
+  CLI captures `os.Getwd()` and includes it in the spawn POST body so
+  the daemon's `forkSpawn` plumbs it through to the new tclaude session.
+  Existing `-C cwd` / `--cwd` override stays as the explicit knob.
+
 ### Inbox & message UX
 - **Interactive mailbox inspector**: `tclaude agent mailbox <conv> -w` (or
   some better verb — possibly `inbox watch`, `mail`, etc.). Lists mails
