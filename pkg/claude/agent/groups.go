@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -146,33 +147,103 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 
 // --- groups create ---
 
-type groupsCreateParams struct {
-	Name     string `pos:"true" help:"Group name"`
-	Descr    string `long:"descr" short:"d" optional:"true" help:"Optional description"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+// GroupsCreateParams drives `tclaude agent groups create`. The optional
+// repeatable `--member` flag bootstraps a team in one shot: the CLI
+// creates the group first, then spawns one fresh CC session per member
+// (via the existing `groups.spawn` daemon endpoint).
+type GroupsCreateParams struct {
+	Name     string   `pos:"true" help:"Group name"`
+	Descr    string   `long:"descr" short:"d" optional:"true" help:"Optional description"`
+	Members  []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (alias=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'alias' is required; 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
+	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsCreateCmd() *cobra.Command {
-	return boa.CmdT[groupsCreateParams]{
+	return boa.CmdT[GroupsCreateParams]{
 		Use:         "create",
-		Short:       "Create a new group",
+		Short:       "Create a new group, optionally bootstrapping members in one call",
+		Long: "Create a new group. With one or more `--member` flags, immediately " +
+			"spawn fresh CC sessions for each member and add them to the group. Each " +
+			"`--member` value is a comma-separated list of key=value pairs: " +
+			"`alias=lead,role=tech-lead,descr=Owns the diff,cwd=.`. Member spawn " +
+			"requires `groups.spawn` (default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
-		InitFuncCtx: func(ctx *boa.HookContext, p *groupsCreateParams, _ *cobra.Command) error {
+		InitFuncCtx: func(ctx *boa.HookContext, p *GroupsCreateParams, _ *cobra.Command) error {
 			// `Name` is brand-new on create; no value-completion to offer.
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
-		RunFunc: func(p *groupsCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsCreate(p, os.Stdout, os.Stderr))
+		RunFunc: func(p *GroupsCreateParams, _ *cobra.Command, _ []string) {
+			os.Exit(RunGroupsCreate(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runGroupsCreate(p *groupsCreateParams, stdout, stderr io.Writer) int {
+// memberSpec is the parsed shape of one `--member` flag value.
+type memberSpec struct {
+	Alias string
+	Role  string
+	Descr string
+	Cwd   string
+}
+
+// parseMemberSpec turns "alias=lead,role=tech-lead,descr=Owns the diff,cwd=."
+// into a memberSpec. Values can't contain commas or '=' (for v1) — the
+// helper documents this trade-off in the user-facing error.
+func parseMemberSpec(s string) (*memberSpec, error) {
+	spec := &memberSpec{}
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("--member %q: expected key=value pairs separated by commas, got %q", s, part)
+		}
+		key := strings.ToLower(strings.TrimSpace(kv[0]))
+		val := strings.TrimSpace(kv[1])
+		switch key {
+		case "alias":
+			spec.Alias = val
+		case "role":
+			spec.Role = val
+		case "descr":
+			spec.Descr = val
+		case "cwd":
+			spec.Cwd = val
+		default:
+			return nil, fmt.Errorf("--member %q: unknown key %q (allowed: alias, role, descr, cwd)", s, key)
+		}
+	}
+	if spec.Alias == "" {
+		return nil, fmt.Errorf("--member %q: 'alias' is required", s)
+	}
+	return spec, nil
+}
+
+// RunGroupsCreate dispatches the create + (optional) bootstrap.
+// Exported so flow tests can drive it directly through the agent
+// client bridge.
+func RunGroupsCreate(p *GroupsCreateParams, stdout, stderr io.Writer) int {
 	if p.Name == "" {
 		fmt.Fprintf(stderr, "Error: group name is required\n")
 		return rcInvalidArg
 	}
+
+	// Parse member specs up-front so a typo doesn't leave an empty
+	// group sitting around. Fails the whole command before any DB work.
+	specs := make([]*memberSpec, 0, len(p.Members))
+	for _, m := range p.Members {
+		spec, err := parseMemberSpec(m)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcInvalidArg
+		}
+		specs = append(specs, spec)
+	}
+
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -196,7 +267,54 @@ func runGroupsCreate(p *groupsCreateParams, stdout, stderr io.Writer) int {
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Created group %q (id=%d)\n", resp.Name, resp.ID)
+
+	// Bootstrap members. Each spawn is independent — partial failure is
+	// reported but doesn't abort the rest. The group already exists at
+	// this point, so a half-bootstrapped team is a recoverable state
+	// (the human can retry just the failures via `agent spawn`).
+	if len(specs) > 0 {
+		spawned, failed := bootstrapMembers(p.Name, specs, stdout, stderr)
+		fmt.Fprintf(stdout, "Bootstrapped %d/%d members\n", spawned, len(specs))
+		if failed > 0 && spawned == 0 {
+			return rcIOFailure
+		}
+	}
 	return rcOK
+}
+
+// bootstrapMembers iterates parsed member specs, calling the
+// `groups.spawn` daemon endpoint for each. Returns (spawned, failed).
+// Cwd defaults to the caller's cwd when the spec doesn't pin one,
+// matching the pattern `agent spawn` and `--join-group` use.
+func bootstrapMembers(groupName string, specs []*memberSpec, stdout, stderr io.Writer) (spawned, failed int) {
+	callerCwd := ""
+	if wd, err := os.Getwd(); err == nil {
+		callerCwd = wd
+	}
+	path := "/v1/groups/" + groupName + "/spawn"
+	for _, spec := range specs {
+		cwd := spec.Cwd
+		if cwd == "" {
+			cwd = callerCwd
+		}
+		body := map[string]any{
+			"alias":           spec.Alias,
+			"role":            spec.Role,
+			"descr":           spec.Descr,
+			"cwd":             cwd,
+			"timeout_seconds": 30,
+		}
+		var sresp SpawnResponse
+		if err := DaemonRequest(http.MethodPost, path, body, &sresp, DaemonOpts{}); err != nil {
+			fmt.Fprintf(stderr, "  Failed to spawn member alias=%q: %v\n", spec.Alias, err)
+			failed++
+			continue
+		}
+		fmt.Fprintf(stdout, "  Spawned member alias=%q conv=%s tmux=%s\n",
+			spec.Alias, short(sresp.ConvID), sresp.TmuxSession)
+		spawned++
+	}
+	return spawned, failed
 }
 
 // --- groups rm ---

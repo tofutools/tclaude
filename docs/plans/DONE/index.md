@@ -13,6 +13,19 @@ design see `docs/plans/agent-coord.md`. For the daemon design see
 
 ## 2026-05 (recent commits)
 
+- **`groups create --member` spawn-on-create**. Repeatable
+  `--member alias=...,role=...,descr=...,cwd=...` flag bootstraps a
+  team in one call. CLI parses + validates up-front (typo aborts
+  before any DB work), creates the group via existing endpoint, then
+  iterates `groups.spawn` per member. Partial failure leaves the
+  group up; human retries via `agent spawn`. Caller's cwd defaulted
+  per-member when `cwd=` is omitted; explicit `cwd=` overrides.
+  Three flow scenarios pinned:
+  `TestGroupsCreateTeam_BootstrapsMembers`,
+  `TestGroupsCreateTeam_PerMemberCwdOverride`,
+  `TestGroupsCreateTeam_BadSpecAbortsBeforeCreate`. Persistent-
+  template Phase B left for later (see TODO/high-prio/group-
+  lifecycle.md).
 - **Clone rate limiting** (commit fc2f9cc). Schema v19
   `agent_clone_history` table; `db.ClaimCloneSlot` does atomic
   INSERT-WHERE-NOT-EXISTS; `runCloneOrchestration` returns 429

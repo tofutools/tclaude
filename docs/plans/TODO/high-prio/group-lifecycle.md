@@ -20,23 +20,35 @@ the missing piece.
   `groups.spawn`, default human-only).
 - `tclaude --join-group <group>` — top-level + `session new` flag
   reusing the spawn endpoint, foreground attach.
+- **`groups create --member ...` spawn-on-create** (2026-05).
+  Repeatable `--member alias=lead,role=tech-lead,descr=...,cwd=.`
+  flag. CLI parses + validates up-front, creates the group via the
+  existing endpoint, then iterates `groups.spawn` calls. Partial
+  failure leaves the group up with the successful members; the human
+  can retry the rest via `agent spawn`. Limitations of v1: member
+  values can't contain commas or `=` (parser splits on those —
+  workaround: use `groups update-member` afterwards).
 
 ## Open
 
-### `groups create --team <template>` bootstrap
+### Persistent member templates (Phase B)
 
-Bootstrap a group + initial members in one call. Template is JSON or
-a flag bundle:
+The shipped variant is "spawn-on-create" — each member becomes a
+live conv immediately. The original TODO contemplated **persistent
+templates**: `groups create --team` records members in a "no-conv-
+yet" state, and `groups spawn <group>` later reads the templates and
+spawns each. This lets a team be cycled (stop → resume same conv-
+ids; or stop → re-spawn fresh conv-ids from the template).
 
-```
-tclaude agent groups create reviewer-team \
-  --member alias=lead,role=tech-lead,descr="...",cwd=. \
-  --member alias=tester,role=test-runner,descr="..."
-```
-
-Each member starts in the `no-conv-yet` placeholder state until
-`groups spawn` is called. Or could spawn-and-join in the same
-`--team` flag.
+To ship this:
+- Persist member templates somewhere — either a new
+  `agent_group_member_templates(group_id, alias, role, descr, cwd,
+  bootstrap_prompt)` table, or a TOML file under
+  `~/.tclaude/teams/<name>.toml` (docker-compose-shaped).
+- `groups spawn <group>` reads templates and spawns each (only those
+  not already running, for idempotency).
+- Decide on member-row stability across spawn cycles (open question
+  below).
 
 ### Phase B: groups spawn handles no-conv-yet placeholders
 
