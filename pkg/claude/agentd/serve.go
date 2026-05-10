@@ -212,6 +212,11 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/permissions/revoke", handlePermissionsRevoke)
 	mux.HandleFunc("/v1/cron", handleCron)
 	mux.HandleFunc("/v1/cron/", handleCronByID)
+	// Sudo: most-specific path goes first so the trailing-slash form
+	// catches /v1/sudo/{id} and the bare form catches POST/GET/DELETE
+	// against the collection.
+	mux.HandleFunc("/v1/sudo", handleSudo)
+	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	return logRequest(mux)
 }
 

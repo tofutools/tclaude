@@ -165,6 +165,15 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 			allowed = true
 		}
 	}
+	// Third source: time-bounded sudo grants (`tclaude agent sudo`).
+	// Active rows = expires_at > now() AND revoked_at IS empty.
+	// Filtered server-side by indexed lookup; safe to call on every
+	// permission check.
+	if !allowed {
+		if ok, err := db.HasActiveSudoGrant(p.ConvID, perm); err == nil && ok {
+			allowed = true
+		}
+	}
 	if !allowed {
 		// Permission denied. If the caller asked for a human-override
 		// popup (via X-Tclaude-Ask-Human: <duration>), open one and

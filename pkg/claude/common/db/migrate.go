@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 22
+const currentVersion = 23
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -155,6 +155,58 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 23 {
+		if err := migrateV22toV23(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV22toV23 adds agent_sudo_grants — time-bounded permission
+// elevations modeled after Unix sudo / GCP PAM. An agent requests a
+// bundle of slugs for a bounded duration; the request always pops a
+// human-approval popup; on approve we insert one row per slug with
+// the same expires_at. requirePermission consults active rows
+// (`expires_at > now()` AND revoked_at IS NULL) as a third source
+// alongside defaults and per-conv grants.
+//
+// Shape:
+//   - id PRIMARY KEY for clean revocation by id from the CLI / dashboard.
+//   - conv_id is the agent the elevation applies to.
+//   - slug is the permission being elevated.
+//   - granted_at / expires_at are RFC3339Nano stamps; expires_at is
+//     the time-bound check at lookup.
+//   - granted_by carries audit context, e.g. "human:popup-id=<n>" for
+//     popup-approved grants, "human:cli" for direct admin grants.
+//   - reason is the caller-supplied justification surfaced in the popup
+//     and audit views.
+//   - revoked_at is non-NULL when explicitly revoked early (distinct
+//     from expired-by-time so audit can tell those apart).
+//
+// Partial index makes the active-grants probe O(matching rows).
+func migrateV22toV23(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_sudo_grants (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			conv_id     TEXT NOT NULL,
+			slug        TEXT NOT NULL,
+			granted_at  TEXT NOT NULL,
+			expires_at  TEXT NOT NULL,
+			granted_by  TEXT NOT NULL,
+			reason      TEXT NOT NULL DEFAULT '',
+			revoked_at  TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_sudo_active
+			ON agent_sudo_grants(conv_id, expires_at)
+			WHERE revoked_at = '';
+
+		UPDATE schema_version SET version = 23;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v22→v23: %w", err)
+	}
 	return nil
 }
 

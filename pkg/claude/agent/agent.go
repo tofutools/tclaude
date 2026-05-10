@@ -37,6 +37,7 @@ func Cmd() *cobra.Command {
 			spawnCmd(),
 			inboxCmd(),
 			permissionsCmd(),
+			sudoCmd(),
 			cronCmd(),
 			dashboardCmd(),
 		},
