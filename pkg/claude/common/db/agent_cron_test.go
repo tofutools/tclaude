@@ -163,6 +163,113 @@ func TestAgentCronRun_InsertListCascade(t *testing.T) {
 	}
 }
 
+func TestAgentCronJob_UpdateFields_Partial(t *testing.T) {
+	setupTestDB(t)
+
+	id, _ := InsertAgentCronJob(&AgentCronJob{
+		Name:            "before",
+		OwnerConv:       "owner",
+		TargetConv:      "target",
+		GroupID:         7,
+		IntervalSeconds: 300,
+		Subject:         "subj-before",
+		Body:            "body-before",
+		Enabled:         true,
+	})
+	// Stamp a non-zero last_run_at so we can prove UpdateAgentCronJobFields
+	// leaves it alone.
+	prevRun := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	if err := UpdateAgentCronJobLastRun(id, prevRun, "ok"); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+
+	// Touch only name + enabled. All other fields should be unchanged.
+	newName := "after"
+	enabled := false
+	n, err := UpdateAgentCronJobFields(id, UpdateCronPatch{Name: &newName, Enabled: &enabled})
+	if err != nil {
+		t.Fatalf("UpdateAgentCronJobFields: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("rows affected = %d, want 1", n)
+	}
+	got, _ := GetAgentCronJob(id)
+	if got.Name != "after" {
+		t.Errorf("name: got %q, want %q", got.Name, "after")
+	}
+	if got.Enabled {
+		t.Errorf("expected enabled=false after patch")
+	}
+	// Untouched.
+	if got.OwnerConv != "owner" || got.TargetConv != "target" || got.GroupID != 7 ||
+		got.IntervalSeconds != 300 || got.Subject != "subj-before" || got.Body != "body-before" {
+		t.Errorf("untouched fields changed: %+v", got)
+	}
+	// last_run_at preserved.
+	if !got.LastRunAt.Equal(prevRun) {
+		t.Errorf("last_run_at must not be touched; got %v, want %v", got.LastRunAt, prevRun)
+	}
+	if got.LastRunStatus != "ok" {
+		t.Errorf("last_run_status must not be touched; got %q, want %q", got.LastRunStatus, "ok")
+	}
+}
+
+func TestAgentCronJob_UpdateFields_IntervalLeavesLastRunAlone(t *testing.T) {
+	setupTestDB(t)
+
+	id, _ := InsertAgentCronJob(&AgentCronJob{
+		Name:            "n",
+		OwnerConv:       "a",
+		TargetConv:      "b",
+		IntervalSeconds: 60,
+		Body:            "x",
+		Enabled:         true,
+	})
+	stamped := time.Now().Add(-90 * time.Second).UTC().Truncate(time.Second)
+	if err := UpdateAgentCronJobLastRun(id, stamped, "ok"); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+
+	newInterval := int64(3600)
+	if _, err := UpdateAgentCronJobFields(id, UpdateCronPatch{IntervalSeconds: &newInterval}); err != nil {
+		t.Fatalf("UpdateAgentCronJobFields: %v", err)
+	}
+	got, _ := GetAgentCronJob(id)
+	if got.IntervalSeconds != 3600 {
+		t.Errorf("interval: got %d, want 3600", got.IntervalSeconds)
+	}
+	if !got.LastRunAt.Equal(stamped) {
+		t.Errorf("last_run_at changed after interval patch: got %v, want %v", got.LastRunAt, stamped)
+	}
+}
+
+func TestAgentCronJob_UpdateFields_EmptyPatchNoop(t *testing.T) {
+	setupTestDB(t)
+	id, _ := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		IntervalSeconds: 60, Body: "x", Enabled: true,
+	})
+	n, err := UpdateAgentCronJobFields(id, UpdateCronPatch{})
+	if err != nil {
+		t.Fatalf("UpdateAgentCronJobFields: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("empty patch should affect 0 rows; got %d", n)
+	}
+}
+
+func TestAgentCronJob_UpdateFields_NotFound(t *testing.T) {
+	setupTestDB(t)
+	newName := "x"
+	n, err := UpdateAgentCronJobFields(9999, UpdateCronPatch{Name: &newName})
+	if err != nil {
+		t.Fatalf("UpdateAgentCronJobFields: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("missing id should affect 0 rows; got %d", n)
+	}
+}
+
 func TestAgentCronJob_DeleteAndEnable(t *testing.T) {
 	setupTestDB(t)
 

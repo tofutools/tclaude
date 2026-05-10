@@ -17,15 +17,18 @@ import (
 // Wired into the popup mux from registerDashboardEditRoutes.
 
 func registerDashboardCronRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/cron", handleDashboardCronCreate)
 	mux.HandleFunc("/api/cron/", handleDashboardCronAPI)
 }
 
 // handleDashboardCronAPI dispatches:
 //
 //	GET    /api/cron/{id}/logs[?limit=N]   → recent run history
+//	POST   /api/cron                       → create a new cron job
 //	POST   /api/cron/{id}/enable           → enable
 //	POST   /api/cron/{id}/disable          → disable
 //	POST   /api/cron/{id}/run-now          → fire + stamp last_run
+//	PATCH  /api/cron/{id}                  → partial update
 //	DELETE /api/cron/{id}                  → delete
 func handleDashboardCronAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
@@ -102,15 +105,42 @@ func handleDashboardCronAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if r.Method != http.MethodDelete {
-		http.Error(w, "DELETE only on /api/cron/{id}", http.StatusMethodNotAllowed)
+	switch r.Method {
+	case http.MethodDelete:
+		if err := db.DeleteAgentCronJob(id); err != nil {
+			http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodPatch:
+		dashboardCronPatch(w, r, id)
+	default:
+		http.Error(w, "DELETE or PATCH on /api/cron/{id}", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleDashboardCronCreate is the cookie-auth twin of POST /v1/cron.
+// Delegates to handleCronCreate after stamping a synthetic human peer
+// on the request — the cookie+Origin pin is the human-consent layer,
+// and the inner handler's authCronWrite then short-circuits the slug
+// check via the !HasClaudeAncestor branch.
+func handleDashboardCronCreate(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
 		return
 	}
-	if err := db.DeleteAgentCronJob(id); err != nil {
-		http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	handleCronCreate(w, asDashboardHumanPeer(r))
+}
+
+// dashboardCronPatch is the cookie-auth twin of PATCH /v1/cron/{id}.
+// Same body shape, validation, and last_run_at-preservation rule as
+// the /v1 handler. Stamps a human peer so the inner authCronWrite
+// passes without a slug check.
+func dashboardCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
+	handleCronPatch(w, asDashboardHumanPeer(r), id)
 }
 
 // dashboardCronLogs returns the recent run history for one job. Same

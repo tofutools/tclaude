@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -143,6 +144,79 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 	_, err = d.Exec(`UPDATE agent_cron_jobs SET enabled = ? WHERE id = ?`,
 		boolToInt(enabled), id)
 	return err
+}
+
+// UpdateCronPatch is the partial-update shape for UpdateAgentCronJobFields.
+// nil → leave field unchanged. Pointer-shaped so callers can distinguish
+// "set to zero" from "don't touch".
+type UpdateCronPatch struct {
+	Name            *string
+	OwnerConv       *string
+	TargetConv      *string
+	GroupID         *int64
+	IntervalSeconds *int64
+	Subject         *string
+	Body            *string
+	Enabled         *bool
+}
+
+// UpdateAgentCronJobFields applies a partial update to one row. Only
+// non-nil fields in the patch are written. Returns the number of rows
+// affected (0 → no such id).
+//
+// Never touches last_run_at or last_run_status — re-enabling a paused
+// job after a long pause must not fire a flood of catch-ups, and
+// editing the body should not reset the run-history pointer either.
+func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	sets := make([]string, 0, 8)
+	args := make([]any, 0, 9)
+	if p.Name != nil {
+		sets = append(sets, "name = ?")
+		args = append(args, *p.Name)
+	}
+	if p.OwnerConv != nil {
+		sets = append(sets, "owner_conv = ?")
+		args = append(args, *p.OwnerConv)
+	}
+	if p.TargetConv != nil {
+		sets = append(sets, "target_conv = ?")
+		args = append(args, *p.TargetConv)
+	}
+	if p.GroupID != nil {
+		sets = append(sets, "group_id = ?")
+		args = append(args, *p.GroupID)
+	}
+	if p.IntervalSeconds != nil {
+		sets = append(sets, "interval_seconds = ?")
+		args = append(args, *p.IntervalSeconds)
+	}
+	if p.Subject != nil {
+		sets = append(sets, "subject = ?")
+		args = append(args, *p.Subject)
+	}
+	if p.Body != nil {
+		sets = append(sets, "body = ?")
+		args = append(args, *p.Body)
+	}
+	if p.Enabled != nil {
+		sets = append(sets, "enabled = ?")
+		args = append(args, boolToInt(*p.Enabled))
+	}
+	if len(sets) == 0 {
+		return 0, nil
+	}
+	args = append(args, id)
+	res, err := d.Exec(`UPDATE agent_cron_jobs SET `+strings.Join(sets, ", ")+
+		` WHERE id = ?`, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // AgentCronRun is a row in agent_cron_runs — one entry per

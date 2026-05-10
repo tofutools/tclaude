@@ -70,6 +70,16 @@ func BuildDashboardHandlerForTest() http.Handler {
 	return &dashTestHandler{inner: mux}
 }
 
+// RegisterDashboardRoutesForTest exposes registerDashboardRoutes
+// directly without the dashTestHandler cookie-injection wrapper. Lets
+// flow tests prove that the dashboard's auth check actually refuses
+// uncookied requests (rather than the test harness silently passing
+// because it always injects a cookie).
+func RegisterDashboardRoutesForTest(mux *http.ServeMux) {
+	initDashboardToken()
+	registerDashboardRoutes(mux)
+}
+
 type dashTestHandler struct{ inner http.Handler }
 
 func (h *dashTestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -52,6 +52,21 @@ func peerFromContext(ctx context.Context) *peer {
 	return v
 }
 
+// asDashboardHumanPeer stamps a synthetic "human via dashboard cookie"
+// peer onto the request, so a /v1 handler delegated-to from a
+// cookie-authenticated dashboard endpoint sees the caller as a
+// permission-bypassing human. The dashboard cookie + Origin pin in
+// checkDashboardAuth IS the human-consent layer; the inner handler
+// would otherwise fail on PID==0.
+//
+// Used by handleDashboardCronCreate / dashboardCronPatch when they
+// delegate to handleCronCreate / handleCronPatch — same DB writes,
+// same validation, without duplicating either.
+func asDashboardHumanPeer(r *http.Request) *http.Request {
+	p := &peer{PID: 1, HasClaudeAncestor: false}
+	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
+}
+
 // withIdentity is the per-request middleware that resolves the connecting
 // peer's PID, walks the process tree to a claude/node ancestor, reads its
 // per-pid session file, and attaches the result to the request context.

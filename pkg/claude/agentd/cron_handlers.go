@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -115,8 +116,10 @@ func handleCronByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete:
 		handleCronDelete(w, r, id)
+	case http.MethodPatch:
+		handleCronPatch(w, r, id)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method", "DELETE")
+		writeError(w, http.StatusMethodNotAllowed, "method", "DELETE or PATCH")
 	}
 }
 
@@ -286,6 +289,10 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is required (the message text the cron job sends)")
 		return
 	}
+	if err := validateCronName(body.Name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
 	d, err := time.ParseDuration(strings.TrimSpace(body.Interval))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
@@ -351,6 +358,137 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toJobJSON(row))
+}
+
+// validateCronName enforces the spec's name charset: alphanumeric +
+// '-' / '_'. Empty is allowed (name is optional). Stricter than the
+// group name validator on purpose — cron-job names appear in subject
+// prefixes ("[cron:<name>] ..."), in dashboard table rows, and in the
+// `cron logs` output, so the conservative shape avoids quoting +
+// rendering surprises across those surfaces.
+func validateCronName(name string) error {
+	if name == "" {
+		return nil
+	}
+	for _, r := range name {
+		isAlnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !isAlnum && r != '-' && r != '_' {
+			return errors.New("name may contain only alphanumeric, '-', or '_'")
+		}
+	}
+	return nil
+}
+
+// handleCronPatch applies a partial update to one job. Validation
+// mirrors handleCronCreate; only fields explicitly present in the
+// JSON body are touched. last_run_at is never modified — see
+// db.UpdateAgentCronJobFields docstring.
+func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
+	job, err := db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "lookup: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronWrite(w, r, job.TargetConv); !ok {
+		return
+	}
+	patch, ok := decodeCronPatchBody(w, r)
+	if !ok {
+		return
+	}
+	n, err := db.UpdateAgentCronJobFields(id, patch)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
+		return
+	}
+	if n == 0 {
+		// Row vanished between Get and Update, or empty patch — both
+		// are 200 OK with the current row, just like POST returns the
+		// row after insert.
+		row, _ := db.GetAgentCronJob(id)
+		if row == nil {
+			writeError(w, http.StatusNotFound, "not_found",
+				"job "+strconv.FormatInt(id, 10)+" not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, toJobJSON(row))
+		return
+	}
+	row, _ := db.GetAgentCronJob(id)
+	if row == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"id": id})
+		return
+	}
+	writeJSON(w, http.StatusOK, toJobJSON(row))
+}
+
+// decodeCronPatchBody decodes the PATCH JSON into a typed db patch.
+// Returns ok=false (and writes the error response) on bad input.
+// Empty body / no recognised fields is allowed and produces an
+// empty patch — handleCronPatch then no-ops cleanly.
+func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronPatch, bool) {
+	var body struct {
+		Name     *string `json:"name,omitempty"`
+		Target   *string `json:"target,omitempty"`
+		Interval *string `json:"interval,omitempty"`
+		Subject  *string `json:"subject,omitempty"`
+		Body     *string `json:"body,omitempty"`
+		Enabled  *bool   `json:"enabled,omitempty"`
+		GroupID  *int64  `json:"group_id,omitempty"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return db.UpdateCronPatch{}, false
+		}
+	}
+	patch := db.UpdateCronPatch{
+		Name:    body.Name,
+		Subject: body.Subject,
+		Body:    body.Body,
+		Enabled: body.Enabled,
+		GroupID: body.GroupID,
+	}
+	if body.Name != nil {
+		if err := validateCronName(*body.Name); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return db.UpdateCronPatch{}, false
+		}
+	}
+	if body.Body != nil && *body.Body == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"body must not be empty when present (the message text the cron job sends)")
+		return db.UpdateCronPatch{}, false
+	}
+	if body.Interval != nil {
+		d, err := time.ParseDuration(strings.TrimSpace(*body.Interval))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"interval must be a Go duration like 10m / 1h / 30s; got: "+*body.Interval)
+			return db.UpdateCronPatch{}, false
+		}
+		if d < 30*time.Second {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"interval must be >= 30s (the scheduler tick interval)")
+			return db.UpdateCronPatch{}, false
+		}
+		secs := int64(d.Seconds())
+		patch.IntervalSeconds = &secs
+	}
+	if body.Target != nil {
+		res, _, err := agent.ResolveSelector(*body.Target)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
+			return db.UpdateCronPatch{}, false
+		}
+		t := res.ConvID
+		patch.TargetConv = &t
+	}
+	return patch, true
 }
 
 func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
