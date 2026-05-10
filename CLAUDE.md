@@ -98,4 +98,18 @@ See `docs/plans/testharness-v2.md` for the full design.
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
 - `docs/plans/agentd.md` — design for `tclaude agentd` HTTP-over-Unix-socket daemon. Identity comes from socket peer credentials (`LOCAL_PEERPID` / `SO_PEERCRED`), not tokens; tmux delivery happens out-of-sandbox.
-- `docs/plans/agents_todo.md` — living TODO/DONE list for agent coordination work; keep updated as features ship.
+- `docs/plans/agents_todo.md` — root README explaining the layout below.
+
+### TODO / DONE layout
+
+```
+docs/plans/
+├── TODO/
+│   ├── high-prio/   pick from here first
+│   ├── med-prio/    worth doing, not blocking
+│   └── future/      deferred / "if shows up in practice" / cross-machine
+└── DONE/
+    └── index.md     shipped log
+```
+
+One file per coherent feature (kebab-case slug). Each TODO file is self-contained: it states what's open, briefly notes shipped context, lists relevant source files, and any open questions. **Pick up work by listing one tier dir** rather than loading the whole backlog into context. After shipping, either delete the TODO file (if fully done) or update it inline; in both cases append a one-line entry to `DONE/index.md`. Reprioritise by `mv`-ing the file between tier dirs — the directory IS the priority.
