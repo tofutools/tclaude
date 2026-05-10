@@ -22,7 +22,10 @@ poll-on-read.
    push fresh values into `conv_index` without waiting for `tclaude
    conv ls` or the watch model.
 2. **Dashboard live-refresh.** Title / context-pct changes show up
-   in the dashboard without a manual refresh.
+   in the dashboard without a manual refresh. **Pairs with**
+   [`dashboard-realtime-push.md`](dashboard-realtime-push.md) —
+   fsnotify is the event SOURCE; the push TODO is the browser-
+   delivery TRANSPORT. Best to design + ship them together.
 3. **Cheap "new conv spawned" detection.** Replaces the polling loop
    in `handleGroupSpawn` / `handleReincarnate` that waits for the
    new `.jsonl` to appear.

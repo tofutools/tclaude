@@ -109,7 +109,9 @@ docs/plans/
 │   ├── med-prio/    worth doing, not blocking
 │   └── future/      deferred / "if shows up in practice" / cross-machine
 └── DONE/
-    └── index.md     shipped log
+    └── *.md         one shipped feature per file (no index — mod times tell the story)
 ```
 
-One file per coherent feature (kebab-case slug). Each TODO file is self-contained: it states what's open, briefly notes shipped context, lists relevant source files, and any open questions. **Pick up work by listing one tier dir** rather than loading the whole backlog into context. After shipping, either delete the TODO file (if fully done) or update it inline; in both cases append a one-line entry to `DONE/index.md`. Reprioritise by `mv`-ing the file between tier dirs — the directory IS the priority.
+**One file per coherent feature** on BOTH sides (kebab-case slug). Each TODO file is self-contained: it states what's open, briefly notes shipped context, lists relevant source files, and any open questions. **Pick up work by listing one tier dir** rather than loading the whole backlog into context.
+
+After shipping, **move the TODO file into `DONE/`** — keep its filename, rewrite the body to describe what shipped (CLI surface, schema migrations, slugs, file paths, test scenarios, commit refs if known). One file per feature, NOT a single monolithic log. No index file: `ls -lt docs/plans/DONE/` orders by ship date, and `grep -rli` finds features by keyword. Reprioritise TODO files by `mv`-ing between tier dirs — the directory IS the priority.

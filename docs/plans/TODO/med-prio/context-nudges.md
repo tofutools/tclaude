@@ -6,6 +6,13 @@ the agent's workflow *before* it runs out of room, without forcing it
 to reincarnate mid-task. Already-reincarnating agents and agents that
 just reincarnated should not get pinged.
 
+> **Pairs with**
+> [`per-group-reincarnate-thresholds.md`](per-group-reincarnate-thresholds.md)
+> — that file extends this one with **per-group UI-configurable
+> thresholds** and **optional auto-reincarnate**. Ship this simpler
+> global-threshold version first; the per-group / UI / auto-trigger
+> evolution layers on top.
+
 ## Configuration (opt-in)
 
 Per-agent (or default) in `~/.tclaude/config.json`, probably under an

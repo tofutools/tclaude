@@ -51,26 +51,10 @@ same daemon endpoints the CLI uses.
 
 ### Direct-manipulation interactions in the Groups view
 
-- **Drag-and-drop members between groups.** Modifier-key matrix:
-  - **No modifier (move)**: drag a member row from group A onto
-    group B's header → POST add to B + DELETE from A, in that order
-    so the conv is never groupless mid-drag.
-  - **Ctrl+drag (clone)**: drops a `agent clone` of the source row
-    into B, leaving the original in A untouched. Uses the existing
-    `clone` daemon endpoint with target group set to the drop
-    target.
-  - **Shift+drag (multi-membership)**: adds the conv to B without
-    removing it from A.
-  Drop targets pulse on hover; modifier hint pill ("→ move", "→
-  clone", "→ multi") appears near the cursor.
-
-- **"Ungrouped" virtual group.** Pinned row at the bottom (or top)
-  of the Groups tab that surfaces every conv-id that's not currently
-  a member of any group but is online / has a recent session. Acts
-  as a drag SOURCE: drag an ungrouped agent into a real group to
-  add it. Drop ON the ungrouped row removes the conv from all
-  groups (= "kick from every group I'm in"). Empty when every known
-  agent already has at least one group membership.
+- **Drag-and-drop members between groups + per-group `+ add member`
+  button.** → carved out to
+  [`high-prio/dashboard-group-membership-ux.md`](../high-prio/dashboard-group-membership-ux.md).
+  Don't edit the design here — edit there.
 
 - **Per-member action buttons.** Far-right cell on each member row
   gets icon buttons:
@@ -78,20 +62,17 @@ same daemon endpoints the CLI uses.
   - **clone**: one-click `agent clone` of this conv into the same
     group; uses the existing daemon orchestration. Same button on
     the Agents tab too.
-  - **wake up**: only shown when the agent is OFFLINE. Spawns a
-    fresh tmux session resumed onto this conv. Daemon endpoint
-    `POST /api/agents/{conv}/wake` (or hook the existing
-    `groups.resume` slug into a single-conv path).
-  - **shut down**: only shown when the agent is ONLINE. Soft
-    `/exit` injection (or `--force` kill-session). Confirmation
-    modal.
+  - **wake up / shut down** → carved out to
+    [`dashboard-agent-wake-shutdown.md`](dashboard-agent-wake-shutdown.md).
+    Daemon side (`agent.stop` / `agent.resume`) already ships;
+    UI is the work.
   - **make/revoke owner** (shipped).
   - **remove** (shipped).
   - Possible later: reincarnate / compact (manager-pattern verbs).
 
-- **Add-member button** in each group's header. Opens a search
-  overlay listing candidate convs. Selecting one calls `groups
-  add` against the current group.
+- **Add-member button** in each group's header → carved out to
+  [`high-prio/dashboard-group-membership-ux.md`](../high-prio/dashboard-group-membership-ux.md)
+  alongside the DnD work.
 
 - **Rename buttons (agents + groups).** Inline edit pattern: small
   input replaces the label cell on click, Enter saves / Esc
@@ -110,20 +91,16 @@ same daemon endpoints the CLI uses.
 The dashboard currently surfaces existing data + a few destructive
 verbs; creation + edit are still CLI-only. Two equivalents to add:
 
-- **Cron jobs.** "+ new cron job" button on the Cron tab opens a
-  form modal: name, owner (default = "<dashboard-human>"), target
-  (group:<name> or solo conv via search), interval (preset chips:
-  1m / 5m / 15m / 1h / custom duration string), subject, body.
-  POST `/api/cron`. On row hover: an "edit" icon opens the same
-  form pre-filled; PATCH `/api/cron/{id}` (new endpoint to add).
-  Editing the interval should NOT bump `last_run_at`.
+- **Cron jobs.** "+ new cron job" + edit form → carved out to
+  [`high-prio/dashboard-cron-create-form.md`](../high-prio/dashboard-cron-create-form.md).
 - **Agents.** "+ new agent" button at the top of the Agents tab
   (and inside each group header — pre-fills the group). Form:
   alias, role, descr, group(s) to join (multi-select), cwd
   (defaults to daemon's cwd; picker with file-system browse would
   be nice but optional v1). POST → existing `groups.spawn`
-  endpoint per group. For "edit": surfaces the existing
-  `groups update-member` verb as inline edits on the row.
+  endpoint per group.
+- **Inline edit alias / role / descr per member** → carved out to
+  [`dashboard-member-metadata-editing.md`](dashboard-member-metadata-editing.md).
 
 ## Framework migration trigger
 
