@@ -41,7 +41,7 @@ func handleGroupRename(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	renamed, err := db.RenameAgentGroup(g.Name, body.NewName, caller)
+	renamed, err := db.RenameAgentGroup(g.Name, body.NewName, auditedCaller(caller, PermGroupsRename))
 	if errors.Is(err, db.ErrGroupNameTaken) {
 		writeError(w, http.StatusConflict, "exists",
 			"a group named \""+body.NewName+"\" already exists")

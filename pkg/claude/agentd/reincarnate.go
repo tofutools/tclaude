@@ -183,7 +183,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, caller, caller, followUp)
+	runReincarnationOrchestration(w, caller, caller, PermSelfReincarnate, followUp)
 }
 
 // handleAgentReincarnate handles POST /v1/agent/{conv}/reincarnate
@@ -202,7 +202,7 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, targetConv, caller, followUp)
+	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, followUp)
 }
 
 // decodeReincarnateFollowUp parses + validates the optional follow_up
@@ -242,8 +242,12 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 //   - followUp is an optional first-turn prompt; empty means "just
 //     reincarnate, no handoff message".
 //
+//   - perm is the slug requirePermission gated this call on
+//     (PermSelfReincarnate / PermAgentReincarnate). Used by
+//     auditedCaller to annotate via-sudo grants in the audit trail.
+//
 // Writes the JSON response (or error) directly to w.
-func runReincarnationOrchestration(w http.ResponseWriter, target, caller, followUp string) {
+func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, followUp string) {
 	// 1. Snapshot target conv state. We require an alive tmux session
 	// for the target — that's the cwd source and the target of the
 	// final /exit injection.
@@ -327,7 +331,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 	migrated := []string{}
 	granter := "system:reincarnate"
 	if caller != target {
-		granter = "system:reincarnate:by=" + caller
+		granter = "system:reincarnate:by=" + auditedCaller(caller, perm)
+	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
+		granter = fmt.Sprintf("system:reincarnate:via-sudo:grant-id=%d", grantID)
 	}
 
 	for _, m := range oldMembers {

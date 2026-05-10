@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -399,6 +400,118 @@ func TestSudo_PerConvOverrideMaxDuration_AppliedByTitle(t *testing.T) {
 	}
 	if rows, _ := db.ListActiveSudoGrants(workerConv); len(rows) != 0 {
 		t.Errorf("worker over-cap request must not insert rows; got %d", len(rows))
+	}
+}
+
+// Scenario: agent sudoes groups.create then creates a group. The
+// auto-granted ownership row carries `via-sudo:grant-id=<N>` in
+// granted_by, so a forensic query "what did agent X do during the
+// elevation window?" can spot the row by LIKE-matching the annotation.
+//
+// Pins the audit-string annotation across the requirePermission →
+// downstream-write boundary. Without the annotation, an op carried
+// out under sudo looks identical to one carried out via a normal
+// permission grant, defeating the purpose of the time-bounded audit
+// trail.
+func TestSudo_DownstreamAuditAnnotation_GroupsCreateOwner(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	restoreApproval := agentd.StubApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	const conv = "aud-aaaa-bbbb-cccc-1111"
+	f.HaveConvWithTitle(conv, "worker")
+
+	// 1. Sudo for groups.create. Worker has NO non-sudo source for
+	// the slug — that's the precondition for the via-sudo annotation
+	// (agents with default-granted slugs aren't elevated; auditedCaller
+	// returns plain conv-id for them).
+	sudoBody := map[string]any{
+		"slugs":    []string{"groups.create"},
+		"duration": "5m",
+	}
+	sudoReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", sudoBody), conv)
+	sudoRec := testharness.Serve(f.Mux, sudoReq)
+	if sudoRec.Code != http.StatusOK {
+		t.Fatalf("sudo request: status=%d body=%s", sudoRec.Code, sudoRec.Body.String())
+	}
+	var sudoResp struct {
+		Grants []struct {
+			ID int64 `json:"id"`
+		} `json:"grants"`
+	}
+	_ = json.Unmarshal(sudoRec.Body.Bytes(), &sudoResp)
+	if len(sudoResp.Grants) != 1 || sudoResp.Grants[0].ID == 0 {
+		t.Fatalf("expected a single grant with non-zero id; got %+v", sudoResp.Grants)
+	}
+	grantID := sudoResp.Grants[0].ID
+
+	// 2. Create a group. The auto-owner write inside handleGroupCreate
+	// goes through auditedCaller(creator, PermGroupsCreate) and should
+	// therefore stamp the via-sudo annotation onto the granted_by
+	// column.
+	createBody := map[string]any{"name": "team-via-sudo"}
+	createReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/groups", createBody), conv)
+	createRec := testharness.Serve(f.Mux, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("groups create under sudo: status=%d body=%s",
+			createRec.Code, createRec.Body.String())
+	}
+
+	// 3. Inspect the auto-granted ownership row.
+	g, err := db.GetAgentGroupByName("team-via-sudo")
+	if err != nil || g == nil {
+		t.Fatalf("get group: err=%v g=%v", err, g)
+	}
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	if err != nil {
+		t.Fatalf("ListAgentGroupOwners: %v", err)
+	}
+	if len(owners) != 1 {
+		t.Fatalf("owner rows: got %d, want 1", len(owners))
+	}
+	want := fmt.Sprintf("%s:via-sudo:grant-id=%d", conv, grantID)
+	if owners[0].GrantedBy != want {
+		t.Errorf("granted_by = %q, want %q", owners[0].GrantedBy, want)
+	}
+}
+
+// Scenario: agent has groups.create via the normal permission_overrides
+// path (agent_permissions row), then creates a group. The auto-owner's
+// granted_by is the plain conv-id — NO via-sudo annotation, because
+// the call didn't need an elevation. Pins the "only annotate when
+// sudo was actually load-bearing" rule.
+func TestSudo_DownstreamAuditAnnotation_NoSudoNoAnnotation(t *testing.T) {
+	f := newFlow(t)
+	const conv = "nau-aaaa-bbbb-cccc-1111"
+	f.HaveConvWithTitle(conv, "trusted-worker")
+	if err := db.GrantAgentPermission(conv, "groups.create", "<test>"); err != nil {
+		t.Fatalf("seed permission: %v", err)
+	}
+
+	createBody := map[string]any{"name": "team-no-sudo"}
+	createReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/groups", createBody), conv)
+	createRec := testharness.Serve(f.Mux, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("groups create with permission row: status=%d body=%s",
+			createRec.Code, createRec.Body.String())
+	}
+
+	g, err := db.GetAgentGroupByName("team-no-sudo")
+	if err != nil || g == nil {
+		t.Fatalf("get group: err=%v g=%v", err, g)
+	}
+	owners, _ := db.ListAgentGroupOwners(g.ID)
+	if len(owners) != 1 {
+		t.Fatalf("owner rows: got %d, want 1", len(owners))
+	}
+	if owners[0].GrantedBy != conv {
+		t.Errorf("granted_by = %q, want plain %q (no via-sudo annotation when sudo wasn't load-bearing)",
+			owners[0].GrantedBy, conv)
 	}
 }
 

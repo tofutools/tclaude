@@ -1601,7 +1601,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		// Failure here is logged but doesn't unwind the create — the
 		// human can grant ownership manually if needed.
 		if creator != "" {
-			if err := db.AddAgentGroupOwner(id, creator, creator); err != nil {
+			if err := db.AddAgentGroupOwner(id, creator, auditedCaller(creator, PermGroupsCreate)); err != nil {
 				slog.Warn("groups create: auto-grant owner failed",
 					"group", body.Name, "creator", creator, "error", err)
 			}
@@ -1891,7 +1891,7 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, grantedBy); err != nil {
+	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, auditedCaller(grantedBy, PermGroupsOwn)); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}

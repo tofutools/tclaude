@@ -454,7 +454,7 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, res.ConvID, dashboardGranter, followUp, noCopyConv)
+	runCloneOrchestration(w, res.ConvID, dashboardGranter, "", followUp, noCopyConv)
 }
 
 // dashboardResumeAgent is the cookie-auth twin of POST

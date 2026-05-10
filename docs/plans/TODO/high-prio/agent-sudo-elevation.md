@@ -4,9 +4,13 @@ V1 shipped 2026-05; see
 [`DONE/agent-sudo-elevation-v1.md`](../../DONE/agent-sudo-elevation-v1.md)
 for what's already in. This file tracks the deferred surfaces.
 
-Slice 1 (config-driven defaults + per-conv overrides) shipped
-separately — see
-[`DONE/agent-sudo-elevation-config-defaults.md`](../../DONE/agent-sudo-elevation-config-defaults.md).
+Slices that have already shipped (see DONE files for shape +
+test surface):
+
+- `agent-sudo-elevation-config-defaults` — config-driven defaults
+  + per-conv overrides
+- `agent-sudo-elevation-audit-annotations` — `via-sudo:grant-id=<n>`
+  on downstream `granted_by` columns
 
 ## Dashboard panel + per-row indicator
 
@@ -49,30 +53,6 @@ the elevation window without opening the dashboard. Polls
 `db.ListAllActiveSudoGrants()` on the same 200ms tick the
 pending-approval poller uses.
 
-## Audit annotations on downstream operations
-
-Today an op that succeeds via a sudo grant records the same
-`granted_by` it would record without sudo. To make
-forensics ("what did agent X do with their elevated privileges
-between 18:30 and 18:34?") trivial, downstream ops should
-annotate:
-
-```
-granted_by = "system:groups.spawn:via-sudo:grant-id=<id>:by=<conv>"
-```
-
-Plumbing: `requirePermission` already returns
-`(callerConvID, ok)`; extend it to also return whether the call
-passed via a sudo grant (and which grant id, when relevant).
-Each `audit columns` writer in the daemon takes the optional
-sudo-grant id and composes the annotated string.
-
-Affected writers (search `granted_by` for the full set):
-
-- `db.AddAgentGroupOwner` — `granted_by` already exists
-- `db.GrantAgentPermission` — same
-- Anywhere the per-call audit string is composed
-
 ## Manager-pattern approval (deferred — explicit trust laundering)
 
 Could a group owner approve sudo for a group member instead of
@@ -97,9 +77,6 @@ just needs a cron job to call it. Slot into the existing
 In addition to the v1 6 flow tests:
 
 - **Dashboard panel** (cookie-auth list + revoke endpoints).
-- **Per-conv-grant audit trail** — sudo a `groups.spawn` then
-  spawn one; assert the new group's `granted_by` carries the
-  `via-sudo:grant-id=<id>` annotation.
 
 ## Files (when implementing)
 
@@ -110,10 +87,6 @@ In addition to the v1 6 flow tests:
 - `pkg/claude/agentd/dashboard.go` — extend snapshot's
   `dashboardAgent` with an `active_sudo[]` field
 - `pkg/claude/agentd/tray.go` — orange state + tooltip wiring
-- `pkg/claude/agentd/identity.go` — `requirePermission` returns
-  the sudo grant-id when the call passed via sudo
-- `pkg/claude/agentd/permissions.go`, `groups_*.go`, etc. —
-  audit-string composition takes the sudo-grant-id
 
 ## Cross-references
 

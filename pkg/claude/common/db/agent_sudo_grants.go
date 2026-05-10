@@ -109,6 +109,40 @@ func HasActiveSudoGrant(convID, slug string) (bool, error) {
 	return n > 0, nil
 }
 
+// LookupActiveSudoGrantID returns the id of an active grant for
+// (convID, slug), or 0 if none. Used by the audit-string composer in
+// agentd: when requirePermission only passed because of a sudo grant,
+// downstream `granted_by` is annotated with the grant id so forensic
+// queries can answer "what did agent X do during the elevation
+// window?".
+//
+// If multiple active grants for the pair exist (re-request before the
+// first expired), returns the soonest-to-expire — same ordering
+// `sudo ls` uses, so the audit string ties to the row the human is
+// most likely to act on first.
+func LookupActiveSudoGrantID(convID, slug string) (int64, error) {
+	if convID == "" || slug == "" {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	cutoff := time.Now().Format(time.RFC3339Nano)
+	var id int64
+	err = d.QueryRow(`SELECT id FROM agent_sudo_grants
+		WHERE conv_id = ? AND slug = ? AND revoked_at = '' AND expires_at > ?
+		ORDER BY expires_at ASC LIMIT 1`,
+		convID, slug, cutoff).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 // ListActiveSudoGrants returns every active grant for convID ordered
 // by expires_at ascending (soonest expiring first — useful for the
 // CLI's `sudo ls` which shows the user what's about to fall off).

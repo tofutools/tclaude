@@ -82,7 +82,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 
 	granter := "system:groups.clone"
 	if caller != "" {
-		granter = "system:groups.clone:by=" + caller
+		granter = "system:groups.clone:by=" + auditedCaller(caller, PermGroupsClone)
 	}
 
 	// Per-member clone results. Each row carries the source conv-id

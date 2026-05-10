@@ -254,7 +254,7 @@ func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, caller, caller, followUp, noCopyConv)
+	runCloneOrchestration(w, caller, caller, PermSelfClone, followUp, noCopyConv)
 }
 
 // handleAgentClone handles POST /v1/agent/{conv}/clone (cross-agent).
@@ -272,7 +272,7 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, targetConv, caller, followUp, noCopyConv)
+	runCloneOrchestration(w, targetConv, caller, PermAgentClone, followUp, noCopyConv)
 }
 
 // decodeCloneBody parses + validates the optional follow_up and
@@ -307,7 +307,11 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 //   - caller is the conv that triggered the clone; recorded in the
 //     audit trail (`system:clone:by=<caller>` for cross calls) and
 //     used as the FromConv on the optional handoff message.
-func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp string, noCopyConv bool) {
+//   - perm is the slug requirePermission gated this call on
+//     (PermSelfClone / PermAgentClone / "" for human dashboard). Used
+//     to annotate `granted_by` with `:via-sudo:grant-id=<n>` when the
+//     call only passed because of a sudo grant.
+func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp string, noCopyConv bool) {
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
 	oldSess := pickAliveSession(target)
@@ -385,7 +389,12 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 	// the CLI.
 	granter := "system:clone"
 	if caller != target {
-		granter = "system:clone:by=" + caller
+		granter = "system:clone:by=" + auditedCaller(caller, perm)
+	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
+		// Self-clone via sudo: no :by= (it's just the target itself)
+		// but still surface the via-sudo annotation so forensics can
+		// tie the new conv's grants back to the elevation window.
+		granter = fmt.Sprintf("system:clone:via-sudo:grant-id=%d", grantID)
 	}
 	// Resolve the original's display title once so per-group alias
 	// derivations can fall back to it when the original member row

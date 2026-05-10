@@ -331,6 +331,42 @@ func granterLabel(granterConvID string) string {
 	return granterConvID
 }
 
+// auditedCaller composes the granted_by audit string for a permission-
+// gated mutate, annotating sudo-elevated calls so forensic queries
+// can tell normal ops apart from elevated ones.
+//
+// Returns:
+//   - "" when callerConvID is empty (human path; sites that label
+//     humans differently — e.g. granterLabel — keep doing so).
+//   - "<conv>:via-sudo:grant-id=<n>" when the call only passed because
+//     of an active sudo grant for perm. The grant-id ties the audit
+//     string to a specific row in agent_sudo_grants, so a
+//     post-incident query like "what did agent X do during grant
+//     42's window?" is a single LIKE.
+//   - "<conv>" otherwise — the agent had a non-sudo source for the
+//     permission (default-permissions list or agent_permissions row).
+//     Annotating those with via-sudo would be misleading.
+//
+// Only used at the audit-write layer, not in the hot read path —
+// re-checking config + DB here is fine.
+func auditedCaller(callerConvID, perm string) string {
+	if callerConvID == "" {
+		return ""
+	}
+	cfg, _ := config.Load()
+	if cfg.HasDefaultPermission(perm) {
+		return callerConvID
+	}
+	if ok, err := db.HasAgentPermissionRow(callerConvID, perm); err == nil && ok {
+		return callerConvID
+	}
+	grantID, err := db.LookupActiveSudoGrantID(callerConvID, perm)
+	if err != nil || grantID == 0 {
+		return callerConvID
+	}
+	return fmt.Sprintf("%s:via-sudo:grant-id=%d", callerConvID, grantID)
+}
+
 // handlePermissionsGrant adds slug to either the DefaultPermissions list
 // (target=="default", in config.json) or to agent_permissions(conv_id,
 // slug) in SQLite. Idempotent.
