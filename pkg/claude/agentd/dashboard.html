@@ -245,6 +245,18 @@ details[open] > summary .group-actions { opacity: 1; }
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="shutdown-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shutdown-title">
+    <h3 id="shutdown-title">Shut down agent?</h3>
+    <p>Soft exit injects <code>/exit</code> into the tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted.</p>
+    <div class="modal-meta" id="shutdown-meta"></div>
+    <div class="modal-buttons">
+      <button id="shutdown-cancel">Cancel</button>
+      <button id="shutdown-force" class="confirm-danger" title="tmux kill-session — unrecoverable for the current pane">Force kill</button>
+      <button id="shutdown-soft">Soft exit</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="edit-member-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-member-title">
     <h3 id="edit-member-title">Edit member</h3>
@@ -344,19 +356,35 @@ details[open] > summary .group-actions { opacity: 1; }
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
-    const focusBtn = m.online
-      ? `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Focus this agent's terminal window">focus</button>`
-      : '';
-    // Edit opens the alias/role/descr modal pre-filled with current
-    // values. The handler reads data-* attributes back, so embed the
-    // current values here (HTML-escaped). Owner state is mutated by
-    // the make/revoke-owner buttons, NOT by the role text field.
-    const editBtn = `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" data-alias="${esc(m.alias || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit alias / role / description">edit</button>`;
-    const ownerBtn = m.owner
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${removeMemberButton(g, m)}</div>`;
+  }
+
+  // lifecycleAndFocusButtons renders the focus/wake/shutdown trio.
+  // Mutually exclusive based on online state so the row stays visually
+  // stable as the agent toggles. Online → focus + shutdown; offline →
+  // wake. Used by both the Groups tab member rows and the Agents tab
+  // top-level rows so the surface is identical in both places.
+  function lifecycleAndFocusButtons(m) {
+    const label = m.alias || m.title || m.conv_id;
+    if (m.online) {
+      return [
+        `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`,
+        `<button data-act="shutdown-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Soft-exit this agent (force kill available in confirm)">shut down</button>`,
+      ].join('');
+    }
+    return `<button data-act="wake-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Wake this agent — spawns a tmux session resumed onto its conv">wake</button>`;
+  }
+
+  function editMemberButton(g, m) {
+    return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" data-alias="${esc(m.alias || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit alias / role / description">edit</button>`;
+  }
+  function ownerToggleButton(g, m) {
+    return m.owner
       ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
       : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
-    const removeBtn = `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
-    return `<div class="row-actions">${focusBtn}${editBtn}${ownerBtn}${removeBtn}</div>`;
+  }
+  function removeMemberButton(g, m) {
+    return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
   }
 
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
@@ -468,7 +496,7 @@ details[open] > summary .group-actions { opacity: 1; }
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${a.online ? `<button data-act="jump" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Focus this agent's terminal window">focus</button>` : ''}<button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}<button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -808,6 +836,42 @@ details[open] > summary .group-actions { opacity: 1; }
     });
   }
 
+  // shutdownConfirm pops a 3-button confirm: Soft exit (default),
+  // Force kill (destructive), Cancel. Resolves to "soft" / "force" /
+  // null. Mirrors the existing confirmModal but with two distinct
+  // confirm paths so the human can pick blast radius.
+  function shutdownConfirm({label}) {
+    return new Promise(resolve => {
+      const overlay = $('#shutdown-modal');
+      $('#shutdown-meta').textContent = label || '';
+      $('#shutdown-meta').style.display = label ? 'block' : 'none';
+      const softBtn = $('#shutdown-soft');
+      const forceBtn = $('#shutdown-force');
+      const cancelBtn = $('#shutdown-cancel');
+      const cleanup = (result) => {
+        overlay.classList.remove('show');
+        softBtn.removeEventListener('click', onSoft);
+        forceBtn.removeEventListener('click', onForce);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onSoft = () => cleanup('soft');
+      const onForce = () => cleanup('force');
+      const onCancel = () => cleanup(null);
+      const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
+      softBtn.addEventListener('click', onSoft);
+      forceBtn.addEventListener('click', onForce);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      softBtn.focus();
+    });
+  }
+
   // editMemberModal pops the alias/role/descr editor pre-filled with
   // current values. Resolves to the new {alias, role, descr} object on
   // Save (only fields that actually changed are kept; unchanged fields
@@ -977,6 +1041,53 @@ details[open] > summary .group-actions { opacity: 1; }
             ok = r.ok;
             if (!ok) toast(`edit failed: ${await r.text()}`, true);
             break;
+          }
+          case 'wake-agent': {
+            // Resume is non-destructive (only spawns a tmux session;
+            // the conv jsonl is unchanged). No confirm modal — fire +
+            // toast + refresh on success. Idempotent server-side.
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) {
+              toast(`wake failed: ${await r.text()}`, true);
+              break;
+            }
+            // Surface the daemon's per-conv result so an
+            // "already-online" no-op shows up distinctly from a real
+            // wake. The body is JSON shaped like
+            // {action: "resumed" | "skipped:already_online" | ...}.
+            try {
+              const out = await r.json();
+              toast(`wake ${label}: ${out.action || 'ok'}`);
+            } catch (_) {
+              toast(`wake ${label}: ok`);
+            }
+            refresh();
+            return; // Skip the default toast — already toasted above.
+          }
+          case 'shutdown-agent': {
+            const choice = await shutdownConfirm({label});
+            if (!choice) return;
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/stop`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({force: choice === 'force'}),
+            });
+            ok = r.ok;
+            if (!ok) {
+              toast(`shutdown failed: ${await r.text()}`, true);
+              break;
+            }
+            try {
+              const out = await r.json();
+              toast(`shutdown ${label}: ${out.action || 'ok'}`);
+            } catch (_) {
+              toast(`shutdown ${label}: ok`);
+            }
+            refresh();
+            return;
           }
           case 'rename-group': {
             // Inline edit: replace the group's <strong> label with an

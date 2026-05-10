@@ -380,6 +380,79 @@ func TestDashboardEdit_DeleteAgent_WrongMethod(t *testing.T) {
 	}
 }
 
+// POST /api/agents/{conv}/stop on an offline conv → 200 with action
+// "skipped:already_offline". Pins the dashboard route as a thin
+// pass-through to stopOneConv (the same helper /v1/agent/{conv}/stop
+// uses) without exercising the side-effecting tmux send-keys path.
+func TestDashboardEdit_StopAgent_OfflineSkipped(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	const convID = "11111111-2222-3333-4444-555555555555"
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "alice"}); err != nil {
+		t.Fatalf("UpsertConvIndex: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/agents/"+convID+"/stop", "")
+	handleDashboardAgentsAPI(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "skipped:already_offline") {
+		t.Errorf("body should announce already_offline; got %s", body)
+	}
+}
+
+// Stop on an unresolvable selector → 404.
+func TestDashboardEdit_StopAgent_NotFound(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/agents/no-such-conv/stop", "")
+	handleDashboardAgentsAPI(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// Resume on an unresolvable selector → 404. (We don't exercise the
+// happy path here since it would call SpawnDetachedTclaudeResume,
+// which spawns a real subprocess in unit-test scope.)
+func TestDashboardEdit_ResumeAgent_NotFound(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/agents/no-such-conv/resume", "")
+	handleDashboardAgentsAPI(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// GET on the lifecycle subpaths → 405.
+func TestDashboardEdit_StopResume_WrongMethod(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	const convID = "11111111-2222-3333-4444-555555555555"
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "alice"}); err != nil {
+		t.Fatalf("UpsertConvIndex: %v", err)
+	}
+
+	for _, verb := range []string{"stop", "resume"} {
+		w := httptest.NewRecorder()
+		r := dashboardRequest(http.MethodGet, "/api/agents/"+convID+"/"+verb, "")
+		handleDashboardAgentsAPI(w, r)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s: status = %d, want 405", verb, w.Code)
+		}
+	}
+}
+
 func TestDashboardEdit_DeleteAgent_MissingConv(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

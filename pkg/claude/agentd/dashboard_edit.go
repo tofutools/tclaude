@@ -122,12 +122,31 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	if u, err := url.PathUnescape(convSelector); err == nil {
 		convSelector = u
 	}
+	// Sub-verbs: stop / resume — thin pass-throughs to the per-conv
+	// helpers shared with the bulk groups.{stop,resume} paths.
+	if len(parts) > 1 && parts[1] != "" {
+		switch parts[1] {
+		case "stop":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardStopAgent(w, r, convSelector)
+			return
+		case "resume":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardResumeAgent(w, convSelector)
+			return
+		default:
+			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
+			return
+		}
+	}
 	if r.Method != http.MethodDelete {
 		http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
-		return
-	}
-	if len(parts) > 1 && parts[1] != "" {
-		http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 		return
 	}
 
@@ -370,6 +389,41 @@ func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"conv_id": res.ConvID})
+}
+
+// dashboardStopAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/stop. Body is optional `{"force": true}`. Calls
+// the same `stopOneConv` helper the bulk groups.stop path uses, so
+// "soft exit" / "force kill" semantics match exactly.
+func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Force bool `json:"force"`
+	}
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&body) // optional; default false
+	}
+	out := stopOneConv(res.ConvID, body.Force)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// dashboardResumeAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/resume. Idempotent — already-online conv-ids
+// surface as `skipped:already_online`. No body.
+func dashboardResumeAgent(w http.ResponseWriter, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	out := resumeOneConv(res.ConvID)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
