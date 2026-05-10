@@ -1,108 +1,100 @@
-# Dashboard: group membership editing UX (Part 1 — drag-and-drop)
+# Dashboard: group membership editing UX (Part 1B — Ctrl-clone)
 
-Direct-manipulation editing on the Groups tab. The originally-paired
-overlay (`+ add member`) shipped 2026-05; see
-[`DONE/dashboard-add-member-overlay.md`](../../DONE/dashboard-add-member-overlay.md).
-This file now tracks **only** the drag-and-drop half.
+Drag-and-drop **Move** shipped 2026-05; see
+[`DONE/dashboard-dnd-move.md`](../../DONE/dashboard-dnd-move.md). The
+[+ add member overlay](../../DONE/dashboard-add-member-overlay.md)
+shipped earlier the same week. This file now tracks **only the
+remaining Ctrl-clone slice** + the deferred ungrouped-as-source
+detail.
 
-## Drag-and-drop
+## Ctrl-clone
 
-Three behaviours, in priority order:
+**Ctrl+drag** a member row from group A onto group B's header →
+drop a clone of the source row into B; original stays in A. Uses
+the already-shipped `POST /v1/agent/{conv}/clone` endpoint (the
+same one `tclaude agent clone` calls). Inherits the `-clone-<N>`
+alias suffix scheme already wired into `runCloneOrchestration`.
 
-1. **Move (no modifier).** Drag a member row from group A onto group
-   B's header → the conv leaves A and joins B. Order the calls:
-   `POST groups/B/members` then `DELETE groups/A/members/{conv}`,
-   so the conv is never groupless mid-drag. On a failed delete the
-   conv ends up in both groups (visible, recoverable) rather than
-   nowhere (silently lost).
-2. **Clone (Ctrl+drag).** Drops an `agent clone` of the source row
-   into the target group; original stays in A. Uses the already-
-   shipped `POST /v1/agent/{conv}/clone` endpoint (the same one
-   `tclaude agent clone` calls). Inherits the `-clone-<N>` alias
-   suffix scheme already wired into `runCloneOrchestration`.
-3. **Ungrouped virtual group.** Pinned row at the top or bottom of
-   the Groups tab listing every conv-id that is online OR has a
-   recent session AND holds zero `agent_group_members` rows. Acts
-   as a drag SOURCE: drag an ungrouped agent into a real group to
-   add it. Hidden / shows an empty-state line when the set is empty.
+A **modifier-hint pill** (`→ move`, `→ clone`) follows the cursor
+during the drag so the user can see which behaviour they're about
+to commit before releasing. With Ctrl-clone added there's a real
+1-of-2 disambiguation that earns the pill's weight (with Move
+alone the drop-target highlight was sufficient).
 
-Drop targets pulse on hover. A small modifier-hint pill ("→ move",
-"→ clone") follows the cursor while dragging so the user can see
-which behaviour they're about to commit before releasing.
+### Daemon endpoint (need to add a cookie-auth twin)
 
-## Daemon endpoints (all already ship)
+The shipped `POST /v1/agent/{conv}/clone` is on the `/v1` socket
+mux (peer-cred auth); the dashboard speaks cookie-auth on the
+loopback HTTP server. Add a `POST /api/agents/{conv}/clone` twin
+that calls the same `runCloneOrchestration` helper with `caller`
+recorded as the dashboard granter (`<human-dashboard>`).
 
-| Behaviour | Endpoint(s) |
-|-----------|-------------|
-| Move | `POST /v1/groups/{B}/members` (also at `/api/groups/{B}/members` for dashboard cookie auth, shipped with the add-member overlay) then `DELETE /v1/groups/{A}/members/{conv}` (also `/api/groups/{A}/members/{conv}`) |
-| Clone | `POST /v1/agent/{conv}/clone` (target-group in body) |
-| Ungrouped enum source | shipped — `/api/snapshot.ungrouped[]`, see [`DONE/dashboard-snapshot-ungrouped.md`](../../DONE/dashboard-snapshot-ungrouped.md) |
+The endpoint should accept the same `{follow_up?, no_copy_conv?}`
+body the v1 endpoint takes, plus an optional `target_group` field
+that triggers the post-clone `POST groups/{target_group}/members`
+follow-up so the clone lands in the requested group when it isn't
+already a member of one of the source's groups.
 
-Auth: dashboard cookie. Humans bypass slug checks; the underlying
-mutations go through the same daemon code paths the CLI uses, so
-audit columns (`granted_by`) get filled the usual way.
+### JS
 
-## Optimistic UI + rollback
+On `dragstart`, attach a `dragover`-tracking listener that flips
+the cursor pill text + the drop effect (`copy` for Ctrl, `move`
+otherwise). On `drop` with `e.ctrlKey === true`, fire the new
+`/api/agents/{conv}/clone` endpoint with the target group rather
+than the move sequence. Optimistic UI is harder for clone (the
+new conv-id isn't known until the response lands), so just await
+the response and trigger a `refresh()` on success — no local
+optimistic mutation.
 
-Feels broken without optimistic updates — the dropped row should
-appear in the target group immediately, not after the next 5-second
-poll. On success: nothing more to do (the next poll confirms). On
-failure: snap back to the prior state and surface the error in a
-toast. The add-member overlay already pioneered this pattern in
-vanilla JS; reuse the same approach.
+### Test coverage
 
-## Framework question
+Per project convention: flow test under
+`pkg/claude/agentd/*_flow_test.go`:
 
-The original parent doc gated this on a JS framework migration.
-After 5+ dashboard features shipped in vanilla JS (rename modal,
-edit-member modal, wake/shutdown buttons, groups clone, add-member
-overlay), the migration is no longer a hard prerequisite — but DnD
-has higher state-juggling needs (ghost images / drop-zone hover /
-modifier-hint pill / multi-step optimistic flow) than any of the
-shipped features. **Decide before starting**: vanilla JS with
-discipline, or migrate first.
+- **Clone-into-group** — POST `/api/agents/{conv}/clone` with a
+  `target_group` body field; assert the clone lands in target
+  group with a `-clone-<N>` alias and the original is untouched in
+  source.
 
-## Explicitly out of scope (deferred)
+## Ungrouped virtual group as drag SOURCE (deferred)
+
+The `+ add member` overlay already covers this flow (arrow-nav +
+Enter from a candidate list that includes ungrouped[]). Pinned-row
+DnD source for ungrouped agents stays open as a possible future
+slice if the overlay UX turns out to be too keyboard-heavy in
+practice. No daemon work needed when it ships — same
+`/api/snapshot.ungrouped[]` foundation.
+
+## Out of scope (deferred to later slices)
 
 - **Shift+drag (multi-membership).** Add to B without removing from
-  A. Useful eventually; ship after move + clone bake.
+  A. Useful eventually; ship after Ctrl-clone bakes.
 - **Drop ON the ungrouped row** to remove from every group ("kick
-  from all groups I'm in"). Destructive and easy to misclick.
-- **Inline rename.** Already shipped (separate item).
-- **Cross-group bulk move/clone via multi-select.** Single-row DnD
+  from all groups"). Destructive and easy to misclick; defer.
+- **Cross-group bulk move/clone via multi-select.** Single-row
   first.
-
-## Test coverage
-
-Per project convention: add a flow test under
-`pkg/claude/agentd/*_flow_test.go` exercising:
-
-- **Move**: set up agent in group A, call the add+remove sequence,
-  assert membership in B and not A via the production read path
-  (`GET /v1/groups/{name}/members` and snapshot).
-- **Clone-into-group**: assert the clone lands in target group with
-  a `-clone-<N>` alias and the original is untouched in source.
-
-The DnD interaction itself is JS — out of scope for Go flow tests.
+- **Inline group rename.** Already shipped (separate item).
 
 ## Files (when implementing)
 
-- `pkg/claude/agentd/dashboard.html` (or new component tree under
-  `pkg/claude/agentd/dashboard/` post-migration)
-- `pkg/claude/agentd/dashboard_edit.go` — sanity-check the clone
-  path is reachable from the dashboard cookie auth (the move
-  endpoints already are)
+- `pkg/claude/agentd/dashboard.html` — modifier-hint pill CSS +
+  JS branch on `e.ctrlKey` in the existing `bindDnd()` handler
+- `pkg/claude/agentd/dashboard_edit.go` — `dashboardCloneAgent`
+  helper + dispatcher branch on `/api/agents/{conv}/clone`
+- `pkg/claude/agentd/clone.go` — sanity-check `runCloneOrchestration`
+  is reachable from the dashboard-cookie path with no slug
+  prerequisite
 
 ## Cross-references
 
+- [`DONE/dashboard-dnd-move.md`](../../DONE/dashboard-dnd-move.md)
+  — Move shipped; this file is now the remaining slice
 - [`DONE/dashboard-add-member-overlay.md`](../../DONE/dashboard-add-member-overlay.md)
-  — Part 2 of this feature, shipped
+  — covers the ungrouped-as-source flow today
 - [`DONE/dashboard-snapshot-ungrouped.md`](../../DONE/dashboard-snapshot-ungrouped.md)
-  — backend foundation for the ungrouped virtual group
-- [`TODO/med-prio/web-dashboard.md`](../med-prio/web-dashboard.md)
-  — parent v2 dashboard plan (DnD reference here, no edits)
+  — backend foundation, untouched
 
 ## When done
 
-Move this file to `DONE/dashboard-group-membership-dnd.md` and
-rewrite to describe what shipped.
+Move this file to `DONE/dashboard-dnd-clone.md` and rewrite to
+describe what shipped.

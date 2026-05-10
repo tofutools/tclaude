@@ -163,6 +163,26 @@ details[open] > summary .group-actions { opacity: 1; }
 .modal .field input:focus,
 .modal .field textarea:focus { border-color: #58a6ff; outline: none; }
 .modal .field textarea { resize: vertical; min-height: 60px; }
+/* Drag-and-drop: move a member from group A onto group B's
+   header to migrate. The member <tr> is draggable; the <summary>
+   row is the drop target. While dragging, the source row dims so
+   the user can track its origin and we highlight every other group's
+   summary as a valid drop target. The source's own summary stays
+   un-highlighted (move-onto-self is a no-op). */
+.dnd-draggable {
+  cursor: grab;
+}
+.dnd-draggable:active { cursor: grabbing; }
+.dnd-source-row {
+  opacity: 0.45;
+  background: #161b22;
+}
+summary.dnd-drop-over {
+  background: #1f3148;
+  outline: 1px dashed #58a6ff;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
 .add-member-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);
@@ -484,7 +504,7 @@ details[open] > summary .group-actions { opacity: 1; }
       const isOpen = localStorage.getItem('tclaude.dash.group.' + g.name) === '1';
       return `
       <details data-group-key="${esc(g.name)}"${isOpen ? ' open' : ''}>
-        <summary>
+        <summary data-dnd-target-group="${esc(g.name)}">
           <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
           <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
@@ -507,7 +527,11 @@ details[open] > summary .group-actions { opacity: 1; }
                 const state = m.state || {};
                 const subagents = state.subagent_count || 0;
                 return `
-                <tr>
+                <tr class="dnd-draggable"
+                    draggable="true"
+                    data-dnd-source-group="${esc(g.name)}"
+                    data-dnd-conv="${esc(m.conv_id)}"
+                    data-dnd-label="${esc(m.alias || m.title || m.conv_id)}">
                   <td>${onlineDot(m.online)}</td>
                   <td class="id">${esc(shortId(m.conv_id))}</td>
                   <td>
@@ -1547,10 +1571,160 @@ details[open] > summary .group-actions { opacity: 1; }
     });
   }
 
+  // Drag-and-drop: move a member row from group A onto group B's
+  // <summary> header to migrate. Optimistic local mutation runs first
+  // so the user sees the move immediately; the daemon round-trip
+  // confirms (or snaps back on failure).
+  //
+  // Order on success: POST /api/groups/B/members → DELETE
+  // /api/groups/A/members/{conv}. POST first guarantees the conv is
+  // never groupless mid-drag — on a failed delete it ends up in both
+  // groups (visible, recoverable) instead of nowhere (silently lost).
+  //
+  // Auto-refresh suspends via the existing modalEditing flag while a
+  // drag is in flight, so a 5s tick doesn't blow our optimistic
+  // mutation away while the round-trip is mid-air.
+  let dndDragActive = false;
+  function bindDnd() {
+    document.addEventListener('dragstart', (e) => {
+      const row = e.target.closest('.dnd-draggable');
+      if (!row) return;
+      const conv = row.getAttribute('data-dnd-conv');
+      const sourceGroup = row.getAttribute('data-dnd-source-group');
+      const label = row.getAttribute('data-dnd-label') || conv;
+      if (!conv || !sourceGroup) return;
+      // Stash the payload on the DataTransfer so other drag listeners
+      // (and the eventual drop) can read it without globals. The MIME
+      // type 'text/plain' is the most-supported channel; the JSON
+      // body keeps the encoding self-describing.
+      const payload = JSON.stringify({conv, sourceGroup, label});
+      e.dataTransfer.setData('application/x-tclaude-member', payload);
+      e.dataTransfer.setData('text/plain', payload);
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('dnd-source-row');
+      dndDragActive = true;
+      modalEditing = true; // suspend auto-refresh during the drag
+    });
+    document.addEventListener('dragend', (e) => {
+      const row = e.target.closest('.dnd-draggable');
+      if (row) row.classList.remove('dnd-source-row');
+      // Clear any lingering hover highlight (Firefox sometimes fires
+      // dragend without a final dragleave on the target).
+      $$('summary.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over'));
+      dndDragActive = false;
+      modalEditing = false;
+      refresh();
+    });
+    document.addEventListener('dragover', (e) => {
+      if (!dndDragActive) return;
+      const summary = e.target.closest('summary[data-dnd-target-group]');
+      if (!summary) return;
+      e.preventDefault(); // required for drop to fire on this element
+      e.dataTransfer.dropEffect = 'move';
+    });
+    document.addEventListener('dragenter', (e) => {
+      if (!dndDragActive) return;
+      const summary = e.target.closest('summary[data-dnd-target-group]');
+      if (!summary) return;
+      summary.classList.add('dnd-drop-over');
+    });
+    document.addEventListener('dragleave', (e) => {
+      const summary = e.target.closest('summary[data-dnd-target-group]');
+      if (!summary) return;
+      // dragleave fires when the cursor enters a child element too;
+      // only remove the highlight when the cursor has actually left
+      // the summary.
+      if (summary.contains(e.relatedTarget)) return;
+      summary.classList.remove('dnd-drop-over');
+    });
+    document.addEventListener('drop', async (e) => {
+      const summary = e.target.closest('summary[data-dnd-target-group]');
+      if (!summary) return;
+      e.preventDefault();
+      summary.classList.remove('dnd-drop-over');
+      const targetGroup = summary.getAttribute('data-dnd-target-group');
+      const raw = e.dataTransfer.getData('application/x-tclaude-member')
+        || e.dataTransfer.getData('text/plain');
+      let payload;
+      try { payload = JSON.parse(raw); } catch (_) { return; }
+      if (!payload || !payload.conv || !payload.sourceGroup) return;
+      if (payload.sourceGroup === targetGroup) {
+        // Move-onto-self: no-op. The auto-refresh + dragend already
+        // restore visual state; nothing else to do.
+        return;
+      }
+      await runDndMove(payload, targetGroup);
+    });
+  }
+
+  // runDndMove performs the optimistic local mutation, then the
+  // POST B → DELETE A sequence. Failure of either step rolls back
+  // the local mutation and surfaces a toast.
+  async function runDndMove(payload, targetGroup) {
+    const {conv, sourceGroup, label} = payload;
+    if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) return;
+    // Snapshot the source row so we can restore it on rollback +
+    // append it to the target so the optimistic render is correct.
+    const source = lastSnapshot.groups.find(g => g.name === sourceGroup);
+    const target = lastSnapshot.groups.find(g => g.name === targetGroup);
+    if (!source || !target) {
+      toast(`move: group not found in snapshot`, true);
+      return;
+    }
+    const idx = (source.members || []).findIndex(m => m.conv_id === conv);
+    if (idx < 0) {
+      toast(`move: member not found in source group`, true);
+      return;
+    }
+    const memberSnapshot = source.members[idx];
+    // Optimistic mutation: pull from source, push onto target.
+    source.members.splice(idx, 1);
+    target.members = target.members || [];
+    target.members.push(memberSnapshot);
+    renderGroupsTab();
+
+    const rollback = () => {
+      // Re-insert at the original position so the visible ordering
+      // doesn't drift mid-failure.
+      source.members.splice(idx, 0, memberSnapshot);
+      target.members = (target.members || []).filter(m => m.conv_id !== conv);
+      renderGroupsTab();
+    };
+
+    try {
+      const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({conv}),
+      });
+      if (!addRes.ok) {
+        toast(`move add failed: ${await addRes.text()}`, true);
+        rollback();
+        return;
+      }
+      const delRes = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      if (!delRes.ok) {
+        // Add succeeded but remove failed: the conv is now in BOTH
+        // groups. Report it so the human can manually clean up; do
+        // NOT roll the optimistic mutation back, because the daemon
+        // really did add it to the target.
+        toast(`move partial: added to ${targetGroup} but failed to remove from ${sourceGroup}: ${await delRes.text()}`, true);
+        return;
+      }
+      toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
+    } catch (err) {
+      toast(`move failed: ${err && err.message || err}`, true);
+      rollback();
+    }
+  }
+
   bindTabs();
   bindCopy();
   bindDetailsPersistence();
   bindRowActions();
+  bindDnd();
   bindFilter('groups');
   bindFilter('agents');
   bindFilter('cron');
