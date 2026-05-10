@@ -64,12 +64,20 @@ func newUnixSocketClient(timeout time.Duration) *http.Client {
 	}
 }
 
+// DaemonAvailableImpl is the indirection point for DaemonAvailable so
+// CLI flow-tests can stand in a stub without binding a real Unix
+// socket. Production code paths use realDaemonAvailable. Tests
+// reassign with t.Cleanup to restore.
+var DaemonAvailableImpl = realDaemonAvailable
+
 // DaemonAvailable returns true if a tclaude agentd is reachable on the
 // well-known socket. CLI commands route through the daemon; if it's not
 // running, they exit with a clear error pointing the user at
 // `tclaude agentd serve`. The direct-DB code paths still exist for
 // tests, but production CLI invocations always go through the daemon.
-func DaemonAvailable() bool {
+func DaemonAvailable() bool { return DaemonAvailableImpl() }
+
+func realDaemonAvailable() bool {
 	sock := SocketPath()
 	if sock == "" {
 		return false
@@ -174,10 +182,17 @@ func DaemonPatch(path string, in, out any) error {
 	return daemonReq(http.MethodPatch, path, in, out, DaemonOpts{})
 }
 
+// DaemonRequestImpl is the indirection point for DaemonRequest so CLI
+// flow-tests can capture the body a `tclaude agent <verb>` invocation
+// would have sent without standing up a real daemon. Production code
+// paths use the default (the real Unix-socket transport in
+// daemonReq). Tests reassign with t.Cleanup to restore.
+var DaemonRequestImpl = daemonReq
+
 // DaemonRequest is the variadic-opts form. Use this from CLI commands
 // that need to attach AskHuman.
 func DaemonRequest(method, path string, in, out any, opts DaemonOpts) error {
-	return daemonReq(method, path, in, out, opts)
+	return DaemonRequestImpl(method, path, in, out, opts)
 }
 
 func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
