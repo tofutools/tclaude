@@ -271,6 +271,59 @@ func TestMessageRouting_NoSuccession_NoRedirect(t *testing.T) {
 	}
 }
 
+// Scenario: the recipient of a message is the live successor of the
+// original sender — i.e. our predecessor sent us a handoff message
+// before reincarnating into us. Replying via /v1/messages/{id}/reply
+// would chain-walk the reply target onto our own conv-id, which would
+// land in our own inbox. Reject observably so the caller can choose a
+// different action (write a fresh message, no-op, etc.).
+//
+// Pins a real-world scenario caught in production: a fresh agent
+// reincarnated from a predecessor that just sent it the
+// `reincarnation handoff` message; replying via the standard reply
+// path looped the message back to the new instance.
+func TestReply_ChainResolvesToSelf_Rejected(t *testing.T) {
+	f := newFlow(t)
+
+	const meConv = "meee-aaaa-bbbb-cccc-1111"
+	const predConv = "pred-aaaa-bbbb-cccc-2222"
+
+	g := f.HaveGroup("alpha")
+	f.HaveMember("alpha", meConv, "me")
+
+	// Predecessor sent us a handoff message before reincarnating
+	// into us. Mirrors what reincarnate's handoff path produces.
+	origID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:  g.ID,
+		FromConv: predConv,
+		ToConv:   meConv,
+		Subject:  "reincarnation handoff",
+		Body:     "you are me; carry on",
+	})
+	if err != nil {
+		t.Fatalf("InsertAgentMessage: %v", err)
+	}
+	if err := db.RecordConvSuccession(predConv, meConv, "reincarnate"); err != nil {
+		t.Fatalf("RecordConvSuccession: %v", err)
+	}
+
+	body := map[string]any{"body": "thanks!"}
+	path := "/v1/messages/" + itoa64(origID) + "/reply"
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, path, body), meConv)
+	rec := testharness.Serve(f.Mux, r)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status=%d body=%s, want 400 (reply chain points back at sender)",
+			rec.Code, rec.Body.String())
+	}
+	// The reply must NOT have been written. Inbox stays at exactly
+	// the predecessor's handoff row; no echo from the rejected reply.
+	rows, _ := db.ListAgentMessagesForConv(meConv, 100)
+	if len(rows) != 1 {
+		t.Errorf("inbox after rejected reply: got %d rows, want 1 (only the original handoff)", len(rows))
+	}
+}
+
 // itoa64 — local helper; strconv.FormatInt is fine but inline str
 // concat reads cleaner in the test.
 func itoa64(n int64) string {

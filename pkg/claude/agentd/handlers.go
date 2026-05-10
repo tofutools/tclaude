@@ -1197,6 +1197,19 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 	// (immutable audit trail). Walk the chain so the reply lands on
 	// the live successor instead of the archived inbox.
 	replyTarget, replyOriginalTo := walkSuccession(orig.FromConv)
+	if replyTarget == myID {
+		// The chain-walk has identified the recipient (us) as the
+		// live successor of the original sender — i.e. we received
+		// the original from our own predecessor before reincarnating.
+		// Replying to ourselves is nonsensical; reject observably so
+		// the caller can choose to write a fresh message instead of
+		// looping into their own inbox. (Caught in production by the
+		// system replying to a `reincarnation handoff` message from
+		// its own predecessor.)
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"cannot reply: original sender has been superseded by you; the predecessor's chain points back to your own conv")
+		return
+	}
 	newID, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:        via.ID,
 		FromConv:       myID,
