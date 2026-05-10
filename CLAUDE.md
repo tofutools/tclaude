@@ -62,6 +62,38 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 - Interactive list views (sessions, conversations) use bubbletea with the shared `table` package
 - The status bar command is hidden (`cmd.Hidden = true`) - it's invoked by Claude Code's statusline feature, not directly by users
 
+## Testing
+
+Two layers, both run under bare `go test ./...`:
+
+- **Unit tests** sit next to the code they cover and exercise individual functions / handlers / DB ops in isolation.
+- **Flow tests** live in `pkg/claude/agentd/*_flow_test.go` and exercise multi-step coordination (spawn → /rename → resume, reincarnate-of-r-N, clone alias derivation, delete cleanup) via the daemon's HTTP mux. The daemon, conv, agent, session — all production code paths run unchanged. Only the two subprocess boundaries are mocked.
+
+**The two boundaries** (and only two) are interface vars in production source:
+
+- `clcommon.Default Tmux` — the tmux command builder. `LiveTmux{}` runs real `tmux -L tclaude …`; tests assign a `*testharness.TmuxSim` that routes `send-keys` to a simulated CC instance.
+- `agentd.Spawn Spawner` — `tclaude session new` invocations. `LiveSpawner{}` forks the real subprocess; tests assign a `simSpawner` that builds a `CCSim` + writes the SessionRow the production hook callback would have written.
+
+Tests swap these in `flow_setup_test.go` with `t.Cleanup` restoration:
+
+```go
+prevTmux := clcommon.Default
+clcommon.Default = m.Tmux
+t.Cleanup(func() { clcommon.Default = prevTmux })
+```
+
+**Simulators** under `pkg/testharness/`:
+
+- **`CCSim`** owns a real `.jsonl` under `~/.claude/projects/<encoded-cwd>/<convID>.jsonl`. Receives keystrokes via `Receive(text)`, buffers until `"Enter"` arrives, then dispatches through a handler list. Default handlers cover `/rename` (writes a `customTitle` turn), `/exit` (final user turn + flips alive=false), `/compact` (summary turn), and a fallback that writes a user turn. Tests register custom behaviors via `cc.OnInput(prefix, handler)` and async-process delays via `cc.SetCommandDelay(prefix, dur)`. Zero DB writes — CC's job is the `.jsonl`; the daemon owns SQLite.
+- **`TmuxSim`** is a pure tmux substitute. `Command(args ...)` answers `has-session` against an alive flag, routes `send-keys` to the attached `CCSim.Receive`, models `kill-session`. Zero DB writes.
+- **`Flow`** wraps a `World` with a Given/When/Then DSL — `HaveGroup`, `HaveAliveSession`, `Spawn`, `Reincarnate`, `Clone`, `Delete`, plus surface assertions like `AssertGroupMember`, `AssertSentContains`.
+
+**Assertion philosophy:** verify at real surfaces — `GET /v1/groups/{name}/members` (what `tclaude agent groups members` would render), `conv.ListSessions(projectDir)` (what `tclaude conv ls` walks), `agent.FreshConvRowResolved` (what the dashboard refreshes through). The simulator's `.jsonl` is impl detail of the mock layer; the production read path is the system under test. New scenarios should reach for these surfaces, not poke `.jsonl` files directly.
+
+When discovering a new CC or tmux quirk that bites in production, **encode it in the simulator** — `cc.OnInput` for behavior, `cc.SetCommandDelay` for timing — so the regression fails the relevant flow test. Over time the sims accrete the institutional knowledge of "things that have surprised us."
+
+See `docs/plans/testharness-v2.md` for the full design.
+
 ## Active design / TODO docs
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).

@@ -516,60 +516,37 @@ existing `groups.*`/`member.*` model:
     capped per-user (`fs.inotify.max_user_watches`). Cap our
     watchers at e.g. 64 active project dirs, evict LRU.
 
-### Testing infrastructure (e2e regression)
+### Testing infrastructure — shipped (2026-05, PR #49)
 
-Unit tests on individual handlers / DB functions catch a lot, but
-several recent bugs only show up when the spawn → /rename → resume
-chain interacts as a whole (the orphan-on-empty-spawn, the wrong
-clone alias, the silent "resumed" lie). We need an e2e harness that
-exercises the daemon end-to-end without touching the human's real
-state.
+Flow-test harness landed under `pkg/testharness/` (CCSim + TmuxSim +
+Given/When/Then DSL) with the v2 simulator design described in
+`docs/plans/testharness-v2.md`. Boundary mocking is via plain Go
+interfaces (`clcommon.Tmux`, `agentd.Spawner`) — no toolchain
+dependency, no build tag, runs under bare `go test ./...`.
 
-**Pieces needed:**
+Four flow scenarios pinned: `TestSpawn_RenamesAndResumes`,
+`TestReincarnate_OfRN_ProducesRNplus1`,
+`TestClone_EmptyAlias_DerivesFromOriginalTitle`,
+`TestDelete_PurgesAllReferencingRows`. Surface-level assertions
+hit `GET /v1/groups/{name}/members` and `conv.ListSessions` —
+exactly what `tclaude agent groups members` and `tclaude conv ls`
+render.
 
-- **A mocked Claude Code binary.** A small Go program that
-  pretends to be the `claude` CLI: opens a pty, prints a prompt
-  banner, accepts `send-keys` input on its tmux pane, fires the
-  hook callbacks the real CC fires (PostToolUse / Notification /
-  conv-id materialisation / etc.), and writes a stub `.jsonl` to
-  the right path. Doesn't need to actually run an LLM — just
-  emulate the lifecycle interactions tclaude depends on. Lives
-  under e.g. `pkg/claude/agentd/testharness/mockcc/`. Drop-in via
-  PATH manipulation or an env-var override the daemon honours
-  when set (`TCLAUDE_TEST_CC_BIN`).
-- **A testable agent daemon.** Today `agentd serve` binds a Unix
-  socket at a fixed path. For tests we want the same code to
-  start on a tmpdir socket so multiple test runs can co-exist.
-  Add a constructor that returns a *Daemon and accepts an
-  override socket path + DB path; current `serve` becomes a thin
-  wrapper.
-- **Separate test DB.** Tests must never touch
-  `~/.tclaude/db.sqlite`. Wire an `AGENTD_DB_PATH` env var (or a
-  constructor param) so the harness can point at a tmpdir
-  sqlite. Existing per-test `setupTestDB(t)` helpers already
-  rely on `t.Setenv("HOME", dir)` — extend rather than replace.
-- **Test fixture: tmux helpers.** Tests need a tmux server they
-  can spin up in isolation (custom `-S /tmp/...` socket). Wrap
-  this so individual tests don't have to redo the boilerplate.
-- **Scenario library.** A handful of scripted flows that cover
-  the e2e shape we care about regressing on:
-  - Spawn → wait for /rename → assert .jsonl exists → resume
-    → assert session re-attaches.
-  - Reincarnate from r-N → assert new title is r-(N+1) →
-    assert old conv archived.
-  - Clone → assert alias is `<base>-c-1` (not `c-1`) → assert
-    /rename hit the .jsonl.
-  - Multi-recipient send (--cc) → assert N+1 rows landed →
-    assert each receiver's `inbox read` shows the audience.
-  - Delete → assert all referencing rows gone, .jsonl gone,
-    session-env gone.
+Future iterations:
 
-**Open questions:**
-
-- Run on every CI push, or only nightly? E2E is heavier than
-  unit tests; the budget cap matters.
-- Linux-only first? tmux is platform-specific enough that
-  cross-platform e2e is a separate effort.
+- Add scenarios for **multi-recipient send (--cc)** and **inbox
+  read with audience metadata** (called out in the original spec
+  but not yet pinned).
+- A **real-binary nightly smoke test** — one happy-path scenario
+  running outside the simulator stack against a real tmux + real
+  CC. Synthetic e2e misses bugs in real tmux paste-mode, real
+  subprocess signal handling, real CC wire-protocol quirks.
+  Cadence + recording shape TBD; not in scope for the simulator
+  PR.
+- **Encode quirks in the sim as we hit them in prod.** CCSim has
+  `OnInput` / `SetCommandDelay` hooks designed for this — paste-
+  mode coalescing, post-/compact input lag, hook-callback timing
+  windows.
 
 ### Spawn UX
 
