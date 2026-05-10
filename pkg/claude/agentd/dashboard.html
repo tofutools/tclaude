@@ -153,6 +153,16 @@ details[open] > summary .group-actions { opacity: 1; }
 }
 .modal-buttons button.confirm-danger:hover { background: #f85149; color: #fff; }
 .modal-buttons button:hover { border-color: #58a6ff; }
+.modal .field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.modal .field label { font-size: 12px; color: #7d8590; }
+.modal .field input,
+.modal .field textarea {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
+  color: #d4d4d4; padding: 6px 8px; font-family: inherit; font-size: 13px;
+}
+.modal .field input:focus,
+.modal .field textarea:focus { border-color: #58a6ff; outline: none; }
+.modal .field textarea { resize: vertical; min-height: 60px; }
 .toast {
   position: fixed; bottom: 24px; right: 24px;
   background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
@@ -232,6 +242,28 @@ details[open] > summary .group-actions { opacity: 1; }
     <div class="modal-buttons">
       <button id="confirm-cancel">Cancel</button>
       <button id="confirm-ok" class="confirm-danger"></button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="edit-member-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-member-title">
+    <h3 id="edit-member-title">Edit member</h3>
+    <div class="modal-meta" id="edit-member-meta"></div>
+    <div class="field">
+      <label for="edit-member-alias">Alias</label>
+      <input id="edit-member-alias" type="text" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="field">
+      <label for="edit-member-role">Role</label>
+      <input id="edit-member-role" type="text" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="field">
+      <label for="edit-member-descr">Description</label>
+      <textarea id="edit-member-descr" rows="3" spellcheck="false"></textarea>
+    </div>
+    <div class="modal-buttons">
+      <button id="edit-member-cancel">Cancel</button>
+      <button id="edit-member-save">Save</button>
     </div>
   </div>
 </div>
@@ -315,11 +347,16 @@ details[open] > summary .group-actions { opacity: 1; }
     const focusBtn = m.online
       ? `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Focus this agent's terminal window">focus</button>`
       : '';
+    // Edit opens the alias/role/descr modal pre-filled with current
+    // values. The handler reads data-* attributes back, so embed the
+    // current values here (HTML-escaped). Owner state is mutated by
+    // the make/revoke-owner buttons, NOT by the role text field.
+    const editBtn = `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" data-alias="${esc(m.alias || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit alias / role / description">edit</button>`;
     const ownerBtn = m.owner
       ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
       : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
     const removeBtn = `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
-    return `<div class="row-actions">${focusBtn}${ownerBtn}${removeBtn}</div>`;
+    return `<div class="row-actions">${focusBtn}${editBtn}${ownerBtn}${removeBtn}</div>`;
   }
 
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
@@ -495,6 +532,9 @@ details[open] > summary .group-actions { opacity: 1; }
   // True while an inline rename input is open; suspends the auto-
   // refresh so the 5s tick doesn't blow the input away mid-edit.
   let renameEditing = false;
+  // True while the edit-member modal is open; same purpose as
+  // renameEditing — refresh() short-circuits on either flag.
+  let modalEditing = false;
 
   function filterGroups(groups, q) {
     if (!q) return groups;
@@ -665,9 +705,10 @@ details[open] > summary .group-actions { opacity: 1; }
   }
 
   async function refresh() {
-    if (renameEditing) {
-      // An inline-edit input is open; re-rendering would replace it
-      // mid-keystroke. Skip this tick — commit() / restore() will
+    if (renameEditing || modalEditing) {
+      // An inline-edit input or a modal is open; re-rendering would
+      // either blow the input away mid-keystroke or refocus the
+      // textarea. Skip this tick — commit() / cancel() handlers will
       // re-trigger refresh() when the user is done.
       return;
     }
@@ -767,6 +808,69 @@ details[open] > summary .group-actions { opacity: 1; }
     });
   }
 
+  // editMemberModal pops the alias/role/descr editor pre-filled with
+  // current values. Resolves to the new {alias, role, descr} object on
+  // Save (only fields that actually changed are kept; unchanged fields
+  // are sent as null so the daemon leaves them alone), or null on
+  // Cancel / outside-click / Escape. Auto-refresh suspends while the
+  // modal is open via the modalEditing flag.
+  function editMemberModal({label, alias, role, descr}) {
+    return new Promise(resolve => {
+      const overlay = $('#edit-member-modal');
+      $('#edit-member-meta').textContent = label || '';
+      $('#edit-member-meta').style.display = label ? 'block' : 'none';
+      const aliasEl = $('#edit-member-alias');
+      const roleEl = $('#edit-member-role');
+      const descrEl = $('#edit-member-descr');
+      aliasEl.value = alias || '';
+      roleEl.value = role || '';
+      descrEl.value = descr || '';
+      const saveBtn = $('#edit-member-save');
+      const cancelBtn = $('#edit-member-cancel');
+      modalEditing = true;
+      const cleanup = (result) => {
+        overlay.classList.remove('show');
+        saveBtn.removeEventListener('click', onSave);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKey);
+        modalEditing = false;
+        resolve(result);
+      };
+      const onSave = () => {
+        // Only send fields that changed; unchanged fields go as null
+        // so the daemon's PATCH leaves them untouched. Each field
+        // either differs from the original (send the new value, even
+        // if empty) or is unchanged (send null).
+        const out = {};
+        const newAlias = aliasEl.value;
+        const newRole = roleEl.value;
+        const newDescr = descrEl.value;
+        if (newAlias !== (alias || '')) out.alias = newAlias;
+        if (newRole !== (role || '')) out.role = newRole;
+        if (newDescr !== (descr || '')) out.descr = newDescr;
+        cleanup(Object.keys(out).length === 0 ? 'noop' : out);
+      };
+      const onCancel = () => cleanup(null);
+      const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+        // Ctrl/Cmd+Enter saves from anywhere in the modal so power
+        // users don't have to mouse over to the Save button.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault(); onSave();
+        }
+      };
+      saveBtn.addEventListener('click', onSave);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      aliasEl.focus();
+      aliasEl.select();
+    });
+  }
+
   // toast shows a transient message in the bottom-right. error=true
   // makes the left border red. Auto-dismisses after 3s.
   let toastTimer = null;
@@ -848,6 +952,30 @@ details[open] > summary .group-actions { opacity: 1; }
             });
             ok = r.ok;
             if (!ok) toast(`Delete failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'edit-member': {
+            const cur = {
+              alias: btn.getAttribute('data-alias') || '',
+              role: btn.getAttribute('data-role') || '',
+              descr: btn.getAttribute('data-descr') || '',
+            };
+            const result = await editMemberModal({
+              label: `${label} → ${group}`,
+              alias: cur.alias, role: cur.role, descr: cur.descr,
+            });
+            if (result === null) return; // cancelled
+            if (result === 'noop') {
+              toast('no changes');
+              return;
+            }
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(conv)}`, {
+              method: 'PATCH', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(result),
+            });
+            ok = r.ok;
+            if (!ok) toast(`edit failed: ${await r.text()}`, true);
             break;
           }
           case 'rename-group': {

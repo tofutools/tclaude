@@ -251,16 +251,20 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		dashboardRenameGroup(w, r, g)
 	case "members":
-		// /api/groups/{name}/members/{conv} — DELETE only.
+		// /api/groups/{name}/members/{conv} — DELETE removes; PATCH
+		// updates alias/role/descr.
 		if len(parts) < 3 || parts[2] == "" {
 			http.Error(w, "expected /api/groups/{name}/members/{conv}", http.StatusNotFound)
 			return
 		}
-		if r.Method != http.MethodDelete {
-			http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
-			return
+		switch r.Method {
+		case http.MethodDelete:
+			dashboardRemoveMember(w, g, parts[2])
+		case http.MethodPatch:
+			dashboardUpdateMember(w, r, g, parts[2])
+		default:
+			http.Error(w, "DELETE or PATCH", http.StatusMethodNotAllowed)
 		}
-		dashboardRemoveMember(w, g, parts[2])
 	case "owners":
 		switch r.Method {
 		case http.MethodPost:
@@ -327,6 +331,45 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		"group":    renamed.Name,
 		"old_name": g.Name,
 	})
+}
+
+// dashboardUpdateMember is the dashboard-cookie-auth twin of
+// /v1/groups/{name}/members/{conv} PATCH. Only fields explicitly
+// present (non-nil) in the request body are touched, matching the
+// /v1 contract — pass `null` (or omit) to leave a field unchanged.
+func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
+	if u, err := url.PathUnescape(convSelector); err == nil {
+		convSelector = u
+	}
+	var body struct {
+		Alias *string `json:"alias,omitempty"`
+		Role  *string `json:"role,omitempty"`
+		Descr *string `json:"descr,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Alias == nil && body.Role == nil && body.Descr == nil {
+		http.Error(w, "at least one of alias/role/descr is required", http.StatusBadRequest)
+		return
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Alias, body.Role, body.Descr)
+	if err != nil {
+		http.Error(w, "update member: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "no such member in group", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"conv_id": res.ConvID})
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {

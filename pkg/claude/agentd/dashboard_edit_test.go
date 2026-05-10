@@ -137,6 +137,102 @@ func TestDashboardEdit_DeleteGroup(t *testing.T) {
 	}
 }
 
+// PATCH /api/groups/{name}/members/{conv} with one or more of
+// alias/role/descr updates the row. Verifies the dashboard mirror
+// of the /v1 PATCH that the CLI's `groups update-member` already
+// uses — ensures edits initiated from the dashboard land in the
+// same agent_group_members row the CLI would touch.
+func TestDashboardEdit_UpdateMember(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: gID, ConvID: "worker", Alias: "old-alias", Role: "old-role", Descr: "old descr",
+	})
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker",
+		`{"alias":"new-alias","role":"new-role","descr":"new descr"}`)
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	members, _ := db.ListAgentGroupMembers(gID)
+	if len(members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(members))
+	}
+	got := members[0]
+	if got.Alias != "new-alias" || got.Role != "new-role" || got.Descr != "new descr" {
+		t.Errorf("update did not land; got %+v", got)
+	}
+}
+
+// PATCH with only one field touches only that field — the others
+// stay at their current values. Mirrors the daemon's nil-as-leave-
+// alone semantics so the dashboard's "only send changed fields"
+// optimization is safe.
+func TestDashboardEdit_UpdateMember_PartialFields(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: gID, ConvID: "worker", Alias: "stay-alias", Role: "stay-role", Descr: "stay-descr",
+	})
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker",
+		`{"role":"only-role-changed"}`)
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	members, _ := db.ListAgentGroupMembers(gID)
+	got := members[0]
+	if got.Role != "only-role-changed" {
+		t.Errorf("role should be updated; got %q", got.Role)
+	}
+	if got.Alias != "stay-alias" || got.Descr != "stay-descr" {
+		t.Errorf("untouched fields should remain; got alias=%q descr=%q", got.Alias, got.Descr)
+	}
+}
+
+// PATCH with an empty body (or all-nil fields) → 400. Pins the
+// "at least one field is required" rule so a buggy UI that sends
+// {} doesn't silently no-op.
+func TestDashboardEdit_UpdateMember_EmptyBodyIs400(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "a"})
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker", `{}`)
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("empty body: status = %d, want 400", w.Code)
+	}
+}
+
+// PATCH on a missing member → 404 (not 200 with zero rows updated).
+// Pins the "no such member" surface so a typo'd selector is loud.
+func TestDashboardEdit_UpdateMember_MissingIs404(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	_, _ = db.CreateAgentGroup("team", "")
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/no-such-conv",
+		`{"alias":"x"}`)
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("missing member: status = %d, want 404", w.Code)
+	}
+}
+
 func TestDashboardEdit_RenameGroup(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
