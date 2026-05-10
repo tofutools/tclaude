@@ -355,10 +355,21 @@ that *act on* members in bulk.
   Each member starts in the `no-conv-yet` placeholder state until
   `groups spawn` is called.
 
-- `tclaude agent groups archive <group>` — soft-delete (so message
-  history stays queryable but membership is sealed). Distinct from
-  `stop`: archive freezes the membership too. Probably implies
-  `stop --force` first.
+- ~~`tclaude agent groups archive <group>`~~ — **shipped
+  (2026-05).** Soft-deletes a group: stamps
+  `agent_groups.archived_at` (schema v16), refuses subsequent
+  mutating operations (member.add / remove / update, owners.*,
+  messages, group multicast, spawn) with 409, and hides the group
+  from default `groups ls` output. Members + ownership + message
+  history all preserved. Reverse with `groups unarchive`. Idempotent.
+  Slug `groups.archive`. CLI: `--archived` flag on `groups ls`
+  reveals them with a "(archived)" tag; `unarchive` tab-completes
+  only on archived groups. Lifecycle ops (`groups stop` /
+  `groups resume`) are intentionally still allowed on archived
+  groups so a human can shut down running members of a sealed
+  group. Note: archive does NOT auto-stop running members — the
+  destructive `groups stop --force` step is left explicit (two-step
+  keeps the blast radius visible).
 
 - **Per-row online filters** (already in the Discovery section but
   worth restating here) so `groups ls --state=offline` surfaces

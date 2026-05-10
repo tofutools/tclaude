@@ -255,6 +255,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if _, ok := requirePermission(w, r, PermGroupsSpawn); !ok {
 		return
 	}
+	if !requireGroupActive(w, g) {
+		return
+	}
 	var body struct {
 		Alias          string `json:"alias,omitempty"`
 		Role           string `json:"role,omitempty"`

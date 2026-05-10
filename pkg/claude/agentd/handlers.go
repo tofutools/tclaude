@@ -304,6 +304,9 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 			"no shared group with target and you do not own a group containing the target")
 		return
 	}
+	if !requireGroupActive(w, via) {
+		return
+	}
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  via.ID,
 		FromConv: fromID,
@@ -344,6 +347,9 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 	if g == nil {
 		writeError(w, http.StatusNotFound, "not_found",
 			fmt.Sprintf("no group named %q", groupName))
+		return
+	}
+	if !requireGroupActive(w, g) {
 		return
 	}
 	// Sender must be a member OR an owner of the group to broadcast.
@@ -1153,10 +1159,11 @@ func groupByID(id int64) (*db.AgentGroup, error) {
 // --- /v1/groups (GET = anyone, POST = human only) ---
 
 type groupSummary struct {
-	Name    string `json:"name"`
-	Descr   string `json:"descr,omitempty"`
-	Members int    `json:"members"`
-	Online  int    `json:"online"`
+	Name     string `json:"name"`
+	Descr    string `json:"descr,omitempty"`
+	Members  int    `json:"members"`
+	Online   int    `json:"online"`
+	Archived bool   `json:"archived,omitempty"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -1177,14 +1184,22 @@ func isConvOnline(convID string) bool {
 func handleGroups(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		// Anyone (token or not) can list groups.
+		// Anyone (token or not) can list groups. By default archived
+		// groups are filtered out — they're soft-deleted and rarely
+		// belong in a default listing. Pass `?archived=1` (any non-empty
+		// truthy value) to include them; the CLI surfaces this via
+		// `groups ls --archived`.
 		groups, err := db.ListAgentGroups()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
+		showArchived := isTruthy(r.URL.Query().Get("archived"))
 		out := make([]groupSummary, 0, len(groups))
 		for _, g := range groups {
+			if !showArchived && g.IsArchived() {
+				continue
+			}
 			members, _ := db.ListAgentGroupMembers(g.ID)
 			online := 0
 			for _, m := range members {
@@ -1192,7 +1207,13 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 					online++
 				}
 			}
-			out = append(out, groupSummary{Name: g.Name, Descr: g.Descr, Members: len(members), Online: online})
+			out = append(out, groupSummary{
+				Name:     g.Name,
+				Descr:    g.Descr,
+				Members:  len(members),
+				Online:   online,
+				Archived: g.IsArchived(),
+			})
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
@@ -1283,6 +1304,22 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		handleGroupSpawn(w, r, g)
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "archive" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+			return
+		}
+		handleGroupArchive(w, r, g)
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "unarchive" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+			return
+		}
+		handleGroupUnarchive(w, r, g)
 		return
 	}
 
@@ -1466,6 +1503,9 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 	if !ok {
 		return
 	}
+	if !requireGroupActive(w, g) {
+		return
+	}
 	var body struct {
 		Conv string `json:"conv"`
 	}
@@ -1499,6 +1539,9 @@ func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.Agent
 	if _, ok := requirePermission(w, r, PermGroupsOwn); !ok {
 		return
 	}
+	if !requireGroupActive(w, g) {
+		return
+	}
 	res, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -1519,6 +1562,9 @@ func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.Agent
 
 func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if _, ok := requirePermission(w, r, PermMemberAdd); !ok {
+		return
+	}
+	if !requireGroupActive(w, g) {
 		return
 	}
 	var body struct {
@@ -1560,6 +1606,9 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 	if _, ok := requirePermission(w, r, PermMemberRedesignate); !ok {
 		return
 	}
+	if !requireGroupActive(w, g) {
+		return
+	}
 	var body struct {
 		Alias *string `json:"alias,omitempty"`
 		Role  *string `json:"role,omitempty"`
@@ -1592,6 +1641,9 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 
 func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
 	if _, ok := requirePermission(w, r, PermMemberRemove); !ok {
+		return
+	}
+	if !requireGroupActive(w, g) {
 		return
 	}
 	res, _, err := agent.ResolveSelector(convSelector)

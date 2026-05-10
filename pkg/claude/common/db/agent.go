@@ -9,10 +9,19 @@ import (
 
 // AgentGroup is a row in agent_groups.
 type AgentGroup struct {
-	ID        int64
-	Name      string
-	Descr     string
-	CreatedAt time.Time
+	ID         int64
+	Name       string
+	Descr      string
+	CreatedAt  time.Time
+	ArchivedAt time.Time // zero = active; non-zero = archived (soft-deleted)
+}
+
+// IsArchived reports whether the group has been soft-deleted via
+// `groups archive`. Archived groups are hidden from default listings
+// and reject mutating operations (member.add / member.remove /
+// owners.* / message), while preserving message history.
+func (g *AgentGroup) IsArchived() bool {
+	return !g.ArchivedAt.IsZero()
 }
 
 // AgentGroupMember is a row in agent_group_members.
@@ -217,7 +226,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, created_at FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(`SELECT id, name, descr, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -232,7 +241,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, created_at FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, name, descr, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -246,7 +255,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, created_at FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, descr, created_at, archived_at FROM agent_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +270,47 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// ArchiveAgentGroup soft-deletes a group: stamps archived_at = now and
+// leaves all rows intact. Mutating operations (member.add, owners.*,
+// message) refuse on archived groups; listing endpoints filter them out
+// by default. Idempotent — re-archiving an already-archived group bumps
+// the timestamp without erroring. Returns sql.ErrNoRows if the group
+// doesn't exist (callers should treat as a clean miss).
+func ArchiveAgentGroup(name string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE agent_groups SET archived_at = ? WHERE name = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), name)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UnarchiveAgentGroup reverses ArchiveAgentGroup: clears archived_at so
+// the group is active again. Idempotent on already-active groups.
+func UnarchiveAgentGroup(name string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE agent_groups SET archived_at = '' WHERE name = ?`, name)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // AddAgentGroupMember inserts (or replaces) a member in a group.
@@ -380,7 +430,7 @@ func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.conv_id = ?
@@ -437,7 +487,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.conv_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.conv_id = ?
@@ -915,11 +965,12 @@ type rowScanner interface {
 
 func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
-	var createdAt string
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &createdAt); err != nil {
+	var createdAt, archivedAt string
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &createdAt, &archivedAt); err != nil {
 		return nil, err
 	}
 	g.CreatedAt = parseTimeOrZero(createdAt)
+	g.ArchivedAt = parseTimeOrZero(archivedAt)
 	return &g, nil
 }
 

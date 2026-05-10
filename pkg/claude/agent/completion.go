@@ -26,6 +26,9 @@ import (
 // (groups/agents always have completable values when they exist).
 
 // completeGroupNames returns every known group name, prefix-filtered.
+// Includes archived groups so completion works for verbs that operate
+// on them (e.g. `groups unarchive`); the standard listing surface
+// filters archived groups out separately.
 func completeGroupNames(_ *cobra.Command, _ []string, toComplete string) []string {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
@@ -33,6 +36,26 @@ func completeGroupNames(_ *cobra.Command, _ []string, toComplete string) []strin
 	}
 	out := []string{}
 	for _, g := range groups {
+		if strings.HasPrefix(g.Name, toComplete) {
+			out = append(out, g.Name)
+		}
+	}
+	return out
+}
+
+// completeArchivedGroupNames returns ONLY archived group names —
+// useful for `groups unarchive` where active groups are no-ops and
+// shouldn't be tab-suggested.
+func completeArchivedGroupNames(_ *cobra.Command, _ []string, toComplete string) []string {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, g := range groups {
+		if !g.IsArchived() {
+			continue
+		}
 		if strings.HasPrefix(g.Name, toComplete) {
 			out = append(out, g.Name)
 		}

@@ -34,6 +34,8 @@ func groupsCmd() *cobra.Command {
 			groupsLsCmd(),
 			groupsCreateCmd(),
 			groupsRmCmd(),
+			groupsArchiveCmd(),
+			groupsUnarchiveCmd(),
 			groupsMembersCmd(),
 			groupsAddCmd(),
 			groupsRemoveCmd(),
@@ -50,8 +52,9 @@ func groupsCmd() *cobra.Command {
 // --- groups ls ---
 
 type groupsLsParams struct {
-	State string `long:"state" optional:"true" help:"Filter: online (any member online) | offline (no member online)"`
-	JSON  bool   `long:"json" help:"Output JSON"`
+	State    string `long:"state" optional:"true" help:"Filter: online (any member online) | offline (no member online)"`
+	Archived bool   `long:"archived" help:"Include archived (soft-deleted) groups in the listing"`
+	JSON     bool   `long:"json" help:"Output JSON"`
 }
 
 func groupsLsCmd() *cobra.Command {
@@ -70,10 +73,11 @@ func groupsLsCmd() *cobra.Command {
 }
 
 type groupSummary struct {
-	Name    string `json:"name"`
-	Descr   string `json:"descr,omitempty"`
-	Members int    `json:"members"`
-	Online  int    `json:"online"`
+	Name     string `json:"name"`
+	Descr    string `json:"descr,omitempty"`
+	Members  int    `json:"members"`
+	Online   int    `json:"online"`
+	Archived bool   `json:"archived,omitempty"`
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
@@ -85,8 +89,12 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	path := "/v1/groups"
+	if p.Archived {
+		path += "?archived=1"
+	}
 	var groups []groupSummary
-	if err := DaemonGet("/v1/groups", &groups); err != nil {
+	if err := DaemonGet(path, &groups); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -119,8 +127,14 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, g := range groups {
+		name := g.Name
+		if g.Archived {
+			// Visually mark archived rows so the listing distinguishes
+			// them from live groups when --archived is on.
+			name += " (archived)"
+		}
 		tbl.AddRow(table.Row{Cells: []string{
-			g.Name,
+			name,
 			fmt.Sprintf("%d", g.Members),
 			fmt.Sprintf("%d", g.Online),
 			g.Descr,
@@ -627,5 +641,86 @@ func runGroupsUpdateMember(p *groupsUpdateMemberParams, cmd *cobra.Command, stdo
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Updated %s in group %q\n", short(resp.ConvID), p.Group)
+	return rcOK
+}
+
+// --- groups archive / unarchive ---
+
+type groupsArchiveParams struct {
+	Name     string `pos:"true" help:"Group name"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsArchiveCmd() *cobra.Command {
+	return boa.CmdT[groupsArchiveParams]{
+		Use:   "archive",
+		Short: "Archive (soft-delete) a group",
+		Long: "Soft-deletes the group: freezes membership + ownership, refuses " +
+			"future mutating operations (add/remove members, grant/revoke owners, " +
+			"messages), and hides the group from default listings. Message " +
+			"history is preserved. Distinct from `groups rm` (which destroys " +
+			"the group + history outright). Reverse with `groups unarchive`.\n\n" +
+			"Note: archive does NOT auto-stop the group's running members. " +
+			"If you also want to end the running tmux panes, run `groups stop` " +
+			"first — the two-step keeps the destructive part visible.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsArchiveParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsArchiveParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "archive", p.AskHuman, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func groupsUnarchiveCmd() *cobra.Command {
+	return boa.CmdT[groupsArchiveParams]{
+		Use:         "unarchive",
+		Short:       "Reverse `groups archive` — re-activate a soft-deleted group",
+		Long:        "Clears the group's archived flag so mutating operations are accepted again and the group reappears in default listings. Idempotent on already-active groups.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsArchiveParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeArchivedGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsArchiveParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsArchiveOrUnarchive(name, verb, askHuman string, stdout, stderr io.Writer) int {
+	if name == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(askHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group  string `json:"group"`
+		Action string `json:"action"`
+		Note   string `json:"note,omitempty"`
+	}
+	path := "/v1/groups/" + url.PathEscape(name) + "/" + verb
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s: %s\n", resp.Group, resp.Action)
+	if resp.Note != "" {
+		fmt.Fprintf(stdout, "  %s\n", resp.Note)
+	}
 	return rcOK
 }

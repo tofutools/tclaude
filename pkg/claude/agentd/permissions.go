@@ -122,6 +122,10 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermAgentResume,
 		Description: "Resume ANOTHER agent into a fresh tmux session (tclaude agent resume). Single-conv variant of groups.resume. Group owners can resume members of groups they own without this slug.",
 	},
+	{
+		Slug:        PermGroupsArchive,
+		Description: "Archive (soft-delete) a group: freezes membership + ownership and hides the group from default listings, while preserving message history (tclaude agent groups archive / unarchive)",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

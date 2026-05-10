@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 15
+const currentVersion = 16
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -113,6 +113,40 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 16 {
+		if err := migrateV15toV16(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV15toV16 adds agent_groups.archived_at — a soft-delete /
+// freeze flag. Distinct from `groups rm` (which destroys membership +
+// history) and from `groups stop` (which only ends the running tmux
+// sessions, leaving membership intact and writable). Archive freezes
+// membership + ownership AND hides the group from default listings,
+// while preserving the message history for forensic queries.
+//
+// Empty string = active. Non-empty (RFC3339 timestamp) = archived.
+// Plain TEXT column rather than separate epoch + flag because a
+// human reading the row directly should see when, not just whether.
+//
+// Indexed so the eventual `WHERE archived_at = ''` filter on
+// listing endpoints stays cheap as the table grows.
+func migrateV15toV16(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_groups
+			ADD COLUMN archived_at TEXT NOT NULL DEFAULT '';
+		CREATE INDEX IF NOT EXISTS idx_agent_groups_archived
+			ON agent_groups(archived_at);
+
+		UPDATE schema_version SET version = 16;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v15→v16: %w", err)
+	}
 	return nil
 }
 
