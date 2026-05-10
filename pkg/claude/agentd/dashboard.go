@@ -128,6 +128,13 @@ type snapshotPayload struct {
 	GeneratedAt string                  `json:"generated_at"`
 	Groups      []dashboardGroup        `json:"groups"`
 	Agents      []dashboardAgent        `json:"agents"`
+	// Ungrouped: every conv-id that has a live tmux session but is NOT
+	// a member of any group. Surfaces fresh-spawned agents and other
+	// loose convs so the eventual "Ungrouped virtual group" + the
+	// `+ add member` overlay can show them as drag/add sources without
+	// a second round-trip. Same wire shape as Agents — empty when no
+	// loose convs exist.
+	Ungrouped   []dashboardAgent        `json:"ungrouped"`
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
 	Cron        []dashboardCronJob      `json:"cron"`
@@ -383,6 +390,34 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(copySlice)
 		out.Permissions.Grants[convID] = copySlice
 	}
+
+	// Online conv-sessions that aren't already known via group
+	// membership or explicit grants. These become candidates for the
+	// dashboard's ungrouped virtual group and the `+ add member`
+	// overlay. Filtered to live tmux sessions so we don't surface
+	// stale rows from past runs (a non-empty Cwd + alive tmux is the
+	// signal that the conv is currently "running").
+	if sessions, err := db.ListSessions(); err == nil {
+		seenLoose := map[string]bool{}
+		for _, s := range sessions {
+			if s.ConvID == "" {
+				continue
+			}
+			if seenLoose[s.ConvID] {
+				continue
+			}
+			if _, alreadyKnown := agentRows[s.ConvID]; alreadyKnown {
+				continue
+			}
+			if !isConvOnline(s.ConvID) {
+				continue
+			}
+			addAgent(s.ConvID)
+			seenLoose[s.ConvID] = true
+		}
+	}
+
+	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
 		// Effective = defaults ∪ grants. Defaults come from config;
 		// grants from agent_permissions for that conv.
@@ -407,9 +442,20 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(a.Groups)
 		sort.Strings(a.OwnedGroups)
 		out.Agents = append(out.Agents, *a)
+		// An agent with no group memberships is "ungrouped" — surfaces
+		// in the dedicated array so the dashboard can list them as
+		// drag/add sources without re-deriving the membership state.
+		// Effective perms still come from the broader Agents row, so
+		// the dashboard uses Ungrouped purely as a candidate-set hint.
+		if len(a.Groups) == 0 {
+			out.Ungrouped = append(out.Ungrouped, *a)
+		}
 	}
 	sort.Slice(out.Agents, func(i, j int) bool {
 		return out.Agents[i].Title < out.Agents[j].Title
+	})
+	sort.Slice(out.Ungrouped, func(i, j int) bool {
+		return out.Ungrouped[i].Title < out.Ungrouped[j].Title
 	})
 
 	out.Cron = collectCronSnapshot()

@@ -51,3 +51,36 @@ func StubApprovalForTest(decision bool) func() {
 	}
 	return func() { RequestHumanApprovalImpl = prev }
 }
+
+// BuildDashboardHandlerForTest exposes the dashboard mux (the
+// loopback-port mux that hosts `/`, `/api/snapshot`,
+// `/api/groups/...` mutation endpoints, and the popup `/approve/...`
+// route in production). Flow tests use this when asserting the
+// dashboard's snapshot or edit endpoints — `BuildHandlerForTest` only
+// covers the /v1 Unix-socket mux.
+//
+// Initialises the dashboard session token if it isn't already, then
+// returns a `dashTestHandler` that injects a valid cookie + Origin on
+// every request — the dashboard's auth checks would otherwise refuse
+// the synthetic httptest peer.
+func BuildDashboardHandlerForTest() http.Handler {
+	initDashboardToken()
+	mux := http.NewServeMux()
+	registerDashboardRoutes(mux)
+	return &dashTestHandler{inner: mux}
+}
+
+type dashTestHandler struct{ inner http.Handler }
+
+func (h *dashTestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Cookie") == "" {
+		r.AddCookie(&http.Cookie{
+			Name:  dashboardCookieName,
+			Value: dashboardSessionToken,
+		})
+	}
+	if popupBaseURL != "" && r.Header.Get("Origin") == "" {
+		r.Header.Set("Origin", popupBaseURL)
+	}
+	h.inner.ServeHTTP(w, r)
+}
