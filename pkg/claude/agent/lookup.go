@@ -121,6 +121,16 @@ func redirectResolvedToLatest(r *resolved) *resolved {
 // group-member alias/prefix) without touching disk beyond the SQLite
 // cache.
 func tryResolve(selector string) (*resolved, []*resolved, error) {
+	// 0) global head-alias lookup. A handle (e.g. "po", "ceo")
+	//    resolves to the current head of its conv chain — survives
+	//    arbitrary reincarnation depth via ResolveLatestConv. Handles
+	//    are validated to never shadow UUIDs / "group:" / "."/"-", so
+	//    this branch can take precedence without ambiguity.
+	if head, err := db.ResolveHeadAlias(selector); err == nil && head != "" {
+		row, _ := db.GetConvIndex(head)
+		return &resolved{ConvID: head, Row: row}, nil, nil
+	}
+
 	// 1) full UUID match
 	if row, err := db.GetConvIndex(selector); err == nil && row != nil {
 		return &resolved{ConvID: row.ConvID, Row: row}, nil, nil

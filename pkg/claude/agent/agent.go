@@ -33,6 +33,7 @@ func Cmd() *cobra.Command {
 			messageCmd(),
 			replyCmd(),
 			groupsCmd(),
+			aliasCmd(),
 			spawnCmd(),
 			inboxCmd(),
 			permissionsCmd(),

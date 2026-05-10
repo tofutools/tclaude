@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 21
+const currentVersion = 22
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -149,6 +149,50 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 22 {
+		if err := migrateV21toV22(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV21toV22 adds agent_head_aliases — a small naming layer
+// that maps a stable handle (e.g. "ceo", "po") to a conv-id chain
+// anchor. Lookups walk the chain via db.ResolveLatestConv at read
+// time, so the handle always resolves to the current head no matter
+// how many times the conv has been reincarnated. Complements the
+// existing per-group agent_group_members.alias by being GLOBAL —
+// not scoped to a group, useful for convs that aren't (yet) in any
+// group.
+//
+// Shape:
+//   - handle is the user-visible name; PRIMARY KEY enforces uniqueness
+//     across the daemon. Lower-cased on insert so case folding doesn't
+//     surprise the human.
+//   - anchor_conv_id is the conv we point at; ResolveLatestConv walks
+//     forward from there, so we don't need to update on every
+//     reincarnate (the succession row added by reincarnate is enough).
+//   - by_conv records who set the handle (empty string for human via
+//     dashboard / CLI; conv-id when an agent set it). Same shape as
+//     agent_group_owners.granted_by.
+func migrateV21toV22(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_head_aliases (
+			handle         TEXT PRIMARY KEY,
+			anchor_conv_id TEXT NOT NULL,
+			created_at     TEXT NOT NULL,
+			by_conv        TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_head_aliases_anchor
+			ON agent_head_aliases(anchor_conv_id);
+
+		UPDATE schema_version SET version = 22;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v21→v22: %w", err)
+	}
 	return nil
 }
 

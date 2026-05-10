@@ -199,6 +199,10 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/messages/", handleMessageByIDOrReply)
 	mux.HandleFunc("/v1/inbox", handleInbox)
 	mux.HandleFunc("/v1/inbox/prune", handleInboxPrune)
+	// Head aliases: most-specific path goes first so HandleFunc's
+	// pattern table picks `/v1/agent/aliases` over `/v1/agent/`.
+	mux.HandleFunc("/v1/agent/aliases", handleHeadAliases)
+	mux.HandleFunc("/v1/agent/aliases/", handleHeadAliasByHandle)
 	mux.HandleFunc("/v1/agent/", handleAgentByConv)
 	mux.HandleFunc("/v1/groups", handleGroups)
 	mux.HandleFunc("/v1/groups/", handleGroupByName)
