@@ -255,7 +255,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 	var newConv, newTmux, label string
 	if noCopyConv {
 		label = generateSpawnLabel()
-		if err := spawnDetachedTclaudeNew(label, cwd); err != nil {
+		if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
 			writeError(w, http.StatusInternalServerError, "spawn",
 				"failed to launch tclaude session new: "+err.Error())
 			return
@@ -290,7 +290,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 			return
 		}
 		newConv = copyResult.NewConvID
-		if err := spawnDetachedTclaudeResume(newConv, cwd); err != nil {
+		if err := SpawnDetachedTclaudeResume(newConv, cwd); err != nil {
 			writeError(w, http.StatusInternalServerError, "spawn",
 				"failed to launch tclaude session new -r: "+err.Error())
 			return

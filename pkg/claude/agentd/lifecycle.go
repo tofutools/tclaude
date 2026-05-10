@@ -156,7 +156,7 @@ func resumeOneConv(convID string) memberOpResult {
 	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
 		cwd = rows[0].Cwd
 	}
-	if err := spawnDetachedTclaudeResume(convID, cwd); err != nil {
+	if err := SpawnDetachedTclaudeResume(convID, cwd); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
@@ -415,7 +415,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := spawnDetachedTclaudeNew(label, body.Cwd); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, body.Cwd); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return
@@ -577,16 +577,16 @@ func generateSpawnLabel() string {
 	return "spwn-" + hex.EncodeToString(b[:])
 }
 
-// spawnDetachedTclaudeNew runs `tclaude session new -d --global
+// SpawnDetachedTclaudeNew runs `tclaude session new -d --global
 // --label <label>` as a fully-detached subprocess. Same detachment
-// story as spawnDetachedTclaudeResume — see its doc comment for the
+// story as SpawnDetachedTclaudeResume — see its doc comment for the
 // full rationale on why this doesn't trip CC's process-ownership
 // checks.
 //
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func spawnDetachedTclaudeNew(label, cwd string) error {
+func SpawnDetachedTclaudeNew(label, cwd string) error {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -609,7 +609,7 @@ func spawnDetachedTclaudeNew(label, cwd string) error {
 	return nil
 }
 
-// spawnDetachedTclaudeResume runs `tclaude session new -r <conv> -d
+// SpawnDetachedTclaudeResume runs `tclaude session new -r <conv> -d
 // --global` as a fully-detached subprocess.
 //
 // Detachment story:
@@ -631,7 +631,7 @@ func spawnDetachedTclaudeNew(label, cwd string) error {
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func spawnDetachedTclaudeResume(convID, cwd string) error {
+func SpawnDetachedTclaudeResume(convID, cwd string) error {
 	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
