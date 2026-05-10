@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Run the full local verification matrix:
-#   - plain build + unit tests + lint (flow tests skip via build tag)
-#   - lint with the rewire build tag so the flow test files are covered
-#   - flow tests via ./script/test, which auto-installs rewire and
-#     uses a separate GOCACHE so toolexec'd artifacts stay isolated
-#     from the production build cache
+# Run the local verification matrix:
+#   - build, test, lint
+#
+# Flow tests in pkg/claude/agentd run under a bare `go test` —
+# boundaries are mocked via interface assignment (clcommon.Default,
+# agentd.Spawn), so no toolchain dependency or build tag is needed.
 set -euo pipefail
 
 go build -o /dev/null ./...
 go test ./...
 golangci-lint run ./...
-golangci-lint run --build-tags=rewire ./...
-./script/test ./...

@@ -1,5 +1,3 @@
-//go:build rewire
-
 // Package testharness provides scaffolding for end-to-end flow tests
 // that drive the agentd HTTP layer without spinning up real
 // subprocesses, tmux servers, or sockets. See

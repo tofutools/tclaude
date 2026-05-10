@@ -577,16 +577,27 @@ func generateSpawnLabel() string {
 	return "spwn-" + hex.EncodeToString(b[:])
 }
 
-// SpawnDetachedTclaudeNew runs `tclaude session new -d --global
-// --label <label>` as a fully-detached subprocess. Same detachment
-// story as SpawnDetachedTclaudeResume — see its doc comment for the
-// full rationale on why this doesn't trip CC's process-ownership
-// checks.
+// SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
+// Tests substitute a behavior-accurate fake by assigning Spawn at
+// setup; production keeps the LiveSpawner default.
+func SpawnDetachedTclaudeNew(label, cwd string) error {
+	return Spawn.SpawnNew(label, cwd)
+}
+
+// SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
+func SpawnDetachedTclaudeResume(convID, cwd string) error {
+	return Spawn.SpawnResume(convID, cwd)
+}
+
+// liveSpawnNew runs `tclaude session new -d --global --label <label>`
+// as a fully-detached subprocess. Same detachment story as
+// liveSpawnResume — see its doc comment for the full rationale on
+// why this doesn't trip CC's process-ownership checks.
 //
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func SpawnDetachedTclaudeNew(label, cwd string) error {
+func liveSpawnNew(label, cwd string) error {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -609,8 +620,8 @@ func SpawnDetachedTclaudeNew(label, cwd string) error {
 	return nil
 }
 
-// SpawnDetachedTclaudeResume runs `tclaude session new -r <conv> -d
-// --global` as a fully-detached subprocess.
+// liveSpawnResume runs `tclaude session new -r <conv> -d --global`
+// as a fully-detached subprocess.
 //
 // Detachment story:
 //   - `tclaude session new -d` only means "don't attach this terminal
@@ -631,7 +642,7 @@ func SpawnDetachedTclaudeNew(label, cwd string) error {
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func SpawnDetachedTclaudeResume(convID, cwd string) error {
+func liveSpawnResume(convID, cwd string) error {
 	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)

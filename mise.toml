@@ -1,27 +1,2 @@
 [tools]
 go = "1.26.2"
-"go:github.com/GiGurra/rewire/cmd/rewire" = "v0.0.75"
-
-# Tests run with rewire active by default. flow tests in
-# pkg/claude/agentd/ rely on the toolexec rewriter to mock package
-# boundaries (clcommon.TmuxCommand, agentd.SpawnDetachedTclaude{New,
-# Resume}). The separate GOCACHE keeps rewritten artifacts out of the
-# production build cache — see docs/plans/testing-strategy.md.
-[env]
-GOFLAGS = "-toolexec=rewire -tags=rewire"
-# Lives under $TMPDIR rather than ~/.cache so it stays writable in
-# restrictive sandboxes that only allow tmp + ~/.cache/go-build (exact).
-GOCACHE = "{{ env.TMPDIR | default(value='/tmp') }}/go-build-tclaude-test"
-
-[tasks.test]
-description = "Run go test with rewire"
-run = "go test ./..."
-
-[tasks.lint]
-description = "golangci-lint with rewire build tag"
-run = "golangci-lint run --build-tags=rewire ./..."
-
-[tasks.build]
-description = "Plain build (no rewire). Uses default GOCACHE."
-env = { GOFLAGS = "", GOCACHE = "{{ env.HOME }}/.cache/go-build" }
-run = "go build ./..."

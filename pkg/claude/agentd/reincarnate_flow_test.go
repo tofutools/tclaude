@@ -1,5 +1,3 @@
-//go:build rewire
-
 package agentd_test
 
 import (
