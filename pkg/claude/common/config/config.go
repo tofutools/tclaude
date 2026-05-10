@@ -31,8 +31,91 @@ type Config struct {
 // Permission slugs are simple dotted strings, e.g. "self.rename",
 // "member.redesignate", "agent.spawn". Unknown slugs are ignored
 // (forward-compat: a user grants a permission a future build wires up).
+//
+// Sudo carries the human-curated defaults for `tclaude agent sudo`
+// (time-bounded permission elevations). Hand-written; the daemon
+// reads but never rewrites it. Empty fields fall back to the agentd
+// hardcoded defaults. Per-conv overrides via Sudo.Overrides[] use the
+// same selector-shaped keys (conv-id / alias / title, with prefix
+// match against title and conv-id) the historical permission_overrides
+// block did.
 type AgentConfig struct {
-	DefaultPermissions []string `json:"default_permissions,omitempty"`
+	DefaultPermissions []string    `json:"default_permissions,omitempty"`
+	Sudo               *SudoConfig `json:"sudo,omitempty"`
+}
+
+// SudoConfig overrides the hardcoded sudo defaults globally. Each
+// field is optional: an empty/unset value preserves the agentd
+// fallback. Use Overrides to scope overrides to a specific conv /
+// alias / title.
+//
+// Blocklist is a pointer-to-slice so we can distinguish "field
+// absent → keep the default block of permissions.grant /
+// permissions.revoke" from "field present, value [] → explicitly
+// empty blocklist (you really know what you're doing)". Replace
+// semantics, not merge — when set, this field is the complete list.
+type SudoConfig struct {
+	MaxDuration     string                         `json:"max_duration,omitempty"`
+	DefaultDuration string                         `json:"default_duration,omitempty"`
+	PopupTimeout    string                         `json:"popup_timeout,omitempty"`
+	Blocklist       *[]string                      `json:"blocklist,omitempty"`
+	Overrides       map[string]*SudoConfigOverride `json:"overrides,omitempty"`
+}
+
+// SudoConfigOverride is the per-conv twin of SudoConfig — same fields
+// minus Overrides (no recursion). A non-empty override field replaces
+// the corresponding global value; unset fields fall through to the
+// global SudoConfig (and then to the agentd hardcoded defaults).
+type SudoConfigOverride struct {
+	MaxDuration     string    `json:"max_duration,omitempty"`
+	DefaultDuration string    `json:"default_duration,omitempty"`
+	PopupTimeout    string    `json:"popup_timeout,omitempty"`
+	Blocklist       *[]string `json:"blocklist,omitempty"`
+}
+
+// MatchSudoOverride picks the SudoConfigOverride that applies to the
+// caller (convID / alias / title). Match shape mirrors the historical
+// permission_overrides[<conv-id|prefix|title>] pattern: a key matches
+// if it equals one of the three identifiers OR is a prefix of conv-id
+// (≥8 chars) or title. The longest matching key wins so a more
+// specific override beats a generic prefix. Returns nil when no key
+// matches.
+func (c *Config) MatchSudoOverride(convID, alias, title string) *SudoConfigOverride {
+	if c == nil || c.Agent == nil || c.Agent.Sudo == nil {
+		return nil
+	}
+	var (
+		bestKey string
+		best    *SudoConfigOverride
+	)
+	for k, v := range c.Agent.Sudo.Overrides {
+		if !sudoOverrideKeyMatches(k, convID, alias, title) {
+			continue
+		}
+		if len(k) > len(bestKey) {
+			bestKey = k
+			best = v
+		}
+	}
+	return best
+}
+
+func sudoOverrideKeyMatches(key, convID, alias, title string) bool {
+	if key == "" {
+		return false
+	}
+	if key == convID || key == alias || key == title {
+		return true
+	}
+	// Conv-id prefix match: 8 chars is the same threshold ResolveSelector
+	// uses for prefix lookups, so config keys can use a stable short form.
+	if len(key) >= 8 && convID != "" && len(key) <= len(convID) && convID[:len(key)] == key {
+		return true
+	}
+	if title != "" && len(key) <= len(title) && title[:len(key)] == key {
+		return true
+	}
+	return false
 }
 
 // HasDefaultPermission reports whether perm is in the global defaults

@@ -3,6 +3,8 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -282,5 +284,168 @@ func TestSudo_Ls_AgentSeesOnlyOwnGrants(t *testing.T) {
 	agentAllRec := testharness.Serve(f.Mux, agentAllReq)
 	if agentAllRec.Code != http.StatusForbidden {
 		t.Errorf("agent ls --all: status=%d body=%s, want 403", agentAllRec.Code, agentAllRec.Body.String())
+	}
+}
+
+// writeSudoConfig drops a config.json under $HOME/.tclaude with the
+// supplied agent.sudo block. Each test gets a fresh tmpdir-HOME via
+// testharness.New, so this scopes cleanly and reverts implicitly when
+// the temp dir is removed.
+func writeSudoConfig(t *testing.T, body string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("HOME"), ".tclaude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir tclaude config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+}
+
+// Scenario: config sets agent.sudo.max_duration to 30m. A request for
+// 1h is rejected with 400 before the popup opens — the config cap
+// kicks in below the hardcoded ceiling. Pins the global-default
+// override path: v1's hardcoded const is now a fallback, not an
+// inviolable ceiling.
+func TestSudo_ConfigMaxDuration_LowersTheCap(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	restoreApproval := agentd.StubApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	writeSudoConfig(t, `{
+	  "agent": {
+	    "sudo": {
+	      "max_duration": "30m"
+	    }
+	  }
+	}`)
+	const conv = "cfg-aaaa-bbbb-cccc-1111"
+	f.HaveConvWithTitle(conv, "worker")
+
+	body := map[string]any{
+		"slugs":    []string{"groups.spawn"},
+		"duration": "1h",
+	}
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", body), conv)
+	rec := testharness.Serve(f.Mux, r)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("over-config-cap request: status=%d body=%s, want 400",
+			rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "30m") {
+		t.Errorf("error must surface the resolved cap (30m) so the human knows what was overridden; body=%s",
+			rec.Body.String())
+	}
+	rows, _ := db.ListActiveSudoGrants(conv)
+	if len(rows) != 0 {
+		t.Errorf("over-config-cap request must not insert rows; got %d", len(rows))
+	}
+}
+
+// Scenario: config sets a tight global cap (15m) AND a per-conv
+// override raising it for one specific title ("manager-bot": 45m).
+// The matching agent's request for 30m is approved; a non-matching
+// agent's same request is rejected. Pins the per-conv override path
+// keyed by title — the doc's "specific manager agent gets a longer
+// window" example.
+func TestSudo_PerConvOverrideMaxDuration_AppliedByTitle(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	restoreApproval := agentd.StubApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	writeSudoConfig(t, `{
+	  "agent": {
+	    "sudo": {
+	      "max_duration": "15m",
+	      "overrides": {
+	        "manager-bot": {
+	          "max_duration": "45m"
+	        }
+	      }
+	    }
+	  }
+	}`)
+	const managerConv = "mgr-aaaa-bbbb-cccc-1111"
+	const workerConv = "wrk-aaaa-bbbb-cccc-2222"
+	f.HaveConvWithTitle(managerConv, "manager-bot")
+	f.HaveConvWithTitle(workerConv, "plain-worker")
+
+	// Manager: 30m is allowed (under the 45m override).
+	mgrBody := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "30m"}
+	mgrReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", mgrBody), managerConv)
+	mgrRec := testharness.Serve(f.Mux, mgrReq)
+	if mgrRec.Code != http.StatusOK {
+		t.Errorf("manager 30m under override (45m): status=%d body=%s, want 200",
+			mgrRec.Code, mgrRec.Body.String())
+	}
+	if rows, _ := db.ListActiveSudoGrants(managerConv); len(rows) != 1 {
+		t.Errorf("manager grant must land; got %d rows", len(rows))
+	}
+
+	// Worker: same 30m is rejected against the global 15m cap.
+	wrkBody := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "30m"}
+	wrkReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", wrkBody), workerConv)
+	wrkRec := testharness.Serve(f.Mux, wrkReq)
+	if wrkRec.Code != http.StatusBadRequest {
+		t.Errorf("worker 30m over global cap (15m): status=%d body=%s, want 400",
+			wrkRec.Code, wrkRec.Body.String())
+	}
+	if rows, _ := db.ListActiveSudoGrants(workerConv); len(rows) != 0 {
+		t.Errorf("worker over-cap request must not insert rows; got %d", len(rows))
+	}
+}
+
+// Scenario: config-supplied blocklist replaces the hardcoded default.
+// A slug that v1 hardcoded as blocked (permissions.grant) becomes
+// allowable when config sets blocklist to a different list — and a
+// fresh entry the human added (groups.own) becomes blocked. Pins the
+// "replace, not merge" semantics: the human is fully in control.
+func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	restoreApproval := agentd.StubApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	writeSudoConfig(t, `{
+	  "agent": {
+	    "sudo": {
+	      "blocklist": ["groups.own"]
+	    }
+	  }
+	}`)
+	const conv = "blk-aaaa-bbbb-cccc-1111"
+	f.HaveConvWithTitle(conv, "worker")
+
+	// permissions.grant — hardcoded-blocked in v1, but config replaced
+	// the list with just [groups.own]. Request should now reach the
+	// popup (and succeed under the stub-approval).
+	allowBody := map[string]any{"slugs": []string{"permissions.grant"}, "duration": "5m"}
+	allowReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", allowBody), conv)
+	allowRec := testharness.Serve(f.Mux, allowReq)
+	if allowRec.Code != http.StatusOK {
+		t.Errorf("config replaced blocklist; permissions.grant should be allowable now: status=%d body=%s",
+			allowRec.Code, allowRec.Body.String())
+	}
+
+	// groups.own — newly blocked by config. Should 403 without popup.
+	denyBody := map[string]any{"slugs": []string{"groups.own"}, "duration": "5m"}
+	denyReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", denyBody), conv)
+	denyRec := testharness.Serve(f.Mux, denyReq)
+	if denyRec.Code != http.StatusForbidden {
+		t.Errorf("groups.own newly blocked by config: status=%d body=%s, want 403",
+			denyRec.Code, denyRec.Body.String())
+	}
+	if !strings.Contains(denyRec.Body.String(), "groups.own") {
+		t.Errorf("error must name the blocked slug; body=%s", denyRec.Body.String())
 	}
 }

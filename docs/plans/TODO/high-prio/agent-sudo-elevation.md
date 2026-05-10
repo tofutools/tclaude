@@ -4,6 +4,10 @@ V1 shipped 2026-05; see
 [`DONE/agent-sudo-elevation-v1.md`](../../DONE/agent-sudo-elevation-v1.md)
 for what's already in. This file tracks the deferred surfaces.
 
+Slice 1 (config-driven defaults + per-conv overrides) shipped
+separately — see
+[`DONE/agent-sudo-elevation-config-defaults.md`](../../DONE/agent-sudo-elevation-config-defaults.md).
+
 ## Dashboard panel + per-row indicator
 
 A new "Sudo" tab on the dashboard listing every active grant:
@@ -69,37 +73,6 @@ Affected writers (search `granted_by` for the full set):
 - `db.GrantAgentPermission` — same
 - Anywhere the per-call audit string is composed
 
-## Config-driven defaults
-
-Hardcoded today:
-
-```go
-const sudoMaxDuration     = 1 * time.Hour
-const sudoDefaultDuration = 5 * time.Minute
-const sudoPopupTimeout    = 60 * time.Second
-var sudoBlocklist = []string{PermPermissionsGrant, PermPermissionsRevoke}
-```
-
-Promote to `~/.tclaude/config.json`:
-
-```json
-{
-  "agent": {
-    "sudo": {
-      "max_duration": "1h",
-      "default_duration": "5m",
-      "popup_timeout": "60s",
-      "blocklist": ["permissions.grant", "permissions.revoke"]
-    }
-  }
-}
-```
-
-Plus per-conv overrides via the existing
-`agent.permission_overrides[conv|prefix|title]` pattern (e.g. a
-specific manager agent gets `max_duration: 4h`). Same shape as
-the existing default-permissions overrides.
-
 ## Manager-pattern approval (deferred — explicit trust laundering)
 
 Could a group owner approve sudo for a group member instead of
@@ -127,9 +100,6 @@ In addition to the v1 6 flow tests:
 - **Per-conv-grant audit trail** — sudo a `groups.spawn` then
   spawn one; assert the new group's `granted_by` carries the
   `via-sudo:grant-id=<id>` annotation.
-- **Config override** — set `max_duration: 30m` in config; a
-  request for 1h is rejected (config-cap kicks in below the
-  hardcoded ceiling).
 
 ## Files (when implementing)
 
@@ -144,7 +114,6 @@ In addition to the v1 6 flow tests:
   the sudo grant-id when the call passed via sudo
 - `pkg/claude/agentd/permissions.go`, `groups_*.go`, etc. —
   audit-string composition takes the sudo-grant-id
-- `pkg/claude/common/config/config.go` — `agent.sudo` block
 
 ## Cross-references
 

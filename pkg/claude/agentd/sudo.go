@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -29,29 +30,33 @@ import (
 //	DELETE /v1/sudo?conv=<selector>    revoke all for one conv (human-only)
 //	DELETE /v1/sudo?all=1              revoke every active grant (human-only)
 //
-// Defaults are hardcoded for v1 (config-driven overrides ladder up
-// later — `agent.sudo.{max_duration, default_duration, blocklist}`
-// in `~/.tclaude/config.json`). Tests can override the popup decision
-// via the existing RequestHumanApprovalImpl indirection.
+// Defaults below are the hardcoded fallbacks. The active values used
+// at request time come from resolveSudoConfig — config.json's
+// agent.sudo block and any matching agent.sudo.overrides[<key>]
+// overlay these defaults per caller. Tests override the popup
+// decision via the existing StubApprovalForTest indirection and the
+// per-test $HOME tmpdir lets them write a config.json that
+// resolveSudoConfig will pick up.
 
-// sudoMaxDuration is the upper bound on a single sudo grant. Requests
-// exceeding it return 400 before the popup even opens — guards against
-// an agent asking for "30 days" and the human approving without
-// noticing.
-const sudoMaxDuration = 1 * time.Hour
+// sudoDefaultMaxDuration is the upper bound on a single sudo grant
+// when no config or override sets one. Requests exceeding the
+// resolved max return 400 before the popup even opens — guards
+// against an agent asking for "30 days" and the human approving
+// without noticing.
+const sudoDefaultMaxDuration = 1 * time.Hour
 
-// sudoDefaultDuration is what the CLI emits when --duration is
-// omitted. The popup payload always shows the resolved expires_at so
-// the human sees the actual window.
-const sudoDefaultDuration = 5 * time.Minute
+// sudoDefaultDefaultDuration is what an unspecified --duration
+// resolves to. The popup payload always shows the resolved expires_at
+// so the human sees the actual window.
+const sudoDefaultDefaultDuration = 5 * time.Minute
 
-// sudoPopupTimeout is how long the request blocks waiting for the
-// human's decision. Timeout is treated as deny: a doomed agent never
-// gets stuck waiting forever.
-const sudoPopupTimeout = 60 * time.Second
+// sudoDefaultPopupTimeout is how long the request blocks waiting for
+// the human's decision. Timeout is treated as deny: a doomed agent
+// never gets stuck waiting forever.
+const sudoDefaultPopupTimeout = 60 * time.Second
 
-// sudoBlocklist names slugs that can NEVER be sudo-elevated. Each
-// listed slug enables permanent privilege escalation: an agent
+// sudoDefaultBlocklist names slugs that can NEVER be sudo-elevated.
+// Each listed slug enables permanent privilege escalation: an agent
 // holding `permissions.grant` could grant itself anything during the
 // sudo window and the grant would outlive the elevation. Block at
 // the request-validation layer (no popup) so a misclick or runaway
@@ -60,9 +65,82 @@ const sudoPopupTimeout = 60 * time.Second
 // Group ownership (`groups.own`) is intentionally NOT blocklisted —
 // it spreads power but the time-bound + popup audit make it
 // recoverable. Forbid only the truly recursive escalation.
-var sudoBlocklist = []string{
+//
+// Config can replace this list via agent.sudo.blocklist. An explicit
+// empty list (`"blocklist": []`) is honored — the human opts out of
+// the safety net knowingly.
+var sudoDefaultBlocklist = []string{
 	PermPermissionsGrant,
 	PermPermissionsRevoke,
+}
+
+// resolvedSudo bundles the active sudo policy for a single caller
+// after the global config + per-conv override are layered onto the
+// hardcoded defaults. Built fresh per request via resolveSudoConfig
+// so a config edit lands without restarting the daemon.
+type resolvedSudo struct {
+	MaxDuration     time.Duration
+	DefaultDuration time.Duration
+	PopupTimeout    time.Duration
+	Blocklist       []string
+}
+
+// resolveSudoConfig builds the effective sudo policy for a caller
+// (convID / alias / title). Order of precedence: per-conv override
+// (Sudo.Overrides[matching key]) → global Sudo block → hardcoded
+// fallbacks. Each layer fills in only the fields it sets — unset
+// fields fall through.
+//
+// Bad duration strings in the config are tolerated: a
+// time.ParseDuration error preserves the previous layer's value and
+// logs nothing (the human edited the file; surface the error in CI
+// or via a dedicated config-lint subcommand later if it becomes a
+// support burden).
+func resolveSudoConfig(cfg *config.Config, convID, alias, title string) resolvedSudo {
+	out := resolvedSudo{
+		MaxDuration:     sudoDefaultMaxDuration,
+		DefaultDuration: sudoDefaultDefaultDuration,
+		PopupTimeout:    sudoDefaultPopupTimeout,
+		Blocklist:       append([]string(nil), sudoDefaultBlocklist...),
+	}
+	if cfg == nil || cfg.Agent == nil || cfg.Agent.Sudo == nil {
+		return out
+	}
+	applySudoLayer(&out, cfg.Agent.Sudo.MaxDuration, cfg.Agent.Sudo.DefaultDuration,
+		cfg.Agent.Sudo.PopupTimeout, cfg.Agent.Sudo.Blocklist)
+	if ov := cfg.MatchSudoOverride(convID, alias, title); ov != nil {
+		applySudoLayer(&out, ov.MaxDuration, ov.DefaultDuration, ov.PopupTimeout, ov.Blocklist)
+	}
+	return out
+}
+
+func applySudoLayer(dst *resolvedSudo, maxStr, defaultStr, popupStr string, blocklist *[]string) {
+	if d, ok := parseDurationOpt(maxStr); ok {
+		dst.MaxDuration = d
+	}
+	if d, ok := parseDurationOpt(defaultStr); ok {
+		dst.DefaultDuration = d
+	}
+	if d, ok := parseDurationOpt(popupStr); ok {
+		dst.PopupTimeout = d
+	}
+	if blocklist != nil {
+		// Replace, not merge: an empty list means "explicitly no
+		// blocklist" (human opts out of the safety net).
+		dst.Blocklist = append([]string(nil), (*blocklist)...)
+	}
+}
+
+func parseDurationOpt(s string) (time.Duration, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+	return d, true
 }
 
 func handleSudo(w http.ResponseWriter, r *http.Request) {
@@ -163,13 +241,24 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 			"slugs[] is required (at least one slug to elevate)")
 		return
 	}
+
+	// Resolve caller title up-front: needed for both the per-conv
+	// override lookup (Sudo.Overrides[<key>]) and the popup payload
+	// (a familiar name helps the human recognise who's asking).
+	title := ""
+	if row := agent.FreshConvRow(p.ConvID); row != nil {
+		title = agent.DisplayTitle(row)
+	}
+	cfg, _ := config.Load()
+	policy := resolveSudoConfig(cfg, p.ConvID, "", title)
+
 	// Blocklist check: refuse permanent-escalation slugs without
 	// popping the popup, so a runaway loop can't even surface them
 	// to the human. Reports every blocklisted slug at once so the
 	// caller can fix its bundle in a single retry.
 	blocked := []string{}
 	for _, slug := range body.Slugs {
-		for _, b := range sudoBlocklist {
+		for _, b := range policy.Blocklist {
 			if slug == b {
 				blocked = append(blocked, slug)
 				break
@@ -182,8 +271,8 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 				strings.Join(blocked, ", ")))
 		return
 	}
-	// Duration: parse + cap. Empty defaults to sudoDefaultDuration.
-	dur := sudoDefaultDuration
+	// Duration: parse + cap. Empty defaults to the resolved default.
+	dur := policy.DefaultDuration
 	if strings.TrimSpace(body.Duration) != "" {
 		d, err := time.ParseDuration(body.Duration)
 		if err != nil {
@@ -198,19 +287,12 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		dur = d
 	}
-	if dur > sudoMaxDuration {
+	if dur > policy.MaxDuration {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("duration %s exceeds the max %s", dur, sudoMaxDuration))
+			fmt.Sprintf("duration %s exceeds the max %s", dur, policy.MaxDuration))
 		return
 	}
 	reason := strings.TrimSpace(body.Reason)
-
-	// Resolve caller title for the popup payload — a familiar name
-	// helps the human recognise who's asking.
-	title := ""
-	if row := agent.FreshConvRow(p.ConvID); row != nil {
-		title = agent.DisplayTitle(row)
-	}
 
 	// Build the popup payload. The body preview surfaces the slug
 	// list + reason + resolved expiry so the human sees exactly what
@@ -227,7 +309,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		path:        r.URL.Path,
 		bodyPreview: preview,
 		createdAt:   now,
-		timeout:     sudoPopupTimeout,
+		timeout:     policy.PopupTimeout,
 		decision:    make(chan bool, 1),
 		extend:      make(chan time.Duration, 1),
 	}
