@@ -469,7 +469,7 @@ summary.dnd-drop-over.dnd-effect-clone {
 <main>
   <section id="tab-groups" class="active">
     <div class="filter-bar">
-      <input id="filter-groups" type="text" placeholder="Filter groups (matches group name + member alias/title)" autocomplete="off" spellcheck="false" />
+      <input id="filter-groups" type="text" placeholder="Filter (group name + member alias/title/role/descr/cwd)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-groups-count"></span>
       <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
     </div>
@@ -477,7 +477,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   </section>
   <section id="tab-agents">
     <div class="filter-bar">
-      <input id="filter-agents" type="text" placeholder="Filter agents (matches title + conv-id + group tags)" autocomplete="off" spellcheck="false" />
+      <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + alias/role/descr/cwd + group tags)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-agents-count"></span>
       <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
     </div>
@@ -485,7 +485,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   </section>
   <section id="tab-cron">
     <div class="filter-bar">
-      <input id="filter-cron" type="text" placeholder="Filter cron jobs (matches name + owner/target label + body)" autocomplete="off" spellcheck="false" />
+      <input id="filter-cron" type="text" placeholder="Filter (name + owner/target label + subject + body)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-cron-count"></span>
       <button class="clear-filter" id="filter-cron-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
@@ -830,11 +830,22 @@ summary.dnd-drop-over.dnd-effect-clone {
     return Math.floor(sec / 86400) + 'd ago';
   }
 
+  // shortCwd renders an absolute path compactly for table cells.
+  // Replaces the home prefix with `~` and, if the result still exceeds
+  // ~40 chars, truncates from the LEFT — `…/git/tclaude` is far more
+  // useful than `/home/gigur/git/tcla…` because most paths share a
+  // long common prefix and the distinguishing detail is the tail.
+  // Empty / unknown input renders as an em dash so the column stays
+  // visually consistent.
   function shortCwd(cwd) {
-    if (!cwd) return '';
+    if (!cwd) return '—';
     const home = (cwd.match(/^\/(?:home|Users)\/[^/]+/) || [''])[0];
-    if (home && cwd.startsWith(home)) return '~' + cwd.slice(home.length);
-    return cwd;
+    let out = (home && cwd.startsWith(home)) ? '~' + cwd.slice(home.length) : cwd;
+    const cap = 40;
+    if (out.length > cap) {
+      out = '…' + out.slice(out.length - (cap - 1));
+    }
+    return out;
   }
 
   function renderGroups(groups) {
@@ -865,7 +876,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           <table>
             <thead>
               <tr>
-                <th></th><th>ID</th><th>Alias / Title</th><th>State</th><th>Last</th><th>Role</th><th>Description</th><th></th>
+                <th></th><th>ID</th><th>Alias / Title</th><th>State</th><th>Last</th><th>CWD</th><th>Role</th><th>Description</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -889,6 +900,7 @@ summary.dnd-drop-over.dnd-effect-clone {
                     ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
                   </td>
                   <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
+                  <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
                   <td>${roleCell(m)}</td>
                   <td class="muted">${esc(m.descr || '')}</td>
                   <td>${memberActions(g, m)}</td>
@@ -1009,14 +1021,19 @@ summary.dnd-drop-over.dnd-effect-clone {
     const out = [];
     for (const g of groups) {
       const nameHit = (g.name || '').toLowerCase().includes(needle);
-      const matchedMembers = (g.members || []).filter(m =>
-        ((m.alias || '').toLowerCase().includes(needle)) ||
-        ((m.title || '').toLowerCase().includes(needle)) ||
-        ((m.conv_id || '').toLowerCase().includes(needle))
-      );
-      if (nameHit) {
-        // Group name matched: keep all members so the user can see
-        // the whole group context.
+      const descrHit = (g.descr || '').toLowerCase().includes(needle);
+      const matchedMembers = (g.members || []).filter(m => {
+        const state = m.state || {};
+        return ((m.alias || '').toLowerCase().includes(needle)) ||
+               ((m.title || '').toLowerCase().includes(needle)) ||
+               ((m.conv_id || '').toLowerCase().includes(needle)) ||
+               ((m.role || '').toLowerCase().includes(needle)) ||
+               ((m.descr || '').toLowerCase().includes(needle)) ||
+               ((state.cwd || '').toLowerCase().includes(needle));
+      });
+      if (nameHit || descrHit) {
+        // Group name / descr matched: keep all members so the user can
+        // see the whole group context.
         out.push(g);
       } else if (matchedMembers.length > 0) {
         // Members matched: show only the matching subset.
@@ -1026,14 +1043,38 @@ summary.dnd-drop-over.dnd-effect-clone {
     return out;
   }
 
+  // memberMetaForAgent pulls alias / role / descr from any group
+  // membership the agent has. The Agents tab's snapshot rows don't
+  // dedupe these onto the top-level agent record (they belong to
+  // group_members rows); we look them up here so the Agents-tab
+  // search can match human-meaningful fields the agent object
+  // itself doesn't surface. A conv that's a member of two groups
+  // uses the first-seen row.
+  function memberMetaForAgent(convID) {
+    for (const g of (lastSnapshot?.groups || [])) {
+      for (const m of (g.members || [])) {
+        if (m.conv_id === convID) {
+          return {alias: m.alias || '', role: m.role || '', descr: m.descr || ''};
+        }
+      }
+    }
+    return {alias: '', role: '', descr: ''};
+  }
+
   function filterAgents(agents, q) {
     if (!q) return agents;
     const needle = q.toLowerCase();
-    return agents.filter(a =>
-      ((a.title || '').toLowerCase().includes(needle)) ||
-      ((a.conv_id || '').toLowerCase().includes(needle)) ||
-      (a.groups || []).some(g => g.toLowerCase().includes(needle))
-    );
+    return agents.filter(a => {
+      const state = a.state || {};
+      const meta = memberMetaForAgent(a.conv_id);
+      return ((a.title || '').toLowerCase().includes(needle)) ||
+             ((a.conv_id || '').toLowerCase().includes(needle)) ||
+             ((meta.alias || '').toLowerCase().includes(needle)) ||
+             ((meta.role  || '').toLowerCase().includes(needle)) ||
+             ((meta.descr || '').toLowerCase().includes(needle)) ||
+             ((state.cwd || '').toLowerCase().includes(needle)) ||
+             (a.groups || []).some(g => g.toLowerCase().includes(needle));
+    });
   }
 
   function renderGroupsTab() {
@@ -1142,6 +1183,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       ((j.owner_label || '').toLowerCase().includes(needle)) ||
       ((j.target_label || '').toLowerCase().includes(needle)) ||
       ((j.group_name || '').toLowerCase().includes(needle)) ||
+      ((j.subject || '').toLowerCase().includes(needle)) ||
       ((j.body || '').toLowerCase().includes(needle))
     );
   }
