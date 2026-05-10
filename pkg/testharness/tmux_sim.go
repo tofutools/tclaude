@@ -1,5 +1,3 @@
-//go:build rewire
-
 package testharness
 
 import (

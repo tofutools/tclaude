@@ -42,16 +42,6 @@ jobs:
         with:
           version: v2.12.2
 
-      # Flow tests are gated `//go:build rewire` and need the rewire
-      # toolexec rewriter on PATH. See docs/plans/testing-strategy.md.
-      # Skipped on Windows where the bash wrapper doesn't run.
-      - name: Install rewire
-        if: runner.os != 'Windows'
-        run: go install github.com/GiGurra/rewire/cmd/rewire@v0.0.75
-      - name: Run flow tests (rewire)
-        if: runner.os != 'Windows'
-        run: ./script/test ./...
-
   version:
     name: Generate Version
     runs-on: ubuntu-latest

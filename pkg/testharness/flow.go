@@ -1,17 +1,15 @@
-//go:build rewire
-
 package testharness
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
@@ -60,87 +58,97 @@ func NewFlow(
 	}
 }
 
-// Mocks bundles the default replacement functions for the v2
-// simulator boundaries. Tests install them via
-// `rewire.Func(t, target, m.X)` — rewire's scanner only walks
-// `_test.go` files for those calls, so the harness can't install
-// them itself.
+// SpawnerLike mirrors the agentd.Spawner interface here to avoid an
+// import cycle (agentd_test imports testharness, so testharness
+// can't import agentd directly). Go interfaces are structural; any
+// concrete type satisfying agentd.Spawner satisfies this too, so a
+// flow_setup_test.go can do `agentd.Spawn = mocks.Spawner` directly.
+type SpawnerLike interface {
+	SpawnNew(label, cwd string) error
+	SpawnResume(convID, cwd string) error
+}
+
+// Mocks bundles the default boundary impls for the v2 simulators.
+// Tests assign these to the production package vars
+// (clcommon.Default, agentd.Spawn) at setup, with t.Cleanup
+// restoring the originals.
 type Mocks struct {
-	// SpawnNew stands in for SpawnDetachedTclaudeNew: builds a fresh
-	// CCSim under HOME, writes its initial summary turn, registers it
-	// in TmuxSim under a tmux name == label (mirroring production's
-	// `tmuxSession := sessionID`), and writes the SessionRow keyed by
-	// label so handleGroupSpawn / reincarnate / clone-no-copy poll
-	// loops succeed on the first iteration.
-	SpawnNew func(label, cwd string) error
+	// Tmux is a TmuxSim — answers has-session against an alive table,
+	// routes send-keys to the attached CCSim, models kill-session.
+	// Drop-in for clcommon.Default.
+	Tmux clcommon.Tmux
 
-	// SpawnResume stands in for SpawnDetachedTclaudeResume: locates
-	// the existing CCSim by conv-id (or hydrates from disk if it was
-	// shut down), re-arms it, picks a fresh resume label, writes a
-	// new SessionRow, and re-registers in TmuxSim. Production uses
-	// the same conv-id with a new sessionID/tmux name on every
-	// resume, which we mirror.
-	SpawnResume func(convID, cwd string) error
-
-	// TmuxCmd is TmuxSim.Command — returns a no-op cmd, records
-	// send-keys, routes them to the attached CCSim, dispatches
-	// has-session against the alive table.
-	TmuxCmd func(args ...string) *exec.Cmd
+	// Spawner builds CCSims on SpawnNew and re-attaches them on
+	// SpawnResume. Drop-in for agentd.Spawn. Production poll loops
+	// see SessionRow + alive flag the moment SpawnNew returns.
+	Spawner SpawnerLike
 }
 
 // DefaultMocks builds the canonical mock set against this World.
-// Tests pass each field into rewire.Func from their own _test.go.
+// flow_setup_test.go does the package-var swap with t.Cleanup.
 func (w *World) DefaultMocks(t *testing.T) Mocks {
 	t.Helper()
 	return Mocks{
-		SpawnNew: func(label, cwd string) error {
-			cc := NewCCSim(t, w.HomeDir, cwd)
-			if err := cc.Start(); err != nil {
-				return err
-			}
-			tmuxSession := label
-			// Use cc.Cwd (post-default-substitution) so the SessionRow
-			// agrees with the .jsonl's actual on-disk location.
-			// Otherwise an empty body.Cwd leaves the row with cwd=""
-			// and JSONLPathFor can't derive the project dir.
-			if err := db.SaveSession(&db.SessionRow{
-				ID:          label,
-				TmuxSession: tmuxSession,
-				ConvID:      cc.ConvID,
-				Cwd:         cc.Cwd,
-				Status:      "running",
-			}); err != nil {
-				return err
-			}
-			w.Tmux.Register(tmuxSession, cc.Cwd, cc)
-			w.CCs.Set(label, cc)
-			return nil
-		},
-		SpawnResume: func(convID, cwd string) error {
-			cc := w.CCs.GetByConvID(convID)
-			if cc == nil {
-				cc = HydrateCCSim(t, w.HomeDir, convID, cwd)
-				w.CCs.SetByConvID(cc)
-			}
-			if err := cc.Start(); err != nil {
-				return err
-			}
-			label := generateResumeLabel()
-			if err := db.SaveSession(&db.SessionRow{
-				ID:          label,
-				TmuxSession: label,
-				ConvID:      convID,
-				Cwd:         cc.Cwd,
-				Status:      "running",
-			}); err != nil {
-				return err
-			}
-			w.Tmux.Register(label, cc.Cwd, cc)
-			w.CCs.Set(label, cc)
-			return nil
-		},
-		TmuxCmd: w.Tmux.Command,
+		Tmux:    w.Tmux,
+		Spawner: &simSpawner{t: t, w: w},
 	}
+}
+
+// simSpawner is the SpawnerLike implementation backed by CCSim +
+// TmuxSim. SpawnNew creates a fresh CCSim, writes the SessionRow the
+// hook callback would have written in prod, and registers in
+// TmuxSim. SpawnResume locates an existing CCSim or hydrates from
+// disk and re-attaches under a fresh resume label.
+type simSpawner struct {
+	t *testing.T
+	w *World
+}
+
+func (s *simSpawner) SpawnNew(label, cwd string) error {
+	cc := NewCCSim(s.t, s.w.HomeDir, cwd)
+	if err := cc.Start(); err != nil {
+		return err
+	}
+	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
+	// with the .jsonl's actual on-disk location. Otherwise an empty
+	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
+	// can't derive the project dir.
+	if err := db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: label,
+		ConvID:      cc.ConvID,
+		Cwd:         cc.Cwd,
+		Status:      "running",
+	}); err != nil {
+		return err
+	}
+	s.w.Tmux.Register(label, cc.Cwd, cc)
+	s.w.CCs.Set(label, cc)
+	return nil
+}
+
+func (s *simSpawner) SpawnResume(convID, cwd string) error {
+	cc := s.w.CCs.GetByConvID(convID)
+	if cc == nil {
+		cc = HydrateCCSim(s.t, s.w.HomeDir, convID, cwd)
+		s.w.CCs.SetByConvID(cc)
+	}
+	if err := cc.Start(); err != nil {
+		return err
+	}
+	label := generateResumeLabel()
+	if err := db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: label,
+		ConvID:      convID,
+		Cwd:         cc.Cwd,
+		Status:      "running",
+	}); err != nil {
+		return err
+	}
+	s.w.Tmux.Register(label, cc.Cwd, cc)
+	s.w.CCs.Set(label, cc)
+	return nil
 }
 
 // AsHuman returns a Flow scoped to the human peer (no claude
