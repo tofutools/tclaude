@@ -110,6 +110,12 @@ func runServe(p *serveParams) error {
 	defer close(cronStop)
 	startCronScheduler(cronStop)
 
+	// agent_sudo_grants housekeeping. Hard-deletes expired rows
+	// older than sudoGrantsRetention so the table stays bounded.
+	// Shares the same stop channel — both sweeps shut down together
+	// when the daemon quits.
+	startSudoGrantsCleanup(cronStop)
+
 	// Both the Unix-socket server and the popup server run in
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).

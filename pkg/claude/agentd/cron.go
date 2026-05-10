@@ -71,6 +71,64 @@ func runCronTick(now time.Time) {
 	}
 }
 
+// sudoGrantsCleanupInterval is how often the housekeeping sweep
+// runs. 1 hour is fine: correctness doesn't depend on prompt
+// purging (the active-grants probe filters by `expires_at` on
+// every check), and a long-running daemon's table grows by maybe
+// dozens of rows per hour at worst.
+const sudoGrantsCleanupInterval = 1 * time.Hour
+
+// sudoGrantsRetention is how long an expired/revoked grant row is
+// kept around before hard-deletion. Keeps recent forensic context
+// available ("what did agent X do yesterday?") without letting the
+// table grow forever. Tunable via the sudoGrantsRetentionVar
+// override below for tests.
+var sudoGrantsRetention = 30 * 24 * time.Hour
+
+// startSudoGrantsCleanup spins up the agent_sudo_grants housekeeping
+// sweep. Hard-deletes rows whose expires_at slipped past the
+// retention window; a long-running daemon's table is bounded
+// regardless of grant volume.
+//
+// Runs sudoGrantsRetention behind wall-clock so the most-recent ~30d
+// of forensic context stays queryable. Active grants are NOT touched
+// — PurgeExpiredSudoGrants filters by `expires_at < now`, so an
+// in-window grant survives even if it was inserted years ago (which
+// it can't be, since the cap is 1h, but the rule is robust either
+// way).
+//
+// The first sweep fires immediately on startup so a daemon restart
+// doesn't have to wait the full hour for catch-up; subsequent ones
+// are timer-driven.
+func startSudoGrantsCleanup(stop <-chan struct{}) {
+	go func() {
+		runSudoGrantsCleanup(time.Now())
+		t := time.NewTicker(sudoGrantsCleanupInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				runSudoGrantsCleanup(now)
+			}
+		}
+	}()
+}
+
+func runSudoGrantsCleanup(now time.Time) {
+	cutoff := now.Add(-sudoGrantsRetention)
+	n, err := db.PurgeExpiredSudoGrants(cutoff)
+	if err != nil {
+		slog.Warn("sudo cleanup: purge failed", "error", err, "cutoff", cutoff)
+		return
+	}
+	if n > 0 {
+		slog.Info("sudo cleanup: purged expired grants",
+			"count", n, "older_than", cutoff.Format(time.RFC3339))
+	}
+}
+
 // fireCronJob delivers a single job's payload. Returns the status
 // tag stored in last_run_status (visible in the dashboard).
 //
