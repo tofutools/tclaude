@@ -47,6 +47,10 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentRename(w, r, res.ConvID)
 	case "clone":
 		handleAgentClone(w, r, res.ConvID)
+	case "stop":
+		handleAgentStop(w, r, res.ConvID)
+	case "resume":
+		handleAgentResume(w, r, res.ConvID)
 	default:
 		writeError(w, http.StatusNotFound, "not_found",
 			"unknown verb "+verb+" for /v1/agent/{selector}/...")

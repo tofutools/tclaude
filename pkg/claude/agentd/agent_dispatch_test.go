@@ -182,7 +182,13 @@ func TestHandleAgentByConv_KnownVerbsRoute(t *testing.T) {
 	if err := db.GrantAgentPermission("manager", PermAgentClone, "<test>"); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	for _, verb := range []string{"reincarnate", "compact", "rename", "clone"} {
+	if err := db.GrantAgentPermission("manager", PermAgentStop, "<test>"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := db.GrantAgentPermission("manager", PermAgentResume, "<test>"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	for _, verb := range []string{"reincarnate", "compact", "rename", "clone", "stop", "resume"} {
 		t.Run(verb, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(http.MethodPost, "/v1/agent/w/"+verb, nil)

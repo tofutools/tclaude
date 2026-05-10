@@ -55,36 +55,48 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	}
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
 	for _, m := range members {
-		res := memberOpResult{ConvID: m.ConvID, Alias: m.Alias}
-		sess := pickAliveSession(m.ConvID)
-		if sess == nil {
-			res.Action = "skipped:already_offline"
-			out.Members = append(out.Members, res)
-			continue
-		}
-		res.TmuxSes = sess.TmuxSession
-		if force {
-			if err := clcommon.TmuxCommand("kill-session", "-t", sess.TmuxSession).Run(); err != nil {
-				res.Action = "error"
-				res.Detail = "kill-session: " + err.Error()
-			} else {
-				res.Action = "killed"
-			}
-		} else {
-			// Soft stop: inject `/exit`. Same two-step send-keys the
-			// /rename injector uses (see injectSlashCommand). CC closes
-			// the conversation cleanly; tmux session goes away when CC
-			// exits.
-			if injectSlashCommand(m.ConvID, "/exit", "") {
-				res.Action = "soft_stopped"
-			} else {
-				res.Action = "error"
-				res.Detail = "send-keys /exit failed"
-			}
-		}
+		res := stopOneConv(m.ConvID, force)
+		res.Alias = m.Alias
 		out.Members = append(out.Members, res)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// stopOneConv soft-stops (or force-kills with `force=true`) the live
+// tmux session for convID. Returns the per-conv result. Shared between
+// the bulk groups.stop loop and the single-conv agent.stop endpoint.
+//
+// Result shape mirrors the existing memberOpResult so the bulk
+// summary table renders the same regardless of how the call was
+// initiated. Idempotent: convs already offline come back as
+// `skipped:already_offline`.
+func stopOneConv(convID string, force bool) memberOpResult {
+	res := memberOpResult{ConvID: convID}
+	sess := pickAliveSession(convID)
+	if sess == nil {
+		res.Action = "skipped:already_offline"
+		return res
+	}
+	res.TmuxSes = sess.TmuxSession
+	if force {
+		if err := clcommon.TmuxCommand("kill-session", "-t", sess.TmuxSession).Run(); err != nil {
+			res.Action = "error"
+			res.Detail = "kill-session: " + err.Error()
+		} else {
+			res.Action = "killed"
+		}
+		return res
+	}
+	// Soft stop: inject `/exit`. Same two-step send-keys the /rename
+	// injector uses (see injectSlashCommand). CC closes the conversation
+	// cleanly; tmux session goes away when CC exits.
+	if injectSlashCommand(convID, "/exit", "") {
+		res.Action = "soft_stopped"
+	} else {
+		res.Action = "error"
+		res.Detail = "send-keys /exit failed"
+	}
+	return res
 }
 
 // handleGroupResume starts a tclaude session for every member that
@@ -106,34 +118,104 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	out := groupOpResp{Group: g.Name, Action: "resume", Members: []memberOpResult{}}
 	for _, m := range members {
-		res := memberOpResult{ConvID: m.ConvID, Alias: m.Alias}
-		if isConvOnline(m.ConvID) {
-			res.Action = "skipped:already_online"
-			out.Members = append(out.Members, res)
-			continue
-		}
-		if m.ConvID == "" {
-			res.Action = "skipped:no_conv_id"
-			res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
-			out.Members = append(out.Members, res)
-			continue
-		}
-		// Look up the recorded cwd so resume lands the agent in the
-		// directory they were last running in. Falls back to "" which
-		// makes `tclaude session new` use its own default.
-		cwd := ""
-		if rows, _ := db.FindSessionsByConvID(m.ConvID); len(rows) > 0 {
-			cwd = rows[0].Cwd
-		}
-		if err := spawnDetachedTclaudeResume(m.ConvID, cwd); err != nil {
-			res.Action = "error"
-			res.Detail = "spawn: " + err.Error()
-		} else {
-			res.Action = "resumed"
-		}
+		res := resumeOneConv(m.ConvID)
+		res.Alias = m.Alias
 		out.Members = append(out.Members, res)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// resumeOneConv spawns a detached `tclaude session new -r <conv>`
+// for convID if it isn't already online. Returns the per-conv
+// result. Shared between the bulk groups.resume loop and the
+// single-conv agent.resume endpoint.
+//
+// Idempotent: convs already online come back as
+// `skipped:already_online`. Empty conv-ids (placeholder members
+// with no conv yet) come back as `skipped:no_conv_id` since we
+// have no .jsonl to resume from — those are template-based
+// spawns, deferred to a future "groups create --team" pass.
+func resumeOneConv(convID string) memberOpResult {
+	res := memberOpResult{ConvID: convID}
+	if isConvOnline(convID) {
+		res.Action = "skipped:already_online"
+		return res
+	}
+	if convID == "" {
+		res.Action = "skipped:no_conv_id"
+		res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
+		return res
+	}
+	// Look up the recorded cwd so resume lands the agent in the
+	// directory they were last running in. Falls back to "" which
+	// makes `tclaude session new` use its own default.
+	cwd := ""
+	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
+		cwd = rows[0].Cwd
+	}
+	if err := spawnDetachedTclaudeResume(convID, cwd); err != nil {
+		res.Action = "error"
+		res.Detail = "spawn: " + err.Error()
+	} else {
+		res.Action = "resumed"
+	}
+	return res
+}
+
+// handleAgentStop stops a single conv's tmux session. Sibling of
+// the bulk groups.stop. Auth: agent.stop slug OR caller is owner of
+// a group containing target. Routed via /v1/agent/{selector}/stop;
+// `?force=1` switches to tmux kill-session.
+func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentStop, targetConv)
+	if !ok {
+		return
+	}
+	force := r.URL.Query().Get("force") == "1"
+	res := stopOneConv(targetConv, force)
+	resp := map[string]any{
+		"conv_id":      res.ConvID,
+		"action":       res.Action,
+		"tmux_session": res.TmuxSes,
+	}
+	if res.Detail != "" {
+		resp["detail"] = res.Detail
+	}
+	if caller != "" && caller != targetConv {
+		resp["caller_conv"] = caller
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleAgentResume resumes a single conv into a fresh detached
+// tmux session. Sibling of the bulk groups.resume. Auth:
+// agent.resume slug OR caller is owner of a group containing
+// target. Routed via /v1/agent/{selector}/resume.
+func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentResume, targetConv)
+	if !ok {
+		return
+	}
+	res := resumeOneConv(targetConv)
+	resp := map[string]any{
+		"conv_id": res.ConvID,
+		"action":  res.Action,
+	}
+	if res.Detail != "" {
+		resp["detail"] = res.Detail
+	}
+	if caller != "" && caller != targetConv {
+		resp["caller_conv"] = caller
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // pickAliveSession returns the most-recent session row for convID

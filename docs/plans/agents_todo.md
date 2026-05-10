@@ -142,6 +142,28 @@ Follow-up improvements (separate items):
   `rebuildSemanticFiltered` pass. Status-line message confirms the
   toggle on every press; help screen lists the binding under
   Actions.
+- **Make "expired" an explicit DB status, not just a title suffix.**
+  The current implementation infers expired from
+  `HasSuffix(CustomTitle, "-x")`. Two problems with this:
+  1. **False positives.** If a user legitimately names a conv
+     `unix-port` (or anything ending `-x`), it disappears from
+     `conv ls` with no obvious explanation. The connection
+     between "title ends with -x" and "filtered out" isn't
+     discoverable.
+  2. **Couples the marker to the rename mechanism.** Today we
+     have to inject `/rename <prev>-x` into the dying pane to
+     write the marker; if /rename fails (pane is busy / already
+     gone), we silently lose the mark.
+  Better: an explicit boolean column on `conv_index` (or a
+  separate `agent_expired_convs` table) that reincarnate writes
+  directly. The title rename can still happen as a UX cue, but
+  the marker is the column. `IsExpired()` reads the column;
+  filter logic stays the same. Migrate existing `-x` titles into
+  the column on first read so the changeover is invisible.
+  Open question: should expired convs also get filtered out of
+  `conv ls -g` semantic search results regardless of the toggle?
+  Probably yes, since a user explicitly searching "show me
+  history" will type `e` if they want them.
 - Open follow-up: dashboard tabs (Groups / Agents). Reincarnate
   already removes expired convs from groups + permissions, so they
   don't appear in the dashboard's snapshot today — verified by
@@ -488,10 +510,19 @@ Still open:
   daemon), so there's nothing for the daemon to gate yet. Routing
   `session new` through the daemon would make this enforceable —
   bigger refactor, deferred.
-- `agent.stop` / `agent.resume` — cross-conv stop/resume by conv-id
-  (the bulk-by-group `groups.stop` / `groups.resume` are shipped).
-  Useful when a manager agent wants to act on a single subordinate
-  rather than the whole team.
+
+Shipped (2026-05):
+- `agent.stop` / `agent.resume` slugs and CLI verbs. Single-conv
+  variants of the bulk `groups.stop` / `groups.resume` —
+  `tclaude agent stop <selector>` (soft `/exit` injection, or
+  `--force` for `kill-session`) and `tclaude agent resume
+  <selector>` (spawn detached via `tclaude session new -r <conv>
+  -d --global`). Both routed through `/v1/agent/{selector}/{verb}`,
+  same auth model as other cross-agent ops (slug OR
+  owner-of-group). Bulk handlers refactored to call the same
+  `stopOneConv` / `resumeOneConv` per-conv helpers, so the
+  semantics match exactly between the bulk and single-conv paths.
+  Unblocks the future dashboard wake-up / shut-down buttons.
 
 ### Human-in-the-loop approval flow
 

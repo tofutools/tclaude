@@ -114,6 +114,14 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermAgentSchedule,
 		Description: "Manage ANOTHER agent's scheduled cron jobs (tclaude agent cron --target). Group owners can manage cron jobs on members of groups they own without this slug.",
 	},
+	{
+		Slug:        PermAgentStop,
+		Description: "Stop ANOTHER agent's tmux session (tclaude agent stop). Single-conv variant of groups.stop. Group owners can stop members of groups they own without this slug.",
+	},
+	{
+		Slug:        PermAgentResume,
+		Description: "Resume ANOTHER agent into a fresh tmux session (tclaude agent resume). Single-conv variant of groups.resume. Group owners can resume members of groups they own without this slug.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.
