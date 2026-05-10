@@ -46,6 +46,7 @@ func groupsCmd() *cobra.Command {
 			groupsOwnersCmd(),
 			groupsGrantOwnerCmd(),
 			groupsRevokeOwnerCmd(),
+			groupsRenameCmd(),
 		},
 	}.ToCobra()
 }
@@ -808,6 +809,70 @@ func groupsUnarchiveCmd() *cobra.Command {
 			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+// --- groups rename ---
+
+type groupsRenameParams struct {
+	Old      string `pos:"true" help:"Existing group name"`
+	New      string `pos:"true" help:"New group name"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsRenameCmd() *cobra.Command {
+	return boa.CmdT[groupsRenameParams]{
+		Use:   "rename",
+		Short: "Rename a group",
+		Long: "Rename a group's canonical name. Membership, ownership, " +
+			"messages, and cron jobs all stay attached (the schema uses " +
+			"integer foreign keys, so the rename is a single-row update). " +
+			"Same-name rename is a no-op. The previous name is recorded in " +
+			"agent_group_audit so the history is debuggable.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsRenameParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Old).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsRenameParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsRename(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsRename(p *groupsRenameParams, stdout, stderr io.Writer) int {
+	if p.Old == "" || p.New == "" {
+		fmt.Fprintf(stderr, "Error: both <old> and <new> names are required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group   string `json:"group"`
+		OldName string `json:"old_name"`
+		Action  string `json:"action"`
+	}
+	body := map[string]string{"new_name": p.New}
+	path := "/v1/groups/" + url.PathEscape(p.Old) + "/rename"
+	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.OldName == resp.Group {
+		fmt.Fprintf(stdout, "%s: no-op (same name)\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s -> %s\n", resp.OldName, resp.Group)
+	}
+	return rcOK
 }
 
 func runGroupsArchiveOrUnarchive(name, verb, askHuman string, stdout, stderr io.Writer) int {

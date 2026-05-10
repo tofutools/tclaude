@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 19
+const currentVersion = 20
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -137,6 +137,43 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 20 {
+		if err := migrateV19toV20(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV19toV20 adds agent_group_audit — append-only history of group
+// rename events. Lets `tclaude agent groups rename` keep the rename
+// debuggable without needing to scrape slog ("what was this group
+// called before?"). Same shape as agent_conv_succession.
+//
+// Shape:
+//   - group_id is the stable FK; survives the rename so a later lookup
+//     can chain backward through the audit rows for the full history.
+//   - by_conv is the conv-id that authored the rename (empty for the
+//     human path — humans bypass permission checks).
+func migrateV19toV20(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_group_audit (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			old_name   TEXT NOT NULL,
+			new_name   TEXT NOT NULL,
+			by_conv    TEXT NOT NULL DEFAULT '',
+			at         TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_group_audit_group
+			ON agent_group_audit(group_id, at);
+
+		UPDATE schema_version SET version = 20;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v19→v20: %w", err)
+	}
 	return nil
 }
 

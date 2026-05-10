@@ -282,6 +282,124 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	return out, rows.Err()
 }
 
+// ErrGroupNameTaken signals that a rename target already exists.
+var ErrGroupNameTaken = errors.New("group name already exists")
+
+// RenameAgentGroup atomically renames the canonical name of a group +
+// records an audit row. byConv may be empty for the human path.
+//
+// Returns:
+//   - (nil, nil) when no group with oldName exists — caller chooses
+//     whether to surface that as 404 or no-op.
+//   - (nil, ErrGroupNameTaken) if newName collides with another group.
+//   - (group, nil) on success — the returned group reflects the NEW
+//     name + the same id/created_at/archived_at.
+//
+// All work happens in a single transaction so a failure mid-flight
+// rolls back cleanly. The schema stores group references as integer
+// foreign keys (group_id), so renaming is a single-row UPDATE — no
+// cascades required.
+func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
+	if newName == "" {
+		return nil, fmt.Errorf("newName required")
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRow(
+		`SELECT id, name, descr, created_at, archived_at FROM agent_groups WHERE name = ?`,
+		oldName)
+	g, err := scanAgentGroup(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if oldName == newName {
+		// No-op: idempotent same-name. Still record the audit row so a
+		// human can see they tried — useful when chasing typos.
+		if _, err := tx.Exec(
+			`INSERT INTO agent_group_audit (group_id, old_name, new_name, by_conv, at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			g.ID, oldName, newName, byConv, time.Now().Format(time.RFC3339Nano)); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return g, nil
+	}
+	// Collision check before the UPDATE to surface a clear 409, since
+	// the UNIQUE constraint would fire as a generic SQLITE_CONSTRAINT.
+	var existing int64
+	err = tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, newName).Scan(&existing)
+	if err == nil {
+		return nil, ErrGroupNameTaken
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE agent_groups SET name = ? WHERE id = ?`, newName, g.ID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO agent_group_audit (group_id, old_name, new_name, by_conv, at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		g.ID, oldName, newName, byConv, time.Now().Format(time.RFC3339Nano)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	g.Name = newName
+	return g, nil
+}
+
+// ListAgentGroupRenames returns the rename history for a single group,
+// most recent first. Used for "what was this group called before?"
+// lookups; not currently surfaced via CLI but cheap to expose later.
+func ListAgentGroupRenames(groupID int64) ([]AgentGroupAudit, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(
+		`SELECT id, group_id, old_name, new_name, by_conv, at
+		 FROM agent_group_audit WHERE group_id = ? ORDER BY id DESC`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AgentGroupAudit
+	for rows.Next() {
+		var a AgentGroupAudit
+		if err := rows.Scan(&a.ID, &a.GroupID, &a.OldName, &a.NewName, &a.ByConv, &a.At); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// AgentGroupAudit is one row in agent_group_audit, recording a single
+// rename event.
+type AgentGroupAudit struct {
+	ID      int64
+	GroupID int64
+	OldName string
+	NewName string
+	ByConv  string
+	At      string
+}
+
 // ArchiveAgentGroup soft-deletes a group: stamps archived_at = now and
 // leaves all rows intact. Mutating operations (member.add, owners.*,
 // message) refuse on archived groups; listing endpoints filter them out
