@@ -130,7 +130,32 @@ type snapshotPayload struct {
 	Agents      []dashboardAgent        `json:"agents"`
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
+	Cron        []dashboardCronJob      `json:"cron"`
 	PopupBase   string                  `json:"popup_base"` // for tray-shareable display
+}
+
+// dashboardCronJob is the snapshot view of one agent_cron_jobs row.
+// Mirrors jobJSON in cron_handlers.go but adds a few resolved fields
+// — owner/target labels and the most-recent run row — so the
+// dashboard can render a self-contained table without a second
+// fetch per row.
+type dashboardCronJob struct {
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	OwnerConv       string `json:"owner_conv"`
+	OwnerLabel      string `json:"owner_label"`
+	TargetConv      string `json:"target_conv,omitempty"`
+	TargetLabel     string `json:"target_label,omitempty"`
+	GroupID         int64  `json:"group_id"`
+	GroupName       string `json:"group_name,omitempty"`
+	IntervalSeconds int64  `json:"interval_seconds"`
+	Subject         string `json:"subject,omitempty"`
+	Body            string `json:"body"`
+	Enabled         bool   `json:"enabled"`
+	CreatedAt       string `json:"created_at,omitempty"`
+	LastRunAt       string `json:"last_run_at,omitempty"`
+	LastRunStatus   string `json:"last_run_status,omitempty"`
+	NextDueAt       string `json:"next_due_at,omitempty"`
 }
 
 type snapshotPermissionsView struct {
@@ -241,7 +266,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := agentRows[convID]; ok {
 			return existing
 		}
-		row := agent.FreshConvRow(convID)
+		row := agent.FreshConvRowResolved(convID)
 		title := "(unknown)"
 		if row != nil {
 			if t := agent.DisplayTitle(row); t != "" {
@@ -293,7 +318,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		memberSet := map[string]bool{}
 		for _, m := range members {
 			memberSet[m.ConvID] = true
-			row := agent.FreshConvRow(m.ConvID)
+			row := agent.FreshConvRowResolved(m.ConvID)
 			title := "(unknown)"
 			if row != nil {
 				if t := agent.DisplayTitle(row); t != "" {
@@ -327,7 +352,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			if memberSet[ownerConv] {
 				continue
 			}
-			row := agent.FreshConvRow(ownerConv)
+			row := agent.FreshConvRowResolved(ownerConv)
 			title := "(unknown)"
 			if row != nil {
 				if t := agent.DisplayTitle(row); t != "" {
@@ -387,6 +412,82 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return out.Agents[i].Title < out.Agents[j].Title
 	})
 
+	out.Cron = collectCronSnapshot()
+
 	writeJSON(w, http.StatusOK, out)
+}
+
+// collectCronSnapshot builds the wire-shape rows for the dashboard's
+// Cron tab. Resolves owner/target conv-ids to display titles and
+// computes the next-due timestamp so the UI doesn't need a clock-
+// arithmetic helper. Returns an empty slice (not nil) so the page's
+// .map() doesn't crash on null.
+func collectCronSnapshot() []dashboardCronJob {
+	out := []dashboardCronJob{}
+	jobs, err := db.ListAgentCronJobs()
+	if err != nil {
+		return out
+	}
+	// Cache group-id → name across rows in the same snapshot to avoid
+	// a per-row lookup.
+	groupNames := map[int64]string{}
+	for _, j := range jobs {
+		row := dashboardCronJob{
+			ID:              j.ID,
+			Name:            j.Name,
+			OwnerConv:       j.OwnerConv,
+			OwnerLabel:      labelForConv(j.OwnerConv),
+			TargetConv:      j.TargetConv,
+			GroupID:         j.GroupID,
+			IntervalSeconds: j.IntervalSeconds,
+			Subject:         j.Subject,
+			Body:            j.Body,
+			Enabled:         j.Enabled,
+			LastRunStatus:   j.LastRunStatus,
+		}
+		if j.TargetConv != "" {
+			row.TargetLabel = labelForConv(j.TargetConv)
+		}
+		if j.GroupID > 0 {
+			name, ok := groupNames[j.GroupID]
+			if !ok {
+				if g, gerr := db.GetAgentGroupByID(j.GroupID); gerr == nil && g != nil {
+					name = g.Name
+				}
+				groupNames[j.GroupID] = name
+			}
+			row.GroupName = name
+		}
+		if !j.CreatedAt.IsZero() {
+			row.CreatedAt = j.CreatedAt.Format(time.RFC3339)
+		}
+		if !j.LastRunAt.IsZero() {
+			row.LastRunAt = j.LastRunAt.Format(time.RFC3339)
+			next := j.LastRunAt.Add(time.Duration(j.IntervalSeconds) * time.Second)
+			row.NextDueAt = next.Format(time.RFC3339)
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// labelForConv returns a short display label for a conv-id. Tries
+// the conv's display title (custom-title / summary / first-prompt)
+// first, then falls back to the 8-char prefix. Mirrors the rendering
+// used in the Groups/Agents tabs.
+func labelForConv(convID string) string {
+	if convID == "" {
+		return ""
+	}
+	row := agent.FreshConvRowResolved(convID)
+	if row != nil {
+		if t := agent.DisplayTitle(row); t != "" {
+			return t
+		}
+	}
+	if len(convID) >= 8 {
+		return convID[:8]
+	}
+	return convID
 }
 

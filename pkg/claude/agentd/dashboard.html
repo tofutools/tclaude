@@ -195,6 +195,7 @@ details[open] > summary .group-actions { opacity: 1; }
 <nav>
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="agents">Agents</button>
+  <button data-tab="cron">Cron</button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
 </nav>
@@ -214,6 +215,14 @@ details[open] > summary .group-actions { opacity: 1; }
       <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
     </div>
     <div id="agents-list"></div>
+  </section>
+  <section id="tab-cron">
+    <div class="filter-bar">
+      <input id="filter-cron" type="text" placeholder="Filter cron jobs (matches name + owner/target label + body)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-cron-count"></span>
+      <button class="clear-filter" id="filter-cron-clear" title="Clear filter">×</button>
+    </div>
+    <div id="cron-list"></div>
   </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
@@ -539,6 +548,105 @@ details[open] > summary .group-actions { opacity: 1; }
       ? `${filtered.length} / ${total}` : `${total} agent${total === 1 ? '' : 's'}`;
   }
 
+  // formatInterval renders an integer second count as a coarse human
+  // string ("30s", "5m", "2h", "1d"). Mirrors the cron CLI output so
+  // dashboard + terminal read the same.
+  function formatInterval(sec) {
+    if (!sec) return '';
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm';
+    if (sec < 86400) return Math.floor(sec / 3600) + 'h';
+    return Math.floor(sec / 86400) + 'd';
+  }
+
+  // cronTargetCell describes where a cron job fires. Two shapes:
+  //  - group:<name>  → the daemon enqueues an agent_messages row
+  //                    visible to every member.
+  //  - <conv-label>  → solo target; daemon does send-keys directly.
+  function cronTargetCell(j) {
+    if (j.group_id && j.group_name) {
+      return `<span class="tag">group:${esc(j.group_name)}</span>`;
+    }
+    if (j.target_conv) {
+      return `<span class="alias">${esc(j.target_label || j.target_conv.slice(0, 8))}</span>`;
+    }
+    return '<span class="muted">(no target)</span>';
+  }
+
+  // cronStatusPill colorises the last_run_status. Empty / "ok" /
+  // anything else map to neutral / green / red respectively.
+  function cronStatusPill(s) {
+    if (!s) return '<span class="state-pill state-offline" title="never run">never run</span>';
+    if (s === 'ok') return `<span class="state-pill state-working" title="${esc(s)}">${esc(s)}</span>`;
+    return `<span class="state-pill state-awaiting" title="${esc(s)}">${esc(s)}</span>`;
+  }
+
+  function renderCron(jobs) {
+    if (!jobs || !jobs.length) {
+      return '<div class="empty">No cron jobs yet. Create one with: <code>tclaude agent cron add &lt;name&gt; &lt;interval&gt; &lt;target&gt; -- &lt;body&gt;</code></div>';
+    }
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th></th><th>ID</th><th>Name</th><th>Owner</th><th>Target</th>
+            <th>Every</th><th>Last run</th><th>Status</th><th>Body</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${jobs.map(j => {
+            const enabledDot = j.enabled
+              ? '<span class="online" title="enabled">●</span>'
+              : '<span class="offline" title="disabled">○</span>';
+            const enableBtn = j.enabled
+              ? `<button class="warn" data-act="cron-disable" data-id="${j.id}" data-label="${esc(j.name)}" title="Pause this cron job">disable</button>`
+              : `<button data-act="cron-enable" data-id="${j.id}" data-label="${esc(j.name)}" title="Re-enable this cron job">enable</button>`;
+            const runBtn = `<button data-act="cron-run-now" data-id="${j.id}" data-label="${esc(j.name)}" title="Fire this job immediately (also stamps last_run_at)">run now</button>`;
+            const delBtn = `<button class="danger" data-act="cron-delete" data-id="${j.id}" data-label="${esc(j.name)}" title="Delete this cron job">delete</button>`;
+            const bodySummary = (j.body || '').replace(/\s+/g, ' ').trim();
+            const bodyTrunc = bodySummary.length > 80 ? bodySummary.slice(0, 80) + '…' : bodySummary;
+            return `
+              <tr>
+                <td>${enabledDot}</td>
+                <td class="id">${j.id}</td>
+                <td><div class="alias">${esc(j.name)}</div>${j.subject ? `<div class="muted">${esc(j.subject)}</div>` : ''}</td>
+                <td><span class="muted">${esc(j.owner_label || j.owner_conv.slice(0, 8))}</span></td>
+                <td>${cronTargetCell(j)}</td>
+                <td><span class="id">${esc(formatInterval(j.interval_seconds))}</span></td>
+                <td><span class="last-hook">${esc(relTime(j.last_run_at) || '—')}</span></td>
+                <td>${cronStatusPill(j.last_run_status)}</td>
+                <td><span class="muted" title="${esc(j.body || '')}">${esc(bodyTrunc)}</span></td>
+                <td><div class="row-actions">${runBtn}${enableBtn}${delBtn}</div></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function filterCron(jobs, q) {
+    if (!q) return jobs;
+    const needle = q.toLowerCase();
+    return jobs.filter(j =>
+      ((j.name || '').toLowerCase().includes(needle)) ||
+      ((j.owner_label || '').toLowerCase().includes(needle)) ||
+      ((j.target_label || '').toLowerCase().includes(needle)) ||
+      ((j.group_name || '').toLowerCase().includes(needle)) ||
+      ((j.body || '').toLowerCase().includes(needle))
+    );
+  }
+
+  function renderCronTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-cron').value;
+    const filtered = filterCron(lastSnapshot.cron || [], q);
+    $('#cron-list').innerHTML = renderCron(filtered);
+    const total = (lastSnapshot.cron || []).length;
+    $('#filter-cron-count').textContent = q
+      ? `${filtered.length} / ${total}` : `${total} job${total === 1 ? '' : 's'}`;
+  }
+
   function bindFilter(tab) {
     const input = $(`#filter-${tab}`);
     const clear = $(`#filter-${tab}-clear`);
@@ -547,7 +655,9 @@ details[open] > summary .group-actions { opacity: 1; }
     const onChange = () => {
       const v = input.value;
       if (v) localStorage.setItem(key, v); else localStorage.removeItem(key);
-      if (tab === 'groups') renderGroupsTab(); else renderAgentsTab();
+      if (tab === 'groups') renderGroupsTab();
+      else if (tab === 'agents') renderAgentsTab();
+      else if (tab === 'cron') renderCronTab();
     };
     input.addEventListener('input', onChange);
     clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
@@ -565,6 +675,7 @@ details[open] > summary .group-actions { opacity: 1; }
       $('#meta').textContent = data.popup_base + ' · refreshed ' + new Date(data.generated_at).toLocaleTimeString();
       renderGroupsTab();
       renderAgentsTab();
+      renderCronTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
       showStatus('● live', false);
@@ -763,6 +874,52 @@ details[open] > summary .group-actions { opacity: 1; }
             if (!ok) toast(`Revoke failed: ${await r.text()}`, true);
             break;
           }
+          case 'cron-enable':
+          case 'cron-disable': {
+            const id = btn.getAttribute('data-id');
+            const verb = act === 'cron-enable' ? 'enable' : 'disable';
+            const r = await fetch(`/api/cron/${encodeURIComponent(id)}/${verb}`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`${verb} failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'cron-run-now': {
+            const id = btn.getAttribute('data-id');
+            // Run-now is non-destructive (it just fires the job once)
+            // but it does send a real message to the target — confirm
+            // so a stray click doesn't paste into someone's pane.
+            const confirmed = await confirmModal({
+              title: 'Fire this cron job now?',
+              body: 'Sends the job\'s message to its target immediately. Stamps last_run_at so the regular cadence resumes from now.',
+              meta: label,
+              okLabel: 'Fire now',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/cron/${encodeURIComponent(id)}/run-now`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`run-now failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'cron-delete': {
+            const id = btn.getAttribute('data-id');
+            const confirmed = await confirmModal({
+              title: 'Delete cron job?',
+              body: 'Removes the job and its run history. The target itself is unaffected; you can re-create the job with `tclaude agent cron add`.',
+              meta: label,
+              okLabel: 'Delete job',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/cron/${encodeURIComponent(id)}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`delete failed: ${await r.text()}`, true);
+            break;
+          }
           default:
             return;
         }
@@ -783,6 +940,7 @@ details[open] > summary .group-actions { opacity: 1; }
   bindRowActions();
   bindFilter('groups');
   bindFilter('agents');
+  bindFilter('cron');
   refresh();
   setInterval(refresh, 5000);
 })();
