@@ -110,6 +110,23 @@ Follow-up improvements (separate items):
   needed today; keep on the shelf in case the cheap path breaks.
 - Optional title preservation if we wire CC's title into our DB
   (e.g. via a hook that captures it, or by parsing CC's conv jsonl).
+- **Shorten the suffix scheme: `-r-N` / `-c-N`.** Today's titles get
+  long fast — `tclaude-dev-reincarnate-2` is 26 chars before any
+  cwd context. Rename:
+  - `<base>-reincarnate-<N>` → `<base>-r-<N>` (one-letter for
+    reincarnate)
+  - `<base>-clone-<N>` → `<base>-c-<N>` (one-letter for clone)
+  Distinction stays clean: `r` vs `c` is enough to read at a
+  glance, and shorter titles tile better in tmux pane headers and
+  dashboard rows. Touches both `pkg/claude/agentd/reincarnate.go`
+  (uniqueReincarnateTitle + reincarnateSuffixRegex) and
+  `pkg/claude/agentd/clone.go` (uniqueCloneAlias + cloneSuffixRegex).
+  Open question: the regex unwrap-then-renumber logic needs to
+  recognize BOTH old and new suffix forms during the changeover so
+  a v0 `worker-reincarnate-3` cleanly bumps to a v1 `worker-r-4`
+  instead of nesting (`worker-reincarnate-3-r-1`). Probably ship as
+  a one-shot rewrite over `pkg/claude/agent/reincarnate_test.go` +
+  `pkg/claude/agentd/clone_test.go` to lock in the new shape.
 
 ### Agent clone — shipped (2026-05)
 
