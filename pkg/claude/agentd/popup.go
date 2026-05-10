@@ -92,6 +92,14 @@ type approvalRegistry struct {
 
 var approvals = &approvalRegistry{pending: map[string]*approvalRequest{}}
 
+// pendingCount returns the number of in-flight approval requests.
+// Used by the tray icon's poller to decide green vs yellow.
+func (a *approvalRegistry) pendingCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.pending)
+}
+
 // RequestHumanApprovalImpl is the indirection point for
 // requestHumanApproval so flow tests can stub the popup decision
 // without spawning a browser. Production assigns realRequestHumanApproval

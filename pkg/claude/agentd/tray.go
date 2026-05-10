@@ -3,12 +3,14 @@ package agentd
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"log/slog"
 	"os/exec"
 	"runtime"
+	"time"
 
 	"fyne.io/systray"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -37,6 +39,11 @@ type trayConfig struct {
 // it just doesn't have a visible tray entry.
 func runTrayBlocking(cfg trayConfig, onQuit func()) {
 	greenIcon := makeTrayIcon(color.RGBA{R: 30, G: 180, B: 30, A: 255})
+	// Yellow flips on while a `--ask-human` popup is awaiting decision.
+	// Returns to green once the human decides or the popup times out.
+	// Picked an amber-yellow that reads distinctly from green even in
+	// reduced-color taskbar themes.
+	yellowIcon := makeTrayIcon(color.RGBA{R: 230, G: 180, B: 30, A: 255})
 
 	onReady := func() {
 		systray.SetIcon(greenIcon)
@@ -74,7 +81,38 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 
 		mQuit := systray.AddMenuItem("Quit", "Stop tclaude agentd")
 
+		// Pending-approval poller. Flips green↔yellow as approval requests
+		// come and go. 200ms tick is small enough that a popup feels
+		// responsive without burning cycles when nothing is happening.
+		// Quits when mQuit fires (the goroutine below closes trayDone).
+		trayDone := make(chan struct{})
 		go func() {
+			lastPending := 0
+			tk := time.NewTicker(200 * time.Millisecond)
+			defer tk.Stop()
+			for {
+				select {
+				case <-trayDone:
+					return
+				case <-tk.C:
+					n := approvals.pendingCount()
+					if n == lastPending {
+						continue
+					}
+					// Update on EVERY count change, not just the
+					// 0↔non-zero transition, so the tooltip count
+					// stays accurate when a second concurrent
+					// approval queues behind the first.
+					icon, tooltip := pickTrayIcon(greenIcon, yellowIcon, n)
+					systray.SetIcon(icon)
+					systray.SetTooltip(tooltip)
+					lastPending = n
+				}
+			}
+		}()
+
+		go func() {
+			defer close(trayDone)
 			for {
 				select {
 				case <-mDash.ClickedCh:
@@ -117,6 +155,16 @@ func runReinstallSkills() {
 
 // makeTrayIcon returns a small filled-circle icon. PNG everywhere
 // except Windows, which needs ICO-wrapped PNG for Shell_NotifyIcon.
+// pickTrayIcon picks the icon + tooltip the tray should display for a
+// given pending-approval count. Pure function so the policy can be
+// unit-tested without spawning a real systray.
+func pickTrayIcon(green, yellow []byte, pending int) ([]byte, string) {
+	if pending > 0 {
+		return yellow, fmt.Sprintf("tclaude agentd · %d pending approval(s)", pending)
+	}
+	return green, "tclaude agentd"
+}
+
 func makeTrayIcon(c color.RGBA) []byte {
 	pngBytes := makeIconPNG(c)
 	if runtime.GOOS == "windows" {

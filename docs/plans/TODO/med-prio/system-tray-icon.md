@@ -8,9 +8,11 @@ shutdown path. Linux/Windows pure-Go; macOS uses cgo.
 
 ## Open follow-ups
 
-- **Yellow on pending approval** — flip icon to yellow while a
-  `--ask-human` popup is awaiting decision; back to green on
-  approve/deny/timeout.
+- ~~**Yellow on pending approval**~~ — **shipped (2026-05).** Tray
+  goroutine polls `approvals.pendingCount()` on a 200ms tick.
+  Icon flips green↔yellow on count change; tooltip surfaces
+  "tclaude agentd · N pending approval(s)". Pure
+  function `pickTrayIcon` makes the policy unit-testable.
 - **Red on daemon down / shutting down**.
 - **Flashing on unread inbox** — opt-in (loud).
 - **Pending approvals submenu** — list waiting requests; click

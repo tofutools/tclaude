@@ -13,6 +13,13 @@ design see `docs/plans/agent-coord.md`. For the daemon design see
 
 ## 2026-05 (recent commits)
 
+- **Tray icon: yellow on pending approval**. Tray goroutine polls
+  `approvals.pendingCount()` on a 200ms tick; icon flips
+  green↔yellow on count change; tooltip surfaces "tclaude agentd ·
+  N pending approval(s)" so the human sees the count without
+  needing to open the dashboard. Pure function `pickTrayIcon`
+  makes the policy unit-testable. Race-tested concurrent
+  pendingCount under add/remove storm.
 - **Cross-agent X-Tclaude-Ask-Human popup escape hatch**.
   `requireCrossAgentPermission` now honors the popup header as a
   last-chance branch when slug + ownership both fail. Mirrors the
