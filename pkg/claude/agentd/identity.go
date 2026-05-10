@@ -114,6 +114,7 @@ const (
 	PermAgentSchedule     = "agent.schedule"
 	PermAgentStop         = "agent.stop"
 	PermAgentResume       = "agent.resume"
+	PermAgentDelete       = "agent.delete"
 	PermGroupsArchive     = "groups.archive"
 )
 

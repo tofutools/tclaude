@@ -390,6 +390,96 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 	return err
 }
 
+// AgentDeletionCounts records what `DeleteAgentByConvID` removed,
+// per affected table. Surfaced in the daemon response so the human
+// (or the audit log) can confirm scope.
+type AgentDeletionCounts struct {
+	GroupMembers   int64 `json:"group_members"`
+	GroupOwners    int64 `json:"group_owners"`
+	MessagesFrom   int64 `json:"messages_from"`
+	MessagesTo     int64 `json:"messages_to"`
+	Permissions    int64 `json:"permissions"`
+	CronJobsOwned  int64 `json:"cron_jobs_owned"`
+	CronJobsTarget int64 `json:"cron_jobs_target"`
+	SuccessionOld  int64 `json:"succession_old"`
+	SuccessionNew  int64 `json:"succession_new"`
+	Embeddings     int64 `json:"embeddings"`
+	ConvIndex      int64 `json:"conv_index"`
+	Sessions       int64 `json:"sessions"`
+}
+
+// DeleteAgentByConvID purges every row that references convID across
+// the agent / conv / session tables. Single transaction — partial
+// failure rolls everything back.
+//
+// Tables hit (in dependency order):
+//
+//   - agent_group_members
+//   - agent_group_owners
+//   - agent_messages (from_conv = ? OR to_conv = ?)
+//   - agent_permissions
+//   - agent_cron_jobs (owner_conv = ? OR target_conv = ?). Cascades
+//     to agent_cron_runs via the FK.
+//   - agent_conv_succession (old_conv_id = ? OR new_conv_id = ?).
+//     Both sides — chain history of the deleted agent disappears.
+//   - conv_embeddings
+//   - conv_index
+//   - sessions
+//
+// Filesystem state (the .jsonl in ~/.claude/projects/... and the
+// ~/.claude/session-env/<convID> file) is the caller's
+// responsibility — DeleteAgentByConvID only touches SQLite. The
+// daemon handler combines this with file-system cleanup.
+//
+// Idempotent: calling on a conv-id that doesn't exist returns
+// AgentDeletionCounts{} with no error.
+func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
+	var c AgentDeletionCounts
+	if convID == "" {
+		return c, fmt.Errorf("convID is required")
+	}
+	d, err := Open()
+	if err != nil {
+		return c, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return c, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	type step struct {
+		stmt string
+		into *int64
+	}
+	steps := []step{
+		{`DELETE FROM agent_group_members WHERE conv_id = ?`, &c.GroupMembers},
+		{`DELETE FROM agent_group_owners WHERE conv_id = ?`, &c.GroupOwners},
+		{`DELETE FROM agent_messages WHERE from_conv = ?`, &c.MessagesFrom},
+		{`DELETE FROM agent_messages WHERE to_conv = ?`, &c.MessagesTo},
+		{`DELETE FROM agent_permissions WHERE conv_id = ?`, &c.Permissions},
+		{`DELETE FROM agent_cron_jobs WHERE owner_conv = ?`, &c.CronJobsOwned},
+		{`DELETE FROM agent_cron_jobs WHERE target_conv = ?`, &c.CronJobsTarget},
+		{`DELETE FROM agent_conv_succession WHERE old_conv_id = ?`, &c.SuccessionOld},
+		{`DELETE FROM agent_conv_succession WHERE new_conv_id = ?`, &c.SuccessionNew},
+		{`DELETE FROM conv_embeddings WHERE conv_id = ?`, &c.Embeddings},
+		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
+		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
+	}
+	for _, s := range steps {
+		res, err := tx.Exec(s.stmt, convID)
+		if err != nil {
+			return AgentDeletionCounts{}, fmt.Errorf("delete agent (%s): %w", s.stmt, err)
+		}
+		n, _ := res.RowsAffected()
+		*s.into = n
+	}
+	if err := tx.Commit(); err != nil {
+		return AgentDeletionCounts{}, err
+	}
+	return c, nil
+}
+
 // RemoveAllAgentGroupMembershipsForConv drops every membership row
 // referencing convID, regardless of group. Used by the conv-delete
 // path so the dashboard's agent listing doesn't keep showing

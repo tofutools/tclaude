@@ -665,6 +665,138 @@ func TestListAgentMessagesFromConv(t *testing.T) {
 	}
 }
 
+// TestDeleteAgentByConvID_PurgesAllReferencingTables guards the
+// "no leftover refs" promise of `tclaude agent delete`. Seeds a
+// conv with rows in every table that holds a conv-id, then asserts
+// the single transaction wipes them all and returns accurate
+// counts. Idempotent re-run on the gone conv should be a no-op.
+func TestDeleteAgentByConvID_PurgesAllReferencingTables(t *testing.T) {
+	setupTestDB(t)
+	const target = "victim-conv-1234"
+	const peer = "peer-conv-5678"
+
+	g, _ := CreateAgentGroup("alpha", "")
+
+	// Membership + ownership.
+	if err := AddAgentGroupMember(&AgentGroupMember{
+		GroupID: g, ConvID: target, Alias: "victim",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddAgentGroupOwner(g, target, ""); err != nil {
+		t.Fatal(err)
+	}
+	// A peer member so messages can route through the group.
+	if err := AddAgentGroupMember(&AgentGroupMember{
+		GroupID: g, ConvID: peer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Messages: one outgoing (target -> peer), one incoming (peer -> target).
+	if _, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: target, ToConv: peer, Body: "out",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: peer, ToConv: target, Body: "in",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Permission grant.
+	if err := GrantAgentPermission(target, "self.rename", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sessions row.
+	if err := SaveSession(&SessionRow{
+		ID: "label-victim", TmuxSession: "tmux-victim", ConvID: target,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Conv index row.
+	if err := UpsertConvIndex(&ConvIndexRow{
+		ConvID: target, CustomTitle: "victim-title",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Succession trail (target was once the OLD side of a reincarnation).
+	if err := RecordConvSuccession(target, "newer-conv", "reincarnate"); err != nil {
+		t.Fatal(err)
+	}
+
+	counts, err := DeleteAgentByConvID(target)
+	if err != nil {
+		t.Fatalf("DeleteAgentByConvID: %v", err)
+	}
+
+	// Spot-check the counts. Every populated table should be > 0; the
+	// untouched ones (cron, embeddings, succession-new) stay at 0.
+	if counts.GroupMembers != 1 {
+		t.Errorf("GroupMembers = %d, want 1", counts.GroupMembers)
+	}
+	if counts.GroupOwners != 1 {
+		t.Errorf("GroupOwners = %d, want 1", counts.GroupOwners)
+	}
+	if counts.MessagesFrom != 1 {
+		t.Errorf("MessagesFrom = %d, want 1", counts.MessagesFrom)
+	}
+	if counts.MessagesTo != 1 {
+		t.Errorf("MessagesTo = %d, want 1", counts.MessagesTo)
+	}
+	if counts.Permissions != 1 {
+		t.Errorf("Permissions = %d, want 1", counts.Permissions)
+	}
+	if counts.Sessions != 1 {
+		t.Errorf("Sessions = %d, want 1", counts.Sessions)
+	}
+	if counts.ConvIndex != 1 {
+		t.Errorf("ConvIndex = %d, want 1", counts.ConvIndex)
+	}
+	if counts.SuccessionOld != 1 {
+		t.Errorf("SuccessionOld = %d, want 1", counts.SuccessionOld)
+	}
+
+	// Tables are actually empty for this conv now.
+	if got, _ := ListAgentMessagesForConv(target, 0); len(got) != 0 {
+		t.Errorf("messages-to remain after delete: %d", len(got))
+	}
+	if got, _ := ListAgentMessagesFromConv(target, 0); len(got) != 0 {
+		t.Errorf("messages-from remain after delete: %d", len(got))
+	}
+	if row, _ := GetConvIndex(target); row != nil {
+		t.Errorf("conv_index row remains: %+v", row)
+	}
+	if rows, _ := FindSessionsByConvID(target); len(rows) != 0 {
+		t.Errorf("session rows remain: %d", len(rows))
+	}
+	if perms, _ := ListAgentPermissionsForConv(target); len(perms) != 0 {
+		t.Errorf("permissions remain: %v", perms)
+	}
+
+	// Peer's untouched: their inbox / outbox should still hold their
+	// half of the (now-deleted) thread? No — the thread rows had
+	// from_conv=target OR to_conv=target, so both got removed. The
+	// peer's standalone presence (membership) is unaffected.
+	peerMember, err := FindMemberInGroup(g, peer)
+	if err != nil || peerMember == nil {
+		t.Errorf("peer membership should survive: %v %+v", err, peerMember)
+	}
+
+	// Idempotent re-run: every count is zero, no error.
+	again, err := DeleteAgentByConvID(target)
+	if err != nil {
+		t.Errorf("idempotent re-delete errored: %v", err)
+	}
+	if again != (AgentDeletionCounts{}) {
+		t.Errorf("idempotent re-delete returned non-zero counts: %+v", again)
+	}
+}
+
 // TestAgentMessageRecipientsRoundTrip verifies the email-style
 // audience arrays (schema v18 to_recipients / cc_recipients) survive
 // Insert -> Get and Insert -> List read paths. Empty arrays decode

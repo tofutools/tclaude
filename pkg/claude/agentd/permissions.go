@@ -126,6 +126,10 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermGroupsArchive,
 		Description: "Archive (soft-delete) a group: freezes membership + ownership and hides the group from default listings, while preserving message history (tclaude agent groups archive / unarchive)",
 	},
+	{
+		Slug:        PermAgentDelete,
+		Description: "Permanently delete ANOTHER agent (tclaude agent delete): purges its rows in every agent / conv / session table and deletes its .jsonl. NOT default-granted; this is destructive and not undoable. Group owners can delete members of groups they own without this slug.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

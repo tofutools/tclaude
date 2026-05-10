@@ -153,3 +153,122 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	}
 	return rcOK
 }
+
+// `tclaude agent delete <selector>` — permanently remove an agent.
+//
+// Wipes every row that references the conv-id across the agent /
+// conv / cron / succession / sessions tables, plus the .jsonl file
+// and the ~/.claude/session-env/<conv-id> token. Useful for
+// orphaned aliases left over from spawn-without-startup-write
+// (pre-bc7ec81 behaviour) or any agent the human just doesn't want
+// around any more.
+//
+// Refuses when the target's tmux session is alive — the human must
+// stop it first via `tclaude agent stop <selector>`. `--force`
+// kills the tmux session inline before deleting (mirrors the stop
+// endpoint's --force).
+//
+// Auth: requires the agent.delete permission (NOT default-granted —
+// destructive) OR being an owner of a group containing the target.
+// Self-delete via this command is refused; humans should use
+// `tclaude conv rm` instead.
+
+type deleteParams struct {
+	Selector string `pos:"true" help:"Target conv: alias, full conv-id, or 8+-char prefix"`
+	Force    bool   `long:"force" short:"f" help:"Kill the tmux session before deleting (otherwise refuses when target is alive)"`
+	Yes      bool   `long:"yes" short:"y" help:"Skip the confirmation prompt"`
+}
+
+func deleteCmd() *cobra.Command {
+	return boa.CmdT[deleteParams]{
+		Use:   "delete",
+		Short: "Permanently delete an agent (cleanup orphans / unwanted aliases)",
+		Long: "Wipes every row that references the conv-id across the agent / " +
+			"conv / cron / succession / sessions tables, plus the .jsonl file " +
+			"and the ~/.claude/session-env/<conv-id> token. " +
+			"\n\n" +
+			"Refuses when the target's tmux session is alive — pass --force " +
+			"to kill the session inline. " +
+			"\n\n" +
+			"Auth: requires the agent.delete permission (not default-granted) " +
+			"OR being an owner of a group containing the target. Self-delete " +
+			"is refused via this command; use `tclaude conv rm` instead.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *deleteParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
+			return nil
+		},
+		RunFunc: func(p *deleteParams, _ *cobra.Command, _ []string) {
+			os.Exit(runDelete(p, os.Stdout, os.Stderr, os.Stdin))
+		},
+	}.ToCobra()
+}
+
+func runDelete(p *deleteParams, stdout, stderr io.Writer, stdin io.Reader) int {
+	selector := strings.TrimSpace(p.Selector)
+	if selector == "" {
+		fmt.Fprintln(stderr, "Error: a target selector is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	if !p.Yes {
+		// Read once on the daemon to surface what we're about to
+		// destroy. Cheap; kept here so the prompt is informative even
+		// when the daemon is the only place that knows the conv-id.
+		fmt.Fprintf(stdout, "About to permanently delete agent %q (every related row + the .jsonl).\n",
+			selector)
+		if p.Force {
+			fmt.Fprintln(stdout, "--force is set: any live tmux session will be killed.")
+		}
+		fmt.Fprint(stdout, "Continue? [y/N]: ")
+		buf := make([]byte, 8)
+		n, _ := stdin.Read(buf)
+		ans := strings.ToLower(strings.TrimSpace(string(buf[:n])))
+		if ans != "y" && ans != "yes" {
+			fmt.Fprintln(stdout, "Aborted.")
+			return rcOK
+		}
+	}
+	path := "/v1/agent/" + url.PathEscape(selector) + "/delete"
+	if p.Force {
+		path += "?force=1"
+	}
+	var resp struct {
+		ConvID            string         `json:"conv_id"`
+		CallerConv        string         `json:"caller_conv,omitempty"`
+		Action            string         `json:"action"`
+		PreStop           string         `json:"pre_stop,omitempty"`
+		JsonlRemoved      bool           `json:"jsonl_removed"`
+		SessionEnvRemoved bool           `json:"session_env_removed"`
+		DBCounts          map[string]int `json:"db_counts"`
+	}
+	if err := DaemonRequest(http.MethodDelete, path, nil, &resp, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
+	if resp.PreStop != "" {
+		fmt.Fprintf(stdout, "  pre-stop: %s\n", resp.PreStop)
+	}
+	fmt.Fprintf(stdout, "  jsonl removed: %v\n", resp.JsonlRemoved)
+	fmt.Fprintf(stdout, "  session-env removed: %v\n", resp.SessionEnvRemoved)
+	if len(resp.DBCounts) > 0 {
+		var nonZero []string
+		for k, v := range resp.DBCounts {
+			if v > 0 {
+				nonZero = append(nonZero, fmt.Sprintf("%s=%d", k, v))
+			}
+		}
+		if len(nonZero) > 0 {
+			fmt.Fprintf(stdout, "  db rows removed: %s\n", strings.Join(nonZero, ", "))
+		} else {
+			fmt.Fprintln(stdout, "  db rows removed: (none — already gone)")
+		}
+	}
+	if resp.CallerConv != "" {
+		fmt.Fprintf(stdout, "  called by: %s\n", short(resp.CallerConv))
+	}
+	return rcOK
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -191,6 +192,133 @@ func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) 
 		resp["caller_conv"] = caller
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleAgentDelete permanently removes an agent: every row in every
+// agent / conv / session table that references the conv-id, plus the
+// .jsonl file and the ~/.claude/session-env/<conv-id> token. Sibling
+// of stop / resume but DESTRUCTIVE — there is no undo. Auth:
+// agent.delete slug OR caller is owner of a group containing target.
+// Default-grant policy explicitly excludes agent.delete (humans
+// only, unless someone explicitly grants).
+//
+// Refuses when the target's tmux session is alive — the human must
+// stop it first via `tclaude agent stop`. `?force=1` kills the tmux
+// session inline before deleting (mirrors the stop endpoint's force
+// switch). Refusing-by-default avoids racing the live agent's writes
+// to its own .jsonl while we're tearing it down.
+//
+// Returns the per-table deletion counts so the human can see scope.
+func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "method", "DELETE only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentDelete, targetConv)
+	if !ok {
+		return
+	}
+	// Self-delete prevention. An agent shouldn't be able to wipe its
+	// own conv mid-turn — the daemon's own request context is keyed
+	// off the caller's conv-id, and the cleanup goroutine would race
+	// the response write. Humans (caller == "") can always proceed.
+	if caller != "" && caller == targetConv {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"cannot delete self via this endpoint; use `tclaude conv rm` from a human shell or have a peer/owner do it")
+		return
+	}
+	force := r.URL.Query().Get("force") == "1"
+	stopRes := stopOneConv(targetConv, force)
+	if stopRes.Action == "error" {
+		writeError(w, http.StatusInternalServerError, "stop", stopRes.Detail)
+		return
+	}
+	// If the conv is alive but force wasn't passed, stopOneConv
+	// returned `soft_stopped` (sent /exit) — the tmux pane may still
+	// be in the process of dying. Refuse without ?force=1 to avoid
+	// racing the live agent's writes during teardown.
+	if !force && stopRes.Action == "soft_stopped" {
+		writeError(w, http.StatusConflict, "alive",
+			"target had a live tmux session; sent /exit. Re-run with ?force=1 to delete now, or wait for the pane to exit and retry.")
+		return
+	}
+
+	// DB-side purge first. Single transaction across every agent /
+	// conv / cron / succession table that references targetConv.
+	counts, err := db.DeleteAgentByConvID(targetConv)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"db purge failed: "+err.Error())
+		return
+	}
+
+	// Filesystem cleanup: .jsonl + sessions-index entry + sync tombstone.
+	// `db.DeleteAgentByConvID` already dropped the conv_index row, so
+	// `conv.DeleteConvByID`'s own GetConvIndex lookup will return nil
+	// and skip — that's why we shell out to the path independently
+	// below for orphans whose conv_index row was already missing.
+	jsonlRemoved := removeJSONLBestEffort(targetConv)
+	sessionEnvRemoved := removeSessionEnv(targetConv)
+
+	resp := map[string]any{
+		"conv_id":             targetConv,
+		"action":              "deleted",
+		"db_counts":           counts,
+		"jsonl_removed":       jsonlRemoved,
+		"session_env_removed": sessionEnvRemoved,
+	}
+	if caller != "" && caller != targetConv {
+		resp["caller_conv"] = caller
+	}
+	if stopRes.Action != "skipped:already_offline" {
+		resp["pre_stop"] = stopRes.Action
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// removeJSONLBestEffort scans ~/.claude/projects/* for a .jsonl
+// matching convID and removes it. Best-effort: missing file or
+// unreadable projects dir return false rather than erroring — the
+// DB rows are already gone and surfacing a "couldn't find the
+// file" error after a successful purge would be more confusing
+// than helpful. Returns true when at least one file was removed.
+func removeJSONLBestEffort(convID string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	projectsDir := home + "/.claude/projects"
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return false
+	}
+	removed := false
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		candidate := projectsDir + "/" + e.Name() + "/" + convID + ".jsonl"
+		if err := os.Remove(candidate); err == nil {
+			removed = true
+		}
+	}
+	return removed
+}
+
+// removeSessionEnv removes ~/.claude/session-env/<convID> if present.
+// This file is created at spawn time and holds env-var snapshots; it
+// outlives the .jsonl on orphan rows, so cleanup must hit it
+// independently. Returns true when removed.
+func removeSessionEnv(convID string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	path := home + "/.claude/session-env/" + convID
+	if err := os.Remove(path); err == nil {
+		return true
+	}
+	return false
 }
 
 // handleAgentResume resumes a single conv into a fresh detached
