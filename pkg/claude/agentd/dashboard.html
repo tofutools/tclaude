@@ -321,8 +321,15 @@ summary.dnd-drop-over.dnd-effect-clone {
   padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
 }
 .sudo-grant-row input[type=text]:focus { outline: none; border-color: #58a6ff; }
+.sudo-grant-slugs-wrap { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.sudo-grant-slugs-toolbar { display: flex; gap: 6px; }
+.sudo-grant-slugs-toolbar button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.sudo-grant-slugs-toolbar button:hover { background: #2d333b; }
 .sudo-grant-slugs {
-  flex: 1; display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 4px 0;
+  display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 4px 0;
 }
 .sudo-grant-slugs label {
   display: inline-flex; align-items: center; gap: 4px;
@@ -460,6 +467,20 @@ summary.dnd-drop-over.dnd-effect-clone {
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="sudo-pick-agent-modal">
+  <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-pick-agent-title">
+    <h3 id="sudo-pick-agent-title">Grant sudo to <span class="muted">— pick agent</span></h3>
+    <input id="sudo-pick-agent-search" class="add-member-search" type="text" placeholder="Filter by alias / title / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
+    <div class="add-member-list" id="sudo-pick-agent-list"></div>
+    <div class="add-member-foot">
+      <label title="Include offline / archived agents (the daemon will still grant; the agent will see the slug on next wake)">
+        <input id="sudo-pick-agent-all" type="checkbox" />Include offline / archived
+      </label>
+      <span class="spacer"></span>
+      <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="sudo-grant-modal">
   <div class="sudo-grant-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-grant-title">
     <h3 id="sudo-grant-title">Grant sudo</h3>
@@ -470,7 +491,13 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="sudo-grant-row">
       <span class="sudo-grant-label">Slugs</span>
-      <div id="sudo-grant-slugs" class="sudo-grant-slugs"></div>
+      <div class="sudo-grant-slugs-wrap">
+        <div class="sudo-grant-slugs-toolbar">
+          <button type="button" id="sudo-grant-select-all" title="Select every slug except blocklisted ones">all</button>
+          <button type="button" id="sudo-grant-select-none" title="Clear the slug selection">none</button>
+        </div>
+        <div id="sudo-grant-slugs" class="sudo-grant-slugs"></div>
+      </div>
     </label>
     <label class="sudo-grant-row">
       <span class="sudo-grant-label">Duration</span>
@@ -1080,10 +1107,144 @@ summary.dnd-drop-over.dnd-effect-clone {
   // Per-row sudo-revoke is handled by bindRowActions (data-act="sudo-revoke").
   // The Grant modal hooks into bindSudoModal below.
 
+  // pickSudoAgentModal opens a filtered agent picker and resolves to
+  // the chosen conv-id (or "" on cancel). Reuses the .add-member-modal
+  // CSS shape so the look matches the existing "Add member" overlay.
+  // Simpler than addMemberModal: no per-group "exclude existing" — the
+  // daemon's policy already handles policy enforcement on submit.
+  function pickSudoAgentModal() {
+    return new Promise(resolve => {
+      const overlay = $('#sudo-pick-agent-modal');
+      const search = $('#sudo-pick-agent-search');
+      const list = $('#sudo-pick-agent-list');
+      const includeAll = $('#sudo-pick-agent-all');
+      search.value = '';
+      includeAll.checked = false;
+      let highlight = 0;
+      let candidates = [];
+
+      function buildCandidates() {
+        const out = [];
+        const seen = new Set();
+        for (const a of (lastSnapshot?.agents || [])) {
+          if (!a.conv_id || seen.has(a.conv_id)) continue;
+          if (!includeAll.checked && !a.online) continue;
+          seen.add(a.conv_id);
+          out.push(a);
+        }
+        out.sort((a, b) => {
+          if (!!b.online !== !!a.online) return (b.online ? 1 : 0) - (a.online ? 1 : 0);
+          return (a.title || '').localeCompare(b.title || '');
+        });
+        return out;
+      }
+
+      function applyFilter(rows, q) {
+        if (!q) return rows;
+        const needle = q.toLowerCase();
+        return rows.filter(a =>
+          (a.title || '').toLowerCase().includes(needle) ||
+          (a.conv_id || '').toLowerCase().includes(needle) ||
+          (a.groups || []).some(g => g.toLowerCase().includes(needle)));
+      }
+
+      function render() {
+        candidates = applyFilter(buildCandidates(), search.value);
+        if (highlight >= candidates.length) highlight = Math.max(0, candidates.length - 1);
+        if (highlight < 0) highlight = 0;
+        if (!candidates.length) {
+          list.innerHTML = '<div class="add-member-empty">No matching conversations. ' +
+            (includeAll.checked
+              ? '(Try a different filter.)'
+              : '(Try ticking "Include offline / archived" for a wider pool.)') +
+            '</div>';
+          return;
+        }
+        list.innerHTML = candidates.map((a, i) => {
+          const dot = a.online
+            ? '<span class="online" title="online">●</span>'
+            : '<span class="offline" title="offline">○</span>';
+          const groups = (a.groups || []).length
+            ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
+            : '';
+          // Surface the 🔓 badge inline so the human can see who
+          // already holds active grants while picking — useful for
+          // "extend alice's window" without a tab switch.
+          const badge = sudoBadge(sudoByConv[a.conv_id], a.conv_id);
+          return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
+                 `${dot}<span class="alias">${esc(a.title || '(unnamed)')}</span>` +
+                 `<span class="id">${esc(shortId(a.conv_id))}</span>${badge}${groups}` +
+                 `</div>`;
+        }).join('');
+        const hl = list.querySelector('.add-member-row.highlighted');
+        if (hl) hl.scrollIntoView({block: 'nearest'});
+      }
+
+      function close(convID) {
+        overlay.classList.remove('show');
+        modalEditing = false;
+        document.removeEventListener('keydown', onKey);
+        resolve(convID || '');
+      }
+
+      function onKey(e) {
+        if (!overlay.classList.contains('show')) return;
+        if (e.key === 'Escape') { e.preventDefault(); close(''); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); highlight++; render(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); highlight--; render(); }
+        else if (e.key === 'Enter') {
+          e.preventDefault();
+          const c = candidates[highlight];
+          if (c) close(c.conv_id);
+        }
+      }
+
+      list.onclick = (e) => {
+        const row = e.target.closest('.add-member-row');
+        if (!row) return;
+        const i = parseInt(row.dataset.i, 10);
+        const c = candidates[i];
+        if (c) close(c.conv_id);
+      };
+      search.oninput = () => { highlight = 0; render(); };
+      includeAll.onchange = render;
+      overlay.onclick = (e) => { if (e.target === overlay) close(''); };
+      document.addEventListener('keydown', onKey);
+
+      modalEditing = true;
+      overlay.classList.add('show');
+      render();
+      setTimeout(() => search.focus(), 0);
+    });
+  }
+
   function bindSudoModal() {
-    $('#sudo-grant-open').addEventListener('click', () => openSudoGrantModal(''));
+    $('#sudo-grant-open').addEventListener('click', async () => {
+      const convID = await pickSudoAgentModal();
+      if (convID) openSudoGrantModal(convID);
+    });
     $('#sudo-grant-cancel').addEventListener('click', closeSudoGrantModal);
     $('#sudo-grant-submit').addEventListener('click', submitSudoGrant);
+    // Select-all / select-none act on every non-disabled checkbox
+    // (disabled ones are blocklisted slugs that the server will
+    // reject anyway). Per-checkbox onchange handlers update the
+    // .checked styling so the visual matches state.
+    $('#sudo-grant-select-all').addEventListener('click', () => {
+      $$('#sudo-grant-slugs input[type=checkbox]:not([disabled])').forEach(cb => {
+        if (!cb.checked) {
+          cb.checked = true;
+          cb.parentElement.classList.add('checked');
+        }
+      });
+    });
+    $('#sudo-grant-select-none').addEventListener('click', () => {
+      $$('#sudo-grant-slugs input[type=checkbox]').forEach(cb => {
+        if (cb.checked) {
+          cb.checked = false;
+          cb.parentElement.classList.remove('checked');
+        }
+      });
+    });
     $('#sudo-grant-modal').addEventListener('click', (e) => {
       // Click on backdrop closes; clicks inside the dialog don't.
       if (e.target.id === 'sudo-grant-modal') closeSudoGrantModal();
