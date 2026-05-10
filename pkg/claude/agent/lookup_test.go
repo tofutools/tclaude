@@ -294,6 +294,116 @@ func TestFreshConvRowAt_NoFileNoRow(t *testing.T) {
 	}
 }
 
+// TestFreshConvRowResolved_UsesSessionRowCwd covers the dashboard
+// "(unknown)" bug: a freshly-spawned conv has no conv_index row yet,
+// the caller doesn't know cwd directly, but a session row exists with
+// the right cwd. FreshConvRowResolved looks up the session row and
+// uses its cwd to find the .jsonl.
+//
+// Regression: without this resolver, the dashboard showed
+// `(unknown)` for the active session right after a reincarnation —
+// same root cause as the prevTitle="" reincarnate-prefix bug, just
+// surfaced in the dashboard rather than the rename flow.
+func TestFreshConvRowResolved_UsesSessionRowCwd(t *testing.T) {
+	setupTestDB(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	cwd := "/home/u/myproj"
+	convID := "22222222-3333-4444-5555-666666666666"
+
+	projectDir := filepath.Join(home, ".claude", "projects", "-home-u-myproj")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	fixture := strings.Join([]string{
+		`{"type":"user","sessionId":"` + convID + `","timestamp":"2026-05-10T01:00:00Z","cwd":"/home/u/myproj","message":{"role":"user","content":"hi"}}`,
+		`{"type":"custom-title","customTitle":"my-resolved-agent","sessionId":"` + convID + `"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(projectDir, convID+".jsonl"), []byte(fixture), 0o600); err != nil {
+		t.Fatalf("write jsonl: %v", err)
+	}
+
+	if err := db.SaveSession(&db.SessionRow{
+		ID:        "spwn-deadbe",
+		ConvID:    convID,
+		Cwd:       cwd,
+		Status:    "idle",
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	row := FreshConvRowResolved(convID)
+	if row == nil {
+		t.Fatal("FreshConvRowResolved returned nil; expected row via session-row cwd fallback")
+	}
+	if row.CustomTitle != "my-resolved-agent" {
+		t.Errorf("CustomTitle = %q, want %q", row.CustomTitle, "my-resolved-agent")
+	}
+}
+
+// TestFreshConvRowResolved_NoSessionRow: conv has no session row → no
+// way to know cwd → returns nil. Same shape as the empty-cwd FreshConvRowAt
+// case, just routed through the resolver.
+func TestFreshConvRowResolved_NoSessionRow(t *testing.T) {
+	setupTestDB(t)
+	row := FreshConvRowResolved("77777777-8888-9999-aaaa-bbbbbbbbbbbb")
+	if row != nil {
+		t.Errorf("expected nil with no session row + no cache, got %+v", row)
+	}
+}
+
+// TestResolveSelector_FollowsSuccession: typing the original conv-id
+// after a reincarnate redirects to the new conv-id. Without this, CLI
+// commands like `tclaude agent message <old-id>` would silently target
+// a dead pane.
+func TestResolveSelector_FollowsSuccession(t *testing.T) {
+	setupTestDB(t)
+	const oldID = "11111111-aaaa-bbbb-cccc-111111111111"
+	const newID = "22222222-aaaa-bbbb-cccc-222222222222"
+	upsertConvIndex(t, oldID, "old-name", "", "")
+	upsertConvIndex(t, newID, "new-name", "", "")
+
+	// Record the succession edge old → new.
+	if err := db.RecordConvSuccession(oldID, newID, "reincarnate"); err != nil {
+		t.Fatalf("RecordConvSuccession: %v", err)
+	}
+
+	// Resolving the old ID should redirect to the new one + carry the
+	// new conv-index row (so display titles reflect the live conv).
+	r, _, err := resolveSelector(oldID)
+	if err != nil {
+		t.Fatalf("resolveSelector: %v", err)
+	}
+	if r == nil {
+		t.Fatal("expected a resolved match, got nil")
+	}
+	if r.ConvID != newID {
+		t.Errorf("ConvID = %q, want %q (succession redirect missed)", r.ConvID, newID)
+	}
+	if r.Row == nil || r.Row.CustomTitle != "new-name" {
+		t.Errorf("Row.CustomTitle should reflect the new conv, got %+v", r.Row)
+	}
+}
+
+// TestResolveSelector_NoSuccession_LeavesAsIs: with no succession row
+// the resolver returns the conv unchanged. Sanity check that
+// redirectResolvedToLatest doesn't molest "current" convs.
+func TestResolveSelector_NoSuccession_LeavesAsIs(t *testing.T) {
+	setupTestDB(t)
+	const id = "33333333-aaaa-bbbb-cccc-333333333333"
+	upsertConvIndex(t, id, "self", "", "")
+	r, _, err := resolveSelector(id)
+	if err != nil {
+		t.Fatalf("resolveSelector: %v", err)
+	}
+	if r == nil || r.ConvID != id {
+		t.Errorf("expected ConvID=%q, got %+v", id, r)
+	}
+}
+
 func TestRunLookup(t *testing.T) {
 	setupTestDB(t)
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")

@@ -344,6 +344,26 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 		migrated = append(migrated, fmt.Sprintf("owner:%d", gID))
 	}
 
+	// Eagerly rewrite cron job refs from old → new. Without this, jobs
+	// owned by or targeted at the reincarnated conv keep firing against
+	// a dead conv-id (the old pane is /exit'd below). Best-effort: the
+	// succession-chain lookup is the safety net for any reference we
+	// might miss here.
+	if n, err := db.MigrateCronJobConvRef(target, newConv); err != nil {
+		slog.Warn("reincarnate: migrate cron job refs failed",
+			"old", target, "new", newConv, "error", err)
+	} else if n > 0 {
+		migrated = append(migrated, fmt.Sprintf("cron:%d", n))
+	}
+
+	// Record the succession edge so historical references (CLI
+	// selectors, log spelunking, things we forgot to eagerly migrate)
+	// can be walked forward via db.ResolveLatestConv.
+	if err := db.RecordConvSuccession(target, newConv, "reincarnate"); err != nil {
+		slog.Warn("reincarnate: record conv succession failed",
+			"old", target, "new", newConv, "error", err)
+	}
+
 	// 5. Carry any tmux clients attached to the old session over to
 	// the new session BEFORE we /exit the old pane. Without this, the
 	// human's terminal gets detached when CC dies and they have to

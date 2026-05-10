@@ -62,6 +62,13 @@ type resolved = Resolved
 // On a miss, we do a global rescan of `~/.claude/projects/*` and try once
 // more so brand-new convs (or convs that were just renamed) get picked up
 // without requiring a manual `tclaude conv ls -g` first.
+//
+// Succession redirect: after a successful resolve, if the conv-id has a
+// recorded successor (because the original was reincarnated), the
+// resolver returns the latest conv in the chain. This lets stale
+// references from CLI / cron / handlers transparently target the live
+// conv without callers having to thread `db.ResolveLatestConv` through
+// every code path.
 func resolveSelector(selector string) (*resolved, []*resolved, error) {
 	if selector == "" {
 		return nil, nil, fmt.Errorf("selector is required")
@@ -76,12 +83,38 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 	}
 
 	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) {
-		return r, matches, err
+		return redirectResolvedToLatest(r), matches, err
 	}
 
 	// Cache miss. Refresh the index across all projects and try again.
 	refreshAllProjects()
-	return tryResolve(selector)
+	r, matches, err := tryResolve(selector)
+	return redirectResolvedToLatest(r), matches, err
+}
+
+// redirectResolvedToLatest follows the agent_conv_succession chain
+// from r.ConvID forward and returns a resolved pointing at the live
+// conv. Returns r unchanged when there's no chain edge (the common
+// case) or when the chain head is the same conv-id we already have.
+//
+// On a successful redirect we re-fetch the conv_index row for the new
+// conv so display titles / metadata reflect the live conv. If that
+// fetch fails (e.g. the new conv isn't indexed yet), we keep the old
+// row but stamp the new ConvID — the caller can still send messages /
+// look up sessions; only the title might be momentarily stale.
+func redirectResolvedToLatest(r *resolved) *resolved {
+	if r == nil {
+		return nil
+	}
+	latest := db.ResolveLatestConv(r.ConvID)
+	if latest == r.ConvID {
+		return r
+	}
+	out := &resolved{ConvID: latest, Row: r.Row}
+	if newRow, err := db.GetConvIndex(latest); err == nil && newRow != nil {
+		out.Row = newRow
+	}
+	return out
 }
 
 // tryResolve runs the cached lookup chain (UUID → prefix → title →
@@ -219,6 +252,27 @@ func FreshConvRowAt(convID, cwd string) *db.ConvIndexRow {
 	jsonlPath := filepath.Join(projectPath, convID+".jsonl")
 	conv.ScanAndUpsertFile(jsonlPath)
 	return freshConvRow(convID)
+}
+
+// FreshConvRowResolved is FreshConvRow with the cwd hint sourced
+// automatically from the most-recent session row for this conv. It's
+// the right choice for callers that want the .jsonl-scan fallback but
+// don't already have a cwd in scope (the dashboard is the prototypical
+// example).
+//
+// Without this fallback, fresh-spawned reincarnations / clones display
+// as "(unknown)" in the dashboard until the first `tclaude conv ls`
+// indexes them — same root cause as the prevTitle="" reincarnate-prefix
+// bug, just visible in a different surface.
+func FreshConvRowResolved(convID string) *db.ConvIndexRow {
+	if row := freshConvRow(convID); row != nil {
+		return row
+	}
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	return FreshConvRowAt(convID, rows[0].Cwd)
 }
 
 // ShortID truncates a conv-id to the first 8 hex chars.
