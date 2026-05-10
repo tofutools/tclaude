@@ -138,7 +138,13 @@ type snapshotPayload struct {
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
 	Cron        []dashboardCronJob      `json:"cron"`
-	PopupBase   string                  `json:"popup_base"` // for tray-shareable display
+	// Sudo: every active grant across all agents, ordered by conv-id
+	// then soonest expiry. Powers the dedicated "Sudo" tab. Per-agent
+	// active state also surfaces on Agents[*].ActiveSudo so the Groups
+	// + Agents tabs can render the 🔓 indicator without a second
+	// round-trip.
+	Sudo      []dashboardSudoEntry `json:"sudo"`
+	PopupBase string               `json:"popup_base"` // for tray-shareable display
 }
 
 // dashboardCronJob is the snapshot view of one agent_cron_jobs row.
@@ -195,13 +201,30 @@ type dashboardMember struct {
 }
 
 type dashboardAgent struct {
-	ConvID       string     `json:"conv_id"`
-	Title        string     `json:"title"`
-	Online       bool       `json:"online"`
-	State        agentState `json:"state"`
-	Groups       []string   `json:"groups"`
-	OwnedGroups  []string   `json:"owned_groups"` // subset of Groups the agent owns; UI tags these distinctly
-	Effective    []string   `json:"effective"`    // perms = union(defaults, per-conv grants)
+	ConvID      string                `json:"conv_id"`
+	Title       string                `json:"title"`
+	Online      bool                  `json:"online"`
+	State       agentState            `json:"state"`
+	Groups      []string              `json:"groups"`
+	OwnedGroups []string              `json:"owned_groups"` // subset of Groups the agent owns; UI tags these distinctly
+	Effective   []string              `json:"effective"`    // perms = union(defaults, per-conv grants)
+	ActiveSudo  []dashboardSudoEntry  `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
+}
+
+// dashboardSudoEntry is the wire shape for one active sudo grant in
+// the snapshot. Used both as agent[*].active_sudo[] (per-row "this
+// agent currently holds these") and as the top-level Sudo[] (full
+// list across all agents for the dedicated tab).
+type dashboardSudoEntry struct {
+	ID               int64  `json:"id"`
+	ConvID           string `json:"conv_id,omitempty"` // omitted on agent[*].active_sudo (caller already knows)
+	ConvTitle        string `json:"conv_title,omitempty"`
+	Slug             string `json:"slug"`
+	GrantedAt        string `json:"granted_at"`
+	ExpiresAt        string `json:"expires_at"`
+	GrantedBy        string `json:"granted_by,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+	RemainingSeconds int64  `json:"remaining_seconds"`
 }
 
 // agentState mirrors what `tclaude session ls` shows: status from the
@@ -417,6 +440,45 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Active sudo grants across every agent. One DB scan, then we
+	// bucket per conv-id so the per-agent Active rendering is O(1)
+	// inside the agent loop. The same rows feed the top-level Sudo[]
+	// for the dedicated tab.
+	sudoByConv := map[string][]dashboardSudoEntry{}
+	out.Sudo = []dashboardSudoEntry{}
+	if grants, err := db.ListAllActiveSudoGrants(); err == nil {
+		now := time.Now()
+		for _, g := range grants {
+			title := ""
+			if row := agent.FreshConvRowResolved(g.ConvID); row != nil {
+				title = agent.DisplayTitle(row)
+			}
+			remaining := int64(0)
+			if rem := g.ExpiresAt.Sub(now); rem > 0 {
+				remaining = int64(rem.Seconds())
+			}
+			topEntry := dashboardSudoEntry{
+				ID:               g.ID,
+				ConvID:           g.ConvID,
+				ConvTitle:        title,
+				Slug:             g.Slug,
+				GrantedAt:        g.GrantedAt.Format(time.RFC3339Nano),
+				ExpiresAt:        g.ExpiresAt.Format(time.RFC3339Nano),
+				GrantedBy:        g.GrantedBy,
+				Reason:           g.Reason,
+				RemainingSeconds: remaining,
+			}
+			out.Sudo = append(out.Sudo, topEntry)
+			// On the per-agent slice we omit ConvID — the agent row's
+			// own ConvID already identifies who holds the grant. Saves
+			// bytes on agents with many grants and keeps the JSON
+			// readable in browser devtools.
+			rowEntry := topEntry
+			rowEntry.ConvID = ""
+			sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
+		}
+	}
+
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
 		// Effective = defaults ∪ grants. Defaults come from config;
@@ -441,6 +503,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		a.Effective = merged
 		sort.Strings(a.Groups)
 		sort.Strings(a.OwnedGroups)
+		if rows := sudoByConv[a.ConvID]; len(rows) > 0 {
+			a.ActiveSudo = rows
+		}
 		out.Agents = append(out.Agents, *a)
 		// An agent with no group memberships is "ungrouped" — surfaces
 		// in the dedicated array so the dashboard can list them as

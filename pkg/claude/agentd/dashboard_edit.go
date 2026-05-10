@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -39,6 +40,8 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/groups/", handleDashboardGroupsAPI)
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
+	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
+	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
 	registerDashboardCronRoutes(mux)
 }
 
@@ -569,4 +572,78 @@ func dashboardRemoveOwner(w http.ResponseWriter, g *db.AgentGroup, convSelector 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDashboardSudoAPI is the cookie-auth twin of the daemon's
+// /v1/sudo revoke endpoints (peer-cred-auth on the Unix socket).
+// Same DB writes, same human-only rules — the dashboard is human-only
+// by definition, so these endpoints unconditionally treat the caller
+// as human.
+//
+//	DELETE /api/sudo/{id}            → revoke one
+//	DELETE /api/sudo?conv=<selector> → revoke all for one conv
+//	DELETE /api/sudo?all=1           → revoke every active grant
+//
+// Read paths (list / per-conv view) are not surfaced separately —
+// the snapshot already exposes per-agent active sudo state, so the
+// dashboard renders off that single round-trip.
+func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodDelete {
+		http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/sudo")
+	rest = strings.TrimPrefix(rest, "/")
+	if rest != "" {
+		// Per-id revoke: /api/sudo/{id}.
+		id, err := strconv.ParseInt(rest, 10, 64)
+		if err != nil {
+			http.Error(w, "id must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		n, err := db.RevokeSudoGrant(id)
+		if err != nil {
+			http.Error(w, "revoke: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if n == 0 {
+			http.Error(w, "no active grant with that id", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "id": id})
+		return
+	}
+	// Bulk revoke: /api/sudo?conv=… or /api/sudo?all=1.
+	q := r.URL.Query()
+	if q.Get("all") == "1" || q.Get("all") == "true" {
+		n, err := db.RevokeAllActiveSudoGrants()
+		if err != nil {
+			http.Error(w, "revoke all: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "scope": "all"})
+		return
+	}
+	convSel := strings.TrimSpace(q.Get("conv"))
+	if convSel == "" {
+		http.Error(w, "DELETE /api/sudo requires ?conv=<selector> or ?all=1", http.StatusBadRequest)
+		return
+	}
+	if u, err := url.QueryUnescape(convSel); err == nil {
+		convSel = u
+	}
+	res, _, err := agent.ResolveSelector(convSel)
+	if err != nil {
+		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	n, err := db.RevokeSudoGrantsByConv(res.ConvID)
+	if err != nil {
+		http.Error(w, "revoke by conv: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID})
 }

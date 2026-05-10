@@ -13,33 +13,29 @@ test surface):
   on downstream `granted_by` columns
 - `agent-sudo-elevation-tray-orange` — orange tray icon + tooltip
   when ≥1 sudo grant is active anywhere
+- `agent-sudo-elevation-dashboard-api` — cookie-auth twin endpoints
+  + snapshot extension surfacing per-agent + global active grants
+  (Go side; JS rendering still open)
 
-## Dashboard panel + per-row indicator
+## Dashboard JS rendering (Go side shipped — JS still open)
 
-A new "Sudo" tab on the dashboard listing every active grant:
+The Go API + snapshot extensions for the Sudo tab landed —
+see `DONE/agent-sudo-elevation-dashboard-api.md` for the wire
+surface. What's still open is the actual JavaScript rendering
+inside `dashboard.html`:
 
-| Conv | Slug | Granted at | Expires in | Reason | |
-|------|------|------------|------------|--------|-|
-| alice | `groups.spawn` | 18:30 | 4m 12s | bootstrap | [Revoke] |
+- A new "Sudo" tab consuming `snapshot.sudo[]`. Columns: conv |
+  slug | granted_at | expires_in | reason | revoke. Group rows by
+  conv-id with the soonest expiry first inside each block.
+- A 🔓 badge on the Groups + Agents tabs for any agent whose
+  `active_sudo[]` is non-empty. Click could open a popover with the
+  agent's slugs + remaining time + per-row revoke.
+- Click handlers wired to `DELETE /api/sudo/{id}`,
+  `DELETE /api/sudo?conv=…`, `DELETE /api/sudo?all=1`.
 
-Per-row indicator on the **Groups** and **Agents** tabs: a 🔓 emoji
-(or coloured highlight) when the agent currently holds ≥1 active
-grant. Clicking the indicator could open a popover listing the
-agent's slugs + remaining time + revoke buttons.
-
-Mutates via cookie-auth twins:
-
-- `DELETE /api/sudo/{id}` — single revoke
-- `DELETE /api/sudo?conv=<selector>` — bulk per conv
-- `DELETE /api/sudo?all=1` — nuke
-
-Daemon endpoints already ship; just need the cookie-auth twin
-handlers in `dashboard_edit.go` (mirror the pattern from
-`/api/groups/...` and `/api/agents/...`).
-
-The snapshot's `agents[]` array should gain an `active_sudo[]`
-field surfacing the slugs each agent currently holds — single round
-trip, both tabs render off the same blob.
+Carved out of the Go-side slice because Go flow tests can't
+exercise browser JS — needs hand-written + browser-tested. All the
+data is already on the wire.
 
 ## Manager-pattern approval (deferred — explicit trust laundering)
 
@@ -69,11 +65,7 @@ In addition to the v1 6 flow tests:
 ## Files (when implementing)
 
 - `pkg/claude/agentd/dashboard.html` — new "Sudo" tab + per-row
-  indicator
-- `pkg/claude/agentd/dashboard_edit.go` — cookie-auth twins for
-  the revoke endpoints
-- `pkg/claude/agentd/dashboard.go` — extend snapshot's
-  `dashboardAgent` with an `active_sudo[]` field
+  indicator (consumes the already-shipped snapshot fields)
 
 ## Cross-references
 
