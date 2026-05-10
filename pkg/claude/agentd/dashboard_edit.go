@@ -222,7 +222,9 @@ func looksLikeConvID(s string) bool {
 //
 //	DELETE /api/groups/{name}                   → delete group
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
+//	POST   /api/groups/{name}/members           → add member (body: {conv, alias?, role?, descr?})
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
+//	PATCH  /api/groups/{name}/members/{conv}    → update alias/role/descr
 //	POST   /api/groups/{name}/owners            → grant owner (body: {conv})
 //	DELETE /api/groups/{name}/owners/{conv}     → revoke owner
 //
@@ -270,10 +272,15 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		dashboardRenameGroup(w, r, g)
 	case "members":
-		// /api/groups/{name}/members/{conv} — DELETE removes; PATCH
-		// updates alias/role/descr.
+		// /api/groups/{name}/members          — POST adds a new member.
+		// /api/groups/{name}/members/{conv}   — DELETE removes; PATCH
+		//                                       updates alias/role/descr.
 		if len(parts) < 3 || parts[2] == "" {
-			http.Error(w, "expected /api/groups/{name}/members/{conv}", http.StatusNotFound)
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST /api/groups/{name}/members or DELETE/PATCH /api/groups/{name}/members/{conv}", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardAddMember(w, r, g)
 			return
 		}
 		switch r.Method {
@@ -424,6 +431,44 @@ func dashboardResumeAgent(w http.ResponseWriter, convSelector string) {
 	out := resumeOneConv(res.ConvID)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// dashboardAddMember is the cookie-auth twin of POST
+// /v1/groups/{name}/members. Body: `{conv, alias?, role?, descr?}`.
+// `conv` accepts an alias / prefix / full conv-id selector and is
+// resolved through agent.ResolveSelector — same rules as the CLI.
+func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	var body struct {
+		Conv  string `json:"conv"`
+		Alias string `json:"alias,omitempty"`
+		Role  string `json:"role,omitempty"`
+		Descr string `json:"descr,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Conv = strings.TrimSpace(body.Conv)
+	if body.Conv == "" {
+		http.Error(w, "missing conv", http.StatusBadRequest)
+		return
+	}
+	res, _, err := agent.ResolveSelector(body.Conv)
+	if err != nil {
+		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: g.ID,
+		ConvID:  res.ConvID,
+		Alias:   body.Alias,
+		Role:    body.Role,
+		Descr:   body.Descr,
+	}); err != nil {
+		http.Error(w, "add member: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
