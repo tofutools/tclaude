@@ -290,7 +290,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 
 	// 2. Spawn a fresh tclaude session in the same cwd.
 	label := generateSpawnLabel()
-	if err := spawnDetachedTclaudeNew(label, cwd); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return
