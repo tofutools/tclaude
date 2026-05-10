@@ -6,20 +6,27 @@ import (
 	"testing"
 )
 
-// TestClone_EmptyAlias_DerivesFromOriginalTitle pins the alias-
-// fallback fix from d0cb0e1 (clone fixes — alias fallback +
-// post-spawn /rename). When the original conv joined a group with
-// NO alias, cloning it should produce `<originalTitle>-c-1` in the
-// new member row — NOT bare `c-1`, which is what the pre-fix
-// daemon produced and made clones impossible to distinguish in
+// Scenario: the human clones a worker that was added to a group
+// without a per-group alias.
+//
+// Setup: a conversation titled "worker" is a member of group
+// "alpha". It joined by conv-id, so its agent_group_members row
+// has an empty alias. The pane is live.
+//
+// Action: the human clones "worker" without specifying an alias
+// for the new sibling. (Cloning forks the agent into an
+// independent copy that inherits identity but keeps running
+// alongside the original.)
+//
+// Expected: the clone's row in "alpha" has alias "worker-c-1".
+// The daemon falls back to the conv's display title to derive
+// the alias when the original member row had none — without that
+// fallback the clone would land as bare "c-1" and be
+// indistinguishable from clones of other untitled members in
 // tmux/dashboard tiles.
 //
-// The scenario:
-//  - "worker" is in group "alpha" with alias="" (joined by conv-id).
-//  - We clone "worker" with no alias (so the daemon must derive one).
-//  - The clone's new member row in alpha should have alias
-//    "worker-c-1", proving the daemon falls back to the original's
-//    display title rather than the original's empty alias.
+// CloneFresh is used (no_copy_conv: true) to skip the .jsonl
+// copy path so the test stays off convops.CopyConversationToPath.
 func TestClone_EmptyAlias_DerivesFromOriginalTitle(t *testing.T) {
 	f := newFlow(t)
 
@@ -27,22 +34,15 @@ func TestClone_EmptyAlias_DerivesFromOriginalTitle(t *testing.T) {
 	const oldLabel = "spwn-old-001"
 	const oldTmux = "tclaude-spwn-old-001"
 
-	// Given: a "worker" conv with title set, in group alpha with no
-	// alias, and a live tmux pane.
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "" /* alias intentionally empty */)
+	f.HaveMember("alpha", oldConv, "" /* intentionally no alias */)
 
-	// When: the human clones with no alias and no jsonl copy
-	// (CloneFresh keeps the test off convops.CopyConversationToPath).
 	c := f.AsHuman().CloneFresh(oldConv, "")
 
-	// Then: the clone joined alpha with the title-derived alias.
 	f.AssertCloneAliasInGroup(c, "alpha", "worker-c-1")
 
-	// And: the original keeps its (empty-alias) seat in the group —
-	// clone is ADD-only, in contrast to reincarnate's MOVE.
 	if c.OldConv != oldConv {
 		t.Errorf("OldConv = %q, want %q", c.OldConv, oldConv)
 	}

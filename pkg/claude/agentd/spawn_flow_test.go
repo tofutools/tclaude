@@ -7,32 +7,34 @@ import (
 	"time"
 )
 
-// TestSpawn_RenamesAndResumes pins the canonical spawn lifecycle:
-// human spawns into a group, the post-init goroutine fires
-// `/rename <alias>` into the new pane, and a subsequent resume on
-// an offline conv actually shells out a fresh `tclaude session new -r`
-// (rather than silently reporting "skipped:already_online" against
-// a stale row — the bug class the testing-strategy doc calls out).
+// Scenario: a human spawns a new agent into a group.
+//
+// Setup: a group "alpha" exists. Nothing else.
+//
+// Action: the human asks the daemon to spawn a worker into "alpha".
+//
+// Expected:
+//   - The daemon launches a fresh CC session and registers it in
+//     the group.
+//   - Shortly after the response returns, a background goroutine
+//     types `/rename worker` into the new pane so the agent shows
+//     up under that name.
+//   - When the worker later goes offline (CC crashed, human closed
+//     the pane), `tclaude agent resume` brings it back via a fresh
+//     subprocess — it does NOT silently report success against the
+//     dead tmux session.
 func TestSpawn_RenamesAndResumes(t *testing.T) {
 	f := newFlow(t)
 
-	// Given: an empty group called "alpha".
 	f.HaveGroup("alpha")
 
-	// When: the human spawns a worker.
 	spawn := f.AsHuman().Spawn("alpha", "worker")
 
-	// Then: the post-init goroutine injects /rename worker. Up to
-	// ~2.5s in production timing (waitForConvAlive's poll + ready
-	// delay + injectTextAndSubmit's two paste-mode pauses); 5s
-	// gives slack.
+	// /rename lands ~2.5s after spawn returns (waitForConvAlive
+	// poll + readyDelay + two paste-mode pauses); 5s gives slack.
 	f.AssertSentContains(spawn.TmuxTarget(), "/rename worker", 5*time.Second)
 
-	// When: the conv goes offline (simulating a CC crash / human
-	// closing the pane), and the human resumes it.
 	f.MarkOffline(spawn.TmuxSession)
 	resume := f.AsHuman().Resume(spawn.ConvID)
-
-	// Then: the resume actually exercised the spawn path.
 	f.AssertResumeSpawned(resume)
 }
