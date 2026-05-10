@@ -156,6 +156,51 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	return "", false
 }
 
+// requireInboxAccess resolves the effective inbox conv for a read-only
+// operation (list, message-fetch). When no X-Tclaude-Target-Conv header
+// is set, behaves like requireAgent — returns the caller's own conv.
+// When the header IS set:
+//
+//   - The target is resolved via agent.ResolveSelector (alias / prefix /
+//     full conv-id), same convention as the manager-pattern verbs.
+//   - The caller must hold the agent.inbox-watch slug, or own a group
+//     containing the target. Humans (no claude ancestor) bypass.
+//   - On grant, returns (target, isOperator=true, ok=true).
+//
+// 403 with the slug surfaced in the error message on denial. The popup
+// escape hatch (X-Tclaude-Ask-Human) is supported the same way as on
+// the lifecycle verbs — header-based, capped at 300s.
+//
+// Same dual-source check as the lifecycle verbs (cfg defaults +
+// per-agent SQLite grants), so a slug granted via either mechanism
+// works identically.
+func requireInboxAccess(w http.ResponseWriter, r *http.Request) (effectiveConv string, isOperator, ok bool) {
+	target := strings.TrimSpace(r.Header.Get("X-Tclaude-Target-Conv"))
+	if target == "" {
+		// Self-targeted: caller IS the target. Same shape as requireAgent
+		// — agent identity is required.
+		convID, ok := requireAgent(w, r)
+		return convID, false, ok
+	}
+	// Resolve aliases / prefixes the same way the lifecycle dispatcher
+	// does, so callers can pass `--target some-alias`.
+	res, _, err := agent.ResolveSelector(target)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found",
+			"could not resolve --target "+target+": "+err.Error())
+		return "", false, false
+	}
+	target = res.ConvID
+
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentInboxWatch, target)
+	if !ok {
+		return "", false, false
+	}
+	// caller is "" for humans (no agent identity), the agent's conv otherwise.
+	// In both cases the EFFECTIVE conv to query is the target.
+	return target, caller != "" && caller != target, true
+}
+
 // ownerOfGroupContaining returns true if ownerConv owns at least one
 // group whose membership includes targetConv. Linear scan over owned
 // groups; expected to be cheap (most agents own a handful of groups

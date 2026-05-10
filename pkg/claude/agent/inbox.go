@@ -39,9 +39,10 @@ func inboxCmd() *cobra.Command {
 // --- inbox ls ---
 
 type inboxLsParams struct {
-	Limit  int  `long:"limit" short:"n" help:"Max number of messages to show" default:"20"`
-	Unread bool `long:"unread" help:"Only show messages without read_at"`
-	JSON   bool `long:"json" help:"Output JSON"`
+	Limit  int    `long:"limit" short:"n" help:"Max number of messages to show" default:"20"`
+	Unread bool   `long:"unread" help:"Only show messages without read_at"`
+	JSON   bool   `long:"json" help:"Output JSON"`
+	Target string `long:"target" help:"Read another agent's inbox (alias / prefix / conv-id). Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxLsCmd() *cobra.Command {
@@ -83,7 +84,7 @@ func runInboxLsDaemon(p *inboxLsParams, stdout, stderr io.Writer) int {
 		q += "&unread=1"
 	}
 	var out []inboxEntry
-	if err := DaemonGet(q, &out); err != nil {
+	if err := DaemonRequest("GET", q, nil, &out, DaemonOpts{TargetConv: p.Target}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -229,6 +230,7 @@ func outboxStatusGlyph(e inboxEntry) string {
 type inboxReadParams struct {
 	ID         string `pos:"true" help:"Message ID from inbox ls"`
 	KeepUnread bool   `long:"keep-unread" help:"Don't update read_at"`
+	Target     string `long:"target" help:"Read another agent's message (alias / prefix / conv-id). Implies --keep-unread. Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxReadCmd() *cobra.Command {
@@ -300,7 +302,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		ToRecipients  []recipientLine `json:"to_recipients,omitempty"`
 		CcRecipients  []recipientLine `json:"cc_recipients,omitempty"`
 	}
-	if err := DaemonGet(path, &m); err != nil {
+	if err := DaemonRequest("GET", path, nil, &m, DaemonOpts{TargetConv: p.Target}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

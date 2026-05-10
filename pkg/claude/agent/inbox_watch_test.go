@@ -535,6 +535,37 @@ func TestInboxWatch_RemoveEntryByID(t *testing.T) {
 	}
 }
 
+// Operator mode (--target set) disables `r` (reply) in the read view
+// and `del`/`backspace` in the list view, with a status message
+// surfacing why.
+func TestInboxWatch_OperatorViewIsReadOnly(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50, Target: "other-conv"})
+	m.entries = []inboxEntry{{ID: 1}}
+	m.readingID = 42
+
+	// `r` in read view: must NOT open the reply textarea.
+	m2, _ := m.Update(asKey("r"))
+	mm := m2.(*inboxWatchModel)
+	if mm.replyFocused {
+		t.Error("operator-view r should not open reply textarea")
+	}
+	if !contains(mm.statusMsg, "operator") {
+		t.Errorf("statusMsg should explain why reply was blocked; got %q", mm.statusMsg)
+	}
+
+	// `del` in list view: must NOT open the confirm modal.
+	mm.readingID = 0
+	mm.statusMsg = ""
+	m3, _ := mm.Update(asKey("delete"))
+	mm = m3.(*inboxWatchModel)
+	if mm.deleteConfirmID != 0 {
+		t.Errorf("operator-view delete should not open confirm modal; got %d", mm.deleteConfirmID)
+	}
+	if !contains(mm.statusMsg, "operator") {
+		t.Errorf("statusMsg should explain why delete was blocked; got %q", mm.statusMsg)
+	}
+}
+
 // Up/down arrows from search-focused mode unfocus and move the cursor
 // in a single keystroke (UX shortcut so the user can type, then jump
 // to a result without an extra Enter or Esc).

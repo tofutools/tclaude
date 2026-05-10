@@ -116,6 +116,7 @@ const (
 	PermAgentResume       = "agent.resume"
 	PermAgentDelete       = "agent.delete"
 	PermGroupsArchive     = "groups.archive"
+	PermAgentInboxWatch   = "agent.inbox-watch"
 )
 
 // requirePermission gates an endpoint behind a named agent permission.

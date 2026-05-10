@@ -1126,7 +1126,11 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	myID, ok := requireAgent(w, r)
+	// Operator view: same header as /v1/inbox. When the operator reads
+	// someone else's message, we force keep-unread (below) so the read
+	// marker reflects the recipient's actual interaction, not the
+	// operator's drive-by.
+	myID, isOperator, ok := requireInboxAccess(w, r)
 	if !ok {
 		return
 	}
@@ -1153,7 +1157,7 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "auth", "message is not addressed to you")
 		return
 	}
-	if r.URL.Query().Get("keep-unread") != "1" && m.ReadAt.IsZero() {
+	if !isOperator && r.URL.Query().Get("keep-unread") != "1" && m.ReadAt.IsZero() {
 		if err := db.MarkAgentMessageRead(id); err != nil {
 			// User asked us to mark read; if we can't, that's a real
 			// failure they should see — surface it instead of silently
@@ -1238,7 +1242,11 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	myID, ok := requireAgent(w, r)
+	// Operator view: when X-Tclaude-Target-Conv is set, the caller
+	// reads someone else's inbox (gated by agent.inbox-watch slug or
+	// group ownership). Without the header, returns the caller's own
+	// inbox just as before.
+	myID, _, ok := requireInboxAccess(w, r)
 	if !ok {
 		return
 	}

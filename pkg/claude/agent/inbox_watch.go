@@ -23,8 +23,9 @@ import (
 // daemon endpoints; no new server-side work.
 
 type inboxWatchParams struct {
-	Limit  int  `long:"limit" short:"n" help:"Max number of messages to show" default:"50"`
-	Unread bool `long:"unread" help:"Only show messages without read_at"`
+	Limit  int    `long:"limit" short:"n" help:"Max number of messages to show" default:"50"`
+	Unread bool   `long:"unread" help:"Only show messages without read_at"`
+	Target string `long:"target" help:"Watch another agent's inbox (alias / prefix / conv-id). Read-only: reply / delete are disabled in operator view. Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxWatchCmd() *cobra.Command {
@@ -206,13 +207,14 @@ func (m *inboxWatchModel) loadCmd() tea.Cmd {
 		limit = 50
 	}
 	unread := m.params.Unread
+	target := m.params.Target
 	return func() tea.Msg {
 		q := fmt.Sprintf("/v1/inbox?limit=%d", limit)
 		if unread {
 			q += "&unread=1"
 		}
 		var out []inboxEntry
-		if err := DaemonGet(q, &out); err != nil {
+		if err := DaemonRequest("GET", q, nil, &out, DaemonOpts{TargetConv: target}); err != nil {
 			return inboxLoadedMsg{err: err}
 		}
 		return inboxLoadedMsg{entries: out}
@@ -255,6 +257,7 @@ func (m *inboxWatchModel) submitReplyCmd(id int64, body string) tea.Cmd {
 }
 
 func (m *inboxWatchModel) loadMessageCmd(id int64) tea.Cmd {
+	target := m.params.Target
 	return func() tea.Msg {
 		path := fmt.Sprintf("/v1/messages/%d", id)
 		var msg struct {
@@ -263,7 +266,7 @@ func (m *inboxWatchModel) loadMessageCmd(id int64) tea.Cmd {
 			Subject string `json:"subject"`
 			Body    string `json:"body"`
 		}
-		if err := DaemonGet(path, &msg); err != nil {
+		if err := DaemonRequest("GET", path, nil, &msg, DaemonOpts{TargetConv: target}); err != nil {
 			return inboxMessageLoadedMsg{id: id, err: err}
 		}
 		body := msg.Body
@@ -395,6 +398,15 @@ func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.readingBody = ""
 			return m, nil
 		case "r":
+			// Reply is disabled in operator mode (--target). Replying
+			// would write FROM the operator's conv but with the original
+			// recipient's reply context — confusing for the recipient
+			// who'd see a new "thread" not addressed to them. Refuse
+			// outright until a future cross-agent reply story exists.
+			if m.params.Target != "" {
+				m.statusMsg = "reply disabled in operator view"
+				return m, nil
+			}
 			m.replyFocused = true
 			m.replyTextarea.Focus()
 			return m, nil
@@ -514,6 +526,13 @@ func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.Focus()
 		return m, nil
 	case "delete", "backspace":
+		// Operator view is read-only: deleting from someone else's
+		// inbox would surprise the owner. Same reasoning as the
+		// reply-disabled path in the read view above.
+		if m.params.Target != "" {
+			m.statusMsg = "delete disabled in operator view"
+			return m, nil
+		}
 		if m.cursor < len(visible) {
 			m.deleteConfirmID = visible[m.cursor].ID
 			return m, nil
@@ -555,7 +574,12 @@ func (m *inboxWatchModel) renderListView() string {
 	visible := m.visibleEntries()
 	filterActive := m.searchInput.Value() != ""
 
-	b.WriteString(inboxHeaderStyle.Render("  Inbox"))
+	if m.params.Target != "" {
+		b.WriteString(inboxHeaderStyle.Render(
+			fmt.Sprintf("  Inbox of %s (read-only)", short(m.params.Target))))
+	} else {
+		b.WriteString(inboxHeaderStyle.Render("  Inbox"))
+	}
 	if m.params.Unread {
 		b.WriteString(inboxHelpStyle.Render("  (unread only)"))
 	}
@@ -641,8 +665,13 @@ func (m *inboxWatchModel) renderListView() string {
 			"  Delete message #%d? (y/n)", m.deleteConfirmID)))
 		return b.String()
 	}
-	b.WriteString(inboxHelpStyle.Render(
-		"  ↑/↓ nav • enter read • / search • del delete • r refresh • q quit"))
+	if m.params.Target != "" {
+		b.WriteString(inboxHelpStyle.Render(
+			"  ↑/↓ nav • enter read • / search • r refresh • q quit (operator: read-only)"))
+	} else {
+		b.WriteString(inboxHelpStyle.Render(
+			"  ↑/↓ nav • enter read • / search • del delete • r refresh • q quit"))
+	}
 	return b.String()
 }
 

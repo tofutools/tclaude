@@ -159,6 +159,12 @@ type DaemonOpts struct {
 	// extends the per-request timeout so the daemon has room to wait
 	// for a human-approval popup decision. Capped daemon-side at 300s.
 	AskHuman time.Duration
+	// TargetConv, when non-empty, sends the X-Tclaude-Target-Conv
+	// header so endpoints that support the operator view (today:
+	// /v1/inbox and /v1/messages/{id}) act on that conv-id instead of
+	// the caller's own. Resolved daemon-side via agent.ResolveSelector,
+	// so aliases / prefixes work too.
+	TargetConv string
 }
 
 // DaemonGet performs a GET against the daemon and decodes the JSON body
@@ -219,6 +225,9 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 		// take up to 300s. Use a per-request client whose timeout is
 		// generous enough to outlive the daemon's wait.
 		client = httpClientWithTimeout(opts.AskHuman + 30*time.Second)
+	}
+	if opts.TargetConv != "" {
+		req.Header.Set("X-Tclaude-Target-Conv", opts.TargetConv)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
