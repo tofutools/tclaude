@@ -982,6 +982,31 @@ func MarkAgentMessageRead(id int64) error {
 	return err
 }
 
+// DeleteAgentMessageByID deletes a single agent_messages row when
+// forConv is the sender or recipient. Returns (deleted, err) where
+// deleted is true iff a row was removed (false also when the row
+// exists but forConv is neither party — the caller is expected to
+// distinguish those cases via GetAgentMessage). Mirrors the prune
+// auth model: if you're a party to the message you can wipe the
+// shared row.
+func DeleteAgentMessageByID(id int64, forConv string) (bool, error) {
+	if forConv == "" {
+		return false, fmt.Errorf("forConv required")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(
+		`DELETE FROM agent_messages WHERE id = ? AND (from_conv = ? OR to_conv = ?)`,
+		id, forConv, forConv)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // GetAgentMessage returns a single message by ID, or nil if not found.
 func GetAgentMessage(id int64) (*AgentMessage, error) {
 	db, err := Open()

@@ -27,6 +27,25 @@ SearchEscapeLadder, FilterMatchesAcrossFields,
 NavigationRespectsFilter, EnterOnFilteredCursorReadsCorrectID,
 FilterPersistsAcrossReload, ArrowFromSearchUnfocusesAndMoves).
 
+Delete-from-watch shipped 2026-05: `del` / `backspace` in the list
+view opens a y/n confirm modal pinned to the cursor's message; `y`
+optimistically removes the row and POSTs `DELETE /v1/messages/{id}`,
+any other key cancels. Daemon endpoint mirrors prune auth — sender
+or recipient may delete the shared row (third party gets 403; missing
+id gets 404). Failure restores via reload + status message; no
+silent loss. Help line: `del delete`. Modal renders inline at the
+bottom of the table in the error style.
+
+Files: `pkg/claude/common/db/agent.go` (`DeleteAgentMessageByID`),
+`pkg/claude/agentd/handlers.go` (`handleMessageDelete` + dispatcher
+wiring), `pkg/claude/agent/inbox_watch.go` (`deleteConfirmID` +
+`submitDeleteCmd` + `removeEntryByID`),
+`pkg/claude/agent/inbox_watch_test.go` (6 new unit tests covering
+modal open, optimistic remove, error reload, read-view ignore,
+empty-list no-op, removeEntryByID),
+`pkg/claude/agentd/inbox_delete_flow_test.go` (recipient purge round
+trip + third-party 403).
+
 ## Open
 
 ### Operator view: watch another agent's inbox
@@ -37,12 +56,6 @@ view needs either a new endpoint or a header that passes the target
 conv through (mirroring `--target` on lifecycle verbs). Permission:
 reuse the `agent.<verb>` slug pattern (default human-only,
 group-owner implicit power).
-
-### Delete from the watch
-
-`del` / `backspace` to delete a single message. Confirm modal.
-Backed by a daemon endpoint that prunes one message ID — the
-existing `inbox prune` is bulk by `--older-than`.
 
 ## Files
 - `pkg/claude/agent/inbox_watch.go` — bubbletea model (v1)

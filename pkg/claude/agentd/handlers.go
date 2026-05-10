@@ -974,8 +974,11 @@ func isValidRenameTitle(t string) bool {
 
 // --- /v1/messages/{id} (GET) and /v1/messages/{id}/reply (POST) ---
 
-// handleMessageByIDOrReply dispatches between the message-fetch and
-// reply endpoints based on path suffix.
+// handleMessageByIDOrReply dispatches between the message-fetch,
+// reply, and delete endpoints based on path suffix and HTTP method.
+// GET  /v1/messages/{id}        -> handleMessageByID
+// POST /v1/messages/{id}/reply  -> handleMessageReply
+// DELETE /v1/messages/{id}      -> handleMessageDelete
 func handleMessageByIDOrReply(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/messages/")
 	if rest == "" {
@@ -987,7 +990,52 @@ func handleMessageByIDOrReply(w http.ResponseWriter, r *http.Request) {
 		handleMessageReply(w, r, parts[0])
 		return
 	}
+	if r.Method == http.MethodDelete {
+		handleMessageDelete(w, r, parts[0])
+		return
+	}
 	handleMessageByID(w, r)
+}
+
+// handleMessageDelete removes a single agent_messages row when the
+// caller is a party to it (sender or recipient). Mirrors the auth
+// model of `inbox prune` (which already lets parties wipe rows by
+// time-cutoff) — this just narrows the cutoff to one ID for use by
+// the inbox-watch TUI.
+func handleMessageDelete(w http.ResponseWriter, r *http.Request, idStr string) {
+	myID, ok := requireAgent(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid id")
+		return
+	}
+	deleted, err := db.DeleteAgentMessageByID(id, myID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if !deleted {
+		// Two-step check so the caller gets a useful error: 404 when
+		// the row never existed, 403 when it exists but they're not a
+		// party. Probing only on the cold path keeps the happy path
+		// at one DB write.
+		m, err := db.GetAgentMessage(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if m == nil {
+			writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no message #%d", id))
+			return
+		}
+		writeError(w, http.StatusForbidden, "auth",
+			"you are not a party to this message")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
 }
 
 // handleMessageReply lets the recipient of a message reply without

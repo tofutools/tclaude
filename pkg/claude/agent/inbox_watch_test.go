@@ -413,6 +413,128 @@ func TestInboxWatch_FilterPersistsAcrossReload(t *testing.T) {
 	}
 }
 
+// `delete` opens a y/n confirm modal pinned to the cursor's entry.
+// While the modal is open, list-nav keys are ignored (every non-y key
+// cancels). `y` triggers the delete command + optimistic removal.
+func TestInboxWatch_DeleteOpensConfirmModal(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{{ID: 10}, {ID: 20}, {ID: 30}}
+	m.cursor = 1 // points at ID 20
+
+	m2, _ := m.Update(asKey("delete"))
+	mm := m2.(*inboxWatchModel)
+	if mm.deleteConfirmID != 20 {
+		t.Fatalf("deleteConfirmID = %d, want 20 (cursor row)", mm.deleteConfirmID)
+	}
+
+	// While modal open, j/k must NOT move cursor or commit deletion.
+	for _, k := range []string{"j", "k", "down", "up", "enter"} {
+		mm.deleteConfirmID = 20
+		mm.cursor = 1
+		m3, _ := mm.Update(asKey(k))
+		mm = m3.(*inboxWatchModel)
+		if mm.cursor != 1 {
+			t.Errorf("key %q during delete-confirm should not move cursor; got %d", k, mm.cursor)
+		}
+		if mm.deleteConfirmID != 0 {
+			t.Errorf("key %q during delete-confirm should cancel (clear deleteConfirmID); got %d", k, mm.deleteConfirmID)
+		}
+		// Entries must be untouched on cancel.
+		if len(mm.entries) != 3 {
+			t.Errorf("key %q should not remove entries; got %d", k, len(mm.entries))
+		}
+	}
+}
+
+// `y` on the confirm modal optimistically removes the row and dispatches
+// the delete cmd. The cmd execution is async and not asserted here —
+// the optimistic removal is the user-visible change tested via state.
+func TestInboxWatch_DeleteConfirmYRemovesOptimistically(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{{ID: 10}, {ID: 20}, {ID: 30}}
+	m.cursor = 1
+	m.deleteConfirmID = 20
+
+	m2, cmd := m.Update(asKey("y"))
+	mm := m2.(*inboxWatchModel)
+	if mm.deleteConfirmID != 0 {
+		t.Errorf("y should clear deleteConfirmID; got %d", mm.deleteConfirmID)
+	}
+	if len(mm.entries) != 2 {
+		t.Fatalf("y should optimistically remove the row; entries = %d", len(mm.entries))
+	}
+	for _, e := range mm.entries {
+		if e.ID == 20 {
+			t.Errorf("entry #20 should be removed; still present")
+		}
+	}
+	if cmd == nil {
+		t.Error("y should return a cmd to POST the delete")
+	}
+}
+
+// On a delete error, the model reloads (which restores the entry from
+// the daemon if the row is still there). statusMsg announces failure.
+func TestInboxWatch_DeleteSentErrorTriggersReload(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{{ID: 10}, {ID: 30}} // already optimistically removed #20
+	m.statusMsg = "deleting #20…"
+
+	m2, cmd := m.Update(inboxDeleteSentMsg{id: 20, err: errors.New("boom")})
+	mm := m2.(*inboxWatchModel)
+	if cmd == nil {
+		t.Error("delete error should trigger a reload cmd to restore state")
+	}
+	if !contains(mm.statusMsg, "failed") {
+		t.Errorf("statusMsg should announce failure; got %q", mm.statusMsg)
+	}
+}
+
+// `delete` in the read view must NOT open the confirm modal — that
+// would be surprising behaviour while the user is reading.
+func TestInboxWatch_DeleteIgnoredInReadView(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{{ID: 1}}
+	m.readingID = 42
+
+	for _, k := range []string{"delete", "backspace"} {
+		m2, _ := m.Update(asKey(k))
+		mm := m2.(*inboxWatchModel)
+		if mm.deleteConfirmID != 0 {
+			t.Errorf("key %q in read view should not open delete-confirm; got %d", k, mm.deleteConfirmID)
+		}
+		if mm.readingID != 42 {
+			t.Errorf("key %q in read view should not exit read mode; got %d", k, mm.readingID)
+		}
+	}
+}
+
+// Empty list: pressing delete must NOT open the modal (nothing to
+// confirm).
+func TestInboxWatch_DeleteOnEmptyListNoOp(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	// no entries
+	m2, _ := m.Update(asKey("delete"))
+	mm := m2.(*inboxWatchModel)
+	if mm.deleteConfirmID != 0 {
+		t.Errorf("delete on empty list should not open modal; got %d", mm.deleteConfirmID)
+	}
+}
+
+// removeEntryByID drops the matching row, leaves order otherwise
+// intact, and is a no-op when the ID isn't present.
+func TestInboxWatch_RemoveEntryByID(t *testing.T) {
+	in := []inboxEntry{{ID: 1}, {ID: 2}, {ID: 3}}
+	out := removeEntryByID(in, 2)
+	if len(out) != 2 || out[0].ID != 1 || out[1].ID != 3 {
+		t.Errorf("removeEntryByID(2) = %+v, want [1, 3]", out)
+	}
+	out2 := removeEntryByID(in, 99)
+	if len(out2) != 3 {
+		t.Errorf("removeEntryByID for missing ID should return original; got %+v", out2)
+	}
+}
+
 // Up/down arrows from search-focused mode unfocus and move the cursor
 // in a single keystroke (UX shortcut so the user can type, then jump
 // to a result without an extra Enter or Esc).

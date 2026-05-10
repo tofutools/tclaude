@@ -75,6 +75,14 @@ type inboxReplySentMsg struct {
 	err error
 }
 
+// inboxDeleteSentMsg arrives after the daemon responds to a single-
+// message delete. On success the optimistically-removed entry stays
+// removed; on error it is restored from m.entries by reloading.
+type inboxDeleteSentMsg struct {
+	id  int64
+	err error
+}
+
 type inboxWatchModel struct {
 	params    inboxWatchParams
 	entries   []inboxEntry
@@ -104,6 +112,12 @@ type inboxWatchModel struct {
 	// round-trips.
 	searchFocused bool
 	searchInput   textinput.Model
+
+	// Delete-confirm modal (list view only): when non-zero, the View
+	// renders a y/n prompt instead of letting list keys mutate the
+	// cursor. Set by `del` / `backspace` on a non-empty selection;
+	// cleared by `y` (POSTs the delete) or any other key.
+	deleteConfirmID int64
 }
 
 func newInboxWatchModel(p *inboxWatchParams) *inboxWatchModel {
@@ -205,6 +219,20 @@ func (m *inboxWatchModel) loadCmd() tea.Cmd {
 	}
 }
 
+// submitDeleteCmd issues DELETE /v1/messages/{id}. Returns
+// inboxDeleteSentMsg on completion. Daemon-side auth restricts this
+// to messages the caller is a party to (sender or recipient).
+func (m *inboxWatchModel) submitDeleteCmd(id int64) tea.Cmd {
+	return func() tea.Msg {
+		var resp struct {
+			Deleted bool  `json:"deleted"`
+			ID      int64 `json:"id"`
+		}
+		err := DaemonDelete(fmt.Sprintf("/v1/messages/%d", id), &resp)
+		return inboxDeleteSentMsg{id: id, err: err}
+	}
+}
+
 // submitReplyCmd POSTs the textarea value to the reply endpoint.
 // Returns inboxReplySentMsg on completion. Empty body short-circuits
 // to a "no-op" result so the user can press ctrl+enter on an empty
@@ -298,6 +326,18 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.replyTextarea.Blur()
 		m.replyTextarea.SetValue("")
 		return m, nil
+
+	case inboxDeleteSentMsg:
+		if msg.err != nil {
+			// Restore the optimistically-removed entry by reloading;
+			// the next loadCmd brings it back if the daemon kept it.
+			m.statusMsg = fmt.Sprintf("delete #%d failed: %v", msg.id, msg.err)
+			return m, m.loadCmd()
+		}
+		m.statusMsg = fmt.Sprintf("deleted #%d", msg.id)
+		// Reload to confirm the deletion landed; until it does, the
+		// optimistic removal already hides the row from the user.
+		return m, m.loadCmd()
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -412,6 +452,26 @@ func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	visible := m.visibleEntries()
 
+	// Delete-confirm modal eats every key. Only `y` commits.
+	if m.deleteConfirmID != 0 {
+		switch msg.String() {
+		case "y", "Y":
+			id := m.deleteConfirmID
+			m.deleteConfirmID = 0
+			// Optimistic removal so the row vanishes from the table
+			// before the daemon round-trip; the inboxDeleteSentMsg
+			// handler reloads to confirm or restore.
+			m.entries = removeEntryByID(m.entries, id)
+			m.clampCursor()
+			m.statusMsg = fmt.Sprintf("deleting #%d…", id)
+			return m, m.submitDeleteCmd(id)
+		default:
+			m.deleteConfirmID = 0
+			m.statusMsg = "delete cancelled"
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -453,8 +513,24 @@ func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchFocused = true
 		m.searchInput.Focus()
 		return m, nil
+	case "delete", "backspace":
+		if m.cursor < len(visible) {
+			m.deleteConfirmID = visible[m.cursor].ID
+			return m, nil
+		}
 	}
 	return m, nil
+}
+
+// removeEntryByID returns entries with any row matching id removed.
+// Returns the original slice when no match is found.
+func removeEntryByID(entries []inboxEntry, id int64) []inboxEntry {
+	for i, e := range entries {
+		if e.ID == id {
+			return append(entries[:i:i], entries[i+1:]...)
+		}
+	}
+	return entries
 }
 
 // --- View ---
@@ -560,8 +636,13 @@ func (m *inboxWatchModel) renderListView() string {
 	}
 	b.WriteString(tbl.Render())
 	b.WriteString("\n\n")
+	if m.deleteConfirmID != 0 {
+		b.WriteString(inboxErrorStyle.Render(fmt.Sprintf(
+			"  Delete message #%d? (y/n)", m.deleteConfirmID)))
+		return b.String()
+	}
 	b.WriteString(inboxHelpStyle.Render(
-		"  ↑/↓ nav • enter read • / search • r refresh • q quit"))
+		"  ↑/↓ nav • enter read • / search • del delete • r refresh • q quit"))
 	return b.String()
 }
 
