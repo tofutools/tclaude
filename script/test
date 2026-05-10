@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Run the test suite with rewire mocks active.
+#
+# rewire (https://github.com/GiGurra/rewire) is a -toolexec rewriter
+# that lets tests mock arbitrary functions, including stdlib and
+# package-internal helpers. Flow tests in pkg/claude/agentd that drive
+# the daemon end-to-end (spawn → /rename → resume, etc.) live behind
+# `//go:build rewire` and depend on this wrapper for the toolexec
+# wiring; bare `go test ./...` skips them cleanly.
+#
+# Works without mise. Useful for CI and devs who don't use mise.
+#
+# Caveat: rewire's first compile of a freshly-mocked package can leave
+# stale registry entries — run twice, or `rm -rf "$GOCACHE"` once after
+# adding a new mock target. See docs/plans/testing-strategy.md for the
+# rollout phasing.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Install the rewire binary if missing. We don't pin a version here
+# (Phase 1 — pin lands with mise.toml in Phase 2).
+if ! command -v rewire >/dev/null 2>&1; then
+    echo "Installing rewire…" >&2
+    go install github.com/GiGurra/rewire/cmd/rewire@latest
+fi
+
+# Separate cache so rewire's rewritten compile artifacts don't leak
+# back into the production GOCACHE (and vice versa). Mirrors the
+# rewire README's recommended split.
+export GOFLAGS="${GOFLAGS:-} -toolexec=rewire -tags=rewire"
+export GOCACHE="${GOCACHE:-$HOME/.cache/go-build-tclaude-test}"
+
+exec go test "$@"

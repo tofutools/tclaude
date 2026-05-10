@@ -1,6 +1,6 @@
 module github.com/tofutools/tclaude
 
-go 1.26
+go 1.26.2
 
 require (
 	charm.land/bubbles/v2 v2.1.0
@@ -8,6 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.3
 	fyne.io/systray v1.12.1
 	github.com/GiGurra/boa v1.0.25
+	github.com/GiGurra/rewire v0.0.75
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.10.0
 	github.com/godbus/dbus/v5 v5.2.2
