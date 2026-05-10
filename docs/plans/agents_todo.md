@@ -118,20 +118,28 @@ Follow-up improvements (separate items):
   nesting. Legacy-form titles do NOT reserve numbers in the new
   namespace (no surprising holes after the changeover). Tests
   rewritten + new coverage for both legacy-form behaviours.
-- ~~**Mark superseded conv with `-x` suffix.**~~ — **shipped
-  (2026-05).** When reincarnating, the daemon injects
-  `/rename <prevTitle>-x` into the OLD pane right before the
-  `/exit`, writing a custom-title record to the old conv's .jsonl.
-  The watch model / FreshConvRow refresh picks it up the next time
-  someone looks at the conv, so dashboards / `agent ls` can render
-  `worker-x` (dead) distinctly from `worker-r-1` (live successor).
-  Idempotent — no double-suffix on retries. Naming chain:
+- ~~**Mark expired conv with `-x` suffix.**~~ — **shipped (2026-05).**
+  When reincarnating, the daemon injects `/rename <prevTitle>-x`
+  into the OLD pane right before the `/exit`, writing a custom-title
+  record to the old conv's .jsonl. The watch model / FreshConvRow
+  refresh picks it up the next time someone looks at the conv, so
+  dashboards / `conv ls` can render `worker-x` (dead) distinctly
+  from `worker-r-1` (live successor). Idempotent — no double-suffix
+  on retries. Mnemonic: `-x` = expired. Naming chain:
   `worker` → renames to `worker-x`, new is `worker-r-1`;
   `worker-r-1` → renames to `worker-r-1-x`, new is `worker-r-2`;
   …
-  Open follow-up: dashboard / `agent ls` should default-filter `-x`
-  rows out of the listing (with a "show superseded" toggle), since
-  they accumulate over time but rarely need to be addressed.
+- ~~**Default-filter `-x` rows from `conv ls`.**~~ — **shipped
+  (2026-05).** `--show-expired` opt-in flag on `conv ls` /
+  `conv ls -g`. New helper `convops.IsExpiredTitle(customTitle)` /
+  `(*SessionEntry).IsExpired()` is the canonical check; consumers
+  should reuse it rather than open-coding the suffix test.
+- Open follow-up: dashboard tabs (Groups / Agents) and the watch
+  mode (`conv ls -w`) don't currently apply the expired filter.
+  Dashboard probably doesn't need it (reincarnate already removes
+  expired convs from groups + permissions, so they don't appear in
+  the snapshot), but worth verifying. Watch mode should grow a
+  toggle (e.g. press `x` to show/hide expired).
 
 ### Agent clone — shipped (2026-05)
 

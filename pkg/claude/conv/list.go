@@ -19,19 +19,20 @@ import (
 )
 
 type ListParams struct {
-	Dir     string `short:"C" long:"dir" optional:"true" help:"Directory to list conversations from (defaults to current directory)"`
-	Global  bool   `short:"g" help:"List conversations from all projects"`
-	SortBy  string `long:"sort-by" help:"Sort by: created, modified, messages, prompt, project" default:"modified"`
-	Asc     bool   `long:"asc" help:"Sort ascending (default is descending)"`
-	Long    bool   `short:"l" help:"Show detailed output"`
-	Limit   int    `short:"n" help:"Limit number of results (0 = no limit)" default:"0"`
-	JSON    bool   `long:"json" help:"Output as JSON"`
-	Count   bool   `short:"c" long:"count" help:"Only output the count of conversations"`
-	Since   string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Before  string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Watch   bool   `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
-	Verbose bool   `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
-	Reindex bool   `long:"reindex" help:"Force rescan all conversations from .jsonl files and update index"`
+	Dir             string `short:"C" long:"dir" optional:"true" help:"Directory to list conversations from (defaults to current directory)"`
+	Global          bool   `short:"g" help:"List conversations from all projects"`
+	SortBy          string `long:"sort-by" help:"Sort by: created, modified, messages, prompt, project" default:"modified"`
+	Asc             bool   `long:"asc" help:"Sort ascending (default is descending)"`
+	Long            bool   `short:"l" help:"Show detailed output"`
+	Limit           int    `short:"n" help:"Limit number of results (0 = no limit)" default:"0"`
+	JSON            bool   `long:"json" help:"Output as JSON"`
+	Count           bool   `short:"c" long:"count" help:"Only output the count of conversations"`
+	Since           string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
+	Before          string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
+	Watch           bool   `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
+	Verbose         bool   `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
+	Reindex         bool   `long:"reindex" help:"Force rescan all conversations from .jsonl files and update index"`
+	ShowExpired     bool   `long:"show-expired" help:"Include convs whose title ends with the -x expired marker (default: hidden)"`
 }
 
 func ListCmd() *cobra.Command {
@@ -119,6 +120,19 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
+	}
+
+	// Hide expired convs by default — `-x`-suffixed CustomTitles are
+	// reincarnated old instances kept on disk for history but rarely
+	// what the user wants to see. Opt back in with --show-expired.
+	if !params.ShowExpired {
+		filtered := allEntries[:0]
+		for _, e := range allEntries {
+			if !e.IsExpired() {
+				filtered = append(filtered, e)
+			}
+		}
+		allEntries = filtered
 	}
 
 	// Count output (before limit is applied)

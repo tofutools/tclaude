@@ -419,14 +419,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 	// title in the new pane.
 	go runReincarnatePostSpawn(newConv, newTitle, followUp, len(oldMembers) > 0)
 
-	// 9. Mark the old conv as superseded with a `-x` suffix on its
+	// 9. Mark the old conv as expired with a `-x` suffix on its
 	// title, then soft-stop. The rename writes a custom-title record
 	// to the old conv's .jsonl before /exit closes the pane, so any
 	// later scan picks up the new "<prev>-x" name (the watch model /
 	// FreshConvRow refreshes on mtime). This way the dashboard /
-	// `agent ls` can render dead-but-still-on-disk convs distinctly
-	// from live ones — they're superseded by their `-r-<N>`
-	// successor (recorded in agent_conv_succession).
+	// `conv ls` can render dead-but-still-on-disk convs distinctly
+	// from live ones — they're expired and replaced by their
+	// `-r-<N>` successor (recorded in agent_conv_succession).
+	// Mnemonic: `-x` = expired.
 	//
 	// Skip the rename when prevTitle is empty (no original title to
 	// suffix) or when the old title already ends in `-x` (idempotent
