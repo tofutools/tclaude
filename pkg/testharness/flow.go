@@ -258,7 +258,8 @@ type SpawnResp struct {
 func (s SpawnResp) TmuxTarget() string { return s.TmuxSession + ":0.0" }
 
 // Spawn drives POST /v1/groups/{group}/spawn with the alias. Mocks
-// must already be installed (DefaultMocks wired into rewire.Func).
+// must already be installed (DefaultMocks assigned to clcommon.Default
+// and agentd.Spawn — see flow_setup_test.go).
 func (f *Flow) Spawn(group, alias string) SpawnResp {
 	f.T.Helper()
 	rec := f.do(http.MethodPost,

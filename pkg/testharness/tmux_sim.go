@@ -16,10 +16,12 @@ type SentKey struct {
 	Text   string
 }
 
-// TmuxSim is the rewire replacement for clcommon.TmuxCommand. It owns
-// a sessions table, routes send-keys to the registered CCSim's
-// Receive, answers has-session against the alive flag, and removes
-// sessions on kill-session.
+// TmuxSim is the test-time stand-in for clcommon.LiveTmux. It
+// satisfies the clcommon.Tmux interface: owns a sessions table,
+// routes send-keys to the registered CCSim's Receive, answers
+// has-session against the alive flag, and removes sessions on
+// kill-session. Tests assign a *TmuxSim to clcommon.Default at
+// setup; t.Cleanup restores the production singleton.
 //
 // One pane per session. Multi-pane / multi-window scenarios aren't
 // modelled; add them when a real test needs them.
@@ -39,10 +41,10 @@ func newTmuxSim() *TmuxSim {
 	return &TmuxSim{sessions: map[string]*tmuxSession{}}
 }
 
-// Command is the rewire replacement signature for clcommon.TmuxCommand.
-// Returns a no-op `true`/`false` exec.Cmd whose Run() exits with the
-// appropriate status; for verbs that mutate state (send-keys,
-// kill-session), the mutation happens here before the cmd is returned.
+// Command satisfies the clcommon.Tmux interface. Returns a no-op
+// `true`/`false` exec.Cmd whose Run() exits with the appropriate
+// status; for verbs that mutate state (send-keys, kill-session),
+// the mutation happens here before the cmd is returned.
 func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	switch {
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":

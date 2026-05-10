@@ -7,8 +7,8 @@ import (
 
 // BuildHandlerForTest exposes the production /v1 mux to flow tests in
 // `package agentd_test`. The mux is identical to what serve() installs
-// — minus the socket plumbing. Build-tagged so the symbol only exists
-// in test binaries built with `-tags=rewire`.
+// — minus the socket plumbing. The _test.go suffix keeps it out of
+// production builds; only test binaries see it.
 func BuildHandlerForTest() http.Handler {
 	return buildMux()
 }

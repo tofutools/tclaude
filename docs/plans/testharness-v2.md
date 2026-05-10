@@ -85,8 +85,11 @@ inconsistencies. To pin them, the harness has to model:
 
 - Modeling CC's full prompt/turn lifecycle (assistant responses, tool
   use). The sims only do what scenarios require.
-- A real-binary smoke test (still deferred to Phase 4 in the original
-  testing-strategy doc).
+- A real-binary smoke test (one happy-path scenario running outside
+  the simulator stack, against a real tmux + real CC). Worth keeping
+  one eventually — synthetic e2e misses bugs in real tmux paste-mode,
+  real subprocess signal handling, real CC wire-protocol quirks. Not
+  in scope for this round.
 - Mocking other subprocess boundaries (git, gh, dbus). Out of scope.
 
 ## Architecture
@@ -155,8 +158,7 @@ type tmuxSession struct {
     alive bool
 }
 
-// Command is the rewire replacement for clcommon.TmuxCommand.
-// Dispatches based on args[0]:
+// Command satisfies the clcommon.Tmux interface. Dispatches based on args[0]:
 //   - has-session -t X         → exit 0 if alive, exit 1 otherwise
 //   - send-keys -t TARGET TEXT → routes to attached CCSim's Receive
 //   - kill-session -t X        → mark dead, signal CCSim shutdown
@@ -196,31 +198,37 @@ type World struct {
 
 ### Mock wiring (`pkg/claude/agentd/flow_setup_test.go`)
 
-```go
-rewire.Func(t, agentd.SpawnDetachedTclaudeNew, func(label, cwd string) error {
-    cc := testharness.NewCCSim(t, w.HomeDir, label, cwd)
-    if err := cc.Start(label); err != nil {
-        return err
-    }
-    w.Tmux.Register(label, cwd, cc)
-    w.CCs.Set(label, cc)
-    return nil
-})
+The two production package vars (`clcommon.Default` and `agentd.Spawn`)
+are swapped at test setup. `t.Cleanup` restores the production
+`LiveTmux` / `LiveSpawner` singletons at the end of the test:
 
-rewire.Func(t, agentd.SpawnDetachedTclaudeResume, func(convID, cwd string) error {
-    // Resume: locate the existing CCSim by conv-id, re-attach to a
-    // tmux session. If the .jsonl exists but no in-memory CCSim does
-    // (e.g. the prior CCSim was Shutdown before resume), hydrate a
-    // fresh one from the .jsonl on disk.
-    cc := w.CCs.GetByConvID(convID)
-    if cc == nil {
-        cc = testharness.HydrateCCSim(t, w.HomeDir, convID, cwd)
-    }
-    label := generateResumeLabel(convID)
-    w.Tmux.Register(label, cwd, cc)
-    return nil
-})
+```go
+func newFlow(t *testing.T) *testharness.Flow {
+    w := testharness.New(t)
+    m := w.DefaultMocks(t)
+
+    prevTmux := clcommon.Default
+    clcommon.Default = m.Tmux           // a *TmuxSim
+    t.Cleanup(func() { clcommon.Default = prevTmux })
+
+    prevSpawn := agentd.Spawn
+    agentd.Spawn = m.Spawner            // a *simSpawner backed by CCSim+TmuxSim
+    t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+    return testharness.NewFlow(t, w,
+        agentd.BuildHandlerForTest(),
+        agentd.AsHumanPeer,
+        agentd.AsAgentPeer,
+    )
+}
 ```
+
+`m.Spawner.SpawnNew(label, cwd)` builds a fresh CCSim, writes the
+SessionRow the production hook callback would have written, and
+registers the sim in TmuxSim. `SpawnResume(convID, cwd)` locates an
+existing CCSim by conv-id (or hydrates one from the on-disk .jsonl
+if it was already shut down) and re-attaches under a fresh resume
+label.
 
 ## Migration: existing 4 flow tests
 

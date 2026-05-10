@@ -7,8 +7,7 @@ const TmuxSocketName = "tclaude"
 
 // Tmux is the boundary surface flow tests inject through. The default
 // LiveTmux runs the real tmux binary; tests assign a fake to Default
-// at setup and restore via t.Cleanup. This is the interface-based
-// alternative to rewire's compile-time mocking.
+// at setup and restore via t.Cleanup.
 type Tmux interface {
 	Command(args ...string) *exec.Cmd
 }
@@ -16,7 +15,7 @@ type Tmux interface {
 // Default is the package-wide Tmux instance every caller hits via the
 // TmuxCommand facade. Production starts on LiveTmux; tests overwrite
 // during their setup. Single global var = goroutine-unsafe across
-// parallel tests on the same package, same as the rewire approach.
+// parallel tests on the same package — flow tests don't t.Parallel.
 var Default Tmux = LiveTmux{}
 
 // LiveTmux is the production impl: forks `tmux -L tclaude <args>`.

@@ -23,13 +23,13 @@ type World struct {
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
-// and an empty TmuxSim/CCRegistry pair ready to be rewired into
-// clcommon.TmuxCommand and the agentd spawn boundaries.
+// and an empty TmuxSim/CCRegistry pair ready to be plugged into the
+// production boundaries (clcommon.Default and agentd.Spawn).
 //
-// The harness does NOT install the rewires itself: rewire's scanner
-// walks `_test.go` files for `rewire.Func` calls, so the test must
-// own the install. flow_setup_test.go in package agentd_test does
-// this; see DefaultMocks for the canonical wiring.
+// The harness does NOT install the package-var swaps itself; the
+// test owns that so it can use t.Cleanup to restore. See
+// flow_setup_test.go in package agentd_test for the canonical
+// wiring, and DefaultMocks below for the mock impls.
 func New(t *testing.T) *World {
 	t.Helper()
 	home := t.TempDir()
