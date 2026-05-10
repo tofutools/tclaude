@@ -23,6 +23,7 @@ func inboxCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			inboxLsCmd(),
+			inboxWatchCmd(),
 			inboxSentCmd(),
 			inboxReadCmd(),
 			inboxPruneCmd(),

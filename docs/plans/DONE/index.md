@@ -13,6 +13,15 @@ design see `docs/plans/agent-coord.md`. For the daemon design see
 
 ## 2026-05 (recent commits)
 
+- **`tclaude agent inbox watch` interactive mailbox v1**. New
+  bubbletea TUI under `pkg/claude/agent/inbox_watch.go`. Auto-
+  refreshes the list every 3s; up/down/k/j to navigate, g/G to
+  jump to top/bottom, Enter loads + marks read (via the existing
+  `/v1/messages/{id}` endpoint), esc/q returns to the list / quits.
+  Background poll suspends while in the read view to avoid list-
+  shuffle surprises. Reuses the table package + the existing
+  daemon endpoints — no new server work. Reply / search / target-
+  another-agent / per-message delete left for v2 (see TODO).
 - **`conv ls -w` group filter**. New `f` key in normal mode opens a
   group-name input; Enter applies, Esc clears. Composes with `/`
   search and `x` archived toggle as three independent filter passes
