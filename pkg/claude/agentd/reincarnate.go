@@ -30,23 +30,43 @@ var reincarnateSuffixRegex = regexp.MustCompile(`^(.*?)-(?:r|reincarnate)-\d+$`)
 // `-c-` for clones — distinct enough at a glance, short enough to
 // tile in tmux pane headers.
 //
-// N is the smallest integer such that no row in conv_index already
-// uses `<base>-r-<N>` as its custom_title. Lookup error → fall back
-// to N=1. The "used" set scans only the new short prefix; legacy
-// `-reincarnate-N` titles don't reserve a number in the new
-// namespace (so we don't end up with surprising holes after a
-// changeover).
+// N is monotonically larger than the previous instance's N: we start
+// the search at `prevN + 1`, then advance to the smallest free slot
+// from that floor. Without the floor, a previously-used N whose
+// conv_index row has since disappeared (pruned, retitled, file
+// deleted) gets recycled — so a chain like r-1 → r-2 → r-3 could
+// surprise-reset back to r-1 on the next reincarnation. Anchoring on
+// prevN keeps the lineage chronologically readable. The "used" set
+// only scans the new short prefix; legacy `-reincarnate-N` titles
+// don't reserve a number in the new namespace.
+//
+// Lookup error → fall back to `prevN + 1` (or 1 when prevN is 0).
 func uniqueReincarnateTitle(prevTitle string) string {
 	base := prevTitle
+	prevN := 0
 	if m := reincarnateSuffixRegex.FindStringSubmatch(base); m != nil {
 		base = m[1]
+		// Re-extract N from the original suffix; the capture group only
+		// pins the base, so we have to re-parse to recover the digits.
+		// Splitting on "-" is safe: the regex anchors `-r-\d+$` (or the
+		// legacy `-reincarnate-\d+$`), so the trailing token is always
+		// the integer.
+		if i := strings.LastIndex(prevTitle, "-"); i >= 0 {
+			if n, err := strconv.Atoi(prevTitle[i+1:]); err == nil {
+				prevN = n
+			}
+		}
 	}
 	prefix := "r-"
 	if base != "" {
 		prefix = base + "-r-"
 	}
 	used := scanReincarnateSuffixes(prefix)
-	for n := 1; ; n++ {
+	start := prevN + 1
+	if start < 1 {
+		start = 1
+	}
+	for n := start; ; n++ {
 		if !used[n] {
 			return prefix + strconv.Itoa(n)
 		}

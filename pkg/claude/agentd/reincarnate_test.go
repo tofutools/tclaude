@@ -58,15 +58,37 @@ func TestUniqueReincarnateTitle_FillsHoles(t *testing.T) {
 }
 
 func TestUniqueReincarnateTitle_StripsExistingSuffix(t *testing.T) {
-	// Reincarnating `worker-r-3` should yield `worker-r-N` (bumped),
-	// not `worker-r-3-r-1` (nested). 1 and 2 are free, so we expect 1.
+	// Reincarnating `worker-r-3` strips the suffix to anchor the base
+	// (so we don't nest into `worker-r-3-r-1`), but the new N is
+	// MONOTONIC w.r.t. the previous instance: prevN=3 → start at 4.
+	// We don't loop back to a "free" 1/2 even when their conv_index
+	// rows are missing — chronological lineage matters more than slot
+	// economy.
 	setupTestDB(t)
 	upsertCustomTitle(t, "a", "worker")
 	upsertCustomTitle(t, "b", "worker-r-3")
 
 	got := uniqueReincarnateTitle("worker-r-3")
-	if got != "worker-r-1" {
-		t.Errorf("reincarnate-of-reincarnate: got %q, want %q", got, "worker-r-1")
+	if got != "worker-r-4" {
+		t.Errorf("reincarnate-of-reincarnate: got %q, want %q", got, "worker-r-4")
+	}
+}
+
+// TestUniqueReincarnateTitle_MonotonicFromPrev_PrunedAncestor pins the
+// real bug we hit in production: prev was `tclaude-dev-r-2`, but the
+// `-r-1` row was no longer in conv_index (pruned / retitled), so the
+// old smallest-free policy reused N=1 — the new instance got titled
+// `r-1` even though it's a descendant of `r-2`. Monotonic-from-prev
+// makes the result `r-3` regardless of what's missing.
+func TestUniqueReincarnateTitle_MonotonicFromPrev_PrunedAncestor(t *testing.T) {
+	setupTestDB(t)
+	// Only the parent's row is in conv_index; the "r-1" ancestor that
+	// chronologically came before is gone.
+	upsertCustomTitle(t, "parent", "tclaude-dev-r-2")
+
+	got := uniqueReincarnateTitle("tclaude-dev-r-2")
+	if got != "tclaude-dev-r-3" {
+		t.Errorf("monotonic-from-prev: got %q, want %q", got, "tclaude-dev-r-3")
 	}
 }
 
@@ -97,12 +119,19 @@ func TestUniqueReincarnateTitle_DifferentBasesIndependent(t *testing.T) {
 // NEW `-r-<N>` title rather than nesting
 // (`worker-reincarnate-3-r-1`). Without the alternation in
 // reincarnateSuffixRegex the legacy form would not be stripped.
+//
+// Note on N: prev was `-reincarnate-3` so prevN=3, and the monotonic
+// floor lifts the new N to 4. We treat the legacy suffix's N as
+// chronologically meaningful even though it lived in a different
+// namespace — the alternative ("legacy resets to 1") was a holdover
+// from the pre-monotonic policy and would visibly under-count the
+// lineage on the rare migration paths still in flight.
 func TestUniqueReincarnateTitle_LegacyFormStripsCleanlyOnReincarnateOfReincarnate(t *testing.T) {
 	setupTestDB(t)
 	got := uniqueReincarnateTitle("worker-reincarnate-3")
-	if got != "worker-r-1" {
+	if got != "worker-r-4" {
 		t.Errorf("legacy-form reincarnate-of-reincarnate: got %q, want %q",
-			got, "worker-r-1")
+			got, "worker-r-4")
 	}
 }
 

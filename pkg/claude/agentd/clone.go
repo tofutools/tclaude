@@ -55,28 +55,41 @@ var cloneSuffixRegex = regexp.MustCompile(`^(.*?)-(?:c|clone)-\d+$`)
 // with `-r-` for reincarnations — distinct enough at a glance,
 // short enough to tile in dashboard rows.
 //
-// N is chosen globally — the smallest integer such that
-// `<base>-c-<N>` doesn't appear as the alias of any
-// agent_group_members row anywhere. This intentionally does NOT
-// scope by group: the same clone uses the same alias across every
-// group it inherits, and parallel clones of the same original each
-// pick distinct N's regardless of which groups they're added to.
-// The "used" set scans only the new short prefix; legacy
-// `-clone-N` aliases don't reserve a number in the new namespace
-// (avoids surprising holes after a changeover).
+// N is monotonically larger than the previous clone's N: we start
+// the search at `prevN + 1`, then advance to the smallest free slot
+// from that floor. Without the floor, a previously-used N whose
+// agent_group_members row has since disappeared (member removed,
+// group deleted, etc.) gets recycled — chronologically confusing
+// when the new clone descends from a higher-numbered ancestor. The
+// "used" set still scans every group globally so parallel clones
+// don't collide; legacy `-clone-N` aliases don't reserve a number
+// in the new namespace.
 //
-// Lookup error → fall back to N=1 (best-effort).
+// Lookup error → fall back to `prevN + 1` (or 1 when prevN is 0).
 func uniqueCloneAlias(origAlias string) string {
 	base := origAlias
+	prevN := 0
 	if m := cloneSuffixRegex.FindStringSubmatch(base); m != nil {
 		base = m[1]
+		// Re-extract N from the final dash-separated token; the regex
+		// only captures the base. Same shape as the reincarnate
+		// counterpart for symmetry.
+		if i := strings.LastIndex(origAlias, "-"); i >= 0 {
+			if n, err := strconv.Atoi(origAlias[i+1:]); err == nil {
+				prevN = n
+			}
+		}
 	}
 	prefix := "c-"
 	if base != "" {
 		prefix = base + "-c-"
 	}
 	used := scanCloneSuffixesGlobal(prefix)
-	for n := 1; ; n++ {
+	start := prevN + 1
+	if start < 1 {
+		start = 1
+	}
+	for n := start; ; n++ {
 		if !used[n] {
 			return prefix + strconv.Itoa(n)
 		}

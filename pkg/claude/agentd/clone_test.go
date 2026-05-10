@@ -55,16 +55,36 @@ func TestUniqueCloneAlias_FillsHoles(t *testing.T) {
 }
 
 func TestUniqueCloneAlias_CloneOfACloneStripsSuffix(t *testing.T) {
-	// Cloning `worker-c-3` should yield `worker-c-N` (bumped), not
-	// `worker-c-3-c-1` (nested). 1 and 2 are free, so we expect 1.
+	// Cloning `worker-c-3` strips the suffix to anchor the base (so we
+	// don't nest into `worker-c-3-c-1`), but the new N is MONOTONIC
+	// w.r.t. the previous clone: prevN=3 → start at 4. We don't loop
+	// back to a "free" 1/2 even when their member rows are missing —
+	// chronological lineage matters more than slot economy. Same
+	// policy as uniqueReincarnateTitle.
 	setupTestDB(t)
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "a", Alias: "worker"})
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "b", Alias: "worker-c-3"})
 
 	got := uniqueCloneAlias("worker-c-3")
-	if got != "worker-c-1" {
-		t.Errorf("clone-of-clone: got %q, want %q", got, "worker-c-1")
+	if got != "worker-c-4" {
+		t.Errorf("clone-of-clone: got %q, want %q", got, "worker-c-4")
+	}
+}
+
+// TestUniqueCloneAlias_MonotonicFromPrev_PrunedAncestor mirrors the
+// reincarnate test of the same shape: when the chronologically-prev
+// clone (worker-c-2) is the seed and its predecessor (worker-c-1) is
+// not in the index — member removed, group deleted, etc. — the new
+// clone must NOT recycle N=1. It bumps to N=3 instead.
+func TestUniqueCloneAlias_MonotonicFromPrev_PrunedAncestor(t *testing.T) {
+	setupTestDB(t)
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "a", Alias: "worker-c-2"})
+
+	got := uniqueCloneAlias("worker-c-2")
+	if got != "worker-c-3" {
+		t.Errorf("monotonic-from-prev: got %q, want %q", got, "worker-c-3")
 	}
 }
 
@@ -100,11 +120,15 @@ func TestUniqueCloneAlias_DifferentBasesIndependent(t *testing.T) {
 // strips the legacy suffix and produces a NEW `-c-<N>` alias rather
 // than nesting (`worker-clone-3-c-1`). Without the alternation in
 // cloneSuffixRegex the legacy form would not be stripped.
+//
+// Note on N: prev was `-clone-3` so prevN=3 and the monotonic floor
+// lifts the new N to 4. We treat the legacy suffix's N as
+// chronologically meaningful — same call as the reincarnate side.
 func TestUniqueCloneAlias_LegacyFormStripsCleanlyOnCloneOfClone(t *testing.T) {
 	setupTestDB(t)
 	got := uniqueCloneAlias("worker-clone-3")
-	if got != "worker-c-1" {
-		t.Errorf("legacy-form clone-of-clone: got %q, want %q", got, "worker-c-1")
+	if got != "worker-c-4" {
+		t.Errorf("legacy-form clone-of-clone: got %q, want %q", got, "worker-c-4")
 	}
 }
 
