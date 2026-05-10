@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 17
+const currentVersion = 18
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -125,6 +125,46 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 18 {
+		if err := migrateV17toV18(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV17toV18 adds agent_messages.{to_recipients,cc_recipients}
+// — the email-style multi-recipient model. Each row in agent_messages
+// stays the per-recipient view (one row per (message × recipient) so
+// delivered_at / read_at stay per-recipient), but the AUDIENCE of
+// the original send is now denormalized onto every recipient's row:
+//
+//   - to_recipients: JSON array of conv-ids that were primary
+//     recipients of the original send. The recipient on this row knows
+//     they were a primary if their own conv-id appears here.
+//   - cc_recipients: JSON array of conv-ids that were CC'd.
+//
+// Both empty for legacy single-recipient messages — the existing
+// to_conv column is canonical for delivery + filtering, the
+// recipients arrays are display-only ("From X, To: Y, CC: Z, W"
+// rendering in inbox read).
+//
+// Encoded as JSON arrays inside TEXT for forward-compat (we may
+// switch to a normalized recipients table later, but the JSON form
+// keeps the v1 migration cheap and the read path simple).
+func migrateV17toV18(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_messages
+			ADD COLUMN to_recipients TEXT NOT NULL DEFAULT '';
+		ALTER TABLE agent_messages
+			ADD COLUMN cc_recipients TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 18;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v17→v18: %w", err)
+	}
 	return nil
 }
 
