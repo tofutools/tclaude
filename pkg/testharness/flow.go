@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/conv"
 )
 
 // Flow wraps a World with a small Given/When/Then DSL so flow tests
@@ -57,40 +60,86 @@ func NewFlow(
 	}
 }
 
-// Mocks bundles the default replacement functions for the boundaries
-// Phase 1/2 needs. Tests install them via `rewire.Func(t, target, m.X)`
-// — rewire's scanner only walks `_test.go` files for those calls, so
-// the harness can't install them itself.
+// Mocks bundles the default replacement functions for the v2
+// simulator boundaries. Tests install them via
+// `rewire.Func(t, target, m.X)` — rewire's scanner only walks
+// `_test.go` files for those calls, so the harness can't install
+// them itself.
 type Mocks struct {
-	// SpawnNew synthesises the side effect of `tclaude session new -d`:
-	// writes a SessionRow with the spawned label + a fresh conv-id +
-	// tmux session, marks tmux alive. Causes handleGroupSpawn /
-	// reincarnate / clone-no-copy poll loops to succeed on the first
-	// iteration.
+	// SpawnNew stands in for SpawnDetachedTclaudeNew: builds a fresh
+	// CCSim under HOME, writes its initial summary turn, registers it
+	// in TmuxSim under a tmux name == label (mirroring production's
+	// `tmuxSession := sessionID`), and writes the SessionRow keyed by
+	// label so handleGroupSpawn / reincarnate / clone-no-copy poll
+	// loops succeed on the first iteration.
 	SpawnNew func(label, cwd string) error
 
-	// SpawnResume is the resume counterpart. handleAgentResume's
-	// success path doesn't poll for a row, so this just succeeds.
-	// Tests that need to count invocations can wrap this.
+	// SpawnResume stands in for SpawnDetachedTclaudeResume: locates
+	// the existing CCSim by conv-id (or hydrates from disk if it was
+	// shut down), re-arms it, picks a fresh resume label, writes a
+	// new SessionRow, and re-registers in TmuxSim. Production uses
+	// the same conv-id with a new sessionID/tmux name on every
+	// resume, which we mirror.
 	SpawnResume func(convID, cwd string) error
 
-	// TmuxCmd is FakeTmux.Command — returns a no-op cmd, records
-	// send-keys, dispatches has-session against the alive table.
+	// TmuxCmd is TmuxSim.Command — returns a no-op cmd, records
+	// send-keys, routes them to the attached CCSim, dispatches
+	// has-session against the alive table.
 	TmuxCmd func(args ...string) *exec.Cmd
 }
 
-// DefaultMocks builds the typical Phase-1/2 mock set against this
-// World. Tests pass each field into rewire.Func from their own
-// _test.go.
+// DefaultMocks builds the canonical mock set against this World.
+// Tests pass each field into rewire.Func from their own _test.go.
 func (w *World) DefaultMocks(t *testing.T) Mocks {
 	t.Helper()
 	return Mocks{
 		SpawnNew: func(label, cwd string) error {
-			w.CC.MaterializeSpawn(t, label, cwd)
+			cc := NewCCSim(t, w.HomeDir, cwd)
+			if err := cc.Start(); err != nil {
+				return err
+			}
+			tmuxSession := label
+			// Use cc.Cwd (post-default-substitution) so the SessionRow
+			// agrees with the .jsonl's actual on-disk location.
+			// Otherwise an empty body.Cwd leaves the row with cwd=""
+			// and JSONLPathFor can't derive the project dir.
+			if err := db.SaveSession(&db.SessionRow{
+				ID:          label,
+				TmuxSession: tmuxSession,
+				ConvID:      cc.ConvID,
+				Cwd:         cc.Cwd,
+				Status:      "running",
+			}); err != nil {
+				return err
+			}
+			w.Tmux.Register(tmuxSession, cc.Cwd, cc)
+			w.CCs.Set(label, cc)
 			return nil
 		},
-		SpawnResume: func(_, _ string) error { return nil },
-		TmuxCmd:     w.Tmux.Command,
+		SpawnResume: func(convID, cwd string) error {
+			cc := w.CCs.GetByConvID(convID)
+			if cc == nil {
+				cc = HydrateCCSim(t, w.HomeDir, convID, cwd)
+				w.CCs.SetByConvID(cc)
+			}
+			if err := cc.Start(); err != nil {
+				return err
+			}
+			label := generateResumeLabel()
+			if err := db.SaveSession(&db.SessionRow{
+				ID:          label,
+				TmuxSession: label,
+				ConvID:      convID,
+				Cwd:         cc.Cwd,
+				Status:      "running",
+			}); err != nil {
+				return err
+			}
+			w.Tmux.Register(label, cc.Cwd, cc)
+			w.CCs.Set(label, cc)
+			return nil
+		},
+		TmuxCmd: w.Tmux.Command,
 	}
 }
 
@@ -154,12 +203,17 @@ func (f *Flow) HaveConvWithTitle(convID, customTitle string) {
 	}
 }
 
-// HaveAliveSession marks a tmux session alive in FakeTmux + writes a
-// SessionRow so isConvOnline / pickAliveSession find it. Used to
-// precede Reincarnate / Delete / Clone tests that require a live
-// pane on the target.
+// HaveAliveSession sets up a live agent at convID: builds a real
+// CCSim (so its .jsonl exists and accepts /exit / /rename), writes
+// the SessionRow so isConvOnline / pickAliveSession find it, and
+// registers in TmuxSim. Used to precede Reincarnate / Delete / Clone
+// tests that require a live pane on the target.
 func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 	f.T.Helper()
+	cc := NewCCSimWithID(f.T, f.World.HomeDir, convID, cwd)
+	if err := cc.Start(); err != nil {
+		f.T.Fatalf("HaveAliveSession: cc.Start: %v", err)
+	}
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
 		TmuxSession: tmuxSession,
@@ -169,7 +223,8 @@ func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 	}); err != nil {
 		f.T.Fatalf("HaveAliveSession: %v", err)
 	}
-	f.World.Tmux.MarkAlive(tmuxSession)
+	f.World.Tmux.Register(tmuxSession, cwd, cc)
+	f.World.CCs.Set(label, cc)
 }
 
 // MarkOffline flips a tmux session off (handler side believes it's
@@ -397,6 +452,107 @@ func (f *Flow) AssertCloneAliasInGroup(c CloneResp, groupName, wantAlias string)
 	}
 	if m.Alias != wantAlias {
 		f.T.Errorf("clone alias in %s = %q, want %q", groupName, m.Alias, wantAlias)
+	}
+}
+
+// MemberView is the parsed shape of one row in
+// GET /v1/groups/{name}/members — what `tclaude agent groups members`
+// would render. Title is sourced from db.GetConvIndex (NOT the
+// disk-fallback FreshConvRow path), mirroring production's surface
+// behavior: stale conv_index ⇒ stale title here, exactly as humans
+// see it before the watch model refreshes.
+type MemberView struct {
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Alias  string `json:"alias,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Descr  string `json:"descr,omitempty"`
+	Online bool   `json:"online"`
+	Owner  bool   `json:"owner,omitempty"`
+}
+
+// ListGroupMembers calls GET /v1/groups/{name}/members and returns
+// the parsed list — the same shape `tclaude agent groups members`
+// renders. Use AsHuman/AsAgent to scope the caller. Fatals on
+// non-200.
+func (f *Flow) ListGroupMembers(group string) []MemberView {
+	f.T.Helper()
+	rec := f.do(http.MethodGet, "/v1/groups/"+group+"/members", nil)
+	if rec.Code != http.StatusOK {
+		f.T.Fatalf("ListGroupMembers(%q): status=%d body=%s", group, rec.Code, rec.Body.String())
+	}
+	var out []MemberView
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		f.T.Fatalf("ListGroupMembers decode: %v body=%s", err, rec.Body.String())
+	}
+	return out
+}
+
+// AssertGroupMember asserts that `tclaude agent groups members <group>`
+// shows convID with the expected alias and title. Polls because the
+// .jsonl write that follows /rename is async; the conv_index has to
+// pick it up before the title surfaces here.
+//
+// We trigger conv_index refresh inline via FreshConvRowResolved (the
+// same call dashboard makes). In production the watch model handles
+// this; tests don't run the watch model, so we stand in for it.
+func (f *Flow) AssertGroupMember(group, convID, wantAlias, wantTitle string, timeout time.Duration) {
+	f.T.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_ = agent.FreshConvRowResolved(convID)
+		members := f.ListGroupMembers(group)
+		for _, m := range members {
+			if m.ConvID != convID {
+				continue
+			}
+			if m.Alias == wantAlias && m.Title == wantTitle {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	last := f.ListGroupMembers(group)
+	f.T.Fatalf("AssertGroupMember(%q, %s, alias=%q, title=%q): not found within %s; got %+v",
+		group, convID, wantAlias, wantTitle, timeout, last)
+}
+
+// AssertNotGroupMember asserts that convID is NOT in
+// `tclaude agent groups members <group>`. Used for reincarnate (old
+// conv migrates off) and delete (target purged).
+func (f *Flow) AssertNotGroupMember(group, convID string) {
+	f.T.Helper()
+	for _, m := range f.ListGroupMembers(group) {
+		if m.ConvID == convID {
+			f.T.Errorf("conv %s should not be in group %q; got member %+v",
+				convID, group, m)
+		}
+	}
+}
+
+// AssertConvNotListed asserts that convID does not appear in the
+// disk-scan output of `conv.ListSessions(projectDir)` — the same scan
+// `tclaude conv ls` runs. Used post-delete to surface the orphan-
+// .jsonl bug class: if removeJSONLBestEffort walks the wrong project
+// dir and the .jsonl lingers, the next conv ls re-indexes the orphan
+// and it shows up here.
+//
+// cwd is the cwd the conv was last running in (recorded on its
+// SessionRow before delete; tests should capture it pre-delete).
+func (f *Flow) AssertConvNotListed(convID, cwd string) {
+	f.T.Helper()
+	projectDir := convops.GetClaudeProjectPath(cwd)
+	entries, err := conv.ListSessions(projectDir)
+	if err != nil {
+		// Project dir gone entirely is a stronger guarantee than no
+		// matching entry; treat as success.
+		return
+	}
+	for _, e := range entries {
+		if e.SessionID == convID {
+			f.T.Errorf("conv %s should not be listed by conv ls in %s after delete; got entry %+v",
+				convID, projectDir, e)
+		}
 	}
 }
 

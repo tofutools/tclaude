@@ -65,6 +65,16 @@ inconsistencies. To pin them, the harness has to model:
    `injectTextAndSubmit` (e.g., dropping the 500ms gap) fails the
    relevant flow test.
 
+   v2 implements this via two opt-in CCSim hooks:
+   - `OnInput(prefix, handler)` — register a custom behavior for an
+     input prefix; newer registrations win, so a single test can
+     shadow a default without editing the sim.
+   - `SetCommandDelay(prefix, dur)` — schedule processing of a
+     matching input asynchronously after `dur`. Models "CC takes a
+     moment to commit this turn"; tests that depend on prod's
+     "send-keys returned ⇒ turn on disk" fallacy will fail when this
+     is set non-zero.
+
 4. **All the existing flow tests still pass and gain teeth.**
    At least one assertion per scenario should now be jsonl-grounded:
    "after the daemon injects `/rename worker`, the conv's `.jsonl`
@@ -214,15 +224,19 @@ rewire.Func(t, agentd.SpawnDetachedTclaudeResume, func(convID, cwd string) error
 
 ## Migration: existing 4 flow tests
 
-All four still pass after the migration; each gains a jsonl-grounded
-assertion to prove the simulator is doing real work:
+All four still pass after the migration. Assertions exercise the
+real surfaces a human would use (`tclaude agent groups members`,
+`tclaude conv ls` equivalents) — NOT the simulator's internal
+.jsonl. The .jsonl is impl detail of the mock layer: the mock writes
+it so the production read path (FreshConvRowResolved → ScanAndUpsertFile
+→ conv_index → /v1/groups/{name}/members) finds something realistic.
 
-| Test | New assertion |
-|------|---------------|
-| `TestSpawn_RenamesAndResumes` | After `/rename worker`, the conv's .jsonl has a `customTitle: worker` turn AND `agent.FreshConvRow(convID).Title()` returns "worker". |
-| `TestReincarnate_OfRN_ProducesRNplus1` | Old conv's .jsonl ends with an `/exit` turn; new conv's .jsonl has `customTitle: worker-r-4`. |
-| `TestClone_EmptyAlias_DerivesFromOriginalTitle` | Original's .jsonl is unchanged (clone is ADD-only); clone's .jsonl has `customTitle: worker-c-1`. |
-| `TestDelete_PurgesAllReferencingRows` | `~/.claude/projects/<encoded>/del-...jsonl` no longer exists post-delete. |
+| Test | New surface assertion |
+|------|------------------------|
+| `TestSpawn_RenamesAndResumes` | `GET /v1/groups/alpha/members` lists the new conv with alias=worker AND title=worker (after the daemon's post-spawn /rename settles). |
+| `TestReincarnate_OfRN_ProducesRNplus1` | `GET /v1/groups/alpha/members` shows the new conv with alias=worker, title=worker-r-4; the old conv is no longer a member. |
+| `TestClone_EmptyAlias_DerivesFromOriginalTitle` | `GET /v1/groups/alpha/members` shows BOTH the original (unchanged title) AND the clone with the computed alias=worker-c-1 + matching title. |
+| `TestDelete_PurgesAllReferencingRows` | `conv.ListSessions(projectDir)` (the same scan `tclaude conv ls` runs) does not re-discover the deleted conv — guards the orphan-jsonl bug class. |
 
 ## Phasing
 

@@ -4,6 +4,7 @@ package agentd_test
 
 import (
 	"testing"
+	"time"
 )
 
 // Scenario: the human clones a worker that was added to a group
@@ -46,4 +47,16 @@ func TestClone_EmptyAlias_DerivesFromOriginalTitle(t *testing.T) {
 	if c.OldConv != oldConv {
 		t.Errorf("OldConv = %q, want %q", c.OldConv, oldConv)
 	}
+
+	// Surface-level invariants the human would see post-clone in
+	// `tclaude agent groups members alpha`:
+	//   - both members visible (clone is ADD-only — original isn't
+	//     touched);
+	//   - the new clone has the computed alias + matching title
+	//     "worker-c-1" (catches both the alias fallback and the
+	//     post-spawn /rename actually rendering at the surface);
+	//   - the original retains its title (no stray /rename on the
+	//     source).
+	f.AssertGroupMember("alpha", c.NewConv, "worker-c-1", "worker-c-1", 5*time.Second)
+	f.AssertGroupMember("alpha", oldConv, "", "worker", 1*time.Second)
 }

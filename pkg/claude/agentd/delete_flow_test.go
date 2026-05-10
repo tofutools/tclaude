@@ -46,6 +46,18 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 		t.Fatalf("grant: %v", err)
 	}
 
+	// Capture the recorded cwd BEFORE delete clears the session row.
+	// AssertConvNotListed needs it to derive the project dir for the
+	// post-delete `conv ls` scan; once delete purges the SessionRow
+	// there's no way to recover.
+	preDeleteCwd := func() string {
+		rows, _ := db.FindSessionsByConvID(target)
+		if len(rows) == 0 {
+			t.Fatalf("expected session row for %s pre-delete", target)
+		}
+		return rows[0].Cwd
+	}()
+
 	resp := f.AsHuman().Delete(target, true /* force */)
 
 	if resp.Action != "deleted" {
@@ -56,6 +68,15 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 	}
 
 	f.AssertDeleted(target)
+	f.AssertNotGroupMember("alpha", target)
+
+	// Surface-level orphan-jsonl check: a re-scan via the same path
+	// `tclaude conv ls` walks must NOT re-discover the deleted conv.
+	// This catches the bug class where removeJSONLBestEffort walks
+	// the wrong project dir, the .jsonl lingers, and the next conv ls
+	// re-indexes it (after which a resume against the orphan would
+	// silently succeed).
+	f.AssertConvNotListed(target, preDeleteCwd)
 
 	stillThere, err := db.GetAgentGroupByName("alpha")
 	if err != nil || stillThere == nil || stillThere.ID != g.ID {

@@ -5,8 +5,6 @@ package agentd_test
 import (
 	"testing"
 	"time"
-
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Scenario: a worker on its third reincarnation gets reincarnated
@@ -49,13 +47,13 @@ func TestReincarnate_OfRN_ProducesRNplus1(t *testing.T) {
 		t.Errorf("old pane should have received /exit; sent=%+v", f.World.Tmux.Sent())
 	}
 
-	if old, _ := db.FindMemberInGroup(g.ID, oldConv); old != nil {
-		t.Errorf("old conv still a member of %s: %+v", g.Name, old)
-	}
-	newMember, _ := db.FindMemberInGroup(g.ID, r.NewConv)
-	if newMember == nil {
-		t.Errorf("new conv was not added to %s", g.Name)
-	} else if newMember.Alias != "worker" {
-		t.Errorf("new member alias = %q, want %q", newMember.Alias, "worker")
-	}
+	// Surface-level invariants the human would see post-reincarnate
+	// in `tclaude agent groups members alpha`:
+	//   - the new conv shows up under the worker alias with the
+	//     bumped -r-4 title (catches both the daemon's title-bump
+	//     math AND the rename actually landing as a renderable title);
+	//   - the old conv is gone (catches the membership migration
+	//     that reincarnate has to do atomically).
+	f.AssertGroupMember(g.Name, r.NewConv, "worker", "worker-r-4", 5*time.Second)
+	f.AssertNotGroupMember(g.Name, oldConv)
 }

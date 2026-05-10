@@ -34,6 +34,14 @@ func TestSpawn_RenamesAndResumes(t *testing.T) {
 	// poll + readyDelay + two paste-mode pauses); 5s gives slack.
 	f.AssertSentContains(spawn.TmuxTarget(), "/rename worker", 5*time.Second)
 
+	// What the human would see at the contact surface after the
+	// rename settles: `tclaude agent groups members alpha` lists the
+	// new conv with title "worker". Pinning at this surface catches
+	// the bug class where the daemon's send-keys returns success but
+	// the rename never actually lands as a renderable title (CC
+	// dropped it, paste-mode swallowed Enter, etc.).
+	f.AssertGroupMember("alpha", spawn.ConvID, "worker", "worker", 5*time.Second)
+
 	f.MarkOffline(spawn.TmuxSession)
 	resume := f.AsHuman().Resume(spawn.ConvID)
 	f.AssertResumeSpawned(resume)
