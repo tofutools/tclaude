@@ -158,11 +158,6 @@ details[open] > summary .group-actions { opacity: 1; }
 }
 .toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
 .toast.error { border-left-color: #f85149; }
-.banner {
-  background: #1c2128; border: 1px solid #2a3340; border-left: 3px solid #d29922;
-  padding: 8px 12px; margin: 0 24px; border-radius: 0 0 4px 4px;
-  color: #d29922; font-size: 12px;
-}
 .filter-bar {
   display: flex; align-items: center; gap: 8px;
   margin: 0 0 12px 0;
@@ -189,9 +184,6 @@ details[open] > summary .group-actions { opacity: 1; }
   <span class="meta" id="meta">loading…</span>
   <span class="meta" style="margin-left:auto" id="status"></span>
 </header>
-<div class="banner">
-  Inline edits available for member ownership and removal (hover a member row in the Groups tab). Other mutations still go through the <code>tclaude agent</code> CLI — every row has a "Copy CLI command" suggestion. <a href="#" id="refresh-link" style="color:#58a6ff">refresh now</a>
-</div>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="agents">Agents</button>
@@ -933,7 +925,6 @@ details[open] > summary .group-actions { opacity: 1; }
     });
   }
 
-  $('#refresh-link').addEventListener('click', e => { e.preventDefault(); refresh(); });
   bindTabs();
   bindCopy();
   bindDetailsPersistence();
