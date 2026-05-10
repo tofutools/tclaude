@@ -134,12 +134,22 @@ Follow-up improvements (separate items):
   `conv ls -g`. New helper `convops.IsExpiredTitle(customTitle)` /
   `(*SessionEntry).IsExpired()` is the canonical check; consumers
   should reuse it rather than open-coding the suffix test.
-- Open follow-up: dashboard tabs (Groups / Agents) and the watch
-  mode (`conv ls -w`) don't currently apply the expired filter.
-  Dashboard probably doesn't need it (reincarnate already removes
-  expired convs from groups + permissions, so they don't appear in
-  the snapshot), but worth verifying. Watch mode should grow a
-  toggle (e.g. press `x` to show/hide expired).
+- ~~**Watch mode toggle for expired convs.**~~ — **shipped
+  (2026-05).** `conv ls -w` defaults to hiding `-x` rows; press
+  `e` to toggle (mnemonic for "expired"; lowercase `x` was already
+  taken by the delete binding). Composes with both text-search and
+  semantic-search filters via the same `applySearchFilter` /
+  `rebuildSemanticFiltered` pass. Status-line message confirms the
+  toggle on every press; help screen lists the binding under
+  Actions.
+- Open follow-up: dashboard tabs (Groups / Agents). Reincarnate
+  already removes expired convs from groups + permissions, so they
+  don't appear in the dashboard's snapshot today — verified by
+  re-reading `handleDashboardSnapshot` (agentRows = group members
+  ∪ explicit-grant convs, both migrated by reincarnate). No filter
+  needed there unless an expired conv slips through (e.g. partial
+  migration). Worth re-checking if user reports `-x` rows in the
+  dashboard.
 
 ### Agent clone — shipped (2026-05)
 

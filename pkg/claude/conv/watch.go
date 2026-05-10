@@ -134,6 +134,7 @@ type watchModel struct {
 	projectPath string // Current project path
 	since       string // Filter: modified after
 	before      string // Filter: modified before
+	showExpired bool   // Include expired (-x suffixed) convs in the listing; toggled with `x`
 
 	// Result
 	selectedConv   *SessionEntry
@@ -467,6 +468,24 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.semanticChecking = true
 			return m, m.semanticPreCheck()
+		case "e":
+			// Toggle visibility of expired (-x) convs. Default-hidden;
+			// useful when forensically tracking down a reincarnated
+			// instance's history. (Lowercase `x` is already taken by
+			// delete — the conflict made `e` for "expired" the natural
+			// pick.) Re-runs the active filter (search or semantic) so
+			// the result composes with whatever else is on.
+			m.showExpired = !m.showExpired
+			if m.semanticMode {
+				m.rebuildSemanticFiltered()
+			} else {
+				m.applySearchFilter()
+			}
+			if m.showExpired {
+				m.statusMsg = "showing expired convs (press e to hide)"
+			} else {
+				m.statusMsg = "hiding expired convs (press e to show)"
+			}
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -1299,17 +1318,29 @@ func (m *watchModel) applySearchFilter() {
 		return
 	}
 	searchVal := m.searchInput.Value()
-	if searchVal == "" {
+	query := strings.ToLower(searchVal)
+
+	// Compose two filters:
+	//   1. Hide expired (-x) entries unless m.showExpired is on. Reincarnated
+	//      old convs persist on disk for history, but listing them by
+	//      default just clutters the table — toggle with `x`.
+	//   2. The text-search filter (matchesSearch).
+	// When neither filter is active we can short-circuit to a slice
+	// reference, avoiding the allocation.
+	if query == "" && m.showExpired {
 		m.filtered = m.entries
 		return
 	}
 
-	query := strings.ToLower(searchVal)
 	m.filtered = make([]SessionEntry, 0, len(m.entries))
 	for _, e := range m.entries {
-		if matchesSearch(e, query) {
-			m.filtered = append(m.filtered, e)
+		if !m.showExpired && e.IsExpired() {
+			continue
 		}
+		if query != "" && !matchesSearch(e, query) {
+			continue
+		}
+		m.filtered = append(m.filtered, e)
 	}
 
 	if m.cursor >= len(m.filtered) {
@@ -1319,13 +1350,19 @@ func (m *watchModel) applySearchFilter() {
 }
 
 // rebuildSemanticFiltered reconstructs the filtered list from entries matching
-// saved semantic scores, sorted by similarity descending.
+// saved semantic scores, sorted by similarity descending. The expired-filter
+// toggle (`x`) applies here too — semantic results for old expired convs
+// stay hidden until the user opts in.
 func (m *watchModel) rebuildSemanticFiltered() {
 	m.filtered = m.filtered[:0]
 	for _, e := range m.entries {
-		if _, ok := m.semanticScores[e.SessionID]; ok {
-			m.filtered = append(m.filtered, e)
+		if _, ok := m.semanticScores[e.SessionID]; !ok {
+			continue
 		}
+		if !m.showExpired && e.IsExpired() {
+			continue
+		}
+		m.filtered = append(m.filtered, e)
 	}
 	sort.Slice(m.filtered, func(i, j int) bool {
 		return m.semanticScores[m.filtered[i].SessionID] > m.semanticScores[m.filtered[j].SessionID]
@@ -1511,6 +1548,7 @@ func (m *watchModel) renderHelpView() string {
 	b.WriteString("    W         Create git worktree with this conversation\n")
 	b.WriteString("    del/x     Delete conversation (with confirmation)\n")
 	b.WriteString("              If has session: y=delete+stop, s=stop only, n=cancel\n")
+	b.WriteString("    e         Toggle expired (-x) convs (default: hidden)\n")
 	b.WriteString("    r         Refresh conversation list\n")
 	b.WriteString("\n")
 
