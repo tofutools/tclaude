@@ -245,5 +245,189 @@ func TestInboxWatch_ListKeysIgnoredInReadView(t *testing.T) {
 		if mm.readingID != 42 {
 			t.Errorf("key %q in read view should not exit read mode; readingID = %d", k, mm.readingID)
 		}
+		// And `/` must NOT slip through to enable search mode while
+		// the user is reading — that would surprise the user the next
+		// time they esc back to the list.
+		if mm.searchFocused {
+			t.Errorf("key %q in read view should not enable search mode", k)
+		}
+	}
+}
+
+// `/` in the list view focuses the search input. Esc with non-empty
+// value clears the value (still focused). Esc again exits search mode.
+func TestInboxWatch_SearchEscapeLadder(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{{ID: 1, Subject: "alpha"}}
+
+	m2, _ := m.Update(asKey("/"))
+	mm := m2.(*inboxWatchModel)
+	if !mm.searchFocused {
+		t.Fatal("/ should focus the search input")
+	}
+	mm.searchInput.SetValue("foo")
+
+	// First esc: clears value, stays focused.
+	m3, _ := mm.Update(asKey("esc"))
+	mm = m3.(*inboxWatchModel)
+	if !mm.searchFocused {
+		t.Error("esc with non-empty filter should keep search focused")
+	}
+	if mm.searchInput.Value() != "" {
+		t.Errorf("esc should clear the filter; got %q", mm.searchInput.Value())
+	}
+
+	// Second esc: exits search mode entirely.
+	m4, _ := mm.Update(asKey("esc"))
+	mm = m4.(*inboxWatchModel)
+	if mm.searchFocused {
+		t.Error("esc on empty filter should exit search mode")
+	}
+}
+
+// visibleEntries filters by case-insensitive substring across multiple
+// fields. Empty filter passes everything through.
+func TestInboxWatch_FilterMatchesAcrossFields(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{
+		{ID: 1, Subject: "Deploy hotfix", FromShort: "ops-1", Group: "team-a"},
+		{ID: 2, Subject: "lunch", FromShort: "alice", Group: "team-b"},
+		{ID: 3, Subject: "review pr", FromShort: "bob", Group: "team-a"},
+	}
+
+	// Subject substring (case-insensitive).
+	m.searchInput.SetValue("HOTFIX")
+	v := m.visibleEntries()
+	if len(v) != 1 || v[0].ID != 1 {
+		t.Errorf("HOTFIX should match #1 only, got %+v", v)
+	}
+
+	// From substring.
+	m.searchInput.SetValue("alice")
+	v = m.visibleEntries()
+	if len(v) != 1 || v[0].ID != 2 {
+		t.Errorf("alice should match #2 only, got %+v", v)
+	}
+
+	// Group substring matches multiple.
+	m.searchInput.SetValue("team-a")
+	v = m.visibleEntries()
+	if len(v) != 2 {
+		t.Errorf("team-a should match 2 entries, got %d", len(v))
+	}
+
+	// Empty filter passes everything through unchanged.
+	m.searchInput.SetValue("")
+	v = m.visibleEntries()
+	if len(v) != 3 {
+		t.Errorf("empty filter should pass all 3 entries, got %d", len(v))
+	}
+
+	// Whitespace-only filter is treated as empty.
+	m.searchInput.SetValue("   ")
+	v = m.visibleEntries()
+	if len(v) != 3 {
+		t.Errorf("whitespace-only filter should pass all 3 entries, got %d", len(v))
+	}
+}
+
+// Cursor stays in bounds against the FILTERED list. After the filter
+// shrinks past the cursor position, clamp resets to 0; nav keys stop
+// at the filtered end, not the underlying entries length.
+func TestInboxWatch_NavigationRespectsFilter(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{
+		{ID: 1, Subject: "alpha"},
+		{ID: 2, Subject: "beta"},
+		{ID: 3, Subject: "alphabet"},
+	}
+	m.cursor = 2
+
+	m.searchInput.SetValue("alpha")
+	m.clampCursor()
+	if m.cursor != 0 {
+		t.Errorf("cursor 2 should snap to 0 when filter shrinks list to 2 visible entries past cursor; got %d", m.cursor)
+	}
+
+	// j moves to filtered index 1.
+	m2, _ := m.Update(asKey("j"))
+	mm := m2.(*inboxWatchModel)
+	if mm.cursor != 1 {
+		t.Errorf("j should move to 1 (still inside filtered len=2), got %d", mm.cursor)
+	}
+
+	// j again must NOT advance past filtered end (len=2 → max index 1).
+	m3, _ := mm.Update(asKey("j"))
+	mm = m3.(*inboxWatchModel)
+	if mm.cursor != 1 {
+		t.Errorf("j past filtered end should clamp at 1, got %d", mm.cursor)
+	}
+
+	// G also clamps to filtered end.
+	mm.cursor = 0
+	m4, _ := mm.Update(asKey("G"))
+	mm = m4.(*inboxWatchModel)
+	if mm.cursor != 1 {
+		t.Errorf("G should jump to filtered end (1), got %d", mm.cursor)
+	}
+}
+
+// Enter on a filtered list reads the message at the FILTERED cursor
+// position, not the underlying-entries position. Pins the bug where
+// the wrong message would open after a filter narrowed the list.
+func TestInboxWatch_EnterOnFilteredCursorReadsCorrectID(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{
+		{ID: 10, Subject: "alpha"},
+		{ID: 20, Subject: "beta"},
+		{ID: 30, Subject: "alphabet"},
+	}
+	m.searchInput.SetValue("alpha")
+	m.cursor = 1 // filtered index 1 = entries[2] = ID 30
+
+	m2, _ := m.Update(asKey("enter"))
+	mm := m2.(*inboxWatchModel)
+	if mm.readingID != 30 {
+		t.Errorf("enter on filtered cursor=1 should read ID 30 (alphabet), got %d", mm.readingID)
+	}
+}
+
+// Background reload (inboxLoadedMsg) preserves the active filter and
+// clamps the cursor against the new filtered length.
+func TestInboxWatch_FilterPersistsAcrossReload(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.searchInput.SetValue("alpha")
+	m.cursor = 0
+
+	m2, _ := m.Update(inboxLoadedMsg{entries: []inboxEntry{
+		{ID: 1, Subject: "alpha-one"},
+		{ID: 2, Subject: "beta"},
+		{ID: 3, Subject: "alpha-two"},
+	}})
+	mm := m2.(*inboxWatchModel)
+	if mm.searchInput.Value() != "alpha" {
+		t.Errorf("filter should survive reload, got %q", mm.searchInput.Value())
+	}
+	if got := len(mm.visibleEntries()); got != 2 {
+		t.Errorf("filtered visible count after reload = %d, want 2", got)
+	}
+}
+
+// Up/down arrows from search-focused mode unfocus and move the cursor
+// in a single keystroke (UX shortcut so the user can type, then jump
+// to a result without an extra Enter or Esc).
+func TestInboxWatch_ArrowFromSearchUnfocusesAndMoves(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{{ID: 1}, {ID: 2}}
+	m.searchFocused = true
+	m.searchInput.Focus()
+
+	m2, _ := m.Update(asKey("down"))
+	mm := m2.(*inboxWatchModel)
+	if mm.searchFocused {
+		t.Error("down arrow should unfocus search")
+	}
+	if mm.cursor != 1 {
+		t.Errorf("down arrow should advance cursor to 1; got %d", mm.cursor)
 	}
 }

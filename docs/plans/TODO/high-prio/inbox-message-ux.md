@@ -10,12 +10,24 @@ Interactive mailbox v1 shipped 2026-05: `tclaude agent inbox watch`
 quits. Background poll suspends while in the read view to avoid
 list-shuffle surprises.
 
+`/` text search shipped 2026-05: in the list view, `/` focuses a
+filter input that case-insensitive-substring-matches across subject,
+preview, from, from_short, and group. Composes with `--unread`
+(daemon-side filter). Esc clears the filter then exits search;
+enter commits and unfocuses; up/down arrow exits search and moves
+the cursor in one keystroke. Filter persists across the 3s
+background reload and across read-view round-trips. Cursor always
+indexes the filtered slice — `enter` reads the visually selected
+row, not entries[m.cursor]. Empty/whitespace filter is treated as
+no filter. Header surfaces `[N/M messages]` while filtering.
+
+Files: `pkg/claude/agent/inbox_watch.go` (model + handler + view),
+`pkg/claude/agent/inbox_watch_test.go` (6 new unit tests:
+SearchEscapeLadder, FilterMatchesAcrossFields,
+NavigationRespectsFilter, EnterOnFilteredCursorReadsCorrectID,
+FilterPersistsAcrossReload, ArrowFromSearchUnfocusesAndMoves).
+
 ## Open
-
-### Search / filter inside the watch
-
-`/` to text-search inbox entries by subject/from/group — same shape
-as `conv ls -w`. Compose with the existing `--unread` flag.
 
 ### Operator view: watch another agent's inbox
 

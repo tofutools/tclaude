@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/GiGurra/boa/pkg/boa"
@@ -93,15 +94,85 @@ type inboxWatchModel struct {
 	// cancels. While replyFocused, list-mode keys don't fire.
 	replyFocused  bool
 	replyTextarea textarea.Model
+
+	// Search mode (active only in the list view): a textinput shown
+	// above the table. While searchFocused, list-mode keys are
+	// captured by the input. The current value filters the rendered
+	// list by case-insensitive substring across subject/from/group;
+	// composes with the --unread flag (which filters at the daemon).
+	// Filter persists across background reloads and across read-view
+	// round-trips.
+	searchFocused bool
+	searchInput   textinput.Model
 }
 
 func newInboxWatchModel(p *inboxWatchParams) *inboxWatchModel {
 	ta := textarea.New()
 	ta.Placeholder = "Reply… (ctrl+enter submit, esc cancel)"
 	ta.SetHeight(4)
+
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.Placeholder = "Filter by subject / from / group…"
+	tiStyles := ti.Styles()
+	tiStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	tiStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	ti.SetStyles(tiStyles)
+
 	return &inboxWatchModel{
 		params:        *p,
 		replyTextarea: ta,
+		searchInput:   ti,
+	}
+}
+
+// visibleEntries returns m.entries filtered by the active search text
+// (case-insensitive substring across subject/from/from_short/group).
+// Empty filter returns the full slice. The view and the cursor lookup
+// both go through this helper so the cursor index always refers to a
+// position in the filtered slice.
+func (m *inboxWatchModel) visibleEntries() []inboxEntry {
+	q := strings.TrimSpace(m.searchInput.Value())
+	if q == "" {
+		return m.entries
+	}
+	q = strings.ToLower(q)
+	out := make([]inboxEntry, 0, len(m.entries))
+	for _, e := range m.entries {
+		if entryMatchesFilter(e, q) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func entryMatchesFilter(e inboxEntry, q string) bool {
+	if strings.Contains(strings.ToLower(e.Subject), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(e.Preview), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(e.From), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(e.FromShort), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(e.Group), q) {
+		return true
+	}
+	return false
+}
+
+// clampCursor resets m.cursor to 0 if it points past the end of the
+// currently visible (filtered) slice. Matches the pre-search behaviour
+// for entry reloads, and makes typing into the filter snap to the top
+// match when the previous selection no longer matches.
+func (m *inboxWatchModel) clampCursor() {
+	n := len(m.visibleEntries())
+	if m.cursor < 0 || m.cursor >= n {
+		m.cursor = 0
 	}
 }
 
@@ -201,9 +272,7 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loadErr = ""
 		m.entries = msg.entries
-		if m.cursor >= len(m.entries) {
-			m.cursor = 0
-		}
+		m.clampCursor()
 		return m, nil
 
 	case inboxMessageLoadedMsg:
@@ -241,6 +310,15 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.replyFocused {
 		var cmd tea.Cmd
 		m.replyTextarea, cmd = m.replyTextarea.Update(msg)
+		return m, cmd
+	}
+	if m.searchFocused {
+		prevVal := m.searchInput.Value()
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		if m.searchInput.Value() != prevVal {
+			m.clampCursor()
+		}
 		return m, cmd
 	}
 	return m, nil
@@ -284,26 +362,86 @@ func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Search mode: typing updates the filter live; esc clears the value
+	// then exits; enter commits + leaves search focus (filter persists);
+	// up/down exit search and move the cursor in one keystroke so the
+	// user can type, jump straight to a result, and read it.
+	if m.searchFocused {
+		switch msg.String() {
+		case "esc":
+			if m.searchInput.Value() != "" {
+				m.searchInput.SetValue("")
+				m.clampCursor()
+				return m, nil
+			}
+			m.searchFocused = false
+			m.searchInput.Blur()
+			return m, nil
+		case "ctrl+c":
+			m.searchFocused = false
+			m.searchInput.Blur()
+			return m, nil
+		case "enter":
+			m.searchFocused = false
+			m.searchInput.Blur()
+			return m, nil
+		case "up":
+			m.searchFocused = false
+			m.searchInput.Blur()
+			if m.cursor > 0 {
+				m.cursor--
+			}
+			return m, nil
+		case "down":
+			m.searchFocused = false
+			m.searchInput.Blur()
+			if m.cursor < len(m.visibleEntries())-1 {
+				m.cursor++
+			}
+			return m, nil
+		default:
+			prevVal := m.searchInput.Value()
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			if m.searchInput.Value() != prevVal {
+				m.clampCursor()
+			}
+			return m, cmd
+		}
+	}
+
+	visible := m.visibleEntries()
+
 	switch msg.String() {
-	case "q", "ctrl+c", "esc":
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		// Mirror the conv-watch escape ladder: a single esc dismisses
+		// the topmost filter before quitting, so a user with an active
+		// search doesn't lose context to a stray esc.
+		if m.searchInput.Value() != "" {
+			m.searchInput.SetValue("")
+			m.clampCursor()
+			return m, nil
+		}
 		return m, tea.Quit
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
 		}
 	case "down", "j":
-		if m.cursor < len(m.entries)-1 {
+		if m.cursor < len(visible)-1 {
 			m.cursor++
 		}
 	case "home", "g":
 		m.cursor = 0
 	case "end", "G":
-		if len(m.entries) > 0 {
-			m.cursor = len(m.entries) - 1
+		if len(visible) > 0 {
+			m.cursor = len(visible) - 1
 		}
 	case "enter":
-		if m.cursor < len(m.entries) {
-			id := m.entries[m.cursor].ID
+		if m.cursor < len(visible) {
+			id := visible[m.cursor].ID
 			m.readingID = id // optimistic — flips back on error
 			m.readingBody = "(loading...)"
 			return m, m.loadMessageCmd(id)
@@ -311,6 +449,10 @@ func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.statusMsg = "refreshing..."
 		return m, m.loadCmd()
+	case "/":
+		m.searchFocused = true
+		m.searchInput.Focus()
+		return m, nil
 	}
 	return m, nil
 }
@@ -334,16 +476,38 @@ func (m *inboxWatchModel) View() tea.View {
 
 func (m *inboxWatchModel) renderListView() string {
 	var b strings.Builder
+	visible := m.visibleEntries()
+	filterActive := m.searchInput.Value() != ""
+
 	b.WriteString(inboxHeaderStyle.Render("  Inbox"))
 	if m.params.Unread {
 		b.WriteString(inboxHelpStyle.Render("  (unread only)"))
 	}
-	b.WriteString(inboxHelpStyle.Render(fmt.Sprintf("  [%d messages]", len(m.entries))))
+	if filterActive {
+		b.WriteString(inboxHelpStyle.Render(
+			fmt.Sprintf("  [%d/%d messages]", len(visible), len(m.entries))))
+	} else {
+		b.WriteString(inboxHelpStyle.Render(
+			fmt.Sprintf("  [%d messages]", len(m.entries))))
+	}
 	if m.statusMsg != "" {
 		b.WriteString("  ")
 		b.WriteString(inboxHelpStyle.Render(m.statusMsg))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	if m.searchFocused {
+		b.WriteString("  ")
+		b.WriteString(inboxHelpStyle.Render("Filter: "))
+		b.WriteString(m.searchInput.View())
+		b.WriteString("\n")
+	} else if filterActive {
+		b.WriteString("  ")
+		b.WriteString(inboxHelpStyle.Render(
+			fmt.Sprintf("Filter: [%s] (esc to clear)", m.searchInput.Value())))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	if m.loadErr != "" {
 		b.WriteString(inboxErrorStyle.Render("Error: " + m.loadErr))
@@ -352,7 +516,13 @@ func (m *inboxWatchModel) renderListView() string {
 
 	if len(m.entries) == 0 {
 		b.WriteString("  (empty inbox)\n\n")
-		b.WriteString(inboxHelpStyle.Render("  r refresh • q quit"))
+		b.WriteString(inboxHelpStyle.Render("  r refresh • / search • q quit"))
+		return b.String()
+	}
+
+	if len(visible) == 0 {
+		fmt.Fprintf(&b, "  (no matches for %q)\n\n", m.searchInput.Value())
+		b.WriteString(inboxHelpStyle.Render("  esc clear filter • / edit • q quit"))
 		return b.String()
 	}
 
@@ -368,7 +538,7 @@ func (m *inboxWatchModel) renderListView() string {
 	tbl.HeaderStyle = inboxHeaderStyle
 	tbl.SelectedStyle = inboxSelectedStyle
 	tbl.SelectedIndex = m.cursor
-	for _, e := range m.entries {
+	for _, e := range visible {
 		marker := "*" // unread
 		if e.Read {
 			marker = " "
@@ -391,7 +561,7 @@ func (m *inboxWatchModel) renderListView() string {
 	b.WriteString(tbl.Render())
 	b.WriteString("\n\n")
 	b.WriteString(inboxHelpStyle.Render(
-		"  ↑/↓ nav • enter read • r refresh • q quit"))
+		"  ↑/↓ nav • enter read • / search • r refresh • q quit"))
 	return b.String()
 }
 
