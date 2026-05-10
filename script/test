@@ -18,17 +18,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Install the rewire binary if missing. We don't pin a version here
-# (Phase 1 — pin lands with mise.toml in Phase 2).
+# Install the rewire binary if missing. Pinned to match mise.toml +
+# the agentd_test imports of github.com/GiGurra/rewire/pkg/rewire.
 if ! command -v rewire >/dev/null 2>&1; then
     echo "Installing rewire…" >&2
-    go install github.com/GiGurra/rewire/cmd/rewire@latest
+    go install github.com/GiGurra/rewire/cmd/rewire@v0.0.75
 fi
 
 # Separate cache so rewire's rewritten compile artifacts don't leak
 # back into the production GOCACHE (and vice versa). Mirrors the
-# rewire README's recommended split.
+# rewire README's recommended split. Lives under $TMPDIR rather
+# than ~/.cache so the path stays writable in restrictive sandboxes
+# that only allow tmp + ~/.cache/go-build (exact). Cache persists
+# until the next reboot — fine for iterative dev runs.
 export GOFLAGS="${GOFLAGS:-} -toolexec=rewire -tags=rewire"
-export GOCACHE="${GOCACHE:-$HOME/.cache/go-build-tclaude-test}"
+export GOCACHE="${TMPDIR:-/tmp}/go-build-tclaude-test"
 
 exec go test "$@"

@@ -9,7 +9,9 @@ go = "1.26.2"
 # production build cache — see docs/plans/testing-strategy.md.
 [env]
 GOFLAGS = "-toolexec=rewire -tags=rewire"
-GOCACHE = "{{ env.HOME }}/.cache/go-build-tclaude-test"
+# Lives under $TMPDIR rather than ~/.cache so it stays writable in
+# restrictive sandboxes that only allow tmp + ~/.cache/go-build (exact).
+GOCACHE = "{{ env.TMPDIR | default(value='/tmp') }}/go-build-tclaude-test"
 
 [tasks.test]
 description = "Run go test with rewire"

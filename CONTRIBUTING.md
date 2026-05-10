@@ -52,7 +52,7 @@ Works without mise. Useful for CI and devs who don't use mise.
 
 The wrapper installs rewire on the fly if missing, sets
 `GOFLAGS=-toolexec=rewire -tags=rewire`, and uses a separate
-`GOCACHE` (default `~/.cache/go-build-tclaude-test`) so rewritten
+`GOCACHE` (default `${TMPDIR:-/tmp}/go-build-tclaude-test`) so rewritten
 compile artifacts don't leak back into the production build cache.
 
 ### Caveat: stale rewire registry on first compile
