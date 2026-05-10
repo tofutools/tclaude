@@ -224,9 +224,10 @@ func peerEntriesFromResolved(rs []*agent.Resolved) []*peerEntry {
 // --- /v1/messages (POST), /v1/messages/{id} (GET) ---
 
 type sendReq struct {
-	To      string `json:"to"`
-	Subject string `json:"subject,omitempty"`
-	Body    string `json:"body"`
+	To      string   `json:"to"`
+	Cc      []string `json:"cc,omitempty"`
+	Subject string   `json:"subject,omitempty"`
+	Body    string   `json:"body"`
 }
 
 // sendResp carries the result of either a direct send or a group
@@ -307,12 +308,26 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	if !requireGroupActive(w, via) {
 		return
 	}
+
+	// Multi-recipient (--cc) path: one row per (To + each CC), each with
+	// the same to_recipients / cc_recipients audience. CCs that resolve
+	// ambiguously / not at all / aren't reachable surface as a 4xx so
+	// the sender can fix the typo before any rows are written.
+	if len(req.Cc) > 0 {
+		handleMultiRecipient(w, fromID, target.ConvID, via, &req)
+		return
+	}
+
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  via.ID,
 		FromConv: fromID,
 		ToConv:   target.ConvID,
 		Subject:  req.Subject,
 		Body:     req.Body,
+		// Even single-recipient sends record the audience arrays now
+		// so the recipient's `inbox read` can render a consistent
+		// "To: ..." header. CC stays empty.
+		ToRecipients: []string{target.ConvID},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -320,6 +335,135 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	delivered := nudgeIfAlive(id, target.ConvID)
 	writeJSON(w, http.StatusOK, sendResp{ID: id, Delivered: delivered, ViaGroup: via.Name})
+}
+
+// handleMultiRecipient writes one row per (primary + each CC) of a
+// `--cc`-flagged send, where every row carries the same to_recipients
+// / cc_recipients arrays so each receiver's `inbox read` sees the full
+// audience. The primary's `via` group has already been validated by
+// the caller; each CC is independently resolved and authorised.
+//
+// Pre-validation: if any CC fails (ambiguous, unknown, unreachable,
+// duplicate of self/primary), the whole send is rejected before any
+// rows are written. Half-broadcasts are confusing for the recipient
+// who notices an extra "CC: <missing>" entry that wasn't actually
+// delivered.
+func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv string, primaryVia *db.AgentGroup, req *sendReq) {
+	type resolvedCC struct {
+		ConvID string
+		Alias  string
+		Via    *db.AgentGroup
+	}
+	resolved := make([]resolvedCC, 0, len(req.Cc))
+	seen := map[string]bool{primaryConv: true, fromID: true}
+	for _, sel := range req.Cc {
+		sel = strings.TrimSpace(sel)
+		if sel == "" {
+			continue
+		}
+		t, matches, err := agent.ResolveSelector(sel)
+		if errors.Is(err, agent.ErrAmbiguous) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":      fmt.Sprintf("CC selector %q matches multiple conversations", sel),
+				"code":       "ambiguous",
+				"candidates": peerEntriesFromResolved(matches),
+			})
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found",
+				fmt.Sprintf("CC %q: %v", sel, err))
+			return
+		}
+		if seen[t.ConvID] {
+			// Duplicate (CC == To, CC == self, CC repeated). Skip silently
+			// — the sender's intent is "include this conv once" either way.
+			continue
+		}
+		seen[t.ConvID] = true
+		via, _, err := db.CanSenderReachTarget(fromID, t.ConvID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if via == nil {
+			writeError(w, http.StatusForbidden, "auth",
+				fmt.Sprintf("CC %q: no shared group and you do not own a group containing it", sel))
+			return
+		}
+		if via.IsArchived() {
+			writeError(w, http.StatusConflict, "archived",
+				fmt.Sprintf("CC %q routes via archived group %q", sel, via.Name))
+			return
+		}
+		alias := agent.AliasFor(via.ID, t.ConvID)
+		resolved = append(resolved, resolvedCC{ConvID: t.ConvID, Alias: alias, Via: via})
+	}
+
+	toRecipients := []string{primaryConv}
+	ccRecipients := make([]string, 0, len(resolved))
+	for _, r := range resolved {
+		ccRecipients = append(ccRecipients, r.ConvID)
+	}
+
+	out := sendResp{ViaGroup: primaryVia.Name, Recipients: []recipient{}}
+
+	// Insert + nudge primary first so the response order matches the
+	// "To:, CC: ..." header order in inbox read.
+	primaryAlias := agent.AliasFor(primaryVia.ID, primaryConv)
+	primaryID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:      primaryVia.ID,
+		FromConv:     fromID,
+		ToConv:       primaryConv,
+		Subject:      req.Subject,
+		Body:         req.Body,
+		ToRecipients: toRecipients,
+		CcRecipients: ccRecipients,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	primaryDelivered := nudgeIfAlive(primaryID, primaryConv)
+	out.Recipients = append(out.Recipients, recipient{
+		ConvID:    primaryConv,
+		Alias:     primaryAlias,
+		MessageID: primaryID,
+		Delivered: primaryDelivered,
+	})
+
+	for _, r := range resolved {
+		id, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:      r.Via.ID,
+			FromConv:     fromID,
+			ToConv:       r.ConvID,
+			Subject:      req.Subject,
+			Body:         req.Body,
+			ToRecipients: toRecipients,
+			CcRecipients: ccRecipients,
+		})
+		if err != nil {
+			// Don't abort: the primary already landed. Surface the per-CC
+			// failure so the sender can retry just that one.
+			slog.Warn("multi-recipient: CC insert failed",
+				"to", r.ConvID, "error", err)
+			out.Recipients = append(out.Recipients, recipient{
+				ConvID:    r.ConvID,
+				Alias:     r.Alias,
+				MessageID: 0,
+				Delivered: false,
+			})
+			continue
+		}
+		delivered := nudgeIfAlive(id, r.ConvID)
+		out.Recipients = append(out.Recipients, recipient{
+			ConvID:    r.ConvID,
+			Alias:     r.Alias,
+			MessageID: id,
+			Delivered: delivered,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleMulticast fans out req.Body to every member of the named group
@@ -996,6 +1140,16 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		// which figures this out from the message ID.
 		"reply_cmd": fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID),
 	}
+	// Email-style audience (schema v18). Each recipient row carries the
+	// same arrays so any reader can render "To: ...; CC: ..." identically.
+	// Decorated with aliases when known so the receiver sees friendly names
+	// alongside the conv-ids.
+	if len(m.ToRecipients) > 0 {
+		resp["to_recipients"] = decorateRecipients(m.GroupID, m.ToRecipients)
+	}
+	if len(m.CcRecipients) > 0 {
+		resp["cc_recipients"] = decorateRecipients(m.GroupID, m.CcRecipients)
+	}
 	// In-Reply-To: only set on threaded messages so the renderer can
 	// hide the header for top-of-thread messages.
 	if m.ParentID > 0 {
@@ -1141,6 +1295,30 @@ func bodyPreview(s string) string {
 		return s
 	}
 	return string(r[:max]) + "…"
+}
+
+// recipientLine pairs a conv-id with the friendly label resolved for it
+// (alias if known, else the conv-index title, else empty). Returned as
+// part of /v1/messages/{id} so `inbox read` can render
+// "To: alice <abcd1234>" without a second round-trip.
+type recipientLine struct {
+	ConvID string `json:"conv_id"`
+	Alias  string `json:"alias,omitempty"`
+}
+
+// decorateRecipients turns a recipients array (conv-ids only, as stored
+// in agent_messages) into a labelled list. Best-effort lookup: a conv
+// without an alias / index row just gets ConvID set, so the renderer
+// can fall back to the short prefix.
+func decorateRecipients(groupID int64, ids []string) []recipientLine {
+	out := make([]recipientLine, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, recipientLine{
+			ConvID: id,
+			Alias:  agent.AliasFor(groupID, id),
+		})
+	}
+	return out
 }
 
 func groupByID(id int64) (*db.AgentGroup, error) {

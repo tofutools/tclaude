@@ -257,24 +257,47 @@ func runInboxRead(p *inboxReadParams, stdout, stderr io.Writer) int {
 	return runInboxReadDaemon(p, id, stdout, stderr)
 }
 
+// recipientLine mirrors the daemon's response shape for the audience
+// arrays (to_recipients / cc_recipients on /v1/messages/{id}).
+type recipientLine struct {
+	ConvID string `json:"conv_id"`
+	Alias  string `json:"alias"`
+}
+
+// formatRecipientList renders a recipient list as comma-separated
+// "alias <prefix>" entries (or just the prefix when no alias is known).
+func formatRecipientList(rs []recipientLine) string {
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		if r.Alias != "" {
+			parts = append(parts, fmt.Sprintf("%s <%s>", r.Alias, short(r.ConvID)))
+		} else {
+			parts = append(parts, short(r.ConvID))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) int {
 	path := fmt.Sprintf("/v1/messages/%d", id)
 	if p.KeepUnread {
 		path += "?keep-unread=1"
 	}
 	var m struct {
-		ID            int64  `json:"id"`
-		From          string `json:"from"`
-		FromAlias     string `json:"from_alias"`
-		To            string `json:"to"`
-		Group         string `json:"group"`
-		Subject       string `json:"subject"`
-		Body          string `json:"body"`
-		CreatedAt     string `json:"created_at"`
-		ReplyTo       string `json:"reply_to"`
-		ReplyCmd      string `json:"reply_cmd"`
-		InReplyTo     int64  `json:"in_reply_to,omitempty"`
-		ParentSubject string `json:"parent_subject,omitempty"`
+		ID            int64           `json:"id"`
+		From          string          `json:"from"`
+		FromAlias     string          `json:"from_alias"`
+		To            string          `json:"to"`
+		Group         string          `json:"group"`
+		Subject       string          `json:"subject"`
+		Body          string          `json:"body"`
+		CreatedAt     string          `json:"created_at"`
+		ReplyTo       string          `json:"reply_to"`
+		ReplyCmd      string          `json:"reply_cmd"`
+		InReplyTo     int64           `json:"in_reply_to,omitempty"`
+		ParentSubject string          `json:"parent_subject,omitempty"`
+		ToRecipients  []recipientLine `json:"to_recipients,omitempty"`
+		CcRecipients  []recipientLine `json:"cc_recipients,omitempty"`
 	}
 	if err := DaemonGet(path, &m); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -297,7 +320,18 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	} else {
 		fmt.Fprintf(stdout, "  From:       %s\n", m.From)
 	}
-	fmt.Fprintf(stdout, "  To:         %s\n", m.To)
+	if len(m.ToRecipients) > 0 {
+		// Email-style audience: render the full To: list (and CC: if
+		// present) instead of the single per-row to_conv. Lets the
+		// receiver see who else is on the thread without an extra
+		// round-trip.
+		fmt.Fprintf(stdout, "  To:         %s\n", formatRecipientList(m.ToRecipients))
+	} else {
+		fmt.Fprintf(stdout, "  To:         %s\n", m.To)
+	}
+	if len(m.CcRecipients) > 0 {
+		fmt.Fprintf(stdout, "  CC:         %s\n", formatRecipientList(m.CcRecipients))
+	}
 	fmt.Fprintf(stdout, "  Group:      %s\n", m.Group)
 	if m.Subject != "" {
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)

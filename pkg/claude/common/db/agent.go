@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -159,17 +160,26 @@ func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
 
 // AgentMessage is a row in agent_messages. Body is stored inline.
 // ParentID is the message this one is a reply to, or 0 for top-of-thread.
+//
+// ToRecipients / CcRecipients are the email-style audience of the
+// original send: every row of a multi-recipient send carries the same
+// arrays (denormalized) so each recipient knows who else got the
+// message. Empty for legacy single-recipient sends — ToConv stays
+// canonical for delivery + filtering, the recipient arrays are
+// display-only.
 type AgentMessage struct {
-	ID          int64
-	GroupID     int64
-	FromConv    string
-	ToConv      string
-	Subject     string
-	Body        string
-	ParentID    int64
-	CreatedAt   time.Time
-	DeliveredAt time.Time
-	ReadAt      time.Time
+	ID           int64
+	GroupID      int64
+	FromConv     string
+	ToConv       string
+	Subject      string
+	Body         string
+	ParentID     int64
+	CreatedAt    time.Time
+	DeliveredAt  time.Time
+	ReadAt       time.Time
+	ToRecipients []string
+	CcRecipients []string
 }
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
@@ -535,11 +545,13 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	}
 	res, err := db.Exec(`INSERT INTO agent_messages
 		(group_id, from_conv, to_conv, subject, body, parent_id,
-		 created_at, delivered_at, read_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 created_at, delivered_at, read_at,
+		 to_recipients, cc_recipients)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.GroupID, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
 		m.CreatedAt.Format(time.RFC3339Nano),
-		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt))
+		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt),
+		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients))
 	if err != nil {
 		return 0, err
 	}
@@ -823,7 +835,8 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 		return nil, err
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
-		created_at, delivered_at, read_at
+		created_at, delivered_at, read_at,
+		to_recipients, cc_recipients
 		FROM agent_messages
 		WHERE to_conv = ? AND delivered_at = ''
 		ORDER BY created_at ASC`
@@ -886,7 +899,8 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
-		created_at, delivered_at, read_at
+		created_at, delivered_at, read_at,
+		to_recipients, cc_recipients
 		FROM agent_messages WHERE id = ?`, id)
 	m, err := scanAgentMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -916,7 +930,8 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 		return nil, err
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
-		created_at, delivered_at, read_at
+		created_at, delivered_at, read_at,
+		to_recipients, cc_recipients
 		FROM agent_messages WHERE ` + col + ` = ? ORDER BY created_at DESC`
 	args := []any{value}
 	if limit > 0 {
@@ -945,6 +960,36 @@ func formatTimeOrEmpty(t time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339Nano)
+}
+
+// recipientsToJSON encodes a recipient slice as the JSON-array text we
+// store in agent_messages.{to_recipients,cc_recipients}. Empty / nil
+// slices encode to "" so the column matches the v18 default of empty
+// string for legacy rows (round-trip-friendly).
+func recipientsToJSON(rs []string) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(rs)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// recipientsFromJSON decodes the column back into a slice. Empty
+// string decodes to nil; malformed input also yields nil rather than
+// failing the whole row read — the recipients arrays are display-only,
+// not load-bearing for delivery.
+func recipientsFromJSON(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 func parseTimeOrZero(s string) time.Time {
@@ -987,13 +1032,17 @@ func scanAgentGroupMember(s rowScanner) (*AgentGroupMember, error) {
 func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
 	var createdAt, deliveredAt, readAt string
+	var toRecipients, ccRecipients string
 	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
 		&m.Subject, &m.Body, &m.ParentID,
-		&createdAt, &deliveredAt, &readAt); err != nil {
+		&createdAt, &deliveredAt, &readAt,
+		&toRecipients, &ccRecipients); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = parseTimeOrZero(createdAt)
 	m.DeliveredAt = parseTimeOrZero(deliveredAt)
 	m.ReadAt = parseTimeOrZero(readAt)
+	m.ToRecipients = recipientsFromJSON(toRecipients)
+	m.CcRecipients = recipientsFromJSON(ccRecipients)
 	return &m, nil
 }

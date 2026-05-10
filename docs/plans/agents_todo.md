@@ -448,10 +448,15 @@ existing `groups.*`/`member.*` model:
 - ~~Surface outbox via `inbox sent`.~~ **Shipped.** `tclaude agent
   inbox sent` lists this conv's outgoing messages with delivery +
   read status from the recipient's side. JSON via `--json`.
-- Multi-recipient messages: add `to_convs` (or normalise to a
-  per-recipient row table) plus a `cc_convs` list. The "from / to / cc /
-  subject / body / read" mental model maps directly onto email and is
-  intuitive for agents to reason about.
+- ~~Multi-recipient messages.~~ **Shipped.** `tclaude agent message
+  <primary> --cc <other> --cc <another> "body"` writes one row per
+  recipient (To + each CC) with the same email-style audience arrays
+  denormalised onto every row (schema v18 `to_recipients` /
+  `cc_recipients` TEXT-as-JSON). `inbox read` renders
+  `To: ...; CC: ...` from those arrays, so each receiver sees the
+  full audience without an extra round-trip. Pre-flight resolve
+  rejects the whole send if any CC selector is unknown / ambiguous /
+  unreachable, so half-broadcasts can't silently happen.
 - ~~In-Reply-To threading.~~ **Shipped.** `parent_id` column on
   `agent_messages` (schema v10), auto-set on `reply`. `inbox read`
   renders `In-Reply-To: <id> ("Subject")`. `inbox ls` prefixes

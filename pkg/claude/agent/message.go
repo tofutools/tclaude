@@ -36,11 +36,12 @@ type messageDeps struct {
 }
 
 type messageParams struct {
-	Target  string `pos:"true" help:"Target conv (UUID/prefix/title) OR 'group:<name>' to broadcast to every member"`
-	Body    string `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
-	Subject string `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
-	Stdin   bool   `long:"stdin" help:"Read body from stdin"`
-	File    string `long:"file" short:"f" optional:"true" help:"Read body from a file"`
+	Target  string   `pos:"true" help:"Target conv (UUID/prefix/title) OR 'group:<name>' to broadcast to every member"`
+	Body    string   `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
+	Subject string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
+	Stdin   bool     `long:"stdin" help:"Read body from stdin"`
+	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file"`
+	Cc      []string `long:"cc" optional:"true" help:"CC recipient (alias / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
 }
 
 func messageCmd() *cobra.Command {
@@ -53,6 +54,7 @@ func messageCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *messageParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeMessageTargets)
+			boa.GetParamT(ctx, &p.Cc).SetAlternativesFunc(completeConvSelectors)
 			return nil
 		},
 		RunFunc: func(p *messageParams, _ *cobra.Command, _ []string) {
@@ -90,11 +92,15 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			Delivered bool   `json:"delivered"`
 		} `json:"recipients,omitempty"`
 	}
-	err := DaemonPost("/v1/messages", map[string]string{
+	payload := map[string]any{
 		"to":      p.Target,
 		"subject": p.Subject,
 		"body":    body,
-	}, &resp)
+	}
+	if len(p.Cc) > 0 {
+		payload["cc"] = p.Cc
+	}
+	err := DaemonPost("/v1/messages", payload, &resp)
 	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
 		fmt.Fprintf(stderr, "%s\n", de.Msg)
 		return rcAmbiguous
@@ -107,8 +113,12 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	// Recipients slice gets `omitempty`'d when empty (single-member
 	// group), so checking response shape would misroute that case
 	// into the direct-send branch. The CLI knows what it sent.
+	//
+	// `--cc` also fans out per-recipient (one row per To + each CC),
+	// so we reuse the multicast rendering path in that case too.
 	isMulticast := strings.HasPrefix(p.Target, "group:")
-	if isMulticast {
+	hasCC := len(p.Cc) > 0
+	if isMulticast || hasCC {
 		if len(resp.Recipients) == 0 {
 			fmt.Fprintf(stdout, "No recipients in group %q (you're the only member); nothing sent.\n", resp.ViaGroup)
 			return rcOK
@@ -119,8 +129,12 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 				delivered++
 			}
 		}
-		fmt.Fprintf(stdout, "Broadcast to group %q: %d recipients (%d delivered, %d queued).\n",
-			resp.ViaGroup, len(resp.Recipients), delivered, len(resp.Recipients)-delivered)
+		header := "Broadcast"
+		if hasCC && !isMulticast {
+			header = "Sent (multi-recipient)"
+		}
+		fmt.Fprintf(stdout, "%s via group %q: %d recipients (%d delivered, %d queued).\n",
+			header, resp.ViaGroup, len(resp.Recipients), delivered, len(resp.Recipients)-delivered)
 		for _, rcp := range resp.Recipients {
 			alias := rcp.Alias
 			if alias == "" {

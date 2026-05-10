@@ -664,3 +664,69 @@ func TestListAgentMessagesFromConv(t *testing.T) {
 		t.Errorf("expected most-recent-first, got %q then %q", out[0].Body, out[1].Body)
 	}
 }
+
+// TestAgentMessageRecipientsRoundTrip verifies the email-style
+// audience arrays (schema v18 to_recipients / cc_recipients) survive
+// Insert -> Get and Insert -> List read paths. Empty arrays decode
+// back as nil; populated arrays preserve order.
+func TestAgentMessageRecipientsRoundTrip(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("alpha", "")
+
+	// Multi-recipient: To=[primary], CC=[c1, c2]. Three rows would
+	// normally be inserted (one per recipient); here we just round-trip
+	// the audience on one row to keep the test focused.
+	id, err := InsertAgentMessage(&AgentMessage{
+		GroupID:      g,
+		FromConv:     "sender",
+		ToConv:       "primary",
+		Body:         "hi all",
+		ToRecipients: []string{"primary"},
+		CcRecipients: []string{"c1", "c2"},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	got, err := GetAgentMessage(id)
+	if err != nil || got == nil {
+		t.Fatalf("GetAgentMessage: %v %+v", err, got)
+	}
+	if len(got.ToRecipients) != 1 || got.ToRecipients[0] != "primary" {
+		t.Errorf("ToRecipients = %v, want [primary]", got.ToRecipients)
+	}
+	if len(got.CcRecipients) != 2 || got.CcRecipients[0] != "c1" || got.CcRecipients[1] != "c2" {
+		t.Errorf("CcRecipients = %v, want [c1 c2]", got.CcRecipients)
+	}
+
+	// List path scans the same columns; check it picks them up too.
+	msgs, err := ListAgentMessagesForConv("primary", 0)
+	if err != nil {
+		t.Fatalf("ListAgentMessagesForConv: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 inbox row, got %d", len(msgs))
+	}
+	if len(msgs[0].CcRecipients) != 2 {
+		t.Errorf("list CcRecipients lost: %v", msgs[0].CcRecipients)
+	}
+
+	// Legacy single-recipient (no audience): both arrays decode to nil.
+	idLegacy, err := InsertAgentMessage(&AgentMessage{
+		GroupID:  g,
+		FromConv: "sender",
+		ToConv:   "lone",
+		Body:     "old shape",
+	})
+	if err != nil {
+		t.Fatalf("Insert legacy: %v", err)
+	}
+	legacy, err := GetAgentMessage(idLegacy)
+	if err != nil || legacy == nil {
+		t.Fatalf("GetAgentMessage legacy: %v %+v", err, legacy)
+	}
+	if legacy.ToRecipients != nil || legacy.CcRecipients != nil {
+		t.Errorf("legacy row should decode to nil arrays, got to=%v cc=%v",
+			legacy.ToRecipients, legacy.CcRecipients)
+	}
+}
