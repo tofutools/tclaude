@@ -550,13 +550,12 @@ Future iterations:
 
 ### Spawn UX
 
-- **`tclaude agent spawn` should default cwd to the caller's cwd, not
-  the daemon's.** Today the new agent inherits whatever directory the
-  daemon was started in, which is almost never what the human wants
-  when they type `agent spawn` from a project tree. Fix is small: the
-  CLI captures `os.Getwd()` and includes it in the spawn POST body so
-  the daemon's `forkSpawn` plumbs it through to the new tclaude session.
-  Existing `-C cwd` / `--cwd` override stays as the explicit knob.
+- ~~**`tclaude agent spawn` should default cwd to the caller's cwd, not
+  the daemon's.**~~ — **shipped (2026-05).** Both `tclaude agent spawn`
+  and `tclaude --join-group` (and `tclaude session new --join-group`)
+  now capture `os.Getwd()` on the CLI side when `-C` / `--cwd` is
+  omitted, before POSTing to the daemon's spawn endpoint. Explicit
+  `-C` still overrides as before. Daemon-side behavior unchanged.
 
 ### Inbox & message UX
 - **Interactive mailbox inspector**: `tclaude agent mailbox <conv> -w` (or

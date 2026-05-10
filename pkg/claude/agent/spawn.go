@@ -18,7 +18,7 @@ type spawnParams struct {
 	Alias   string `long:"alias" short:"a" optional:"true" help:"Alias for the new member in this group (e.g. 'reviewer')"`
 	Role    string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	Descr   string `long:"descr" short:"d" optional:"true" help:"Description of the new member's purpose in this group"`
-	Cwd     string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to daemon's cwd)"`
+	Cwd     string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
 	Timeout string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
 
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
@@ -75,11 +75,17 @@ func runSpawn(p *spawnParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
+	cwd := p.Cwd
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
 	body := map[string]any{
 		"alias":           p.Alias,
 		"role":            p.Role,
 		"descr":           p.Descr,
-		"cwd":             p.Cwd,
+		"cwd":             cwd,
 		"timeout_seconds": timeoutSeconds,
 	}
 	var resp struct {

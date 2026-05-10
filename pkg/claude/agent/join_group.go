@@ -33,11 +33,17 @@ func runJoinGroup(params *session.NewParams) error {
 		return fmt.Errorf("daemon required for --join-group")
 	}
 
+	cwd := params.Dir
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
 	body := map[string]any{
 		"alias":           params.Alias,
 		"role":            params.Role,
 		"descr":           params.Descr,
-		"cwd":             params.Dir,
+		"cwd":             cwd,
 		"timeout_seconds": 30,
 	}
 	var resp struct {
