@@ -234,12 +234,17 @@ agent_permissions / agent_group_owners audit columns alone.
   --global --label <random>`, polls SQLite for the new conv-id, then
   adds it to the group. Permission slug `groups.spawn` (default:
   human-only). Returns the attach command for the new tmux session.
-- Variant: `tclaude --join-group <group>` flag on the top-level
-  command (so `tclaude` itself starts an attached session that
-  auto-joins). Less useful than the daemon-orchestrated `agent spawn`
-  for parallel work, but still nice for the "I want to attach right
-  now" path. Open question: pre-launch (DB write before conv-id) vs.
-  first-tick (after the conv-id is known via a hook).
+- ~~Variant: `tclaude --join-group <group>` flag on the top-level
+  command~~ — **shipped (2026-05).** Available on both `tclaude`
+  (top-level) and `tclaude session new`. Reuses the existing
+  `groups.spawn` daemon endpoint (which already does the first-tick
+  poll-for-conv-id), then attaches to the new tmux session in the
+  foreground. `-d` flips to detached + prints the attach command.
+  Optional `--alias`/`--role`/`--descr` mirror `agent spawn`. Tab-
+  completion suggests existing group names. Conflicts with
+  `--resume`/`--label` and rejects up front. No new daemon code —
+  the shipped `--join-group` is just a CLI orchestration layer over
+  the existing spawn endpoint.
 
 ### Group lifecycle (spawn / stop / resume entire teams)
 
@@ -413,38 +418,40 @@ Open follow-ups:
 
 ### Agent self-service permissions (graduated trust)
 
-Today the human is the sole mutator: any `groups create|rm|add|remove`
-from a process with a `claude`/`node` ancestor is refused. We want a
-graduated permission model so trusted agents can do *some* of this on
-their own, while everything else still requires human action.
+**Mostly shipped (2026-05).** The graduated permission model is in:
+`requirePermission()` consults defaults + per-conv overrides per
+permission slug. Humans (no claude ancestor) bypass entirely. See
+`pkg/claude/agentd/identity.go` for the slug list and
+`pkg/claude/agentd/permissions.go` for the per-slug metadata.
 
-Permission levels to consider, from least to most powerful:
-- `member.redesignate` — change alias / role / descr on existing members
-  (incl. self).
-- `member.add` — add a conv to one of *its own* groups (self-onboard
-  peers it can already see).
-- `member.remove` — kick a conv from one of its own groups.
-- `agent.spawn` — start a new tclaude session (probably implies a
-  bootstrap group join, see "Session shortcuts").
-- `agent.stop` — terminate another agent's session (tmux kill).
-- `agent.resume` — re-attach a stopped session.
-- `groups.create` / `groups.rm` — full group lifecycle.
+Shipped slugs (default human-only unless noted):
+- `member.add` / `member.remove` / `member.redesignate`
+- `groups.create` / `groups.rm` / `groups.own` / `groups.spawn`
+  / `groups.stop` / `groups.resume`
+- `permissions.grant` / `permissions.revoke`
+- `self.rename` / `self.compact` / `self.reincarnate` / `self.clone`
+  / `self.schedule` (default-granted alongside the other
+  self-lifecycle slugs)
+- `agent.rename` / `agent.compact` / `agent.reincarnate` /
+  `agent.clone` / `agent.schedule` (cross-agent / manager pattern,
+  default human-only; group-owner implicitly bypasses against group
+  members)
 
-Storage shape: a per-`(conv, group)` permission set, plus a per-conv
-"global" permission set the human can grant for cross-group powers
-(`agent.spawn` doesn't really belong to any one group). The daemon's
-`requireHuman()` becomes a permission check against this table; the
-"absolutely no caller from a `claude` ancestor" rule remains the
-default for any permission the agent does not hold.
+Storage: `agent_permissions` table (schema v9) holds per-conv grants;
+`requirePermission()` evaluates `union(defaults, grants)` against the
+caller's resolved conv-id.
 
-Open questions:
-- Are permissions inherited (if `member.add` is granted in group X, can
-  the agent add to *any* group it's a member of?). Probably no — keep
-  it explicit per group, with a separate "global" bucket.
-- How does a permission grant happen? Likely `tclaude agent groups
-  grant <group> <conv> member.add` (human-only, same gate as
-  membership).
-- Should grants expire? v1: no; persistent until revoked.
+Still open:
+- `agent.spawn` — generic "spawn a fresh CC session by some
+  identifier (not tied to a group)" slug. Today an agent can already
+  call `tclaude session new` directly (it doesn't route through the
+  daemon), so there's nothing for the daemon to gate yet. Routing
+  `session new` through the daemon would make this enforceable —
+  bigger refactor, deferred.
+- `agent.stop` / `agent.resume` — cross-conv stop/resume by conv-id
+  (the bulk-by-group `groups.stop` / `groups.resume` are shipped).
+  Useful when a manager agent wants to act on a single subordinate
+  rather than the whole team.
 
 ### Human-in-the-loop approval flow
 
@@ -593,38 +600,90 @@ changed and when.
 **Direct-manipulation interactions in the Groups view** (the natural
 home for membership editing):
 
-- **Drag-and-drop members between groups.** Drag a member row from
-  group A and drop it on group B's header → moves the conv (POST add
-  to B + DELETE from A, in that order so the conv is never groupless
-  mid-drag). Drop targets pulse on hover so the action is
-  discoverable.
-- **Ctrl+drag = copy/multi-membership.** Holding Ctrl while dropping
-  pops a small choice menu:
-   1. Add to the new group (dual membership; the conv is now in
-      both A and B).
-   2. Clone the agent and add the clone to B (uses `agent clone`
-      once that ships; the original stays in A untouched, the
-      clone joins B).
-   3. (open question — better idea?) Maybe "spawn a fresh
-      sibling into B" as a third option, useful when copy-the-conv
-      isn't what you want but you do want a peer in the same role.
-  Default action without Ctrl is the move (current behaviour with
-  drop targets).
-- **Per-member action buttons.** Far-right (or far-left) cell on
-  each member row gets icon buttons:
-   - Toggle owner: grant-owner / revoke-owner depending on current
-     state. Uses `groups grant-owner` / `revoke-owner`.
-   - Remove from group: confirmation modal (destructive), calls
-     `groups remove`.
-   - Possible third: reincarnate / compact (manager-pattern
-     verbs) once we want one-click lifecycle controls. Gated by
-     the same `agent.<verb>` slug + owner-of-group rules.
+- **Drag-and-drop members between groups.** Modifier-key matrix:
+  - **No modifier (move)**: drag a member row from group A onto
+    group B's header → POST add to B + DELETE from A, in that order
+    so the conv is never groupless mid-drag.
+  - **Ctrl+drag (clone)**: drops a `agent clone` of the source row
+    into B, leaving the original in A untouched. Useful for "spin
+    up a peer in this role." Uses the existing `clone` daemon
+    endpoint with target group set to the drop target.
+  - **Shift+drag (multi-membership)**: adds the conv to B without
+    removing it from A. The same conv is now a member of both
+    groups (with the same alias, or a `-N` suffix if the alias
+    collides). Useful for promoting a single agent into multiple
+    role contexts.
+  Drop targets pulse on hover so the action is discoverable; a small
+  modifier hint pill ("→ move", "→ clone", "→ multi") appears near the
+  cursor while dragging so the user can see which behaviour they're
+  about to commit.
+- **"Ungrouped" virtual group.** A pinned row at the bottom (or top)
+  of the Groups tab that surfaces every conv-id that's not currently
+  a member of any group but is online / has a recent session. Acts as
+  a drag SOURCE: you can drag an ungrouped agent into a real group to
+  add it. Drop ON the ungrouped row removes the conv from all groups
+  (move-to-ungrouped = "kick from every group I'm in"). Empty when
+  every known agent already has at least one group membership.
+- **Per-member action buttons.** Far-right cell on each member row
+  gets icon buttons:
+  - **focus**: jump to the agent's tmux pane (shipped).
+  - **clone**: one-click `agent clone` of this conv into the same
+    group; uses the existing daemon orchestration. Same button on
+    the Agents tab too (without the group context — clones land
+    in every group the source was in, default behaviour).
+  - **wake up**: only shown when the agent is OFFLINE. Spawns a
+    fresh tmux session resumed onto this conv (`tclaude session
+    new -r <conv> -d --global`) — same orchestration `groups
+    resume` uses, but scoped to a single conv. Daemon endpoint
+    `POST /api/agents/{conv}/wake` (or hook the existing
+    `groups.resume` slug into a single-conv path). Available on
+    both Groups and Agents tabs.
+  - **shut down**: only shown when the agent is ONLINE. Soft `/exit`
+    injection (or `--force` kill-session) into the agent's tmux
+    pane — same as `groups stop` but scoped to a single conv.
+    Confirmation modal (destructive: the conv keeps existing,
+    but the live tmux session ends and any in-flight tool calls
+    get cut). Available on both tabs.
+  - **make/revoke owner**: grant-owner / revoke-owner depending on
+    current state (shipped).
+  - **remove**: confirmation modal (destructive), calls
+    `groups remove` (shipped).
+  - Possible later: reincarnate / compact (manager-pattern
+    verbs) once we want one-click lifecycle controls. Gated by
+    the same `agent.<verb>` slug + owner-of-group rules.
+
+  Implementation note: wake/shutdown surface the long-pending
+  `agent.spawn` / `agent.stop` / `agent.resume` slugs in the
+  permission system (single-conv variants of the bulk
+  `groups.spawn`/`stop`/`resume` slugs that already ship). The
+  dashboard is human-only so it bypasses the slug check, but the
+  underlying daemon endpoints should still gate agent callers.
+- **Add-member button** in each group's header, next to "delete
+  group". Opens a search overlay listing candidate convs (members
+  of any group + currently-online conv-sessions; "include all
+  conversations" checkbox extends to every conv-id we know about).
+  Selecting one calls `groups add` against the current group.
+  Closes the gap between "I see this agent in another group" and
+  "I want them in this group too" without dragging.
 - ~~**Per-group delete button**~~ — **shipped.** Header button (hover-
   reveal, full opacity when expanded) → confirm modal → `DELETE
   /api/groups/{name}` → `db.DeleteAgentGroup`. The DB helper has
   `ON DELETE RESTRICT` on `agent_messages`, so the modal warns the
   user to clear the inbox first; backend returns 409 on constraint
   failure and the toast surfaces the error.
+- **Rename buttons (agents + groups).** Per-row "rename" affordance on
+  both the Agents tab and the Groups tab (group header rename + member
+  rename inline). Backed by the existing `tclaude agent rename`
+  (uses `self.rename` / `agent.rename` slugs, gated daemon-side) and a
+  `groups rename` we'd need to add (no current verb). Inline edit
+  pattern: small input replaces the label cell on click, Enter saves /
+  Esc cancels. Same dashboard-cookie auth. Open question: do agent
+  renames have to round-trip through `injectSlashCommand` (today's
+  only path) or do we add a direct DB rewrite for human-from-dashboard
+  callers? Direct DB rewrite is simpler but means CC's in-process
+  conversation title disagrees until the next /rename — probably OK if
+  the dashboard calls the same daemon endpoint that the CLI uses,
+  which already orchestrates the slash-injection.
 - ~~**Jump-to-terminal button**~~ — **shipped.** `POST /api/jump/{conv}`
   resolves the conv to its alive tmux session row daemon-side and
   calls `session.TryFocusAttachedSession`. UI shows a "focus"
@@ -640,12 +699,36 @@ home for membership editing):
   archive-vs-delete distinction. Open questions: per-group only or
   per-agent too? One label or N? Stored in a new column or as a
   free-form tags table?
-- **Add-member affordance in the group header.** A "+" button next
-  to the group name opens a search overlay/popup listing
-  candidates. Defaults to the agent set (members of any group +
-  online conv-sessions); a "include all conversations" checkbox
-  expands the list to every conv-id we know about. Selecting one
-  calls `groups add` against the current group.
+- (Add-member affordance moved up — see "Add-member button" in the
+  direct-manipulation list above.)
+
+**CRUD forms — create/edit from the dashboard.** The dashboard
+currently surfaces existing data + a few destructive verbs; creation
++ edit are still CLI-only. Two equivalents to add:
+
+- **Cron jobs.** "+ new cron job" button on the Cron tab opens a form
+  modal: name, owner (default = "<dashboard-human>"; or pick a conv
+  to attribute the job to), target (group:<name> or solo conv via
+  search), interval (preset chips: 1m / 5m / 15m / 1h / custom
+  duration string), subject (optional), body (textarea). POST
+  `/api/cron` (mirroring `/v1/cron` POST). On row hover: an "edit"
+  icon opens the same form pre-filled; PATCH `/api/cron/{id}` (new
+  endpoint to add) updates in place. Editing the interval should
+  NOT bump last_run_at — re-enabling a paused job after long pause
+  shouldn't fire 50 catch-ups.
+- **Agents.** "+ new agent" button at the top of the Agents tab
+  (and inside each group header — context-aware, pre-fills the
+  group). Form: alias, role, descr, group(s) to join (multi-select),
+  cwd (defaults to daemon's cwd; picker with file-system browse
+  would be nice but optional v1). POST → existing `groups.spawn`
+  daemon endpoint per group, single-call when only one group is
+  selected. For "edit": surfaces the existing `groups update-member`
+  verb as inline edits on the row (alias / role / descr per group)
+  — same shape as the rename inline-edit notes above.
+
+Both forms benefit from the framework migration trigger above —
+form state + validation + optimistic refresh with vanilla JS gets
+ugly fast.
 
 Implementation notes for the interaction layer:
 
@@ -694,6 +777,11 @@ section crosses ~700 lines OR we want to add either of the above
 overlay/DnD features, do the migration FIRST so we don't pay the
 cost twice. Decide as part of the v2 scope review; not a blocker
 right now but worth resolving before the next big chunk of work.
+
+**Status update (2026-05):** Cron tab landed pushing the script
+section to ~707 lines — the trigger has now fired. Next dashboard
+feature (drag/drop, add-member overlay, rename inline edits) should
+do the framework migration first.
 
 Open questions:
 
@@ -877,3 +965,37 @@ Short notes only — see `docs/agent.md` and the code for details.
   Auto-own-on-create: an agent that creates a group becomes its
   owner automatically (skipped for human creator since humans bypass
   the permission system).
+
+### 2026-05 (later)
+
+- `tclaude --join-group <group>` — top-level + `session new` flag
+  that spawns a fresh CC session via the existing daemon `groups.spawn`
+  endpoint, then attaches in the foreground. Optional `--alias` /
+  `--role` / `--descr` mirror `agent spawn`. Tab-completion suggests
+  group names. Wired via a `session.JoinGroupHandler` function-variable
+  hook so `agent → session` import direction stays clean.
+- Dashboard "(unknown)" fix for fresh-spawned convs:
+  `agent.FreshConvRowResolved(convID)` falls back to a session-row cwd
+  lookup when the conv has never been indexed, then runs the same
+  .jsonl scan as `FreshConvRowAt`. Same root cause as the prior
+  reincarnate-prefix bug (just visible in the dashboard rather than
+  the rename flow). All three dashboard `FreshConvRow` call sites
+  switched to the resolver.
+- Dashboard Cron tab. New "Cron" entry on the nav, table view of
+  every `agent_cron_jobs` row with name / owner / target / interval /
+  last-run / status pill / body summary. Per-row buttons: enable/
+  disable toggle, run-now (with confirm), delete. Filter bar like
+  Groups/Agents. Snapshot extended with a `cron[]` field including
+  resolved owner/target labels and computed next-due timestamp.
+  Mutations gated by the dashboard cookie; no permission slug since
+  the dashboard is human-only by definition.
+- Conv-succession chain (schema v15). New `agent_conv_succession`
+  table records `old_conv_id → new_conv_id` every time a conv is
+  replaced (today: reincarnate). Reincarnate now also eagerly
+  rewrites `agent_cron_jobs.{owner_conv,target_conv}` from old → new
+  via `db.MigrateCronJobConvRef` so jobs keep firing against the live
+  conv after a reincarnation. `db.ResolveLatestConv(id)` walks the
+  chain forward (cycle-protected at 32 hops) — available to wire into
+  ResolveSelector / other lookup paths as a follow-up. The `reason`
+  column on each row distinguishes future succession kinds (clone-
+  replace, etc.).
