@@ -12,15 +12,6 @@ list-shuffle surprises.
 
 ## Open
 
-### Reply from the watch view
-
-Today reply still requires quitting the watch and running
-`tclaude agent reply <id> "..."` from the shell. v1 deliberately
-deferred reply to keep the surface small. Plan: add a `r` key in
-the read view that opens a textarea below the body; submit via
-ctrl+enter, esc cancels. The daemon endpoint exists already; only
-the UI input + key handling is missing.
-
 ### Search / filter inside the watch
 
 `/` to text-search inbox entries by subject/from/group — same shape

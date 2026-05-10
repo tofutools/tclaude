@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/GiGurra/boa/pkg/boa"
@@ -66,23 +67,42 @@ type inboxMessageLoadedMsg struct {
 	err  error
 }
 
+// inboxReplySentMsg flips back from reply mode after the daemon
+// responds. err is nil on successful send.
+type inboxReplySentMsg struct {
+	id  int64
+	err error
+}
+
 type inboxWatchModel struct {
-	params   inboxWatchParams
-	entries  []inboxEntry
-	cursor   int
-	width    int
-	height   int
-	loadErr  string
+	params    inboxWatchParams
+	entries   []inboxEntry
+	cursor    int
+	width     int
+	height    int
+	loadErr   string
 	statusMsg string
 
 	// Read view: when readingID is non-zero, the View renders the
 	// loaded message body instead of the table.
 	readingID   int64
 	readingBody string
+
+	// Reply mode (active only while in the read view): a textarea
+	// stacked under the body. ctrl+enter / alt+enter submits, esc
+	// cancels. While replyFocused, list-mode keys don't fire.
+	replyFocused  bool
+	replyTextarea textarea.Model
 }
 
 func newInboxWatchModel(p *inboxWatchParams) *inboxWatchModel {
-	return &inboxWatchModel{params: *p}
+	ta := textarea.New()
+	ta.Placeholder = "Reply… (ctrl+enter submit, esc cancel)"
+	ta.SetHeight(4)
+	return &inboxWatchModel{
+		params:        *p,
+		replyTextarea: ta,
+	}
 }
 
 func (m *inboxWatchModel) Init() tea.Cmd {
@@ -111,6 +131,27 @@ func (m *inboxWatchModel) loadCmd() tea.Cmd {
 			return inboxLoadedMsg{err: err}
 		}
 		return inboxLoadedMsg{entries: out}
+	}
+}
+
+// submitReplyCmd POSTs the textarea value to the reply endpoint.
+// Returns inboxReplySentMsg on completion. Empty body short-circuits
+// to a "no-op" result so the user can press ctrl+enter on an empty
+// reply and see a clear status without spamming the daemon.
+func (m *inboxWatchModel) submitReplyCmd(id int64, body string) tea.Cmd {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return func() tea.Msg {
+			return inboxReplySentMsg{id: id, err: fmt.Errorf("empty reply ignored")}
+		}
+	}
+	return func() tea.Msg {
+		var resp struct {
+			ID int64 `json:"id"`
+		}
+		err := DaemonPost(fmt.Sprintf("/v1/messages/%d/reply", id),
+			map[string]string{"body": body}, &resp)
+		return inboxReplySentMsg{id: id, err: err}
 	}
 }
 
@@ -176,19 +217,68 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reload the list so the read marker updates next refresh.
 		return m, m.loadCmd()
 
+	case inboxReplySentMsg:
+		if msg.err != nil {
+			m.statusMsg = "reply failed: " + msg.err.Error()
+			// Keep the reply textarea open on failure so the user can
+			// retry / edit without re-typing.
+			return m, nil
+		}
+		m.statusMsg = fmt.Sprintf("reply to #%d sent", msg.id)
+		m.replyFocused = false
+		m.replyTextarea.Blur()
+		m.replyTextarea.SetValue("")
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	}
+
+	// While reply textarea is focused, route every other event through
+	// it so paste / cursor / etc. work. (Key events are handled in
+	// handleKey, which checks m.replyFocused first; non-key events
+	// land here.)
+	if m.replyFocused {
+		var cmd tea.Cmd
+		m.replyTextarea, cmd = m.replyTextarea.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
 
 func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Read view has its own keymap.
+	// Reply textarea takes priority while focused: ctrl+enter submits,
+	// esc cancels, everything else routes to the textarea so the user
+	// can type freely.
+	if m.replyFocused {
+		switch msg.String() {
+		case "esc":
+			m.replyFocused = false
+			m.replyTextarea.Blur()
+			m.replyTextarea.SetValue("")
+			return m, nil
+		case "ctrl+enter", "alt+enter":
+			body := m.replyTextarea.Value()
+			id := m.readingID
+			m.statusMsg = "sending reply..."
+			return m, m.submitReplyCmd(id, body)
+		default:
+			var cmd tea.Cmd
+			m.replyTextarea, cmd = m.replyTextarea.Update(msg)
+			return m, cmd
+		}
+	}
+
+	// Read view has its own keymap (without reply).
 	if m.readingID != 0 {
 		switch msg.String() {
 		case "esc", "q", "ctrl+c":
 			m.readingID = 0
 			m.readingBody = ""
+			return m, nil
+		case "r":
+			m.replyFocused = true
+			m.replyTextarea.Focus()
 			return m, nil
 		}
 		return m, nil
@@ -308,9 +398,21 @@ func (m *inboxWatchModel) renderListView() string {
 func (m *inboxWatchModel) renderReadView() string {
 	var b strings.Builder
 	b.WriteString(inboxReadingStyle.Render(fmt.Sprintf("  Reading message #%d", m.readingID)))
+	if m.statusMsg != "" {
+		b.WriteString("  ")
+		b.WriteString(inboxHelpStyle.Render(m.statusMsg))
+	}
 	b.WriteString("\n\n")
 	b.WriteString(m.readingBody)
 	b.WriteString("\n\n")
-	b.WriteString(inboxHelpStyle.Render("  esc/q  back to list"))
+	if m.replyFocused {
+		b.WriteString(inboxReadingStyle.Render("  Reply:"))
+		b.WriteString("\n")
+		b.WriteString(m.replyTextarea.View())
+		b.WriteString("\n\n")
+		b.WriteString(inboxHelpStyle.Render("  ctrl+enter send • esc cancel"))
+	} else {
+		b.WriteString(inboxHelpStyle.Render("  r reply • esc/q back to list"))
+	}
 	return b.String()
 }

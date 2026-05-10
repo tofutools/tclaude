@@ -138,6 +138,95 @@ func TestInboxWatch_ReadErrorFlipsBack(t *testing.T) {
 	}
 }
 
+// `r` in the read view opens the reply textarea. While the textarea
+// is focused, list keys (j/k/g/G) and read-mode keys (q) are ignored.
+func TestInboxWatch_ReplyOpensAndIsolatesKeys(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.entries = []inboxEntry{{ID: 1}, {ID: 2}}
+	m.readingID = 42
+	m.readingBody = "hello"
+
+	// Press r to open reply.
+	m2, _ := m.Update(asKey("r"))
+	mm := m2.(*inboxWatchModel)
+	if !mm.replyFocused {
+		t.Fatal("r should set replyFocused = true")
+	}
+
+	// While in reply mode, list keys must NOT mutate cursor or close
+	// the read view.
+	for _, k := range []string{"j", "k", "q", "G", "g"} {
+		m3, _ := mm.Update(asKey(k))
+		mm = m3.(*inboxWatchModel)
+		if mm.cursor != 0 {
+			t.Errorf("key %q while replyFocused should not move cursor; got %d", k, mm.cursor)
+		}
+		if mm.readingID != 42 {
+			t.Errorf("key %q while replyFocused should not exit read view; readingID=%d", k, mm.readingID)
+		}
+	}
+
+	// Esc cancels reply mode and returns to read view (NOT to list).
+	m4, _ := mm.Update(asKey("esc"))
+	mm = m4.(*inboxWatchModel)
+	if mm.replyFocused {
+		t.Error("esc in reply mode should clear replyFocused")
+	}
+	if mm.readingID != 42 {
+		t.Errorf("esc in reply mode should keep read view open; readingID=%d", mm.readingID)
+	}
+}
+
+// A successful reply send clears the textarea and exits reply mode.
+// Failure leaves the textarea open with a status message so the user
+// can retry without re-typing.
+func TestInboxWatch_ReplySentSuccessClearsTextarea(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.readingID = 42
+	m.replyFocused = true
+	m.replyTextarea.SetValue("hello")
+
+	m2, _ := m.Update(inboxReplySentMsg{id: 42, err: nil})
+	mm := m2.(*inboxWatchModel)
+	if mm.replyFocused {
+		t.Error("successful send should clear replyFocused")
+	}
+	if mm.replyTextarea.Value() != "" {
+		t.Errorf("textarea should be cleared on success, got %q", mm.replyTextarea.Value())
+	}
+	if !contains(mm.statusMsg, "sent") {
+		t.Errorf("statusMsg should announce success, got %q", mm.statusMsg)
+	}
+}
+
+func TestInboxWatch_ReplyFailureKeepsDraft(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.readingID = 42
+	m.replyFocused = true
+	m.replyTextarea.SetValue("hello")
+
+	m2, _ := m.Update(inboxReplySentMsg{id: 42, err: errors.New("daemon down")})
+	mm := m2.(*inboxWatchModel)
+	if !mm.replyFocused {
+		t.Error("failed send should keep replyFocused so user can retry")
+	}
+	if mm.replyTextarea.Value() != "hello" {
+		t.Errorf("draft should be preserved on failure, got %q", mm.replyTextarea.Value())
+	}
+	if !contains(mm.statusMsg, "failed") {
+		t.Errorf("statusMsg should mention the failure, got %q", mm.statusMsg)
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // While in read view, list-mode keys (j, k, /) are ignored — only
 // esc/q return to the list. Pins the bug class where a stray j press
 // scrolls the underlying list while the user is reading.
