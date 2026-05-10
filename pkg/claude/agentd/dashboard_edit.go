@@ -92,7 +92,10 @@ func handleDashboardJumpAPI(w http.ResponseWriter, r *http.Request) {
 
 // handleDashboardAgentsAPI dispatches:
 //
-//	DELETE /api/agents/{conv}    → wipe the conversation + orphan-clean
+//	DELETE /api/agents/{conv}              → wipe the conversation + orphan-clean
+//	POST   /api/agents/{conv}/stop         → soft exit / force kill
+//	POST   /api/agents/{conv}/resume       → wake (resume tmux pane)
+//	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
 //
 // Behaviour:
 //   - If the conv still exists in conv_index, runs conv.DeleteConvByID
@@ -139,6 +142,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			dashboardResumeAgent(w, convSelector)
+			return
+		case "clone":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardCloneAgent(w, r, convSelector)
 			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
@@ -417,6 +427,34 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 	out := stopOneConv(res.ConvID, body.Force)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// dashboardCloneAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/clone. Forks a sibling that inherits the source's
+// identity (groups / perms / ownership). Body matches the v1 endpoint:
+// optional `follow_up` (typed-into-new-pane handoff) + `no_copy_conv`
+// (skip the .jsonl copy, fresh CC instead). Cookie auth ≈ human, so
+// no slug check; the audit trail records `<human-dashboard>` as the
+// caller via the existing `runCloneOrchestration` granter compose
+// path.
+//
+// The dashboard's Ctrl-drag handler uses this to clone a member into
+// a target group: it fires this endpoint, parses the response for
+// `new_conv`, then fires `POST /api/groups/{target}/members` to add
+// the clone to the drop target group (idempotent). Keeping the
+// target-group join client-side keeps the daemon endpoint identical
+// to the v1 surface.
+func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	followUp, noCopyConv, ok := decodeCloneBody(w, r)
+	if !ok {
+		return
+	}
+	runCloneOrchestration(w, res.ConvID, dashboardGranter, followUp, noCopyConv)
 }
 
 // dashboardResumeAgent is the cookie-auth twin of POST
