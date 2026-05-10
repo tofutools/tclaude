@@ -64,5 +64,6 @@ func Cmd() *cobra.Command {
 	}
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	session.RegisterJoinGroupCompletion(cmd)
 	return cmd
 }

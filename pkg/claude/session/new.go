@@ -13,6 +13,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -25,6 +26,14 @@ type NewParams struct {
 	Detached         bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
 	Compact          int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
 	WaitForRateLimit bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
+
+	// --join-group makes the new session auto-join an existing agent group
+	// the moment its conv-id materialises. Routed through the daemon's
+	// `groups.spawn` orchestration; not compatible with --resume / --label.
+	JoinGroup string `long:"join-group" optional:"true" help:"Spawn the session and add it to an existing agent group (alias of agent spawn + foreground attach)"`
+	Alias     string `long:"alias" optional:"true" help:"Alias for the new member in --join-group (e.g. 'reviewer')"`
+	Role      string `long:"role" optional:"true" help:"Role tag for the new member in --join-group (e.g. 'tech-lead')"`
+	Descr     string `long:"descr" optional:"true" help:"Description of the new member's purpose in --join-group"`
 }
 
 func NewCmd() *cobra.Command {
@@ -51,7 +60,30 @@ func NewCmd() *cobra.Command {
 		return clcommon.GetConversationCompletions(global), cobra.ShellCompDirectiveKeepOrder | cobra.ShellCompDirectiveNoFileComp
 	})
 
+	RegisterJoinGroupCompletion(cmd)
+
 	return cmd
+}
+
+// RegisterJoinGroupCompletion wires `--join-group` to suggest existing
+// agent group names. Reads SQLite directly — completions fire on every
+// <tab> keystroke, so they bypass the daemon (same convention as
+// `tclaude agent groups …` completions). Exported so the top-level
+// `tclaude` cobra cmd in pkg/claude/claude.go can register it too.
+func RegisterJoinGroupCompletion(cmd *cobra.Command) {
+	_ = cmd.RegisterFlagCompletionFunc("join-group", func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		groups, err := db.ListAgentGroups()
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		out := make([]string, 0, len(groups))
+		for _, g := range groups {
+			if strings.HasPrefix(g.Name, toComplete) {
+				out = append(out, g.Name)
+			}
+		}
+		return out, cobra.ShellCompDirectiveNoFileComp
+	})
 }
 
 // RunNew is the exported entry point for running the new session command
@@ -59,7 +91,19 @@ func RunNew(params *NewParams) error {
 	return runNew(params)
 }
 
+// JoinGroupHandler implements `--join-group`. Set by the agent package's
+// init() to avoid a session→agent import cycle (agent already depends on
+// session for AttachToSession). When nil, --join-group falls back to a
+// clear error.
+var JoinGroupHandler func(*NewParams) error
+
 func runNew(params *NewParams) error {
+	if params.JoinGroup != "" {
+		if JoinGroupHandler == nil {
+			return fmt.Errorf("--join-group is not wired up in this binary")
+		}
+		return JoinGroupHandler(params)
+	}
 	extraArgs := clcommon.ExtractClaudeExtraArgs()
 
 	// Pass-through mode: --help, --version etc. — run claude directly, no tmux.
