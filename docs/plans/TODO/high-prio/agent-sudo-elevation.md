@@ -11,6 +11,8 @@ test surface):
   + per-conv overrides
 - `agent-sudo-elevation-audit-annotations` — `via-sudo:grant-id=<n>`
   on downstream `granted_by` columns
+- `agent-sudo-elevation-tray-orange` — orange tray icon + tooltip
+  when ≥1 sudo grant is active anywhere
 
 ## Dashboard panel + per-row indicator
 
@@ -38,20 +40,6 @@ handlers in `dashboard_edit.go` (mirror the pattern from
 The snapshot's `agents[]` array should gain an `active_sudo[]`
 field surfacing the slugs each agent currently holds — single round
 trip, both tabs render off the same blob.
-
-## Tray-icon orange state
-
-Existing colour matrix:
-
-- Green: idle
-- Yellow: pending approval
-- Red: daemon down (planned)
-
-Add **Orange** for "at least one active sudo grant somewhere".
-Tooltip surfaces the count + soonest expiry, so the human knows
-the elevation window without opening the dashboard. Polls
-`db.ListAllActiveSudoGrants()` on the same 200ms tick the
-pending-approval poller uses.
 
 ## Manager-pattern approval (deferred — explicit trust laundering)
 
@@ -86,7 +74,6 @@ In addition to the v1 6 flow tests:
   the revoke endpoints
 - `pkg/claude/agentd/dashboard.go` — extend snapshot's
   `dashboardAgent` with an `active_sudo[]` field
-- `pkg/claude/agentd/tray.go` — orange state + tooltip wiring
 
 ## Cross-references
 

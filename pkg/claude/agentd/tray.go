@@ -14,6 +14,7 @@ import (
 
 	"fyne.io/systray"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // trayConfig is the data tray menu items need.
@@ -44,6 +45,13 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 	// Picked an amber-yellow that reads distinctly from green even in
 	// reduced-color taskbar themes.
 	yellowIcon := makeTrayIcon(color.RGBA{R: 230, G: 180, B: 30, A: 255})
+	// Orange flips on while at least one sudo grant is active somewhere.
+	// Pure orange (255,140,0) reads distinctly from yellow but stays in
+	// the same warm-warning family — the human is reminded that an
+	// elevation window is open without a flashing red alarm. Yellow
+	// (pending approval) takes priority so the human can never miss a
+	// popup waiting on them.
+	orangeIcon := makeTrayIcon(color.RGBA{R: 255, G: 140, B: 0, A: 255})
 
 	onReady := func() {
 		systray.SetIcon(greenIcon)
@@ -81,13 +89,16 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 
 		mQuit := systray.AddMenuItem("Quit", "Stop tclaude agentd")
 
-		// Pending-approval poller. Flips green↔yellow as approval requests
-		// come and go. 200ms tick is small enough that a popup feels
-		// responsive without burning cycles when nothing is happening.
-		// Quits when mQuit fires (the goroutine below closes trayDone).
+		// Pending-approval + sudo-active poller. Flips
+		// green ↔ orange ↔ yellow as approval requests come and go and
+		// sudo grants open and close. 200ms tick is small enough that a
+		// popup feels responsive without burning cycles when nothing is
+		// happening. Quits when mQuit fires (the goroutine below closes
+		// trayDone).
 		trayDone := make(chan struct{})
 		go func() {
-			lastPending := 0
+			lastPending, lastSudo := 0, 0
+			lastHint := ""
 			tk := time.NewTicker(200 * time.Millisecond)
 			defer tk.Stop()
 			for {
@@ -95,18 +106,21 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 				case <-trayDone:
 					return
 				case <-tk.C:
-					n := approvals.pendingCount()
-					if n == lastPending {
+					pending := approvals.pendingCount()
+					sudoActive, hint := snapshotSudoTrayState()
+					if pending == lastPending && sudoActive == lastSudo && hint == lastHint {
 						continue
 					}
-					// Update on EVERY count change, not just the
-					// 0↔non-zero transition, so the tooltip count
-					// stays accurate when a second concurrent
-					// approval queues behind the first.
-					icon, tooltip := pickTrayIcon(greenIcon, yellowIcon, n)
+					// Update on EVERY change of any input, not just
+					// 0↔non-zero transitions, so the tooltip count and
+					// soonest-expiry hint stay accurate as concurrent
+					// approvals or grants stack and the soonest-expiry
+					// rolls forward.
+					icon, tooltip := pickTrayIcon(greenIcon, yellowIcon, orangeIcon,
+						pending, sudoActive, hint)
 					systray.SetIcon(icon)
 					systray.SetTooltip(tooltip)
-					lastPending = n
+					lastPending, lastSudo, lastHint = pending, sudoActive, hint
 				}
 			}
 		}()
@@ -153,17 +167,66 @@ func runReinstallSkills() {
 	slog.Info("tray: agent skills reinstalled")
 }
 
-// makeTrayIcon returns a small filled-circle icon. PNG everywhere
-// except Windows, which needs ICO-wrapped PNG for Shell_NotifyIcon.
 // pickTrayIcon picks the icon + tooltip the tray should display for a
-// given pending-approval count. Pure function so the policy can be
-// unit-tested without spawning a real systray.
-func pickTrayIcon(green, yellow []byte, pending int) ([]byte, string) {
+// given (pending-approval, sudo-active-grant) snapshot. Pure function
+// so the policy can be unit-tested without spawning a real systray
+// or the daemon SQLite.
+//
+// Priority (highest first):
+//
+//   - yellow — at least one --ask-human popup is open. Highest because
+//     the human is BLOCKING; missing this stalls an agent.
+//   - orange — at least one sudo grant is active somewhere. The human
+//     should know an elevation window is open, but it's a passive
+//     reminder, not a blocking interrupt.
+//   - green  — idle.
+//
+// sudoExpiryHint is appended to the orange tooltip when non-empty
+// (e.g. "soonest expires in 4m12s"); pickTrayIcon doesn't format
+// durations itself so the unit test can pin tooltip composition
+// without time math.
+func pickTrayIcon(green, yellow, orange []byte, pending, sudoActive int, sudoExpiryHint string) ([]byte, string) {
 	if pending > 0 {
 		return yellow, fmt.Sprintf("tclaude agentd · %d pending approval(s)", pending)
 	}
+	if sudoActive > 0 {
+		t := fmt.Sprintf("tclaude agentd · %d active sudo grant(s)", sudoActive)
+		if sudoExpiryHint != "" {
+			t += " · " + sudoExpiryHint
+		}
+		return orange, t
+	}
 	return green, "tclaude agentd"
 }
+
+// snapshotSudoTrayState polls db.ListAllActiveSudoGrants and returns
+// (count, expiryHint) for the tray. expiryHint is "soonest expires in
+// <duration>" when there's at least one grant, otherwise empty. DB
+// errors collapse to (0, "") — a transient SQLite hiccup shouldn't
+// flicker the icon orange when there's nothing to elevate.
+func snapshotSudoTrayState() (int, string) {
+	rows, err := db.ListAllActiveSudoGrants()
+	if err != nil || len(rows) == 0 {
+		return 0, ""
+	}
+	soonest := rows[0].ExpiresAt
+	for _, g := range rows[1:] {
+		if g.ExpiresAt.Before(soonest) {
+			soonest = g.ExpiresAt
+		}
+	}
+	rem := time.Until(soonest).Round(time.Second)
+	if rem <= 0 {
+		// All grants slipped past expires_at between the SELECT and
+		// here (rare, but the partial index uses a wall-clock cutoff).
+		// Drop the hint rather than render "expires in -1s".
+		return len(rows), ""
+	}
+	return len(rows), fmt.Sprintf("soonest expires in %s", rem)
+}
+
+// makeTrayIcon returns a small filled-circle icon. PNG everywhere
+// except Windows, which needs ICO-wrapped PNG for Shell_NotifyIcon.
 
 func makeTrayIcon(c color.RGBA) []byte {
 	pngBytes := makeIconPNG(c)

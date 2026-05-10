@@ -6,24 +6,27 @@ import (
 	"testing"
 )
 
-// pickTrayIcon's policy: pending=0 → green + base tooltip;
-// pending>0 → yellow + count-aware tooltip.
+// pickTrayIcon's policy: priority yellow (pending) > orange (sudo) >
+// green (idle). Tooltip carries the count of whichever colour fired
+// (and the soonest-expiry hint for the orange path).
 func TestPickTrayIcon_GreenWhenIdle(t *testing.T) {
 	green := []byte("green")
 	yellow := []byte("yellow")
-	icon, tooltip := pickTrayIcon(green, yellow, 0)
+	orange := []byte("orange")
+	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 0, "")
 	if string(icon) != "green" {
-		t.Errorf("pending=0: icon = %q, want green", icon)
+		t.Errorf("idle: icon = %q, want green", icon)
 	}
 	if tooltip != "tclaude agentd" {
-		t.Errorf("pending=0: tooltip = %q, want %q", tooltip, "tclaude agentd")
+		t.Errorf("idle: tooltip = %q, want %q", tooltip, "tclaude agentd")
 	}
 }
 
 func TestPickTrayIcon_YellowWhenPending(t *testing.T) {
 	green := []byte("green")
 	yellow := []byte("yellow")
-	icon, tooltip := pickTrayIcon(green, yellow, 1)
+	orange := []byte("orange")
+	icon, tooltip := pickTrayIcon(green, yellow, orange, 1, 0, "")
 	if string(icon) != "yellow" {
 		t.Errorf("pending=1: icon = %q, want yellow", icon)
 	}
@@ -35,9 +38,67 @@ func TestPickTrayIcon_YellowWhenPending(t *testing.T) {
 func TestPickTrayIcon_YellowCountUpdatesWithMultiple(t *testing.T) {
 	green := []byte("green")
 	yellow := []byte("yellow")
-	_, tooltip := pickTrayIcon(green, yellow, 7)
+	orange := []byte("orange")
+	_, tooltip := pickTrayIcon(green, yellow, orange, 7, 0, "")
 	if !strings.Contains(tooltip, "7 pending") {
 		t.Errorf("pending=7 tooltip should mention 7, got %q", tooltip)
+	}
+}
+
+// pending=0, sudoActive>0 → orange + count + expiry hint. Pins the
+// new state from v2 slice 4.
+func TestPickTrayIcon_OrangeWhenSudoActive(t *testing.T) {
+	green := []byte("green")
+	yellow := []byte("yellow")
+	orange := []byte("orange")
+	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 2, "soonest expires in 4m12s")
+	if string(icon) != "orange" {
+		t.Errorf("sudoActive=2: icon = %q, want orange", icon)
+	}
+	if !strings.Contains(tooltip, "2 active sudo") {
+		t.Errorf("sudoActive=2: tooltip should mention count, got %q", tooltip)
+	}
+	if !strings.Contains(tooltip, "soonest expires in 4m12s") {
+		t.Errorf("sudoActive=2: tooltip should include expiry hint, got %q", tooltip)
+	}
+}
+
+// Yellow takes priority over orange when BOTH are non-zero — the
+// human's blocked-on-popup state is more time-critical than the
+// passive elevation reminder. Pins the precedence rule.
+func TestPickTrayIcon_YellowBeatsOrange(t *testing.T) {
+	green := []byte("green")
+	yellow := []byte("yellow")
+	orange := []byte("orange")
+	icon, tooltip := pickTrayIcon(green, yellow, orange, 1, 3, "soonest expires in 1m")
+	if string(icon) != "yellow" {
+		t.Errorf("pending=1 sudoActive=3: icon = %q, want yellow (blocking > passive)", icon)
+	}
+	if !strings.Contains(tooltip, "1 pending") {
+		t.Errorf("pending=1 sudoActive=3: tooltip should mention pending, got %q", tooltip)
+	}
+	if strings.Contains(tooltip, "sudo") {
+		t.Errorf("yellow tooltip should NOT mention sudo (different state); got %q", tooltip)
+	}
+}
+
+// Orange tooltip without an expiry hint — the SELECT-then-format
+// race in snapshotSudoTrayState collapses to "" hint. Pins the
+// fallback path so the icon still flips orange but the tooltip
+// stays clean.
+func TestPickTrayIcon_OrangeWithoutExpiryHint(t *testing.T) {
+	green := []byte("green")
+	yellow := []byte("yellow")
+	orange := []byte("orange")
+	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 1, "")
+	if string(icon) != "orange" {
+		t.Errorf("sudoActive=1, no hint: icon = %q, want orange", icon)
+	}
+	if !strings.Contains(tooltip, "1 active sudo") {
+		t.Errorf("tooltip should mention count, got %q", tooltip)
+	}
+	if strings.Contains(tooltip, "expires in") {
+		t.Errorf("tooltip should NOT have expiry hint when none provided, got %q", tooltip)
 	}
 }
 
