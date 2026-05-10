@@ -83,6 +83,7 @@ Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
   "max_verify_iterations": 5,
   "verify_timeout": "2m",
   "review_skill": "task-review",
+  "review_prefix": "You messed up! Please fix this:",
   "max_review_iterations": 3,
   "review_timeout": "5m",
   "review_diff": true,
@@ -91,17 +92,18 @@ Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
 }
 ```
 
-| Field                   | Description                                                                                                                             |
-|-------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`)                                                              |
-| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                                                                               |
-| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)                                                             |
-| `review_skill`          | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`)                                                        |
-| `max_review_iterations` | Max review-and-fix cycles per task (default: 1)                                                                                         |
-| `review_timeout`        | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                                                                              |
-| `review_diff`           | Whether to pass the git diff to the review agent (default: `true`)                                                                      |
-| `stuck_timeout`         | How long Claude can be idle (no hook activity) before being considered stuck; set `"0s"` to disable (default: `"5m"`, minimum: `"30s"`) |
-| `max_stuck_nudges`      | Max "continue" nudges sent to a stuck agent before giving up (default: 3)                                                               |
+| Field                   | Description                                                                                                                                                                  |
+|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`)                                                                                                   |
+| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                                                                                                                    |
+| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)                                                                                                  |
+| `review_skill`          | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`)                                                                                             |
+| `review_prefix`         | String to put before the review agent output when feeding back into main agent (default: `"Consider the following review feedback and fix the issues that seems relevant:"`) |
+| `max_review_iterations` | Max review-and-fix cycles per task (default: 1)                                                                                                                              |
+| `review_timeout`        | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                                                                                                                   |
+| `review_diff`           | Whether to pass the git diff to the review agent (default: `true`)                                                                                                           |
+| `stuck_timeout`         | How long Claude can be idle (no hook activity) before being considered stuck; set `"0s"` to disable (default: `"5m"`, minimum: `"30s"`)                                      |
+| `max_stuck_nudges`      | Max "continue" nudges sent to a stuck agent before giving up (default: 3)                                                                                                    |
 
 
 ### Stuck Agent Detection

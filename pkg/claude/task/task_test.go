@@ -506,6 +506,28 @@ func TestLoadTasksConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("review_prefix default", func(t *testing.T) {
+		cfg, err := LoadTasksConfig(t.TempDir())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewPrefix != defaultReviewPrefix {
+			t.Errorf("ReviewPrefix = %s, want %s", cfg.ReviewPrefix, defaultReviewPrefix)
+		}
+	})
+
+	t.Run("review_prefix custom", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTasksConfig(t, dir, `{"review_prefix":"some prefix:"}`)
+		cfg, err := LoadTasksConfig(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ReviewPrefix != "some prefix:" {
+			t.Errorf("ReviewPrefix = %s, want %s", cfg.ReviewPrefix, "some prefix:")
+		}
+	})
+
 	t.Run("review_timeout default", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
 		if err != nil {

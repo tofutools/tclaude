@@ -274,6 +274,7 @@ func runTaskLoop(out io.Writer, cwd, taskDir string, extraClaudeArgs []string, w
 			verifyMaxRetries:    taskCfg.MaxVerifyIterations,
 			verifyTimeout:       taskCfg.VerifyTimeout,
 			reviewSkill:         taskCfg.ReviewSkill,
+			reviewPrefix:        taskCfg.ReviewPrefix,
 			maxReviewIterations: taskCfg.MaxReviewIterations,
 			reviewTimeout:       taskCfg.ReviewTimeout,
 			reviewDiff:          taskCfg.reviewDiffEnabled(),
@@ -398,6 +399,7 @@ type taskRunOpts struct {
 	verifyMaxRetries    int
 	verifyTimeout       time.Duration
 	reviewSkill         string
+	reviewPrefix        string
 	maxReviewIterations int
 	reviewTimeout       time.Duration
 	reviewDiff          bool
@@ -662,7 +664,7 @@ func watchForTaskCompletion(ctx context.Context, signalPath, tmuxSession, cwd st
 								reviewAttempts++
 								_ = os.Remove(signalPath)
 								signalExists = false
-								msg := fmt.Sprintf("Please address the following review feedback:\n%s", reviewOutput)
+								msg := fmt.Sprintf("%s\n%s", opts.reviewPrefix, reviewOutput)
 								sendTmuxMessage(tmuxSession, msg)
 								sendTmuxEnter(tmuxSession)
 								attempts = 0 // reset verify attempts for post-review changes

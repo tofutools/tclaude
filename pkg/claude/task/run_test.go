@@ -912,6 +912,7 @@ func TestReviewDiff_TrueSkipsReviewWhenDiffEmpty(t *testing.T) {
 	// Clean repo → diff is empty; reviewDiff=true → review must be skipped.
 	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
 		reviewSkill:   "check the work",
+		reviewPrefix:  defaultReviewPrefix,
 		reviewTimeout: 5 * time.Second,
 		reviewDiff:    true,
 	})
@@ -927,6 +928,7 @@ func TestReviewDiff_FalseRunsReviewWithoutDiff(t *testing.T) {
 	// Clean repo → diff is empty; reviewDiff=false → review must still run.
 	called := simulateReviewDiffDecision(t, dir, "", taskRunOpts{
 		reviewSkill:   "check the work",
+		reviewPrefix:  defaultReviewPrefix,
 		reviewTimeout: 5 * time.Second,
 		reviewDiff:    false,
 	})

@@ -25,6 +25,7 @@ type TasksConfig struct {
 	MaxReviewIterations int           `json:"max_review_iterations,omitempty"`
 	ReviewTimeoutStr    string        `json:"review_timeout,omitempty"`
 	ReviewTimeout       time.Duration `json:"-"`
+	ReviewPrefix        string        `json:"review_prefix,omitempty"`
 	ReviewDiff          *bool         `json:"review_diff,omitempty"`
 	StuckTimeoutStr     string        `json:"stuck_timeout,omitempty"`
 	StuckTimeout        time.Duration `json:"-"`
@@ -35,6 +36,7 @@ const defaultMaxVerifyIterations = 3
 const defaultVerifyTimeout = time.Minute
 const defaultMaxReviewIterations = 1
 const defaultReviewTimeout = 5 * time.Minute
+const defaultReviewPrefix = "Consider the following review feedback and fix the issues that seems relevant:"
 const defaultStuckTimeout = 5 * time.Minute
 const defaultMaxStuckNudges = 3
 const minStuckTimeout = 30 * time.Second
@@ -52,6 +54,7 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 		VerifyTimeout:       defaultVerifyTimeout,
 		MaxReviewIterations: defaultMaxReviewIterations,
 		ReviewTimeout:       defaultReviewTimeout,
+		ReviewPrefix:        defaultReviewPrefix,
 		ReviewDiff:          new(true),
 		StuckTimeout:        defaultStuckTimeout,
 		MaxStuckNudges:      defaultMaxStuckNudges,
@@ -105,6 +108,9 @@ func LoadTasksConfig(dir string) (TasksConfig, error) {
 		if cfg.StuckTimeout != 0 && cfg.StuckTimeout < minStuckTimeout {
 			return cfg, fmt.Errorf("stuck_timeout %v is below minimum %v (use 0s to disable)", cfg.StuckTimeout, minStuckTimeout)
 		}
+	}
+	if cfg.ReviewPrefix == "" {
+		cfg.ReviewPrefix = defaultReviewPrefix
 	}
 	// nil only occurs when the JSON explicitly contains "review_diff": null; apply the default.
 	if cfg.ReviewDiff == nil {
