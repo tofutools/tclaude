@@ -39,22 +39,29 @@ func (e *SessionEntry) DisplayTitle() string {
 	return e.FirstPrompt
 }
 
-// IsExpiredTitle returns true when a CustomTitle ends with the `-x`
-// expired-marker suffix that reincarnate writes onto the old conv's
+// IsArchivedTitle returns true when a CustomTitle ends with the `-x`
+// archived-marker suffix that reincarnate writes onto the old conv's
 // .jsonl right before /exit. Used by listing surfaces (conv ls,
 // dashboard) to default-hide dead convs without needing a separate
 // "is_active" column. Only checks CustomTitle — Summary / FirstPrompt
-// happening to end with `-x` is coincidental, not an expiry mark.
+// happening to end with `-x` is coincidental, not an archive mark.
 //
-// Mnemonic: `-x` = expired. Pairs with `-r-N` (reincarnated
-// successor) and `-c-N` (clone) on the live side.
-func IsExpiredTitle(customTitle string) bool {
+// Mnemonic: `-x` = archived (mark of expiration / supersession).
+// Pairs with `-r-N` (reincarnated successor) and `-c-N` (clone) on
+// the live side. Unifies with `groups archive` — both are
+// soft-delete states.
+//
+// Note: this is the title-based fallback. The canonical check is the
+// (future) `conv_index.archived_at` column; this helper covers
+// legacy convs that pre-date the column. New code should prefer the
+// column-based check when one is available.
+func IsArchivedTitle(customTitle string) bool {
 	return strings.HasSuffix(customTitle, "-x")
 }
 
-// IsExpired is a SessionEntry shorthand for IsExpiredTitle.
-func (e *SessionEntry) IsExpired() bool {
-	return IsExpiredTitle(e.CustomTitle)
+// IsArchived is a SessionEntry shorthand for IsArchivedTitle.
+func (e *SessionEntry) IsArchived() bool {
+	return IsArchivedTitle(e.CustomTitle)
 }
 
 // HasTitle returns true if the entry has a custom title or summary

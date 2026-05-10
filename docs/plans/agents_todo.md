@@ -118,30 +118,36 @@ Follow-up improvements (separate items):
   nesting. Legacy-form titles do NOT reserve numbers in the new
   namespace (no surprising holes after the changeover). Tests
   rewritten + new coverage for both legacy-form behaviours.
-- ~~**Mark expired conv with `-x` suffix.**~~ — **shipped (2026-05).**
+- ~~**Mark archived conv with `-x` suffix.**~~ — **shipped (2026-05).**
   When reincarnating, the daemon injects `/rename <prevTitle>-x`
   into the OLD pane right before the `/exit`, writing a custom-title
   record to the old conv's .jsonl. The watch model / FreshConvRow
   refresh picks it up the next time someone looks at the conv, so
   dashboards / `conv ls` can render `worker-x` (dead) distinctly
   from `worker-r-1` (live successor). Idempotent — no double-suffix
-  on retries. Mnemonic: `-x` = expired. Naming chain:
+  on retries. Mnemonic: `-x` = archived. Naming chain:
   `worker` → renames to `worker-x`, new is `worker-r-1`;
   `worker-r-1` → renames to `worker-r-1-x`, new is `worker-r-2`;
   …
+  Originally shipped under "expired" terminology; renamed to
+  "archived" in the same release to unify with `groups archive`
+  (same conceptual soft-delete state, same default-hidden listing
+  behavior).
 - ~~**Default-filter `-x` rows from `conv ls`.**~~ — **shipped
-  (2026-05).** `--show-expired` opt-in flag on `conv ls` /
-  `conv ls -g`. New helper `convops.IsExpiredTitle(customTitle)` /
-  `(*SessionEntry).IsExpired()` is the canonical check; consumers
+  (2026-05).** `--show-archived` opt-in flag on `conv ls` /
+  `conv ls -g`. Helper `convops.IsArchivedTitle(customTitle)` /
+  `(*SessionEntry).IsArchived()` is the canonical check; consumers
   should reuse it rather than open-coding the suffix test.
-- ~~**Watch mode toggle for expired convs.**~~ — **shipped
+- ~~**Watch mode toggle for archived convs.**~~ — **shipped
   (2026-05).** `conv ls -w` defaults to hiding `-x` rows; press
-  `e` to toggle (mnemonic for "expired"; lowercase `x` was already
-  taken by the delete binding). Composes with both text-search and
-  semantic-search filters via the same `applySearchFilter` /
-  `rebuildSemanticFiltered` pass. Status-line message confirms the
-  toggle on every press; help screen lists the binding under
-  Actions.
+  `x` to toggle (mnemonic: press `x` to see convs marked with `-x`).
+  Originally `e` for "expired"; remapped to `x` after the rename
+  to "archived" since `x` was the natural mnemonic. Delete actions
+  freed up: `del` / `backspace` / `ctrl+d` still trigger delete.
+  Composes with both text-search and semantic-search filters via
+  the same `applySearchFilter` / `rebuildSemanticFiltered` pass.
+  Status-line message confirms the toggle on every press; help
+  screen lists the binding under Actions.
 - **Make "expired" an explicit DB status, not just a title suffix.**
   The current implementation infers expired from
   `HasSuffix(CustomTitle, "-x")`. Two problems with this:

@@ -82,43 +82,45 @@ func TestSessionEntry_HasTitle(t *testing.T) {
 	}
 }
 
-// TestIsExpiredTitle locks in the suffix detection used by listing
+// TestIsArchivedTitle locks in the suffix detection used by listing
 // surfaces (conv ls, dashboard) to default-hide reincarnated old
 // convs. Edge case: names like `unix` (no hyphen before x) must NOT
-// match — only the literal `-x` suffix counts.
-func TestIsExpiredTitle(t *testing.T) {
+// match — only the literal `-x` suffix counts. Pairs conceptually
+// with `groups archive` on the group side; both are soft-delete
+// markers.
+func TestIsArchivedTitle(t *testing.T) {
 	cases := map[string]bool{
 		"":                false, // empty
 		"worker":          false, // no -x at all
 		"unix":            false, // ends in x but no hyphen — not a marker
 		"x":               false, // single 'x' isn't `-x`
 		"foo-x":           true,  // simplest match
-		"worker-r-1-x":    true,  // expired reincarnate-1 form
-		"worker-c-2-x":    true,  // expired clone form (unusual but possible)
-		"foo-x-x":         true,  // already-expired-twice (edge case; reincarnate skips this but still detected)
+		"worker-r-1-x":    true,  // archived reincarnate-1 form
+		"worker-c-2-x":    true,  // archived clone form (unusual but possible)
+		"foo-x-x":         true,  // already-archived-twice (edge case; reincarnate skips this but still detected)
 		"foo-extra":       false, // ends in something other than -x
 		"-x":              true,  // bare suffix is technically a match — title shouldn't be just "-x" but be permissive
 	}
 	for in, want := range cases {
 		t.Run(in, func(t *testing.T) {
-			if got := IsExpiredTitle(in); got != want {
-				t.Errorf("IsExpiredTitle(%q) = %v, want %v", in, got, want)
+			if got := IsArchivedTitle(in); got != want {
+				t.Errorf("IsArchivedTitle(%q) = %v, want %v", in, got, want)
 			}
 			// Method form mirrors the helper.
 			e := SessionEntry{CustomTitle: in}
-			if got := e.IsExpired(); got != want {
-				t.Errorf("(SessionEntry).IsExpired() with CustomTitle=%q = %v, want %v",
+			if got := e.IsArchived(); got != want {
+				t.Errorf("(SessionEntry).IsArchived() with CustomTitle=%q = %v, want %v",
 					in, got, want)
 			}
 		})
 	}
 
-	// IsExpired only checks CustomTitle, not Summary / FirstPrompt —
-	// a Summary that happens to end in `-x` is coincidence, not a
-	// supersede mark.
+	// IsArchived only checks CustomTitle, not Summary / FirstPrompt —
+	// a Summary that happens to end in `-x` is coincidence, not an
+	// archive mark.
 	e := SessionEntry{Summary: "summary-x", FirstPrompt: "prompt-x"}
-	if e.IsExpired() {
-		t.Error("Summary/FirstPrompt ending in -x must NOT mark a conv as expired")
+	if e.IsArchived() {
+		t.Error("Summary/FirstPrompt ending in -x must NOT mark a conv as archived")
 	}
 }
 
