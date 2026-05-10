@@ -354,6 +354,102 @@ summary.dnd-drop-over.dnd-effect-clone {
 .sudo-grant-modal .modal-buttons button.primary:disabled {
   background: #6e7681; border-color: #6e7681; cursor: default;
 }
+/* Cron-create modal — reuses .sudo-grant-modal CSS shape for the
+   outer dialog/buttons. Cron form has more rows (name, owner, target
+   radio, schedule presets, subject, body, enabled), so we widen
+   slightly and let the body textarea grow. */
+.cron-create-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 520px; max-width: 640px;
+  width: calc(100% - 32px);
+  display: flex; flex-direction: column; gap: 10px;
+  color: #c9d1d9; max-height: 86vh; overflow-y: auto;
+}
+.cron-create-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.cron-create-modal .modal-meta {
+  font-size: 11px; color: #7d8590;
+  padding: 4px 8px; background: #0d1117;
+  border-left: 2px solid #2a3340; margin-top: -4px;
+}
+.cron-create-row {
+  display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
+}
+.cron-create-row .cron-create-label {
+  flex: 0 0 72px; color: #7d8590; padding-top: 6px;
+}
+.cron-create-row input[type=text],
+.cron-create-row select,
+.cron-create-row textarea {
+  flex: 1;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
+}
+.cron-create-row input[type=text]:focus,
+.cron-create-row select:focus,
+.cron-create-row textarea:focus { outline: none; border-color: #58a6ff; }
+.cron-create-row textarea {
+  min-height: 80px; max-height: 220px; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cron-create-target {
+  flex: 1; display: flex; flex-direction: column; gap: 6px;
+}
+.cron-create-target .cron-target-modes {
+  display: flex; gap: 12px; font-size: 12px; color: #c9d1d9;
+}
+.cron-create-target .cron-target-modes label { cursor: pointer; }
+.cron-create-target .cron-target-input-row {
+  display: flex; gap: 6px; align-items: center;
+}
+.cron-create-target .cron-target-input-row input[type=text],
+.cron-create-target .cron-target-input-row select {
+  flex: 1;
+}
+.cron-create-target .cron-target-input-row button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 10px; font-size: 12px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.cron-create-target .cron-target-input-row button:hover { background: #2d333b; }
+.cron-create-schedule {
+  flex: 1; display: flex; flex-direction: column; gap: 6px;
+}
+.cron-create-schedule .cron-schedule-chips {
+  display: flex; flex-wrap: wrap; gap: 4px 6px;
+}
+.cron-create-schedule .cron-schedule-chips button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.cron-create-schedule .cron-schedule-chips button.selected {
+  background: #1f6feb; border-color: #388bfd; color: white;
+}
+.cron-create-enabled {
+  display: flex; align-items: center; gap: 6px; font-size: 12px;
+  color: #c9d1d9;
+}
+.cron-create-enabled input { margin: 0; }
+.cron-create-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.cron-create-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.cron-create-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.cron-create-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.cron-create-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
+.cron-create-modal .modal-buttons .spacer { flex: 1; }
+.cron-create-modal .modal-buttons .secondary {
+  background: transparent; border-color: #2a3340; color: #7d8590;
+}
+.cron-create-modal .modal-buttons .secondary:hover { color: #c9d1d9; }
 </style>
 </head>
 <body>
@@ -392,6 +488,8 @@ summary.dnd-drop-over.dnd-effect-clone {
       <input id="filter-cron" type="text" placeholder="Filter cron jobs (matches name + owner/target label + body)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-cron-count"></span>
       <button class="clear-filter" id="filter-cron-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job">+ new cron job</button>
     </div>
     <div id="cron-list"></div>
   </section>
@@ -514,6 +612,86 @@ summary.dnd-drop-over.dnd-effect-clone {
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="cron-pick-target-modal">
+  <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="cron-pick-target-title">
+    <h3 id="cron-pick-target-title">Pick target <span class="muted">— agent</span></h3>
+    <input id="cron-pick-target-search" class="add-member-search" type="text" placeholder="Filter by alias / title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false" />
+    <div class="add-member-list" id="cron-pick-target-list"></div>
+    <div class="add-member-foot">
+      <label title="Include offline / archived agents in the candidate pool">
+        <input id="cron-pick-target-all" type="checkbox" />Include offline / archived
+      </label>
+      <span class="spacer"></span>
+      <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="cron-create-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="cron-create-title">
+    <h3 id="cron-create-title">Schedule a cron job</h3>
+    <div class="modal-meta" id="cron-create-meta" style="display:none"></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Name</span>
+      <input id="cron-create-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Owner</span>
+      <div class="cron-create-target">
+        <div class="cron-target-input-row">
+          <input id="cron-create-owner" type="text" placeholder="(default: dashboard human) alias / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+          <button type="button" id="cron-create-owner-pick" title="Pick from agent list">🔍</button>
+        </div>
+      </div>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Target</span>
+      <div class="cron-create-target">
+        <div class="cron-target-modes">
+          <label><input type="radio" name="cron-target-mode" value="solo" checked /> Solo agent</label>
+          <label><input type="radio" name="cron-target-mode" value="group" /> Group (multicast)</label>
+        </div>
+        <div class="cron-target-input-row" id="cron-create-target-solo">
+          <input id="cron-create-target" type="text" placeholder="alias / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+          <button type="button" id="cron-create-target-pick" title="Pick from agent list">🔍</button>
+        </div>
+        <div class="cron-target-input-row" id="cron-create-target-group" style="display:none">
+          <select id="cron-create-group"></select>
+        </div>
+      </div>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Every</span>
+      <div class="cron-create-schedule">
+        <div class="cron-schedule-chips" id="cron-create-chips">
+          <button type="button" data-chip="5m">5m</button>
+          <button type="button" data-chip="15m">15m</button>
+          <button type="button" data-chip="1h">1h</button>
+          <button type="button" data-chip="4h">4h</button>
+          <button type="button" data-chip="24h">daily</button>
+        </div>
+        <input id="cron-create-interval" type="text" placeholder="custom (30s min, e.g. 10m, 2h, 1h30m)" autocomplete="off" spellcheck="false" />
+      </div>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Subject</span>
+      <input id="cron-create-subject" type="text" placeholder="optional, shows in inbox listings" maxlength="100" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Body</span>
+      <textarea id="cron-create-body" rows="4" placeholder="message text the cron job sends each tick (required)" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-enabled">
+      <input id="cron-create-enabled" type="checkbox" checked /> Enabled
+    </label>
+    <div class="cron-create-error" id="cron-create-error"></div>
+    <div class="modal-buttons">
+      <button id="cron-create-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="cron-create-save-another" class="secondary" type="button" title="Save and reset the form so you can create another in the same sitting">Save &amp; create another</button>
+      <button id="cron-create-submit" class="primary" type="button">Create</button>
+    </div>
+  </div>
+</div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
 <script>
@@ -592,10 +770,23 @@ summary.dnd-drop-over.dnd-effect-clone {
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
-    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
   }
   function sudoMemberButton(m) {
     return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
+  }
+  // cronMemberButton renders the ⏰ "schedule a nudge for this member"
+  // button. Opens the cron-create modal prefilled with Solo target =
+  // this conv-id, and Owner = this conv-id too (self-nudge is the
+  // common case from member rows).
+  function cronMemberButton(m) {
+    const label = m.alias || m.title || m.conv_id;
+    const prefill = JSON.stringify({
+      targetMode: 'solo',
+      target: m.conv_id,
+      owner: m.conv_id,
+    });
+    return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="Schedule a recurring nudge for ${esc(label)}">⏰</button>`;
   }
 
   // lifecycleAndFocusButtons renders the focus/wake/shutdown trio.
@@ -664,6 +855,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-actions">
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add a conversation to this group">+ add member</button>
+            <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
           </span>
@@ -743,7 +935,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -918,6 +1110,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               ? `<button class="warn" data-act="cron-disable" data-id="${j.id}" data-label="${esc(j.name)}" title="Pause this cron job">disable</button>`
               : `<button data-act="cron-enable" data-id="${j.id}" data-label="${esc(j.name)}" title="Re-enable this cron job">enable</button>`;
             const runBtn = `<button data-act="cron-run-now" data-id="${j.id}" data-label="${esc(j.name)}" title="Fire this job immediately (also stamps last_run_at)">run now</button>`;
+            const editBtn = `<button data-act="cron-edit" data-id="${j.id}" data-label="${esc(j.name)}" title="Edit this cron job">edit</button>`;
             const delBtn = `<button class="danger" data-act="cron-delete" data-id="${j.id}" data-label="${esc(j.name)}" title="Delete this cron job">delete</button>`;
             const bodySummary = (j.body || '').replace(/\s+/g, ' ').trim();
             const bodyTrunc = bodySummary.length > 80 ? bodySummary.slice(0, 80) + '…' : bodySummary;
@@ -932,7 +1125,7 @@ summary.dnd-drop-over.dnd-effect-clone {
                 <td><span class="last-hook">${esc(relTime(j.last_run_at) || '—')}</span></td>
                 <td>${cronStatusPill(j.last_run_status)}</td>
                 <td><span class="muted" title="${esc(j.body || '')}">${esc(bodyTrunc)}</span></td>
-                <td><div class="row-actions">${runBtn}${enableBtn}${delBtn}</div></td>
+                <td><div class="row-actions">${runBtn}${editBtn}${enableBtn}${delBtn}</div></td>
               </tr>
             `;
           }).join('')}
@@ -1215,6 +1408,396 @@ summary.dnd-drop-over.dnd-effect-clone {
       overlay.classList.add('show');
       render();
       setTimeout(() => search.focus(), 0);
+    });
+  }
+
+  // -- Cron create / edit form ----------------------------------------
+  //
+  // One modal serves both Create and Edit. Edit mode prefills every
+  // field from the selected row and routes the submit to PATCH; create
+  // mode starts blank and POSTs. The "Save & create another" button
+  // posts then resets the form for the next entry — handy when building
+  // out a multi-cron team in one sitting.
+  //
+  // Target has two radio modes: Solo agent (text input + agent picker
+  // overlay) or Group (dropdown of group names from the snapshot).
+  // Owner is always a text input + optional picker — humans rarely
+  // need to override the default, but per-agent self-nudge cron jobs
+  // benefit from prefill (owner = the agent itself).
+
+  // Active edit id; null in create mode. Reset every time the modal
+  // opens or closes.
+  let cronEditId = null;
+  let cronOriginalTarget = null;       // for PATCH: only send `target` if user changed it
+  let cronOriginalGroupID = null;      // ditto for `group_id`
+
+  // openCronCreateModal opens the modal in create mode. prefill is an
+  // optional object: { targetMode, target, owner, name, subject, body,
+  // interval, enabled }. All optional. Used by the context-aware
+  // entry-point buttons (Agents row ⏰, Groups member ⏰, group header ⏰)
+  // to drop the relevant defaults into the form before the user opens
+  // it.
+  function openCronCreateModal(prefill) {
+    cronEditId = null;
+    cronOriginalTarget = null;
+    cronOriginalGroupID = null;
+    $('#cron-create-title').textContent = 'Schedule a cron job';
+    $('#cron-create-meta').style.display = 'none';
+    $('#cron-create-submit').textContent = 'Create';
+    $('#cron-create-save-another').style.display = '';
+    populateCronForm(prefill || {});
+    showCronCreateModal();
+  }
+
+  // openCronEditModal opens the modal in edit mode, prefilled from the
+  // selected cron job row. Submit PATCHes /api/cron/{id} instead of
+  // POSTing /api/cron.
+  function openCronEditModal(job) {
+    cronEditId = job.id;
+    cronOriginalTarget = job.target_conv || '';
+    cronOriginalGroupID = job.group_id || 0;
+    $('#cron-create-title').textContent = 'Edit cron job';
+    const meta = $('#cron-create-meta');
+    meta.style.display = 'block';
+    meta.textContent = `#${job.id} · ${job.name || '(unnamed)'}`;
+    $('#cron-create-submit').textContent = 'Save';
+    // Edit mode hides "Save & create another" — that pattern only
+    // makes sense for create.
+    $('#cron-create-save-another').style.display = 'none';
+    populateCronForm(jobToPrefill(job));
+    showCronCreateModal();
+  }
+
+  function jobToPrefill(job) {
+    const isGroup = job.group_id && job.group_id > 0;
+    return {
+      name: job.name || '',
+      owner: job.owner_label || job.owner_conv || '',
+      targetMode: isGroup ? 'group' : 'solo',
+      target: isGroup ? '' : (job.target_label || job.target_conv || ''),
+      groupName: isGroup ? (job.group_name || '') : '',
+      interval: formatInterval(job.interval_seconds) || '',
+      subject: job.subject || '',
+      body: job.body || '',
+      enabled: !!job.enabled,
+    };
+  }
+
+  function populateCronForm(p) {
+    $('#cron-create-name').value = p.name || '';
+    $('#cron-create-owner').value = p.owner || '';
+    $('#cron-create-subject').value = p.subject || '';
+    $('#cron-create-body').value = p.body || '';
+    $('#cron-create-enabled').checked = p.enabled === undefined ? true : !!p.enabled;
+    // Interval: prefill the text input; if it matches a chip preset,
+    // visually highlight the chip too.
+    const interval = p.interval || '';
+    $('#cron-create-interval').value = interval;
+    setSelectedChip(interval);
+    // Target mode.
+    const mode = p.targetMode || 'solo';
+    $$('#cron-create-modal input[name=cron-target-mode]').forEach(r => {
+      r.checked = r.value === mode;
+    });
+    setCronTargetMode(mode, /*populateOnly=*/true);
+    if (mode === 'solo') {
+      $('#cron-create-target').value = p.target || '';
+    } else {
+      populateGroupSelect();
+      const sel = $('#cron-create-group');
+      const want = p.groupName || '';
+      let found = false;
+      Array.from(sel.options).forEach(o => {
+        if (o.value === want) { o.selected = true; found = true; }
+      });
+      if (!found && sel.options.length) sel.selectedIndex = 0;
+    }
+    $('#cron-create-error').textContent = '';
+  }
+
+  function setSelectedChip(value) {
+    const chips = $$('#cron-create-chips button');
+    chips.forEach(c => c.classList.toggle('selected', c.dataset.chip === value));
+  }
+
+  function setCronTargetMode(mode, populateOnly) {
+    const solo = mode === 'solo';
+    $('#cron-create-target-solo').style.display = solo ? '' : 'none';
+    $('#cron-create-target-group').style.display = solo ? 'none' : '';
+    if (!solo && !populateOnly) populateGroupSelect();
+  }
+
+  function populateGroupSelect() {
+    const sel = $('#cron-create-group');
+    const groups = (lastSnapshot?.groups || []).map(g => g.name).sort();
+    const prev = sel.value;
+    sel.innerHTML = groups.length
+      ? groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
+      : '<option value="">(no groups — create one first)</option>';
+    if (prev && groups.includes(prev)) sel.value = prev;
+  }
+
+  function showCronCreateModal() {
+    $('#cron-create-modal').classList.add('show');
+    modalEditing = true;
+    setTimeout(() => $('#cron-create-name').focus(), 0);
+  }
+  function closeCronCreateModal() {
+    $('#cron-create-modal').classList.remove('show');
+    modalEditing = false;
+    cronEditId = null;
+  }
+
+  // submitCronForm POSTs (create) or PATCHes (edit). On success, the
+  // dashboard refreshes; on `Save & create another`, the form resets
+  // for the next entry instead.
+  async function submitCronForm(keepOpen) {
+    const errEl = $('#cron-create-error');
+    errEl.textContent = '';
+    const name = $('#cron-create-name').value.trim();
+    const owner = $('#cron-create-owner').value.trim();
+    const mode = ($$('#cron-create-modal input[name=cron-target-mode]:checked')[0] || {}).value;
+    let target = '';
+    if (mode === 'solo') {
+      target = $('#cron-create-target').value.trim();
+    } else {
+      const g = $('#cron-create-group').value;
+      if (g) target = 'group:' + g;
+    }
+    const interval = $('#cron-create-interval').value.trim();
+    const subject = $('#cron-create-subject').value.trim();
+    const bodyText = $('#cron-create-body').value;
+    const enabled = $('#cron-create-enabled').checked;
+
+    // Client-side gates with inline errors — same shape as the sudo
+    // modal's #sudo-grant-error pattern. Daemon does authoritative
+    // validation too, so we don't need to enumerate every rule here.
+    if (!target) {
+      errEl.textContent = mode === 'solo'
+        ? 'Target is required — type an alias / conv-id or use 🔍 to pick.'
+        : 'Pick a group from the dropdown (or create one first via the Groups tab).';
+      return;
+    }
+    if (!bodyText) {
+      errEl.textContent = 'Body is required (the message text the cron job sends).';
+      return;
+    }
+    if (!cronEditId && !interval) {
+      errEl.textContent = 'Schedule is required — click a chip or type a custom duration.';
+      return;
+    }
+
+    const submitBtn = $('#cron-create-submit');
+    const otherBtn = $('#cron-create-save-another');
+    submitBtn.disabled = true; otherBtn.disabled = true;
+    try {
+      let r;
+      if (cronEditId) {
+        const patch = { name, body: bodyText, subject, enabled };
+        if (owner) patch.owner = owner;
+        if (interval) patch.interval = interval;
+        // Only send target/group_id if the user actually changed
+        // them — avoids re-resolving and possibly tripping validation
+        // on an unchanged field.
+        if (mode === 'solo' && target !== cronOriginalTarget) {
+          patch.target = target;
+          patch.group_id = 0;
+        } else if (mode === 'group') {
+          // Switching to group mode (or staying in it with a different
+          // pick): send target=group:<name>; daemon resolves to the
+          // group's conv set on its own.
+          patch.target = target;
+        }
+        r = await fetch(`/api/cron/${cronEditId}`, {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+      } else {
+        const payload = { name, target, interval, subject, body: bodyText, enabled };
+        if (owner) payload.owner = owner;
+        r = await fetch('/api/cron', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
+        return;
+      }
+      const resp = await r.json();
+      const verb = cronEditId ? 'saved' : 'created';
+      toast(`cron ${verb}: ${resp.name || ('#' + (resp.id || ''))}`);
+      // Optimistic insert/update so the table updates before the next
+      // 5s snapshot poll. We just got the canonical row back; splice it
+      // into lastSnapshot.cron and re-render.
+      if (lastSnapshot) {
+        lastSnapshot.cron = lastSnapshot.cron || [];
+        const idx = lastSnapshot.cron.findIndex(j => j.id === resp.id);
+        if (idx >= 0) lastSnapshot.cron[idx] = resp;
+        else lastSnapshot.cron.push(resp);
+        renderCronTab();
+      }
+      if (keepOpen) {
+        // Reset body + name for the next entry; keep target/schedule
+        // since "create another" is usually batch-style.
+        $('#cron-create-name').value = '';
+        $('#cron-create-subject').value = '';
+        $('#cron-create-body').value = '';
+        $('#cron-create-name').focus();
+        return;
+      }
+      closeCronCreateModal();
+      // Fire a snapshot refresh so anything we missed (e.g. server
+      // re-routed the job through a shared group) gets picked up.
+      refresh();
+    } catch (e) {
+      errEl.textContent = 'Network error: ' + (e.message || e);
+    } finally {
+      submitBtn.disabled = false; otherBtn.disabled = false;
+    }
+  }
+
+  // pickCronTargetModal opens a filtered candidate list. Reuses the
+  // .add-member-modal CSS. Mode "agent" → solo conv pool (matches the
+  // sudo picker); mode "group" → would surface groups but in v1 we
+  // already have a <select> for groups, so this is agent-only. Returns
+  // the picked conv-id ("" on cancel).
+  function pickCronTargetModal() {
+    return new Promise(resolve => {
+      const overlay = $('#cron-pick-target-modal');
+      const search = $('#cron-pick-target-search');
+      const list = $('#cron-pick-target-list');
+      const includeAll = $('#cron-pick-target-all');
+      search.value = '';
+      includeAll.checked = false;
+      let highlight = 0;
+      let candidates = [];
+
+      function buildCandidates() {
+        const out = [];
+        const seen = new Set();
+        for (const a of (lastSnapshot?.agents || [])) {
+          if (!a.conv_id || seen.has(a.conv_id)) continue;
+          if (!includeAll.checked && !a.online) continue;
+          seen.add(a.conv_id);
+          out.push(a);
+        }
+        out.sort((a, b) => {
+          if (!!b.online !== !!a.online) return (b.online ? 1 : 0) - (a.online ? 1 : 0);
+          return (a.title || '').localeCompare(b.title || '');
+        });
+        return out;
+      }
+
+      function applyFilter(rows, q) {
+        if (!q) return rows;
+        const needle = q.toLowerCase();
+        return rows.filter(a =>
+          (a.title || '').toLowerCase().includes(needle) ||
+          (a.conv_id || '').toLowerCase().includes(needle) ||
+          (a.groups || []).some(g => g.toLowerCase().includes(needle)));
+      }
+
+      function render() {
+        candidates = applyFilter(buildCandidates(), search.value);
+        if (highlight >= candidates.length) highlight = Math.max(0, candidates.length - 1);
+        if (highlight < 0) highlight = 0;
+        if (!candidates.length) {
+          list.innerHTML = '<div class="add-member-empty">No matching conversations. ' +
+            (includeAll.checked
+              ? '(Try a different filter.)'
+              : '(Try ticking "Include offline / archived" for a wider pool.)') +
+            '</div>';
+          return;
+        }
+        list.innerHTML = candidates.map((a, i) => {
+          const dot = a.online
+            ? '<span class="online" title="online">●</span>'
+            : '<span class="offline" title="offline">○</span>';
+          const groups = (a.groups || []).length
+            ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
+            : '';
+          return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
+                 `${dot}<span class="alias">${esc(a.title || '(unnamed)')}</span>` +
+                 `<span class="id">${esc(shortId(a.conv_id))}</span>${groups}` +
+                 `</div>`;
+        }).join('');
+        const hl = list.querySelector('.add-member-row.highlighted');
+        if (hl) hl.scrollIntoView({block: 'nearest'});
+      }
+
+      function close(convID) {
+        overlay.classList.remove('show');
+        document.removeEventListener('keydown', onKey);
+        resolve(convID || '');
+      }
+      function onKey(e) {
+        if (!overlay.classList.contains('show')) return;
+        if (e.key === 'Escape') { e.preventDefault(); close(''); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); highlight++; render(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); highlight--; render(); }
+        else if (e.key === 'Enter') {
+          e.preventDefault();
+          const c = candidates[highlight];
+          if (c) close(c.conv_id);
+        }
+      }
+      list.onclick = (e) => {
+        const row = e.target.closest('.add-member-row');
+        if (!row) return;
+        const i = parseInt(row.dataset.i, 10);
+        const c = candidates[i];
+        if (c) close(c.conv_id);
+      };
+      search.oninput = () => { highlight = 0; render(); };
+      includeAll.onchange = render;
+      overlay.onclick = (e) => { if (e.target === overlay) close(''); };
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      render();
+      setTimeout(() => search.focus(), 0);
+    });
+  }
+
+  function bindCronModal() {
+    $('#cron-create-open').addEventListener('click', () => openCronCreateModal({}));
+    $('#cron-create-cancel').addEventListener('click', closeCronCreateModal);
+    $('#cron-create-submit').addEventListener('click', () => submitCronForm(false));
+    $('#cron-create-save-another').addEventListener('click', () => submitCronForm(true));
+    $('#cron-create-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'cron-create-modal') closeCronCreateModal();
+    });
+    // Mode radio toggles between solo/group input panes.
+    $$('#cron-create-modal input[name=cron-target-mode]').forEach(r => {
+      r.addEventListener('change', () => setCronTargetMode(r.value, false));
+    });
+    // Schedule chips push value into the text input + highlight.
+    $('#cron-create-chips').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-chip]');
+      if (!b) return;
+      const v = b.dataset.chip;
+      $('#cron-create-interval').value = v;
+      setSelectedChip(v);
+    });
+    // Typing in the custom interval input clears the chip highlight.
+    $('#cron-create-interval').addEventListener('input', () => {
+      setSelectedChip($('#cron-create-interval').value.trim());
+    });
+    // Owner / target picker buttons reuse the cron-pick-target overlay.
+    $('#cron-create-owner-pick').addEventListener('click', async () => {
+      const conv = await pickCronTargetModal();
+      if (conv) $('#cron-create-owner').value = conv;
+    });
+    $('#cron-create-target-pick').addEventListener('click', async () => {
+      const conv = await pickCronTargetModal();
+      if (conv) $('#cron-create-target').value = conv;
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#cron-create-modal').classList.contains('show')) {
+        closeCronCreateModal();
+      }
     });
   }
 
@@ -2075,6 +2658,29 @@ summary.dnd-drop-over.dnd-effect-clone {
             if (!ok) toast(`delete failed: ${await r.text()}`, true);
             break;
           }
+          case 'cron-edit': {
+            const id = parseInt(btn.getAttribute('data-id'), 10);
+            const job = (lastSnapshot?.cron || []).find(j => j.id === id);
+            if (!job) {
+              toast(`edit: job #${id} not in current snapshot`, true);
+              return;
+            }
+            openCronEditModal(job);
+            return;
+          }
+          case 'cron-new': {
+            // Context-aware "+ new cron job" buttons from Agents /
+            // Groups tabs land here. data-prefill is a JSON blob
+            // describing the prefill state (targetMode, target,
+            // groupName, owner). Empty / missing → default form.
+            let prefill = {};
+            const raw = btn.getAttribute('data-prefill');
+            if (raw) {
+              try { prefill = JSON.parse(raw); } catch (_) {}
+            }
+            openCronCreateModal(prefill);
+            return;
+          }
           default:
             return;
         }
@@ -2327,6 +2933,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindFilter('cron');
   bindFilter('sudo');
   bindSudoModal();
+  bindCronModal();
   refresh();
   setInterval(refresh, 5000);
 })();

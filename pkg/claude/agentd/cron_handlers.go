@@ -266,12 +266,14 @@ func jobVisibleTo(j *db.AgentCronJob, callerConv string) bool {
 
 func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name       string `json:"name"`
-		Target     string `json:"target"`
-		Interval   string `json:"interval"` // e.g. "10m", "1h" — parsed via time.ParseDuration
-		Subject    string `json:"subject"`
-		Body       string `json:"body"`
-		GroupID    int64  `json:"group_id"` // optional explicit override; auto-inferred from shared groups when 0
+		Name     string `json:"name"`
+		Target   string `json:"target"`
+		Owner    string `json:"owner"`    // optional; humans may attribute the job to a specific conv (default: target)
+		Interval string `json:"interval"` // e.g. "10m", "1h" — parsed via time.ParseDuration
+		Subject  string `json:"subject"`
+		Body     string `json:"body"`
+		Enabled  *bool  `json:"enabled,omitempty"` // optional; defaults to true
+		GroupID  int64  `json:"group_id"`          // optional explicit override; auto-inferred from shared groups when 0
 	}
 	if r.ContentLength == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing request body")
@@ -321,9 +323,18 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	if owner == "" {
 		// Human caller — record the target as owner so the job is
 		// self-managed by the target if the human goes away. Reasonable
-		// default; humans can override with an explicit owner_conv field
-		// in v2 if needed.
+		// default; humans can override via the explicit `owner` field
+		// (resolved through agent.ResolveSelector, same as target).
 		owner = targetConv
+		if strings.TrimSpace(body.Owner) != "" {
+			ownerRes, _, ownerErr := agent.ResolveSelector(body.Owner)
+			if ownerErr != nil {
+				writeError(w, http.StatusNotFound, "not_found",
+					"resolve owner: "+ownerErr.Error())
+				return
+			}
+			owner = ownerRes.ConvID
+		}
 	}
 
 	// Group routing: pick the first shared group between owner and
@@ -338,6 +349,10 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
 	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
 		Name:            body.Name,
 		OwnerConv:       owner,
@@ -346,7 +361,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		IntervalSeconds: int64(d.Seconds()),
 		Subject:         body.Subject,
 		Body:            body.Body,
-		Enabled:         true,
+		Enabled:         enabled,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "insert: "+err.Error())
@@ -434,6 +449,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 	var body struct {
 		Name     *string `json:"name,omitempty"`
 		Target   *string `json:"target,omitempty"`
+		Owner    *string `json:"owner,omitempty"`
 		Interval *string `json:"interval,omitempty"`
 		Subject  *string `json:"subject,omitempty"`
 		Body     *string `json:"body,omitempty"`
@@ -487,6 +503,15 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		}
 		t := res.ConvID
 		patch.TargetConv = &t
+	}
+	if body.Owner != nil {
+		res, _, err := agent.ResolveSelector(*body.Owner)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+err.Error())
+			return db.UpdateCronPatch{}, false
+		}
+		o := res.ConvID
+		patch.OwnerConv = &o
 	}
 	return patch, true
 }

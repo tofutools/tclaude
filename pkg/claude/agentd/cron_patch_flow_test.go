@@ -246,6 +246,77 @@ func TestDashboardCron_Patch_RoundTrips(t *testing.T) {
 	}
 }
 
+// Scenario: dashboard cookie-auth twin POST /api/cron creates a job
+// with a human-supplied owner override. Pins the new `owner` field
+// the dashboard form sends — without it humans couldn't attribute a
+// job to a specific agent (e.g. a PO agent that monitors workers).
+func TestDashboardCron_Create_OwnerOverride(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+
+	const ownerConv = "ownr-aaaa-bbbb-cccc-1111"
+	const targetConv = "tgth-aaaa-bbbb-cccc-2222"
+	f.HaveConvWithTitle(ownerConv, "po-agent")
+	f.HaveConvWithTitle(targetConv, "worker")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	body, _ := json.Marshal(map[string]any{
+		"name":     "po-pings",
+		"target":   targetConv,
+		"owner":    ownerConv,
+		"interval": "10m",
+		"body":     "status check",
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(mux, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard POST /api/cron: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ID         int64  `json:"id"`
+		OwnerConv  string `json:"owner_conv"`
+		TargetConv string `json:"target_conv"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.OwnerConv != ownerConv {
+		t.Errorf("owner_conv = %q, want %q", resp.OwnerConv, ownerConv)
+	}
+	if resp.TargetConv != targetConv {
+		t.Errorf("target_conv = %q, want %q", resp.TargetConv, targetConv)
+	}
+	got, _ := db.GetAgentCronJob(resp.ID)
+	if got == nil || got.OwnerConv != ownerConv {
+		t.Errorf("DB row owner mismatch: %+v", got)
+	}
+}
+
+// Scenario: dashboard POST /api/cron without the dashboard cookie is
+// refused. Mirrors PatchAuthRequired so the create path is gated too.
+func TestDashboardCron_CreateAuthRequired(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	_ = newFlow(t)
+
+	mux := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(mux)
+	body, _ := json.Marshal(map[string]any{
+		"name":     "x",
+		"target":   "anywhere",
+		"interval": "10m",
+		"body":     "hi",
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(mux, r)
+	if rec.Code == http.StatusOK {
+		t.Errorf("dashboard POST /api/cron without cookie should fail; got 200 body=%s", rec.Body.String())
+	}
+}
+
 // Scenario: PATCH /api/cron/{id} without the dashboard cookie returns
 // non-200 (auth refused). Pins the cookie gate on the new endpoint.
 func TestDashboardCron_PatchAuthRequired(t *testing.T) {
