@@ -47,6 +47,7 @@ func groupsCmd() *cobra.Command {
 			groupsGrantOwnerCmd(),
 			groupsRevokeOwnerCmd(),
 			groupsRenameCmd(),
+			groupsCloneCmd(),
 		},
 	}.ToCobra()
 }
@@ -809,6 +810,96 @@ func groupsUnarchiveCmd() *cobra.Command {
 			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+// --- groups clone ---
+
+type groupsCloneParams struct {
+	Source   string `pos:"true" help:"Source group to clone"`
+	NewName  string `pos:"true" optional:"true" help:"Optional new group name (defaults to <source>-c-<N>)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsCloneCmd() *cobra.Command {
+	return boa.CmdT[groupsCloneParams]{
+		Use:   "clone",
+		Short: "Clone an entire group: snapshot members + owners, fork each into a new group",
+		Long: "Clones every member of <source> via the same `agent clone` machinery, " +
+			"attaches the clones to a new group, and copies <source>'s owners (same conv-ids) " +
+			"onto the new group. The source group is left untouched.\n\n" +
+			"Default new group name is <source>-c-<N> (smallest free N globally). " +
+			"Clone-of-a-clone strips the existing -c-<N> suffix before computing the next " +
+			"so names don't nest.\n\n" +
+			"Each member clone uses the copy-jsonl path so the clone starts with the " +
+			"source's conversation history. Owners stay as the same conv-id (no clone). " +
+			"Per-conv permissions on each member are copied to the clone (best-effort).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsCloneParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Source).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsCloneParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsClone(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsClone(p *groupsCloneParams, stdout, stderr io.Writer) int {
+	if p.Source == "" {
+		fmt.Fprintf(stderr, "Error: source group is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	body := map[string]string{}
+	if p.NewName != "" {
+		body["new_name"] = p.NewName
+	}
+	var resp struct {
+		Group        string `json:"group"`
+		SrcGroup     string `json:"src_group"`
+		OwnersCopied int    `json:"owners_copied"`
+		Members      []struct {
+			SrcConv string `json:"src_conv"`
+			NewConv string `json:"new_conv,omitempty"`
+			Alias   string `json:"alias,omitempty"`
+			Label   string `json:"label,omitempty"`
+			Error   string `json:"error,omitempty"`
+		} `json:"members"`
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Source) + "/clone"
+	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s -> %s (%d owner(s) copied)\n",
+		resp.SrcGroup, resp.Group, resp.OwnersCopied)
+	failed := 0
+	for _, m := range resp.Members {
+		if m.Error != "" {
+			fmt.Fprintf(stdout, "  ! %s -> FAILED: %s\n", m.SrcConv, m.Error)
+			failed++
+			continue
+		}
+		fmt.Fprintf(stdout, "  + %s -> %s (alias %s)\n",
+			m.SrcConv, m.NewConv, m.Alias)
+	}
+	if failed > 0 {
+		fmt.Fprintf(stderr, "%d member(s) failed; retry with `tclaude agent clone <src-conv> --target %s`\n",
+			failed, resp.Group)
+		return rcIOFailure
+	}
+	return rcOK
 }
 
 // --- groups rename ---

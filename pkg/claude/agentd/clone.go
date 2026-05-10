@@ -16,6 +16,97 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+// cloneSpawnError carries enough context to surface either an HTTP
+// error (when called from the single-clone handler) or accumulate
+// into a per-member result (when called from groups-clone). The two
+// callers differ in how they report failure but agree on which
+// statuses + codes apply.
+type cloneSpawnError struct {
+	Status int
+	Code   string
+	Msg    string
+}
+
+func (e *cloneSpawnError) Error() string { return e.Msg }
+func (e *cloneSpawnError) write(w http.ResponseWriter) {
+	writeError(w, e.Status, e.Code, e.Msg)
+}
+
+// cloneSpawnOnce mints a clone's conv-id (and optionally its jsonl).
+// Two branches:
+//   - copy: use convops to fork the existing jsonl onto a fresh
+//     conv-id; spawn `tclaude session new -r <new-conv>` so CC loads
+//     the cloned conversation.
+//   - no-copy: spawn `tclaude session new --label <label>` and poll
+//     for whatever conv-id CC mints, same as reincarnate.
+//
+// Returns (newConv, newTmux, label, nil) on success. label may be
+// empty in the copy path when the session row's id field hasn't
+// materialised within the deadline; that's not an error since the
+// conv-id is already known.
+//
+// Extracted from runCloneOrchestration so groups-clone can reuse the
+// same race handling without duplicating it. Behaviour-preserving;
+// see commit history for the original inline version.
+func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, label string, spawnErr *cloneSpawnError) {
+	if noCopyConv {
+		label = generateSpawnLabel()
+		if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
+			return "", "", "", &cloneSpawnError{
+				Status: http.StatusInternalServerError, Code: "spawn",
+				Msg: "failed to launch tclaude session new: " + err.Error(),
+			}
+		}
+		deadline := time.Now().Add(reincarnateSpawnTimeout)
+		for time.Now().Before(deadline) {
+			s, err := db.LoadSession(label)
+			if err == nil && s != nil {
+				newTmux = s.TmuxSession
+				if s.ConvID != "" {
+					return s.ConvID, newTmux, label, nil
+				}
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		return "", newTmux, label, &cloneSpawnError{
+			Status: http.StatusGatewayTimeout, Code: "timeout",
+			Msg: "spawned session " + label + " but conv-id never materialised within " +
+				reincarnateSpawnTimeout.String() +
+				" — the session may still come up; check `tclaude session attach " + label + "`",
+		}
+	}
+	// Copy path: fork the jsonl first, then resume into it.
+	copyResult, err := convops.CopyConversationToPath(sourceConv, cwd, true /* global */)
+	if err != nil {
+		return "", "", "", &cloneSpawnError{
+			Status: http.StatusInternalServerError, Code: "copy",
+			Msg: "failed to copy conversation jsonl: " + err.Error(),
+		}
+	}
+	newConv = copyResult.NewConvID
+	if err := SpawnDetachedTclaudeResume(newConv, cwd); err != nil {
+		return "", "", "", &cloneSpawnError{
+			Status: http.StatusInternalServerError, Code: "spawn",
+			Msg: "failed to launch tclaude session new -r: " + err.Error(),
+		}
+	}
+	deadline := time.Now().Add(reincarnateSpawnTimeout)
+	for time.Now().Before(deadline) {
+		if s, err := db.FindSessionByConvID(newConv); err == nil && s != nil && s.TmuxSession != "" {
+			newTmux = s.TmuxSession
+			if s.ID != "" {
+				label = s.ID
+			}
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	// Don't fail if the tmux name doesn't surface — the conv-id is
+	// already known and the spawn was successful. Empty newTmux just
+	// means the human needs to look up the label themselves.
+	return newConv, newTmux, label, nil
+}
+
 // CloneCooldown is the minimum time between two clones of the same
 // source conv. The clone handler does an atomic INSERT-WHERE-NOT-
 // EXISTS against agent_clone_history to enforce this — see
@@ -278,73 +369,14 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 		return
 	}
 
-	// 2. Mint the clone's conv-id (and optionally its jsonl). Two
-	// branches:
-	//   - copy: use convops to fork the existing jsonl onto a fresh
-	//     conv-id; then spawn `tclaude session new -r <new-conv>` so
-	//     CC loads the cloned conversation.
-	//   - no-copy: spawn `tclaude session new --label <label>` and
-	//     poll for whatever conv-id CC mints, same as reincarnate.
-	var newConv, newTmux, label string
-	if noCopyConv {
-		label = generateSpawnLabel()
-		if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
-			writeError(w, http.StatusInternalServerError, "spawn",
-				"failed to launch tclaude session new: "+err.Error())
-			return
-		}
-		// Same poll loop as reincarnate.
-		deadline := time.Now().Add(reincarnateSpawnTimeout)
-		for time.Now().Before(deadline) {
-			s, err := db.LoadSession(label)
-			if err == nil && s != nil {
-				newTmux = s.TmuxSession
-				if s.ConvID != "" {
-					newConv = s.ConvID
-					break
-				}
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-		if newConv == "" {
-			writeError(w, http.StatusGatewayTimeout, "timeout",
-				"spawned session "+label+" but conv-id never materialised within "+
-					reincarnateSpawnTimeout.String()+
-					" — the session may still come up; check `tclaude session attach "+label+"`")
-			return
-		}
-	} else {
-		// Copy the jsonl first; this gives us the new conv-id
-		// up-front, which we then resume into.
-		copyResult, err := convops.CopyConversationToPath(target, cwd, true /* global */)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "copy",
-				"failed to copy conversation jsonl: "+err.Error())
-			return
-		}
-		newConv = copyResult.NewConvID
-		if err := SpawnDetachedTclaudeResume(newConv, cwd); err != nil {
-			writeError(w, http.StatusInternalServerError, "spawn",
-				"failed to launch tclaude session new -r: "+err.Error())
-			return
-		}
-		// Wait for the session row to materialise so we can return
-		// the tmux session name in the response.
-		deadline := time.Now().Add(reincarnateSpawnTimeout)
-		for time.Now().Before(deadline) {
-			if s, err := db.FindSessionByConvID(newConv); err == nil && s != nil && s.TmuxSession != "" {
-				newTmux = s.TmuxSession
-				if s.ID != "" {
-					label = s.ID
-				}
-				break
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-		// Don't 504 if we don't get the tmux name — the conv-id is
-		// already known and the spawn was successful. Empty newTmux
-		// in the response just means the human will need to look up
-		// the label themselves.
+	// 2. Mint the clone's conv-id (and optionally its jsonl). The
+	// branching logic + race-handling lives in cloneSpawnOnce so the
+	// groups-clone orchestration can reuse the same code path without
+	// duplicating it.
+	newConv, newTmux, label, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv)
+	if spawnErr != nil {
+		spawnErr.write(w)
+		return
 	}
 
 	// 3. Copy identity to the new conv. Crucially, this is ADD-only —

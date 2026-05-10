@@ -1564,6 +1564,14 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 		handleGroupRename(w, r, g)
 		return
 	}
+	if len(parts) >= 2 && parts[1] == "clone" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+			return
+		}
+		handleGroupClone(w, r, g)
+		return
+	}
 
 	// /v1/groups/{name}/owners[*]
 	if len(parts) >= 2 && parts[1] == "owners" {
