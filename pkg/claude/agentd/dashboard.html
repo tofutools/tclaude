@@ -130,6 +130,12 @@ details[open] > summary .group-actions { opacity: 1; }
   display: none; align-items: center; justify-content: center; z-index: 100;
 }
 .modal-overlay.show { display: flex; }
+/* The cron-pick-target overlay is opened FROM inside the cron-create
+   form (Owner / Target 🔍 buttons), so it has to stack on top of the
+   create modal — not below it. Plain z-index:100 ties with the create
+   modal and the later DOM order wins, hiding the picker. Bumping the
+   picker to 150 keeps it on top regardless of DOM order. */
+#cron-pick-target-modal { z-index: 150; }
 .modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
