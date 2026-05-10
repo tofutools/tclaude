@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -327,6 +329,27 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Post-spawn injection: rename the new pane to the agent's alias
+	// and drop a [system: ...] welcome that describes the agent's
+	// identity. Two purposes:
+	//
+	//   1. Materialise the .jsonl. CC only writes the conversation
+	//      file once it has content; a freshly-spawned but never-used
+	//      conv leaves an orphan group_members row with no .jsonl,
+	//      and `agent resume` then silently fails because
+	//      `tclaude session new -r <conv>` has nothing to resume.
+	//      The /rename + welcome guarantee at least two writes hit
+	//      the file before anyone closes the pane.
+	//
+	//   2. Give the new agent its name + context up front. The agent
+	//      sees its alias in tmux/dashboard immediately, and the
+	//      welcome describes its role/descr/group so it can orient
+	//      itself before the human starts typing.
+	//
+	// Runs in a goroutine so the spawn response returns promptly; the
+	// goroutine waits for the pane to come alive before injecting.
+	go runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"group":        g.Name,
 		"conv_id":      convID,
@@ -334,6 +357,87 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"tmux_session": tmuxSession,
 		"attach_cmd":   "tclaude session attach " + label,
 	})
+}
+
+// runSpawnPostInit fires asynchronously after a successful spawn. It
+// waits for the new tmux pane to come online, then injects /rename
+// (when alias is a valid rename title) followed by a welcome system
+// message. Failures are logged, never bubbled — the spawn already
+// succeeded as far as the caller is concerned.
+//
+// Why /rename first: it's a slash command CC processes immediately,
+// landing a write on the .jsonl before any other turn happens. Even
+// if the welcome injection fails afterwards, the file exists and
+// `agent resume` can find it.
+func runSpawnPostInit(convID, alias, role, descr, groupName string) {
+	if !waitForConvAlive(convID) {
+		slog.Warn("spawn: new conv never came online; rename + welcome abandoned",
+			"conv", convID)
+		return
+	}
+
+	welcome := buildSpawnWelcome(alias, role, descr, groupName)
+
+	// Prefer the slash + follow-up combo when we can rename. /rename
+	// alone covers the .jsonl-materialisation half; the follow-up
+	// covers the context-handoff half. Skips rename when alias is
+	// empty / invalid (so spawn doesn't break for callers that pass
+	// human-friendly aliases that don't fit the rename charset).
+	if alias != "" && isValidRenameTitle(alias) {
+		if !injectSlashCommand(convID, "/rename "+alias, welcome) {
+			slog.Warn("spawn: post-init injection failed", "conv", convID, "alias", alias)
+		}
+		return
+	}
+	// No valid alias to rename to — still inject the welcome so the
+	// .jsonl gets written and the agent has its context.
+	if alias != "" {
+		slog.Warn("spawn: alias not a valid rename title; skipping /rename, sending welcome only",
+			"conv", convID, "alias", alias)
+	}
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil || len(candidates) == 0 {
+		slog.Warn("spawn: cannot resolve tmux session for welcome", "conv", convID)
+		return
+	}
+	var tmuxTarget string
+	for _, c := range candidates {
+		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
+			tmuxTarget = c.TmuxSession + ":0.0"
+			break
+		}
+	}
+	if tmuxTarget == "" {
+		slog.Warn("spawn: no alive tmux session for welcome", "conv", convID)
+		return
+	}
+	if err := injectTextAndSubmit(tmuxTarget, welcome); err != nil {
+		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
+	}
+}
+
+// buildSpawnWelcome composes the [system: ...] welcome text. Brackets
+// signal "this is metadata from tclaude, not a human prompt" — same
+// convention agent-message nudges use. Kept to a single line so it
+// renders cleanly in CC's prompt history.
+func buildSpawnWelcome(alias, role, descr, groupName string) string {
+	parts := []string{"spawned by the human"}
+	if alias != "" {
+		parts = append(parts, fmt.Sprintf("as %q", alias))
+	}
+	if role != "" {
+		parts = append(parts, fmt.Sprintf("(role: %s)", role))
+	}
+	if groupName != "" {
+		parts = append(parts, fmt.Sprintf("in group %q", groupName))
+	}
+	header := strings.Join(parts, " ")
+	body := header + "."
+	if descr != "" {
+		body += " Descr: " + descr + "."
+	}
+	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate. Wait for the first instruction."
+	return "[system: " + body + "]"
 }
 
 // generateSpawnLabel produces a "spwn-XXXXXX" identifier. 6 hex
