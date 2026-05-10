@@ -10,12 +10,48 @@ import (
 	"log/slog"
 	"os/exec"
 	"runtime"
+	"sync"
 	"time"
 
 	"fyne.io/systray"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// trayApprovalSlotCount caps how many pending-approval rows we surface
+// inline in the tray menu. Five is enough for the realistic burst (a
+// human running a coordinated group will rarely have more than a
+// handful blocked at once) and small enough that the menu stays
+// scannable. Overflow is signalled via "+N more…" on the header.
+const trayApprovalSlotCount = 5
+
+// approvalSlot is one pre-allocated submenu item the tray poller
+// rebinds as the pending-approvals set changes. Pre-allocation matters:
+// fyne.io/systray doesn't support reliably removing items at runtime
+// on all platforms, so we create a fixed slate at onReady time and
+// Hide/Show + SetTitle them as state evolves.
+//
+// currentID is read by the slot's click handler at click time, NOT
+// captured by closure — slot bindings shift as approvals come and go,
+// and we want the click to fire on the approval that's currently
+// shown, not whatever was there when the click handler was wired.
+type approvalSlot struct {
+	item *systray.MenuItem
+	mu   sync.Mutex
+	id   string // current approval-id bound to this slot; "" when hidden
+}
+
+func (s *approvalSlot) setID(id string) {
+	s.mu.Lock()
+	s.id = id
+	s.mu.Unlock()
+}
+
+func (s *approvalSlot) getID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.id
+}
 
 // trayConfig is the data tray menu items need.
 type trayConfig struct {
@@ -74,6 +110,39 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 			"Run `tclaude setup --install-agent-skills`")
 		mConfig := systray.AddMenuItem("Open config.json", config.ConfigPath())
 
+		// Pending-approvals submenu — pre-allocated fixed slate so the
+		// poller can Show/Hide + SetTitle without runtime add/remove
+		// (which fyne.io/systray doesn't reliably support).
+		mApprovalsHeader := systray.AddMenuItem("Pending approvals", "")
+		mApprovalsHeader.Disable()
+		mApprovalsHeader.Hide()
+		approvalSlots := make([]*approvalSlot, trayApprovalSlotCount)
+		for i := range approvalSlots {
+			it := systray.AddMenuItem("", "Open this approval in the browser")
+			it.Hide()
+			slot := &approvalSlot{item: it}
+			approvalSlots[i] = slot
+			// One click goroutine per slot, reading the current id at
+			// click time. Captures `slot` (stable address) — not `id`
+			// — so rebinding works.
+			go func(s *approvalSlot) {
+				for range s.item.ClickedCh {
+					id := s.getID()
+					if id == "" || cfg.PopupBaseURL == "" {
+						continue
+					}
+					url := cfg.PopupBaseURL + "/approve/" + id
+					if err := openBrowser(url); err != nil {
+						slog.Warn("tray: open approval failed",
+							"id", id, "error", err)
+					}
+				}
+			}(slot)
+		}
+		// Separator below the approval submenu so it's visually grouped
+		// even when collapsed. Always present; cheap.
+		systray.AddSeparator()
+
 		systray.AddSeparator()
 		// Disabled info rows so the human can copy-paste socket / popup
 		// addresses without dropping to a shell.
@@ -95,10 +164,18 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 		// popup feels responsive without burning cycles when nothing is
 		// happening. Quits when mQuit fires (the goroutine below closes
 		// trayDone).
+		//
+		// Same tick also refreshes the pending-approvals submenu: takes
+		// a fresh snapshot, binds the first N slots to the oldest
+		// approvals (so the longest-waiting popup is at the top), hides
+		// any unused slots. Always rebinds when the set changes — the
+		// approval-id set isn't captured by lastPending alone (count
+		// can stay the same while a request is replaced).
 		trayDone := make(chan struct{})
 		go func() {
 			lastPending, lastSudo := 0, 0
 			lastHint := ""
+			var lastIDs []string
 			tk := time.NewTicker(200 * time.Millisecond)
 			defer tk.Stop()
 			for {
@@ -108,19 +185,19 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 				case <-tk.C:
 					pending := approvals.pendingCount()
 					sudoActive, hint := snapshotSudoTrayState()
-					if pending == lastPending && sudoActive == lastSudo && hint == lastHint {
+					summary := approvals.snapshot()
+					ids := pendingIDs(summary)
+					if pending == lastPending && sudoActive == lastSudo &&
+						hint == lastHint && sliceEq(ids, lastIDs) {
 						continue
 					}
-					// Update on EVERY change of any input, not just
-					// 0↔non-zero transitions, so the tooltip count and
-					// soonest-expiry hint stay accurate as concurrent
-					// approvals or grants stack and the soonest-expiry
-					// rolls forward.
 					icon, tooltip := pickTrayIcon(greenIcon, yellowIcon, orangeIcon,
 						pending, sudoActive, hint)
 					systray.SetIcon(icon)
 					systray.SetTooltip(tooltip)
+					refreshApprovalsSubmenu(mApprovalsHeader, approvalSlots, summary)
 					lastPending, lastSudo, lastHint = pending, sudoActive, hint
+					lastIDs = ids
 				}
 			}
 		}()
@@ -165,6 +242,87 @@ func runReinstallSkills() {
 		return
 	}
 	slog.Info("tray: agent skills reinstalled")
+}
+
+// refreshApprovalsSubmenu rebinds the pre-allocated slot slate to the
+// current pending-approval set. Slots beyond what's needed are hidden.
+// The header surfaces an overflow count when there are more pending
+// requests than slots ("Pending approvals (+2 more…)").
+//
+// Pure function over (header, slots, summary) — no global state. The
+// poller calls it on every state-change tick.
+func refreshApprovalsSubmenu(header *systray.MenuItem, slots []*approvalSlot, summary []pendingApprovalSummary) {
+	if len(summary) == 0 {
+		header.Hide()
+		for _, s := range slots {
+			s.setID("")
+			s.item.Hide()
+		}
+		return
+	}
+	overflow := len(summary) - len(slots)
+	if overflow > 0 {
+		header.SetTitle(fmt.Sprintf("Pending approvals (+%d more…)", overflow))
+	} else {
+		header.SetTitle("Pending approvals")
+	}
+	header.Show()
+	for i, s := range slots {
+		if i >= len(summary) {
+			s.setID("")
+			s.item.Hide()
+			continue
+		}
+		row := summary[i]
+		label := formatApprovalSlotLabel(row)
+		s.setID(row.ID)
+		s.item.SetTitle(label)
+		s.item.SetTooltip(fmt.Sprintf("perm=%s · conv=%s · id=%s",
+			row.Perm, row.ConvTitle, row.ID))
+		s.item.Show()
+	}
+}
+
+// formatApprovalSlotLabel renders one menu-item label. Kept short so
+// it fits typical tray-menu width: "<perm> · <who> · 24s ago".
+// Conv-title falls back to a short id when no title is known.
+func formatApprovalSlotLabel(row pendingApprovalSummary) string {
+	who := row.ConvTitle
+	if who == "" {
+		who = shortApprovalID(row.ConvID)
+	}
+	age := time.Since(row.CreatedAt).Round(time.Second)
+	return fmt.Sprintf("%s · %s · %s ago", row.Perm, who, age)
+}
+
+func shortApprovalID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// pendingIDs extracts just the IDs in order. Used by the poller to
+// detect "same count, different request set" (rare but possible
+// when one popup decides and another arrives within the 200ms window).
+func pendingIDs(summary []pendingApprovalSummary) []string {
+	out := make([]string, len(summary))
+	for i, r := range summary {
+		out[i] = r.ID
+	}
+	return out
+}
+
+func sliceEq(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // pickTrayIcon picks the icon + tooltip the tray should display for a

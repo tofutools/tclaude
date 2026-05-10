@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // pickTrayIcon's policy: priority yellow (pending) > orange (sudo) >
@@ -99,6 +100,91 @@ func TestPickTrayIcon_OrangeWithoutExpiryHint(t *testing.T) {
 	}
 	if strings.Contains(tooltip, "expires in") {
 		t.Errorf("tooltip should NOT have expiry hint when none provided, got %q", tooltip)
+	}
+}
+
+// snapshot must order rows oldest-first so the longest-blocked
+// popup lands at the top of the tray menu. Pins the sort key.
+func TestApprovalRegistry_SnapshotSortsOldestFirst(t *testing.T) {
+	now := time.Now()
+	r := &approvalRegistry{pending: map[string]*approvalRequest{
+		"new": {id: "new", createdAt: now.Add(-10 * time.Second)},
+		"old": {id: "old", createdAt: now.Add(-2 * time.Minute)},
+		"mid": {id: "mid", createdAt: now.Add(-1 * time.Minute)},
+	}}
+	got := r.snapshot()
+	if len(got) != 3 {
+		t.Fatalf("snapshot len = %d, want 3", len(got))
+	}
+	want := []string{"old", "mid", "new"}
+	for i, w := range want {
+		if got[i].ID != w {
+			t.Errorf("position %d: got %q, want %q (full: %+v)", i, got[i].ID, w, got)
+		}
+	}
+}
+
+// formatApprovalSlotLabel must include the perm, the who (title or
+// short id), and an age. Pins the exact shape the tray menu surfaces.
+func TestFormatApprovalSlotLabel_UsesConvTitleWhenPresent(t *testing.T) {
+	row := pendingApprovalSummary{
+		ID:        "abcdef0123",
+		Perm:      "groups.spawn",
+		ConvTitle: "alice",
+		ConvID:    "aaaa-bbbb",
+		CreatedAt: time.Now().Add(-90 * time.Second),
+	}
+	label := formatApprovalSlotLabel(row)
+	if !strings.Contains(label, "groups.spawn") {
+		t.Errorf("label %q should mention perm", label)
+	}
+	if !strings.Contains(label, "alice") {
+		t.Errorf("label %q should mention conv title", label)
+	}
+	if !strings.Contains(label, "ago") {
+		t.Errorf("label %q should mention age", label)
+	}
+}
+
+func TestFormatApprovalSlotLabel_FallsBackToShortIDWhenNoTitle(t *testing.T) {
+	row := pendingApprovalSummary{
+		ID:        "id-001",
+		Perm:      "agent.clone",
+		ConvTitle: "",
+		ConvID:    "12345678abcdef",
+		CreatedAt: time.Now(),
+	}
+	label := formatApprovalSlotLabel(row)
+	if !strings.Contains(label, "12345678") {
+		t.Errorf("label %q should fall back to 8-char conv prefix when no title", label)
+	}
+	if strings.Contains(label, "abcdef") {
+		t.Errorf("label %q should truncate at 8 chars; full conv-id leaked", label)
+	}
+}
+
+// sliceEq is the change-detector the poller uses to decide whether to
+// rebind slots. Pin its zero / equal / unequal behaviour.
+func TestSliceEq(t *testing.T) {
+	cases := []struct {
+		name    string
+		a, b    []string
+		wantEq  bool
+	}{
+		{"both nil", nil, nil, true},
+		{"nil vs empty", nil, []string{}, true},
+		{"both empty", []string{}, []string{}, true},
+		{"equal", []string{"x", "y"}, []string{"x", "y"}, true},
+		{"different length", []string{"x"}, []string{"x", "y"}, false},
+		{"different content", []string{"x", "y"}, []string{"x", "z"}, false},
+		{"order matters", []string{"x", "y"}, []string{"y", "x"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sliceEq(c.a, c.b); got != c.wantEq {
+				t.Errorf("sliceEq(%v, %v) = %v, want %v", c.a, c.b, got, c.wantEq)
+			}
+		})
 	}
 }
 

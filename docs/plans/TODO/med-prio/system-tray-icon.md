@@ -13,11 +13,16 @@ shutdown path. Linux/Windows pure-Go; macOS uses cgo.
   Icon flips green↔yellow on count change; tooltip surfaces
   "tclaude agentd · N pending approval(s)". Pure
   function `pickTrayIcon` makes the policy unit-testable.
+- ~~**Pending approvals submenu**~~ — **shipped (2026-05).** Tray
+  exposes a 5-slot pre-allocated submenu refreshed on the same
+  200ms tick. Slots bind to oldest-first pending approvals; click
+  re-opens `/approve/{id}` (helps when the auto-opened tab got
+  buried). Overflow surfaces as "Pending approvals (+N more…)"
+  on the disabled header row. Pure helpers
+  (`refreshApprovalsSubmenu`, `formatApprovalSlotLabel`, etc.)
+  unit-tested. See `DONE/system-tray-icon-approvals-submenu.md`.
 - **Red on daemon down / shutting down**.
 - **Flashing on unread inbox** — opt-in (loud).
-- **Pending approvals submenu** — list waiting requests; click
-  re-opens `/approve/{id}` (helps when the auto-opened tab got
-  buried).
 - **Tray-mediated approve** — pair with the popup so Approve/Deny
   also requires a tray click within N seconds (kills the residual
   /proc cmdline-scrape attack — see

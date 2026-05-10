@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,6 +99,42 @@ func (a *approvalRegistry) pendingCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.pending)
+}
+
+// pendingApprovalSummary is a tray-friendly slice of one pending row.
+// Keeps only the fields the tray menu needs so callers don't hold
+// references to *approvalRequest (which is mutex-protected and would
+// race if read off the registry).
+type pendingApprovalSummary struct {
+	ID        string
+	Perm      string
+	ConvTitle string
+	ConvID    string
+	CreatedAt time.Time
+}
+
+// snapshotPendingApprovals returns a snapshot of every in-flight
+// approval, sorted oldest-first (so the longest-waiting popup is at
+// the top of the tray menu — the human's eye lands on what's been
+// blocked longest). Safe to call from any goroutine; takes the
+// registry mutex briefly.
+func (a *approvalRegistry) snapshot() []pendingApprovalSummary {
+	a.mu.Lock()
+	out := make([]pendingApprovalSummary, 0, len(a.pending))
+	for _, req := range a.pending {
+		out = append(out, pendingApprovalSummary{
+			ID:        req.id,
+			Perm:      req.perm,
+			ConvTitle: req.convTitle,
+			ConvID:    req.convID,
+			CreatedAt: req.createdAt,
+		})
+	}
+	a.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out
 }
 
 // RequestHumanApprovalImpl is the indirection point for
