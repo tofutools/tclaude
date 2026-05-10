@@ -286,6 +286,142 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 	}
 }
 
+// TestDashboardSudo_GrantProactive exercises the cookie-auth twin
+// of POST /v1/sudo: the human seeds a time-bounded grant from the
+// dashboard without involving the popup. Pins the new path's
+// audit label so a forensic query can tell proactive grants apart
+// from agent-requested + popup-approved ones.
+func TestDashboardSudo_GrantProactive(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	const conv = "alic-aaaa-bbbb-cccc-1111"
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed conv_index: %v", err)
+	}
+
+	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"5m","reason":"bootstrap"}`
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
+	handleDashboardSudoAPI(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+
+	rows, err := db.ListActiveSudoGrants(conv)
+	if err != nil {
+		t.Fatalf("ListActiveSudoGrants: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("active grants: got %d, want 1", len(rows))
+	}
+	got := rows[0]
+	if got.Slug != "groups.spawn" {
+		t.Errorf("slug = %q, want %q", got.Slug, "groups.spawn")
+	}
+	if got.Reason != "bootstrap" {
+		t.Errorf("reason = %q, want %q", got.Reason, "bootstrap")
+	}
+	if got.GrantedBy != dashboardSudoGranter {
+		t.Errorf("granted_by = %q, want %q (proactive label distinguishes from popup-approved)",
+			got.GrantedBy, dashboardSudoGranter)
+	}
+	if !got.IsActive(time.Now()) {
+		t.Errorf("freshly-inserted grant must be active; expires_at=%v revoked_at=%v",
+			got.ExpiresAt, got.RevokedAt)
+	}
+}
+
+// TestDashboardSudo_GrantBlocklist pins the policy-applies rule.
+// The same blocklist that protects agent-initiated /v1/sudo applies
+// to the dashboard's POST — a human typo can't grant
+// permissions.grant for "just 5 minutes" because the cap on
+// recursive escalation is structural, not advisory.
+func TestDashboardSudo_GrantBlocklist(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	const conv = "blok-aaaa-bbbb-cccc-1111"
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed conv_index: %v", err)
+	}
+
+	body := `{"conv":"` + conv + `","slugs":["groups.spawn","permissions.grant"],"duration":"5m"}`
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
+	handleDashboardSudoAPI(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("blocklisted POST: status = %d body=%s, want 403",
+			w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "permissions.grant") {
+		t.Errorf("error must name the blocked slug; body=%s", w.Body.String())
+	}
+	if rows, _ := db.ListActiveSudoGrants(conv); len(rows) != 0 {
+		t.Errorf("blocklisted POST must not insert ANY rows (even the non-blocked ones); got %d",
+			len(rows))
+	}
+}
+
+// TestDashboardSudo_GrantDurationCap pins the cap rule: a dashboard
+// POST exceeding sudoDefaultMaxDuration is rejected with 400 before
+// any DB writes. Same value the agent-initiated path enforces.
+func TestDashboardSudo_GrantDurationCap(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	const conv = "capd-aaaa-bbbb-cccc-1111"
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed conv_index: %v", err)
+	}
+
+	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"24h"}`
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
+	handleDashboardSudoAPI(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("over-cap POST: status = %d body=%s, want 400",
+			w.Code, w.Body.String())
+	}
+	if rows, _ := db.ListActiveSudoGrants(conv); len(rows) != 0 {
+		t.Errorf("over-cap POST must not insert rows; got %d", len(rows))
+	}
+}
+
+// TestDashboardSudo_GrantAuthRequired pins the cookie gate on the
+// new POST path — without cookie + Origin, the request is refused
+// before any state changes.
+func TestDashboardSudo_GrantAuthRequired(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	const conv = "auth-aaaa-bbbb-cccc-1111"
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed conv_index: %v", err)
+	}
+
+	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"5m"}`
+	w := httptest.NewRecorder()
+	// Request without cookie / Origin.
+	r := httptest.NewRequest(http.MethodPost, "/api/sudo", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	handleDashboardSudoAPI(w, r)
+	if w.Code == http.StatusOK {
+		t.Errorf("unauth POST succeeded; status = %d, want non-200", w.Code)
+	}
+	if rows, _ := db.ListActiveSudoGrants(conv); len(rows) != 0 {
+		t.Errorf("unauth call must not insert grants; got %d rows, want 0", len(rows))
+	}
+}
+
 // TestSnapshot_ActiveSudoEmptyByDefault pins the no-grants case:
 // agents without any active grants get either no ActiveSudo field
 // at all (omitempty) or an empty slice. Either way nothing extra

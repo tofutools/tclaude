@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -33,6 +35,13 @@ import (
 // dashboard is human-only by definition; agents talk to /v1/.
 
 const dashboardGranter = "<human-dashboard>"
+
+// dashboardSudoGranter is the audit label for proactive sudo grants
+// minted via POST /api/sudo. Distinct from dashboardGranter so a
+// forensic query can tell "human typed permissions grant in the
+// dashboard" apart from "human proactively elevated alice for 5m"
+// — different operations with different blast radius.
+const dashboardSudoGranter = "<human-dashboard>:proactive"
 
 // registerDashboardEditRoutes wires the mutation endpoints onto the
 // loopback mux. Called from registerDashboardRoutes.
@@ -575,11 +584,13 @@ func dashboardRemoveOwner(w http.ResponseWriter, g *db.AgentGroup, convSelector 
 }
 
 // handleDashboardSudoAPI is the cookie-auth twin of the daemon's
-// /v1/sudo revoke endpoints (peer-cred-auth on the Unix socket).
-// Same DB writes, same human-only rules — the dashboard is human-only
-// by definition, so these endpoints unconditionally treat the caller
+// /v1/sudo surface (peer-cred-auth on the Unix socket). Same DB
+// writes, same human-only rules — the dashboard is human-only by
+// definition, so these endpoints unconditionally treat the caller
 // as human.
 //
+//	POST   /api/sudo                 → proactive grant (no popup —
+//	                                   the cookie IS the human consent)
 //	DELETE /api/sudo/{id}            → revoke one
 //	DELETE /api/sudo?conv=<selector> → revoke all for one conv
 //	DELETE /api/sudo?all=1           → revoke every active grant
@@ -591,8 +602,12 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	if r.Method == http.MethodPost {
+		handleDashboardSudoGrant(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
-		http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
+		http.Error(w, "POST or DELETE only", http.StatusMethodNotAllowed)
 		return
 	}
 	rest := strings.TrimPrefix(r.URL.Path, "/api/sudo")
@@ -646,4 +661,146 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID})
+}
+
+// handleDashboardSudoGrant inserts time-bounded permission grants on
+// behalf of an agent without involving the popup. The dashboard
+// cookie + Origin pinning is the human-consent layer here; an agent
+// reaching this endpoint would have to forge the cookie, which is
+// the same threat model that protects every other dashboard mutate.
+//
+// Same blocklist + duration cap as the agent-initiated /v1/sudo path.
+// Bypassing the policy isn't a feature — the policy already encodes
+// human intent at config-edit time, and "I want a one-off override"
+// is what `tclaude agent permissions grant` is for (permanent, no
+// expiry, also human-only).
+//
+// The granter label is "<human-dashboard>:proactive" so audit can
+// distinguish proactive grants from agent-requested ones; remaining
+// fields mirror the /v1/sudo response shape so the dashboard's JSON
+// handler doesn't need a special case.
+func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
+	if rest := strings.TrimPrefix(r.URL.Path, "/api/sudo"); rest != "" && rest != "/" {
+		http.Error(w, "POST /api/sudo only (no path suffix)", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Conv     string   `json:"conv"`
+		Slugs    []string `json:"slugs"`
+		Duration string   `json:"duration"`
+		Reason   string   `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Conv = strings.TrimSpace(body.Conv)
+	if body.Conv == "" {
+		http.Error(w, "missing conv (selector for the agent to elevate)",
+			http.StatusBadRequest)
+		return
+	}
+	body.Slugs = dedupeNonEmpty(body.Slugs)
+	if len(body.Slugs) == 0 {
+		http.Error(w, "slugs[] is required (at least one slug to elevate)",
+			http.StatusBadRequest)
+		return
+	}
+	res, _, err := agent.ResolveSelector(body.Conv)
+	if err != nil {
+		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Resolve title for per-conv override lookup, mirrors the
+	// agent-initiated path in handleSudoRequest.
+	title := ""
+	if row := agent.FreshConvRowResolved(res.ConvID); row != nil {
+		title = agent.DisplayTitle(row)
+	}
+	cfg, _ := config.Load()
+	policy := resolveSudoConfig(cfg, res.ConvID, "", title)
+
+	// Blocklist — same rule, same error shape.
+	blocked := []string{}
+	for _, slug := range body.Slugs {
+		for _, b := range policy.Blocklist {
+			if slug == b {
+				blocked = append(blocked, slug)
+				break
+			}
+		}
+	}
+	if len(blocked) > 0 {
+		http.Error(w,
+			"slug(s) blocklisted from sudo (would enable permanent escalation): "+
+				strings.Join(blocked, ", "),
+			http.StatusForbidden)
+		return
+	}
+
+	// Duration — empty defaults to the resolved default.
+	dur := policy.DefaultDuration
+	if strings.TrimSpace(body.Duration) != "" {
+		d, err := time.ParseDuration(body.Duration)
+		if err != nil {
+			http.Error(w, "duration: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if d <= 0 {
+			http.Error(w, "duration must be positive", http.StatusBadRequest)
+			return
+		}
+		dur = d
+	}
+	if dur > policy.MaxDuration {
+		http.Error(w,
+			"duration "+dur.String()+" exceeds the max "+policy.MaxDuration.String(),
+			http.StatusBadRequest)
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+
+	// Insert one row per slug, sharing granted_at / expires_at so the
+	// bundle reads as a coherent grant in audit views — same pattern
+	// the agent-initiated path uses.
+	now := time.Now()
+	expires := now.Add(dur)
+	out := struct {
+		Grants    []sudoGrantJSON `json:"grants"`
+		ExpiresAt string          `json:"expires_at"`
+		ConvID    string          `json:"conv_id"`
+	}{
+		ExpiresAt: expires.Format(time.RFC3339Nano),
+		ConvID:    res.ConvID,
+	}
+	for _, slug := range body.Slugs {
+		id, err := db.InsertSudoGrant(&db.SudoGrant{
+			ConvID:    res.ConvID,
+			Slug:      slug,
+			GrantedAt: now,
+			ExpiresAt: expires,
+			GrantedBy: dashboardSudoGranter,
+			Reason:    reason,
+		})
+		if err != nil {
+			out.Grants = append(out.Grants, sudoGrantJSON{
+				Slug:   slug,
+				Reason: "insert failed: " + err.Error(),
+			})
+			continue
+		}
+		out.Grants = append(out.Grants, sudoGrantJSON{
+			ID:               id,
+			ConvID:           res.ConvID,
+			ConvTitle:        title,
+			Slug:             slug,
+			GrantedAt:        now.Format(time.RFC3339Nano),
+			ExpiresAt:        expires.Format(time.RFC3339Nano),
+			GrantedBy:        dashboardSudoGranter,
+			Reason:           reason,
+			RemainingSeconds: int64(dur.Seconds()),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
