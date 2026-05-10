@@ -38,25 +38,32 @@ import (
 // each clone has its own conv_id, so the clobber is alias-scoped
 // only — the rows themselves are distinct).
 
-// cloneSuffixRegex matches a trailing `-clone-<digits>` so we can
-// strip it from a clone-of-a-clone's base before computing the next
-// suffix. Anchored at end; greedy lazy on the base (`.*?`) so
-// `worker-clone-3` → base `worker`, not `worker-clone` + suffix `3`.
-var cloneSuffixRegex = regexp.MustCompile(`^(.*?)-clone-\d+$`)
+// cloneSuffixRegex matches a trailing clone suffix in either the
+// current short form `-c-<digits>` or the legacy long form
+// `-clone-<digits>`. Recognising both lets a legacy
+// `worker-clone-3` cleanly transition to `worker-c-1` (rather than
+// nesting as `worker-clone-3-c-1`) the next time it's cloned. Same
+// idea for reincarnateSuffixRegex.
+var cloneSuffixRegex = regexp.MustCompile(`^(.*?)-(?:c|clone)-\d+$`)
 
 // uniqueCloneAlias computes the clone's per-group alias. The format
-// is ALWAYS `<base>-clone-<N>` (or `clone-<N>` when the original had
-// no alias in this group). base is origAlias with any existing
-// `-clone-<digits>` stripped, so a clone-of-a-clone bumps N rather
-// than nesting suffixes (`worker-clone-3` clones to `worker-clone-4`,
-// not `worker-clone-3-clone-1`).
+// is ALWAYS `<base>-c-<N>` (or `c-<N>` when the original had no
+// alias in this group). base is origAlias with any existing
+// `-c-<digits>` / `-clone-<digits>` stripped, so a clone-of-a-clone
+// bumps N rather than nesting suffixes (`worker-c-3` clones to
+// `worker-c-4`, not `worker-c-3-c-1`). The short `-c-` is paired
+// with `-r-` for reincarnations — distinct enough at a glance,
+// short enough to tile in dashboard rows.
 //
 // N is chosen globally — the smallest integer such that
-// `<base>-clone-<N>` doesn't appear as the alias of any
+// `<base>-c-<N>` doesn't appear as the alias of any
 // agent_group_members row anywhere. This intentionally does NOT
 // scope by group: the same clone uses the same alias across every
 // group it inherits, and parallel clones of the same original each
 // pick distinct N's regardless of which groups they're added to.
+// The "used" set scans only the new short prefix; legacy
+// `-clone-N` aliases don't reserve a number in the new namespace
+// (avoids surprising holes after a changeover).
 //
 // Lookup error → fall back to N=1 (best-effort).
 func uniqueCloneAlias(origAlias string) string {
@@ -64,9 +71,9 @@ func uniqueCloneAlias(origAlias string) string {
 	if m := cloneSuffixRegex.FindStringSubmatch(base); m != nil {
 		base = m[1]
 	}
-	prefix := "clone-"
+	prefix := "c-"
 	if base != "" {
-		prefix = base + "-clone-"
+		prefix = base + "-c-"
 	}
 	used := scanCloneSuffixesGlobal(prefix)
 	for n := 1; ; n++ {

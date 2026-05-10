@@ -15,29 +15,35 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// reincarnateSuffixRegex matches a trailing `-reincarnate-<digits>`
-// (mirrors cloneSuffixRegex). Used so reincarnating a previously-
-// reincarnated agent bumps N rather than nesting suffixes —
-// `worker-reincarnate-3` reincarnates to `worker-reincarnate-4`,
-// not `worker-reincarnate-3-reincarnate-1`.
-var reincarnateSuffixRegex = regexp.MustCompile(`^(.*?)-reincarnate-\d+$`)
+// reincarnateSuffixRegex matches a trailing reincarnation suffix in
+// either the current short form `-r-<digits>` or the legacy long
+// form `-reincarnate-<digits>`. Recognising both lets a legacy
+// `worker-reincarnate-3` cleanly transition to `worker-r-1` (rather
+// than nesting as `worker-reincarnate-3-r-1`) the next time it
+// reincarnates. Same idea for cloneSuffixRegex.
+var reincarnateSuffixRegex = regexp.MustCompile(`^(.*?)-(?:r|reincarnate)-\d+$`)
 
 // uniqueReincarnateTitle picks the new instance's CC title in the
-// pattern `<base>-reincarnate-<N>` (or `reincarnate-<N>` when the
-// previous instance had no title). base is prevTitle with any
-// existing `-reincarnate-<digits>` stripped.
+// pattern `<base>-r-<N>` (or `r-<N>` when the previous instance had
+// no title). base is prevTitle with any existing `-r-<digits>` /
+// `-reincarnate-<digits>` stripped. The short `-r-` is paired with
+// `-c-` for clones — distinct enough at a glance, short enough to
+// tile in tmux pane headers.
 //
 // N is the smallest integer such that no row in conv_index already
-// uses `<base>-reincarnate-<N>` as its custom_title. Lookup error →
-// fall back to N=1.
+// uses `<base>-r-<N>` as its custom_title. Lookup error → fall back
+// to N=1. The "used" set scans only the new short prefix; legacy
+// `-reincarnate-N` titles don't reserve a number in the new
+// namespace (so we don't end up with surprising holes after a
+// changeover).
 func uniqueReincarnateTitle(prevTitle string) string {
 	base := prevTitle
 	if m := reincarnateSuffixRegex.FindStringSubmatch(base); m != nil {
 		base = m[1]
 	}
-	prefix := "reincarnate-"
+	prefix := "r-"
 	if base != "" {
-		prefix = base + "-reincarnate-"
+		prefix = base + "-r-"
 	}
 	used := scanReincarnateSuffixes(prefix)
 	for n := 1; ; n++ {
@@ -413,9 +419,22 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, follow
 	// title in the new pane.
 	go runReincarnatePostSpawn(newConv, newTitle, followUp, len(oldMembers) > 0)
 
-	// 9. Soft-stop the old conv. Best-effort — if the old pane is
-	// already gone (somehow), we still consider the reincarnation
-	// successful.
+	// 9. Mark the old conv as superseded with a `-x` suffix on its
+	// title, then soft-stop. The rename writes a custom-title record
+	// to the old conv's .jsonl before /exit closes the pane, so any
+	// later scan picks up the new "<prev>-x" name (the watch model /
+	// FreshConvRow refreshes on mtime). This way the dashboard /
+	// `agent ls` can render dead-but-still-on-disk convs distinctly
+	// from live ones — they're superseded by their `-r-<N>`
+	// successor (recorded in agent_conv_succession).
+	//
+	// Skip the rename when prevTitle is empty (no original title to
+	// suffix) or when the old title already ends in `-x` (idempotent
+	// in case of a redo). Best-effort — both injections are
+	// best-effort; failure here doesn't abort reincarnation.
+	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
+		_ = injectSlashCommand(target, "/rename "+prevTitle+"-x", "")
+	}
 	_ = injectSlashCommand(target, "/exit", "")
 
 	resp := map[string]any{
