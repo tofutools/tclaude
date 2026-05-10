@@ -179,6 +179,18 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 		}
 	}
 
+	// 5) succession-chain fallback: a raw conv-id that's been pruned
+	//    from conv_index and isn't a member of any group can still be
+	//    resolvable if it has a recorded successor. Walking the chain
+	//    forward from the input picks up "Bob's old UUID got reincarnated
+	//    into Bob-r-1 which IS indexed" cases. The chain row alone is
+	//    enough to declare the input a known historical id; we accept
+	//    the walked head as the resolution result.
+	if walked := db.ResolveLatestConv(selector); walked != selector {
+		row, _ := db.GetConvIndex(walked)
+		return &resolved{ConvID: walked, Row: row}, nil, nil
+	}
+
 	return nil, nil, fmt.Errorf("no conversation matches %q", selector)
 }
 

@@ -82,14 +82,16 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 
 func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) int {
 	var resp struct {
-		ID         int64  `json:"id,omitempty"`
-		Delivered  bool   `json:"delivered,omitempty"`
-		ViaGroup   string `json:"via_group"`
-		Recipients []struct {
-			ConvID    string `json:"conv_id"`
-			Alias     string `json:"alias,omitempty"`
-			MessageID int64  `json:"message_id"`
-			Delivered bool   `json:"delivered"`
+		ID             int64  `json:"id,omitempty"`
+		Delivered      bool   `json:"delivered,omitempty"`
+		ViaGroup       string `json:"via_group"`
+		RedirectedFrom string `json:"redirected_from,omitempty"`
+		Recipients     []struct {
+			ConvID         string `json:"conv_id"`
+			Alias          string `json:"alias,omitempty"`
+			MessageID      int64  `json:"message_id"`
+			Delivered      bool   `json:"delivered"`
+			RedirectedFrom string `json:"redirected_from,omitempty"`
 		} `json:"recipients,omitempty"`
 	}
 	payload := map[string]any{
@@ -144,7 +146,15 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			if rcp.Delivered {
 				state = "delivered"
 			}
-			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)\n", rcp.MessageID, short(rcp.ConvID), alias, state)
+			redirect := ""
+			if rcp.RedirectedFrom != "" {
+				// You addressed an old conv-id; the daemon walked the
+				// chain and routed to the live successor. Surface the
+				// hop so the sender can update their selector if they
+				// were typing a stale UUID.
+				redirect = fmt.Sprintf("  [redirected from %s, superseded]", short(rcp.RedirectedFrom))
+			}
+			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, short(rcp.ConvID), alias, state, redirect)
 		}
 		return rcOK
 	}
@@ -152,7 +162,15 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	if resp.Delivered {
 		state = "delivered"
 	}
-	fmt.Fprintf(stdout, "Sent message #%d via group %q (%s)\n", resp.ID, resp.ViaGroup, state)
+	if resp.RedirectedFrom != "" {
+		// Direct-send redirect: addressed conv was superseded; daemon
+		// re-routed to the live successor. Surface the hop so the
+		// sender can correct stale selectors.
+		fmt.Fprintf(stdout, "Sent message #%d via group %q (%s) → redirected from %s, superseded by current target\n",
+			resp.ID, resp.ViaGroup, state, short(resp.RedirectedFrom))
+	} else {
+		fmt.Fprintf(stdout, "Sent message #%d via group %q (%s)\n", resp.ID, resp.ViaGroup, state)
+	}
 	return rcOK
 }
 

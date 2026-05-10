@@ -287,20 +287,21 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		path += "?keep-unread=1"
 	}
 	var m struct {
-		ID            int64           `json:"id"`
-		From          string          `json:"from"`
-		FromAlias     string          `json:"from_alias"`
-		To            string          `json:"to"`
-		Group         string          `json:"group"`
-		Subject       string          `json:"subject"`
-		Body          string          `json:"body"`
-		CreatedAt     string          `json:"created_at"`
-		ReplyTo       string          `json:"reply_to"`
-		ReplyCmd      string          `json:"reply_cmd"`
-		InReplyTo     int64           `json:"in_reply_to,omitempty"`
-		ParentSubject string          `json:"parent_subject,omitempty"`
-		ToRecipients  []recipientLine `json:"to_recipients,omitempty"`
-		CcRecipients  []recipientLine `json:"cc_recipients,omitempty"`
+		ID             int64           `json:"id"`
+		From           string          `json:"from"`
+		FromAlias      string          `json:"from_alias"`
+		To             string          `json:"to"`
+		OriginalToConv string          `json:"original_to_conv,omitempty"`
+		Group          string          `json:"group"`
+		Subject        string          `json:"subject"`
+		Body           string          `json:"body"`
+		CreatedAt      string          `json:"created_at"`
+		ReplyTo        string          `json:"reply_to"`
+		ReplyCmd       string          `json:"reply_cmd"`
+		InReplyTo      int64           `json:"in_reply_to,omitempty"`
+		ParentSubject  string          `json:"parent_subject,omitempty"`
+		ToRecipients   []recipientLine `json:"to_recipients,omitempty"`
+		CcRecipients   []recipientLine `json:"cc_recipients,omitempty"`
 	}
 	if err := DaemonRequest("GET", path, nil, &m, DaemonOpts{TargetConv: p.Target}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -331,6 +332,16 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  To:         %s\n", formatRecipientList(m.ToRecipients))
 	} else {
 		fmt.Fprintf(stdout, "  To:         %s\n", m.To)
+	}
+	if m.OriginalToConv != "" {
+		// The sender addressed a superseded conv-id; the daemon walked
+		// the succession chain forward and routed to this row's To
+		// (the live successor). Surface the original target so the
+		// receiver knows the message was originally meant for their
+		// predecessor — useful when picking up partially-handled work
+		// from a prior incarnation.
+		fmt.Fprintf(stdout, "  Original-To: %s (superseded by current %s)\n",
+			short(m.OriginalToConv), short(m.To))
 	}
 	if len(m.CcRecipients) > 0 {
 		fmt.Fprintf(stdout, "  CC:         %s\n", formatRecipientList(m.CcRecipients))
@@ -388,6 +399,10 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  From:       %s\n", m.FromConv)
 	}
 	fmt.Fprintf(stdout, "  To:         %s\n", m.ToConv)
+	if m.OriginalToConv != "" {
+		fmt.Fprintf(stdout, "  Original-To: %s (superseded by current %s)\n",
+			short(m.OriginalToConv), short(m.ToConv))
+	}
 	fmt.Fprintf(stdout, "  Group:      %s\n", groupName)
 	if m.Subject != "" {
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)

@@ -168,18 +168,25 @@ func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
 // canonical for delivery + filtering, the recipient arrays are
 // display-only.
 type AgentMessage struct {
-	ID           int64
-	GroupID      int64
-	FromConv     string
-	ToConv       string
-	Subject      string
-	Body         string
-	ParentID     int64
-	CreatedAt    time.Time
-	DeliveredAt  time.Time
-	ReadAt       time.Time
-	ToRecipients []string
-	CcRecipients []string
+	ID       int64
+	GroupID  int64
+	FromConv string
+	ToConv   string
+	// OriginalToConv is non-empty when the send path rewrote a
+	// superseded conv-id onto a live successor (db.ResolveLatestConv
+	// followed the agent_conv_succession chain forward). Records the
+	// id the sender originally addressed so the recipient's `inbox
+	// read` can render an `Original-To: <id>` header. Empty for the
+	// usual case where ToConv was already canonical.
+	OriginalToConv string
+	Subject        string
+	Body           string
+	ParentID       int64
+	CreatedAt      time.Time
+	DeliveredAt    time.Time
+	ReadAt         time.Time
+	ToRecipients   []string
+	CcRecipients   []string
 }
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
@@ -754,12 +761,13 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	res, err := db.Exec(`INSERT INTO agent_messages
 		(group_id, from_conv, to_conv, subject, body, parent_id,
 		 created_at, delivered_at, read_at,
-		 to_recipients, cc_recipients)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 to_recipients, cc_recipients, original_to_conv)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.GroupID, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
 		m.CreatedAt.Format(time.RFC3339Nano),
 		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt),
-		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients))
+		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients),
+		m.OriginalToConv)
 	if err != nil {
 		return 0, err
 	}
@@ -1044,7 +1052,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients
+		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages
 		WHERE to_conv = ? AND delivered_at = ''
 		ORDER BY created_at ASC`
@@ -1133,7 +1141,7 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 	}
 	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients
+		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages WHERE id = ?`, id)
 	m, err := scanAgentMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1164,7 +1172,7 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients
+		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages WHERE ` + col + ` = ? ORDER BY created_at DESC`
 	args := []any{value}
 	if limit > 0 {
@@ -1269,7 +1277,7 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
 		&m.Subject, &m.Body, &m.ParentID,
 		&createdAt, &deliveredAt, &readAt,
-		&toRecipients, &ccRecipients); err != nil {
+		&toRecipients, &ccRecipients, &m.OriginalToConv); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = parseTimeOrZero(createdAt)

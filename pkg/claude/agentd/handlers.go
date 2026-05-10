@@ -240,6 +240,13 @@ type sendResp struct {
 	Delivered  bool        `json:"delivered,omitempty"`
 	ViaGroup   string      `json:"via_group"`
 	Recipients []recipient `json:"recipients,omitempty"`
+	// RedirectedFrom is non-empty when the addressed conv-id has been
+	// superseded and the daemon re-routed to its live successor. The
+	// sender CLI uses this to print a `→ delivered to <new> (you
+	// addressed <old>, superseded)` notice. Only populated on direct
+	// sends; per-recipient redirects on multicast / multi-recipient
+	// surface in the per-row recipient struct.
+	RedirectedFrom string `json:"redirected_from,omitempty"`
 }
 
 type recipient struct {
@@ -247,6 +254,11 @@ type recipient struct {
 	Alias     string `json:"alias,omitempty"`
 	MessageID int64  `json:"message_id"`
 	Delivered bool   `json:"delivered"`
+	// RedirectedFrom mirrors sendResp.RedirectedFrom on a per-recipient
+	// basis: when the entry's ConvID is the live successor of a
+	// superseded id the sender originally addressed, the original id
+	// goes here. Empty when the address was already canonical.
+	RedirectedFrom string `json:"redirected_from,omitempty"`
 }
 
 // multicastPrefix marks a multicast target. `to: "group:reviewer-team"`
@@ -288,14 +300,34 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	if target.ConvID == fromID {
+	// Succession-aware routing: ResolveSelector already auto-redirects
+	// internally for known indexed convs (and the new succession-chain
+	// fallback in tryResolve), so target.ConvID is the head of any
+	// chain that walks. We just need to detect *whether* a redirect
+	// happened, so the recipient can see Original-To: in their inbox
+	// and the sender gets a redirect notice. Compare the raw input
+	// string (after trim) to target.ConvID — when they differ AND the
+	// input walks to target.ConvID via the chain, the input was a
+	// superseded conv-id and the resolver redirected it. Alias / prefix
+	// inputs naturally skip this branch (they don't have chain rows
+	// keyed on the literal alias text).
+	finalConv := target.ConvID
+	originalTo := ""
+	rawInput := strings.TrimSpace(req.To)
+	if rawInput != "" && rawInput != finalConv && db.ResolveLatestConv(rawInput) == finalConv {
+		originalTo = rawInput
+	}
+	if finalConv == fromID {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "cannot message self")
 		return
 	}
 	// Authorisation: shared-group OR sender owns a group containing
 	// target. Owner-as-non-member lets a coordinator agent address its
-	// teams without itself being a peer.
-	via, _, err := db.CanSenderReachTarget(fromID, target.ConvID)
+	// teams without itself being a peer. Authority is checked against
+	// the LIVE successor — the outdated id may have lost membership
+	// by the time the successor took over, but the successor is who
+	// actually receives the message.
+	via, _, err := db.CanSenderReachTarget(fromID, finalConv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -314,27 +346,49 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	// ambiguously / not at all / aren't reachable surface as a 4xx so
 	// the sender can fix the typo before any rows are written.
 	if len(req.Cc) > 0 {
-		handleMultiRecipient(w, fromID, target.ConvID, via, &req)
+		handleMultiRecipient(w, fromID, finalConv, originalTo, via, &req)
 		return
 	}
 
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:  via.ID,
-		FromConv: fromID,
-		ToConv:   target.ConvID,
-		Subject:  req.Subject,
-		Body:     req.Body,
+		GroupID:        via.ID,
+		FromConv:       fromID,
+		ToConv:         finalConv,
+		OriginalToConv: originalTo,
+		Subject:        req.Subject,
+		Body:           req.Body,
 		// Even single-recipient sends record the audience arrays now
 		// so the recipient's `inbox read` can render a consistent
 		// "To: ..." header. CC stays empty.
-		ToRecipients: []string{target.ConvID},
+		ToRecipients: []string{finalConv},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	delivered := nudgeIfAlive(id, target.ConvID)
-	writeJSON(w, http.StatusOK, sendResp{ID: id, Delivered: delivered, ViaGroup: via.Name})
+	delivered := nudgeIfAlive(id, finalConv)
+	writeJSON(w, http.StatusOK, sendResp{
+		ID:             id,
+		Delivered:      delivered,
+		ViaGroup:       via.Name,
+		RedirectedFrom: originalTo,
+	})
+}
+
+// walkSuccession returns the live successor of convID and the
+// original id when a redirect happened. When the chain has no
+// successor, finalConv == convID and originalTo == "" — callers can
+// rely on the empty originalTo to skip the redirect-rendering paths
+// without comparing strings.
+func walkSuccession(convID string) (finalConv, originalTo string) {
+	if convID == "" {
+		return convID, ""
+	}
+	latest := db.ResolveLatestConv(convID)
+	if latest == convID {
+		return convID, ""
+	}
+	return latest, convID
 }
 
 // handleMultiRecipient writes one row per (primary + each CC) of a
@@ -348,11 +402,12 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 // rows are written. Half-broadcasts are confusing for the recipient
 // who notices an extra "CC: <missing>" entry that wasn't actually
 // delivered.
-func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv string, primaryVia *db.AgentGroup, req *sendReq) {
+func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOriginalTo string, primaryVia *db.AgentGroup, req *sendReq) {
 	type resolvedCC struct {
-		ConvID string
-		Alias  string
-		Via    *db.AgentGroup
+		ConvID         string
+		OriginalToConv string
+		Alias          string
+		Via            *db.AgentGroup
 	}
 	resolved := make([]resolvedCC, 0, len(req.Cc))
 	seen := map[string]bool{primaryConv: true, fromID: true}
@@ -375,13 +430,26 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv string, pri
 				fmt.Sprintf("CC %q: %v", sel, err))
 			return
 		}
-		if seen[t.ConvID] {
-			// Duplicate (CC == To, CC == self, CC repeated). Skip silently
-			// — the sender's intent is "include this conv once" either way.
+		// Detect succession redirect on each CC so the per-row
+		// original_to_conv reflects what the sender actually typed.
+		// ResolveSelector already auto-redirected, so t.ConvID is
+		// the head; we compare to the raw selector string to attribute
+		// the original. Same shape as the primary path.
+		ccConv := t.ConvID
+		ccOriginal := ""
+		ccRaw := strings.TrimSpace(sel)
+		if ccRaw != "" && ccRaw != ccConv && db.ResolveLatestConv(ccRaw) == ccConv {
+			ccOriginal = ccRaw
+		}
+		if seen[ccConv] {
+			// Duplicate (CC == To, CC == self, CC repeated, OR a CC
+			// that happens to redirect onto the primary's successor).
+			// Skip silently — the sender's intent is "include this conv
+			// once" either way.
 			continue
 		}
-		seen[t.ConvID] = true
-		via, _, err := db.CanSenderReachTarget(fromID, t.ConvID)
+		seen[ccConv] = true
+		via, _, err := db.CanSenderReachTarget(fromID, ccConv)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -396,8 +464,8 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv string, pri
 				fmt.Sprintf("CC %q routes via archived group %q", sel, via.Name))
 			return
 		}
-		alias := agent.AliasFor(via.ID, t.ConvID)
-		resolved = append(resolved, resolvedCC{ConvID: t.ConvID, Alias: alias, Via: via})
+		alias := agent.AliasFor(via.ID, ccConv)
+		resolved = append(resolved, resolvedCC{ConvID: ccConv, OriginalToConv: ccOriginal, Alias: alias, Via: via})
 	}
 
 	toRecipients := []string{primaryConv}
@@ -412,13 +480,14 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv string, pri
 	// "To:, CC: ..." header order in inbox read.
 	primaryAlias := agent.AliasFor(primaryVia.ID, primaryConv)
 	primaryID, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:      primaryVia.ID,
-		FromConv:     fromID,
-		ToConv:       primaryConv,
-		Subject:      req.Subject,
-		Body:         req.Body,
-		ToRecipients: toRecipients,
-		CcRecipients: ccRecipients,
+		GroupID:        primaryVia.ID,
+		FromConv:       fromID,
+		ToConv:         primaryConv,
+		OriginalToConv: primaryOriginalTo,
+		Subject:        req.Subject,
+		Body:           req.Body,
+		ToRecipients:   toRecipients,
+		CcRecipients:   ccRecipients,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -426,21 +495,23 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv string, pri
 	}
 	primaryDelivered := nudgeIfAlive(primaryID, primaryConv)
 	out.Recipients = append(out.Recipients, recipient{
-		ConvID:    primaryConv,
-		Alias:     primaryAlias,
-		MessageID: primaryID,
-		Delivered: primaryDelivered,
+		ConvID:         primaryConv,
+		Alias:          primaryAlias,
+		MessageID:      primaryID,
+		Delivered:      primaryDelivered,
+		RedirectedFrom: primaryOriginalTo,
 	})
 
 	for _, r := range resolved {
 		id, err := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:      r.Via.ID,
-			FromConv:     fromID,
-			ToConv:       r.ConvID,
-			Subject:      req.Subject,
-			Body:         req.Body,
-			ToRecipients: toRecipients,
-			CcRecipients: ccRecipients,
+			GroupID:        r.Via.ID,
+			FromConv:       fromID,
+			ToConv:         r.ConvID,
+			OriginalToConv: r.OriginalToConv,
+			Subject:        req.Subject,
+			Body:           req.Body,
+			ToRecipients:   toRecipients,
+			CcRecipients:   ccRecipients,
 		})
 		if err != nil {
 			// Don't abort: the primary already landed. Surface the per-CC
@@ -457,10 +528,11 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv string, pri
 		}
 		delivered := nudgeIfAlive(id, r.ConvID)
 		out.Recipients = append(out.Recipients, recipient{
-			ConvID:    r.ConvID,
-			Alias:     r.Alias,
-			MessageID: id,
-			Delivered: delivered,
+			ConvID:         r.ConvID,
+			Alias:          r.Alias,
+			MessageID:      id,
+			Delivered:      delivered,
+			RedirectedFrom: r.OriginalToConv,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -525,33 +597,48 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 		if m.ConvID == fromID {
 			continue
 		}
+		// Defensive: membership migrations on reincarnate are atomic
+		// today (the new conv-id is added before the old is removed),
+		// so a member row should already point at the live successor.
+		// But cross-machine sync, manual DB edits, or a future race
+		// could leave a stale row. Walk the chain so the message
+		// always lands on the live successor; cheap insurance.
+		finalConv, originalTo := walkSuccession(m.ConvID)
+		if finalConv == fromID {
+			// Sender's own conv may be the live successor of a member
+			// row (rare manager-pattern edge case); skip self-send.
+			continue
+		}
 		id, err := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:  g.ID,
-			FromConv: fromID,
-			ToConv:   m.ConvID,
-			Subject:  req.Subject,
-			Body:     req.Body,
+			GroupID:        g.ID,
+			FromConv:       fromID,
+			ToConv:         finalConv,
+			OriginalToConv: originalTo,
+			Subject:        req.Subject,
+			Body:           req.Body,
 		})
 		if err != nil {
 			// Don't abort the whole broadcast on one DB error; record
 			// it and continue. The sender sees per-recipient status
 			// in the response and can retry the failures explicitly.
 			slog.Warn("multicast: insert failed",
-				"group", g.Name, "to", m.ConvID, "error", err)
+				"group", g.Name, "to", finalConv, "error", err)
 			out.Recipients = append(out.Recipients, recipient{
-				ConvID:    m.ConvID,
-				Alias:     m.Alias,
-				MessageID: 0,
-				Delivered: false,
+				ConvID:         finalConv,
+				Alias:          m.Alias,
+				MessageID:      0,
+				Delivered:      false,
+				RedirectedFrom: originalTo,
 			})
 			continue
 		}
-		delivered := nudgeIfAlive(id, m.ConvID)
+		delivered := nudgeIfAlive(id, finalConv)
 		out.Recipients = append(out.Recipients, recipient{
-			ConvID:    m.ConvID,
-			Alias:     m.Alias,
-			MessageID: id,
-			Delivered: delivered,
+			ConvID:         finalConv,
+			Alias:          m.Alias,
+			MessageID:      id,
+			Delivered:      delivered,
+			RedirectedFrom: originalTo,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -1105,20 +1192,31 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 			"original message references a group that no longer exists")
 		return
 	}
+	// Reply target is the original sender. If they've since
+	// reincarnated, their old conv-id is still on the message row
+	// (immutable audit trail). Walk the chain so the reply lands on
+	// the live successor instead of the archived inbox.
+	replyTarget, replyOriginalTo := walkSuccession(orig.FromConv)
 	newID, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:  via.ID,
-		FromConv: myID,
-		ToConv:   orig.FromConv,
-		Subject:  subject,
-		Body:     body.Body,
-		ParentID: orig.ID,
+		GroupID:        via.ID,
+		FromConv:       myID,
+		ToConv:         replyTarget,
+		OriginalToConv: replyOriginalTo,
+		Subject:        subject,
+		Body:           body.Body,
+		ParentID:       orig.ID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	delivered := nudgeIfAlive(newID, orig.FromConv)
-	writeJSON(w, http.StatusOK, sendResp{ID: newID, Delivered: delivered, ViaGroup: via.Name})
+	delivered := nudgeIfAlive(newID, replyTarget)
+	writeJSON(w, http.StatusOK, sendResp{
+		ID:             newID,
+		Delivered:      delivered,
+		ViaGroup:       via.Name,
+		RedirectedFrom: replyOriginalTo,
+	})
 }
 
 func handleMessageByID(w http.ResponseWriter, r *http.Request) {
@@ -1191,6 +1289,14 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		// case. Agents in skills should prefer the `agent reply` command,
 		// which figures this out from the message ID.
 		"reply_cmd": fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID),
+	}
+	// Original-To: non-empty when this message was redirected by the
+	// succession-aware send path — the sender addressed a superseded
+	// conv-id and the daemon walked the chain to the live successor
+	// (this row's to_conv). Surface in the response so `inbox read`
+	// can render an `Original-To:` header line.
+	if m.OriginalToConv != "" {
+		resp["original_to_conv"] = m.OriginalToConv
 	}
 	// Email-style audience (schema v18). Each recipient row carries the
 	// same arrays so any reader can render "To: ...; CC: ..." identically.

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 20
+const currentVersion = 21
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -143,6 +143,33 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 21 {
+		if err := migrateV20toV21(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV20toV21 adds agent_messages.original_to_conv — when the send
+// path's `db.ResolveLatestConv` rewrites the addressed conv-id onto a
+// live successor, the recipient still wants to see who the message
+// was originally for. Empty for sends that didn't get redirected.
+//
+// Shape: TEXT NOT NULL DEFAULT '' (empty == "this row was sent
+// directly, no redirection happened"). Cheap to filter on, no index
+// needed — reads are by primary key.
+func migrateV20toV21(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_messages
+			ADD COLUMN original_to_conv TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 21;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v20→v21: %w", err)
+	}
 	return nil
 }
 
