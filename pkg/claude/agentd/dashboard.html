@@ -120,6 +120,11 @@ details[open] > summary .group-actions { opacity: 1; }
 }
 .group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+.group-rename-input {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 1px 6px; font: inherit; font-weight: bold;
+  min-width: 8em;
+}
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6);
   display: none; align-items: center; justify-content: center; z-index: 100;
@@ -350,10 +355,11 @@ details[open] > summary .group-actions { opacity: 1; }
       return `
       <details data-group-key="${esc(g.name)}"${isOpen ? ' open' : ''}>
         <summary>
-          <strong>${esc(g.name)}</strong>
+          <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
           <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-actions">
+            <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
           </span>
         </summary>
@@ -486,6 +492,9 @@ details[open] > summary .group-actions { opacity: 1; }
   // Last successful snapshot, kept so the filter inputs can re-render
   // without a server roundtrip when the user types.
   let lastSnapshot = null;
+  // True while an inline rename input is open; suspends the auto-
+  // refresh so the 5s tick doesn't blow the input away mid-edit.
+  let renameEditing = false;
 
   function filterGroups(groups, q) {
     if (!q) return groups;
@@ -656,6 +665,12 @@ details[open] > summary .group-actions { opacity: 1; }
   }
 
   async function refresh() {
+    if (renameEditing) {
+      // An inline-edit input is open; re-rendering would replace it
+      // mid-keystroke. Skip this tick — commit() / restore() will
+      // re-trigger refresh() when the user is done.
+      return;
+    }
     try {
       const r = await fetch('/api/snapshot', { credentials: 'same-origin' });
       if (!r.ok) {
@@ -834,6 +849,80 @@ details[open] > summary .group-actions { opacity: 1; }
             ok = r.ok;
             if (!ok) toast(`Delete failed: ${await r.text()}`, true);
             break;
+          }
+          case 'rename-group': {
+            // Inline edit: replace the group's <strong> label with an
+            // <input>. Enter saves (POST /api/groups/{old}/rename),
+            // Esc cancels (revert without touching the daemon).
+            // Background poll is suspended while editing so a 5s
+            // refresh doesn't blow the input away mid-type.
+            const summary = btn.closest('summary');
+            const nameEl = summary && summary.querySelector('.group-name');
+            if (!nameEl) {
+              toast('rename: could not locate group name element', true);
+              return;
+            }
+            // Suspend the auto-refresh while the input is open. The
+            // refresh re-runs renderGroups which would replace our
+            // input back with the static strong, losing keystrokes.
+            const prevSnapshot = lastSnapshot;
+            renameEditing = true;
+            const oldName = group;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'group-rename-input';
+            input.value = oldName;
+            input.spellcheck = false;
+            input.autocomplete = 'off';
+            // Replace + focus + select.
+            nameEl.replaceWith(input);
+            input.focus();
+            input.select();
+            const restore = () => {
+              const restored = document.createElement('strong');
+              restored.className = 'group-name';
+              restored.dataset.groupName = oldName;
+              restored.textContent = oldName;
+              if (input.parentNode) input.replaceWith(restored);
+              renameEditing = false;
+              lastSnapshot = prevSnapshot;
+            };
+            const commit = async () => {
+              const newName = input.value;
+              if (newName === oldName || newName.trim() === '') {
+                restore();
+                return;
+              }
+              const r = await fetch(`/api/groups/${encodeURIComponent(oldName)}/rename`, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ new_name: newName }),
+              });
+              if (!r.ok) {
+                toast(`rename failed: ${await r.text()}`, true);
+                restore();
+                return;
+              }
+              // Move the persisted "is open" flag onto the new key so
+              // the details stays in the state the user left it in.
+              const wasOpen = localStorage.getItem('tclaude.dash.group.' + oldName) === '1';
+              localStorage.removeItem('tclaude.dash.group.' + oldName);
+              if (wasOpen) localStorage.setItem('tclaude.dash.group.' + newName, '1');
+              renameEditing = false;
+              toast(`renamed: ${oldName} → ${newName}`);
+              refresh();
+            };
+            input.addEventListener('keydown', (ev) => {
+              if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+              else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+            });
+            input.addEventListener('blur', () => {
+              // Blur cancels rather than commits — avoids accidentally
+              // posting a stale name when the user clicks elsewhere
+              // mid-edit. They have to commit explicitly with Enter.
+              if (renameEditing) restore();
+            });
+            return; // Skip the default refresh; commit() / restore() handle it.
           }
           case 'delete-group': {
             const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);

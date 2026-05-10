@@ -82,6 +82,26 @@ becomes useful.
 - `pkg/claude/agent/groups.go` — `groupsRenameCmd` / `runGroupsRename`
 - `pkg/claude/agentd/groups_rename_flow_test.go` — 6 flow tests
 
+## Dashboard surface (2026-05)
+
+The dashboard's group header gets a small "rename" button next to
+"delete group". Clicking replaces the `<strong class="group-name">`
+label with an inline `<input>`; Enter saves (POST `/api/groups/{old}/rename`),
+Esc cancels, blur cancels (avoids accidental commit on click-away).
+The auto-refresh poll suspends while the input is open so the 5s tick
+doesn't blow the input away mid-keystroke. Successful rename moves the
+`tclaude.dash.group.<name>` localStorage flag onto the new key so the
+details `<open>` state survives the rename.
+
+The dashboard's `/api/groups/{name}/rename` is a thin twin of
+`/v1/groups/{name}/rename` — same `db.RenameAgentGroup`, same
+`validateGroupName`, same 400/404/409 surface. Cookie auth bypasses
+the slug check (humans bypass anyway).
+
+Tests in `pkg/claude/agentd/dashboard_edit_test.go`:
+`TestDashboardEdit_RenameGroup`, `TestDashboardEdit_RenameGroup_Collision`,
+`TestDashboardEdit_RenameGroup_BadName`.
+
 ## Out of scope (deferred)
 
 - **Reserved old names** (history of "this group used to be called X")
@@ -89,10 +109,8 @@ becomes useful.
   be a future surface if needed.
 - **Auto-redirect old name in CLI selectors** — would require a soft
   redirect via the audit table. Defer.
-- **Dashboard inline rename** — calls the same daemon endpoint; ship
-  with the framework migration sketched in
-  `dashboard-group-membership-ux.md`.
 - **Strike the cross-reference in `web-dashboard.md`** — that file is
   reserved for another agent right now per the parallel-work handoff,
   so the "Rename buttons (agents + groups)" bullet stays as-is. Whoever
-  next touches `web-dashboard.md` should mark the daemon side shipped.
+  next touches `web-dashboard.md` should mark the daemon + dashboard
+  sides shipped.

@@ -137,6 +137,67 @@ func TestDashboardEdit_DeleteGroup(t *testing.T) {
 	}
 }
 
+func TestDashboardEdit_RenameGroup(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", `{"new_name":"team-renamed"}`)
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got, _ := db.GetAgentGroupByName("team"); got != nil {
+		t.Errorf("old name should 404 after rename; got %+v", got)
+	}
+	got, _ := db.GetAgentGroupByName("team-renamed")
+	if got == nil || got.ID != gID {
+		t.Errorf("new name should resolve to same id %d; got %+v", gID, got)
+	}
+	// Members survived via stable id.
+	members, _ := db.ListAgentGroupMembers(gID)
+	if len(members) != 1 {
+		t.Errorf("members should survive dashboard rename; got %d", len(members))
+	}
+}
+
+func TestDashboardEdit_RenameGroup_Collision(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	_, _ = db.CreateAgentGroup("team", "")
+	_, _ = db.CreateAgentGroup("team-renamed", "")
+
+	w := httptest.NewRecorder()
+	r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", `{"new_name":"team-renamed"}`)
+	handleDashboardGroupsAPI(w, r)
+	if w.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", w.Code)
+	}
+}
+
+func TestDashboardEdit_RenameGroup_BadName(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	_, _ = db.CreateAgentGroup("team", "")
+	for _, bad := range []string{`{"new_name":""}`, `{"new_name":"has/slash"}`, "{\"new_name\":\"\x01ctrl\"}"} {
+		w := httptest.NewRecorder()
+		r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", bad)
+		handleDashboardGroupsAPI(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status = %d, want 400", bad, w.Code)
+		}
+		// team untouched.
+		if got, _ := db.GetAgentGroupByName("team"); got == nil {
+			t.Fatalf("team should still exist after rejecting %q", bad)
+		}
+	}
+}
+
 func TestDashboardEdit_DeleteGroup_NotFound(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

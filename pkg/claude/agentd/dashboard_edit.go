@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -201,6 +202,7 @@ func looksLikeConvID(s string) bool {
 // handleDashboardGroupsAPI dispatches:
 //
 //	DELETE /api/groups/{name}                   → delete group
+//	POST   /api/groups/{name}/rename            → rename (body: {new_name})
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
 //	POST   /api/groups/{name}/owners            → grant owner (body: {conv})
 //	DELETE /api/groups/{name}/owners/{conv}     → revoke owner
@@ -238,6 +240,16 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch parts[1] {
+	case "rename":
+		if len(parts) >= 3 && parts[2] != "" {
+			http.Error(w, "POST /api/groups/{name}/rename takes new_name in the body, not the URL", http.StatusBadRequest)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		dashboardRenameGroup(w, r, g)
 	case "members":
 		// /api/groups/{name}/members/{conv} — DELETE only.
 		if len(parts) < 3 || parts[2] == "" {
@@ -278,6 +290,43 @@ func dashboardDeleteGroup(w http.ResponseWriter, name string) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// dashboardRenameGroup is the dashboard-cookie-auth twin of
+// /v1/groups/{name}/rename — same db.RenameAgentGroup call, same
+// validateGroupName check, same 400/404/409 surface. The dashboard
+// caller is the human (cookie auth ≈ requirePermission's bypass), so
+// no slug check is needed here.
+func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	var body struct {
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "rename: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateGroupName(body.NewName); err != nil {
+		http.Error(w, "rename: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	renamed, err := db.RenameAgentGroup(g.Name, body.NewName, "")
+	if errors.Is(err, db.ErrGroupNameTaken) {
+		http.Error(w, "rename: a group named \""+body.NewName+"\" already exists", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if renamed == nil {
+		http.Error(w, "rename: group \""+g.Name+"\" no longer exists", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"group":    renamed.Name,
+		"old_name": g.Name,
+	})
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
