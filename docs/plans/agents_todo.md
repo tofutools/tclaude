@@ -210,9 +210,17 @@ pattern). Both routed through the existing
   `worker-clone-3-clone-1` (nested). Counter is global, not per-
   group, so the same clone gets the same alias across every group
   it inherits.
-- **Rate limiting.** A runaway loop can fork unboundedly since the
-  original isn't taken down. Worth adding 1-clone-per-minute at the
-  daemon if it shows up in practice.
+- ~~**Rate limiting.** A runaway loop can fork unboundedly since the
+  original isn't taken down.~~ — **shipped (2026-05).** New
+  `agent_clone_history` table (schema v19) records every successful
+  clone claim. `runCloneOrchestration` does an atomic INSERT-WHERE-
+  NOT-EXISTS via `db.ClaimCloneSlot` before the spawn; second clone
+  of the same source within `agentd.CloneCooldown` (default 1m)
+  returns `429 rate_limited`. Per-source-conv (so a manager fanning
+  out clones of *different* workers is unaffected). Failed
+  rate-limit attempts do NOT reset the timer (the INSERT-WHERE-
+  NOT-EXISTS is idempotent on the loss path). `CloneCooldown` is
+  exported so flow tests can shrink/lengthen it without sleeping.
 - **--no-copy-conv polish.** Today the no-copy path uses the same
   poll-for-new-conv-id loop as reincarnate; CC has to mint the
   conv-id before identity can be copied. Hopefully fast enough; if

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 18
+const currentVersion = 19
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -131,6 +131,46 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 19 {
+		if err := migrateV18toV19(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV18toV19 adds agent_clone_history — append-only audit of every
+// clone attempt that passed the rate-limit check. The daemon's clone
+// handler does an atomic INSERT-WHERE-NOT-EXISTS against this table to
+// gate "1 clone per cooldown" at the source-conv level (see
+// ClaimCloneSlot), preventing a runaway clone loop from forking the
+// same conv unboundedly.
+//
+// Shape:
+//   - source_conv_id is the target being cloned. Index keys lookups by
+//     (source, cloned_at) for the recency probe.
+//   - cloned_at is the wall-clock instant the clone was claimed
+//     (RFC3339Nano so closely-spaced attempts compare correctly).
+//
+// Append-only by construction: rows are never updated or deleted in
+// the production code path. A future cleanup verb could prune rows
+// older than N days if the table grows uncomfortably; not pulled by
+// need yet.
+func migrateV18toV19(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_clone_history (
+			source_conv_id TEXT NOT NULL,
+			cloned_at      TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_clone_history_source
+			ON agent_clone_history(source_conv_id, cloned_at);
+
+		UPDATE schema_version SET version = 19;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v18→v19: %w", err)
+	}
 	return nil
 }
 

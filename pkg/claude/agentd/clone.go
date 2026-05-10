@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,20 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// CloneCooldown is the minimum time between two clones of the same
+// source conv. The clone handler does an atomic INSERT-WHERE-NOT-
+// EXISTS against agent_clone_history to enforce this — see
+// db.ClaimCloneSlot. Default 1 minute; flow tests shrink it via
+// t.Cleanup-restored assignment to drive the locked/unlocked branches
+// without sleeping.
+//
+// Per source conv, not per caller: the runaway scenario the TODO
+// flagged is "the same conv being cloned in a tight loop", regardless
+// of which agent triggered it. A manager that wants to fan out clones
+// of *different* sources hits the limit only if it tries to fan out
+// the *same* source twice within cooldown.
+var CloneCooldown = time.Minute
 
 // `tclaude agent clone` — fork the calling agent into a sibling that
 // inherits its identity (groups, permissions, ownerships) but
@@ -211,6 +226,24 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, followUp strin
 		return
 	}
 	cwd := oldSess.Cwd
+
+	// Rate limit: refuse a second clone of the same source within
+	// CloneCooldown. Clone is the only default-granted, agent-reachable
+	// fork-doubling verb (self.clone is granted by default; reincarnate
+	// is 1-in-1-out, spawn is human-only) — without this gate, an agent
+	// stuck in a tight loop could fork itself unboundedly. Atomic at
+	// the DB layer so two concurrent claim attempts can't both pass.
+	if err := db.ClaimCloneSlot(target, CloneCooldown, time.Now().UTC()); err != nil {
+		if errors.Is(err, db.ErrCloneRateLimited) {
+			writeError(w, http.StatusTooManyRequests, "rate_limited",
+				"clone of "+short8(target)+" too recent; cooldown is "+CloneCooldown.String()+
+					" between consecutive clones of the same source conv")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "io",
+			"clone rate-limit check: "+err.Error())
+		return
+	}
 
 	oldGroups, err := db.ListGroupsForConv(target)
 	if err != nil {
