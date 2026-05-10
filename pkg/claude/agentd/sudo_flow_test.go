@@ -403,6 +403,78 @@ func TestSudo_PerConvOverrideMaxDuration_AppliedByTitle(t *testing.T) {
 	}
 }
 
+// Scenario: human runs `tclaude agent sudo request --target alice
+// groups.spawn -d 5m`. POST /v1/sudo carries body.target → daemon
+// takes the proactive (no-popup) path. Grant lands with the CLI's
+// proactive audit label. Pins the new --target dispatch on the
+// daemon side; the same body shape is what the CLI sends.
+func TestSudo_Proactive_HumanWithTarget_NoPopup(t *testing.T) {
+	// No popup stub here — if the proactive path mistakenly
+	// fell through to the popup, the absent stub would 503 (no popup
+	// base URL configured) or block waiting on a decision channel.
+	// Reaching 200 with a row inserted IS the assertion.
+	f := newFlow(t)
+	const targetConv = "tgt-aaaa-bbbb-cccc-1111"
+	f.HaveConvWithTitle(targetConv, "alice")
+
+	body := map[string]any{
+		"slugs":    []string{"groups.spawn"},
+		"duration": "5m",
+		"reason":   "team-bootstrap",
+		"target":   targetConv,
+	}
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", body))
+	rec := testharness.Serve(f.Mux, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("proactive POST: status=%d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+
+	rows, err := db.ListActiveSudoGrants(targetConv)
+	if err != nil {
+		t.Fatalf("ListActiveSudoGrants: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("active grants: got %d, want 1", len(rows))
+	}
+	got := rows[0]
+	if got.Slug != "groups.spawn" {
+		t.Errorf("slug = %q, want groups.spawn", got.Slug)
+	}
+	if got.GrantedBy != "<human-cli>:proactive" {
+		t.Errorf("granted_by = %q, want <human-cli>:proactive (CLI label distinguishes from dashboard + popup-approved)",
+			got.GrantedBy)
+	}
+}
+
+// Scenario: an AGENT calls /v1/sudo with target set. That's
+// manager-pattern approval (agent grants sudo to a peer) — explicitly
+// deferred in v1, must 403. Without this gate, an agent with the
+// daemon socket could elevate any peer it can name, defeating the
+// human-in-the-loop promise.
+func TestSudo_Proactive_AgentWithTarget_Refused(t *testing.T) {
+	f := newFlow(t)
+	const callerConv = "atk-aaaa-bbbb-cccc-1111"
+	const targetConv = "tgt-aaaa-bbbb-cccc-2222"
+	f.HaveConvWithTitle(callerConv, "attacker")
+	f.HaveConvWithTitle(targetConv, "victim")
+
+	body := map[string]any{
+		"slugs":    []string{"groups.spawn"},
+		"duration": "5m",
+		"target":   targetConv,
+	}
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", body), callerConv)
+	rec := testharness.Serve(f.Mux, r)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("agent + target: status=%d body=%s, want 403", rec.Code, rec.Body.String())
+	}
+	if rows, _ := db.ListActiveSudoGrants(targetConv); len(rows) != 0 {
+		t.Errorf("agent + target must not insert rows on the target; got %d", len(rows))
+	}
+}
+
 // Scenario: agent sudoes groups.create then creates a group. The
 // auto-granted ownership row carries `via-sudo:grant-id=<N>` in
 // granted_by, so a forensic query "what did agent X do during the

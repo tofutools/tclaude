@@ -200,6 +200,13 @@ type sudoRequestBody struct {
 	Slugs    []string `json:"slugs"`
 	Duration string   `json:"duration"`
 	Reason   string   `json:"reason"`
+	// Target switches the endpoint into proactive-grant mode: the
+	// human caller seeds a time-bounded grant for a specific conv
+	// without involving the popup. Agents are not allowed to set
+	// this — manager-pattern approval ("agent grants sudo to a peer")
+	// is intentionally deferred. Empty/unset → original
+	// agent-initiated, popup-gated behaviour.
+	Target string `json:"target,omitempty"`
 }
 
 type sudoGrantJSON struct {
@@ -215,21 +222,7 @@ type sudoGrantJSON struct {
 }
 
 func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
-	// Caller MUST be an agent. Humans bypass requirePermission already;
-	// they don't need sudo. Reject the human path explicitly so a
-	// stray CLI call doesn't insert ghost rows.
 	p := peerFromContext(r.Context())
-	if !p.HasClaudeAncestor {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"sudo is only meaningful for agent callers; humans hold every permission implicitly")
-		return
-	}
-	if p.ConvID == "" {
-		writeError(w, http.StatusForbidden, "auth",
-			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate sudo request")
-		return
-	}
-
 	var body sudoRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -239,6 +232,34 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	if len(body.Slugs) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"slugs[] is required (at least one slug to elevate)")
+		return
+	}
+
+	// Two paths through this endpoint:
+	//
+	//   1. body.target SET — proactive grant. Human caller, no popup
+	//      (peer-cred is the consent layer). The CLI's
+	//      `tclaude agent sudo request --target <conv> ...` lands here.
+	//   2. body.target UNSET — agent-initiated. Popup-gated. The agent's
+	//      conv is the grant target.
+	//
+	// Agents calling with target set is rejected — manager-pattern
+	// approval (agent grants sudo to a peer) is intentionally deferred;
+	// when the use case shows up it ships behind a `sudo.approve` slug.
+	if strings.TrimSpace(body.Target) != "" {
+		handleSudoProactiveGrant(w, p, body, "<human-cli>:proactive")
+		return
+	}
+
+	// Original agent-initiated, popup-gated path.
+	if !p.HasClaudeAncestor {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"sudo is only meaningful for agent callers without --target; humans seed proactive grants by setting body.target = <conv selector>")
+		return
+	}
+	if p.ConvID == "" {
+		writeError(w, http.StatusForbidden, "auth",
+			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate sudo request")
 		return
 	}
 
@@ -252,44 +273,14 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := config.Load()
 	policy := resolveSudoConfig(cfg, p.ConvID, "", title)
 
-	// Blocklist check: refuse permanent-escalation slugs without
-	// popping the popup, so a runaway loop can't even surface them
-	// to the human. Reports every blocklisted slug at once so the
-	// caller can fix its bundle in a single retry.
-	blocked := []string{}
-	for _, slug := range body.Slugs {
-		for _, b := range policy.Blocklist {
-			if slug == b {
-				blocked = append(blocked, slug)
-				break
-			}
-		}
-	}
-	if len(blocked) > 0 {
+	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		writeError(w, http.StatusForbidden, "blocked",
 			fmt.Sprintf("slug(s) blocklisted from sudo (would enable permanent escalation): %s",
 				strings.Join(blocked, ", ")))
 		return
 	}
-	// Duration: parse + cap. Empty defaults to the resolved default.
-	dur := policy.DefaultDuration
-	if strings.TrimSpace(body.Duration) != "" {
-		d, err := time.ParseDuration(body.Duration)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg",
-				"duration: "+err.Error())
-			return
-		}
-		if d <= 0 {
-			writeError(w, http.StatusBadRequest, "invalid_arg",
-				"duration must be positive")
-			return
-		}
-		dur = d
-	}
-	if dur > policy.MaxDuration {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("duration %s exceeds the max %s", dur, policy.MaxDuration))
+	dur, ok := resolveSudoDuration(w, body.Duration, policy)
+	if !ok {
 		return
 	}
 	reason := strings.TrimSpace(body.Reason)
@@ -326,36 +317,132 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert one row per slug, sharing granted_at / expires_at so a
-	// single popup approval surfaces as a coherent bundle in the
-	// audit view. Re-snapshot the timestamps post-popup so the window
-	// is measured from approval time, not request time — fairer to
-	// the agent if the human took 30 seconds to click.
-	postNow := time.Now()
-	postExpires := postNow.Add(dur)
-	granter := "human:popup-id=" + req.id
-	out := struct {
-		Grants    []sudoGrantJSON `json:"grants"`
-		ExpiresAt string          `json:"expires_at"`
-		ConvID    string          `json:"conv_id"`
-	}{
-		ExpiresAt: postExpires.Format(time.RFC3339Nano),
-		ConvID:    p.ConvID,
+	// Re-snapshot the timestamps post-popup so the window is measured
+	// from approval time, not request time — fairer to the agent if
+	// the human took 30 seconds to click.
+	out, status := insertSudoBundle(p.ConvID, title, body.Slugs, dur, reason,
+		"human:popup-id="+req.id)
+	writeJSON(w, status, out)
+}
+
+// handleSudoProactiveGrant runs the human-initiated grant path:
+// validate body.Target, apply the same blocklist + duration cap as
+// the agent-initiated path, insert grant rows, return the standard
+// /v1/sudo response shape. granter labels the audit trail (CLI vs
+// dashboard, both proactive).
+//
+// Caller is required to be human — agents reaching here mean the
+// caller set body.Target, which is reserved for humans (see
+// handleSudoRequest's dispatch). Returning 403 keeps the
+// manager-pattern-approval gap explicit.
+func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBody, granter string) {
+	if p.HasClaudeAncestor {
+		writeError(w, http.StatusForbidden, "auth",
+			"agent callers cannot proactively grant sudo to other convs (manager-pattern approval is deferred; the human seeds proactive grants from the dashboard or `tclaude agent sudo request --target <conv>` from a non-agent shell)")
+		return
 	}
-	for _, slug := range body.Slugs {
+	res, _, err := agent.ResolveSelector(strings.TrimSpace(body.Target))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found",
+			"resolve target: "+err.Error())
+		return
+	}
+	targetConv := res.ConvID
+	title := ""
+	if row := agent.FreshConvRowResolved(targetConv); row != nil {
+		title = agent.DisplayTitle(row)
+	}
+	cfg, _ := config.Load()
+	policy := resolveSudoConfig(cfg, targetConv, "", title)
+
+	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
+		writeError(w, http.StatusForbidden, "blocked",
+			fmt.Sprintf("slug(s) blocklisted from sudo (would enable permanent escalation): %s",
+				strings.Join(blocked, ", ")))
+		return
+	}
+	dur, ok := resolveSudoDuration(w, body.Duration, policy)
+	if !ok {
+		return
+	}
+	out, status := insertSudoBundle(targetConv, title, body.Slugs, dur, strings.TrimSpace(body.Reason), granter)
+	writeJSON(w, status, out)
+}
+
+// blockedSlugs returns every entry of want that's also in blocklist,
+// preserving order. Used by both the agent-initiated and proactive
+// paths so the error message wording stays consistent.
+func blockedSlugs(want, blocklist []string) []string {
+	out := []string{}
+	for _, slug := range want {
+		for _, b := range blocklist {
+			if slug == b {
+				out = append(out, slug)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// resolveSudoDuration parses body.Duration against the policy. On any
+// validation failure it writes the error response and returns
+// (0, false); callers just return.
+func resolveSudoDuration(w http.ResponseWriter, raw string, policy resolvedSudo) (time.Duration, bool) {
+	dur := policy.DefaultDuration
+	if strings.TrimSpace(raw) != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"duration: "+err.Error())
+			return 0, false
+		}
+		if d <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"duration must be positive")
+			return 0, false
+		}
+		dur = d
+	}
+	if dur > policy.MaxDuration {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("duration %s exceeds the max %s", dur, policy.MaxDuration))
+		return 0, false
+	}
+	return dur, true
+}
+
+// sudoBundleResponse is the wire shape returned by both the
+// agent-initiated and proactive grant paths. Mirrors what
+// `tclaude agent sudo request` already parses on the client side.
+type sudoBundleResponse struct {
+	Grants    []sudoGrantJSON `json:"grants"`
+	ExpiresAt string          `json:"expires_at"`
+	ConvID    string          `json:"conv_id"`
+}
+
+// insertSudoBundle inserts one row per slug, sharing granted_at /
+// expires_at so a single grant decision surfaces as a coherent bundle
+// in audit views. Returns the response payload + HTTP status; per-row
+// insert failures are surfaced in the response (non-fatal — sibling
+// rows that landed are still valid).
+func insertSudoBundle(convID, title string, slugs []string, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
+	now := time.Now()
+	expires := now.Add(dur)
+	out := sudoBundleResponse{
+		ExpiresAt: expires.Format(time.RFC3339Nano),
+		ConvID:    convID,
+	}
+	for _, slug := range slugs {
 		id, err := db.InsertSudoGrant(&db.SudoGrant{
-			ConvID:    p.ConvID,
+			ConvID:    convID,
 			Slug:      slug,
-			GrantedAt: postNow,
-			ExpiresAt: postExpires,
+			GrantedAt: now,
+			ExpiresAt: expires,
 			GrantedBy: granter,
 			Reason:    reason,
 		})
 		if err != nil {
-			// Best-effort per slug. The popup approval is single-shot;
-			// if a row insert fails, log + omit it from the response so
-			// the agent can see exactly what landed. Don't 500: the
-			// other slugs already inserted are still valid.
 			out.Grants = append(out.Grants, sudoGrantJSON{
 				Slug:   slug,
 				Reason: "insert failed: " + err.Error(),
@@ -364,17 +451,17 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Grants = append(out.Grants, sudoGrantJSON{
 			ID:               id,
-			ConvID:           p.ConvID,
+			ConvID:           convID,
 			ConvTitle:        title,
 			Slug:             slug,
-			GrantedAt:        postNow.Format(time.RFC3339Nano),
-			ExpiresAt:        postExpires.Format(time.RFC3339Nano),
+			GrantedAt:        now.Format(time.RFC3339Nano),
+			ExpiresAt:        expires.Format(time.RFC3339Nano),
 			GrantedBy:        granter,
 			Reason:           reason,
 			RemainingSeconds: int64(dur.Seconds()),
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, http.StatusOK
 }
 
 func handleSudoList(w http.ResponseWriter, r *http.Request) {

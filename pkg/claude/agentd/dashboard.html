@@ -285,6 +285,68 @@ summary.dnd-drop-over.dnd-effect-clone {
   font-family: inherit;
 }
 .filter-bar button.clear-filter:hover { color: #d4d4d4; }
+.filter-bar .spacer { flex: 1; }
+.filter-bar button.primary {
+  background: #1f6feb; border: 1px solid #1f6feb; color: white;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.filter-bar button.primary:hover { background: #388bfd; border-color: #388bfd; }
+.sudo-badge {
+  display: inline-block; margin-left: 4px; font-size: 11px; cursor: help;
+  color: #ffa657;
+}
+.sudo-badge:hover { color: #ffd47a; }
+.sudo-grant-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 460px; max-width: 560px;
+  display: flex; flex-direction: column; gap: 12px;
+  color: #c9d1d9;
+}
+.sudo-grant-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.sudo-grant-hint { margin: 0; font-size: 11px; color: #7d8590; line-height: 1.4; }
+.sudo-grant-hint code {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 1px 4px; font-size: 10px;
+}
+.sudo-grant-row {
+  display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
+}
+.sudo-grant-row .sudo-grant-label {
+  flex: 0 0 64px; color: #7d8590; padding-top: 6px;
+}
+.sudo-grant-row input[type=text] {
+  flex: 1;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
+}
+.sudo-grant-row input[type=text]:focus { outline: none; border-color: #58a6ff; }
+.sudo-grant-slugs {
+  flex: 1; display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 4px 0;
+}
+.sudo-grant-slugs label {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; cursor: pointer; color: #c9d1d9;
+}
+.sudo-grant-slugs label.checked { background: #1f6feb; border-color: #388bfd; color: white; }
+.sudo-grant-slugs label.blocked { color: #7d8590; cursor: not-allowed; opacity: 0.5; }
+.sudo-grant-slugs label input { display: none; }
+.sudo-grant-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.sudo-grant-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.sudo-grant-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.sudo-grant-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.sudo-grant-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
 </style>
 </head>
 <body>
@@ -297,6 +359,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="agents">Agents</button>
   <button data-tab="cron">Cron</button>
+  <button data-tab="sudo">Sudo</button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
 </nav>
@@ -324,6 +387,16 @@ summary.dnd-drop-over.dnd-effect-clone {
       <button class="clear-filter" id="filter-cron-clear" title="Clear filter">×</button>
     </div>
     <div id="cron-list"></div>
+  </section>
+  <section id="tab-sudo">
+    <div class="filter-bar">
+      <input id="filter-sudo" type="text" placeholder="Filter active sudo grants (matches conv title / id / slug / reason)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-sudo-count"></span>
+      <button class="clear-filter" id="filter-sudo-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent">+ Grant sudo</button>
+    </div>
+    <div id="sudo-list"></div>
   </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
@@ -384,6 +457,33 @@ summary.dnd-drop-over.dnd-effect-clone {
       </label>
       <span class="spacer"></span>
       <span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> add · <kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="sudo-grant-modal">
+  <div class="sudo-grant-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-grant-title">
+    <h3 id="sudo-grant-title">Grant sudo</h3>
+    <p class="sudo-grant-hint">Proactively elevate an agent for a bounded window. Same blocklist + duration cap as the agent-initiated path; granted_by records <code>&lt;human-dashboard&gt;:proactive</code> on the audit row.</p>
+    <label class="sudo-grant-row">
+      <span class="sudo-grant-label">Conv</span>
+      <input id="sudo-grant-conv" type="text" placeholder="alias / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="sudo-grant-row">
+      <span class="sudo-grant-label">Slugs</span>
+      <div id="sudo-grant-slugs" class="sudo-grant-slugs"></div>
+    </label>
+    <label class="sudo-grant-row">
+      <span class="sudo-grant-label">Duration</span>
+      <input id="sudo-grant-duration" type="text" placeholder="5m (default), 30m, 1h" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="sudo-grant-row">
+      <span class="sudo-grant-label">Reason</span>
+      <input id="sudo-grant-reason" type="text" placeholder="optional — surfaced in the audit row" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="sudo-grant-error" id="sudo-grant-error"></div>
+    <div class="modal-buttons">
+      <button id="sudo-grant-cancel">Cancel</button>
+      <button id="sudo-grant-submit" class="primary">Grant</button>
     </div>
   </div>
 </div>
@@ -465,7 +565,10 @@ summary.dnd-drop-over.dnd-effect-clone {
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
-    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${removeMemberButton(g, m)}</div>`;
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+  }
+  function sudoMemberButton(m) {
+    return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
   }
 
   // lifecycleAndFocusButtons renders the focus/wake/shutdown trio.
@@ -559,7 +662,7 @@ summary.dnd-drop-over.dnd-effect-clone {
                   <td>${onlineDot(m.online)}</td>
                   <td class="id">${esc(shortId(m.conv_id))}</td>
                   <td>
-                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}</div>
+                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
                     ${m.alias && m.title ? `<div class="title muted">${esc(m.title)}</div>` : ''}
                   </td>
                   <td>
@@ -601,7 +704,10 @@ summary.dnd-drop-over.dnd-effect-clone {
             <tr>
               <td>${onlineDot(a.online)}</td>
               <td class="id">${esc(shortId(a.conv_id))}</td>
-              <td><span class="alias">${esc(a.title)}</span></td>
+              <td>
+                <span class="alias">${esc(a.title)}</span>
+                ${sudoBadge(a.active_sudo, a.conv_id)}
+              </td>
               <td>
                 ${statePill(state, a.online)}
                 ${subagents > 0 ? `<span class="state-detail">+${subagents} subagent${subagents > 1 ? 's' : ''}</span>` : ''}
@@ -610,7 +716,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}<button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -830,6 +936,181 @@ summary.dnd-drop-over.dnd-effect-clone {
       ? `${filtered.length} / ${total}` : `${total} job${total === 1 ? '' : 's'}`;
   }
 
+  // -- Sudo tab ---------------------------------------------------------
+
+  function fmtRemaining(secs) {
+    if (!secs || secs <= 0) return 'expired';
+    if (secs < 60) return secs + 's';
+    if (secs < 3600) {
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      return s > 0 ? `${m}m${s}s` : `${m}m`;
+    }
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return m > 0 ? `${h}h${m}m` : `${h}h`;
+  }
+
+  function filterSudo(rows, q) {
+    if (!q) return rows;
+    const needle = q.toLowerCase();
+    return rows.filter(r =>
+      (r.conv_title || '').toLowerCase().includes(needle) ||
+      (r.conv_id || '').toLowerCase().includes(needle) ||
+      (r.slug || '').toLowerCase().includes(needle) ||
+      (r.reason || '').toLowerCase().includes(needle));
+  }
+
+  function renderSudo(rows) {
+    if (!rows || !rows.length) {
+      return '<div class="empty">No active sudo grants.</div>';
+    }
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th>Conv</th><th>Slug</th><th>Granted at</th><th>Expires in</th>
+            <th>Reason</th><th>Granted by</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>
+                <span class="alias">${esc(r.conv_title || '(unknown)')}</span>
+                <span class="id">${esc(shortId(r.conv_id))}</span>
+              </td>
+              <td><span class="tag slug">${esc(r.slug)}</span></td>
+              <td><span class="last-hook">${esc(relTime(r.granted_at))}</span></td>
+              <td><span class="last-hook">${esc(fmtRemaining(r.remaining_seconds))}</span></td>
+              <td>${esc(r.reason || '')}</td>
+              <td><span class="muted" title="${esc(r.granted_by || '')}">${esc(r.granted_by || '')}</span></td>
+              <td><button class="danger" data-act="sudo-revoke" data-id="${r.id}" data-slug="${esc(r.slug)}" data-conv="${esc(r.conv_title || r.conv_id)}" title="Revoke this grant">revoke</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderSudoTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-sudo').value;
+    const rows = lastSnapshot.sudo || [];
+    const filtered = filterSudo(rows, q);
+    $('#sudo-list').innerHTML = renderSudo(filtered);
+    $('#filter-sudo-count').textContent = q
+      ? `${filtered.length} / ${rows.length}`
+      : `${rows.length} active grant${rows.length === 1 ? '' : 's'}`;
+  }
+
+  // openSudoGrantModal: builds the slug picker from the snapshot's
+  // registry, restores the conv field from a per-page memory so
+  // reopening keeps focus, and traps Escape to close. Submission
+  // hits POST /api/sudo and falls through to refresh() on success
+  // so the new grant lands on the list immediately.
+  let sudoGrantBlocklist = ['permissions.grant', 'permissions.revoke'];
+  // sudoByConv: conv-id → list of active grants. Built from
+  // snapshot.sudo on every refresh so any renderer (Agents, Groups
+  // members) can consult it for the 🔓 badge without a server-side
+  // duplication of dashboardMember.active_sudo.
+  let sudoByConv = {};
+  function openSudoGrantModal(prefillConv) {
+    const slugs = (lastSnapshot && lastSnapshot.slugs) || [];
+    const wrap = $('#sudo-grant-slugs');
+    wrap.innerHTML = slugs.map(s => {
+      const blocked = sudoGrantBlocklist.includes(s.slug);
+      return `<label class="${blocked ? 'blocked' : ''}" title="${esc(s.descr || '')}">
+        <input type="checkbox" value="${esc(s.slug)}"${blocked ? ' disabled' : ''}>
+        ${esc(s.slug)}
+      </label>`;
+    }).join('');
+    wrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        cb.parentElement.classList.toggle('checked', cb.checked);
+      });
+    });
+    if (prefillConv != null) $('#sudo-grant-conv').value = prefillConv;
+    $('#sudo-grant-error').textContent = '';
+    $('#sudo-grant-modal').classList.add('show');
+    setTimeout(() => $('#sudo-grant-conv').focus(), 0);
+    modalEditing = true;
+  }
+  function closeSudoGrantModal() {
+    $('#sudo-grant-modal').classList.remove('show');
+    modalEditing = false;
+  }
+
+  async function submitSudoGrant() {
+    const conv = $('#sudo-grant-conv').value.trim();
+    const slugs = $$('#sudo-grant-slugs input[type=checkbox]:checked').map(cb => cb.value);
+    const duration = $('#sudo-grant-duration').value.trim();
+    const reason = $('#sudo-grant-reason').value.trim();
+    const errEl = $('#sudo-grant-error');
+    errEl.textContent = '';
+    if (!conv) { errEl.textContent = 'Conv is required.'; return; }
+    if (!slugs.length) { errEl.textContent = 'Pick at least one slug.'; return; }
+    const btn = $('#sudo-grant-submit');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/sudo', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conv, slugs, duration, reason }),
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        errEl.textContent = text || ('HTTP ' + r.status);
+        return;
+      }
+      const resp = await r.json();
+      const ok = (resp.grants || []).filter(g => g.id > 0).length;
+      const failed = (resp.grants || []).length - ok;
+      toast(`Granted ${ok} slug${ok === 1 ? '' : 's'} to ${resp.conv_id ? shortId(resp.conv_id) : conv}` +
+        (failed > 0 ? ` (${failed} failed)` : ''));
+      closeSudoGrantModal();
+      await refresh();
+    } catch (e) {
+      errEl.textContent = 'Network error: ' + (e.message || e);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Per-row sudo-revoke is handled by bindRowActions (data-act="sudo-revoke").
+  // The Grant modal hooks into bindSudoModal below.
+
+  function bindSudoModal() {
+    $('#sudo-grant-open').addEventListener('click', () => openSudoGrantModal(''));
+    $('#sudo-grant-cancel').addEventListener('click', closeSudoGrantModal);
+    $('#sudo-grant-submit').addEventListener('click', submitSudoGrant);
+    $('#sudo-grant-modal').addEventListener('click', (e) => {
+      // Click on backdrop closes; clicks inside the dialog don't.
+      if (e.target.id === 'sudo-grant-modal') closeSudoGrantModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#sudo-grant-modal').classList.contains('show')) {
+        closeSudoGrantModal();
+      }
+    });
+  }
+
+  // sudoBadge renders the per-row 🔓 indicator when an agent currently
+  // holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
+  // hovering tells the human everything they'd want to know without a
+  // tab switch.
+  function sudoBadge(activeSudo, fallbackConvID) {
+    if (!activeSudo || !activeSudo.length) return '';
+    const lines = activeSudo.map(g => `${g.slug} (expires in ${fmtRemaining(g.remaining_seconds)})`);
+    const title = `${activeSudo.length} active sudo grant${activeSudo.length === 1 ? '' : 's'} — click to manage:\n` + lines.join('\n');
+    // Per-agent rows on the Agents tab carry ConvID via the row
+    // itself (Agents[*].active_sudo[] omits it to save bytes); group
+    // member rows look up via sudoByConv[m.conv_id] where the entries
+    // DO carry ConvID. Accept a fallback so both shapes work.
+    const convID = activeSudo[0].conv_id || fallbackConvID || '';
+    return `<span class="sudo-badge" data-act="sudo-manage" data-conv="${esc(convID)}" title="${esc(title)}">🔓</span>`;
+  }
+
   function bindFilter(tab) {
     const input = $(`#filter-${tab}`);
     const clear = $(`#filter-${tab}-clear`);
@@ -841,6 +1122,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       if (tab === 'groups') renderGroupsTab();
       else if (tab === 'agents') renderAgentsTab();
       else if (tab === 'cron') renderCronTab();
+      else if (tab === 'sudo') renderSudoTab();
     };
     input.addEventListener('input', onChange);
     clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
@@ -863,9 +1145,22 @@ summary.dnd-drop-over.dnd-effect-clone {
       const data = await r.json();
       lastSnapshot = data;
       $('#meta').textContent = data.popup_base + ' · refreshed ' + new Date(data.generated_at).toLocaleTimeString();
+      // Refresh the proactive-grant blocklist hint from the snapshot
+      // when present; falls back to the v1 hardcoded pair otherwise.
+      // (Snapshot doesn't carry the resolved blocklist directly; the
+      // server returns 403 on submit if the picker missed one — the
+      // UI just dims the well-known pair so the common case is
+      // self-explanatory.)
+      sudoGrantBlocklist = ['permissions.grant', 'permissions.revoke'];
+      sudoByConv = {};
+      (data.sudo || []).forEach(g => {
+        if (!sudoByConv[g.conv_id]) sudoByConv[g.conv_id] = [];
+        sudoByConv[g.conv_id].push(g);
+      });
       renderGroupsTab();
       renderAgentsTab();
       renderCronTab();
+      renderSudoTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
       showStatus('● live', false);
@@ -1336,6 +1631,43 @@ summary.dnd-drop-over.dnd-effect-clone {
             // dashboard state and the user just left the window.
             if (ok) toast(`focused: ${label}`);
             return;
+          }
+          case 'sudo-grant': {
+            // Per-row affordance: open the same modal the Sudo tab's
+            // "+ Grant sudo" button uses, pre-filled with this conv.
+            // Modal handles the rest (validation, POST /api/sudo,
+            // refresh).
+            openSudoGrantModal(conv);
+            return;
+          }
+          case 'sudo-manage': {
+            // Click on the 🔓 badge: switch to the Sudo tab pre-
+            // filtered to this agent so the human can revoke specific
+            // grants without scrolling through unrelated rows.
+            const filterInput = $('#filter-sudo');
+            filterInput.value = shortId(conv);
+            try { localStorage.setItem('tclaude.dash.filter.sudo', filterInput.value); } catch (_) {}
+            $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'sudo'));
+            $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-sudo'));
+            renderSudoTab();
+            return;
+          }
+          case 'sudo-revoke': {
+            const id = btn.getAttribute('data-id');
+            const slug = btn.getAttribute('data-slug') || '';
+            const confirmed = await confirmModal({
+              title: 'Revoke sudo grant?',
+              body: 'The agent loses access to this slug immediately. They can request again if needed.',
+              meta: `#${id} ${slug ? '· ' + slug : ''}${label ? ' · ' + label : ''}`,
+              okLabel: 'Revoke',
+            });
+            if (!confirmed) return;
+            const r = await fetch('/api/sudo/' + encodeURIComponent(id), {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Revoke failed: ${await r.text()}`, true);
+            break;
           }
           case 'delete-agent': {
             const confirmed = await confirmModal({
@@ -1832,6 +2164,8 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindFilter('groups');
   bindFilter('agents');
   bindFilter('cron');
+  bindFilter('sudo');
+  bindSudoModal();
   refresh();
   setInterval(refresh, 5000);
 })();

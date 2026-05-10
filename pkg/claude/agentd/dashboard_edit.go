@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -663,22 +662,17 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID})
 }
 
-// handleDashboardSudoGrant inserts time-bounded permission grants on
-// behalf of an agent without involving the popup. The dashboard
-// cookie + Origin pinning is the human-consent layer here; an agent
-// reaching this endpoint would have to forge the cookie, which is
-// the same threat model that protects every other dashboard mutate.
+// handleDashboardSudoGrant is the cookie-auth front for proactive
+// sudo grants. The dashboard cookie + Origin pinning is the human-
+// consent layer here; an agent reaching this endpoint would have
+// to forge the cookie, which is the same threat model that protects
+// every other dashboard mutate.
 //
-// Same blocklist + duration cap as the agent-initiated /v1/sudo path.
-// Bypassing the policy isn't a feature — the policy already encodes
-// human intent at config-edit time, and "I want a one-off override"
-// is what `tclaude agent permissions grant` is for (permanent, no
-// expiry, also human-only).
-//
-// The granter label is "<human-dashboard>:proactive" so audit can
-// distinguish proactive grants from agent-requested ones; remaining
-// fields mirror the /v1/sudo response shape so the dashboard's JSON
-// handler doesn't need a special case.
+// Body shape and validation logic are shared with the daemon's
+// /v1/sudo POST path via insertSudoBundle / blockedSlugs /
+// resolveSudoDuration. The granter label is
+// "<human-dashboard>:proactive" so audit can distinguish dashboard
+// grants from CLI grants and from agent-requested ones.
 func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 	if rest := strings.TrimPrefix(r.URL.Path, "/api/sudo"); rest != "" && rest != "/" {
 		http.Error(w, "POST /api/sudo only (no path suffix)", http.StatusBadRequest)
@@ -711,9 +705,6 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
 		return
 	}
-
-	// Resolve title for per-conv override lookup, mirrors the
-	// agent-initiated path in handleSudoRequest.
 	title := ""
 	if row := agent.FreshConvRowResolved(res.ConvID); row != nil {
 		title = agent.DisplayTitle(row)
@@ -721,86 +712,18 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := config.Load()
 	policy := resolveSudoConfig(cfg, res.ConvID, "", title)
 
-	// Blocklist — same rule, same error shape.
-	blocked := []string{}
-	for _, slug := range body.Slugs {
-		for _, b := range policy.Blocklist {
-			if slug == b {
-				blocked = append(blocked, slug)
-				break
-			}
-		}
-	}
-	if len(blocked) > 0 {
+	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		http.Error(w,
 			"slug(s) blocklisted from sudo (would enable permanent escalation): "+
 				strings.Join(blocked, ", "),
 			http.StatusForbidden)
 		return
 	}
-
-	// Duration — empty defaults to the resolved default.
-	dur := policy.DefaultDuration
-	if strings.TrimSpace(body.Duration) != "" {
-		d, err := time.ParseDuration(body.Duration)
-		if err != nil {
-			http.Error(w, "duration: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if d <= 0 {
-			http.Error(w, "duration must be positive", http.StatusBadRequest)
-			return
-		}
-		dur = d
-	}
-	if dur > policy.MaxDuration {
-		http.Error(w,
-			"duration "+dur.String()+" exceeds the max "+policy.MaxDuration.String(),
-			http.StatusBadRequest)
+	dur, ok := resolveSudoDuration(w, body.Duration, policy)
+	if !ok {
 		return
 	}
-	reason := strings.TrimSpace(body.Reason)
-
-	// Insert one row per slug, sharing granted_at / expires_at so the
-	// bundle reads as a coherent grant in audit views — same pattern
-	// the agent-initiated path uses.
-	now := time.Now()
-	expires := now.Add(dur)
-	out := struct {
-		Grants    []sudoGrantJSON `json:"grants"`
-		ExpiresAt string          `json:"expires_at"`
-		ConvID    string          `json:"conv_id"`
-	}{
-		ExpiresAt: expires.Format(time.RFC3339Nano),
-		ConvID:    res.ConvID,
-	}
-	for _, slug := range body.Slugs {
-		id, err := db.InsertSudoGrant(&db.SudoGrant{
-			ConvID:    res.ConvID,
-			Slug:      slug,
-			GrantedAt: now,
-			ExpiresAt: expires,
-			GrantedBy: dashboardSudoGranter,
-			Reason:    reason,
-		})
-		if err != nil {
-			out.Grants = append(out.Grants, sudoGrantJSON{
-				Slug:   slug,
-				Reason: "insert failed: " + err.Error(),
-			})
-			continue
-		}
-		out.Grants = append(out.Grants, sudoGrantJSON{
-			ID:               id,
-			ConvID:           res.ConvID,
-			ConvTitle:        title,
-			Slug:             slug,
-			GrantedAt:        now.Format(time.RFC3339Nano),
-			ExpiresAt:        expires.Format(time.RFC3339Nano),
-			GrantedBy:        dashboardSudoGranter,
-			Reason:           reason,
-			RemainingSeconds: int64(dur.Seconds()),
-		})
-	}
-	writeJSON(w, http.StatusOK, out)
+	out, status := insertSudoBundle(res.ConvID, title, body.Slugs, dur,
+		strings.TrimSpace(body.Reason), dashboardSudoGranter)
+	writeJSON(w, status, out)
 }

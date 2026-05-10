@@ -67,13 +67,14 @@ type sudoRequestParams struct {
 	Slugs    []string `pos:"true" help:"One or more permission slugs to elevate (e.g. groups.spawn member.add)"`
 	Duration string   `long:"duration" short:"d" help:"How long the elevation lasts (e.g. 5m, 1h). Capped at 1h. Default: 5m." default:""`
 	Reason   string   `long:"reason" short:"r" help:"Optional justification surfaced in the popup + audit trail" default:""`
+	Target   string   `long:"target" short:"t" optional:"true" help:"Proactively grant the elevation TO another conv (alias / prefix / conv-id). Human-only — no popup; the CLI shell IS the consent. Agents cannot use this (manager-pattern approval is deferred). Without --target the call goes through the popup as usual."`
 	JSON     bool     `long:"json" help:"Output JSON"`
 }
 
 func sudoRequestCmd() *cobra.Command {
 	return boa.CmdT[sudoRequestParams]{
 		Use:         "request <slug>...",
-		Short:       "Ask the human to elevate one or more slugs for a bounded duration",
+		Short:       "Ask the human to elevate one or more slugs for a bounded duration (or, with --target, proactively grant)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sudoRequestParams, _ *cobra.Command, _ []string) {
 			os.Exit(runSudoRequest(p, os.Stdout, os.Stderr))
@@ -94,6 +95,9 @@ func runSudoRequest(p *sudoRequestParams, stdout, stderr io.Writer) int {
 		"duration": p.Duration,
 		"reason":   p.Reason,
 	}
+	if t := strings.TrimSpace(p.Target); t != "" {
+		body["target"] = t
+	}
 	var resp struct {
 		Grants    []sudoGrantJSON `json:"grants"`
 		ExpiresAt string          `json:"expires_at"`
@@ -111,11 +115,15 @@ func runSudoRequest(p *sudoRequestParams, stdout, stderr io.Writer) int {
 		return rcIOFailure
 	}
 	exp, _ := time.Parse(time.RFC3339Nano, resp.ExpiresAt)
+	verb := "Sudo approved"
+	if strings.TrimSpace(p.Target) != "" {
+		verb = "Sudo granted to " + short(resp.ConvID)
+	}
 	if exp.IsZero() {
-		fmt.Fprintln(stdout, "Sudo approved.")
+		fmt.Fprintln(stdout, verb+".")
 	} else {
-		fmt.Fprintf(stdout, "Sudo approved — expires at %s (%s from now).\n",
-			exp.Format(time.RFC3339), time.Until(exp).Round(time.Second))
+		fmt.Fprintf(stdout, "%s — expires at %s (%s from now).\n",
+			verb, exp.Format(time.RFC3339), time.Until(exp).Round(time.Second))
 	}
 	for _, g := range resp.Grants {
 		if g.ID == 0 {
