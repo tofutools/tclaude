@@ -42,7 +42,7 @@ type inboxLsParams struct {
 	Limit  int    `long:"limit" short:"n" help:"Max number of messages to show" default:"20"`
 	Unread bool   `long:"unread" help:"Only show messages without read_at"`
 	JSON   bool   `long:"json" help:"Output JSON"`
-	Target string `long:"target" help:"Read another agent's inbox (alias / prefix / conv-id). Requires the agent.inbox-watch slug or group ownership."`
+	Target string `long:"target" optional:"true" help:"Read another agent's inbox (alias / prefix / conv-id). Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxLsCmd() *cobra.Command {
@@ -230,7 +230,7 @@ func outboxStatusGlyph(e inboxEntry) string {
 type inboxReadParams struct {
 	ID         string `pos:"true" help:"Message ID from inbox ls"`
 	KeepUnread bool   `long:"keep-unread" help:"Don't update read_at"`
-	Target     string `long:"target" help:"Read another agent's message (alias / prefix / conv-id). Implies --keep-unread. Requires the agent.inbox-watch slug or group ownership."`
+	Target     string `long:"target" optional:"true" help:"Read another agent's message (alias / prefix / conv-id). Implies --keep-unread. Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxReadCmd() *cobra.Command {
