@@ -159,8 +159,10 @@ Follow-up improvements (separate items):
   deliberately omits archived_at from its ON CONFLICT update so a
   routine .jsonl rescan never clobbers the flag. Helper
   `db.SetConvIndexArchived(convID, archived)` is the canonical
-  write path; a future `tclaude conv archive <selector>` verb will
-  call it directly without any rename.
+  write path. `tclaude conv archive <selector>` and
+  `conv unarchive <selector>` (shipped in the same release) call
+  it directly for manual cleanup of orphan / abandoned convs
+  without any rename.
 
   Open follow-up: surface the column in the dashboard tabs (Groups
   / Agents) so archived convs are visually distinct (greyed out /

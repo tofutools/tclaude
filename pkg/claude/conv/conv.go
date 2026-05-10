@@ -54,6 +54,8 @@ func Cmd() *cobra.Command {
 			CpCmd(),
 			MvCmd(),
 			DeleteCmd(),
+			ArchiveCmd(),
+			UnarchiveCmd(),
 			PruneEmptyCmd(),
 		},
 		RunFunc: func(params *ConvParams, _ *cobra.Command, _ []string) {
