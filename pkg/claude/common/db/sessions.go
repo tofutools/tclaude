@@ -278,12 +278,16 @@ func TryClaimCompact(sessionID string) (bool, error) {
 }
 
 // ResetCompact clears compact_pending and zeroes context_pct for a session.
+// Also zeroes nudged_pct so a compacted session can be re-nudged from
+// scratch as its context climbs again.
 func ResetCompact(sessionID string) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE sessions SET compact_pending = 0, context_pct = 0 WHERE id = ?`, sessionID)
+	_, err = db.Exec(`UPDATE sessions
+		SET compact_pending = 0, context_pct = 0, nudged_pct = 0
+		WHERE id = ?`, sessionID)
 	return err
 }
 
@@ -296,6 +300,31 @@ func GetCompactState(sessionID string) (contextPct float64, compactPending float
 	err = db.QueryRow(`SELECT context_pct, compact_pending FROM sessions WHERE id = ?`, sessionID).
 		Scan(&contextPct, &compactPending)
 	return
+}
+
+// GetNudgedPct returns the highest threshold the context-nudge path
+// has already fired for this session. 0 when the session has never
+// been nudged or has been freshly compacted.
+func GetNudgedPct(sessionID string) (float64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var pct float64
+	err = db.QueryRow(`SELECT nudged_pct FROM sessions WHERE id = ?`, sessionID).Scan(&pct)
+	return pct, err
+}
+
+// SetNudgedPct stamps the highest-threshold-already-fired value
+// after a successful nudge. Subsequent ticks at the same threshold
+// no-op; the next climb beyond this value re-arms the nudge.
+func SetNudgedPct(sessionID string, pct float64) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET nudged_pct = ? WHERE id = ?`, pct, sessionID)
+	return err
 }
 
 func boolToInt(b bool) int {

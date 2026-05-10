@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 23
+const currentVersion = 24
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -161,6 +161,31 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 24 {
+		if err := migrateV23toV24(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV23toV24 adds sessions.nudged_pct — the highest
+// context_pct threshold the daemon has already fired a
+// "consider reincarnating" nudge for. Lets the Stop-hook nudge
+// path skip thresholds it's already crossed, so flicker around
+// a boundary (e.g. 49.5 → 50.1 → 49.8) doesn't re-ping.
+// ResetCompact zeroes this alongside context_pct so a compacted
+// session can be re-nudged on its next climb.
+func migrateV23toV24(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN nudged_pct REAL NOT NULL DEFAULT 0;
+
+		UPDATE schema_version SET version = 24;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v23→v24: %w", err)
+	}
 	return nil
 }
 

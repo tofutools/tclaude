@@ -230,8 +230,15 @@ func runHookCallback() error {
 	}
 
 	if stopped {
-		// Check auto-compact threshold
+		// Check auto-compact threshold first — when a session's
+		// context_pct has crossed BOTH the auto-compact threshold and
+		// a nudge threshold, the compact takes precedence (it's the
+		// actionable response; the nudge would be advice that's about
+		// to be invalidated by the compact). handleContextNudge's
+		// "compact_pending > 0 → skip" guard relies on
+		// handleAutoCompact running first to set the flag.
 		handleAutoCompact(input)
+		handleContextNudge(input)
 	}
 
 	state.Updated = time.Now()
@@ -504,5 +511,138 @@ func handleAutoCompact(input HookCallbackInput) {
 	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/compact", "Enter")
 	if err := cmd.Run(); err != nil {
 		slog.Error("auto-compact: failed to send keys", "error", err, "module", "hooks")
+	}
+}
+
+// nextNudgeTarget computes which threshold percentile, if any, the
+// context-nudge Stop-hook path should fire at given the current
+// context_pct and the (min, interval) ladder. Returns 0 when no nudge
+// should fire (below min, or invalid config). Caps at 90 so the agent
+// gets a final "you're really running out" tap before the next gulp
+// pushes it into auto-compact / hard-stop territory.
+//
+// Examples (min=30, interval=10):
+//
+//	pct=25 → 0  (below min, skip)
+//	pct=30 → 30
+//	pct=35 → 30 (most recent crossed)
+//	pct=49 → 40
+//	pct=85 → 80
+//	pct=92 → 90 (cap)
+//
+// Pure function for unit testing.
+func nextNudgeTarget(pct float64, minPct, intervalPct int) int {
+	if intervalPct <= 0 || minPct <= 0 || pct < float64(minPct) {
+		return 0
+	}
+	n := int((pct - float64(minPct)) / float64(intervalPct))
+	target := minPct + n*intervalPct
+	if target > 90 {
+		target = 90
+	}
+	return target
+}
+
+// formatContextNudgeMessage is the text the daemon types into the
+// agent's pane via send-keys when a threshold crosses. Reads as a
+// system tap-on-shoulder rather than user input so the agent picks
+// up on the intent at next turn.
+//
+// Pure for unit testing.
+func formatContextNudgeMessage(target int) string {
+	return fmt.Sprintf("[system: context at %d%%. Consider /reincarnate at the next breakpoint to avoid running out of room mid-task — fresh CC inherits identity but starts with a clean window.]", target)
+}
+
+// handleContextNudge fires an opt-in "consider reincarnating" hint
+// when the agent's context crosses a configured threshold. Sibling of
+// handleAutoCompact: both run in the Stop-hook path, both read the
+// stored context_pct, both deliver via tmux send-keys into the
+// agent's own pane.
+//
+// Skips when:
+//   - the feature isn't enabled in config
+//   - the session id isn't known (callback running outside a tracked session)
+//   - context_pct is below the configured min
+//   - the same-or-higher threshold has already been fired
+//     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
+//   - compact_pending is already set (the agent is about to compact
+//     anyway, no point typing extra text into its pane)
+func handleContextNudge(input HookCallbackInput) {
+	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
+	if sessionID == "" {
+		return
+	}
+
+	cfg, err := config.Load()
+	if err != nil || cfg.Agent == nil {
+		return
+	}
+	enabled, minPct, intervalPct := cfg.Agent.ContextNudge.Resolved()
+	if !enabled {
+		return
+	}
+
+	contextPct, compactPending, err := db.GetCompactState(sessionID)
+	if err != nil {
+		slog.Warn("context-nudge: failed to read compact state",
+			"error", err, "module", "hooks")
+		return
+	}
+	if compactPending > 0 {
+		// /compact has already been claimed; the next-turn behaviour is
+		// going to drop context_pct soon anyway, so suppress the nudge
+		// to avoid stepping on the auto-compact path.
+		return
+	}
+
+	target := nextNudgeTarget(contextPct, minPct, intervalPct)
+	if target == 0 {
+		return
+	}
+
+	prev, err := db.GetNudgedPct(sessionID)
+	if err != nil {
+		slog.Warn("context-nudge: failed to read nudged_pct",
+			"error", err, "module", "hooks")
+		return
+	}
+	if float64(target) <= prev {
+		// Already nudged at this threshold (or a higher one).
+		return
+	}
+
+	tmuxSession := GetCurrentTmuxSession()
+	if tmuxSession == "" {
+		// No tmux pane to type into. Drop the nudge but DO stamp
+		// nudged_pct so a later run with tmux available doesn't
+		// re-send the same threshold for the same climb.
+		_ = db.SetNudgedPct(sessionID, float64(target))
+		return
+	}
+
+	msg := formatContextNudgeMessage(target)
+	slog.Info("context-nudge: typing hint into pane",
+		"session_id", sessionID, "tmux_session", tmuxSession,
+		"context_pct", contextPct, "target", target,
+		"min_pct", minPct, "interval_pct", intervalPct,
+		"module", "hooks")
+
+	// Send-keys the bracketed-paste text + Enter. Same shape the
+	// cron scheduler uses for solo targets. Best-effort: a failed
+	// send leaves nudged_pct unchanged so we'll retry on the next
+	// Stop hook.
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, msg).Run(); err != nil {
+		slog.Warn("context-nudge: send-keys failed",
+			"error", err, "module", "hooks")
+		return
+	}
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter").Run(); err != nil {
+		slog.Warn("context-nudge: submit failed",
+			"error", err, "module", "hooks")
+		return
+	}
+	if err := db.SetNudgedPct(sessionID, float64(target)); err != nil {
+		slog.Warn("context-nudge: failed to stamp nudged_pct",
+			"error", err, "module", "hooks")
 	}
 }

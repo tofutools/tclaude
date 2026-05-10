@@ -293,6 +293,60 @@ func TestCompactStateRoundTrip(t *testing.T) {
 	}
 }
 
+// TestNudgedPct exercises the new sessions.nudged_pct column: it
+// defaults to 0, SetNudgedPct stamps the highest-fired threshold,
+// and ResetCompact wipes it alongside context_pct so post-compact
+// sessions can be re-nudged from scratch.
+func TestNudgedPct(t *testing.T) {
+	setupTestDB(t)
+
+	s := &SessionRow{ID: "nudge-001", CreatedAt: time.Now()}
+	if err := SaveSession(s); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	// Default: 0 right after insert.
+	got, err := GetNudgedPct("nudge-001")
+	if err != nil {
+		t.Fatalf("GetNudgedPct: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("default nudged_pct = %v, want 0", got)
+	}
+
+	// Stamp a threshold.
+	if err := SetNudgedPct("nudge-001", 50); err != nil {
+		t.Fatalf("SetNudgedPct: %v", err)
+	}
+	if got, _ = GetNudgedPct("nudge-001"); got != 50 {
+		t.Errorf("after Set(50), got %v", got)
+	}
+
+	// Stamp a higher one.
+	if err := SetNudgedPct("nudge-001", 70); err != nil {
+		t.Fatalf("SetNudgedPct(70): %v", err)
+	}
+	if got, _ = GetNudgedPct("nudge-001"); got != 70 {
+		t.Errorf("after Set(70), got %v", got)
+	}
+
+	// ResetCompact also zeroes nudged_pct — post-compact sessions get
+	// re-nudged from min_pct upward on the next climb.
+	if err := UpdateContextPct("nudge-001", 80); err != nil {
+		t.Fatalf("UpdateContextPct: %v", err)
+	}
+	if err := ResetCompact("nudge-001"); err != nil {
+		t.Fatalf("ResetCompact: %v", err)
+	}
+	if got, _ = GetNudgedPct("nudge-001"); got != 0 {
+		t.Errorf("after ResetCompact, nudged_pct = %v, want 0", got)
+	}
+	pct, pending, _ := GetCompactState("nudge-001")
+	if pct != 0 || pending != 0 {
+		t.Errorf("after ResetCompact, compact state = (%v, %v); want (0, 0)", pct, pending)
+	}
+}
+
 func TestNotifyState(t *testing.T) {
 	setupTestDB(t)
 

@@ -40,8 +40,58 @@ type Config struct {
 // match against title and conv-id) the historical permission_overrides
 // block did.
 type AgentConfig struct {
-	DefaultPermissions []string    `json:"default_permissions,omitempty"`
-	Sudo               *SudoConfig `json:"sudo,omitempty"`
+	DefaultPermissions []string            `json:"default_permissions,omitempty"`
+	Sudo               *SudoConfig         `json:"sudo,omitempty"`
+	ContextNudge       *ContextNudgeConfig `json:"context_nudge,omitempty"`
+}
+
+// ContextNudgeConfig controls the opt-in "consider reincarnating"
+// nudge that fires as a long-running agent's context fills. Off by
+// default — a fresh daemon shouldn't start typing into the agent's
+// pane until the human signs up for it.
+//
+// Threshold ladder: starting at MinPct, every IntervalPct, capped at
+// 90. So MinPct=30 + IntervalPct=10 → fires at 30, 40, 50, 60, 70,
+// 80, 90. MinPct=50 + IntervalPct=20 → 50, 70, 90.
+//
+// The daemon tracks per-session "highest threshold already fired"
+// in sessions.nudged_pct so flicker around a boundary doesn't
+// re-fire. ResetCompact zeroes it so a compacted session can be
+// re-nudged on its next climb.
+type ContextNudgeConfig struct {
+	Enabled     bool `json:"enabled,omitempty"`
+	MinPct      int  `json:"min_pct,omitempty"`
+	IntervalPct int  `json:"interval_pct,omitempty"`
+}
+
+// defaultContextNudgeMinPct / defaultContextNudgeIntervalPct are the
+// fallbacks when Enabled is true but the user didn't specify a
+// threshold ladder. Picked to fire often enough to be useful (30%
+// is the first "we're past the easy zone" moment) without spamming
+// (10-point steps give six nudges max over a session).
+const (
+	defaultContextNudgeMinPct      = 30
+	defaultContextNudgeIntervalPct = 10
+)
+
+// Resolved returns the effective (MinPct, IntervalPct) for this
+// config — caller-supplied values when present, sensible defaults
+// otherwise. Enabled callers should use this so they don't have to
+// repeat the fallback logic. Returns zeros when Enabled is false
+// so the caller can tell "off" apart from "on with defaults".
+func (c *ContextNudgeConfig) Resolved() (enabled bool, minPct, intervalPct int) {
+	if c == nil || !c.Enabled {
+		return false, 0, 0
+	}
+	minPct = c.MinPct
+	if minPct <= 0 {
+		minPct = defaultContextNudgeMinPct
+	}
+	intervalPct = c.IntervalPct
+	if intervalPct <= 0 {
+		intervalPct = defaultContextNudgeIntervalPct
+	}
+	return true, minPct, intervalPct
 }
 
 // SudoConfig overrides the hardcoded sudo defaults globally. Each
