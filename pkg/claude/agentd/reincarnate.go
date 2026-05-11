@@ -114,8 +114,13 @@ func waitForConvAlive(newConv string) bool {
 
 // `tclaude agent reincarnate` — replace the calling agent with a fresh
 // CC instance that inherits its identity (groups, per-conv permission
-// grants, group ownerships) and, optionally, picks up a follow-up
-// prompt as its first turn.
+// grants, group ownerships) and picks up a follow-up prompt (REQUIRED)
+// as its first turn. The follow-up is required because the new pane
+// comes up with a clean context window and would otherwise sit idle;
+// when the caller has no concrete next directive, the convention is to
+// pass a short summary of the previous "life" (what was happening,
+// where the relevant files are) so the successor has something to
+// start from.
 //
 // Why not just inject /clear? CC's /clear rotates the conv-id, which
 // orphans every row in the agentd DB that's keyed on it: group
@@ -205,9 +210,14 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, followUp)
 }
 
-// decodeReincarnateFollowUp parses + validates the optional follow_up
+// decodeReincarnateFollowUp parses + validates the REQUIRED follow_up
 // body field. Returns (followUp, true) on success; on failure the error
-// response is already written and the caller should return.
+// response is already written and the caller should return. An empty
+// or missing follow_up is rejected: the new pane comes up with a clean
+// context window and would otherwise sit idle. Callers with no
+// concrete next directive should pass a short summary of the previous
+// "life" (what was being worked on, where the relevant files are) so
+// the successor has something to start from.
 func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var body struct {
 		FollowUp string `json:"follow_up"`
@@ -219,7 +229,16 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
-	if body.FollowUp != "" && !isValidFollowUp(body.FollowUp) {
+	if body.FollowUp == "" {
+		writeError(w, http.StatusBadRequest, "missing_follow_up",
+			"follow_up is required. The new agent comes up with a clean context "+
+				"window and would otherwise sit idle. If you have no concrete next "+
+				"directive, summarise your previous 'life' (what you were doing, "+
+				"where the relevant files are, what's next) so the successor has "+
+				"something to start from.")
+		return "", false
+	}
+	if !isValidFollowUp(body.FollowUp) {
 		writeError(w, http.StatusBadRequest, "invalid_follow_up",
 			"REJECTED. Follow-up must be 1-4096 printable characters; tabs, newlines, "+
 				"and other control characters are not allowed (each newline would be "+
@@ -418,13 +437,13 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	}
 	newTitle := uniqueReincarnateTitle(prevTitle)
 
-	// 7. Queue the follow-up message (if any) BEFORE the post-spawn
-	// goroutine runs — gets the row written so the rename can land
-	// first and the message delivery picks it up next. Solo path
-	// has no row to queue; the goroutine below sends the text
-	// directly after the rename.
+	// 7. Queue the follow-up message BEFORE the post-spawn goroutine
+	// runs — gets the row written so the rename can land first and
+	// the message delivery picks it up next. Solo path has no row to
+	// queue; the goroutine below sends the text directly after the
+	// rename. (decodeReincarnateFollowUp guarantees followUp != "".)
 	var msgID int64
-	if followUp != "" && len(oldMembers) > 0 {
+	if len(oldMembers) > 0 {
 		id, err := db.InsertAgentMessage(&db.AgentMessage{
 			GroupID:  oldMembers[0].GroupID,
 			FromConv: caller,
@@ -494,19 +513,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	default:
 		carry = fmt.Sprintf("%d tmux clients carried over to the new session", switchedClients)
 	}
-	if followUp != "" {
-		resp["follow_up"] = followUp
-		if msgID > 0 {
-			resp["message_id"] = msgID
-			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive message #%d",
-				short8(target), carry, newTitle, msgID)
-		} else {
-			resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive the follow-up directly",
-				short8(target), carry, newTitle)
-		}
+	resp["follow_up"] = followUp
+	if msgID > 0 {
+		resp["message_id"] = msgID
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive message #%d",
+			short8(target), carry, newTitle, msgID)
 	} else {
-		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new %s is up at %s and will be /renamed to %q",
-			short8(target), carry, short8(newConv), newTmux, newTitle)
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive the follow-up directly",
+			short8(target), carry, newTitle)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -517,10 +531,10 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 // title shows the proper `<prev>-reincarnate-<N>` immediately,
 // before any work output starts streaming.
 //
-// Always called even when followUp == "" (the rename still needs
-// to happen). Skips rename when newTitle == "" (defensive — should
-// not happen in practice since uniqueReincarnateTitle always
-// returns a non-empty string).
+// followUp is guaranteed non-empty (decodeReincarnateFollowUp
+// rejects empty bodies). Skips rename when newTitle == "" (defensive
+// — should not happen in practice since uniqueReincarnateTitle
+// always returns a non-empty string).
 func runReincarnatePostSpawn(newConv, newTitle, followUp string, hasGroup bool) {
 	if !waitForConvAlive(newConv) {
 		slog.Warn("reincarnate: new conv never came online; rename + handoff abandoned", "conv", newConv)
@@ -534,9 +548,6 @@ func runReincarnatePostSpawn(newConv, newTitle, followUp string, hasGroup bool) 
 		// before we type the follow-up. Without this the follow-up
 		// keystrokes can land in the rename's still-open prompt.
 		time.Sleep(reincarnateReadyDelay)
-	}
-	if followUp == "" {
-		return
 	}
 	if hasGroup {
 		// agent_messages row was already inserted before this

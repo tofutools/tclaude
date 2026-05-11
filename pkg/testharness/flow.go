@@ -319,14 +319,12 @@ type ReincarnateResp struct {
 // TmuxTarget mirrors SpawnResp.TmuxTarget.
 func (r ReincarnateResp) TmuxTarget() string { return r.TmuxSession + ":0.0" }
 
-// Reincarnate drives POST /v1/agent/{target}/reincarnate. Empty
-// followUp == no handoff message body.
+// Reincarnate drives POST /v1/agent/{target}/reincarnate. followUp
+// is required by the daemon; pass a non-empty string (e.g. "fresh
+// start") even when the test doesn't care about the handoff content.
 func (f *Flow) Reincarnate(target, followUp string) ReincarnateResp {
 	f.T.Helper()
-	body := map[string]any{}
-	if followUp != "" {
-		body["follow_up"] = followUp
-	}
+	body := map[string]any{"follow_up": followUp}
 	rec := f.do(http.MethodPost, "/v1/agent/"+target+"/reincarnate", body)
 	var resp ReincarnateResp
 	resp.Code = rec.Code

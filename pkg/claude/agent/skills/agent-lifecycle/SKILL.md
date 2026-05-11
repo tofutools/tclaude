@@ -1,6 +1,6 @@
 ---
 name: agent-lifecycle
-description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate [follow-up]`, and `tclaude agent clone [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` replaces self with a fresh CC instance that inherits identity. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
+description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and `tclaude agent clone [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` replaces self with a fresh CC instance that inherits identity — REQUIRES a follow-up so the fresh pane isn't idle. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
@@ -11,7 +11,7 @@ You have three commands for managing your own context window:
 |----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
 | `tclaude agent context-info`                       | Print the current context_pct + any pending /compact claim                                                                                |
 | `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued.                                            |
-| `tclaude agent reincarnate [follow-up]`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership)                                      |
+| `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
 | `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (with `-clone` alias suffix) and, by default, conv history. |
 
 `context-info` is read-only and self-targeted, so no permission slug.
@@ -80,7 +80,11 @@ The daemon migrates **identity, not task state**. The new agent starts
 with no memory of what you were working on. If you don't write down
 where you were, the work is lost.
 
-The convention this repo (and others should) adopt:
+**The follow-up prompt is REQUIRED** for `reincarnate` — the new pane
+comes up with a clean context window and would otherwise sit idle. So
+even when you have no concrete next directive, you must hand the
+successor *something* to start from. The convention this repo (and
+others should) adopt:
 
 - Before reincarnating, write a short notes file describing where you
   are: what you decided, what's done, what's next, where the relevant
@@ -92,12 +96,22 @@ The convention this repo (and others should) adopt:
   expected location of these handoff notes so a freshly-reincarnated
   agent knows where to look without prompting from the human.
 
+**If you have NO clear next directive**, summarise your previous
+"life" inline — what you were doing, where the relevant files are,
+what your last few turns looked like. The successor will then have at
+least enough context to ask the human a sensible question instead of
+guessing or sitting blank. e.g.
+`tclaude agent reincarnate "I was investigating a flaky test in
+pkg/foo; the failure mode is documented at the top of foo_test.go.
+Pick up by re-reading that file and asking the human how to proceed."`
+
 The notes file is for *you*, not the human — bullet points with paths
 are fine, polish isn't required.
 
 For `compact`, the same advice applies but with lower stakes: a
-post-compact summary is lossy but not blank. Reincarnate is harder —
-treat it like closing a tab with no recovery.
+post-compact summary is lossy but not blank, and the follow-up there
+is optional. Reincarnate is harder — treat it like closing a tab with
+no recovery.
 
 ## Don't reload massive context after compact / reincarnate
 
@@ -134,13 +148,14 @@ tclaude agent compact "now reload /tmp/task-notes.md and continue"
 tclaude agent reincarnate "reload /tmp/task-notes.md and continue"
 ```
 
-The follow-up prompt is optional. For `compact` it queues in the tmux
-pty until CC resumes reading after the slash command settles —
-**timing is not guaranteed**, the follow-up may land in a still-busy
-textarea on unlucky timing. For `reincarnate` the follow-up is
-delivered through the agent message-flush pipeline (or by direct
-keystroke injection if you're not in any group) once the new pane is
-ready, which is more reliable.
+For `compact` and `clone` the follow-up prompt is optional; for
+`reincarnate` it is **required** (see above). For `compact` the
+follow-up queues in the tmux pty until CC resumes reading after the
+slash command settles — **timing is not guaranteed**, it may land in
+a still-busy textarea on unlucky timing. For `reincarnate` the
+follow-up is delivered through the agent message-flush pipeline (or
+by direct keystroke injection if you're not in any group) once the
+new pane is ready, which is more reliable.
 
 ## Reincarnate: what gets migrated
 

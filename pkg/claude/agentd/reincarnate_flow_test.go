@@ -36,7 +36,7 @@ func TestReincarnate_OfRN_ProducesRNplus1(t *testing.T) {
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv, "worker")
 
-	r := f.AsHuman().Reincarnate(oldConv, "")
+	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
 	f.AssertReincarnateTitle(r, "worker-r-4")
 	f.AssertSentContains(r.TmuxTarget(), "/rename worker-r-4", 5*time.Second)

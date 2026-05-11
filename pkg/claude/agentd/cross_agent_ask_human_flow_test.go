@@ -76,7 +76,8 @@ func TestCrossAgentAskHuman_HeaderAndApprovalAllowsCall(t *testing.T) {
 
 	const callerConv = "cccc-1111-2222-3333-4444"
 	r := testharness.JSONRequest(t, http.MethodPost,
-		"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})
+		"/v1/agent/"+targetConv+"/reincarnate",
+		map[string]any{"follow_up": "fresh start"})
 	r.Header.Set("X-Tclaude-Ask-Human", "30s")
 	r = agentd.AsAgentPeer(r, callerConv)
 	rec := testharness.Serve(f.Mux, r)

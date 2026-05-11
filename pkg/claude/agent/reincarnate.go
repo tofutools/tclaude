@@ -24,7 +24,7 @@ import (
 // design.
 
 type reincarnateParams struct {
-	FollowUp string `pos:"true" optional:"true" help:"Optional first-turn prompt for the new agent. Quote multi-word strings."`
+	FollowUp string `pos:"true" help:"First-turn prompt for the new agent (REQUIRED). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
 	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: alias, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
@@ -47,12 +47,16 @@ func reincarnateCmd() *cobra.Command {
 			"identity, not work. The skill (agent-lifecycle) explains the disk-handoff " +
 			"convention. " +
 			"\n\n" +
-			"An optional follow-up prompt is delivered to the new agent via the " +
-			"existing message-flush nudge pipeline (when the agent is in at least " +
-			"one group) or, for solo agents, by direct keystroke injection into the " +
-			"freshly-spawned pane. For cross-agent reincarnations the FromConv on " +
-			"the handoff message is the caller, so the new agent sees who asked it " +
-			"to pick up the work.",
+			"A follow-up prompt is REQUIRED — the new agent comes up with a clean " +
+			"context window and would otherwise sit idle. If you have no concrete " +
+			"next directive, summarise your previous 'life' (what you were doing, " +
+			"where the relevant files are, what's next) so the successor has " +
+			"something to start from. The follow-up is delivered via the existing " +
+			"message-flush nudge pipeline (when the agent is in at least one group) " +
+			"or, for solo agents, by direct keystroke injection into the freshly- " +
+			"spawned pane. For cross-agent reincarnations the FromConv on the " +
+			"handoff message is the caller, so the new agent sees who asked it to " +
+			"pick up the work.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *reincarnateParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
@@ -68,7 +72,14 @@ func reincarnateCmd() *cobra.Command {
 func runReincarnate(followUp, target, askHuman string, stdout, stderr io.Writer) int {
 	followUp = strings.TrimSpace(followUp)
 	target = strings.TrimSpace(target)
-	if followUp != "" && !isValidFollowUp(followUp) {
+	if followUp == "" {
+		fmt.Fprintln(stderr, "Error: a follow-up prompt is required. The new agent comes up with a clean")
+		fmt.Fprintln(stderr, "context window and would otherwise sit idle. If you have no concrete next")
+		fmt.Fprintln(stderr, "directive, summarise your previous 'life' (what you were doing, where the")
+		fmt.Fprintln(stderr, "relevant files are, what's next) so the successor has something to start from.")
+		return rcInvalidArg
+	}
+	if !isValidFollowUp(followUp) {
 		fmt.Fprintln(stderr, "Error: REJECTED. Follow-up must be 1-4096 printable characters; control")
 		fmt.Fprintln(stderr, "characters (newlines, tabs, etc.) are not allowed because each newline")
 		fmt.Fprintln(stderr, "would be treated as a separate prompt-submit by tmux send-keys.")
@@ -92,10 +103,7 @@ func runReincarnate(followUp, target, askHuman string, stdout, stderr io.Writer)
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
-	body := map[string]string{}
-	if followUp != "" {
-		body["follow_up"] = followUp
-	}
+	body := map[string]string{"follow_up": followUp}
 	path := "/v1/whoami/reincarnate"
 	if target != "" {
 		path = "/v1/agent/" + url.PathEscape(target) + "/reincarnate"
