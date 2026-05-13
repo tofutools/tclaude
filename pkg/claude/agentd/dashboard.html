@@ -834,6 +834,26 @@ summary.dnd-drop-over.dnd-effect-clone {
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="rename-agent-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="rename-agent-title">
+    <h3 id="rename-agent-title">Rename conversation</h3>
+    <div class="modal-meta" id="rename-agent-meta"></div>
+    <p style="margin:4px 0; font-size:12px; color:#7d8590">Injects <code>/rename &lt;title&gt;</code> (or a system nudge if auto) into the agent's pane via tmux. The agent must have a live tmux session.</p>
+    <label class="cron-create-row">
+      <span class="cron-create-label">New title</span>
+      <input id="rename-agent-title-input" type="text" placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only — try a 3-4-word kebab slug" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-enabled" id="rename-agent-auto-row" title="Inject a [system: ...] nudge asking the agent to pick a descriptive title itself via the agent-rename skill / CLI.">
+      <input id="rename-agent-auto" type="checkbox" /> Auto (let the agent choose its own title)
+    </label>
+    <div class="cron-create-error" id="rename-agent-error"></div>
+    <div class="modal-buttons">
+      <button id="rename-agent-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="rename-agent-submit" class="primary" type="button">Rename</button>
+    </div>
+  </div>
+</div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
 <script>
@@ -912,7 +932,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
-    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
   }
   // cloneAgentButton renders a "clone" button for any row that
   // represents a single agent. Clone forks a sibling that inherits the
@@ -929,6 +949,15 @@ summary.dnd-drop-over.dnd-effect-clone {
   function reincarnateAgentButton(m) {
     const label = m.alias || m.title || m.conv_id;
     return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Replace with a fresh CC instance that inherits identity; the original is soft-exited. Requires a follow-up message so the successor isn't idle.">reincarnate</button>`;
+  }
+  // renameAgentButton renders a "rename" button for any row that
+  // represents a single agent. Opens a modal where the user can type
+  // an explicit title or check "auto" to ask the agent to pick one
+  // for itself via the agent-rename skill / CLI.
+  function renameAgentButton(m) {
+    const label = m.alias || m.title || m.conv_id;
+    const current = m.title || '';
+    return `<button data-act="rename-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-current="${esc(current)}" title="Change this conversation's title. Type one or check 'auto' to let the agent pick.">rename</button>`;
   }
   function sudoMemberButton(m) {
     return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
@@ -1157,7 +1186,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -2619,6 +2648,101 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
+  // ---- Rename-agent modal --------------------------------------------------
+  //
+  // Opens with `{conv, label, currentTitle}`. Two submit paths:
+  //   - manual: type a title → POST /api/agents/{conv}/rename {title}
+  //   - auto:   check the box → POST /api/agents/{conv}/rename {auto: true}
+  //             daemon injects a [system: ...] nudge asking the agent to
+  //             pick its own title via the agent-rename skill.
+  // The title field is disabled when auto is checked so the two paths
+  // can't be ambiguous.
+
+  function openRenameAgentModal(conv, label, currentTitle) {
+    const meta = $('#rename-agent-meta');
+    meta.textContent = label ? `target: ${label}` : `target: ${shortId(conv)}`;
+    const titleInput = $('#rename-agent-title-input');
+    titleInput.value = currentTitle || '';
+    titleInput.disabled = false;
+    $('#rename-agent-auto').checked = false;
+    $('#rename-agent-error').textContent = '';
+    $('#rename-agent-submit').textContent = 'Rename';
+    $('#rename-agent-modal').dataset.conv = conv;
+    $('#rename-agent-modal').dataset.label = label || '';
+    $('#rename-agent-modal').classList.add('show');
+    setTimeout(() => titleInput.focus(), 0);
+  }
+
+  function closeRenameAgentModal() {
+    $('#rename-agent-modal').classList.remove('show');
+  }
+
+  async function submitRenameAgent() {
+    const modal = $('#rename-agent-modal');
+    const conv = modal.dataset.conv;
+    const label = modal.dataset.label || shortId(conv);
+    const auto = $('#rename-agent-auto').checked;
+    const title = $('#rename-agent-title-input').value.trim();
+    const errEl = $('#rename-agent-error');
+    errEl.textContent = '';
+    if (!auto && !title) {
+      errEl.textContent = 'title is required (or check "auto" to let the agent choose)';
+      return;
+    }
+    const submitBtn = $('#rename-agent-submit');
+    const origLabel = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = auto ? 'Sending nudge…' : 'Renaming…';
+    try {
+      const body = auto ? { auto: true } : { title };
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/rename`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+        return;
+      }
+      closeRenameAgentModal();
+      if (auto) {
+        toast(`auto-rename nudge sent: ${label}`);
+      } else {
+        toast(`renaming ${label} → ${title}`);
+      }
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = origLabel;
+    }
+  }
+
+  function bindRenameAgentModal() {
+    $('#rename-agent-cancel').addEventListener('click', closeRenameAgentModal);
+    $('#rename-agent-submit').addEventListener('click', submitRenameAgent);
+    $('#rename-agent-auto').addEventListener('change', (e) => {
+      const auto = e.target.checked;
+      $('#rename-agent-title-input').disabled = auto;
+      $('#rename-agent-submit').textContent = auto ? 'Send auto-rename nudge' : 'Rename';
+    });
+    $('#rename-agent-title-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !$('#rename-agent-auto').checked) {
+        e.preventDefault();
+        submitRenameAgent();
+      }
+    });
+    $('#rename-agent-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'rename-agent-modal') closeRenameAgentModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#rename-agent-modal').classList.contains('show')) {
+        closeRenameAgentModal();
+      }
+    });
+  }
+
   // sudoBadge renders the per-row 🔓 indicator when an agent currently
   // holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
   // hovering tells the human everything they'd want to know without a
@@ -3308,6 +3432,11 @@ summary.dnd-drop-over.dnd-effect-clone {
             openReincarnateAgentModal(conv, label);
             return;
           }
+          case 'rename-agent': {
+            const current = btn.getAttribute('data-current') || '';
+            openRenameAgentModal(conv, label, current);
+            return;
+          }
           case 'rename-group': {
             // Inline edit: replace the group's <strong> label with an
             // <input>. Enter saves (POST /api/groups/{old}/rename),
@@ -3779,6 +3908,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindAgentSpawnModal();
   bindCloneAgentModal();
   bindReincarnateAgentModal();
+  bindRenameAgentModal();
   refresh();
   setInterval(refresh, 5000);
 })();

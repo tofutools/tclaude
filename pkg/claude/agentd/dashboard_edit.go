@@ -185,6 +185,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardReincarnateAgent(w, r, convSelector)
 			return
+		case "rename":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardRenameAgent(w, r, convSelector)
+			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return
@@ -669,6 +676,22 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 		return
 	}
 	handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
+}
+
+// dashboardRenameAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/rename. Body shape matches the daemon endpoint:
+// `{title: "..."}` for an explicit rename, or `{auto: true}` to
+// inject a system nudge that asks the agent to pick its own title
+// via the agent-rename skill / CLI. Cookie auth ≈ human, so
+// requireCrossAgentPermission short-circuits via the
+// !HasClaudeAncestor branch.
+func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	handleAgentRename(w, asDashboardHumanPeer(r), res.ConvID)
 }
 
 // dashboardResumeAgent is the cookie-auth twin of POST
