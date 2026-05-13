@@ -33,7 +33,19 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		selector = u
 	}
 	res, _, err := agent.ResolveSelector(selector)
-	if err != nil {
+	var convID string
+	if err == nil {
+		convID = res.ConvID
+	} else if verb == "delete" && looksLikeConvID(selector) {
+		// Orphan-delete fallback: when conv_index is gone but
+		// referencing rows (sessions, group_members, …) still exist,
+		// the resolver legitimately can't find the conv. Accept the
+		// raw UUID for `delete` only so the union purge can still run.
+		// Gated on UUID shape so we don't blindly accept arbitrary
+		// input — defence-in-depth on top of the dispatcher's
+		// permission gating downstream.
+		convID = selector
+	} else {
 		writeError(w, http.StatusNotFound, "not_found",
 			"could not resolve target conv "+selector+": "+err.Error())
 		return
@@ -41,19 +53,19 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 
 	switch verb {
 	case "reincarnate":
-		handleAgentReincarnate(w, r, res.ConvID)
+		handleAgentReincarnate(w, r, convID)
 	case "compact":
-		handleAgentCompact(w, r, res.ConvID)
+		handleAgentCompact(w, r, convID)
 	case "rename":
-		handleAgentRename(w, r, res.ConvID)
+		handleAgentRename(w, r, convID)
 	case "clone":
-		handleAgentClone(w, r, res.ConvID)
+		handleAgentClone(w, r, convID)
 	case "stop":
-		handleAgentStop(w, r, res.ConvID)
+		handleAgentStop(w, r, convID)
 	case "resume":
-		handleAgentResume(w, r, res.ConvID)
+		handleAgentResume(w, r, convID)
 	case "delete":
-		handleAgentDelete(w, r, res.ConvID)
+		handleAgentDelete(w, r, convID)
 	default:
 		writeError(w, http.StatusNotFound, "not_found",
 			"unknown verb "+verb+" for /v1/agent/{selector}/...")

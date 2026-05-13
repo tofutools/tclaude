@@ -10,6 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -393,7 +394,7 @@ func hasUserMessages(filePath string) bool {
 			continue
 		}
 
-		var msg jsonlMessage
+		var msg convops.JSONLMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			continue
 		}

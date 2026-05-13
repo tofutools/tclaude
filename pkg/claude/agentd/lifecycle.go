@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -243,29 +243,20 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		return
 	}
 
-	// DB-side purge first. Single transaction across every agent /
-	// conv / cron / succession table that references targetConv.
-	counts, err := db.DeleteAgentByConvID(targetConv)
+	// Comprehensive cleanup: DB purge + filesystem + sync tombstone +
+	// session-env. Single source of truth shared with the dashboard
+	// `DELETE /api/agents/...` path and `tclaude conv rm`.
+	counts, err := conv.DeleteConvByID(targetConv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
-			"db purge failed: "+err.Error())
+			"delete failed: "+err.Error())
 		return
 	}
 
-	// Filesystem cleanup: .jsonl + sessions-index entry + sync tombstone.
-	// `db.DeleteAgentByConvID` already dropped the conv_index row, so
-	// `conv.DeleteConvByID`'s own GetConvIndex lookup will return nil
-	// and skip — that's why we shell out to the path independently
-	// below for orphans whose conv_index row was already missing.
-	jsonlRemoved := removeJSONLBestEffort(targetConv)
-	sessionEnvRemoved := removeSessionEnv(targetConv)
-
 	resp := map[string]any{
-		"conv_id":             targetConv,
-		"action":              "deleted",
-		"db_counts":           counts,
-		"jsonl_removed":       jsonlRemoved,
-		"session_env_removed": sessionEnvRemoved,
+		"conv_id":   targetConv,
+		"action":    "deleted",
+		"db_counts": counts,
 	}
 	if caller != "" && caller != targetConv {
 		resp["caller_conv"] = caller
@@ -274,51 +265,6 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		resp["pre_stop"] = stopRes.Action
 	}
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// removeJSONLBestEffort scans ~/.claude/projects/* for a .jsonl
-// matching convID and removes it. Best-effort: missing file or
-// unreadable projects dir return false rather than erroring — the
-// DB rows are already gone and surfacing a "couldn't find the
-// file" error after a successful purge would be more confusing
-// than helpful. Returns true when at least one file was removed.
-func removeJSONLBestEffort(convID string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	projectsDir := home + "/.claude/projects"
-	entries, err := os.ReadDir(projectsDir)
-	if err != nil {
-		return false
-	}
-	removed := false
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		candidate := projectsDir + "/" + e.Name() + "/" + convID + ".jsonl"
-		if err := os.Remove(candidate); err == nil {
-			removed = true
-		}
-	}
-	return removed
-}
-
-// removeSessionEnv removes ~/.claude/session-env/<convID> if present.
-// This file is created at spawn time and holds env-var snapshots; it
-// outlives the .jsonl on orphan rows, so cleanup must hit it
-// independently. Returns true when removed.
-func removeSessionEnv(convID string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	path := home + "/.claude/session-env/" + convID
-	if err := os.Remove(path); err == nil {
-		return true
-	}
-	return false
 }
 
 // handleAgentResume resumes a single conv into a fresh detached

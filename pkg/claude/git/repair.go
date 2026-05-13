@@ -48,7 +48,7 @@ This command:
 
 func runRepair(params *RepairParams) error {
 	if params.Debug {
-		conv.DebugLog = true
+		conv.SetDebugLog(true)
 	}
 
 	syncDir := SyncDir()
@@ -281,7 +281,7 @@ func updateSessionPaths(dir string, config *SyncConfig, localHome string) (int, 
 // loadIndexWithUnindexed reads sessions-index.json and adds entries for any .jsonl files
 // that aren't already in the index. This ensures the repair/sync code picks up all conversations.
 func loadIndexWithUnindexed(projectDir string) (*conv.SessionsIndex, error) {
-	index, err := convops.LoadSessionsIndex(projectDir)
+	index, err := convops.LoadSessionsIndexFile(projectDir)
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +535,7 @@ func fixProjectPathInIndex(indexPath, projectDirName string, config *SyncConfig,
 	projectDir := filepath.Dir(indexPath)
 
 	// Read sessions-index.json directly (repair operates on JSON files, not DB-backed scan)
-	index, err := convops.LoadSessionsIndex(projectDir)
+	index, err := convops.LoadSessionsIndexFile(projectDir)
 	if err != nil {
 		return 0, err
 	}

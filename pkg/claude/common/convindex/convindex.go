@@ -152,16 +152,10 @@ func cleanTitle(title string) string {
 	return strings.TrimSpace(result)
 }
 
-// SystemTags are Claude Code system tags that should be stripped entirely
-// (both the tags and their content) from display text.
-var SystemTags = []string{
-	"local-command-caveat",
-	"command-name",
-	"command-message",
-	"command-args",
-	"local-command-stdout",
-	"system-reminder",
-}
+// SystemTags is a backward-compat re-export of convops.SystemTags.
+// The canonical definition now lives in convops so the .jsonl parser
+// there doesn't need to back-import convindex.
+var SystemTags = convops.SystemTags
 
 // stripXMLTags removes known system XML tags and their content from a string.
 // Only strips tags listed in SystemTags; other XML-like content is left intact.

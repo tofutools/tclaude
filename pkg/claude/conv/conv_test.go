@@ -18,9 +18,9 @@ func TestParseJSONLSession_ExtractsProjectPathAndGitBranch(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	entry := parseJSONLSession(filePath, sessionID)
+	entry := ParseJSONLSessionPublic(filePath, sessionID)
 	if entry == nil {
-		t.Fatal("parseJSONLSession returned nil")
+		t.Fatal("ParseJSONLSessionPublic returned nil")
 	}
 
 	if entry.ProjectPath != "/home/alice/git/myproject" {
@@ -46,9 +46,9 @@ func TestParseJSONLSession_ExtractsFromFirstMessageWithData(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	entry := parseJSONLSession(filePath, sessionID)
+	entry := ParseJSONLSessionPublic(filePath, sessionID)
 	if entry == nil {
-		t.Fatal("parseJSONLSession returned nil")
+		t.Fatal("ParseJSONLSessionPublic returned nil")
 	}
 
 	if entry.ProjectPath != "/projects/myapp" {
@@ -74,9 +74,9 @@ func TestParseJSONLSession_FindsCustomTitle(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	entry := parseJSONLSession(filePath, sessionID)
+	entry := ParseJSONLSessionPublic(filePath, sessionID)
 	if entry == nil {
-		t.Fatal("parseJSONLSession returned nil")
+		t.Fatal("ParseJSONLSessionPublic returned nil")
 	}
 
 	if entry.FirstPrompt != "hello" {
@@ -100,9 +100,9 @@ func TestParseJSONLSession_FindsSummaryAfterPrompt(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	entry := parseJSONLSession(filePath, sessionID)
+	entry := ParseJSONLSessionPublic(filePath, sessionID)
 	if entry == nil {
-		t.Fatal("parseJSONLSession returned nil")
+		t.Fatal("ParseJSONLSessionPublic returned nil")
 	}
 
 	if entry.FirstPrompt != "fix the bug" {
@@ -132,9 +132,9 @@ func TestParseJSONLSession_StopsWhenAllFound(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	entry := parseJSONLSession(filePath, sessionID)
+	entry := ParseJSONLSessionPublic(filePath, sessionID)
 	if entry == nil {
-		t.Fatal("parseJSONLSession returned nil")
+		t.Fatal("ParseJSONLSessionPublic returned nil")
 	}
 
 	if entry.Summary != "Resumed session summary" {
@@ -163,9 +163,9 @@ func TestParseJSONLSession_FindsSummaryAfterManyLines(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	entry := parseJSONLSession(filePath, sessionID)
+	entry := ParseJSONLSessionPublic(filePath, sessionID)
 	if entry == nil {
-		t.Fatal("parseJSONLSession returned nil")
+		t.Fatal("ParseJSONLSessionPublic returned nil")
 	}
 
 	if entry.FirstPrompt != "refactor the auth module" {

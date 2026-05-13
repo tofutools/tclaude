@@ -6,7 +6,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// setupTestDB isolates the singleton SQLite database under a per-test
+// HOME so tests don't share state with each other or the developer's
+// real ~/.tclaude/db.sqlite.
+func setupTestDB(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+}
 
 func TestSessionEntry_DisplayTitle(t *testing.T) {
 	tests := []struct {
@@ -244,10 +256,13 @@ func TestRemoveSessionByID(t *testing.T) {
 	}
 }
 
-func TestLoadAndSaveSessionsIndex(t *testing.T) {
+// SaveSessionsIndex writes a legacy `sessions-index.json` file. LoadSessionsIndex
+// no longer reads it (SQLite is the source of truth) but Save is still
+// exercised by various conv operations for tooling compatibility; this
+// test pins down that the writer still produces a parseable file.
+func TestSaveSessionsIndex_WritesParseableFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create and save index
 	index := &SessionsIndex{
 		Version: 1,
 		Entries: []SessionEntry{
@@ -264,38 +279,26 @@ func TestLoadAndSaveSessionsIndex(t *testing.T) {
 		t.Fatalf("SaveSessionsIndex failed: %v", err)
 	}
 
-	// Verify file exists
 	indexPath := filepath.Join(tmpDir, "sessions-index.json")
-	if _, err := os.Stat(indexPath); err != nil {
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
 		t.Fatalf("Index file not created: %v", err)
 	}
 
-	// Load and verify
-	loaded, err := LoadSessionsIndex(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadSessionsIndex failed: %v", err)
+	var roundTripped SessionsIndex
+	if err := json.Unmarshal(data, &roundTripped); err != nil {
+		t.Fatalf("Wrote unparseable JSON: %v", err)
 	}
-
-	if len(loaded.Entries) != 1 {
-		t.Fatalf("Expected 1 entry, got %d", len(loaded.Entries))
-	}
-
-	entry := loaded.Entries[0]
-	if entry.SessionID != "test-session-id" {
-		t.Errorf("ConvID mismatch: %q", entry.SessionID)
-	}
-	if entry.Summary != "Test summary" {
-		t.Errorf("Summary mismatch: %q", entry.Summary)
-	}
-	if entry.CustomTitle != "Test title" {
-		t.Errorf("CustomTitle mismatch: %q", entry.CustomTitle)
+	if len(roundTripped.Entries) != 1 || roundTripped.Entries[0].SessionID != "test-session-id" {
+		t.Errorf("Wrote unexpected content: %+v", roundTripped)
 	}
 }
 
 func TestLoadSessionsIndex_NonExistent(t *testing.T) {
+	setupTestDB(t)
 	tmpDir := t.TempDir()
 
-	// Loading from non-existent directory should return empty index
+	// Loading from non-existent directory should return empty index.
 	index, err := LoadSessionsIndex(tmpDir)
 	if err != nil {
 		t.Fatalf("LoadSessionsIndex should not error for non-existent file: %v", err)
@@ -305,6 +308,34 @@ func TestLoadSessionsIndex_NonExistent(t *testing.T) {
 	}
 	if len(index.Entries) != 0 {
 		t.Errorf("Expected 0 entries, got %d", len(index.Entries))
+	}
+}
+
+func TestLoadSessionsIndex_ScansJsonlOnDisk(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+	content := `{"type":"user","cwd":"/myproject","message":{"role":"user","content":"hello"},"timestamp":"2026-03-01T10:00:00Z"}
+{"type":"custom-title","customTitle":"my-agent","sessionId":"` + sessionID + `"}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write jsonl: %v", err)
+	}
+
+	idx, err := LoadSessionsIndex(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadSessionsIndex: %v", err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Fatalf("Expected 1 entry, got %d", len(idx.Entries))
+	}
+	got := idx.Entries[0]
+	if got.SessionID != sessionID {
+		t.Errorf("SessionID: got %q want %q", got.SessionID, sessionID)
+	}
+	if got.CustomTitle != "my-agent" {
+		t.Errorf("CustomTitle: got %q want %q", got.CustomTitle, "my-agent")
 	}
 }
 

@@ -330,7 +330,7 @@ func loadConversationTitles(projectsDir string) map[string]string {
 		}
 
 		projectPath := filepath.Join(projectsDir, project.Name())
-		index, err := convops.LoadSessionsIndex(projectPath)
+		index, err := convops.LoadSessionsIndexFile(projectPath)
 		if err != nil {
 			continue
 		}

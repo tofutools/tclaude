@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -199,7 +200,7 @@ func chunkConversationContent(filePath string) ([]string, error) {
 			continue
 		}
 
-		var msg jsonlMessage
+		var msg convops.JSONLMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			continue
 		}
@@ -209,13 +210,13 @@ func chunkConversationContent(filePath string) ([]string, error) {
 			continue
 		}
 
-		text := extractMessageContent(msg.Message.Content)
+		text := convops.ExtractMessageContent(msg.Message.Content)
 		if text == "" {
 			continue
 		}
 
 		// Skip system-injected messages
-		if msg.Type == "user" && isSystemInjectedMessage(text) {
+		if msg.Type == "user" && convops.IsSystemInjectedMessage(text) {
 			continue
 		}
 		if strings.HasPrefix(text, "[Request interrupted") {

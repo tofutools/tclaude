@@ -51,7 +51,7 @@ func ListCmd() *cobra.Command {
 }
 
 func RunList(params *ListParams, stdout, stderr *os.File) int {
-	DebugLog = params.Verbose
+	SetDebugLog(params.Verbose)
 
 	// Watch mode
 	if params.Watch {

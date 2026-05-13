@@ -165,38 +165,16 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 		}
 	}
 
-	// Delete conversation file
-	convFile := filepath.Join(projectPath, fullID+".jsonl")
-	if err := os.Remove(convFile); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(stderr, "Error deleting conversation file: %v\n", err)
+	// Delegate to the comprehensive cleanup. Handles filesystem + DB
+	// union purge + session-env + sync tombstone in one place.
+	if _, err := DeleteConvByID(fullID); err != nil {
+		fmt.Fprintf(stderr, "Error deleting conversation: %v\n", err)
 		return 1
 	}
-
-	// Delete conversation directory if it exists
-	convDir := filepath.Join(projectPath, fullID)
-	if info, err := os.Stat(convDir); err == nil && info.IsDir() {
-		if err := os.RemoveAll(convDir); err != nil {
-			fmt.Fprintf(stderr, "Error deleting conversation directory: %v\n", err)
-			return 1
-		}
-	}
-
-	// Remove from index (only if it was in the index)
-	if inIndex && index != nil {
-		RemoveSessionByID(index, fullID)
-		if err := SaveSessionsIndex(projectPath, index); err != nil {
-			fmt.Fprintf(stderr, "Error saving sessions index: %v\n", err)
-			return 1
-		}
-	}
-
-	// Add tombstone if sync is initialized
-	if syncutil.IsInitialized() {
-		if err := AddTombstoneForProject(projectPath, fullID); err != nil {
-			fmt.Fprintf(stderr, "Warning: failed to add tombstone: %v\n", err)
-			// Don't fail the deletion - tombstone is best-effort
-		}
-	}
+	// Avoid unused-variable noise on `inIndex` (kept for the display
+	// branches above; the actual delete is identity-agnostic).
+	_ = inIndex
+	_ = index
 
 	fmt.Fprintf(stdout, "Deleted conversation %s\n", fullID[:8])
 	return 0
@@ -229,60 +207,112 @@ func findJSONLByPrefix(projectPath, idPrefix string) string {
 	return ""
 }
 
-// DeleteConvByID is the I/O-free destructive core of the `conv rm`
-// flow, factored out so non-CLI callers (e.g. the agentd dashboard)
-// can wipe a conversation without going through stdout/stderr prompts.
+// DeleteConvByID is the single source-of-truth cleanup for a
+// conversation — whether it's a free conv, an agent's conv, or an
+// orphan with no conv_index row. Every "delete a conversation"
+// surface (`tclaude conv rm`, daemon `/v1/agent/.../delete`, dashboard
+// `DELETE /api/agents/...`) delegates here.
 //
-// Looks the conv up in the conv_index DB, removes the .jsonl file,
-// removes any sibling conv directory, removes the entry from
-// sessions-index.json, drops the conv_index DB row, and writes a
-// tombstone for sync if syncutil is initialised.
+// Comprehensive cleanup:
 //
-// Idempotent — no-op (returns nil) when the conv is unknown to the
-// index DB. Lets orphan-cleanup callers (e.g. dashboard delete on a
-// "(unknown)" agent) run this unconditionally without first proving
-// the row exists.
-func DeleteConvByID(convID string) error {
-	row, err := db.GetConvIndex(convID)
-	if err != nil {
-		return fmt.Errorf("look up conv: %w", err)
+//   - filesystem: removes the .jsonl + any sibling conv directory;
+//     walks ~/.claude/projects/* to find the file when conv_index
+//     doesn't know where it lives (orphan path).
+//   - DB: invokes db.DeleteAgentByConvID, which purges every row
+//     referencing this conv-id across conv_index, sessions, and every
+//     agent_* table (group_members, group_owners, permissions,
+//     messages, cron_jobs, conv_succession, embeddings, …).
+//   - legacy artifacts: removes the sessions-index.json entry and the
+//     ~/.claude/session-env/<convID> env file the hook callback uses.
+//   - sync: writes a tombstone when syncutil is initialised.
+//
+// What it does NOT do: kill an alive tmux session. That's the
+// caller's policy (force vs refuse). Callers must stop the tmux
+// session first if they want a live agent dead.
+//
+// Idempotent: orphans, unknown conv-ids, and double-calls all return
+// (zero-counts, nil) with whatever work CAN be done. Errors are returned
+// only for genuine I/O failures, not for "thing was already gone".
+//
+// Returns the per-table DB-row-removal counts from db.DeleteAgentByConvID
+// so callers (the daemon's /v1/agent/.../delete response in particular)
+// can surface them to the user.
+func DeleteConvByID(convID string) (db.AgentDeletionCounts, error) {
+	var counts db.AgentDeletionCounts
+	if convID == "" {
+		return counts, fmt.Errorf("convID is required")
 	}
-	if row == nil {
-		return nil
-	}
-	fullID := row.ConvID
-	projectPath := filepath.Dir(row.FullPath)
 
-	if row.FullPath != "" {
-		if err := os.Remove(row.FullPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove jsonl: %w", err)
+	// 1. Locate the .jsonl. Try conv_index first (fast, knows the
+	//    project path). For orphans where conv_index is gone, fall
+	//    back to scanning every project dir on disk — the file may
+	//    still exist even if the cache row vanished.
+	var fullPath string
+	var projectPath string
+	fullID := convID
+	if row, _ := db.GetConvIndex(convID); row != nil {
+		fullID = row.ConvID
+		fullPath = row.FullPath
+		if fullPath != "" {
+			projectPath = filepath.Dir(fullPath)
 		}
 	}
-	convDir := filepath.Join(projectPath, fullID)
-	if info, err := os.Stat(convDir); err == nil && info.IsDir() {
-		if err := os.RemoveAll(convDir); err != nil {
-			return fmt.Errorf("remove conv dir: %w", err)
-		}
-	}
-
-	if index, err := LoadSessionsIndex(projectPath); err == nil && index != nil {
-		if RemoveSessionByID(index, fullID) {
-			if err := SaveSessionsIndex(projectPath, index); err != nil {
-				return fmt.Errorf("save sessions-index: %w", err)
+	if fullPath == "" {
+		// Orphan path: walk the projects dir looking for a matching .jsonl.
+		if home, err := os.UserHomeDir(); err == nil {
+			projectsDir := filepath.Join(home, ".claude", "projects")
+			if entries, err := os.ReadDir(projectsDir); err == nil {
+				for _, e := range entries {
+					if !e.IsDir() {
+						continue
+					}
+					candidate := filepath.Join(projectsDir, e.Name(), fullID+".jsonl")
+					if _, err := os.Stat(candidate); err == nil {
+						fullPath = candidate
+						projectPath = filepath.Join(projectsDir, e.Name())
+						break
+					}
+				}
 			}
 		}
 	}
 
-	if err := db.DeleteConvIndex(fullID); err != nil {
-		return fmt.Errorf("drop conv_index row: %w", err)
+	// 2. Remove the .jsonl + any sibling conv dir.
+	if fullPath != "" {
+		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+			return counts, fmt.Errorf("remove jsonl: %w", err)
+		}
+	}
+	if projectPath != "" {
+		convDir := filepath.Join(projectPath, fullID)
+		if info, err := os.Stat(convDir); err == nil && info.IsDir() {
+			if err := os.RemoveAll(convDir); err != nil {
+				return counts, fmt.Errorf("remove conv dir: %w", err)
+			}
+		}
 	}
 
-	if syncutil.IsInitialized() {
-		// Best-effort — sync tombstone failures shouldn't strand the
-		// already-deleted conv.
+	// 3. Comprehensive DB purge — drops conv_index, sessions, and
+	//    every agent_* row referencing this conv-id.
+	c, err := db.DeleteAgentByConvID(fullID)
+	if err != nil {
+		return counts, fmt.Errorf("db purge: %w", err)
+	}
+	counts = c
+
+	// 4. Drop the ~/.claude/session-env/<convID> env file written by
+	//    the spawn flow. Best-effort.
+	if home, err := os.UserHomeDir(); err == nil {
+		envFile := filepath.Join(home, ".claude", "session-env", fullID)
+		_ = os.Remove(envFile)
+	}
+
+	// 5. Write sync tombstone so other machines see the delete.
+	//    Legacy: kept until the git-sync subcommand is removed.
+	if syncutil.IsInitialized() && projectPath != "" {
 		_ = AddTombstoneForProject(projectPath, fullID)
 	}
-	return nil
+	return counts, nil
 }
 
 // AddTombstoneForProject adds a tombstone for a deleted session

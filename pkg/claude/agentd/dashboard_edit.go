@@ -123,6 +123,7 @@ func handleDashboardJumpAPI(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/agents/{conv}/stop         → soft exit / force kill
 //	POST   /api/agents/{conv}/resume       → wake (resume tmux pane)
 //	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
+//	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
 //
 // Behaviour:
 //   - If the conv still exists in conv_index, runs conv.DeleteConvByID
@@ -177,6 +178,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardCloneAgent(w, r, convSelector)
 			return
+		case "reincarnate":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardReincarnateAgent(w, r, convSelector)
+			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return
@@ -190,10 +198,9 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// Try to resolve normally; if it works we get a canonical
 	// conv-id. If the resolver fails (no conv-index row, no
 	// membership row pointing to this conv), accept the raw input as
-	// long as it's UUID-shaped — needed for cleaning up orphan
-	// owner/permission rows whose conv-index is already gone. The
-	// raw path is gated on shape so we don't blindly run
-	// DELETE WHERE conv_id = '<arbitrary>'.
+	// long as it's UUID-shaped — needed for cleaning up orphans whose
+	// conv-index row is already gone. The raw path is gated on shape
+	// so we don't blindly run DELETE WHERE conv_id = '<arbitrary>'.
 	var convID string
 	if res, _, err := agent.ResolveSelector(convSelector); err == nil {
 		convID = res.ConvID
@@ -204,27 +211,17 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// DeleteConvByID is a no-op on missing conv-index rows, so we
-	// run it unconditionally — caller doesn't need to know whether
-	// the underlying file is still there.
-	if err := conv.DeleteConvByID(convID); err != nil {
-		http.Error(w, "delete conv: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Dashboard deletes always force-kill any alive tmux session for
+	// this conv — the "delete forever" button is unambiguous human
+	// intent. Without this, the conv resurrects in handlePeers via
+	// the still-alive sessions row.
+	stopOneConv(convID, true /* force */)
 
-	// Always clean orphan rows. Errors are surfaced as 500 — these
-	// are pure DB DELETE-by-conv-id operations and shouldn't fail
-	// in practice.
-	if _, err := db.RemoveAllAgentGroupMembershipsForConv(convID); err != nil {
-		http.Error(w, "drop memberships: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if _, err := db.RemoveAllAgentGroupOwnershipsForConv(convID); err != nil {
-		http.Error(w, "drop ownerships: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if _, err := db.RevokeAllAgentPermissionsForConv(convID); err != nil {
-		http.Error(w, "drop permissions: "+err.Error(), http.StatusInternalServerError)
+	// Single source of truth for the comprehensive cleanup: filesystem
+	// + DB union purge across every conv-id-referencing table +
+	// session-env + sync tombstone.
+	if _, err := conv.DeleteConvByID(convID); err != nil {
+		http.Error(w, "delete conv: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -493,6 +490,23 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 		return
 	}
 	runCloneOrchestration(w, res.ConvID, dashboardGranter, "", followUp, noCopyConv)
+}
+
+// dashboardReincarnateAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/reincarnate. Spawns a fresh CC instance that inherits
+// the target's identity (groups / perms / ownerships migrate onto the
+// new conv-id), renames it `<prev>-r-<N>`, and soft-exits the original
+// pane. Body: `{follow_up}` — REQUIRED (the new pane comes up with
+// clean context and would otherwise sit idle). Cookie auth ≈ human, so
+// requireCrossAgentPermission short-circuits via the !HasClaudeAncestor
+// branch and the audit trail records the dashboard granter.
+func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
 }
 
 // dashboardResumeAgent is the cookie-auth twin of POST

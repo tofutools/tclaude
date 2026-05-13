@@ -753,6 +753,42 @@ summary.dnd-drop-over.dnd-effect-clone {
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="clone-agent-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="clone-agent-title">
+    <h3 id="clone-agent-title">Clone agent</h3>
+    <div class="modal-meta" id="clone-agent-meta"></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Follow-up</span>
+      <textarea id="clone-agent-followup" rows="3" placeholder="optional — typed into the new pane as a handoff message (no newlines, ≤4096 chars)" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-enabled" title="When checked, copies the source conv.jsonl onto the clone so it starts with the full history. Uncheck for a fresh CC instance that only inherits identity.">
+      <input id="clone-agent-copy-conv" type="checkbox" checked /> Copy conversation history (jsonl)
+    </label>
+    <div class="cron-create-error" id="clone-agent-error"></div>
+    <div class="modal-buttons">
+      <button id="clone-agent-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="clone-agent-submit" class="primary" type="button">Clone</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="reincarnate-agent-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="reincarnate-agent-title">
+    <h3 id="reincarnate-agent-title">Reincarnate agent</h3>
+    <div class="modal-meta" id="reincarnate-agent-meta"></div>
+    <p style="margin:4px 0; font-size:12px; color:#7d8590">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>&lt;prev&gt;-r-&lt;N&gt;</code>.</p>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Follow-up</span>
+      <textarea id="reincarnate-agent-followup" rows="4" placeholder="required — what should the successor pick up? Summarise the current task, where the relevant files are, what's next (no newlines, ≤4096 chars)" spellcheck="false"></textarea>
+    </label>
+    <div class="cron-create-error" id="reincarnate-agent-error"></div>
+    <div class="modal-buttons">
+      <button id="reincarnate-agent-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="reincarnate-agent-submit" class="primary" type="button" disabled>Reincarnate</button>
+    </div>
+  </div>
+</div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
 <script>
@@ -831,7 +867,23 @@ summary.dnd-drop-over.dnd-effect-clone {
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
-    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+  }
+  // cloneAgentButton renders a "clone" button for any row that
+  // represents a single agent. Clone forks a sibling that inherits the
+  // source's identity (groups / perms / ownership). The original keeps
+  // running.
+  function cloneAgentButton(m) {
+    const label = m.alias || m.title || m.conv_id;
+    return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
+  }
+  // reincarnateAgentButton renders a "reincarnate" button for any row
+  // that represents a single agent. Reincarnate spawns a fresh CC
+  // instance that inherits identity, then soft-exits the original. The
+  // new title is auto-suffixed with -r-<N>.
+  function reincarnateAgentButton(m) {
+    const label = m.alias || m.title || m.conv_id;
+    return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Replace with a fresh CC instance that inherits identity; the original is soft-exited. Requires a follow-up message so the successor isn't idle.">reincarnate</button>`;
   }
   function sudoMemberButton(m) {
     return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
@@ -1009,7 +1061,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -2121,6 +2173,160 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
+  // ---- Clone agent modal --------------------------------------------------
+  //
+  // Submit POSTs to /api/agents/{conv}/clone with `{follow_up, no_copy_conv}`.
+  // Follow-up is optional; newlines are stripped client-side because the
+  // server rejects them (tmux send-keys would split them into multiple
+  // submits).
+
+  function openCloneAgentModal(conv, label) {
+    const meta = $('#clone-agent-meta');
+    meta.textContent = label ? `source: ${label}` : `source: ${shortId(conv)}`;
+    $('#clone-agent-followup').value = '';
+    $('#clone-agent-copy-conv').checked = true;
+    $('#clone-agent-error').textContent = '';
+    $('#clone-agent-modal').dataset.conv = conv;
+    $('#clone-agent-modal').dataset.label = label || '';
+    $('#clone-agent-modal').classList.add('show');
+    setTimeout(() => $('#clone-agent-followup').focus(), 0);
+  }
+
+  function closeCloneAgentModal() {
+    $('#clone-agent-modal').classList.remove('show');
+  }
+
+  // normaliseFollowUp collapses newlines/tabs/runs-of-whitespace to a
+  // single space and trims. Server rejects newlines outright; this
+  // keeps the textarea ergonomic while staying safe.
+  function normaliseFollowUp(s) {
+    return String(s || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  async function submitCloneAgent() {
+    const modal = $('#clone-agent-modal');
+    const conv = modal.dataset.conv;
+    const label = modal.dataset.label || shortId(conv);
+    const followUp = normaliseFollowUp($('#clone-agent-followup').value);
+    const copyConv = $('#clone-agent-copy-conv').checked;
+    const errEl = $('#clone-agent-error');
+    errEl.textContent = '';
+    const submitBtn = $('#clone-agent-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Cloning…';
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/clone`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ follow_up: followUp, no_copy_conv: !copyConv }),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+        return;
+      }
+      let payload = {};
+      try { payload = await r.json(); } catch (_) {}
+      closeCloneAgentModal();
+      toast(`cloned ${label}${payload.new_conv ? ' → ' + shortId(payload.new_conv) : ''}`);
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Clone';
+    }
+  }
+
+  function bindCloneAgentModal() {
+    $('#clone-agent-cancel').addEventListener('click', closeCloneAgentModal);
+    $('#clone-agent-submit').addEventListener('click', submitCloneAgent);
+    $('#clone-agent-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'clone-agent-modal') closeCloneAgentModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#clone-agent-modal').classList.contains('show')) {
+        closeCloneAgentModal();
+      }
+    });
+  }
+
+  // ---- Reincarnate agent modal --------------------------------------------
+  //
+  // Submit POSTs to /api/agents/{conv}/reincarnate with `{follow_up}`.
+  // follow_up is REQUIRED (the server rejects empty/missing). Submit
+  // is disabled until the textarea has non-whitespace content.
+
+  function openReincarnateAgentModal(conv, label) {
+    const meta = $('#reincarnate-agent-meta');
+    meta.textContent = label ? `target: ${label}` : `target: ${shortId(conv)}`;
+    $('#reincarnate-agent-followup').value = '';
+    $('#reincarnate-agent-error').textContent = '';
+    $('#reincarnate-agent-submit').disabled = true;
+    $('#reincarnate-agent-modal').dataset.conv = conv;
+    $('#reincarnate-agent-modal').dataset.label = label || '';
+    $('#reincarnate-agent-modal').classList.add('show');
+    setTimeout(() => $('#reincarnate-agent-followup').focus(), 0);
+  }
+
+  function closeReincarnateAgentModal() {
+    $('#reincarnate-agent-modal').classList.remove('show');
+  }
+
+  async function submitReincarnateAgent() {
+    const modal = $('#reincarnate-agent-modal');
+    const conv = modal.dataset.conv;
+    const label = modal.dataset.label || shortId(conv);
+    const followUp = normaliseFollowUp($('#reincarnate-agent-followup').value);
+    const errEl = $('#reincarnate-agent-error');
+    errEl.textContent = '';
+    if (!followUp) {
+      errEl.textContent = 'follow_up is required';
+      return;
+    }
+    const submitBtn = $('#reincarnate-agent-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Reincarnating…';
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reincarnate`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ follow_up: followUp }),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+        return;
+      }
+      let payload = {};
+      try { payload = await r.json(); } catch (_) {}
+      closeReincarnateAgentModal();
+      const suffix = payload.new_title ? ' → ' + payload.new_title : (payload.new_conv ? ' → ' + shortId(payload.new_conv) : '');
+      toast(`reincarnated ${label}${suffix}`);
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submitBtn.textContent = 'Reincarnate';
+      // Leave disabled if the textarea is empty after the error path.
+      submitBtn.disabled = !normaliseFollowUp($('#reincarnate-agent-followup').value);
+    }
+  }
+
+  function bindReincarnateAgentModal() {
+    $('#reincarnate-agent-cancel').addEventListener('click', closeReincarnateAgentModal);
+    $('#reincarnate-agent-submit').addEventListener('click', submitReincarnateAgent);
+    $('#reincarnate-agent-followup').addEventListener('input', () => {
+      $('#reincarnate-agent-submit').disabled = !normaliseFollowUp($('#reincarnate-agent-followup').value);
+    });
+    $('#reincarnate-agent-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'reincarnate-agent-modal') closeReincarnateAgentModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#reincarnate-agent-modal').classList.contains('show')) {
+        closeReincarnateAgentModal();
+      }
+    });
+  }
+
   // sudoBadge renders the per-row 🔓 indicator when an agent currently
   // holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
   // hovering tells the human everything they'd want to know without a
@@ -2795,6 +3001,19 @@ summary.dnd-drop-over.dnd-effect-clone {
             openAgentSpawnModal({groupName: group});
             return;
           }
+          case 'clone': {
+            // Open the clone modal pre-populated with this agent. The
+            // modal handles the POST + refresh.
+            openCloneAgentModal(conv, label);
+            return;
+          }
+          case 'reincarnate': {
+            // Open the reincarnate modal pre-populated with this
+            // agent. The modal enforces the required follow_up and
+            // handles the POST + refresh.
+            openReincarnateAgentModal(conv, label);
+            return;
+          }
           case 'rename-group': {
             // Inline edit: replace the group's <strong> label with an
             // <input>. Enter saves (POST /api/groups/{old}/rename),
@@ -3224,6 +3443,8 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindCronModal();
   bindGroupCreateModal();
   bindAgentSpawnModal();
+  bindCloneAgentModal();
+  bindReincarnateAgentModal();
   refresh();
   setInterval(refresh, 5000);
 })();
