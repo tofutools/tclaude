@@ -45,12 +45,28 @@ const dashboardSudoGranter = "<human-dashboard>:proactive"
 // registerDashboardEditRoutes wires the mutation endpoints onto the
 // loopback mux. Called from registerDashboardRoutes.
 func registerDashboardEditRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/groups", handleDashboardGroupsCreate)
 	mux.HandleFunc("/api/groups/", handleDashboardGroupsAPI)
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
 	registerDashboardCronRoutes(mux)
+}
+
+// handleDashboardGroupsCreate is the cookie-auth twin of POST /v1/groups.
+// Delegates to handleGroups after stamping a synthetic human peer — the
+// cookie+Origin pin is the human-consent layer; requirePermission then
+// short-circuits the slug check via the !HasClaudeAncestor branch.
+func handleDashboardGroupsCreate(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	handleGroups(w, asDashboardHumanPeer(r))
 }
 
 // handleDashboardJumpAPI dispatches:
@@ -243,6 +259,7 @@ func looksLikeConvID(s string) bool {
 //
 //	DELETE /api/groups/{name}                   → delete group
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
+//	POST   /api/groups/{name}/spawn             → spawn a new tclaude session and auto-join this group
 //	POST   /api/groups/{name}/members           → add member (body: {conv, alias?, role?, descr?})
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
 //	PATCH  /api/groups/{name}/members/{conv}    → update alias/role/descr
@@ -292,6 +309,16 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dashboardRenameGroup(w, r, g)
+	case "spawn":
+		if len(parts) >= 3 && parts[2] != "" {
+			http.Error(w, "unknown subpath /api/groups/{name}/spawn/"+parts[2], http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		dashboardSpawnInGroup(w, r, g)
 	case "members":
 		// /api/groups/{name}/members          — POST adds a new member.
 		// /api/groups/{name}/members/{conv}   — DELETE removes; PATCH
@@ -518,6 +545,15 @@ func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+}
+
+// dashboardSpawnInGroup is the cookie-auth twin of POST
+// /v1/groups/{name}/spawn. Forks a fresh `tclaude session new -d --global`
+// detached, waits for its conv-id to materialise, then joins it to the
+// group with the supplied alias/role/descr. Delegates to handleGroupSpawn
+// with a synthetic human peer so the inner requirePermission passes.
+func dashboardSpawnInGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	handleGroupSpawn(w, asDashboardHumanPeer(r), g)
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {

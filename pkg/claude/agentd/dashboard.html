@@ -478,6 +478,8 @@ summary.dnd-drop-over.dnd-effect-clone {
       <input id="filter-groups" type="text" placeholder="Filter (group name + member alias/title/role/descr/cwd)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-groups-count"></span>
       <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
     </div>
     <div id="groups-list"></div>
   </section>
@@ -486,6 +488,8 @@ summary.dnd-drop-over.dnd-effect-clone {
       <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + alias/role/descr/cwd + group tags)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-agents-count"></span>
       <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="agent-spawn-open" class="primary" title="Spawn a new tclaude session and add it to a group">+ new agent</button>
     </div>
     <div id="agents-list"></div>
   </section>
@@ -698,6 +702,57 @@ summary.dnd-drop-over.dnd-effect-clone {
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="group-create-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-create-title">
+    <h3 id="group-create-title">Create a new agent group</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Name</span>
+      <input id="group-create-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Descr</span>
+      <input id="group-create-descr" type="text" placeholder="optional one-line description" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="cron-create-error" id="group-create-error"></div>
+    <div class="modal-buttons">
+      <button id="group-create-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="group-create-submit" class="primary" type="button">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="agent-spawn-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="agent-spawn-title">
+    <h3 id="agent-spawn-title">Spawn a new agent</h3>
+    <div class="modal-meta" id="agent-spawn-meta" style="display:none"></div>
+    <label class="cron-create-row" id="agent-spawn-group-row">
+      <span class="cron-create-label">Group</span>
+      <select id="agent-spawn-group"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Alias</span>
+      <input id="agent-spawn-alias" type="text" placeholder="optional — sets /rename on the new pane" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Role</span>
+      <input id="agent-spawn-role" type="text" placeholder="optional — short tag (e.g. researcher, planner)" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Descr</span>
+      <textarea id="agent-spawn-descr" rows="3" placeholder="optional — longer-form description shown in the welcome message" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">CWD</span>
+      <input id="agent-spawn-cwd" type="text" placeholder="optional — defaults to dashboard daemon's cwd" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="cron-create-error" id="agent-spawn-error"></div>
+    <div class="modal-buttons">
+      <button id="agent-spawn-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="agent-spawn-submit" class="primary" type="button">Spawn</button>
+    </div>
+  </div>
+</div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
 <script>
@@ -871,7 +926,8 @@ summary.dnd-drop-over.dnd-effect-clone {
           <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-actions">
-            <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add a conversation to this group">+ add member</button>
+            <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
+            <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
@@ -1887,6 +1943,184 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
+  // ---- Group create modal -------------------------------------------------
+
+  function openGroupCreateModal() {
+    $('#group-create-name').value = '';
+    $('#group-create-descr').value = '';
+    $('#group-create-error').textContent = '';
+    $('#group-create-modal').classList.add('show');
+    setTimeout(() => $('#group-create-name').focus(), 0);
+  }
+
+  function closeGroupCreateModal() {
+    $('#group-create-modal').classList.remove('show');
+  }
+
+  async function submitGroupCreate() {
+    const name = $('#group-create-name').value.trim();
+    const descr = $('#group-create-descr').value.trim();
+    const errEl = $('#group-create-error');
+    errEl.textContent = '';
+    if (!name) {
+      errEl.textContent = 'name is required';
+      return;
+    }
+    const submitBtn = $('#group-create-submit');
+    submitBtn.disabled = true;
+    try {
+      const r = await fetch('/api/groups', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, descr }),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+        return;
+      }
+      closeGroupCreateModal();
+      toast(`group created: ${name}`);
+      // Persist the expanded state so the new group shows expanded on next render.
+      try { localStorage.setItem('tclaude.dash.group.' + name, '1'); } catch (_) {}
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  function bindGroupCreateModal() {
+    $('#group-create-open').addEventListener('click', openGroupCreateModal);
+    $('#group-create-cancel').addEventListener('click', closeGroupCreateModal);
+    $('#group-create-submit').addEventListener('click', submitGroupCreate);
+    $('#group-create-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'group-create-modal') closeGroupCreateModal();
+    });
+    $('#group-create-modal').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.target.id === 'group-create-name' || e.target.id === 'group-create-descr')) {
+        e.preventDefault();
+        submitGroupCreate();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#group-create-modal').classList.contains('show')) {
+        closeGroupCreateModal();
+      }
+    });
+  }
+
+  // ---- Agent spawn modal --------------------------------------------------
+  //
+  // Opens with `{groupName}` pre-filled when invoked from a group header,
+  // or empty when invoked from the Agents tab (in which case the group
+  // <select> is shown and required). Either way, on submit it POSTs to
+  // /api/groups/{name}/spawn, which forks `tclaude session new` and waits
+  // for the conv-id before returning.
+
+  function openAgentSpawnModal(opts) {
+    const groupName = (opts && opts.groupName) || '';
+    const groupRow = $('#agent-spawn-group-row');
+    const select = $('#agent-spawn-group');
+    // Populate the <select> from the latest snapshot. The select stays
+    // hidden when groupName is fixed; we still set the value so submit
+    // can read it from one place.
+    const groups = (lastSnapshot && lastSnapshot.groups) || [];
+    select.innerHTML = groups.map(g => `<option value="${esc(g.name)}">${esc(g.name)}</option>`).join('');
+    if (groupName) {
+      // Pre-pinned: append/select the target group even if it isn't in
+      // the snapshot yet (paranoid — the user just clicked its header
+      // so it must be there, but defend anyway).
+      if (![...select.options].some(o => o.value === groupName)) {
+        const opt = document.createElement('option');
+        opt.value = groupName;
+        opt.textContent = groupName;
+        select.appendChild(opt);
+      }
+      select.value = groupName;
+      groupRow.style.display = 'none';
+    } else {
+      groupRow.style.display = '';
+      if (!select.value && groups.length) select.value = groups[0].name;
+    }
+    $('#agent-spawn-alias').value = '';
+    $('#agent-spawn-role').value = '';
+    $('#agent-spawn-descr').value = '';
+    $('#agent-spawn-cwd').value = '';
+    $('#agent-spawn-error').textContent = '';
+    const meta = $('#agent-spawn-meta');
+    if (groupName) {
+      meta.textContent = `joining group: ${groupName}`;
+      meta.style.display = '';
+    } else {
+      meta.style.display = 'none';
+    }
+    $('#agent-spawn-modal').classList.add('show');
+    setTimeout(() => {
+      if (groupName) $('#agent-spawn-alias').focus();
+      else select.focus();
+    }, 0);
+  }
+
+  function closeAgentSpawnModal() {
+    $('#agent-spawn-modal').classList.remove('show');
+  }
+
+  async function submitAgentSpawn() {
+    const group = $('#agent-spawn-group').value;
+    const alias = $('#agent-spawn-alias').value.trim();
+    const role = $('#agent-spawn-role').value.trim();
+    const descr = $('#agent-spawn-descr').value.trim();
+    const cwd = $('#agent-spawn-cwd').value.trim();
+    const errEl = $('#agent-spawn-error');
+    errEl.textContent = '';
+    if (!group) {
+      errEl.textContent = 'group is required';
+      return;
+    }
+    const submitBtn = $('#agent-spawn-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Spawning…';
+    try {
+      const r = await fetch(`/api/groups/${encodeURIComponent(group)}/spawn`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alias, role, descr, cwd }),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+        return;
+      }
+      let payload = {};
+      try { payload = await r.json(); } catch (_) {}
+      closeAgentSpawnModal();
+      const label = alias || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
+      toast(`spawned ${label} → ${group}`);
+      // Keep the destination group expanded so the new member is visible.
+      try { localStorage.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Spawn';
+    }
+  }
+
+  function bindAgentSpawnModal() {
+    $('#agent-spawn-open').addEventListener('click', () => openAgentSpawnModal({}));
+    $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
+    $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
+    $('#agent-spawn-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'agent-spawn-modal') closeAgentSpawnModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#agent-spawn-modal').classList.contains('show')) {
+        closeAgentSpawnModal();
+      }
+    });
+  }
+
   // sudoBadge renders the per-row 🔓 indicator when an agent currently
   // holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
   // hovering tells the human everything they'd want to know without a
@@ -2555,6 +2789,12 @@ summary.dnd-drop-over.dnd-effect-clone {
             await addMemberModal(group);
             return;
           }
+          case 'spawn-agent': {
+            // Open the spawn modal pre-pinned to this group. The
+            // modal manages its own POST + refresh on success.
+            openAgentSpawnModal({groupName: group});
+            return;
+          }
           case 'rename-group': {
             // Inline edit: replace the group's <strong> label with an
             // <input>. Enter saves (POST /api/groups/{old}/rename),
@@ -2982,6 +3222,8 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindFilter('sudo');
   bindSudoModal();
   bindCronModal();
+  bindGroupCreateModal();
+  bindAgentSpawnModal();
   refresh();
   setInterval(refresh, 5000);
 })();
