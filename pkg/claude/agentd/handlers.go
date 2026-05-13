@@ -806,14 +806,51 @@ func handleAgentRename(w http.ResponseWriter, r *http.Request, targetConv string
 // `/rename <title>` into the target's pane, and writes the JSON
 // response. caller is recorded in the response when distinct from
 // target so the audit trail has both sides.
+//
+// When body.Auto is true, the title is ignored and instead a
+// bracketed `[system: …]` nudge is injected asking the agent to
+// pick a title for itself via the agent-rename skill / CLI. Same
+// auth, same tmux delivery mechanism — only the payload changes.
 func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, caller string) {
 	var body struct {
 		Title string `json:"title"`
+		Auto  bool   `json:"auto"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+
+	if body.Auto {
+		// Auto-rename: defer the title choice to the agent itself.
+		// The nudge text uses the same bracketed [system: …] shape
+		// as agent_messages so the recipient reads it as a system
+		// prompt rather than user input. Spelling out the allowed
+		// charset up front saves a back-and-forth when the agent
+		// picks something the title validator would reject.
+		nudge := "[system: please rename yourself to give this conversation a clearer title. " +
+			"Run: tclaude agent rename \"<your-chosen-title>\". " +
+			"Pick a 3-4-word kebab-case slug that captures what you've been working on or what " +
+			"your role is — e.g. \"fix-bug-abc-123\", \"working-on-new-ui\", or \"worker-agent-a\". " +
+			"Allowed: 1-64 characters from [A-Za-z0-9_-[]{}() ] only; single spaces ok, " +
+			"no slashes / quotes / newlines / unicode.]"
+		if !injectSlashCommand(target, nudge, "") {
+			writeError(w, http.StatusServiceUnavailable, "no_tmux",
+				"target conv "+short8(target)+" has no live tmux session to inject auto-rename nudge into")
+			return
+		}
+		resp := map[string]any{
+			"conv_id": target,
+			"auto":    true,
+			"note":    "auto-rename nudge submitted via tmux send-keys; the target will pick its own title on its next turn",
+		}
+		if caller != "" && caller != target {
+			resp["caller_conv"] = caller
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	body.Title = strings.TrimSpace(body.Title)
 	if !isValidRenameTitle(body.Title) {
 		writeError(w, http.StatusBadRequest, "invalid_title",
@@ -1709,6 +1746,16 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, or DELETE")
 		}
+		return
+	}
+
+	// /v1/groups/{name}/links[/{id}]
+	if len(parts) >= 2 && parts[1] == "links" {
+		var rest []string
+		if len(parts) >= 3 && parts[2] != "" {
+			rest = []string{parts[2]}
+		}
+		handleGroupLinks(w, r, g, rest)
 		return
 	}
 

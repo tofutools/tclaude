@@ -71,6 +71,10 @@ details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[open] > summary::before { content: "▼ "; }
 .subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
+.group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
+.group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
+.group-links-section > table { margin: 4px 0 6px 0; }
+.group-links-section > button { margin-left: 6px; }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
@@ -469,6 +473,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   <button data-tab="agents">Agents</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
+  <button data-tab="links">Links</button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
 </nav>
@@ -512,6 +517,16 @@ summary.dnd-drop-over.dnd-effect-clone {
       <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent">+ Grant sudo</button>
     </div>
     <div id="sudo-list"></div>
+  </section>
+  <section id="tab-links">
+    <div class="filter-bar">
+      <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-links-count"></span>
+      <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
+    </div>
+    <div id="links-list"></div>
   </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
@@ -721,6 +736,36 @@ summary.dnd-drop-over.dnd-effect-clone {
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="link-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="link-modal-title">
+    <h3 id="link-modal-title">Add inter-group link</h3>
+    <div class="modal-meta" id="link-modal-meta" style="display:none"></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">From</span>
+      <select id="link-modal-from"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">To</span>
+      <select id="link-modal-to"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Mode</span>
+      <select id="link-modal-mode">
+        <option value="members-&gt;members">members → members (any member of FROM may message any member of TO)</option>
+        <option value="owners-&gt;members">owners → members (only owners of FROM may message members of TO)</option>
+      </select>
+    </label>
+    <label class="cron-create-enabled" id="link-modal-bidir-row" title="Also create the reverse link (TO → FROM) with the same mode in one call.">
+      <input id="link-modal-bidir" type="checkbox" /> Also create reverse link (TO → FROM)
+    </label>
+    <div class="cron-create-error" id="link-modal-error"></div>
+    <div class="modal-buttons">
+      <button id="link-modal-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="link-modal-submit" class="primary" type="button">Create link</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="agent-spawn-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="agent-spawn-title">
     <h3 id="agent-spawn-title">Spawn a new agent</h3>
@@ -786,6 +831,26 @@ summary.dnd-drop-over.dnd-effect-clone {
       <button id="reincarnate-agent-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="reincarnate-agent-submit" class="primary" type="button" disabled>Reincarnate</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="rename-agent-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="rename-agent-title">
+    <h3 id="rename-agent-title">Rename conversation</h3>
+    <div class="modal-meta" id="rename-agent-meta"></div>
+    <p style="margin:4px 0; font-size:12px; color:#7d8590">Injects <code>/rename &lt;title&gt;</code> (or a system nudge if auto) into the agent's pane via tmux. The agent must have a live tmux session.</p>
+    <label class="cron-create-row">
+      <span class="cron-create-label">New title</span>
+      <input id="rename-agent-title-input" type="text" placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only — try a 3-4-word kebab slug" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-enabled" id="rename-agent-auto-row" title="Inject a [system: ...] nudge asking the agent to pick a descriptive title itself via the agent-rename skill / CLI.">
+      <input id="rename-agent-auto" type="checkbox" /> Auto (let the agent choose its own title)
+    </label>
+    <div class="cron-create-error" id="rename-agent-error"></div>
+    <div class="modal-buttons">
+      <button id="rename-agent-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="rename-agent-submit" class="primary" type="button">Rename</button>
     </div>
   </div>
 </div>
@@ -867,7 +932,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
-    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
   }
   // cloneAgentButton renders a "clone" button for any row that
   // represents a single agent. Clone forks a sibling that inherits the
@@ -884,6 +949,15 @@ summary.dnd-drop-over.dnd-effect-clone {
   function reincarnateAgentButton(m) {
     const label = m.alias || m.title || m.conv_id;
     return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Replace with a fresh CC instance that inherits identity; the original is soft-exited. Requires a follow-up message so the successor isn't idle.">reincarnate</button>`;
+  }
+  // renameAgentButton renders a "rename" button for any row that
+  // represents a single agent. Opens a modal where the user can type
+  // an explicit title or check "auto" to ask the agent to pick one
+  // for itself via the agent-rename skill / CLI.
+  function renameAgentButton(m) {
+    const label = m.alias || m.title || m.conv_id;
+    const current = m.title || '';
+    return `<button data-act="rename-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-current="${esc(current)}" title="Change this conversation's title. Type one or check 'auto' to let the agent pick.">rename</button>`;
   }
   function sudoMemberButton(m) {
     return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
@@ -1022,11 +1096,62 @@ summary.dnd-drop-over.dnd-effect-clone {
               }).join('')}
             </tbody>
           </table>`}
+          ${renderGroupLinksSection(g.name)}
           <code class="copy-cmd" data-copy="tclaude agent groups members ${g.name}">tclaude agent groups members ${esc(g.name)}</code>
         </div>
       </details>
     `;
     }).join('');
+  }
+
+  // renderGroupLinksSection: per-group outbound/inbound link rows. Reads
+  // from lastSnapshot.links (the snapshot already carries every edge)
+  // so we don't need a second round-trip. Edit/delete buttons hit the
+  // shared row-action dispatcher; add opens the link modal preset to
+  // FROM=this group.
+  function renderGroupLinksSection(groupName) {
+    const all = (lastSnapshot && lastSnapshot.links) || [];
+    const out = all.filter(l => l.from === groupName);
+    const inc = all.filter(l => l.to === groupName);
+    const total = out.length + inc.length;
+    if (total === 0) {
+      return `
+        <div class="group-links-section">
+          <span class="muted" style="font-size:11px">No links involving this group.</span>
+          <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="Add an outbound link from this group">+ link</button>
+        </div>
+      `;
+    }
+    const renderRow = (l, dir) => {
+      const other = dir === 'out' ? l.to : l.from;
+      const arrow = dir === 'out' ? '→' : '←';
+      return `
+        <tr>
+          <td><span class="muted">${arrow}</span></td>
+          <td><span class="alias">${esc(other || '(deleted)')}</span></td>
+          <td><span class="id">${esc(l.mode)}</span></td>
+          <td><div class="row-actions">
+            <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
+            <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(groupName)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">×</button>
+          </div></td>
+        </tr>
+      `;
+    };
+    return `
+      <div class="group-links-section">
+        <strong style="font-size:11px">Links</strong>
+        <table>
+          <thead>
+            <tr><th></th><th>Other group</th><th>Mode</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${out.map(l => renderRow(l, 'out')).join('')}
+            ${inc.map(l => renderRow(l, 'in')).join('')}
+          </tbody>
+        </table>
+        <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="Add an outbound link from this group">+ link</button>
+      </div>
+    `;
   }
 
   function renderAgents(agents) {
@@ -1061,7 +1186,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -1377,6 +1502,59 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#filter-sudo-count').textContent = q
       ? `${filtered.length} / ${rows.length}`
       : `${rows.length} active grant${rows.length === 1 ? '' : 's'}`;
+  }
+
+  // -- Links tab --------------------------------------------------------
+  // Inter-group communication links surface as a flat read-only table
+  // in v1. Use `tclaude agent groups link add/rm` to mutate. The list
+  // shows direction (FROM → TO) and mode so the human can reason about
+  // who can message whom.
+  function renderLinks(rows) {
+    if (!rows || !rows.length) {
+      return '<div class="empty">No inter-group links yet. Create one with the <strong>+ new link</strong> button above, or: <code>tclaude agent groups link add &lt;from&gt; &lt;to&gt; [--bidir]</code></div>';
+    }
+    return `
+      <table>
+        <thead>
+          <tr><th>ID</th><th>From</th><th></th><th>To</th><th>Mode</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${rows.map(l => `
+            <tr>
+              <td class="id">${l.id}</td>
+              <td><span class="alias">${esc(l.from || '(deleted)')}</span></td>
+              <td class="muted">→</td>
+              <td><span class="alias">${esc(l.to || '(deleted)')}</span></td>
+              <td><span class="id">${esc(l.mode)}</span></td>
+              <td><span class="muted">${esc(relTime(l.created_at) || '')}</span></td>
+              <td><div class="row-actions">
+                <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
+                <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(l.from)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">delete</button>
+              </div></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+  function filterLinks(rows, q) {
+    if (!q) return rows;
+    const needle = q.toLowerCase();
+    return rows.filter(l =>
+      ((l.from || '').toLowerCase().includes(needle)) ||
+      ((l.to || '').toLowerCase().includes(needle)) ||
+      ((l.mode || '').toLowerCase().includes(needle))
+    );
+  }
+  function renderLinksTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-links').value;
+    const rows = lastSnapshot.links || [];
+    const filtered = filterLinks(rows, q);
+    $('#links-list').innerHTML = renderLinks(filtered);
+    $('#filter-links-count').textContent = q
+      ? `${filtered.length} / ${rows.length}`
+      : `${rows.length} link${rows.length === 1 ? '' : 's'}`;
   }
 
   // openSudoGrantModal: builds the slug picker from the snapshot's
@@ -2062,6 +2240,149 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
+  // ---- Link modal (create + edit) ----------------------------------------
+  //
+  // One modal, two states:
+  //   openLinkModal({ mode: 'create', preset: {from?, to?, linkMode?} })
+  //   openLinkModal({ mode: 'edit', linkID, preset: {from, to, linkMode} })
+  //
+  // Create posts to /api/groups/{from}/links with body {to, mode, bidir?};
+  // edit patches /api/groups/{from-or-to}/links/{linkID} with {mode}.
+  // Edit hides from/to fields (those are immutable on a link) and the
+  // bidir checkbox (no meaning when editing a single existing row).
+
+  let linkModalState = { mode: 'create', linkID: null };
+
+  function openLinkModal(opts) {
+    opts = opts || {};
+    const state = opts.mode === 'edit' ? 'edit' : 'create';
+    const preset = opts.preset || {};
+    linkModalState = { mode: state, linkID: opts.linkID || null, fromForEdit: preset.from || '' };
+    const groups = ((lastSnapshot && lastSnapshot.groups) || []).map(g => g.name);
+    const fromSel = $('#link-modal-from');
+    const toSel = $('#link-modal-to');
+    fromSel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    toSel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    // Defensive: paste in preset values that aren't in the snapshot yet.
+    for (const [sel, val] of [[fromSel, preset.from], [toSel, preset.to]]) {
+      if (val && ![...sel.options].some(o => o.value === val)) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = val;
+        sel.appendChild(opt);
+      }
+    }
+    if (preset.from) fromSel.value = preset.from;
+    else if (groups.length) fromSel.value = groups[0];
+    if (preset.to) toSel.value = preset.to;
+    else if (groups.length > 1) toSel.value = groups[1];
+
+    $('#link-modal-mode').value = preset.linkMode || 'members->members';
+    $('#link-modal-bidir').checked = false;
+    $('#link-modal-error').textContent = '';
+
+    const title = $('#link-modal-title');
+    const meta = $('#link-modal-meta');
+    const submit = $('#link-modal-submit');
+    const bidirRow = $('#link-modal-bidir-row');
+    if (state === 'edit') {
+      title.textContent = 'Edit link mode';
+      meta.textContent = `#${opts.linkID} · ${preset.from} → ${preset.to}`;
+      meta.style.display = '';
+      submit.textContent = 'Save changes';
+      // From/To are immutable when editing — show as disabled.
+      fromSel.disabled = true;
+      toSel.disabled = true;
+      bidirRow.style.display = 'none';
+    } else {
+      title.textContent = 'Add inter-group link';
+      meta.style.display = 'none';
+      submit.textContent = 'Create link';
+      fromSel.disabled = !!preset.from; // fix FROM when invoked from a group card
+      toSel.disabled = false;
+      bidirRow.style.display = '';
+    }
+
+    $('#link-modal').classList.add('show');
+    setTimeout(() => {
+      if (state === 'edit') $('#link-modal-mode').focus();
+      else if (preset.from && !preset.to) toSel.focus();
+      else fromSel.focus();
+    }, 0);
+  }
+
+  function closeLinkModal() {
+    $('#link-modal').classList.remove('show');
+  }
+
+  async function submitLinkModal() {
+    const state = linkModalState.mode;
+    const errEl = $('#link-modal-error');
+    errEl.textContent = '';
+    const submit = $('#link-modal-submit');
+    const mode = $('#link-modal-mode').value;
+    submit.disabled = true;
+    try {
+      if (state === 'edit') {
+        const id = linkModalState.linkID;
+        const scope = linkModalState.fromForEdit || $('#link-modal-from').value;
+        const r = await fetch(`/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        });
+        if (!r.ok) {
+          errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+          return;
+        }
+        closeLinkModal();
+        toast(`link #${id} mode → ${mode}`);
+      } else {
+        const from = $('#link-modal-from').value;
+        const to = $('#link-modal-to').value;
+        if (!from || !to) {
+          errEl.textContent = 'from and to are required';
+          return;
+        }
+        if (from === to) {
+          errEl.textContent = 'from and to must differ — use group membership for intra-group comm';
+          return;
+        }
+        const bidir = $('#link-modal-bidir').checked;
+        const r = await fetch(`/api/groups/${encodeURIComponent(from)}/links`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, mode, bidir }),
+        });
+        if (!r.ok) {
+          errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+          return;
+        }
+        closeLinkModal();
+        toast(`linked: ${from} → ${to}${bidir ? ' (+reverse)' : ''}`);
+      }
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  function bindLinkModal() {
+    $('#link-new-open').addEventListener('click', () => openLinkModal({ mode: 'create' }));
+    $('#link-modal-cancel').addEventListener('click', closeLinkModal);
+    $('#link-modal-submit').addEventListener('click', submitLinkModal);
+    $('#link-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'link-modal') closeLinkModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#link-modal').classList.contains('show')) {
+        closeLinkModal();
+      }
+    });
+  }
+
   // ---- Agent spawn modal --------------------------------------------------
   //
   // Opens with `{groupName}` pre-filled when invoked from a group header,
@@ -2327,6 +2648,101 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
+  // ---- Rename-agent modal --------------------------------------------------
+  //
+  // Opens with `{conv, label, currentTitle}`. Two submit paths:
+  //   - manual: type a title → POST /api/agents/{conv}/rename {title}
+  //   - auto:   check the box → POST /api/agents/{conv}/rename {auto: true}
+  //             daemon injects a [system: ...] nudge asking the agent to
+  //             pick its own title via the agent-rename skill.
+  // The title field is disabled when auto is checked so the two paths
+  // can't be ambiguous.
+
+  function openRenameAgentModal(conv, label, currentTitle) {
+    const meta = $('#rename-agent-meta');
+    meta.textContent = label ? `target: ${label}` : `target: ${shortId(conv)}`;
+    const titleInput = $('#rename-agent-title-input');
+    titleInput.value = currentTitle || '';
+    titleInput.disabled = false;
+    $('#rename-agent-auto').checked = false;
+    $('#rename-agent-error').textContent = '';
+    $('#rename-agent-submit').textContent = 'Rename';
+    $('#rename-agent-modal').dataset.conv = conv;
+    $('#rename-agent-modal').dataset.label = label || '';
+    $('#rename-agent-modal').classList.add('show');
+    setTimeout(() => titleInput.focus(), 0);
+  }
+
+  function closeRenameAgentModal() {
+    $('#rename-agent-modal').classList.remove('show');
+  }
+
+  async function submitRenameAgent() {
+    const modal = $('#rename-agent-modal');
+    const conv = modal.dataset.conv;
+    const label = modal.dataset.label || shortId(conv);
+    const auto = $('#rename-agent-auto').checked;
+    const title = $('#rename-agent-title-input').value.trim();
+    const errEl = $('#rename-agent-error');
+    errEl.textContent = '';
+    if (!auto && !title) {
+      errEl.textContent = 'title is required (or check "auto" to let the agent choose)';
+      return;
+    }
+    const submitBtn = $('#rename-agent-submit');
+    const origLabel = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = auto ? 'Sending nudge…' : 'Renaming…';
+    try {
+      const body = auto ? { auto: true } : { title };
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/rename`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+        return;
+      }
+      closeRenameAgentModal();
+      if (auto) {
+        toast(`auto-rename nudge sent: ${label}`);
+      } else {
+        toast(`renaming ${label} → ${title}`);
+      }
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = origLabel;
+    }
+  }
+
+  function bindRenameAgentModal() {
+    $('#rename-agent-cancel').addEventListener('click', closeRenameAgentModal);
+    $('#rename-agent-submit').addEventListener('click', submitRenameAgent);
+    $('#rename-agent-auto').addEventListener('change', (e) => {
+      const auto = e.target.checked;
+      $('#rename-agent-title-input').disabled = auto;
+      $('#rename-agent-submit').textContent = auto ? 'Send auto-rename nudge' : 'Rename';
+    });
+    $('#rename-agent-title-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !$('#rename-agent-auto').checked) {
+        e.preventDefault();
+        submitRenameAgent();
+      }
+    });
+    $('#rename-agent-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'rename-agent-modal') closeRenameAgentModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#rename-agent-modal').classList.contains('show')) {
+        closeRenameAgentModal();
+      }
+    });
+  }
+
   // sudoBadge renders the per-row 🔓 indicator when an agent currently
   // holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
   // hovering tells the human everything they'd want to know without a
@@ -2355,6 +2771,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       else if (tab === 'agents') renderAgentsTab();
       else if (tab === 'cron') renderCronTab();
       else if (tab === 'sudo') renderSudoTab();
+      else if (tab === 'links') renderLinksTab();
     };
     input.addEventListener('input', onChange);
     clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
@@ -2393,6 +2810,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       renderAgentsTab();
       renderCronTab();
       renderSudoTab();
+      renderLinksTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
       showStatus('● live', false);
@@ -3014,6 +3432,11 @@ summary.dnd-drop-over.dnd-effect-clone {
             openReincarnateAgentModal(conv, label);
             return;
           }
+          case 'rename-agent': {
+            const current = btn.getAttribute('data-current') || '';
+            openRenameAgentModal(conv, label, current);
+            return;
+          }
           case 'rename-group': {
             // Inline edit: replace the group's <strong> label with an
             // <input>. Enter saves (POST /api/groups/{old}/rename),
@@ -3187,6 +3610,44 @@ summary.dnd-drop-over.dnd-effect-clone {
             }
             openCronCreateModal(prefill);
             return;
+          }
+          case 'link-new': {
+            // From per-group "+ link" button: preset FROM to the
+            // current group so the user only has to pick TO.
+            const from = btn.getAttribute('data-from') || '';
+            openLinkModal({ mode: 'create', preset: { from } });
+            return;
+          }
+          case 'link-edit': {
+            const id = btn.getAttribute('data-id');
+            const from = btn.getAttribute('data-from') || '';
+            const to = btn.getAttribute('data-to') || '';
+            const linkMode = btn.getAttribute('data-mode') || '';
+            openLinkModal({ mode: 'edit', linkID: id, preset: { from, to, linkMode } });
+            return;
+          }
+          case 'link-delete': {
+            const id = btn.getAttribute('data-id');
+            const from = btn.getAttribute('data-from') || '';
+            const to = btn.getAttribute('data-to') || '';
+            // The dashboard's DELETE endpoint requires the link to
+            // touch the group in the URL — pass the from group when
+            // available, otherwise fall back to the explicit data-group
+            // attribute.
+            const scope = btn.getAttribute('data-group') || from || to;
+            const confirmed = await confirmModal({
+              title: 'Remove this link?',
+              body: 'Members of FROM lose the ability to message members of TO via this edge. Other groups / links are unaffected. This can\'t be undone — recreate to restore.',
+              meta: `#${id} · ${from} → ${to}`,
+              okLabel: 'Remove link',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Remove link failed: ${await r.text()}`, true);
+            break;
           }
           default:
             return;
@@ -3439,12 +3900,15 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindFilter('agents');
   bindFilter('cron');
   bindFilter('sudo');
+  bindFilter('links');
   bindSudoModal();
   bindCronModal();
   bindGroupCreateModal();
+  bindLinkModal();
   bindAgentSpawnModal();
   bindCloneAgentModal();
   bindReincarnateAgentModal();
+  bindRenameAgentModal();
   refresh();
   setInterval(refresh, 5000);
 })();

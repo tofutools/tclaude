@@ -144,7 +144,23 @@ type snapshotPayload struct {
 	// + Agents tabs can render the 🔓 indicator without a second
 	// round-trip.
 	Sudo      []dashboardSudoEntry `json:"sudo"`
+	// Links surfaces every inter-group link in the system. The dashboard
+	// renders these in a dedicated panel (read-only in v1) and uses them
+	// to annotate group rows with outbound/inbound counts. Empty slice
+	// (not nil) so JS .length / .map() are safe.
+	Links     []dashboardLink      `json:"links"`
 	PopupBase string               `json:"popup_base"` // for tray-shareable display
+}
+
+// dashboardLink is the snapshot view of one agent_group_links row.
+// Group names are pre-resolved so the renderer doesn't need to do a
+// second lookup.
+type dashboardLink struct {
+	ID        int64  `json:"id"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Mode      string `json:"mode"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // dashboardCronJob is the snapshot view of one agent_cron_jobs row.
@@ -524,8 +540,33 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 
 	out.Cron = collectCronSnapshot()
+	out.Links = collectLinksSnapshot()
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// collectLinksSnapshot enumerates every inter-group link, resolved to
+// group names. One DB hit for the group list (via loadGroupNames),
+// one for the link list; per-row lookups are map indexed. Returns an
+// empty slice (not nil) so JS can safely call .map() / .length
+// without a guard.
+func collectLinksSnapshot() []dashboardLink {
+	out := []dashboardLink{}
+	rows, err := db.ListAllAgentGroupLinks()
+	if err != nil {
+		return out
+	}
+	names := loadGroupNames()
+	for _, l := range rows {
+		out = append(out, dashboardLink{
+			ID:        l.ID,
+			From:      names[l.FromGroupID],
+			To:        names[l.ToGroupID],
+			Mode:      l.Mode,
+			CreatedAt: l.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return out
 }
 
 // collectCronSnapshot builds the wire-shape rows for the dashboard's

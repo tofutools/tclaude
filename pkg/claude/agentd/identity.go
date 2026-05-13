@@ -134,6 +134,8 @@ const (
 	PermAgentInboxWatch   = "agent.inbox-watch"
 	PermGroupsRename      = "groups.rename"
 	PermGroupsClone       = "groups.clone"
+	PermGroupsLinkAdd     = "groups.link.add"
+	PermGroupsLinkRm      = "groups.link.rm"
 )
 
 // requirePermission gates an endpoint behind a named agent permission.

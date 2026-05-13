@@ -130,6 +130,14 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermAgentDelete,
 		Description: "Permanently delete ANOTHER agent (tclaude agent delete): purges its rows in every agent / conv / session table and deletes its .jsonl. NOT default-granted; this is destructive and not undoable. Group owners can delete members of groups they own without this slug.",
 	},
+	{
+		Slug:        PermGroupsLinkAdd,
+		Description: "Create an inter-group link enabling messages from one group to another (tclaude agent groups link add). Group owners can add outbound links FROM groups they own without this slug.",
+	},
+	{
+		Slug:        PermGroupsLinkRm,
+		Description: "Remove an inter-group link (tclaude agent groups link rm). Group owners can remove outbound links FROM groups they own without this slug.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.
