@@ -85,10 +85,10 @@ func GetConvTitle(convID, cwd string) string {
 	return cleanTitle(parseFirstPromptFromJSONL(projectPath, convID))
 }
 
-// FormatTitleAndPrompt formats a title and prompt into "[title]: prompt" format.
-// If title is empty, returns just the cleaned prompt.
-// If prompt is empty, returns just the cleaned title.
-// Both title and prompt are cleaned (XML tags removed, truncated).
+// FormatTitleAndPrompt formats a title and prompt into "[title]: prompt"
+// when both are set, or "[title]" when only the title is set (e.g. a
+// freshly /rename'd conv that hasn't seen a user prompt yet). When only
+// the prompt is set, returns it raw.
 func FormatTitleAndPrompt(title, prompt string) string {
 	cleanedTitle := cleanTitle(title)
 	cleanedPrompt := cleanTitle(prompt)
@@ -96,7 +96,7 @@ func FormatTitleAndPrompt(title, prompt string) string {
 	if cleanedTitle != "" && cleanedPrompt != "" {
 		return "[" + cleanedTitle + "]: " + cleanedPrompt
 	} else if cleanedTitle != "" {
-		return cleanedTitle
+		return "[" + cleanedTitle + "]"
 	}
 	return cleanedPrompt
 }
