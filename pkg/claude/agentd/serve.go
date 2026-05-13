@@ -212,6 +212,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/agent/", handleAgentByConv)
 	mux.HandleFunc("/v1/groups", handleGroups)
 	mux.HandleFunc("/v1/groups/", handleGroupByName)
+	mux.HandleFunc("/v1/links", handleLinksAll)
+	mux.HandleFunc("/v1/can-message", handleCanMessage)
 	mux.HandleFunc("/v1/permissions", handlePermissions)
 	mux.HandleFunc("/v1/permissions/slugs", handlePermissionsSlugs)
 	mux.HandleFunc("/v1/permissions/grant", handlePermissionsGrant)

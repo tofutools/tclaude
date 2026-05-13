@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 24
+const currentVersion = 25
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -167,6 +167,52 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 25 {
+		if err := migrateV24toV25(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV24toV25 adds agent_group_links — directed comm edges between
+// groups. Lets two flat groups exchange messages without merging
+// memberships or installing owner bridges. See
+// docs/plans/TODO/med-prio/group-links.md for the design.
+//
+// Shape:
+//   - (from_group_id, to_group_id, mode) is unique — at most one row
+//     per direction+mode. Reverse edge is a separate row (callers pass
+//     --bidir to create both).
+//   - mode is a text discriminator. v1 parses 'members->members' and
+//     'owners->members'; future modes get added without a schema bump.
+//   - by_conv records the author (empty for human/dashboard, conv-id
+//     for an agent-authored grant). Same convention as
+//     agent_group_owners.granted_by and agent_head_aliases.by_conv.
+//   - ON DELETE CASCADE on both group FKs: deleting a group drops the
+//     links that involve it.
+func migrateV24toV25(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_group_links (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			from_group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			to_group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			mode            TEXT    NOT NULL,
+			created_at      TEXT    NOT NULL,
+			by_conv         TEXT    NOT NULL DEFAULT '',
+			UNIQUE (from_group_id, to_group_id, mode)
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_group_links_from
+			ON agent_group_links(from_group_id);
+		CREATE INDEX IF NOT EXISTS idx_agent_group_links_to
+			ON agent_group_links(to_group_id);
+
+		UPDATE schema_version SET version = 25;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v24→v25: %w", err)
+	}
 	return nil
 }
 

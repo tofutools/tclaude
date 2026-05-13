@@ -1712,6 +1712,16 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /v1/groups/{name}/links[/{id}]
+	if len(parts) >= 2 && parts[1] == "links" {
+		var rest []string
+		if len(parts) >= 3 && parts[2] != "" {
+			rest = []string{parts[2]}
+		}
+		handleGroupLinks(w, r, g, rest)
+		return
+	}
+
 	// /v1/groups/{name}/members[*]
 	if len(parts) >= 2 && parts[1] == "members" {
 		switch r.Method {

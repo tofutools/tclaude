@@ -469,6 +469,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   <button data-tab="agents">Agents</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
+  <button data-tab="links">Links</button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
 </nav>
@@ -512,6 +513,14 @@ summary.dnd-drop-over.dnd-effect-clone {
       <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent">+ Grant sudo</button>
     </div>
     <div id="sudo-list"></div>
+  </section>
+  <section id="tab-links">
+    <div class="filter-bar">
+      <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-links-count"></span>
+      <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
+    </div>
+    <div id="links-list"></div>
   </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
@@ -1377,6 +1386,55 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#filter-sudo-count').textContent = q
       ? `${filtered.length} / ${rows.length}`
       : `${rows.length} active grant${rows.length === 1 ? '' : 's'}`;
+  }
+
+  // -- Links tab --------------------------------------------------------
+  // Inter-group communication links surface as a flat read-only table
+  // in v1. Use `tclaude agent groups link add/rm` to mutate. The list
+  // shows direction (FROM → TO) and mode so the human can reason about
+  // who can message whom.
+  function renderLinks(rows) {
+    if (!rows || !rows.length) {
+      return '<div class="empty">No inter-group links yet. Create one with: <code>tclaude agent groups link add &lt;from&gt; &lt;to&gt; [--bidir]</code></div>';
+    }
+    return `
+      <table>
+        <thead>
+          <tr><th>ID</th><th>From</th><th></th><th>To</th><th>Mode</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map(l => `
+            <tr>
+              <td class="id">${l.id}</td>
+              <td><span class="alias">${esc(l.from || '(deleted)')}</span></td>
+              <td class="muted">→</td>
+              <td><span class="alias">${esc(l.to || '(deleted)')}</span></td>
+              <td><span class="id">${esc(l.mode)}</span></td>
+              <td><span class="muted">${esc(relTime(l.created_at) || '')}</span></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+  function filterLinks(rows, q) {
+    if (!q) return rows;
+    const needle = q.toLowerCase();
+    return rows.filter(l =>
+      ((l.from || '').toLowerCase().includes(needle)) ||
+      ((l.to || '').toLowerCase().includes(needle)) ||
+      ((l.mode || '').toLowerCase().includes(needle))
+    );
+  }
+  function renderLinksTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-links').value;
+    const rows = lastSnapshot.links || [];
+    const filtered = filterLinks(rows, q);
+    $('#links-list').innerHTML = renderLinks(filtered);
+    $('#filter-links-count').textContent = q
+      ? `${filtered.length} / ${rows.length}`
+      : `${rows.length} link${rows.length === 1 ? '' : 's'}`;
   }
 
   // openSudoGrantModal: builds the slug picker from the snapshot's
@@ -2355,6 +2413,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       else if (tab === 'agents') renderAgentsTab();
       else if (tab === 'cron') renderCronTab();
       else if (tab === 'sudo') renderSudoTab();
+      else if (tab === 'links') renderLinksTab();
     };
     input.addEventListener('input', onChange);
     clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
@@ -2393,6 +2452,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       renderAgentsTab();
       renderCronTab();
       renderSudoTab();
+      renderLinksTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
       showStatus('● live', false);
@@ -3439,6 +3499,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindFilter('agents');
   bindFilter('cron');
   bindFilter('sudo');
+  bindFilter('links');
   bindSudoModal();
   bindCronModal();
   bindGroupCreateModal();

@@ -948,6 +948,14 @@ func ListGroupsOwnedBy(convID string) ([]int64, error) {
 //   - shared membership: pick the first group both belong to.
 //   - sender-as-owner: pick the first group the sender owns that
 //     also contains the target.
+//   - via-link: sender is in (or owns) some group A which has an
+//     outbound link to a group B that contains the target. The link
+//     mode determines whether membership alone suffices or ownership
+//     is required (see roleSatisfiesLinkMode).
+//
+// The order is stable so audit logs ("which path authorised this?")
+// keep meaning across versions: tightening the model adds new reasons
+// at the end, never reorders the existing ones.
 func CanSenderReachTarget(senderID, targetID string) (*AgentGroup, string, error) {
 	shared, err := SharedGroupsForConvs(senderID, targetID)
 	if err != nil {
@@ -960,10 +968,6 @@ func CanSenderReachTarget(senderID, targetID string) (*AgentGroup, string, error
 	if err != nil {
 		return nil, "", err
 	}
-	if len(ownerGroups) == 0 {
-		return nil, "", nil
-	}
-	// Pick the first owned group that contains the target.
 	for _, gID := range ownerGroups {
 		members, err := ListAgentGroupMembers(gID)
 		if err != nil {
@@ -978,6 +982,41 @@ func CanSenderReachTarget(senderID, targetID string) (*AgentGroup, string, error
 				return g, "owner-of-group", nil
 			}
 		}
+	}
+	// via-link: walk outbound link reach and check membership of the
+	// target group on the far side.
+	reach, err := LinkReachableTargetsFor(senderID)
+	if err != nil {
+		return nil, "", err
+	}
+	// Pick the link with the lowest id for determinism — matches the
+	// "first by name" convention used by SharedGroupsForConvs.
+	var bestVia *AgentGroup
+	var bestLinkID int64
+	bestReason := ""
+	for _, r := range reach {
+		members, err := ListAgentGroupMembers(r.Target.ID)
+		if err != nil {
+			continue
+		}
+		hit := false
+		for _, m := range members {
+			if m.ConvID == targetID {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			continue
+		}
+		if bestVia == nil || r.Link.ID < bestLinkID {
+			bestVia = r.Via
+			bestLinkID = r.Link.ID
+			bestReason = fmt.Sprintf("via-link:%d", r.Link.ID)
+		}
+	}
+	if bestVia != nil {
+		return bestVia, bestReason, nil
 	}
 	return nil, "", nil
 }

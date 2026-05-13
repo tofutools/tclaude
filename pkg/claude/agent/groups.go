@@ -48,6 +48,9 @@ func groupsCmd() *cobra.Command {
 			groupsRevokeOwnerCmd(),
 			groupsRenameCmd(),
 			groupsCloneCmd(),
+			groupsLinkCmd(),
+			groupsLinksAllCmd(),
+			groupsWhyCanMessageCmd(),
 		},
 	}.ToCobra()
 }
