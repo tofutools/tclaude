@@ -202,7 +202,20 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 
 		// Check if DB entry is fresh
 		if cached, ok := dbByID[convID]; ok && !opts.ForceRescan && cached.FileMtime >= fileMtime {
-			// DB is fresh, use cached data
+			// DB is fresh — but skip stub rows. Stubs are placeholder
+			// entries written when `parseJSONLSession` finds nothing
+			// useful in the .jsonl (e.g. agent-spawn artifacts that
+			// only carry `custom-title`/`agent-name` metadata lines
+			// with no timestamps or user messages). They have nothing
+			// meaningful to display — empty title, empty project,
+			// empty mtime — and resuming them just errors. We keep
+			// the stub row in the DB so we don't re-scan on every
+			// startup, but hide it from listings. `tclaude conv
+			// prune-empty` is the cleanup path for the underlying
+			// .jsonl files.
+			if isStubRow(cached) {
+				continue
+			}
 			entries = append(entries, dbRowToEntry(cached, fileSize))
 			continue
 		}
@@ -462,6 +475,9 @@ func isSystemInjectedMessage(text string) bool {
 // LoadEntriesFromDB loads conversation entries directly from the SQLite cache
 // without touching the filesystem. Used by watch mode for fast refreshes.
 // If projectPath is empty, loads all entries across all projects (global mode).
+// Stub rows (placeholder entries for .jsonl files that contained no real
+// session data; see isStubRow) are filtered out — same rationale as the
+// LoadSessionsIndexWithOptions cache path.
 func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 	var dbRows []*db.ConvIndexRow
 	var err error
@@ -476,9 +492,25 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 
 	entries := make([]SessionEntry, 0, len(dbRows))
 	for _, r := range dbRows {
+		if isStubRow(r) {
+			continue
+		}
 		entries = append(entries, dbRowToEntry(r, r.FileSize))
 	}
 	return entries, nil
+}
+
+// isStubRow reports whether a conv_index row is a stub — a placeholder
+// written when parseJSONLSession found no usable session data (no
+// message carried a timestamp). Stubs sit in the DB to skip pointless
+// re-scans on every startup but are hidden from listing surfaces.
+//
+// `Created` is the load-bearing signal: parseJSONLSession only returns
+// a non-nil entry when it observed at least one timestamped message,
+// and that timestamp is stored as Created. An empty Created therefore
+// uniquely identifies the stub path.
+func isStubRow(r *db.ConvIndexRow) bool {
+	return r != nil && r.Created == ""
 }
 
 // RefreshConvIndexEntry returns the conv_index row for convID, rescanning

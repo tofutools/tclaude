@@ -389,6 +389,63 @@ func TestLoadSessionsIndex_ScansJsonlOnDisk(t *testing.T) {
 	}
 }
 
+// Regression: agent-spawn artifacts — .jsonl files that only carry
+// preamble metadata (`last-prompt`, `custom-title`, `agent-name`,
+// `permission-mode`) with no timestamps — used to surface as ghost
+// rows in `conv ls` after the first scan stored them as stubs in
+// conv_index. Stubs must stay in the DB (so we don't pointlessly
+// re-scan them on every startup) but never reach listing surfaces.
+func TestLoadSessionsIndex_HidesStubFromAgentSpawnArtifact(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "128786c2-79dc-4366-8fed-6250a0d184c7"
+
+	// Faithful reproduction of one of the real-world stub files.
+	content := `{"type":"last-prompt","leafUuid":"83c7a0bc-42d3-4728-9804-c7bdf78f8019","sessionId":"` + sessionID + `"}
+{"type":"custom-title","customTitle":"dev-c-1","sessionId":"` + sessionID + `"}
+{"type":"agent-name","agentName":"dev-c-1","sessionId":"` + sessionID + `"}
+{"type":"permission-mode","permissionMode":"auto","sessionId":"` + sessionID + `"}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write jsonl: %v", err)
+	}
+
+	// First call: stub gets written to the DB.
+	idx, err := LoadSessionsIndex(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadSessionsIndex (first): %v", err)
+	}
+	if len(idx.Entries) != 0 {
+		t.Fatalf("first call: expected 0 entries (stub should not surface), got %d: %+v", len(idx.Entries), idx.Entries)
+	}
+
+	// Stub should be persisted so we don't re-scan on startup.
+	if row, err := db.GetConvIndex(sessionID); err != nil || row == nil {
+		t.Fatalf("stub row should be persisted in DB; row=%v err=%v", row, err)
+	} else if row.Created != "" {
+		t.Errorf("stub row Created should be empty, got %q", row.Created)
+	}
+
+	// Second call: hits the freshness-passes-cache branch. Stub must
+	// still be filtered out.
+	idx2, err := LoadSessionsIndex(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadSessionsIndex (second): %v", err)
+	}
+	if len(idx2.Entries) != 0 {
+		t.Fatalf("second call: expected 0 entries, got %d: %+v", len(idx2.Entries), idx2.Entries)
+	}
+
+	// LoadEntriesFromDB (the watch-mode fast path) must also filter.
+	dbEntries, err := LoadEntriesFromDB(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadEntriesFromDB: %v", err)
+	}
+	if len(dbEntries) != 0 {
+		t.Fatalf("LoadEntriesFromDB: expected 0 entries, got %d: %+v", len(dbEntries), dbEntries)
+	}
+}
+
 func TestCopyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
