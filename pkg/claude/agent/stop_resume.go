@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -213,12 +214,33 @@ func runDelete(p *deleteParams, stdout, stderr io.Writer, stdin io.Reader) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+
+	// 1. Resolve the selector up front so the prompt shows the actual
+	//    conv(s) about to be deleted. Ambiguous selectors (e.g. an alias
+	//    shared by an orphan and a fresh clone) become a batch delete —
+	//    we list every match before asking for confirmation.
+	targets, err := resolveDeleteTargets(selector)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if len(targets) == 0 {
+		fmt.Fprintf(stderr, "Error: no conversation matches %q\n", selector)
+		return rcNotFound
+	}
+
 	if !p.Yes {
-		// Read once on the daemon to surface what we're about to
-		// destroy. Cheap; kept here so the prompt is informative even
-		// when the daemon is the only place that knows the conv-id.
-		fmt.Fprintf(stdout, "About to permanently delete agent %q (every related row + the .jsonl).\n",
-			selector)
+		if len(targets) == 1 {
+			t := targets[0]
+			fmt.Fprintf(stdout, "About to permanently delete agent %s (%s).\n",
+				short(t.ConvID), describeTarget(t))
+		} else {
+			fmt.Fprintf(stdout, "Selector %q matches %d conversations — ALL will be deleted:\n",
+				selector, len(targets))
+			for _, t := range targets {
+				fmt.Fprintf(stdout, "  • %s — %s\n", short(t.ConvID), describeTarget(t))
+			}
+		}
 		if p.Force {
 			fmt.Fprintln(stdout, "--force is set: any live tmux session will be killed.")
 		}
@@ -231,8 +253,66 @@ func runDelete(p *deleteParams, stdout, stderr io.Writer, stdin io.Reader) int {
 			return rcOK
 		}
 	}
-	path := "/v1/agent/" + url.PathEscape(selector) + "/delete"
-	if p.Force {
+
+	// 2. Delete each target by its full conv-id so the daemon's resolver
+	//    can't re-ambiguate.
+	failed := 0
+	for _, t := range targets {
+		if rc := deleteOne(t.ConvID, p.Force, stdout, stderr); rc != rcOK {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return rcIOFailure
+	}
+	return rcOK
+}
+
+// resolveDeleteTargets resolves a selector to one or more conv-ids via
+// GET /v1/lookup. On a single match the daemon returns 200 + {conv_id};
+// on ambiguity it returns 409 + {candidates: [...]}.
+func resolveDeleteTargets(selector string) ([]*peerEntry, error) {
+	var single struct {
+		ConvID string `json:"conv_id"`
+	}
+	err := DaemonGet("/v1/lookup?selector="+url.QueryEscape(selector), &single)
+	if err == nil {
+		return []*peerEntry{{ConvID: single.ConvID}}, nil
+	}
+	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
+		var body struct {
+			Candidates []*peerEntry `json:"candidates"`
+		}
+		if jerr := json.Unmarshal(de.Raw, &body); jerr == nil && len(body.Candidates) > 0 {
+			return body.Candidates, nil
+		}
+	}
+	return nil, err
+}
+
+// describeTarget returns a short human-readable summary used in the
+// confirmation prompt: "<alias> in groups [a, b]" / "<title>" / "(unknown)".
+func describeTarget(t *peerEntry) string {
+	parts := []string{}
+	switch {
+	case t.Alias != "":
+		parts = append(parts, t.Alias)
+	case t.Title != "":
+		parts = append(parts, t.Title)
+	default:
+		parts = append(parts, "(unknown)")
+	}
+	if len(t.Groups) > 0 {
+		parts = append(parts, "in "+strings.Join(t.Groups, ","))
+	}
+	return strings.Join(parts, " ")
+}
+
+// deleteOne fires DELETE /v1/agent/{conv}/delete for a single conv-id
+// and prints the per-conv outcome. Returns the CLI rc for that delete.
+func deleteOne(convID string, force bool, stdout, stderr io.Writer) int {
+	path := "/v1/agent/" + url.PathEscape(convID) + "/delete"
+	if force {
 		path += "?force=1"
 	}
 	var resp struct {
@@ -245,15 +325,19 @@ func runDelete(p *deleteParams, stdout, stderr io.Writer, stdin io.Reader) int {
 		DBCounts          map[string]int `json:"db_counts"`
 	}
 	if err := DaemonRequest(http.MethodDelete, path, nil, &resp, DaemonOpts{}); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		fmt.Fprintf(stderr, "Error deleting %s: %v\n", short(convID), err)
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
 	if resp.PreStop != "" {
 		fmt.Fprintf(stdout, "  pre-stop: %s\n", resp.PreStop)
 	}
-	fmt.Fprintf(stdout, "  jsonl removed: %v\n", resp.JsonlRemoved)
-	fmt.Fprintf(stdout, "  session-env removed: %v\n", resp.SessionEnvRemoved)
+	if resp.JsonlRemoved {
+		fmt.Fprintln(stdout, "  jsonl removed: true")
+	}
+	if resp.SessionEnvRemoved {
+		fmt.Fprintln(stdout, "  session-env removed: true")
+	}
 	if len(resp.DBCounts) > 0 {
 		var nonZero []string
 		for k, v := range resp.DBCounts {
@@ -263,8 +347,6 @@ func runDelete(p *deleteParams, stdout, stderr io.Writer, stdin io.Reader) int {
 		}
 		if len(nonZero) > 0 {
 			fmt.Fprintf(stdout, "  db rows removed: %s\n", strings.Join(nonZero, ", "))
-		} else {
-			fmt.Fprintln(stdout, "  db rows removed: (none — already gone)")
 		}
 	}
 	if resp.CallerConv != "" {

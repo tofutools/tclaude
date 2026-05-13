@@ -76,9 +76,10 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	if _, ok := requireAgent(w, r); !ok {
-		return
-	}
+	// Open to humans as well as agents — selector resolution is a
+	// read-only conv_index lookup with no PII unique to one caller,
+	// and the CLI's `agent delete` uses this to preview matches
+	// before prompting the human for confirmation.
 	selector := r.URL.Query().Get("selector")
 	if selector == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing selector")
