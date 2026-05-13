@@ -509,7 +509,13 @@ func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 		}
 		return row
 	}
-	if info.ModTime().Unix() <= row.FileMtime {
+	// Both mtime AND size must match the cached values. mtime alone
+	// is insufficient — most filesystems report it at 1-second
+	// resolution, so two writes inside the same second leave mtime
+	// unchanged. The size check catches those (every JSONL append
+	// grows the file), and is essentially free since os.Stat already
+	// returned both.
+	if info.ModTime().Unix() <= row.FileMtime && info.Size() == row.FileSize {
 		return row
 	}
 	if ScanAndUpsertFile(row.FullPath) == nil {

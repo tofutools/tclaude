@@ -467,7 +467,9 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 			break
 		}
 	}
-	go runClonePostInit(newConv, cloneAlias, target, caller)
+	goBackground(func() {
+		runClonePostInit(newConv, cloneAlias, target, caller)
+	})
 
 	// 5. Optional follow-up. Same shape as reincarnate: enqueue an
 	// agent_messages row when there's at least one shared group,
@@ -488,10 +490,10 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 				slog.Warn("clone: insert handoff message failed", "error", err)
 			} else {
 				msgID = id
-				go deliverHandoffViaFlush(newConv)
+				goBackground(func() { deliverHandoffViaFlush(newConv) })
 			}
 		} else {
-			go injectFollowUpDirect(newConv, followUp)
+			goBackground(func() { injectFollowUpDirect(newConv, followUp) })
 		}
 	}
 

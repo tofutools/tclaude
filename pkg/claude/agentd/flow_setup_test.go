@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -24,6 +25,15 @@ import (
 // original LiveSpawner / LiveTmux at end of test.
 func newFlow(t *testing.T) *testharness.Flow {
 	t.Helper()
+
+	// Shrink the production waits to test-scale durations. Production
+	// uses 60s alive-timeout + 1s ready-delay to absorb CC startup
+	// jitter; under simulator-backed tests the new conv is alive
+	// instantly, so the long timing only ever makes test cleanup wait.
+	// Worst case (scenario never brings conv online) the post-init
+	// goroutine now bails in 200ms instead of 60s.
+	t.Cleanup(agentd.SetWaitTimingsForTest(300*time.Millisecond, 20*time.Millisecond))
+
 	w := testharness.New(t)
 	m := w.DefaultMocks(t)
 
@@ -37,6 +47,14 @@ func newFlow(t *testing.T) *testharness.Flow {
 	prevSpawn := agentd.Spawn
 	agentd.Spawn = m.Spawner
 	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	// Drain any post-init goroutines (spawn rename+welcome, clone
+	// rename) before the package-var restores and TempDir teardown
+	// run. Registered last → runs first (LIFO), so the goroutines
+	// still see the simulator-backed mocks and finish writing into
+	// $HOME/.tclaude before RemoveAll, and complete before the next
+	// test's db.ResetForTest races them inside db.Open's sync.Once.
+	t.Cleanup(agentd.WaitForBackgroundForTest)
 
 	return testharness.NewFlow(t, w,
 		agentd.BuildHandlerForTest(),
