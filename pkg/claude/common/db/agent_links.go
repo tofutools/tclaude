@@ -259,11 +259,13 @@ func LinkReachableTargetsFor(senderID string) ([]LinkReach, error) {
 	}
 
 	// Dedupe: a sender that is both member AND owner of the same
-	// group counts as "member" (member is the stronger role for
-	// outbound link purposes — satisfies both modes).
-	memberSet := make(map[int64]bool, len(memberGroups))
-	for _, g := range memberGroups {
-		memberSet[g.ID] = true
+	// group counts as "owner" — owner is the strictly stronger role
+	// for outbound link purposes (satisfies every mode "member" does
+	// plus owners->members). The original implementation inverted
+	// this and stranded dual-role senders behind owners-only links.
+	ownerSet := make(map[int64]bool, len(ownerGroupIDs))
+	for _, gid := range ownerGroupIDs {
+		ownerSet[gid] = true
 	}
 
 	type pair struct {
@@ -271,18 +273,19 @@ func LinkReachableTargetsFor(senderID string) ([]LinkReach, error) {
 		role  string // "member" | "owner"
 	}
 	var sources []pair
-	for _, g := range memberGroups {
-		sources = append(sources, pair{group: g, role: "member"})
-	}
+	// Owners first so dual-role groups end up tagged role="owner".
 	for _, gid := range ownerGroupIDs {
-		if memberSet[gid] {
-			continue
-		}
 		g, err := GetAgentGroupByID(gid)
 		if err != nil || g == nil {
 			continue
 		}
 		sources = append(sources, pair{group: g, role: "owner"})
+	}
+	for _, g := range memberGroups {
+		if ownerSet[g.ID] {
+			continue
+		}
+		sources = append(sources, pair{group: g, role: "member"})
 	}
 
 	var out []LinkReach

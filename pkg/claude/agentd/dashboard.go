@@ -546,31 +546,22 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 // collectLinksSnapshot enumerates every inter-group link, resolved to
-// group names. Returns an empty slice (not nil) so JS can safely call
-// .map() / .length without a guard.
+// group names. One DB hit for the group list (via loadGroupNames),
+// one for the link list; per-row lookups are map indexed. Returns an
+// empty slice (not nil) so JS can safely call .map() / .length
+// without a guard.
 func collectLinksSnapshot() []dashboardLink {
 	out := []dashboardLink{}
 	rows, err := db.ListAllAgentGroupLinks()
 	if err != nil {
 		return out
 	}
-	nameCache := map[int64]string{}
-	resolveName := func(id int64) string {
-		if n, ok := nameCache[id]; ok {
-			return n
-		}
-		name := ""
-		if g, err := db.GetAgentGroupByID(id); err == nil && g != nil {
-			name = g.Name
-		}
-		nameCache[id] = name
-		return name
-	}
+	names := loadGroupNames()
 	for _, l := range rows {
 		out = append(out, dashboardLink{
 			ID:        l.ID,
-			From:      resolveName(l.FromGroupID),
-			To:        resolveName(l.ToGroupID),
+			From:      names[l.FromGroupID],
+			To:        names[l.ToGroupID],
 			Mode:      l.Mode,
 			CreatedAt: l.CreatedAt.Format(time.RFC3339),
 		})

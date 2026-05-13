@@ -221,6 +221,41 @@ func TestCanSenderReachTarget_OwnerOnlyMode(t *testing.T) {
 	}
 }
 
+// TestCanSenderReachTarget_DualRole: a conv that is BOTH a member and
+// an owner of the source group should be treated as an owner for link-
+// traversal purposes. Owner is the stronger role (satisfies every mode
+// "member" does plus owners->members), so an owners->members link is
+// reachable.
+//
+// Regression: original LinkReachableTargetsFor kept the member role,
+// stranding dual-role senders behind owners-only links they should
+// have been able to use.
+func TestCanSenderReachTarget_DualRole(t *testing.T) {
+	setupTestDB(t)
+	mgmt, _ := CreateAgentGroup("mgmt", "")
+	floor, _ := CreateAgentGroup("floor", "")
+
+	// alice is both a member AND an owner of mgmt.
+	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: mgmt, ConvID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddAgentGroupOwner(mgmt, "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: floor, ConvID: "worker"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InsertAgentGroupLink(mgmt, floor, LinkModeOwnersToMembers, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	via, reason, _ := CanSenderReachTarget("alice", "worker")
+	if via == nil || via.Name != "mgmt" {
+		t.Errorf("alice (member+owner) → worker via owners->members link should succeed, got via=%+v reason=%q",
+			via, reason)
+	}
+}
+
 // TestCanSenderReachTarget_SharedGroupPriority: when the sender shares
 // a group with the target AND a link reaches them, shared-group wins
 // (auth log stability).

@@ -26,9 +26,10 @@ func handleLinksAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	names := loadGroupNames()
 	out := make([]linkJSON, 0, len(links))
 	for _, l := range links {
-		out = append(out, toLinkJSON(l))
+		out = append(out, toLinkJSON(l, names))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -129,24 +130,37 @@ type linkJSON struct {
 	ByConv    string `json:"by_conv,omitempty"`
 }
 
-func toLinkJSON(l *db.AgentGroupLink) linkJSON {
-	from, _ := db.GetAgentGroupByID(l.FromGroupID)
-	to, _ := db.GetAgentGroupByID(l.ToGroupID)
-	fromName, toName := "", ""
-	if from != nil {
-		fromName = from.Name
-	}
-	if to != nil {
-		toName = to.Name
-	}
+// toLinkJSON renders a link row for the wire. `names` is a preloaded
+// group-id→name map (see loadGroupNames) so a list of N links does
+// 1 DB roundtrip total instead of 2N. Empty string is rendered when
+// the referenced group is missing (deleted between fetch and resolve
+// — shouldn't happen under FK CASCADE but the wire form stays valid
+// either way).
+func toLinkJSON(l *db.AgentGroupLink, names map[int64]string) linkJSON {
 	return linkJSON{
 		ID:        l.ID,
-		From:      fromName,
-		To:        toName,
+		From:      names[l.FromGroupID],
+		To:        names[l.ToGroupID],
 		Mode:      l.Mode,
 		CreatedAt: l.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		ByConv:    l.ByConv,
 	}
+}
+
+// loadGroupNames returns id→name for every group. Used by the link
+// list handlers to resolve from/to references without per-row lookups.
+// Errors are swallowed so a transient DB hiccup just shows the names
+// as empty strings rather than blocking the whole response.
+func loadGroupNames() map[int64]string {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return map[int64]string{}
+	}
+	out := make(map[int64]string, len(groups))
+	for _, g := range groups {
+		out[g.ID] = g.Name
+	}
+	return out
 }
 
 // handleGroupLinks dispatches GET / POST / PATCH / DELETE under
@@ -191,9 +205,10 @@ func handleGroupLinksList(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	names := loadGroupNames()
 	out := make([]linkJSON, 0, len(links))
 	for _, l := range links {
-		out = append(out, toLinkJSON(l))
+		out = append(out, toLinkJSON(l, names))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -271,12 +286,10 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 // are immutable here — re-pointing an edge is logically delete + new,
 // which the regular endpoints already cover. Auth reuses
 // PermGroupsLinkAdd (editing terms is a recreate-shaped action; an
-// owner of the FROM group passes without the slug). 409 on collision
-// with another existing row.
+// owner of g passes without the slug ONLY when g is the link's FROM
+// side — the owner-bypass is outbound-only). 409 on collision with
+// another existing row.
 func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
-	if _, ok := requireGroupLinkAuthority(w, r, g, PermGroupsLinkAdd); !ok {
-		return
-	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "link id must be integer")
@@ -291,12 +304,15 @@ func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id))
 		return
 	}
-	// URL-scoping: the link must touch g (FROM or TO), same convention
-	// as DELETE. Lets the dispatcher keep `/groups/{g}/links/{id}`
-	// meaningful.
+	// URL-scoping: the link must touch g (FROM or TO).
 	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
 		writeError(w, http.StatusNotFound, "not_found",
 			fmt.Sprintf("link %d does not touch group %q", id, g.Name))
+		return
+	}
+	// Auth: now that we know which side of the link g is on, apply
+	// the owner-bypass-only-when-g-is-FROM rule.
+	if _, ok := requireScopedLinkAuthority(w, r, g, link, PermGroupsLinkAdd); !ok {
 		return
 	}
 	var body struct {
@@ -336,9 +352,6 @@ func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentG
 }
 
 func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
-	if _, ok := requireGroupLinkAuthority(w, r, g, PermGroupsLinkRm); !ok {
-		return
-	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "link id must be integer")
@@ -353,13 +366,19 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id))
 		return
 	}
-	// Defensive: reject deletes scoped under a group that doesn't
-	// participate in the link. Lets the dispatcher keep the URL shape
-	// "/groups/{g}/links/{id}" meaningful — id is namespaced under the
-	// group the caller authenticated against.
+	// URL-scoping: reject deletes scoped under a group that doesn't
+	// participate in the link. Keeps `/groups/{g}/links/{id}`
+	// meaningful — id is namespaced under the group the caller
+	// authenticated against.
 	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
 		writeError(w, http.StatusNotFound, "not_found",
 			fmt.Sprintf("link %d does not touch group %q", id, g.Name))
+		return
+	}
+	// Auth: owner-bypass-only-when-g-is-FROM. Owners of the TO side
+	// must hold groups.link.rm — they can't unilaterally cut their
+	// inbound channels.
+	if _, ok := requireScopedLinkAuthority(w, r, g, link, PermGroupsLinkRm); !ok {
 		return
 	}
 	n, err := db.DeleteAgentGroupLink(id)
@@ -375,17 +394,19 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// requireGroupLinkAuthority gates link-mutating endpoints. Caller
-// passes if:
+// requireGroupLinkAuthority gates link-create (POST) where g is the
+// FROM side of the link by construction. Caller passes if:
 //   - they are human (no claude ancestor), OR
-//   - they are an owner of g (the FROM side of the link), OR
-//   - they hold the requested slug (PermGroupsLinkAdd / PermGroupsLinkRm),
-//     possibly via the X-Tclaude-Ask-Human popup escape hatch.
+//   - they are an owner of g (the FROM group), OR
+//   - they hold the requested slug, possibly via the X-Tclaude-Ask-Human
+//     popup escape hatch.
 //
-// Owner-of-from-side is intentionally one-sided: an owner of A can
-// open outbound channels from A unilaterally, mirroring the owner-as-
-// super-member semantics already used for messaging. Mutating links
-// where g is the destination still requires the slug.
+// Owner-of-FROM is intentionally one-sided: an owner of A can open
+// outbound channels from A unilaterally, mirroring the owner-as-super-
+// member semantics already used for messaging. Mutating links where g
+// is the destination still requires the slug — see
+// requireScopedLinkAuthority for the PATCH/DELETE path that has to
+// look at the actual link direction.
 //
 // We probe ownership first (no side effects) so that an owner caller
 // never triggers the slug-denied error path. If neither human nor
@@ -402,6 +423,30 @@ func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.Age
 		return "", true
 	}
 	if p.ConvID != "" {
+		isOwner, err := db.IsAgentGroupOwner(g.ID, p.ConvID)
+		if err == nil && isOwner {
+			return p.ConvID, true
+		}
+	}
+	return requirePermission(w, r, perm)
+}
+
+// requireScopedLinkAuthority is the PATCH/DELETE variant: the link is
+// already fetched, so we know whether g is the FROM or TO side. The
+// owner-of-g bypass ONLY applies when g is the FROM side of the
+// supplied link. Owners of the TO side must hold the slug — they can't
+// unilaterally manage links that point INTO their group.
+func requireScopedLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, link *db.AgentGroupLink, perm string) (string, bool) {
+	p := peerFromContext(r.Context())
+	if p.PID == 0 {
+		writeError(w, http.StatusUnauthorized, "auth",
+			"could not determine peer PID; refusing to evaluate permission")
+		return "", false
+	}
+	if !p.HasClaudeAncestor {
+		return "", true
+	}
+	if p.ConvID != "" && link != nil && link.FromGroupID == g.ID {
 		isOwner, err := db.IsAgentGroupOwner(g.ID, p.ConvID)
 		if err == nil && isOwner {
 			return p.ConvID, true

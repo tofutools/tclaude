@@ -211,8 +211,12 @@ func runGroupsLinkAdd(p *groupsLinkAddParams, stdout, stderr io.Writer) int {
 	if rev, ok := resp["reverse_id"]; ok {
 		fmt.Fprintf(stdout, "  + reverse link: %v\n", rev)
 	}
+	// Partial-failure: forward succeeded, reverse failed (and wasn't
+	// a benign already-exists). Surface a non-zero rc so automation
+	// can distinguish this from a clean success.
 	if revErr, ok := resp["reverse_error"]; ok {
 		fmt.Fprintf(stderr, "  (reverse link failed: %v)\n", revErr)
+		return rcIOFailure
 	}
 	return rcOK
 }
