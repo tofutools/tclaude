@@ -31,13 +31,17 @@ func TestDBCache_FreshEntryNotRescanned(t *testing.T) {
 
 	info, _ := os.Stat(jsonlPath)
 
-	// Pre-populate DB with entry that has matching mtime
+	// Pre-populate DB with entry that has matching mtime. Created is
+	// set because a real (non-stub) row always has a firstTimestamp
+	// from parseJSONLSession — listing surfaces filter rows where
+	// Created is empty (see isStubRow).
 	if err := db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      sessionID,
 		ProjectDir:  dir,
 		FullPath:    jsonlPath,
 		FileMtime:   info.ModTime().Unix(),
 		FirstPrompt: "cached prompt",
+		Created:     "2026-03-01T10:00:00Z",
 		IndexedAt:   info.ModTime(),
 	}); err != nil {
 		t.Fatal(err)
