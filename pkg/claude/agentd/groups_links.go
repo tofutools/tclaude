@@ -149,7 +149,7 @@ func toLinkJSON(l *db.AgentGroupLink) linkJSON {
 	}
 }
 
-// handleGroupLinks dispatches GET / POST / DELETE under
+// handleGroupLinks dispatches GET / POST / PATCH / DELETE under
 // /v1/groups/{name}/links[/{id}].
 func handleGroupLinks(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, rest []string) {
 	switch r.Method {
@@ -157,6 +157,12 @@ func handleGroupLinks(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, 
 		handleGroupLinksList(w, r, g)
 	case http.MethodPost:
 		handleGroupLinksAdd(w, r, g)
+	case http.MethodPatch:
+		if len(rest) < 1 || rest[0] == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "missing link id")
+			return
+		}
+		handleGroupLinksUpdate(w, r, g, rest[0])
 	case http.MethodDelete:
 		if len(rest) < 1 || rest[0] == "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "missing link id")
@@ -164,7 +170,7 @@ func handleGroupLinks(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, 
 		}
 		handleGroupLinksRemove(w, r, g, rest[0])
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, or DELETE")
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, PATCH, or DELETE")
 	}
 }
 
@@ -259,6 +265,74 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGroupLinksUpdate changes the mode of an existing link. From/to
+// are immutable here — re-pointing an edge is logically delete + new,
+// which the regular endpoints already cover. Auth reuses
+// PermGroupsLinkAdd (editing terms is a recreate-shaped action; an
+// owner of the FROM group passes without the slug). 409 on collision
+// with another existing row.
+func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
+	if _, ok := requireGroupLinkAuthority(w, r, g, PermGroupsLinkAdd); !ok {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "link id must be integer")
+		return
+	}
+	link, err := db.GetAgentGroupLinkByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if link == nil {
+		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id))
+		return
+	}
+	// URL-scoping: the link must touch g (FROM or TO), same convention
+	// as DELETE. Lets the dispatcher keep `/groups/{g}/links/{id}`
+	// meaningful.
+	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
+		writeError(w, http.StatusNotFound, "not_found",
+			fmt.Sprintf("link %d does not touch group %q", id, g.Name))
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if !db.ValidLinkMode(mode) {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("unknown mode %q (supported: %s, %s)",
+				mode, db.LinkModeMembersToMembers, db.LinkModeOwnersToMembers))
+		return
+	}
+	if mode == link.Mode {
+		// No-op; report success without touching the row.
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": false})
+		return
+	}
+	n, err := db.UpdateAgentGroupLinkMode(id, mode)
+	if err != nil {
+		if errors.Is(err, db.ErrLinkExists) {
+			writeError(w, http.StatusConflict, "exists",
+				"another link with the same from/to/mode already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": true})
 }
 
 func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {

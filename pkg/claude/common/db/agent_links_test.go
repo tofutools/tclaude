@@ -55,6 +55,58 @@ func TestAgentGroupLink_InvalidModeRejected(t *testing.T) {
 	}
 }
 
+// TestAgentGroupLink_UpdateMode: changing mode succeeds, rejects unknown
+// modes, and surfaces ErrLinkExists on collision with another row.
+func TestAgentGroupLink_UpdateMode(t *testing.T) {
+	setupTestDB(t)
+	a, _ := CreateAgentGroup("alpha", "")
+	b, _ := CreateAgentGroup("beta", "")
+
+	id, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := UpdateAgentGroupLinkMode(id, LinkModeOwnersToMembers)
+	if err != nil || n != 1 {
+		t.Fatalf("UpdateAgentGroupLinkMode = %d %v", n, err)
+	}
+	got, err := GetAgentGroupLinkByID(id)
+	if err != nil || got == nil || got.Mode != LinkModeOwnersToMembers {
+		t.Fatalf("post-update link = %+v %v", got, err)
+	}
+
+	// Unknown mode rejected; row unchanged.
+	if _, err := UpdateAgentGroupLinkMode(id, "garbage"); err == nil {
+		t.Errorf("invalid mode should reject")
+	}
+	if got, _ := GetAgentGroupLinkByID(id); got == nil || got.Mode != LinkModeOwnersToMembers {
+		t.Errorf("invalid update should leave row unchanged, got %+v", got)
+	}
+
+	// Insert a second row at the new mode, then try to update the
+	// first into the same triple — should hit the UNIQUE constraint
+	// and surface ErrLinkExists.
+	id2, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateAgentGroupLinkMode(id2, LinkModeOwnersToMembers); !errors.Is(err, ErrLinkExists) {
+		t.Errorf("collision update err = %v, want ErrLinkExists", err)
+	}
+
+	// Update to the same mode is a no-op (rows-affected = 0 on SQLite
+	// when nothing changes; the helper still returns the count).
+	if _, err := UpdateAgentGroupLinkMode(id, LinkModeOwnersToMembers); err != nil {
+		t.Errorf("no-op update err = %v", err)
+	}
+
+	// Updating a missing id returns 0 rows + no error.
+	if n, err := UpdateAgentGroupLinkMode(9999, LinkModeMembersToMembers); err != nil || n != 0 {
+		t.Errorf("missing id update = %d %v, want 0 nil", n, err)
+	}
+}
+
 // TestAgentGroupLink_DeleteAndCascade: explicit delete works; deleting
 // the source group cascades.
 func TestAgentGroupLink_DeleteAndCascade(t *testing.T) {

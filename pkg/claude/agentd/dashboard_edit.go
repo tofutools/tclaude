@@ -354,9 +354,171 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.Error(w, "POST or DELETE", http.StatusMethodNotAllowed)
 		}
+	case "links":
+		// /api/groups/{name}/links         — POST: add link (body {to, mode?, bidir?})
+		// /api/groups/{name}/links/{id}    — PATCH (body {mode}) | DELETE
+		if len(parts) < 3 || parts[2] == "" {
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST /api/groups/{name}/links or PATCH/DELETE /api/groups/{name}/links/{id}", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardAddLink(w, r, g)
+			return
+		}
+		switch r.Method {
+		case http.MethodPatch:
+			dashboardUpdateLink(w, r, g, parts[2])
+		case http.MethodDelete:
+			dashboardRemoveLink(w, g, parts[2])
+		default:
+			http.Error(w, "PATCH or DELETE", http.StatusMethodNotAllowed)
+		}
 	default:
 		http.Error(w, "unknown endpoint /api/groups/{name}/"+parts[1], http.StatusNotFound)
 	}
+}
+
+// dashboardAddLink mirrors handleGroupLinksAdd on the daemon socket
+// side, but trusts the cookie-auth caller (the dashboard is human-only)
+// and writes through the DB helpers directly. Body: {to, mode?, bidir?}.
+func dashboardAddLink(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	var body struct {
+		To    string `json:"to"`
+		Mode  string `json:"mode"`
+		Bidir bool   `json:"bidir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.To = strings.TrimSpace(body.To)
+	if body.To == "" {
+		http.Error(w, "missing to (target group name)", http.StatusBadRequest)
+		return
+	}
+	to, err := db.GetAgentGroupByName(body.To)
+	if err != nil {
+		http.Error(w, "lookup target: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if to == nil {
+		http.Error(w, "no such target group "+body.To, http.StatusNotFound)
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if mode == "" {
+		mode = db.LinkModeMembersToMembers
+	}
+	if !db.ValidLinkMode(mode) {
+		http.Error(w, "unknown link mode "+mode, http.StatusBadRequest)
+		return
+	}
+	id, err := db.InsertAgentGroupLink(g.ID, to.ID, mode, dashboardGranter)
+	if err != nil {
+		if errors.Is(err, db.ErrLinkExists) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, "add link: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	out := map[string]any{"id": id, "from": g.Name, "to": to.Name, "mode": mode}
+	if body.Bidir {
+		revID, err := db.InsertAgentGroupLink(to.ID, g.ID, mode, dashboardGranter)
+		switch {
+		case err == nil:
+			out["reverse_id"] = revID
+		case errors.Is(err, db.ErrLinkExists):
+			out["reverse_id"] = "already-exists"
+		default:
+			out["reverse_error"] = err.Error()
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// dashboardUpdateLink: PATCH /api/groups/{name}/links/{id} body {mode}.
+func dashboardUpdateLink(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "link id must be integer", http.StatusBadRequest)
+		return
+	}
+	link, err := db.GetAgentGroupLinkByID(id)
+	if err != nil {
+		http.Error(w, "lookup link: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if link == nil {
+		http.Error(w, "no such link", http.StatusNotFound)
+		return
+	}
+	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
+		http.Error(w, "link does not touch this group", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if !db.ValidLinkMode(mode) {
+		http.Error(w, "unknown link mode "+mode, http.StatusBadRequest)
+		return
+	}
+	if mode == link.Mode {
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": false})
+		return
+	}
+	n, err := db.UpdateAgentGroupLinkMode(id, mode)
+	if err != nil {
+		if errors.Is(err, db.ErrLinkExists) {
+			http.Error(w, "another link with the same from/to/mode already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, "update link: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "no such link", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": true})
+}
+
+// dashboardRemoveLink: DELETE /api/groups/{name}/links/{id}.
+func dashboardRemoveLink(w http.ResponseWriter, g *db.AgentGroup, idStr string) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "link id must be integer", http.StatusBadRequest)
+		return
+	}
+	link, err := db.GetAgentGroupLinkByID(id)
+	if err != nil {
+		http.Error(w, "lookup link: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if link == nil {
+		http.Error(w, "no such link", http.StatusNotFound)
+		return
+	}
+	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
+		http.Error(w, "link does not touch this group", http.StatusNotFound)
+		return
+	}
+	n, err := db.DeleteAgentGroupLink(id)
+	if err != nil {
+		http.Error(w, "delete link: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "no such link", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func dashboardDeleteGroup(w http.ResponseWriter, name string) {

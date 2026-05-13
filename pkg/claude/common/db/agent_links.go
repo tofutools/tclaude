@@ -81,6 +81,31 @@ func isUniqueConstraintErr(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
+// UpdateAgentGroupLinkMode changes the mode of an existing link. The
+// only mutable field on a link — changing from/to is conceptually
+// "delete + recreate" and goes through the regular endpoints. Returns
+// ErrLinkExists when the new (from, to, mode) triple collides with
+// another row, mirroring InsertAgentGroupLink. Returns the number of
+// rows updated (0 when id didn't exist).
+func UpdateAgentGroupLinkMode(id int64, mode string) (int64, error) {
+	if !ValidLinkMode(mode) {
+		return 0, fmt.Errorf("invalid link mode %q", mode)
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE agent_group_links SET mode = ? WHERE id = ?`, mode, id)
+	if err != nil {
+		if isUniqueConstraintErr(err) {
+			return 0, ErrLinkExists
+		}
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // DeleteAgentGroupLink removes the link with the given id. Returns the
 // number of rows affected (0 when the id didn't exist).
 func DeleteAgentGroupLink(id int64) (int64, error) {

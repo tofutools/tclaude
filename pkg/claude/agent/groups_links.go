@@ -41,6 +41,7 @@ func groupsLinkCmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			groupsLinkLsCmd(),
 			groupsLinkAddCmd(),
+			groupsLinkSetModeCmd(),
 			groupsLinkRmCmd(),
 		},
 	}.ToCobra()
@@ -212,6 +213,61 @@ func runGroupsLinkAdd(p *groupsLinkAddParams, stdout, stderr io.Writer) int {
 	}
 	if revErr, ok := resp["reverse_error"]; ok {
 		fmt.Fprintf(stderr, "  (reverse link failed: %v)\n", revErr)
+	}
+	return rcOK
+}
+
+// --- groups link set-mode ---
+
+type groupsLinkSetModeParams struct {
+	Group    string `pos:"true" help:"Group the link is scoped to (FROM or TO side)"`
+	ID       string `pos:"true" help:"Link id (numeric, from 'groups link ls')"`
+	Mode     string `pos:"true" help:"New mode: members->members | owners->members"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout."`
+}
+
+func groupsLinkSetModeCmd() *cobra.Command {
+	return boa.CmdT[groupsLinkSetModeParams]{
+		Use:         "set-mode",
+		Short:       "Change the mode of an existing link",
+		Long:        "Only the link's mode is mutable; from/to are immutable (re-pointing an edge is delete + re-add). Requires `groups.link.add` for agents not owning the FROM group.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsLinkSetModeParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsLinkSetModeParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsLinkSetMode(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsLinkSetMode(p *groupsLinkSetModeParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(p.ID), 10, 64)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: link id must be numeric, got %q\n", p.ID)
+		return rcInvalidArg
+	}
+	dur, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	opts := DaemonOpts{AskHuman: dur}
+	path := "/v1/groups/" + url.PathEscape(p.Group) + "/links/" + strconv.FormatInt(id, 10)
+	body := map[string]any{"mode": p.Mode}
+	var resp map[string]any
+	if err := DaemonRequest("PATCH", path, body, &resp, opts); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if changed, _ := resp["changed"].(bool); changed {
+		fmt.Fprintf(stdout, "link %d mode set to %s\n", id, p.Mode)
+	} else {
+		fmt.Fprintf(stdout, "link %d already has mode %s; no change\n", id, p.Mode)
 	}
 	return rcOK
 }

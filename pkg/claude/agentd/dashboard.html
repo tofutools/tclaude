@@ -71,6 +71,10 @@ details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[open] > summary::before { content: "▼ "; }
 .subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
+.group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
+.group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
+.group-links-section > table { margin: 4px 0 6px 0; }
+.group-links-section > button { margin-left: 6px; }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
@@ -519,6 +523,8 @@ summary.dnd-drop-over.dnd-effect-clone {
       <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-links-count"></span>
       <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
     </div>
     <div id="links-list"></div>
   </section>
@@ -727,6 +733,36 @@ summary.dnd-drop-over.dnd-effect-clone {
       <button id="group-create-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="group-create-submit" class="primary" type="button">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="link-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="link-modal-title">
+    <h3 id="link-modal-title">Add inter-group link</h3>
+    <div class="modal-meta" id="link-modal-meta" style="display:none"></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">From</span>
+      <select id="link-modal-from"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">To</span>
+      <select id="link-modal-to"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Mode</span>
+      <select id="link-modal-mode">
+        <option value="members-&gt;members">members → members (any member of FROM may message any member of TO)</option>
+        <option value="owners-&gt;members">owners → members (only owners of FROM may message members of TO)</option>
+      </select>
+    </label>
+    <label class="cron-create-enabled" id="link-modal-bidir-row" title="Also create the reverse link (TO → FROM) with the same mode in one call.">
+      <input id="link-modal-bidir" type="checkbox" /> Also create reverse link (TO → FROM)
+    </label>
+    <div class="cron-create-error" id="link-modal-error"></div>
+    <div class="modal-buttons">
+      <button id="link-modal-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="link-modal-submit" class="primary" type="button">Create link</button>
     </div>
   </div>
 </div>
@@ -1031,11 +1067,62 @@ summary.dnd-drop-over.dnd-effect-clone {
               }).join('')}
             </tbody>
           </table>`}
+          ${renderGroupLinksSection(g.name)}
           <code class="copy-cmd" data-copy="tclaude agent groups members ${g.name}">tclaude agent groups members ${esc(g.name)}</code>
         </div>
       </details>
     `;
     }).join('');
+  }
+
+  // renderGroupLinksSection: per-group outbound/inbound link rows. Reads
+  // from lastSnapshot.links (the snapshot already carries every edge)
+  // so we don't need a second round-trip. Edit/delete buttons hit the
+  // shared row-action dispatcher; add opens the link modal preset to
+  // FROM=this group.
+  function renderGroupLinksSection(groupName) {
+    const all = (lastSnapshot && lastSnapshot.links) || [];
+    const out = all.filter(l => l.from === groupName);
+    const inc = all.filter(l => l.to === groupName);
+    const total = out.length + inc.length;
+    if (total === 0) {
+      return `
+        <div class="group-links-section">
+          <span class="muted" style="font-size:11px">No links involving this group.</span>
+          <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="Add an outbound link from this group">+ link</button>
+        </div>
+      `;
+    }
+    const renderRow = (l, dir) => {
+      const other = dir === 'out' ? l.to : l.from;
+      const arrow = dir === 'out' ? '→' : '←';
+      return `
+        <tr>
+          <td><span class="muted">${arrow}</span></td>
+          <td><span class="alias">${esc(other || '(deleted)')}</span></td>
+          <td><span class="id">${esc(l.mode)}</span></td>
+          <td><div class="row-actions">
+            <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
+            <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(groupName)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">×</button>
+          </div></td>
+        </tr>
+      `;
+    };
+    return `
+      <div class="group-links-section">
+        <strong style="font-size:11px">Links</strong>
+        <table>
+          <thead>
+            <tr><th></th><th>Other group</th><th>Mode</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${out.map(l => renderRow(l, 'out')).join('')}
+            ${inc.map(l => renderRow(l, 'in')).join('')}
+          </tbody>
+        </table>
+        <button data-act="link-new" data-from="${esc(groupName)}" data-label="${esc(groupName)}" title="Add an outbound link from this group">+ link</button>
+      </div>
+    `;
   }
 
   function renderAgents(agents) {
@@ -1395,12 +1482,12 @@ summary.dnd-drop-over.dnd-effect-clone {
   // who can message whom.
   function renderLinks(rows) {
     if (!rows || !rows.length) {
-      return '<div class="empty">No inter-group links yet. Create one with: <code>tclaude agent groups link add &lt;from&gt; &lt;to&gt; [--bidir]</code></div>';
+      return '<div class="empty">No inter-group links yet. Create one with the <strong>+ new link</strong> button above, or: <code>tclaude agent groups link add &lt;from&gt; &lt;to&gt; [--bidir]</code></div>';
     }
     return `
       <table>
         <thead>
-          <tr><th>ID</th><th>From</th><th></th><th>To</th><th>Mode</th><th>Created</th></tr>
+          <tr><th>ID</th><th>From</th><th></th><th>To</th><th>Mode</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
           ${rows.map(l => `
@@ -1411,6 +1498,10 @@ summary.dnd-drop-over.dnd-effect-clone {
               <td><span class="alias">${esc(l.to || '(deleted)')}</span></td>
               <td><span class="id">${esc(l.mode)}</span></td>
               <td><span class="muted">${esc(relTime(l.created_at) || '')}</span></td>
+              <td><div class="row-actions">
+                <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
+                <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(l.from)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">delete</button>
+              </div></td>
             </tr>
           `).join('')}
         </tbody>
@@ -2116,6 +2207,149 @@ summary.dnd-drop-over.dnd-effect-clone {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#group-create-modal').classList.contains('show')) {
         closeGroupCreateModal();
+      }
+    });
+  }
+
+  // ---- Link modal (create + edit) ----------------------------------------
+  //
+  // One modal, two states:
+  //   openLinkModal({ mode: 'create', preset: {from?, to?, linkMode?} })
+  //   openLinkModal({ mode: 'edit', linkID, preset: {from, to, linkMode} })
+  //
+  // Create posts to /api/groups/{from}/links with body {to, mode, bidir?};
+  // edit patches /api/groups/{from-or-to}/links/{linkID} with {mode}.
+  // Edit hides from/to fields (those are immutable on a link) and the
+  // bidir checkbox (no meaning when editing a single existing row).
+
+  let linkModalState = { mode: 'create', linkID: null };
+
+  function openLinkModal(opts) {
+    opts = opts || {};
+    const state = opts.mode === 'edit' ? 'edit' : 'create';
+    const preset = opts.preset || {};
+    linkModalState = { mode: state, linkID: opts.linkID || null, fromForEdit: preset.from || '' };
+    const groups = ((lastSnapshot && lastSnapshot.groups) || []).map(g => g.name);
+    const fromSel = $('#link-modal-from');
+    const toSel = $('#link-modal-to');
+    fromSel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    toSel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    // Defensive: paste in preset values that aren't in the snapshot yet.
+    for (const [sel, val] of [[fromSel, preset.from], [toSel, preset.to]]) {
+      if (val && ![...sel.options].some(o => o.value === val)) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = val;
+        sel.appendChild(opt);
+      }
+    }
+    if (preset.from) fromSel.value = preset.from;
+    else if (groups.length) fromSel.value = groups[0];
+    if (preset.to) toSel.value = preset.to;
+    else if (groups.length > 1) toSel.value = groups[1];
+
+    $('#link-modal-mode').value = preset.linkMode || 'members->members';
+    $('#link-modal-bidir').checked = false;
+    $('#link-modal-error').textContent = '';
+
+    const title = $('#link-modal-title');
+    const meta = $('#link-modal-meta');
+    const submit = $('#link-modal-submit');
+    const bidirRow = $('#link-modal-bidir-row');
+    if (state === 'edit') {
+      title.textContent = 'Edit link mode';
+      meta.textContent = `#${opts.linkID} · ${preset.from} → ${preset.to}`;
+      meta.style.display = '';
+      submit.textContent = 'Save changes';
+      // From/To are immutable when editing — show as disabled.
+      fromSel.disabled = true;
+      toSel.disabled = true;
+      bidirRow.style.display = 'none';
+    } else {
+      title.textContent = 'Add inter-group link';
+      meta.style.display = 'none';
+      submit.textContent = 'Create link';
+      fromSel.disabled = !!preset.from; // fix FROM when invoked from a group card
+      toSel.disabled = false;
+      bidirRow.style.display = '';
+    }
+
+    $('#link-modal').classList.add('show');
+    setTimeout(() => {
+      if (state === 'edit') $('#link-modal-mode').focus();
+      else if (preset.from && !preset.to) toSel.focus();
+      else fromSel.focus();
+    }, 0);
+  }
+
+  function closeLinkModal() {
+    $('#link-modal').classList.remove('show');
+  }
+
+  async function submitLinkModal() {
+    const state = linkModalState.mode;
+    const errEl = $('#link-modal-error');
+    errEl.textContent = '';
+    const submit = $('#link-modal-submit');
+    const mode = $('#link-modal-mode').value;
+    submit.disabled = true;
+    try {
+      if (state === 'edit') {
+        const id = linkModalState.linkID;
+        const scope = linkModalState.fromForEdit || $('#link-modal-from').value;
+        const r = await fetch(`/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        });
+        if (!r.ok) {
+          errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+          return;
+        }
+        closeLinkModal();
+        toast(`link #${id} mode → ${mode}`);
+      } else {
+        const from = $('#link-modal-from').value;
+        const to = $('#link-modal-to').value;
+        if (!from || !to) {
+          errEl.textContent = 'from and to are required';
+          return;
+        }
+        if (from === to) {
+          errEl.textContent = 'from and to must differ — use group membership for intra-group comm';
+          return;
+        }
+        const bidir = $('#link-modal-bidir').checked;
+        const r = await fetch(`/api/groups/${encodeURIComponent(from)}/links`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, mode, bidir }),
+        });
+        if (!r.ok) {
+          errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+          return;
+        }
+        closeLinkModal();
+        toast(`linked: ${from} → ${to}${bidir ? ' (+reverse)' : ''}`);
+      }
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  function bindLinkModal() {
+    $('#link-new-open').addEventListener('click', () => openLinkModal({ mode: 'create' }));
+    $('#link-modal-cancel').addEventListener('click', closeLinkModal);
+    $('#link-modal-submit').addEventListener('click', submitLinkModal);
+    $('#link-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'link-modal') closeLinkModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#link-modal').classList.contains('show')) {
+        closeLinkModal();
       }
     });
   }
@@ -3248,6 +3482,44 @@ summary.dnd-drop-over.dnd-effect-clone {
             openCronCreateModal(prefill);
             return;
           }
+          case 'link-new': {
+            // From per-group "+ link" button: preset FROM to the
+            // current group so the user only has to pick TO.
+            const from = btn.getAttribute('data-from') || '';
+            openLinkModal({ mode: 'create', preset: { from } });
+            return;
+          }
+          case 'link-edit': {
+            const id = btn.getAttribute('data-id');
+            const from = btn.getAttribute('data-from') || '';
+            const to = btn.getAttribute('data-to') || '';
+            const linkMode = btn.getAttribute('data-mode') || '';
+            openLinkModal({ mode: 'edit', linkID: id, preset: { from, to, linkMode } });
+            return;
+          }
+          case 'link-delete': {
+            const id = btn.getAttribute('data-id');
+            const from = btn.getAttribute('data-from') || '';
+            const to = btn.getAttribute('data-to') || '';
+            // The dashboard's DELETE endpoint requires the link to
+            // touch the group in the URL — pass the from group when
+            // available, otherwise fall back to the explicit data-group
+            // attribute.
+            const scope = btn.getAttribute('data-group') || from || to;
+            const confirmed = await confirmModal({
+              title: 'Remove this link?',
+              body: 'Members of FROM lose the ability to message members of TO via this edge. Other groups / links are unaffected. This can\'t be undone — recreate to restore.',
+              meta: `#${id} · ${from} → ${to}`,
+              okLabel: 'Remove link',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/groups/${encodeURIComponent(scope)}/links/${encodeURIComponent(id)}`, {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) toast(`Remove link failed: ${await r.text()}`, true);
+            break;
+          }
           default:
             return;
         }
@@ -3503,6 +3775,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindSudoModal();
   bindCronModal();
   bindGroupCreateModal();
+  bindLinkModal();
   bindAgentSpawnModal();
   bindCloneAgentModal();
   bindReincarnateAgentModal();
