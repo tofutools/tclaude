@@ -159,13 +159,20 @@ const reincarnateSpawnTimeout = 30 * time.Second
 // proactive delivery. The follow-up message stays in the inbox
 // regardless; this is just about whether the nudge fires
 // automatically.
-const reincarnateAliveTimeout = 60 * time.Second
+//
+// Declared as `var` (not `const`) so flow tests can shrink it via
+// SetWaitTimingsForTest — otherwise the post-init drain in newFlow's
+// cleanup can sit on the full 60s when a test scenario never brings
+// the conv online.
+var reincarnateAliveTimeout = 60 * time.Second
 
 // reincarnateReadyDelay is how long we sleep after the new pane is
 // "alive" before injecting any keys. CC's TUI takes a moment after
 // startup before the input box is ready; without this, follow-up
 // keystrokes can land mid-render.
-const reincarnateReadyDelay = 1 * time.Second
+//
+// Same `var` rationale as reincarnateAliveTimeout above.
+var reincarnateReadyDelay = 1 * time.Second
 
 // handleWhoamiReincarnate handles POST /v1/whoami/reincarnate (self
 // path). Gated on self.reincarnate (default-granted). Delegates to
@@ -462,7 +469,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// Single goroutine so ordering is deterministic — without this,
 	// rename and follow-up race and the user briefly sees the wrong
 	// title in the new pane.
-	go runReincarnatePostSpawn(newConv, newTitle, followUp, len(oldMembers) > 0)
+	goBackground(func() {
+		runReincarnatePostSpawn(newConv, newTitle, followUp, len(oldMembers) > 0)
+	})
 
 	// 9. Mark the old conv as archived (soft-deleted), then soft-stop.
 	//

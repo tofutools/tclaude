@@ -422,7 +422,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	//
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
-	go runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name)
+	goBackground(func() {
+		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name)
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"group":        g.Name,
