@@ -48,7 +48,6 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 
 	var srcEntry *SessionEntry
 	var srcProjectPath string
-	var srcIndex *SessionsIndex
 	dstProjectPath := GetClaudeProjectPath(params.DestPath)
 
 	if params.Global {
@@ -72,7 +71,6 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 			if found, _ := FindSessionByID(index, convID); found != nil {
 				srcEntry = found
 				srcProjectPath = projPath
-				srcIndex = index
 				break
 			}
 		}
@@ -85,10 +83,9 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 		}
 
 		srcProjectPath = GetClaudeProjectPath(cwd)
-		var err2 error
-		srcIndex, err2 = LoadSessionsIndex(srcProjectPath)
-		if err2 != nil {
-			fmt.Fprintf(stderr, "Error loading source sessions index: %v\n", err2)
+		srcIndex, err := LoadSessionsIndex(srcProjectPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error loading source sessions index: %v\n", err)
 			return 1
 		}
 
@@ -111,19 +108,15 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 		}
 	}
 
-	// Load destination index
-	dstIndex, err := LoadSessionsIndex(dstProjectPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error loading destination sessions index: %v\n", err)
-		return 1
-	}
-
 	// Use the full session ID from the found entry
 	convID = srcEntry.SessionID
 
-	// Check if conversation already exists in destination
-	existingEntry, _ := FindSessionByID(dstIndex, convID)
-	if existingEntry != nil {
+	// Move conversation file
+	srcConvFile := filepath.Join(srcProjectPath, convID+".jsonl")
+	dstConvFile := filepath.Join(dstProjectPath, convID+".jsonl")
+
+	// Check if destination .jsonl already exists; prompt unless forced.
+	if _, err := os.Stat(dstConvFile); err == nil {
 		if !params.Force {
 			fmt.Fprintf(stdout, "Conversation %s already exists in destination.\n", convID[:8])
 			fmt.Fprintf(stdout, "Overwrite? [y/N]: ")
@@ -135,18 +128,10 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 				return 0
 			}
 		}
-		// Remove existing conversation files from destination
-		existingFile := filepath.Join(dstProjectPath, convID+".jsonl")
 		existingDir := filepath.Join(dstProjectPath, convID)
-		_ = os.Remove(existingFile)
+		_ = os.Remove(dstConvFile)
 		_ = os.RemoveAll(existingDir)
-		// Remove existing entry from destination index
-		RemoveSessionByID(dstIndex, convID)
 	}
-
-	// Move conversation file
-	srcConvFile := filepath.Join(srcProjectPath, convID+".jsonl")
-	dstConvFile := filepath.Join(dstProjectPath, convID+".jsonl")
 
 	if err := os.Rename(srcConvFile, dstConvFile); err != nil {
 		// If rename fails (e.g., cross-device), fall back to copy+delete
@@ -171,45 +156,30 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 		}
 	}
 
-	// Update file info for destination
+	// Surgically update legacy sessions-index.json on both sides for
+	// external tooling (no-op if the file doesn't exist).
+	if err := RemoveSessionsIndexEntry(srcProjectPath, convID); err != nil {
+		fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", srcProjectPath, err)
+	}
 	dstInfo, err := os.Stat(dstConvFile)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error getting destination file info: %v\n", err)
-		return 1
-	}
-
-	// Create new entry for destination
-	newEntry := SessionEntry{
-		SessionID:    srcEntry.SessionID,
-		FullPath:     dstConvFile,
-		FileMtime:    dstInfo.ModTime().UnixMilli(),
-		FirstPrompt:  srcEntry.FirstPrompt,
-		Summary:      srcEntry.Summary,
-		CustomTitle:  srcEntry.CustomTitle,
-		MessageCount: srcEntry.MessageCount,
-		Created:      srcEntry.Created,
-		Modified:     srcEntry.Modified,
-		GitBranch:    srcEntry.GitBranch,
-		ProjectPath:  params.DestPath, // Update to new project path
-		IsSidechain:  srcEntry.IsSidechain,
-	}
-
-	// Add to destination index
-	dstIndex.Entries = append(dstIndex.Entries, newEntry)
-
-	// Save destination index
-	if err := SaveSessionsIndex(dstProjectPath, dstIndex); err != nil {
-		fmt.Fprintf(stderr, "Error saving destination sessions index: %v\n", err)
-		return 1
-	}
-
-	// Remove from source index
-	RemoveSessionByID(srcIndex, convID)
-
-	// Save source index
-	if err := SaveSessionsIndex(srcProjectPath, srcIndex); err != nil {
-		fmt.Fprintf(stderr, "Error saving source sessions index: %v\n", err)
-		return 1
+	if err == nil {
+		dstEntry := SessionEntry{
+			SessionID:    srcEntry.SessionID,
+			FullPath:     dstConvFile,
+			FileMtime:    dstInfo.ModTime().UnixMilli(),
+			FirstPrompt:  srcEntry.FirstPrompt,
+			Summary:      srcEntry.Summary,
+			CustomTitle:  srcEntry.CustomTitle,
+			MessageCount: srcEntry.MessageCount,
+			Created:      srcEntry.Created,
+			Modified:     srcEntry.Modified,
+			GitBranch:    srcEntry.GitBranch,
+			ProjectPath:  params.DestPath,
+			IsSidechain:  srcEntry.IsSidechain,
+		}
+		if err := UpsertSessionsIndexEntry(dstProjectPath, dstEntry); err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", dstProjectPath, err)
+		}
 	}
 
 	fmt.Fprintf(stdout, "Moved conversation %s to %s\n", convID[:8], params.DestPath)

@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -222,9 +221,8 @@ func findJSONLByPrefix(projectPath, idPrefix string) string {
 //     referencing this conv-id across conv_index, sessions, and every
 //     agent_* table (group_members, group_owners, permissions,
 //     messages, cron_jobs, conv_succession, embeddings, …).
-//   - legacy artifacts: removes the sessions-index.json entry and the
-//     ~/.claude/session-env/<convID> env file the hook callback uses.
-//   - sync: writes a tombstone when syncutil is initialised.
+//   - session-env: removes the ~/.claude/session-env/<convID> file the
+//     hook callback uses.
 //
 // What it does NOT do: kill an alive tmux session. That's the
 // caller's policy (force vs refuse). Callers must stop the tmux
@@ -307,36 +305,10 @@ func DeleteConvByID(convID string) (db.AgentDeletionCounts, error) {
 		_ = os.Remove(envFile)
 	}
 
-	// 5. Write sync tombstone so other machines see the delete.
-	//    Legacy: kept until the git-sync subcommand is removed.
-	if syncutil.IsInitialized() && projectPath != "" {
-		_ = AddTombstoneForProject(projectPath, fullID)
+	// 5. Surgically drop the entry from legacy sessions-index.json for
+	//    external tooling. Best-effort; no-op if the file doesn't exist.
+	if projectPath != "" {
+		_ = RemoveSessionsIndexEntry(projectPath, fullID)
 	}
 	return counts, nil
-}
-
-// AddTombstoneForProject adds a tombstone for a deleted session
-// projectPath is the local project dir (e.g., ~/.claude/projects/-Users-alice-git-myproject)
-func AddTombstoneForProject(projectPath, sessionID string) error {
-	// Get the local project dir name (last component of path)
-	localDirName := filepath.Base(projectPath)
-
-	// Load config for path canonicalization
-	config, err := syncutil.LoadConfig()
-	if err != nil {
-		return err
-	}
-
-	// Canonicalize the project dir name for sync
-	canonicalDirName := config.CanonicalizeProjectDir(localDirName)
-
-	// Add tombstone to the sync project dir
-	syncProjectDir := filepath.Join(syncutil.SyncDir(), canonicalDirName)
-
-	// Ensure sync project dir exists
-	if err := os.MkdirAll(syncProjectDir, 0755); err != nil {
-		return err
-	}
-
-	return syncutil.AddTombstone(syncProjectDir, sessionID)
 }

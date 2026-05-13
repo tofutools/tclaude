@@ -3,7 +3,7 @@
 ## What is tclaude?
 
 `tclaude` is a cross-platform CLI tool written in Go that extends Claude Code with session management, conversation utilities, and developer workflow features. 
-It wraps Claude Code sessions in tmux for detach/reattach, provides conversation search/management, git-based conversation sync, usage tracking, a web terminal, 
+It wraps Claude Code sessions in tmux for detach/reattach, provides conversation search/management, usage tracking, a web terminal,
 and a custom status bar.
 
 ## Build & Test
@@ -29,8 +29,7 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 | Package     | Purpose                                                                                                                                                                           |
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `session`   | Core tmux-based session management (new, list, attach, kill, watch). Sessions stored in SQLite (`~/.tclaude/db.sqlite`). Hook callbacks update session status. |
-| `conv`      | Conversation management (list, search, AI search, resume, copy, move, delete, prune). Reads Claude's `.jsonl` conversation files and `sessions-index.json`.                       |
-| `git`       | **Experimental.** Git-based conversation sync across devices. Uses `~/.claude/projects_sync` as a separate git working directory. Subject to rewrite; no guarantees against data loss. |
+| `conv`      | Conversation management (list, search, AI search, resume, copy, move, delete, prune). Reads Claude's `.jsonl` conversation files; SQLite (`conv_index`) is the source-of-truth cache. The legacy `sessions-index.json` file is written-but-never-read for external-tooling compatibility. |
 | `worktree`  | Git worktree management for parallel Claude sessions on different branches.                                                                                                       |
 | `stats`     | Activity statistics from Claude's `~/.claude/stats-cache.json`.                                                                                                                   |
 | `usage`     | Standalone subscription usage limits via Anthropic OAuth API.                                                                                                                     |

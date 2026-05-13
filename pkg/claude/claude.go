@@ -10,7 +10,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
-	claudegit "github.com/tofutools/tclaude/pkg/claude/git"
 	"github.com/tofutools/tclaude/pkg/claude/selftest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/setup"
@@ -34,7 +33,6 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			conv.Cmd(),
 			session.Cmd(),
-			claudegit.Cmd(),
 			worktree.Cmd(),
 			stats.Cmd(),
 			usage.Cmd(),

@@ -256,41 +256,91 @@ func TestRemoveSessionByID(t *testing.T) {
 	}
 }
 
-// SaveSessionsIndex writes a legacy `sessions-index.json` file. LoadSessionsIndex
-// no longer reads it (SQLite is the source of truth) but Save is still
-// exercised by various conv operations for tooling compatibility; this
-// test pins down that the writer still produces a parseable file.
-func TestSaveSessionsIndex_WritesParseableFile(t *testing.T) {
+// Upsert+Remove perform surgical updates to the legacy
+// `sessions-index.json` file. They must preserve unknown top-level
+// fields, unknown per-entry fields on other entries, and never create
+// the file when it didn't exist (we only maintain it; we don't create it).
+func TestSessionsIndex_SurgicalUpdatesPreserveUnknownFields(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	index := &SessionsIndex{
-		Version: 1,
-		Entries: []SessionEntry{
-			{
-				SessionID:   "test-session-id",
-				FirstPrompt: "Test prompt",
-				Summary:     "Test summary",
-				CustomTitle: "Test title",
-			},
-		},
-	}
-
-	if err := SaveSessionsIndex(tmpDir, index); err != nil {
-		t.Fatalf("SaveSessionsIndex failed: %v", err)
-	}
-
 	indexPath := filepath.Join(tmpDir, "sessions-index.json")
+
+	// Start with a file that has unknown top-level + per-entry fields.
+	seed := `{
+  "version": 1,
+  "futureToplevelField": "preserve-me",
+  "entries": [
+    {"sessionId": "aaa", "firstPrompt": "old", "futureField": "keep-aaa"},
+    {"sessionId": "bbb", "firstPrompt": "bbb-prompt", "futureField": "keep-bbb"}
+  ]
+}`
+	if err := os.WriteFile(indexPath, []byte(seed), 0600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Replace aaa with a new payload; bbb is untouched.
+	if err := UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "aaa", FirstPrompt: "new"}); err != nil {
+		t.Fatalf("Upsert (replace) failed: %v", err)
+	}
+
+	// Add a brand-new entry ccc.
+	if err := UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "ccc", FirstPrompt: "ccc-prompt"}); err != nil {
+		t.Fatalf("Upsert (insert) failed: %v", err)
+	}
+
+	// Remove bbb.
+	if err := RemoveSessionsIndexEntry(tmpDir, "bbb"); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
-		t.Fatalf("Index file not created: %v", err)
+		t.Fatalf("read: %v", err)
 	}
 
-	var roundTripped SessionsIndex
-	if err := json.Unmarshal(data, &roundTripped); err != nil {
-		t.Fatalf("Wrote unparseable JSON: %v", err)
+	// Parse loosely to assert unknown fields survived.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatalf("unparseable JSON: %v", err)
 	}
-	if len(roundTripped.Entries) != 1 || roundTripped.Entries[0].SessionID != "test-session-id" {
-		t.Errorf("Wrote unexpected content: %+v", roundTripped)
+	if string(top["futureToplevelField"]) != `"preserve-me"` {
+		t.Errorf("unknown top-level field dropped: %s", string(top["futureToplevelField"]))
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(top["entries"], &entries); err != nil {
+		t.Fatalf("entries unparseable: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (aaa updated, ccc inserted, bbb removed); got %d: %+v", len(entries), entries)
+	}
+	byID := map[string]map[string]any{}
+	for _, e := range entries {
+		id, _ := e["sessionId"].(string)
+		byID[id] = e
+	}
+	if byID["aaa"] == nil {
+		t.Error("aaa missing after replace")
+	} else if byID["aaa"]["firstPrompt"] != "new" {
+		t.Errorf("aaa not replaced: %+v", byID["aaa"])
+	}
+	if byID["ccc"] == nil {
+		t.Error("ccc missing after insert")
+	}
+	if _, ok := byID["bbb"]; ok {
+		t.Error("bbb not removed")
+	}
+}
+
+// When the file doesn't exist, helpers no-op — they never create it.
+func TestSessionsIndex_NoFileNoCreate(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "aaa"}); err != nil {
+		t.Fatalf("upsert into missing file should no-op: %v", err)
+	}
+	if err := RemoveSessionsIndexEntry(tmpDir, "aaa"); err != nil {
+		t.Fatalf("remove from missing file should no-op: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "sessions-index.json")); !os.IsNotExist(err) {
+		t.Errorf("file should not have been created (err=%v)", err)
 	}
 }
 

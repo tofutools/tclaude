@@ -21,22 +21,22 @@ type LoadSessionsIndexOptions = convops.LoadSessionsIndexOptions
 // is the single source-of-truth implementation for all conv-data ops
 // (parsing, SQLite-cached lookups, file I/O).
 var (
-	ClaudeProjectsDir           = convops.ClaudeProjectsDir
-	PathToProjectDir            = convops.PathToProjectDir
-	GetClaudeProjectPath        = convops.GetClaudeProjectPath
-	SaveSessionsIndex           = convops.SaveSessionsIndex
-	FindSessionByID             = convops.FindSessionByID
-	RemoveSessionByID           = convops.RemoveSessionByID
-	CopyDir                     = convops.CopyDir
-	CopyFile                    = convops.CopyFile
-	CopyConversationFile        = convops.CopyConversationFile
-	LoadSessionsIndex           = convops.LoadSessionsIndex
+	ClaudeProjectsDir            = convops.ClaudeProjectsDir
+	PathToProjectDir             = convops.PathToProjectDir
+	GetClaudeProjectPath         = convops.GetClaudeProjectPath
+	RemoveSessionsIndexEntry     = convops.RemoveSessionsIndexEntry
+	UpsertSessionsIndexEntry     = convops.UpsertSessionsIndexEntry
+	FindSessionByID              = convops.FindSessionByID
+	RemoveSessionByID            = convops.RemoveSessionByID
+	CopyDir                      = convops.CopyDir
+	CopyFile                     = convops.CopyFile
+	CopyConversationFile         = convops.CopyConversationFile
+	LoadSessionsIndex            = convops.LoadSessionsIndex
 	LoadSessionsIndexWithOptions = convops.LoadSessionsIndexWithOptions
-	LoadSessionsIndexFile       = convops.LoadSessionsIndexFile
-	LoadEntriesFromDB           = convops.LoadEntriesFromDB
-	RefreshConvIndexEntry       = convops.RefreshConvIndexEntry
-	ScanAndUpsertFile           = convops.ScanAndUpsertFile
-	ParseJSONLSessionPublic     = convops.ParseJSONLSessionPublic
+	LoadEntriesFromDB            = convops.LoadEntriesFromDB
+	RefreshConvIndexEntry        = convops.RefreshConvIndexEntry
+	ScanAndUpsertFile            = convops.ScanAndUpsertFile
+	ParseJSONLSessionPublic      = convops.ParseJSONLSessionPublic
 )
 
 type ConvParams struct {

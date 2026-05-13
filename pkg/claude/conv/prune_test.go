@@ -6,7 +6,25 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// indexInDB upserts a conv_index row so the DB-backed prune helpers
+// see this conv as tracked. Mirrors what `createIndex` used to do for
+// the legacy file but targets the SQLite source-of-truth that the
+// helpers actually read.
+func indexInDB(t *testing.T, projectDir, sessionID, filePath string) {
+	t.Helper()
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:     sessionID,
+		ProjectDir: projectDir,
+		FullPath:   filePath,
+	}); err != nil {
+		t.Fatalf("UpsertConvIndex: %v", err)
+	}
+}
+
 
 // helper to create a .jsonl file with user messages
 func createConvFile(t *testing.T, dir, sessionID string, withUserMsg bool) string {
@@ -75,14 +93,15 @@ func TestFindEmptyConversations(t *testing.T) {
 }
 
 func TestFindEmptyConversations_IndexedFlag(t *testing.T) {
+	setupTestDB(t)
 	dir := t.TempDir()
 
 	indexedID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	unindexedID := "11111111-2222-3333-4444-555555555555"
 
-	createConvFile(t, dir, indexedID, false)
+	indexedPath := createConvFile(t, dir, indexedID, false)
 	createConvFile(t, dir, unindexedID, false)
-	createIndex(t, dir, []SessionEntry{{SessionID: indexedID}})
+	indexInDB(t, dir, indexedID, indexedPath)
 
 	result := findEmptyConversations(dir)
 
@@ -105,18 +124,17 @@ func TestFindEmptyConversations_IndexedFlag(t *testing.T) {
 }
 
 func TestFindMissingFileEntries(t *testing.T) {
+	setupTestDB(t)
 	dir := t.TempDir()
 
 	existingID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	missingID := "11111111-2222-3333-4444-555555555555"
 
-	createConvFile(t, dir, existingID, true)
+	existingPath := createConvFile(t, dir, existingID, true)
 	// Don't create a file for missingID
 
-	createIndex(t, dir, []SessionEntry{
-		{SessionID: existingID},
-		{SessionID: missingID},
-	})
+	indexInDB(t, dir, existingID, existingPath)
+	indexInDB(t, dir, missingID, filepath.Join(dir, missingID+".jsonl"))
 
 	result := findMissingFileEntries(dir)
 
@@ -331,12 +349,13 @@ func TestRunPruneEmpty_DryRunDeletesNothing(t *testing.T) {
 func TestRunPruneEmpty_DanglingDirExclusion(t *testing.T) {
 	// When a session ID appears in both missing-file entries and dangling dirs,
 	// the dangling dir should be excluded (it will be cleaned up during conv deletion)
+	setupTestDB(t)
 	dir := t.TempDir()
 
 	missingID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
-	// Create index entry but no .jsonl file, and a companion directory
-	createIndex(t, dir, []SessionEntry{{SessionID: missingID}})
+	// Create DB row but no .jsonl file, and a companion directory
+	indexInDB(t, dir, missingID, filepath.Join(dir, missingID+".jsonl"))
 	createCompanionDir(t, dir, missingID)
 
 	missing := findMissingFileEntries(dir)

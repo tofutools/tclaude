@@ -114,7 +114,6 @@ Session watch also supports:
 - [Status Bar](status-bar.md) - Rich status bar for Claude Code's statusline
 - [Web Terminal](web-terminal.md) - Access sessions from your phone or browser (deprecated)
 - [Semantic Search](semantic-search.md) - Search conversations by meaning
-- [Git Sync](git-sync.md) - Sync conversations across devices (**experimental — may eat your data**)
 - [Task Management](tasks.md) - Run multiple tasks automatically
 
 ## Recording a Demo

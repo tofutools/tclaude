@@ -20,7 +20,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/session"
-	"github.com/tofutools/tclaude/pkg/claude/syncutil"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
@@ -1583,20 +1582,13 @@ func (m *watchModel) deleteConversation(conv *SessionEntry) error {
 		}
 	}
 
-	index, err := LoadSessionsIndex(projectPath)
-	if err == nil && RemoveSessionByID(index, conv.SessionID) {
-		if err := SaveSessionsIndex(projectPath, index); err != nil {
-			return fmt.Errorf("failed to save index: %w", err)
-		}
-	}
-
 	_ = db.DeleteConvIndex(conv.SessionID)
 	m.removeEntry(conv.SessionID)
 
-	if syncutil.IsInitialized() {
-		if err := AddTombstoneForProject(projectPath, conv.SessionID); err != nil {
-			fmt.Printf("Warning: failed to add tombstone: %v\n", err)
-		}
+	// Surgically drop the entry from legacy sessions-index.json for
+	// external tooling. No-op if the file doesn't exist.
+	if err := RemoveSessionsIndexEntry(projectPath, conv.SessionID); err != nil {
+		slog.Warn("watch: update legacy sessions-index.json", "project", projectPath, "error", err)
 	}
 
 	return nil

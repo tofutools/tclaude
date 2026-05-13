@@ -579,37 +579,118 @@ func extractMessageContent(content any) string {
 	return ""
 }
 
-// LoadSessionsIndexFile reads the legacy `sessions-index.json` file
-// directly, without consulting the SQLite cache or walking the disk.
-// Use this only when the caller specifically needs to operate on the
-// JSON file itself — currently just the git-sync repair/status tooling
-// that canonicalises path fields inside the file. All other callers
-// should use LoadSessionsIndex (SQLite-backed, single source of truth).
-// Returns an empty index when the file doesn't exist.
-func LoadSessionsIndexFile(projectPath string) (*SessionsIndex, error) {
-	indexPath := filepath.Join(projectPath, "sessions-index.json")
-	data, err := os.ReadFile(indexPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &SessionsIndex{Version: 1, Entries: []SessionEntry{}}, nil
-		}
-		return nil, err
-	}
-	var index SessionsIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, err
-	}
-	return &index, nil
+// The legacy `sessions-index.json` file is no longer the source-of-truth
+// for tclaude — the SQLite `conv_index` table is. We never read from it
+// for our own logic. We DO keep it consistent on conv mutations
+// (cp/mv/delete/prune) for any external tooling (Claude Code itself
+// included) that may still consult it.
+//
+// The helpers below perform SURGICAL updates that preserve any
+// top-level fields and per-entry fields we don't recognise — important
+// forward-compat for future tclaude versions or anything else that
+// writes the file. Never rewrite the whole file from scratch.
+//
+// If the file doesn't exist they no-op (we never create it; we only
+// maintain it).
+
+// sessionIDProbe is the minimal shape we deserialize a raw entry into
+// when we just need its conv-id for filtering.
+type sessionIDProbe struct {
+	SessionID string `json:"sessionId"`
 }
 
-// SaveSessionsIndex saves the sessions index to a Claude project directory
-func SaveSessionsIndex(projectPath string, index *SessionsIndex) error {
-	indexPath := filepath.Join(projectPath, "sessions-index.json")
-	data, err := json.MarshalIndent(index, "", "  ")
+func readRawSessionsIndex(projectPath string) (top map[string]json.RawMessage, entries []json.RawMessage, exists bool, err error) {
+	path := filepath.Join(projectPath, "sessions-index.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, false, nil
+		}
+		return nil, nil, false, err
+	}
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, nil, true, fmt.Errorf("parse sessions-index.json: %w", err)
+	}
+	if raw, ok := top["entries"]; ok && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return nil, nil, true, fmt.Errorf("parse sessions-index.json entries: %w", err)
+		}
+	}
+	return top, entries, true, nil
+}
+
+func writeRawSessionsIndex(projectPath string, top map[string]json.RawMessage, entries []json.RawMessage) error {
+	entriesRaw, err := json.Marshal(entries)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(indexPath, data, 0600)
+	if top == nil {
+		top = map[string]json.RawMessage{}
+	}
+	top["entries"] = entriesRaw
+	out, err := json.MarshalIndent(top, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(projectPath, "sessions-index.json"), out, 0600)
+}
+
+func rawEntrySessionID(raw json.RawMessage) string {
+	var p sessionIDProbe
+	_ = json.Unmarshal(raw, &p)
+	return p.SessionID
+}
+
+// RemoveSessionsIndexEntry surgically removes an entry by sessionID from
+// the legacy sessions-index.json file in projectPath. Other entries and
+// any unknown top-level / per-entry fields are preserved verbatim.
+// No-op when the file doesn't exist or the entry isn't there.
+func RemoveSessionsIndexEntry(projectPath, sessionID string) error {
+	top, entries, exists, err := readRawSessionsIndex(projectPath)
+	if err != nil || !exists {
+		return err
+	}
+	filtered := entries[:0]
+	changed := false
+	for _, raw := range entries {
+		if rawEntrySessionID(raw) == sessionID {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, raw)
+	}
+	if !changed {
+		return nil
+	}
+	return writeRawSessionsIndex(projectPath, top, filtered)
+}
+
+// UpsertSessionsIndexEntry surgically inserts or replaces an entry in
+// the legacy sessions-index.json file. Other entries and any unknown
+// top-level fields are preserved verbatim. No-op when the file doesn't
+// exist — we never create it; we only maintain it if external tooling
+// already wrote it.
+func UpsertSessionsIndexEntry(projectPath string, entry SessionEntry) error {
+	top, entries, exists, err := readRawSessionsIndex(projectPath)
+	if err != nil || !exists {
+		return err
+	}
+	newRaw, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	replaced := false
+	for i, raw := range entries {
+		if rawEntrySessionID(raw) == entry.SessionID {
+			entries[i] = newRaw
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		entries = append(entries, newRaw)
+	}
+	return writeRawSessionsIndex(projectPath, top, entries)
 }
 
 // FindSessionByID finds a session entry by its ID (full or prefix)
@@ -770,12 +851,6 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 		return nil, err
 	}
 
-	// Load or create destination index
-	dstIndex, err := LoadSessionsIndex(dstProjectPath)
-	if err != nil {
-		dstIndex = &SessionsIndex{Version: 1, Entries: []SessionEntry{}}
-	}
-
 	// Generate new UUID
 	newConvID := GenerateUUID()
 	oldConvID := srcEntry.SessionID
@@ -797,13 +872,12 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 		}
 	}
 
-	// Get file info for new entry
+	// Keep the legacy sessions-index.json in sync for external tooling
+	// — surgical upsert preserves any unknown fields.
 	dstInfo, err := os.Stat(dstConvFile)
 	if err != nil {
 		return nil, err
 	}
-
-	// Create new entry
 	now := FormatTime()
 	newEntry := SessionEntry{
 		SessionID:    newConvID,
@@ -819,10 +893,7 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 		ProjectPath:  destPath,
 		IsSidechain:  srcEntry.IsSidechain,
 	}
-
-	dstIndex.Entries = append(dstIndex.Entries, newEntry)
-
-	if err := SaveSessionsIndex(dstProjectPath, dstIndex); err != nil {
+	if err := UpsertSessionsIndexEntry(dstProjectPath, newEntry); err != nil {
 		return nil, err
 	}
 

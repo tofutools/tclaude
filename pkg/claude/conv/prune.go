@@ -11,7 +11,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
-	"github.com/tofutools/tclaude/pkg/claude/syncutil"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -157,60 +157,39 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		}
 	}
 
-	// Combine empty and missing lists, group by project path for index updates
+	// Combine empty and missing lists
 	allConvs := append(emptyConvs, missingConvs...)
-	byProject := make(map[string][]emptyConversation)
-	for _, conv := range allConvs {
-		byProject[conv.ProjectPath] = append(byProject[conv.ProjectPath], conv)
-	}
 
 	// Delete conversations
 	deleted := 0
-	syncInitialized := syncutil.IsInitialized()
 
-	for projectPath, convs := range byProject {
-		// Load index for this project (to remove indexed entries)
-		index, _ := loadSessionsIndexOnly(projectPath)
-
-		for _, conv := range convs {
-			// Delete the .jsonl file (may not exist for missing-file entries)
-			if err := os.Remove(conv.FilePath); err != nil {
-				if !os.IsNotExist(err) {
-					fmt.Fprintf(stderr, "Error deleting %s: %v\n", conv.SessionID[:8], err)
-					continue
-				}
-			}
-
-			// Delete companion directory if it exists (subagents, etc.)
-			convDir := filepath.Join(projectPath, conv.SessionID)
-			if info, err := os.Stat(convDir); err == nil && info.IsDir() {
-				if err := os.RemoveAll(convDir); err != nil {
-					fmt.Fprintf(stderr, "Error deleting companion directory for %s: %v\n", conv.SessionID[:8], err)
-				}
-			}
-
-			// Remove from index if present
-			if index != nil && conv.IsIndexed {
-				RemoveSessionByID(index, conv.SessionID)
-			}
-
-			// Add tombstone if sync is initialized
-			if syncInitialized {
-				if err := AddTombstoneForProject(projectPath, conv.SessionID); err != nil {
-					fmt.Fprintf(stderr, "Warning: failed to add tombstone for %s: %v\n", conv.SessionID[:8], err)
-					// Don't fail - tombstone is best-effort
-				}
-			}
-
-			deleted++
-		}
-
-		// Save updated index
-		if index != nil {
-			if err := SaveSessionsIndex(projectPath, index); err != nil {
-				fmt.Fprintf(stderr, "Error saving index for %s: %v\n", projectPath, err)
+	for _, conv := range allConvs {
+		// Delete the .jsonl file (may not exist for missing-file entries)
+		if err := os.Remove(conv.FilePath); err != nil {
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(stderr, "Error deleting %s: %v\n", conv.SessionID[:8], err)
+				continue
 			}
 		}
+
+		// Delete companion directory if it exists (subagents, etc.)
+		convDir := filepath.Join(conv.ProjectPath, conv.SessionID)
+		if info, err := os.Stat(convDir); err == nil && info.IsDir() {
+			if err := os.RemoveAll(convDir); err != nil {
+				fmt.Fprintf(stderr, "Error deleting companion directory for %s: %v\n", conv.SessionID[:8], err)
+			}
+		}
+
+		// Evict the SQLite cache row so the next listing pass doesn't re-surface it.
+		_ = db.DeleteConvIndex(conv.SessionID)
+
+		// Surgically drop the entry from legacy sessions-index.json for
+		// external tooling. No-op if the file doesn't exist.
+		if err := RemoveSessionsIndexEntry(conv.ProjectPath, conv.SessionID); err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", conv.ProjectPath, err)
+		}
+
+		deleted++
 	}
 
 	// Delete dangling directories (UUID dirs with no corresponding .jsonl file)
@@ -221,12 +200,9 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 			continue
 		}
 
-		// Add tombstone so sync doesn't re-copy from remote
-		if syncInitialized {
-			if err := AddTombstoneForProject(conv.ProjectPath, conv.SessionID); err != nil {
-				fmt.Fprintf(stderr, "Warning: failed to add tombstone for %s: %v\n", conv.SessionID[:8], err)
-			}
-		}
+		// Dangling dirs imply the entry shouldn't be in sessions-index.json
+		// either — drop it too just in case external tooling left a stub.
+		_ = RemoveSessionsIndexEntry(conv.ProjectPath, conv.SessionID)
 
 		danglingDeleted++
 	}
@@ -240,35 +216,15 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 	return 0
 }
 
-// loadSessionsIndexOnly loads just the sessions-index.json without scanning for unindexed files
-func loadSessionsIndexOnly(projectPath string) (*SessionsIndex, error) {
-	indexPath := filepath.Join(projectPath, "sessions-index.json")
-	data, err := os.ReadFile(indexPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &SessionsIndex{Version: 1, Entries: []SessionEntry{}}, nil
-		}
-		return nil, fmt.Errorf("failed to read sessions index: %w", err)
-	}
-
-	var index SessionsIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, fmt.Errorf("failed to parse sessions index: %w", err)
-	}
-
-	return &index, nil
-}
-
 // findEmptyConversations finds all .jsonl files with no user messages
 func findEmptyConversations(projectPath string) []emptyConversation {
 	var empty []emptyConversation
 
-	// Load index to check which sessions are indexed
-	index, _ := loadSessionsIndexOnly(projectPath)
+	// Pull the SQLite-cached index to flag which sessions are tracked.
 	indexedIDs := make(map[string]bool)
-	if index != nil {
-		for _, e := range index.Entries {
-			indexedIDs[e.SessionID] = true
+	if rows, err := db.ListConvIndex(projectPath); err == nil {
+		for _, r := range rows {
+			indexedIDs[r.ConvID] = true
 		}
 	}
 
@@ -308,20 +264,20 @@ func findEmptyConversations(projectPath string) []emptyConversation {
 	return empty
 }
 
-// findMissingFileEntries finds index entries whose .jsonl file doesn't exist on disk
+// findMissingFileEntries finds conv_index rows whose .jsonl is gone from disk.
 func findMissingFileEntries(projectPath string) []emptyConversation {
 	var missing []emptyConversation
 
-	index, err := loadSessionsIndexOnly(projectPath)
-	if err != nil || index == nil {
+	rows, err := db.ListConvIndex(projectPath)
+	if err != nil {
 		return missing
 	}
 
-	for _, e := range index.Entries {
-		filePath := filepath.Join(projectPath, e.SessionID+".jsonl")
+	for _, r := range rows {
+		filePath := filepath.Join(projectPath, r.ConvID+".jsonl")
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			missing = append(missing, emptyConversation{
-				SessionID:   e.SessionID,
+				SessionID:   r.ConvID,
 				FilePath:    filePath,
 				ProjectPath: projectPath,
 				IsIndexed:   true,

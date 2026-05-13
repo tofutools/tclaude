@@ -110,13 +110,6 @@ func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
 		}
 	}
 
-	// Load destination index
-	dstIndex, err := LoadSessionsIndex(dstProjectPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error loading destination sessions index: %v\n", err)
-		return 1
-	}
-
 	// Generate new UUID for the copy
 	newConvID := uuid.New().String()
 	oldConvID := srcEntry.SessionID
@@ -156,37 +149,28 @@ func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
 		}
 	}
 
-	// Update file info for destination
+	// Surgically add the new entry to the legacy sessions-index.json for
+	// external tooling that may still read it (no-op if the file doesn't exist).
 	dstInfo, err := os.Stat(dstConvFile)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error getting destination file info: %v\n", err)
-		return 1
-	}
-
-	// Create new entry for destination with new UUID
-	now := time.Now().UTC().Format(time.RFC3339)
-	newEntry := SessionEntry{
-		SessionID:    newConvID,
-		FullPath:     dstConvFile,
-		FileMtime:    dstInfo.ModTime().UnixMilli(),
-		FirstPrompt:  srcEntry.FirstPrompt,
-		Summary:      srcEntry.Summary,
-		CustomTitle:  srcEntry.CustomTitle,
-		MessageCount: srcEntry.MessageCount,
-		Created:      now, // New creation time for the copy
-		Modified:     now,
-		GitBranch:    srcEntry.GitBranch,
-		ProjectPath:  params.DestPath,
-		IsSidechain:  srcEntry.IsSidechain,
-	}
-
-	// Add to destination index
-	dstIndex.Entries = append(dstIndex.Entries, newEntry)
-
-	// Save destination index
-	if err := SaveSessionsIndex(dstProjectPath, dstIndex); err != nil {
-		fmt.Fprintf(stderr, "Error saving destination sessions index: %v\n", err)
-		return 1
+	if err == nil {
+		now := time.Now().UTC().Format(time.RFC3339)
+		newEntry := SessionEntry{
+			SessionID:    newConvID,
+			FullPath:     dstConvFile,
+			FileMtime:    dstInfo.ModTime().UnixMilli(),
+			FirstPrompt:  srcEntry.FirstPrompt,
+			Summary:      srcEntry.Summary,
+			CustomTitle:  srcEntry.CustomTitle,
+			MessageCount: srcEntry.MessageCount,
+			Created:      now,
+			Modified:     now,
+			GitBranch:    srcEntry.GitBranch,
+			ProjectPath:  params.DestPath,
+			IsSidechain:  srcEntry.IsSidechain,
+		}
+		if err := UpsertSessionsIndexEntry(dstProjectPath, newEntry); err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", dstProjectPath, err)
+		}
 	}
 
 	fmt.Fprintf(stdout, "Copied conversation %s -> %s in %s\n", oldConvID[:8], newConvID[:8], params.DestPath)
