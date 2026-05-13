@@ -38,3 +38,9 @@ go.work.sum
 TODO.md
 DOING.md
 DONE.md
+
+# macOS Finder metadata
+.DS_Store
+
+# Excalidraw MCP local log
+excalidraw.log

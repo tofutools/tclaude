@@ -13,28 +13,38 @@ import (
 
 // TryFocusAttachedSession attempts to focus the terminal window that has the session attached.
 func TryFocusAttachedSession(tmuxSession string) {
-	FocusTmuxSession(tmuxSession)
+	FocusTmuxSession(tmuxSession, "")
 }
 
-// TryFocusAttachedSessionWithID exists for cross-platform parity
-// with the Linux/WSL variant; on macOS the tty-based AppleScript
-// focus already works without the session ID, so we just delegate.
-func TryFocusAttachedSessionWithID(tmuxSession, _ string) {
-	TryFocusAttachedSession(tmuxSession)
+// TryFocusAttachedSessionWithID focuses the terminal hosting the session, and
+// if no terminal is attached, spawns a new one running `tclaude session attach <id>`.
+func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
+	FocusTmuxSession(tmuxSession, sessionID)
 }
 
 // FocusTmuxSession focuses the terminal window running a specific tmux session.
-func FocusTmuxSession(tmuxSession string) bool {
+// When no client is currently attached and sessionID is non-empty, a new terminal
+// window is opened that runs `tclaude session attach <sessionID>`.
+func FocusTmuxSession(tmuxSession, sessionID string) bool {
 	debug := os.Getenv("TCLAUDE_DEBUG") != ""
 
 	if debug {
-		fmt.Printf("[debug] FocusTmuxSession: tmuxSession=%s\n", tmuxSession)
+		fmt.Printf("[debug] FocusTmuxSession: tmuxSession=%s sessionID=%s\n", tmuxSession, sessionID)
 	}
 
 	// Get the client tty for the target session
 	tty := getTmuxClientTTY(tmuxSession)
 	if debug {
 		fmt.Printf("[debug] Target tty: %s\n", tty)
+	}
+
+	// No client attached and we know the session ID → spawn a new terminal
+	// that attaches via `tclaude session attach <id>` so the wrapper sets
+	// TCLAUDE_SESSION_ID + window title before execing tmux.
+	if tty == "" && sessionID != "" {
+		if openTerminalAttachingSession(sessionID, debug) {
+			return true
+		}
 	}
 
 	// Get the terminal app
