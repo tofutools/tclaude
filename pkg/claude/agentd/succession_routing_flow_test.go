@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -36,9 +38,7 @@ func TestMessageRouting_SupersededConv_RoutesToSuccessor(t *testing.T) {
 	// succession row points old → new. This is the state the
 	// production reincarnate orchestration leaves behind.
 	f.HaveMember("alpha", bobNewConv, "bob")
-	if err := db.RecordConvSuccession(bobOldConv, bobNewConv, "test"); err != nil {
-		t.Fatalf("RecordConvSuccession: %v", err)
-	}
+	require.NoError(t, db.RecordConvSuccession(bobOldConv, bobNewConv, "test"), "RecordConvSuccession")
 
 	// Alice POSTs addressing the OLD conv-id directly (skipping the
 	// alias resolution path that would already point at bob-new).
@@ -49,43 +49,28 @@ func TestMessageRouting_SupersededConv_RoutesToSuccessor(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/messages", body), aliceConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("POST /v1/messages: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"POST /v1/messages body=%s", rec.Body.String())
 
 	var resp struct {
 		ID             int64  `json:"id"`
 		ViaGroup       string `json:"via_group"`
 		RedirectedFrom string `json:"redirected_from"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v body=%s", err, rec.Body.String())
-	}
-	if resp.RedirectedFrom != bobOldConv {
-		t.Errorf("redirected_from = %q, want %q", resp.RedirectedFrom, bobOldConv)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode response body=%s", rec.Body.String())
+	assert.Equal(t, bobOldConv, resp.RedirectedFrom, "redirected_from")
 
 	// Production read path: the message lands in Bob-r-1's inbox, NOT
 	// the old conv's. Old inbox is empty.
 	newRows, err := db.ListAgentMessagesForConv(bobNewConv, 100)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesForConv(new): %v", err)
-	}
-	if len(newRows) != 1 {
-		t.Fatalf("Bob-new inbox: got %d rows, want 1", len(newRows))
-	}
+	require.NoError(t, err, "ListAgentMessagesForConv(new)")
+	require.Len(t, newRows, 1, "Bob-new inbox")
 	got := newRows[0]
-	if got.OriginalToConv != bobOldConv {
-		t.Errorf("OriginalToConv = %q, want %q", got.OriginalToConv, bobOldConv)
-	}
-	if got.ToConv != bobNewConv {
-		t.Errorf("ToConv = %q, want %q (live successor)", got.ToConv, bobNewConv)
-	}
+	assert.Equal(t, bobOldConv, got.OriginalToConv, "OriginalToConv")
+	assert.Equal(t, bobNewConv, got.ToConv, "ToConv (live successor)")
 
 	oldRows, _ := db.ListAgentMessagesForConv(bobOldConv, 100)
-	if len(oldRows) != 0 {
-		t.Errorf("Bob-old inbox: got %d rows, want 0 (chain-walk should bypass)", len(oldRows))
-	}
+	assert.Empty(t, oldRows, "Bob-old inbox should be empty (chain-walk should bypass)")
 }
 
 // Scenario: the chain has multiple hops — Bob → Bob-r-1 → Bob-r-2.
@@ -103,12 +88,8 @@ func TestMessageRouting_MultiHopSuccession_FollowsToHead(t *testing.T) {
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", aliceConv, "alice")
 	f.HaveMember("alpha", bobV2, "bob") // only the head is a live member
-	if err := db.RecordConvSuccession(bobV0, bobV1, "test"); err != nil {
-		t.Fatalf("RecordConvSuccession v0→v1: %v", err)
-	}
-	if err := db.RecordConvSuccession(bobV1, bobV2, "test"); err != nil {
-		t.Fatalf("RecordConvSuccession v1→v2: %v", err)
-	}
+	require.NoError(t, db.RecordConvSuccession(bobV0, bobV1, "test"), "RecordConvSuccession v0→v1")
+	require.NoError(t, db.RecordConvSuccession(bobV1, bobV2, "test"), "RecordConvSuccession v1→v2")
 
 	body := map[string]any{
 		"to":   bobV0, // address the oldest ancestor
@@ -117,22 +98,14 @@ func TestMessageRouting_MultiHopSuccession_FollowsToHead(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/messages", body), aliceConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	rows, _ := db.ListAgentMessagesForConv(bobV2, 100)
-	if len(rows) != 1 {
-		t.Fatalf("Bob-v2 (head) inbox: got %d, want 1", len(rows))
-	}
-	if rows[0].OriginalToConv != bobV0 {
-		t.Errorf("OriginalToConv = %q, want %q (the original ancestor, not the intermediate hop)",
-			rows[0].OriginalToConv, bobV0)
-	}
+	require.Len(t, rows, 1, "Bob-v2 (head) inbox")
+	assert.Equal(t, bobV0, rows[0].OriginalToConv,
+		"OriginalToConv (the original ancestor, not the intermediate hop)")
 	// Intermediate hop must not have collected a row.
 	rowsV1, _ := db.ListAgentMessagesForConv(bobV1, 100)
-	if len(rowsV1) != 0 {
-		t.Errorf("Bob-v1 (intermediate) inbox: got %d, want 0", len(rowsV1))
-	}
+	assert.Empty(t, rowsV1, "Bob-v1 (intermediate) inbox")
 }
 
 // Scenario: Bob reincarnated AFTER sending Alice a message, then
@@ -160,46 +133,30 @@ func TestReply_FromSupersededSender_RoutesToSuccessor(t *testing.T) {
 		Subject:  "earlier ping",
 		Body:     "hi alice from old bob",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
-	if err := db.RecordConvSuccession(bobOldConv, bobNewConv, "test"); err != nil {
-		t.Fatalf("RecordConvSuccession: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
+	require.NoError(t, db.RecordConvSuccession(bobOldConv, bobNewConv, "test"), "RecordConvSuccession")
 
 	// Alice replies; daemon must rewrite the reply target old → new.
 	body := map[string]any{"body": "hi! you're back"}
 	path := "/v1/messages/" + itoa64(origID) + "/reply"
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, path, body), aliceConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reply status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "reply body=%s", rec.Body.String())
 
 	var resp struct {
 		ID             int64  `json:"id"`
 		RedirectedFrom string `json:"redirected_from"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode reply response: %v", err)
-	}
-	if resp.RedirectedFrom != bobOldConv {
-		t.Errorf("reply redirected_from = %q, want %q", resp.RedirectedFrom, bobOldConv)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode reply response")
+	assert.Equal(t, bobOldConv, resp.RedirectedFrom, "reply redirected_from")
 
 	// Verify the reply landed in Bob-r-1's inbox with the original
 	// (old) addressee on record.
 	rows, _ := db.ListAgentMessagesForConv(bobNewConv, 100)
-	if len(rows) != 1 {
-		t.Fatalf("Bob-new inbox: got %d rows, want 1", len(rows))
-	}
-	if rows[0].OriginalToConv != bobOldConv {
-		t.Errorf("reply OriginalToConv = %q, want %q", rows[0].OriginalToConv, bobOldConv)
-	}
-	if rows[0].ParentID != origID {
-		t.Errorf("reply ParentID = %d, want %d (chain-walk must not break threading)",
-			rows[0].ParentID, origID)
-	}
+	require.Len(t, rows, 1, "Bob-new inbox")
+	assert.Equal(t, bobOldConv, rows[0].OriginalToConv, "reply OriginalToConv")
+	assert.Equal(t, origID, rows[0].ParentID,
+		"reply ParentID (chain-walk must not break threading)")
 }
 
 // Scenario: a succession row exists but the target is the SENDER
@@ -215,9 +172,7 @@ func TestMessageRouting_RedirectsOntoSelf_Rejected(t *testing.T) {
 	const ghostConv = "ghos-aaaa-bbbb-cccc-9999"
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", aliceConv, "alice")
-	if err := db.RecordConvSuccession(ghostConv, aliceConv, "test"); err != nil {
-		t.Fatalf("RecordConvSuccession: %v", err)
-	}
+	require.NoError(t, db.RecordConvSuccession(ghostConv, aliceConv, "test"), "RecordConvSuccession")
 
 	body := map[string]any{
 		"to":   ghostConv, // points at alice via succession
@@ -226,9 +181,8 @@ func TestMessageRouting_RedirectsOntoSelf_Rejected(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/messages", body), aliceConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status=%d body=%s, want 400 (cannot message self)", rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"body=%s (cannot message self)", rec.Body.String())
 }
 
 // Scenario: no succession row at all — the addressed conv is its own
@@ -249,26 +203,16 @@ func TestMessageRouting_NoSuccession_NoRedirect(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/messages", body), aliceConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var resp struct {
 		ID             int64  `json:"id"`
 		RedirectedFrom string `json:"redirected_from"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.RedirectedFrom != "" {
-		t.Errorf("redirected_from = %q, want empty (no chain to walk)", resp.RedirectedFrom)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode")
+	assert.Empty(t, resp.RedirectedFrom, "redirected_from should be empty (no chain to walk)")
 	rows, _ := db.ListAgentMessagesForConv(bobConv, 100)
-	if len(rows) != 1 {
-		t.Fatalf("inbox: got %d, want 1", len(rows))
-	}
-	if rows[0].OriginalToConv != "" {
-		t.Errorf("OriginalToConv = %q, want empty", rows[0].OriginalToConv)
-	}
+	require.Len(t, rows, 1, "inbox")
+	assert.Empty(t, rows[0].OriginalToConv, "OriginalToConv")
 }
 
 // Scenario: the recipient of a message is the live successor of the
@@ -300,28 +244,20 @@ func TestReply_ChainResolvesToSelf_Rejected(t *testing.T) {
 		Subject:  "reincarnation handoff",
 		Body:     "you are me; carry on",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
-	if err := db.RecordConvSuccession(predConv, meConv, "reincarnate"); err != nil {
-		t.Fatalf("RecordConvSuccession: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
+	require.NoError(t, db.RecordConvSuccession(predConv, meConv, "reincarnate"), "RecordConvSuccession")
 
 	body := map[string]any{"body": "thanks!"}
 	path := "/v1/messages/" + itoa64(origID) + "/reply"
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, path, body), meConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status=%d body=%s, want 400 (reply chain points back at sender)",
-			rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"body=%s (reply chain points back at sender)", rec.Body.String())
 	// The reply must NOT have been written. Inbox stays at exactly
 	// the predecessor's handoff row; no echo from the rejected reply.
 	rows, _ := db.ListAgentMessagesForConv(meConv, 100)
-	if len(rows) != 1 {
-		t.Errorf("inbox after rejected reply: got %d rows, want 1 (only the original handoff)", len(rows))
-	}
+	assert.Len(t, rows, 1, "inbox after rejected reply (only the original handoff)")
 }
 
 // itoa64 — local helper; strconv.FormatInt is fine but inline str

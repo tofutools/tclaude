@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -49,9 +51,7 @@ func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 	idDel, _ := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "already",
 	})
-	if err := db.MarkAgentMessageDelivered(idDel); err != nil {
-		t.Fatalf("mark delivered: %v", err)
-	}
+	require.NoError(t, db.MarkAgentMessageDelivered(idDel), "mark delivered")
 
 	// One addressed elsewhere — must not appear.
 	idOther, _ := db.InsertAgentMessage(&db.AgentMessage{
@@ -65,24 +65,20 @@ func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 	}
 
 	n := flush("me", send)
-	if n != 3 {
-		t.Errorf("flush returned %d, want 3", n)
-	}
-	if len(got) != 3 || got[0] != id1 || got[1] != id2 || got[2] != id3 {
-		t.Errorf("delivered order = %v, want [%d %d %d]", got, id1, id2, id3)
-	}
+	assert.Equal(t, 3, n, "flush return value")
+	assert.Equal(t, []int64{id1, id2, id3}, got, "delivered order")
 
 	// All three should now be marked delivered.
 	for _, id := range []int64{id1, id2, id3} {
 		m, _ := db.GetAgentMessage(id)
-		if m == nil || m.DeliveredAt.IsZero() {
-			t.Errorf("msg %d should be delivered after flush", id)
+		if assert.NotNil(t, m, "msg %d should exist", id) {
+			assert.False(t, m.DeliveredAt.IsZero(), "msg %d should be delivered after flush", id)
 		}
 	}
 	// idOther stays alone.
 	m, _ := db.GetAgentMessage(idOther)
-	if m == nil || !m.DeliveredAt.IsZero() {
-		t.Errorf("other-recipient message should not be touched")
+	if assert.NotNil(t, m) {
+		assert.True(t, m.DeliveredAt.IsZero(), "other-recipient message should not be touched")
 	}
 }
 
@@ -90,12 +86,8 @@ func TestFlush_NoMessagesNoCalls(t *testing.T) {
 	setupTestDB(t)
 	calls := 0
 	send := func(*db.AgentMessage) bool { calls++; return true }
-	if got := flush("nobody", send); got != 0 {
-		t.Errorf("flush of empty queue returned %d, want 0", got)
-	}
-	if calls != 0 {
-		t.Errorf("send called %d times, want 0", calls)
-	}
+	assert.Equal(t, 0, flush("nobody", send), "flush of empty queue")
+	assert.Equal(t, 0, calls, "send call count")
 }
 
 func TestFlush_FailedSendStillClaims(t *testing.T) {
@@ -109,19 +101,14 @@ func TestFlush_FailedSendStillClaims(t *testing.T) {
 	})
 
 	send := func(*db.AgentMessage) bool { return false }
-	if got := flush("me", send); got != 1 {
-		t.Errorf("flush returned %d, want 1 (claim still counted)", got)
-	}
+	assert.Equal(t, 1, flush("me", send), "flush return (claim still counted)")
 	m, _ := db.GetAgentMessage(id)
-	if m == nil || m.DeliveredAt.IsZero() {
-		t.Errorf("message should be marked delivered to prevent re-attempt")
+	if assert.NotNil(t, m) {
+		assert.False(t, m.DeliveredAt.IsZero(), "message should be marked delivered to prevent re-attempt")
 	}
 
 	// A second flush sees the row as delivered and skips it.
-	again := flush("me", send)
-	if again != 0 {
-		t.Errorf("second flush returned %d, want 0", again)
-	}
+	assert.Equal(t, 0, flush("me", send), "second flush")
 }
 
 func TestFlush_ConcurrentClaimsAreRaceFree(t *testing.T) {
@@ -154,13 +141,9 @@ func TestFlush_ConcurrentClaimsAreRaceFree(t *testing.T) {
 	}
 	wg.Wait()
 
-	if len(delivered) != 10 {
-		t.Errorf("expected 10 distinct deliveries, got %d", len(delivered))
-	}
+	assert.Len(t, delivered, 10, "expected 10 distinct deliveries")
 	for id, count := range delivered {
-		if count != 1 {
-			t.Errorf("msg %d delivered %d times, want 1", id, count)
-		}
+		assert.Equal(t, 1, count, "msg %d delivered count", id)
 	}
 }
 
@@ -183,9 +166,7 @@ func TestMaybeFlushUndelivered_DebouncesPerConv(t *testing.T) {
 	flushDebounceMu.Lock()
 	after := len(flushDebounce)
 	flushDebounceMu.Unlock()
-	if after != before {
-		t.Errorf("empty conv-id should not touch debounce map")
-	}
+	assert.Equal(t, before, after, "empty conv-id should not touch debounce map")
 
 	// First call records a flush time. Second within window does not
 	// reschedule. We can't easily observe the goroutine itself, but
@@ -194,15 +175,12 @@ func TestMaybeFlushUndelivered_DebouncesPerConv(t *testing.T) {
 	flushDebounceMu.Lock()
 	first, ok := flushDebounce["me"]
 	flushDebounceMu.Unlock()
-	if !ok {
-		t.Fatal("expected debounce entry after first call")
-	}
+	require.True(t, ok, "expected debounce entry after first call")
 
 	maybeFlushUndelivered("me")
 	flushDebounceMu.Lock()
 	second := flushDebounce["me"]
 	flushDebounceMu.Unlock()
-	if !second.Equal(first) {
-		t.Errorf("second call within debounce window should not update timestamp; first=%v second=%v", first, second)
-	}
+	assert.True(t, second.Equal(first),
+		"second call within debounce window should not update timestamp; first=%v second=%v", first, second)
 }

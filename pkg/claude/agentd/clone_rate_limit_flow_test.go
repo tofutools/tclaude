@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -42,9 +44,7 @@ func TestClone_RateLimitBlocksRapidSecondClone(t *testing.T) {
 
 	// First clone — succeeds.
 	c1 := f.AsHuman().CloneFresh(oldConv, "")
-	if c1.NewConv == "" {
-		t.Fatalf("first clone returned empty NewConv: %s", c1.Raw)
-	}
+	require.NotEmpty(t, c1.NewConv, "first clone returned empty NewConv: %s", c1.Raw)
 
 	// Second clone of the same source — should be 429. Use the raw
 	// helper because CloneFresh fatals on non-200.
@@ -53,10 +53,8 @@ func TestClone_RateLimitBlocksRapidSecondClone(t *testing.T) {
 		map[string]any{"no_copy_conv": true})
 	r = agentd.AsHumanPeer(r)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("second clone status = %d, want %d. body=%s",
-			rec.Code, http.StatusTooManyRequests, rec.Body.String())
-	}
+	require.Equal(t, http.StatusTooManyRequests, rec.Code,
+		"second clone status. body=%s", rec.Body.String())
 
 	// Real-surface invariant: only the successful first attempt
 	// consumed a slot. INSERT-WHERE-NOT-EXISTS must leave the table
@@ -64,12 +62,8 @@ func TestClone_RateLimitBlocksRapidSecondClone(t *testing.T) {
 	// would extend the cooldown indefinitely (each failed try would
 	// reset the timer), which is not the intended behaviour.
 	last, err := db.LatestCloneAt(oldConv)
-	if err != nil {
-		t.Fatalf("LatestCloneAt: %v", err)
-	}
-	if last.IsZero() {
-		t.Fatal("agent_clone_history has no row for source; first clone failed to record")
-	}
+	require.NoError(t, err, "LatestCloneAt")
+	require.False(t, last.IsZero(), "agent_clone_history has no row for source; first clone failed to record")
 }
 
 // Scenario: the same source can be cloned again once cooldown has
@@ -95,20 +89,14 @@ func TestClone_RateLimitClearsAfterCooldown(t *testing.T) {
 
 	// First clone lands.
 	c1 := f.AsHuman().CloneFresh(oldConv, "")
-	if c1.NewConv == "" {
-		t.Fatalf("first clone returned empty NewConv: %s", c1.Raw)
-	}
+	require.NotEmpty(t, c1.NewConv, "first clone returned empty NewConv: %s", c1.Raw)
 
 	// Drop cooldown to 0 — the next clone should pass.
 	agentd.CloneCooldown = 0
 
 	c2 := f.AsHuman().CloneFresh(oldConv, "")
-	if c2.NewConv == "" {
-		t.Fatalf("second clone returned empty NewConv after cooldown drop: %s", c2.Raw)
-	}
-	if c2.NewConv == c1.NewConv {
-		t.Errorf("expected distinct new convs from two clones, got duplicate %s", c2.NewConv)
-	}
+	require.NotEmpty(t, c2.NewConv, "second clone returned empty NewConv after cooldown drop: %s", c2.Raw)
+	assert.NotEqual(t, c1.NewConv, c2.NewConv, "expected distinct new convs from two clones")
 }
 
 // Scenario: cloning two *different* sources rapidly is fine. The rate
@@ -133,11 +121,7 @@ func TestClone_RateLimitIsPerSource(t *testing.T) {
 	f.HaveMember("team", bConv, "beta")
 
 	cA := f.AsHuman().CloneFresh(aConv, "")
-	if cA.NewConv == "" {
-		t.Fatalf("clone of A failed: %s", cA.Raw)
-	}
+	require.NotEmpty(t, cA.NewConv, "clone of A failed: %s", cA.Raw)
 	cB := f.AsHuman().CloneFresh(bConv, "")
-	if cB.NewConv == "" {
-		t.Fatalf("clone of B failed despite being a different source: %s", cB.Raw)
-	}
+	require.NotEmpty(t, cB.NewConv, "clone of B failed despite being a different source: %s", cB.Raw)
 }

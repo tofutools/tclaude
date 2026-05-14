@@ -3,6 +3,9 @@ package agent
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseStateFilter(t *testing.T) {
@@ -24,16 +27,13 @@ func TestParseStateFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotOnline, gotApplies, err := parseStateFilter(tt.in)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("err = %v, wantErr=%v", err, tt.wantErr)
-			}
-			if err != nil {
+			if tt.wantErr {
+				require.Error(t, err)
 				return
 			}
-			if gotOnline != tt.wantOnline || gotApplies != tt.wantApplies {
-				t.Fatalf("got (online=%v, applies=%v), want (%v, %v)",
-					gotOnline, gotApplies, tt.wantOnline, tt.wantApplies)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantOnline, gotOnline, "online")
+			assert.Equal(t, tt.wantApplies, gotApplies, "applies")
 		})
 	}
 }
@@ -57,15 +57,12 @@ func TestParseDurationDays(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseDurationDays(tt.in)
-			if (err != nil) != tt.bad {
-				t.Fatalf("err = %v, bad=%v", err, tt.bad)
-			}
-			if err != nil {
+			if tt.bad {
+				require.Error(t, err)
 				return
 			}
-			if got != tt.want {
-				t.Fatalf("got %v, want %v", got, tt.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

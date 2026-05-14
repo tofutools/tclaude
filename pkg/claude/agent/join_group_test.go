@@ -1,9 +1,10 @@
 package agent
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -11,9 +12,7 @@ import (
 // so `tclaude --join-group …` is reachable from runNew without a
 // session→agent import cycle.
 func TestJoinGroupHandlerWired(t *testing.T) {
-	if session.JoinGroupHandler == nil {
-		t.Fatal("session.JoinGroupHandler is nil; agent package init() did not run")
-	}
+	require.NotNil(t, session.JoinGroupHandler, "session.JoinGroupHandler is nil; agent package init() did not run")
 }
 
 // Mutually-exclusive flags should fail before any daemon contact.
@@ -40,12 +39,8 @@ func TestJoinGroupRejectsConflictingFlags(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := RunJoinGroup(&tc.params)
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error %q does not mention %q", err.Error(), tc.want)
-			}
+			require.Error(t, err, "expected error, got nil")
+			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
 }

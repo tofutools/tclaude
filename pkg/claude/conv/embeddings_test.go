@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -96,28 +98,20 @@ func setupEmbeddingsTestDB(t *testing.T) {
 func TestFloat32ToBytes_RoundTrip(t *testing.T) {
 	original := []float32{0.1, -0.5, 3.14, 0, -1.0}
 	bytes := Float32ToBytes(original)
-	if len(bytes) != len(original)*4 {
-		t.Fatalf("expected %d bytes, got %d", len(original)*4, len(bytes))
-	}
+	require.Len(t, bytes, len(original)*4, "expected %d bytes", len(original)*4)
 
 	result := BytesToFloat32(bytes)
-	if len(result) != len(original) {
-		t.Fatalf("expected %d floats, got %d", len(original), len(result))
-	}
+	require.Len(t, result, len(original), "expected %d floats", len(original))
 
 	for i := range original {
-		if result[i] != original[i] {
-			t.Errorf("index %d: expected %f, got %f", i, original[i], result[i])
-		}
+		assert.Equal(t, original[i], result[i], "index %d", i)
 	}
 }
 
 func TestFloat32ToBytes_Empty(t *testing.T) {
 	bytes := Float32ToBytes(nil)
 	result := BytesToFloat32(bytes)
-	if len(result) != 0 {
-		t.Fatalf("expected 0 floats, got %d", len(result))
-	}
+	assert.Empty(t, result, "expected 0 floats")
 }
 
 // --- Cosine similarity tests ---
@@ -125,45 +119,35 @@ func TestFloat32ToBytes_Empty(t *testing.T) {
 func TestCosineSimilarity_Identical(t *testing.T) {
 	a := []float32{1, 2, 3}
 	sim := CosineSimilarity(a, a)
-	if math.Abs(float64(sim)-1.0) > 0.0001 {
-		t.Errorf("expected ~1.0 for identical vectors, got %f", sim)
-	}
+	assert.InDelta(t, 1.0, sim, 0.0001, "expected ~1.0 for identical vectors")
 }
 
 func TestCosineSimilarity_Orthogonal(t *testing.T) {
 	a := []float32{1, 0, 0}
 	b := []float32{0, 1, 0}
 	sim := CosineSimilarity(a, b)
-	if math.Abs(float64(sim)) > 0.0001 {
-		t.Errorf("expected ~0.0 for orthogonal vectors, got %f", sim)
-	}
+	assert.InDelta(t, 0.0, sim, 0.0001, "expected ~0.0 for orthogonal vectors")
 }
 
 func TestCosineSimilarity_Opposite(t *testing.T) {
 	a := []float32{1, 2, 3}
 	b := []float32{-1, -2, -3}
 	sim := CosineSimilarity(a, b)
-	if math.Abs(float64(sim)+1.0) > 0.0001 {
-		t.Errorf("expected ~-1.0 for opposite vectors, got %f", sim)
-	}
+	assert.InDelta(t, -1.0, sim, 0.0001, "expected ~-1.0 for opposite vectors")
 }
 
 func TestCosineSimilarity_DifferentLengths(t *testing.T) {
 	a := []float32{1, 2}
 	b := []float32{1, 2, 3}
 	sim := CosineSimilarity(a, b)
-	if sim != 0 {
-		t.Errorf("expected 0 for different length vectors, got %f", sim)
-	}
+	assert.Equal(t, float32(0), sim, "expected 0 for different length vectors")
 }
 
 func TestCosineSimilarity_ZeroVector(t *testing.T) {
 	a := []float32{0, 0, 0}
 	b := []float32{1, 2, 3}
 	sim := CosineSimilarity(a, b)
-	if sim != 0 {
-		t.Errorf("expected 0 for zero vector, got %f", sim)
-	}
+	assert.Equal(t, float32(0), sim, "expected 0 for zero vector")
 }
 
 // --- Chunking tests ---
@@ -171,9 +155,7 @@ func TestCosineSimilarity_ZeroVector(t *testing.T) {
 func writeTestConversation(t *testing.T, dir, sessionID, content string) string {
 	t.Helper()
 	filePath := filepath.Join(dir, sessionID+".jsonl")
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644), "Failed to write test file")
 	return filePath
 }
 
@@ -188,29 +170,15 @@ func TestChunkConversation_MetadataOnly(t *testing.T) {
 	}
 
 	chunks, err := ChunkConversation(entry)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(chunks) == 0 {
-		t.Fatal("expected at least metadata chunk")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, chunks, "expected at least metadata chunk")
 
 	meta := chunks[0]
-	if meta.Type != "metadata" {
-		t.Errorf("expected type 'metadata', got %q", meta.Type)
-	}
-	if meta.Index != 0 {
-		t.Errorf("expected index 0, got %d", meta.Index)
-	}
-	if !contains(meta.Text, "My Title") {
-		t.Error("metadata chunk missing title")
-	}
-	if !contains(meta.Text, "A summary") {
-		t.Error("metadata chunk missing summary")
-	}
-	if !contains(meta.Text, "Please help me") {
-		t.Error("metadata chunk missing first prompt")
-	}
+	assert.Equal(t, "metadata", meta.Type)
+	assert.Equal(t, 0, meta.Index)
+	assert.True(t, contains(meta.Text, "My Title"), "metadata chunk missing title")
+	assert.True(t, contains(meta.Text, "A summary"), "metadata chunk missing summary")
+	assert.True(t, contains(meta.Text, "Please help me"), "metadata chunk missing first prompt")
 }
 
 func TestChunkConversation_WithContent(t *testing.T) {
@@ -230,27 +198,15 @@ func TestChunkConversation_WithContent(t *testing.T) {
 	}
 
 	chunks, err := ChunkConversation(entry)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should have metadata + 1 content chunk (small conversation)
-	if len(chunks) != 2 {
-		t.Fatalf("expected 2 chunks, got %d", len(chunks))
-	}
+	require.Len(t, chunks, 2, "expected 2 chunks")
 
-	if chunks[0].Type != "metadata" {
-		t.Errorf("chunk 0: expected type 'metadata', got %q", chunks[0].Type)
-	}
-	if chunks[1].Type != "content" {
-		t.Errorf("chunk 1: expected type 'content', got %q", chunks[1].Type)
-	}
-	if !contains(chunks[1].Text, "fix this bug") {
-		t.Error("content chunk missing user message")
-	}
-	if !contains(chunks[1].Text, "error handling") {
-		t.Error("content chunk missing assistant message")
-	}
+	assert.Equal(t, "metadata", chunks[0].Type, "chunk 0 type")
+	assert.Equal(t, "content", chunks[1].Type, "chunk 1 type")
+	assert.True(t, contains(chunks[1].Text, "fix this bug"), "content chunk missing user message")
+	assert.True(t, contains(chunks[1].Text, "error handling"), "content chunk missing assistant message")
 }
 
 func TestChunkConversation_FiltersSystemMessages(t *testing.T) {
@@ -270,9 +226,7 @@ func TestChunkConversation_FiltersSystemMessages(t *testing.T) {
 	}
 
 	chunks, err := ChunkConversation(entry)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Find the content chunk
 	var contentChunk *Chunk
@@ -283,18 +237,10 @@ func TestChunkConversation_FiltersSystemMessages(t *testing.T) {
 		}
 	}
 
-	if contentChunk == nil {
-		t.Fatal("no content chunk found")
-	}
-	if contains(contentChunk.Text, "local-command-caveat") {
-		t.Error("content chunk should not contain system-injected messages")
-	}
-	if contains(contentChunk.Text, "Request interrupted") {
-		t.Error("content chunk should not contain interrupted request messages")
-	}
-	if !contains(contentChunk.Text, "Real user message") {
-		t.Error("content chunk missing real user message")
-	}
+	require.NotNil(t, contentChunk, "no content chunk found")
+	assert.False(t, contains(contentChunk.Text, "local-command-caveat"), "content chunk should not contain system-injected messages")
+	assert.False(t, contains(contentChunk.Text, "Request interrupted"), "content chunk should not contain interrupted request messages")
+	assert.True(t, contains(contentChunk.Text, "Real user message"), "content chunk missing real user message")
 }
 
 func TestChunkConversation_SplitsLongContent(t *testing.T) {
@@ -320,23 +266,17 @@ func TestChunkConversation_SplitsLongContent(t *testing.T) {
 	}
 
 	chunks, err := ChunkConversation(entry)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should have metadata + multiple content chunks
 	contentChunks := 0
 	for _, c := range chunks {
 		if c.Type == "content" {
 			contentChunks++
-			if len(c.Text) > maxChunkChars+1000 { // some slack for the last turn
-				t.Errorf("content chunk too large: %d chars (limit %d)", len(c.Text), maxChunkChars)
-			}
+			assert.LessOrEqual(t, len(c.Text), maxChunkChars+1000, "content chunk too large (limit %d)", maxChunkChars)
 		}
 	}
-	if contentChunks < 2 {
-		t.Errorf("expected multiple content chunks for large conversation, got %d", contentChunks)
-	}
+	assert.GreaterOrEqual(t, contentChunks, 2, "expected multiple content chunks for large conversation")
 }
 
 // --- OllamaClient tests with mock server ---
@@ -347,12 +287,8 @@ func TestEmbedOne_Success(t *testing.T) {
 
 	client := NewOllamaClient(server.URL, "test-model")
 	emb, err := client.EmbedOne("hello world")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(emb) != 768 {
-		t.Fatalf("expected 768 dimensions, got %d", len(emb))
-	}
+	require.NoError(t, err)
+	require.Len(t, emb, 768, "expected 768 dimensions")
 }
 
 func TestEmbedOne_ReducesOnContextLengthError(t *testing.T) {
@@ -370,12 +306,8 @@ func TestEmbedOne_ReducesOnContextLengthError(t *testing.T) {
 	}
 
 	emb, err := client.EmbedOne(string(longText))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(emb) != 4 {
-		t.Fatalf("expected 4 dimensions, got %d", len(emb))
-	}
+	require.NoError(t, err)
+	require.Len(t, emb, 4, "expected 4 dimensions")
 }
 
 func TestEmbedOne_GivesUpWhenTooSmall(t *testing.T) {
@@ -392,17 +324,13 @@ func TestEmbedOne_GivesUpWhenTooSmall(t *testing.T) {
 	}
 
 	_, err := client.EmbedOne(string(text))
-	if err == nil {
-		t.Fatal("expected error when text can't be reduced enough")
-	}
+	require.Error(t, err, "expected error when text can't be reduced enough")
 }
 
 func TestEmbedOne_ConnectionError(t *testing.T) {
 	client := NewOllamaClient("http://localhost:1", "test-model")
 	_, err := client.EmbedOne("hello")
-	if err == nil {
-		t.Fatal("expected error for unreachable server")
-	}
+	require.Error(t, err, "expected error for unreachable server")
 }
 
 // --- IndexConversation with mock ---
@@ -427,29 +355,17 @@ func TestIndexConversation_StoresEmbeddings(t *testing.T) {
 
 	client := NewOllamaClient(server.URL, "test-model")
 	chunks, err := IndexConversation(entry, client)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if chunks == 0 {
-		t.Fatal("expected at least 1 chunk stored")
-	}
+	require.NoError(t, err)
+	require.NotZero(t, chunks, "expected at least 1 chunk stored")
 
 	// Verify stored in DB
 	rows, err := db.ListEmbeddingsForConv(sessionID)
-	if err != nil {
-		t.Fatalf("db error: %v", err)
-	}
-	if len(rows) != chunks {
-		t.Errorf("expected %d rows in DB, got %d", chunks, len(rows))
-	}
+	require.NoError(t, err, "db error")
+	assert.Equal(t, chunks, len(rows), "expected %d rows in DB", chunks)
 	for _, row := range rows {
-		if row.Model != "test-model" {
-			t.Errorf("expected model 'test-model', got %q", row.Model)
-		}
+		assert.Equal(t, "test-model", row.Model)
 		emb := BytesToFloat32(row.Embedding)
-		if len(emb) != 8 {
-			t.Errorf("expected 8 dimensions, got %d", len(emb))
-		}
+		assert.Len(t, emb, 8, "expected 8 dimensions")
 	}
 }
 
@@ -474,28 +390,18 @@ func TestIndexConversation_ReplacesOldEmbeddings(t *testing.T) {
 
 	// Index once
 	chunks1, err := IndexConversation(entry, client)
-	if err != nil {
-		t.Fatalf("first index: %v", err)
-	}
+	require.NoError(t, err, "first index")
 
 	// Index again (simulating re-index)
 	chunks2, err := IndexConversation(entry, client)
-	if err != nil {
-		t.Fatalf("second index: %v", err)
-	}
+	require.NoError(t, err, "second index")
 
-	if chunks1 != chunks2 {
-		t.Errorf("chunk count changed: %d -> %d", chunks1, chunks2)
-	}
+	assert.Equal(t, chunks1, chunks2, "chunk count changed")
 
 	// Should have same number of rows, not double
 	rows, err := db.ListEmbeddingsForConv(sessionID)
-	if err != nil {
-		t.Fatalf("db error: %v", err)
-	}
-	if len(rows) != chunks2 {
-		t.Errorf("expected %d rows after re-index, got %d", chunks2, len(rows))
-	}
+	require.NoError(t, err, "db error")
+	assert.Equal(t, chunks2, len(rows), "expected %d rows after re-index", chunks2)
 }
 
 // --- SearchEmbeddings tests ---
@@ -530,22 +436,13 @@ func TestSearchEmbeddings_RanksByBestChunk(t *testing.T) {
 	}
 
 	results, err := SearchEmbeddings(queryVec, entries, 10)
-	if err != nil {
-		t.Fatalf("search error: %v", err)
-	}
+	require.NoError(t, err, "search error")
 
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
-	}
+	require.Len(t, results, 2, "expected 2 results")
 
 	// Conv A should rank first (higher similarity to query)
-	if results[0].Entry.SessionID != convA {
-		t.Errorf("expected conv A first, got %s", results[0].Entry.SessionID)
-	}
-	if results[0].Similarity <= results[1].Similarity {
-		t.Errorf("expected first result to have higher similarity: %f <= %f",
-			results[0].Similarity, results[1].Similarity)
-	}
+	assert.Equal(t, convA, results[0].Entry.SessionID, "expected conv A first")
+	assert.Greater(t, results[0].Similarity, results[1].Similarity, "expected first result to have higher similarity")
 }
 
 func TestSearchEmbeddings_TopKLimit(t *testing.T) {
@@ -566,12 +463,8 @@ func TestSearchEmbeddings_TopKLimit(t *testing.T) {
 
 	queryVec := []float32{1, 0, 0, 0}
 	results, err := SearchEmbeddings(queryVec, entries, 3)
-	if err != nil {
-		t.Fatalf("search error: %v", err)
-	}
-	if len(results) != 3 {
-		t.Errorf("expected 3 results with topK=3, got %d", len(results))
-	}
+	require.NoError(t, err, "search error")
+	assert.Len(t, results, 3, "expected 3 results with topK=3")
 }
 
 func TestSearchEmbeddings_UsesMaxSimilarityAcrossChunks(t *testing.T) {
@@ -597,21 +490,13 @@ func TestSearchEmbeddings_UsesMaxSimilarityAcrossChunks(t *testing.T) {
 	entries := []SessionEntry{{SessionID: convID, FirstPrompt: "test"}}
 
 	results, err := SearchEmbeddings(queryVec, entries, 10)
-	if err != nil {
-		t.Fatalf("search error: %v", err)
-	}
+	require.NoError(t, err, "search error")
 
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
+	require.Len(t, results, 1, "expected 1 result")
 
 	// Should use the high-similarity chunk
-	if results[0].ChunkText != "high match" {
-		t.Errorf("expected 'high match' chunk, got %q", results[0].ChunkText)
-	}
-	if results[0].ChunkType != "content" {
-		t.Errorf("expected chunk type 'content', got %q", results[0].ChunkType)
-	}
+	assert.Equal(t, "high match", results[0].ChunkText)
+	assert.Equal(t, "content", results[0].ChunkType)
 }
 
 func TestSearchEmbeddings_NoResults(t *testing.T) {
@@ -619,12 +504,8 @@ func TestSearchEmbeddings_NoResults(t *testing.T) {
 
 	queryVec := []float32{1, 0, 0, 0}
 	results, err := SearchEmbeddings(queryVec, nil, 10)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if results != nil {
-		t.Errorf("expected nil results, got %d", len(results))
-	}
+	require.NoError(t, err)
+	assert.Nil(t, results, "expected nil results")
 }
 
 // --- Orphan cleanup scoping tests ---
@@ -680,9 +561,8 @@ func TestRunIndexEmbeddings_LocalModePreservesOtherProjectEmbeddings(t *testing.
 			fullPath = tmp
 		}
 		entry := SessionEntry{SessionID: e.id, FirstPrompt: "hello", FullPath: fullPath}
-		if _, err := IndexConversation(entry, client); err != nil {
-			t.Fatalf("index %s: %v", e.id, err)
-		}
+		_, err := IndexConversation(entry, client)
+		require.NoError(t, err, "index %s", e.id)
 		// Insert conv_index entry so ListEmbeddedConvIDsForProject can join
 		db.UpsertConvIndex(&db.ConvIndexRow{
 			ConvID:     e.id,
@@ -694,9 +574,7 @@ func TestRunIndexEmbeddings_LocalModePreservesOtherProjectEmbeddings(t *testing.
 	// Verify all three have embeddings
 	for _, id := range []string{convA1, convA2, convB} {
 		rows, _ := db.ListEmbeddingsForConv(id)
-		if len(rows) == 0 {
-			t.Fatalf("setup failed: %s has no embeddings", id)
-		}
+		require.NotEmpty(t, rows, "setup failed: %s has no embeddings", id)
 	}
 
 	// Run index-embeddings in local mode (cwd = cwdA -> projectDirA)
@@ -716,21 +594,15 @@ func TestRunIndexEmbeddings_LocalModePreservesOtherProjectEmbeddings(t *testing.
 
 	// convA1: still on disk, embeddings should survive
 	rowsA1, _ := db.ListEmbeddingsForConv(convA1)
-	if len(rowsA1) == 0 {
-		t.Error("convA1 embeddings were incorrectly deleted")
-	}
+	assert.NotEmpty(t, rowsA1, "convA1 embeddings were incorrectly deleted")
 
 	// convA2: orphan within project A, should be cleaned up
 	rowsA2, _ := db.ListEmbeddingsForConv(convA2)
-	if len(rowsA2) != 0 {
-		t.Errorf("expected convA2 (orphan) embeddings to be cleaned up, got %d", len(rowsA2))
-	}
+	assert.Empty(t, rowsA2, "expected convA2 (orphan) embeddings to be cleaned up")
 
 	// convB: belongs to project B, MUST still exist
 	rowsB, _ := db.ListEmbeddingsForConv(convB)
-	if len(rowsB) == 0 {
-		t.Error("convB embeddings were incorrectly deleted by local-mode orphan cleanup")
-	}
+	assert.NotEmpty(t, rowsB, "convB embeddings were incorrectly deleted by local-mode orphan cleanup")
 }
 
 // TestRunIndexEmbeddings_GlobalModeCleanupOrphans verifies that global mode
@@ -765,19 +637,16 @@ func TestRunIndexEmbeddings_GlobalModeCleanupOrphans(t *testing.T) {
 	os.WriteFile(tmpOrphanFile, []byte(convContent), 0644)
 	entryOrphan.FullPath = tmpOrphanFile
 
-	if _, err := IndexConversation(entryLive, client); err != nil {
-		t.Fatalf("index live: %v", err)
-	}
-	if _, err := IndexConversation(entryOrphan, client); err != nil {
-		t.Fatalf("index orphan: %v", err)
-	}
+	_, err := IndexConversation(entryLive, client)
+	require.NoError(t, err, "index live")
+	_, err = IndexConversation(entryOrphan, client)
+	require.NoError(t, err, "index orphan")
 
 	// Verify both have embeddings
 	rowsLive, _ := db.ListEmbeddingsForConv(convLive)
 	rowsOrphan, _ := db.ListEmbeddingsForConv(convOrphan)
-	if len(rowsLive) == 0 || len(rowsOrphan) == 0 {
-		t.Fatalf("setup failed: live=%d orphan=%d embeddings", len(rowsLive), len(rowsOrphan))
-	}
+	require.NotEmpty(t, rowsLive, "setup failed: live has no embeddings")
+	require.NotEmpty(t, rowsOrphan, "setup failed: orphan has no embeddings")
 
 	// Run in global mode — orphan has no .jsonl file so should be cleaned up
 	stdout, _ := os.CreateTemp(t.TempDir(), "stdout")
@@ -792,15 +661,11 @@ func TestRunIndexEmbeddings_GlobalModeCleanupOrphans(t *testing.T) {
 
 	// Live conversation's embeddings should still exist
 	rowsLive, _ = db.ListEmbeddingsForConv(convLive)
-	if len(rowsLive) == 0 {
-		t.Error("live conversation embeddings were incorrectly deleted")
-	}
+	assert.NotEmpty(t, rowsLive, "live conversation embeddings were incorrectly deleted")
 
 	// Orphan's embeddings should be cleaned up
 	rowsOrphan, _ = db.ListEmbeddingsForConv(convOrphan)
-	if len(rowsOrphan) != 0 {
-		t.Errorf("expected orphan embeddings to be cleaned up, got %d", len(rowsOrphan))
-	}
+	assert.Empty(t, rowsOrphan, "expected orphan embeddings to be cleaned up")
 }
 
 func contains(s, substr string) bool {

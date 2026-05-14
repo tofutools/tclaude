@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -21,9 +23,7 @@ func TestHandleAgentStop_SkipsOfflineTarget(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w",
 	})
-	if err := db.GrantAgentPermission("manager", PermAgentStop, "<test>"); err != nil {
-		t.Fatalf("grant: %v", err)
-	}
+	require.NoError(t, db.GrantAgentPermission("manager", PermAgentStop, "<test>"), "grant")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/agent/w/stop", nil)
@@ -31,17 +31,11 @@ func TestHandleAgentStop_SkipsOfflineTarget(t *testing.T) {
 		&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
 	handleAgentByConv(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d, body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got := resp["action"]; got != "skipped:already_offline" {
-		t.Errorf("action = %v, want skipped:already_offline; full body=%s",
-			got, w.Body.String())
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode")
+	assert.Equal(t, "skipped:already_offline", resp["action"],
+		"action; full body=%s", w.Body.String())
 }
 
 // Without the agent.stop slug AND no group ownership, a cross-agent
@@ -61,9 +55,7 @@ func TestHandleAgentStop_NoSlugDenies(t *testing.T) {
 		&peer{PID: 1, HasClaudeAncestor: true, ConvID: "stranger"}))
 	handleAgentByConv(w, r)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("status %d, want 403; body=%s", w.Code, w.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, w.Code, "body=%s", w.Body.String())
 }
 
 // Resume on a target whose conv-id resolves but isn't online should
@@ -78,9 +70,7 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w",
 	})
-	if err := db.GrantAgentPermission("manager", PermAgentResume, "<test>"); err != nil {
-		t.Fatalf("grant: %v", err)
-	}
+	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"), "grant")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/agent/w/resume", nil)
@@ -88,13 +78,9 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 		&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
 	handleAgentByConv(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d, body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode")
 	action, _ := resp["action"].(string)
 	switch action {
 	case "resumed", "error":
@@ -116,12 +102,8 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 func TestStopOneConv_OfflineConvSkips(t *testing.T) {
 	setupTestDB(t)
 	res := stopOneConv("nonexistent-conv-id", false)
-	if res.Action != "skipped:already_offline" {
-		t.Errorf("action = %q, want skipped:already_offline", res.Action)
-	}
-	if res.ConvID != "nonexistent-conv-id" {
-		t.Errorf("ConvID = %q, want round-trip of input", res.ConvID)
-	}
+	assert.Equal(t, "skipped:already_offline", res.Action, "action")
+	assert.Equal(t, "nonexistent-conv-id", res.ConvID, "ConvID should round-trip input")
 }
 
 // resumeOneConv must report `skipped:no_conv_id` when called with an
@@ -130,7 +112,5 @@ func TestStopOneConv_OfflineConvSkips(t *testing.T) {
 func TestResumeOneConv_EmptyConvIDSkips(t *testing.T) {
 	setupTestDB(t)
 	res := resumeOneConv("")
-	if res.Action != "skipped:no_conv_id" {
-		t.Errorf("action = %q, want skipped:no_conv_id", res.Action)
-	}
+	assert.Equal(t, "skipped:no_conv_id", res.Action, "action")
 }

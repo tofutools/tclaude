@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -27,9 +29,7 @@ func TestInboxOperator_SlugLetsCallerReadAnothersInbox(t *testing.T) {
 	f.HaveMember("alpha", sender, "alice")
 	f.HaveMember("alpha", recipient, "bob")
 	// Operator is NOT a peer of either; they hold the slug instead.
-	if err := db.GrantAgentPermission(operator, agentd.PermAgentInboxWatch, "test"); err != nil {
-		t.Fatalf("grant: %v", err)
-	}
+	require.NoError(t, db.GrantAgentPermission(operator, agentd.PermAgentInboxWatch, "test"), "grant")
 
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  g.ID,
@@ -38,23 +38,17 @@ func TestInboxOperator_SlugLetsCallerReadAnothersInbox(t *testing.T) {
 		Subject:  "operator visible",
 		Body:     "payload",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	// Operator-view list: header set, slug grants, expect 200 + visible.
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/inbox?limit=50", nil), operator)
 	r.Header.Set("X-Tclaude-Target-Conv", recipient)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("operator inbox: status=%d body=%s, want 200",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"operator inbox: body=%s", rec.Body.String())
 	var rows []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rows), "decode")
 	found := false
 	for _, row := range rows {
 		// JSON unmarshal of int64 → float64 in any-typed maps; tolerate.
@@ -62,9 +56,7 @@ func TestInboxOperator_SlugLetsCallerReadAnothersInbox(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Errorf("operator did not see message id=%d in target inbox; rows=%+v", id, rows)
-	}
+	assert.True(t, found, "operator did not see message id=%d in target inbox; rows=%+v", id, rows)
 
 	// Operator-view read: must NOT mark the row read (recipient hasn't
 	// seen it yet). The endpoint defaults to mark-as-read for the
@@ -73,16 +65,12 @@ func TestInboxOperator_SlugLetsCallerReadAnothersInbox(t *testing.T) {
 		http.MethodGet, "/v1/messages/"+strconv.FormatInt(id, 10), nil), operator)
 	r2.Header.Set("X-Tclaude-Target-Conv", recipient)
 	rec2 := testharness.Serve(f.Mux, r2)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("operator read: status=%d body=%s", rec2.Code, rec2.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec2.Code, "operator read: body=%s", rec2.Body.String())
 	got, err := db.GetAgentMessage(id)
-	if err != nil || got == nil {
-		t.Fatalf("post-read GetAgentMessage: %v row=%v", err, got)
-	}
-	if !got.ReadAt.IsZero() {
-		t.Errorf("operator read should NOT mark recipient's message as read; ReadAt=%v", got.ReadAt)
-	}
+	require.NoError(t, err, "post-read GetAgentMessage")
+	require.NotNil(t, got, "post-read row is nil")
+	assert.True(t, got.ReadAt.IsZero(),
+		"operator read should NOT mark recipient's message as read; ReadAt=%v", got.ReadAt)
 }
 
 // Scenario: a group owner (not a peer, no slug) reads a member's
@@ -98,9 +86,7 @@ func TestInboxOperator_GroupOwnerImplicitAccess(t *testing.T) {
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", member, "bob")
 	f.HaveMember("alpha", sender, "alice")
-	if err := db.AddAgentGroupOwner(g.ID, owner, "test"); err != nil {
-		t.Fatalf("AddAgentGroupOwner: %v", err)
-	}
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "AddAgentGroupOwner")
 
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  g.ID,
@@ -109,18 +95,13 @@ func TestInboxOperator_GroupOwnerImplicitAccess(t *testing.T) {
 		Subject:  "owner visible",
 		Body:     "payload",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/inbox?limit=50", nil), owner)
 	r.Header.Set("X-Tclaude-Target-Conv", member)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("owner inbox: status=%d body=%s, want 200",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "owner inbox: body=%s", rec.Body.String())
 	var rows []map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &rows)
 	found := false
@@ -129,9 +110,7 @@ func TestInboxOperator_GroupOwnerImplicitAccess(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Errorf("owner did not see message id=%d in member inbox; rows=%+v", id, rows)
-	}
+	assert.True(t, found, "owner did not see message id=%d in member inbox; rows=%+v", id, rows)
 }
 
 // Scenario: a third-party agent (no slug, owns no group containing
@@ -155,18 +134,14 @@ func TestInboxOperator_ThirdPartyForbidden(t *testing.T) {
 		Subject:  "private",
 		Body:     "payload",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/inbox?limit=50", nil), stranger)
 	r.Header.Set("X-Tclaude-Target-Conv", recipient)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("third-party operator: status=%d body=%s, want 403",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusForbidden, rec.Code,
+		"third-party operator: body=%s", rec.Body.String())
 }
 
 // Scenario: no header at all. Self-targeted GET /v1/inbox path must
@@ -189,21 +164,17 @@ func TestInboxOperator_NoHeaderUsesCallerOwnInbox(t *testing.T) {
 		Subject:  "to b",
 		Body:     "payload",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/inbox?limit=50", nil), a)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("a's own inbox: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "a's own inbox: body=%s", rec.Body.String())
 	var rows []map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &rows)
 	for _, row := range rows {
-		if rowID, _ := row["id"].(float64); int64(rowID) == id {
-			t.Errorf("a should NOT see message addressed to b in own inbox; rows=%+v", rows)
-		}
+		rowID, _ := row["id"].(float64)
+		assert.NotEqual(t, id, int64(rowID),
+			"a should NOT see message addressed to b in own inbox; rows=%+v", rows)
 	}
 }

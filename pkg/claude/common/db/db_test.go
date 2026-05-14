@@ -4,6 +4,9 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupTestDB(t *testing.T) {
@@ -16,21 +19,13 @@ func setupTestDB(t *testing.T) {
 func TestOpenAndMigrate(t *testing.T) {
 	setupTestDB(t)
 	db, err := Open()
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if db == nil {
-		t.Fatal("Open returned nil db")
-	}
+	require.NoError(t, err, "Open")
+	require.NotNil(t, db, "Open returned nil db")
 
 	// Verify schema version
 	var ver int
-	if err := db.QueryRow("SELECT version FROM schema_version").Scan(&ver); err != nil {
-		t.Fatalf("schema_version query: %v", err)
-	}
-	if ver != currentVersion {
-		t.Fatalf("expected version %d, got %d", currentVersion, ver)
-	}
+	require.NoError(t, db.QueryRow("SELECT version FROM schema_version").Scan(&ver), "schema_version query")
+	require.Equal(t, currentVersion, ver, "expected version %d, got %d", currentVersion, ver)
 }
 
 func TestSessionCRUD(t *testing.T) {
@@ -49,66 +44,40 @@ func TestSessionCRUD(t *testing.T) {
 	}
 
 	// Save
-	if err := SaveSession(s); err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
+	require.NoError(t, SaveSession(s), "SaveSession")
 
 	// Load
 	loaded, err := LoadSession("test-001")
-	if err != nil {
-		t.Fatalf("LoadSession: %v", err)
-	}
-	if loaded.ConvID != "conv-abc" {
-		t.Errorf("ConvID = %q, want %q", loaded.ConvID, "conv-abc")
-	}
-	if loaded.PID != 12345 {
-		t.Errorf("PID = %d, want 12345", loaded.PID)
-	}
+	require.NoError(t, err, "LoadSession")
+	assert.Equal(t, "conv-abc", loaded.ConvID, "ConvID")
+	assert.Equal(t, 12345, loaded.PID, "PID")
 
 	// FindByConvID
 	found, err := FindSessionByConvID("conv-abc")
-	if err != nil {
-		t.Fatalf("FindSessionByConvID: %v", err)
-	}
-	if found == nil || found.ID != "test-001" {
-		t.Errorf("FindSessionByConvID returned %v", found)
+	require.NoError(t, err, "FindSessionByConvID")
+	if assert.NotNil(t, found, "FindSessionByConvID returned nil") {
+		assert.Equal(t, "test-001", found.ID, "FindSessionByConvID id")
 	}
 
 	// FindByConvID (miss)
 	notFound, err := FindSessionByConvID("nonexistent")
-	if err != nil {
-		t.Fatalf("FindSessionByConvID miss: %v", err)
-	}
-	if notFound != nil {
-		t.Errorf("expected nil for nonexistent conv ID, got %v", notFound)
-	}
+	require.NoError(t, err, "FindSessionByConvID miss")
+	assert.Nil(t, notFound, "expected nil for nonexistent conv ID")
 
 	// Exists
 	exists, err := SessionExists("test-001")
-	if err != nil {
-		t.Fatalf("SessionExists: %v", err)
-	}
-	if !exists {
-		t.Error("expected session to exist")
-	}
+	require.NoError(t, err, "SessionExists")
+	assert.True(t, exists, "expected session to exist")
 
 	// List
 	all, err := ListSessions()
-	if err != nil {
-		t.Fatalf("ListSessions: %v", err)
-	}
-	if len(all) != 1 {
-		t.Errorf("ListSessions returned %d sessions, want 1", len(all))
-	}
+	require.NoError(t, err, "ListSessions")
+	assert.Len(t, all, 1, "ListSessions count")
 
 	// Delete
-	if err := DeleteSession("test-001"); err != nil {
-		t.Fatalf("DeleteSession: %v", err)
-	}
+	require.NoError(t, DeleteSession("test-001"), "DeleteSession")
 	exists, _ = SessionExists("test-001")
-	if exists {
-		t.Error("session should not exist after delete")
-	}
+	assert.False(t, exists, "session should not exist after delete")
 }
 
 func TestCleanupOldExited(t *testing.T) {
@@ -127,9 +96,7 @@ func TestCleanupOldExited(t *testing.T) {
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail, auto_registered, created_at, updated_at)
 		VALUES (?, '', 0, '', '', 'exited', '', 0, ?, ?)`,
 		old.ID, old.CreatedAt.Format(time.RFC3339Nano), old.UpdatedAt.Format(time.RFC3339Nano))
-	if err != nil {
-		t.Fatalf("insert old session: %v", err)
-	}
+	require.NoError(t, err, "insert old session")
 
 	// Create a fresh "exited" session
 	fresh := &SessionRow{
@@ -137,24 +104,16 @@ func TestCleanupOldExited(t *testing.T) {
 		Status:    "exited",
 		CreatedAt: time.Now(),
 	}
-	if err := SaveSession(fresh); err != nil {
-		t.Fatalf("SaveSession fresh: %v", err)
-	}
+	require.NoError(t, SaveSession(fresh), "SaveSession fresh")
 
 	// Cleanup with 24h threshold
 	deleted, err := CleanupOldExited(24 * time.Hour)
-	if err != nil {
-		t.Fatalf("CleanupOldExited: %v", err)
-	}
-	if deleted != 1 {
-		t.Errorf("deleted = %d, want 1", deleted)
-	}
+	require.NoError(t, err, "CleanupOldExited")
+	assert.Equal(t, int64(1), deleted, "deleted count")
 
 	// Fresh one should still exist
 	exists, _ := SessionExists("fresh-exited")
-	if !exists {
-		t.Error("fresh-exited should still exist")
-	}
+	assert.True(t, exists, "fresh-exited should still exist")
 }
 
 func TestMaxUpdatedAt(t *testing.T) {
@@ -162,135 +121,77 @@ func TestMaxUpdatedAt(t *testing.T) {
 
 	// Empty table
 	ts, err := MaxUpdatedAt()
-	if err != nil {
-		t.Fatalf("MaxUpdatedAt empty: %v", err)
-	}
-	if !ts.IsZero() {
-		t.Errorf("expected zero time for empty table, got %v", ts)
-	}
+	require.NoError(t, err, "MaxUpdatedAt empty")
+	assert.True(t, ts.IsZero(), "expected zero time for empty table, got %v", ts)
 
 	// Add a session
 	s := &SessionRow{ID: "max-test", Status: "idle", CreatedAt: time.Now()}
-	if err := SaveSession(s); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, SaveSession(s))
 
 	ts, err = MaxUpdatedAt()
-	if err != nil {
-		t.Fatalf("MaxUpdatedAt: %v", err)
-	}
-	if ts.IsZero() {
-		t.Error("MaxUpdatedAt should not be zero after insert")
-	}
+	require.NoError(t, err, "MaxUpdatedAt")
+	assert.False(t, ts.IsZero(), "MaxUpdatedAt should not be zero after insert")
 }
 
 func TestContextSnapshotRoundTrip(t *testing.T) {
 	setupTestDB(t)
 
 	s := &SessionRow{ID: "snap-001", CreatedAt: time.Now()}
-	if err := SaveSession(s); err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
+	require.NoError(t, SaveSession(s), "SaveSession")
 
 	// Default values: all zero before the statusbar hook fires.
 	got, err := GetContextSnapshot("snap-001")
-	if err != nil {
-		t.Fatalf("GetContextSnapshot empty: %v", err)
-	}
-	if got.ContextPct != 0 || got.TokensInput != 0 || got.TokensOutput != 0 || got.ContextWindowSize != 0 {
-		t.Fatalf("default snapshot non-zero: %+v", got)
-	}
+	require.NoError(t, err, "GetContextSnapshot empty")
+	require.True(t, got.ContextPct == 0 && got.TokensInput == 0 && got.TokensOutput == 0 && got.ContextWindowSize == 0, "default snapshot non-zero: %+v", got)
 
 	// Statusbar tick: write the full snapshot atomically.
-	if err := UpdateContextSnapshot("snap-001", 19.0, 180_000, 10_000, 1_000_000); err != nil {
-		t.Fatalf("UpdateContextSnapshot: %v", err)
-	}
+	require.NoError(t, UpdateContextSnapshot("snap-001", 19.0, 180_000, 10_000, 1_000_000), "UpdateContextSnapshot")
 	got, err = GetContextSnapshot("snap-001")
-	if err != nil {
-		t.Fatalf("GetContextSnapshot populated: %v", err)
-	}
-	if got.ContextPct != 19.0 {
-		t.Errorf("ContextPct = %v, want 19", got.ContextPct)
-	}
-	if got.TokensInput != 180_000 {
-		t.Errorf("TokensInput = %v, want 180000", got.TokensInput)
-	}
-	if got.TokensOutput != 10_000 {
-		t.Errorf("TokensOutput = %v, want 10000", got.TokensOutput)
-	}
-	if got.ContextWindowSize != 1_000_000 {
-		t.Errorf("ContextWindowSize = %v, want 1000000", got.ContextWindowSize)
-	}
+	require.NoError(t, err, "GetContextSnapshot populated")
+	assert.Equal(t, 19.0, got.ContextPct, "ContextPct")
+	assert.Equal(t, int64(180_000), got.TokensInput, "TokensInput")
+	assert.Equal(t, int64(10_000), got.TokensOutput, "TokensOutput")
+	assert.Equal(t, int64(1_000_000), got.ContextWindowSize, "ContextWindowSize")
 
 	// Backwards-compat: UpdateContextPct still works alongside the
 	// snapshot fields. Writing pct alone shouldn't zero the abs fields.
-	if err := UpdateContextPct("snap-001", 21.5); err != nil {
-		t.Fatalf("UpdateContextPct: %v", err)
-	}
+	require.NoError(t, UpdateContextPct("snap-001", 21.5), "UpdateContextPct")
 	got, _ = GetContextSnapshot("snap-001")
-	if got.ContextPct != 21.5 {
-		t.Errorf("after pct-only update: ContextPct = %v, want 21.5", got.ContextPct)
-	}
-	if got.TokensInput != 180_000 {
-		t.Errorf("after pct-only update: TokensInput = %v, want 180000 (preserved)", got.TokensInput)
-	}
+	assert.Equal(t, 21.5, got.ContextPct, "after pct-only update: ContextPct")
+	assert.Equal(t, int64(180_000), got.TokensInput, "after pct-only update: TokensInput (preserved)")
 }
 
 func TestCompactStateRoundTrip(t *testing.T) {
 	setupTestDB(t)
 
 	s := &SessionRow{ID: "ctx-001", CreatedAt: time.Now()}
-	if err := SaveSession(s); err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
+	require.NoError(t, SaveSession(s), "SaveSession")
 
 	// Default values: 0/0 right after insert.
 	pct, pending, err := GetCompactState("ctx-001")
-	if err != nil {
-		t.Fatalf("GetCompactState: %v", err)
-	}
-	if pct != 0 || pending != 0 {
-		t.Fatalf("default state = (%v, %v), want (0, 0)", pct, pending)
-	}
+	require.NoError(t, err, "GetCompactState")
+	require.True(t, pct == 0 && pending == 0, "default state = (%v, %v), want (0, 0)", pct, pending)
 
 	// Update context_pct via the statusbar path.
-	if err := UpdateContextPct("ctx-001", 47.0); err != nil {
-		t.Fatalf("UpdateContextPct: %v", err)
-	}
+	require.NoError(t, UpdateContextPct("ctx-001", 47.0), "UpdateContextPct")
 	pct, pending, _ = GetCompactState("ctx-001")
-	if pct != 47.0 || pending != 0 {
-		t.Fatalf("post-pct state = (%v, %v), want (47, 0)", pct, pending)
-	}
+	require.True(t, pct == 47.0 && pending == 0, "post-pct state = (%v, %v), want (47, 0)", pct, pending)
 
 	// Claim compact: first call wins, second is a no-op.
 	claimed, err := TryClaimCompact("ctx-001")
-	if err != nil {
-		t.Fatalf("TryClaimCompact: %v", err)
-	}
-	if !claimed {
-		t.Fatal("first TryClaimCompact should win")
-	}
+	require.NoError(t, err, "TryClaimCompact")
+	require.True(t, claimed, "first TryClaimCompact should win")
 	pct, pending, _ = GetCompactState("ctx-001")
-	if pct != 47.0 || pending == 0 {
-		t.Fatalf("post-claim state = (%v, %v), want pct=47 pending>0", pct, pending)
-	}
+	require.True(t, pct == 47.0 && pending != 0, "post-claim state = (%v, %v), want pct=47 pending>0", pct, pending)
 
 	again, err := TryClaimCompact("ctx-001")
-	if err != nil {
-		t.Fatalf("TryClaimCompact (re): %v", err)
-	}
-	if again {
-		t.Fatal("second TryClaimCompact must not win after a pending claim")
-	}
+	require.NoError(t, err, "TryClaimCompact (re)")
+	require.False(t, again, "second TryClaimCompact must not win after a pending claim")
 
 	// ResetCompact wipes both fields back to zero.
-	if err := ResetCompact("ctx-001"); err != nil {
-		t.Fatalf("ResetCompact: %v", err)
-	}
+	require.NoError(t, ResetCompact("ctx-001"), "ResetCompact")
 	pct, pending, _ = GetCompactState("ctx-001")
-	if pct != 0 || pending != 0 {
-		t.Fatalf("post-reset state = (%v, %v), want (0, 0)", pct, pending)
-	}
+	require.True(t, pct == 0 && pending == 0, "post-reset state = (%v, %v), want (0, 0)", pct, pending)
 }
 
 // TestNudgedPct exercises the new sessions.nudged_pct column: it
@@ -301,50 +202,31 @@ func TestNudgedPct(t *testing.T) {
 	setupTestDB(t)
 
 	s := &SessionRow{ID: "nudge-001", CreatedAt: time.Now()}
-	if err := SaveSession(s); err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
+	require.NoError(t, SaveSession(s), "SaveSession")
 
 	// Default: 0 right after insert.
 	got, err := GetNudgedPct("nudge-001")
-	if err != nil {
-		t.Fatalf("GetNudgedPct: %v", err)
-	}
-	if got != 0 {
-		t.Errorf("default nudged_pct = %v, want 0", got)
-	}
+	require.NoError(t, err, "GetNudgedPct")
+	assert.Equal(t, float64(0), got, "default nudged_pct")
 
 	// Stamp a threshold.
-	if err := SetNudgedPct("nudge-001", 50); err != nil {
-		t.Fatalf("SetNudgedPct: %v", err)
-	}
-	if got, _ = GetNudgedPct("nudge-001"); got != 50 {
-		t.Errorf("after Set(50), got %v", got)
-	}
+	require.NoError(t, SetNudgedPct("nudge-001", 50), "SetNudgedPct")
+	got, _ = GetNudgedPct("nudge-001")
+	assert.Equal(t, float64(50), got, "after Set(50)")
 
 	// Stamp a higher one.
-	if err := SetNudgedPct("nudge-001", 70); err != nil {
-		t.Fatalf("SetNudgedPct(70): %v", err)
-	}
-	if got, _ = GetNudgedPct("nudge-001"); got != 70 {
-		t.Errorf("after Set(70), got %v", got)
-	}
+	require.NoError(t, SetNudgedPct("nudge-001", 70), "SetNudgedPct(70)")
+	got, _ = GetNudgedPct("nudge-001")
+	assert.Equal(t, float64(70), got, "after Set(70)")
 
 	// ResetCompact also zeroes nudged_pct — post-compact sessions get
 	// re-nudged from min_pct upward on the next climb.
-	if err := UpdateContextPct("nudge-001", 80); err != nil {
-		t.Fatalf("UpdateContextPct: %v", err)
-	}
-	if err := ResetCompact("nudge-001"); err != nil {
-		t.Fatalf("ResetCompact: %v", err)
-	}
-	if got, _ = GetNudgedPct("nudge-001"); got != 0 {
-		t.Errorf("after ResetCompact, nudged_pct = %v, want 0", got)
-	}
+	require.NoError(t, UpdateContextPct("nudge-001", 80), "UpdateContextPct")
+	require.NoError(t, ResetCompact("nudge-001"), "ResetCompact")
+	got, _ = GetNudgedPct("nudge-001")
+	assert.Equal(t, float64(0), got, "after ResetCompact, nudged_pct")
 	pct, pending, _ := GetCompactState("nudge-001")
-	if pct != 0 || pending != 0 {
-		t.Errorf("after ResetCompact, compact state = (%v, %v); want (0, 0)", pct, pending)
-	}
+	assert.True(t, pct == 0 && pending == 0, "after ResetCompact, compact state = (%v, %v); want (0, 0)", pct, pending)
 }
 
 func TestNotifyState(t *testing.T) {
@@ -352,29 +234,17 @@ func TestNotifyState(t *testing.T) {
 
 	// No record
 	_, found, err := GetNotifyTime("sess-1")
-	if err != nil {
-		t.Fatalf("GetNotifyTime: %v", err)
-	}
-	if found {
-		t.Error("expected no record")
-	}
+	require.NoError(t, err, "GetNotifyTime")
+	assert.False(t, found, "expected no record")
 
 	// Set
-	if err := SetNotifyTime("sess-1"); err != nil {
-		t.Fatalf("SetNotifyTime: %v", err)
-	}
+	require.NoError(t, SetNotifyTime("sess-1"), "SetNotifyTime")
 
 	// Get
 	ts, found, err := GetNotifyTime("sess-1")
-	if err != nil {
-		t.Fatalf("GetNotifyTime: %v", err)
-	}
-	if !found {
-		t.Error("expected record")
-	}
-	if time.Since(ts) > 5*time.Second {
-		t.Errorf("notified_at too old: %v", ts)
-	}
+	require.NoError(t, err, "GetNotifyTime")
+	assert.True(t, found, "expected record")
+	assert.LessOrEqual(t, time.Since(ts), 5*time.Second, "notified_at too old: %v", ts)
 }
 
 func TestLegacyImport(t *testing.T) {
@@ -384,10 +254,8 @@ func TestLegacyImport(t *testing.T) {
 
 	// Create legacy session files
 	sessDir := dir + "/.tclaude/claude-sessions"
-	if err := os.MkdirAll(sessDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(sessDir+"/abc12345.json", []byte(`{
+	require.NoError(t, os.MkdirAll(sessDir, 0755))
+	require.NoError(t, os.WriteFile(sessDir+"/abc12345.json", []byte(`{
 		"id": "abc12345",
 		"tmuxSession": "abc12345",
 		"pid": 999,
@@ -396,71 +264,46 @@ func TestLegacyImport(t *testing.T) {
 		"status": "idle",
 		"created": "2025-01-01T00:00:00Z",
 		"updated": "2025-01-01T12:00:00Z"
-	}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	}`), 0644))
 	// Create .auto marker
-	if err := os.WriteFile(sessDir+"/abc12345.auto", []byte("auto-registered"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(sessDir+"/abc12345.auto", []byte("auto-registered"), 0644))
 	// Create legacy debug.log
-	if err := os.WriteFile(sessDir+"/debug.log", []byte("old debug data\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(sessDir+"/debug.log", []byte("old debug data\n"), 0644))
 
 	// Create legacy notify state
 	notifyDir := dir + "/.tclaude/notify-state"
-	if err := os.MkdirAll(notifyDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(notifyDir+"/abc12345", []byte(""), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(notifyDir, 0755))
+	require.NoError(t, os.WriteFile(notifyDir+"/abc12345", []byte(""), 0644))
 
 	// Open triggers migration + import
 	_, err := Open()
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err, "Open")
 
 	// Verify session was imported
 	s, err := LoadSession("abc12345")
-	if err != nil {
-		t.Fatalf("LoadSession: %v", err)
-	}
-	if s.ConvID != "conv-legacy" {
-		t.Errorf("ConvID = %q, want conv-legacy", s.ConvID)
-	}
-	if !s.AutoRegistered {
-		t.Error("expected AutoRegistered = true")
-	}
+	require.NoError(t, err, "LoadSession")
+	assert.Equal(t, "conv-legacy", s.ConvID, "ConvID")
+	assert.True(t, s.AutoRegistered, "expected AutoRegistered = true")
 
 	// Verify notify state was imported
 	_, found, err := GetNotifyTime("abc12345")
-	if err != nil {
-		t.Fatalf("GetNotifyTime: %v", err)
-	}
-	if !found {
-		t.Error("expected notify state to be imported")
-	}
+	require.NoError(t, err, "GetNotifyTime")
+	assert.True(t, found, "expected notify state to be imported")
 
 	// Verify old dirs renamed
-	if _, err := os.Stat(sessDir); !os.IsNotExist(err) {
-		t.Error("old sessions dir should be renamed")
-	}
-	if _, err := os.Stat(sessDir + ".migrated"); err != nil {
-		t.Error("expected .migrated sessions dir")
-	}
+	_, err = os.Stat(sessDir)
+	assert.True(t, os.IsNotExist(err), "old sessions dir should be renamed")
+	_, err = os.Stat(sessDir + ".migrated")
+	assert.NoError(t, err, "expected .migrated sessions dir")
 
 	// Verify debug.log moved to new location
 	newDebugLog := dir + "/.tclaude/debug.log"
 	if data, err := os.ReadFile(newDebugLog); err != nil {
-		t.Error("expected debug.log at new location")
-	} else if string(data) != "old debug data\n" {
-		t.Errorf("debug.log content = %q, want %q", string(data), "old debug data\n")
+		assert.Fail(t, "expected debug.log at new location")
+	} else {
+		assert.Equal(t, "old debug data\n", string(data), "debug.log content")
 	}
 	// Old location should be gone (it was moved before the dir rename)
-	if _, err := os.Stat(sessDir + ".migrated/debug.log"); !os.IsNotExist(err) {
-		t.Error("debug.log should not remain in old dir")
-	}
+	_, err = os.Stat(sessDir + ".migrated/debug.log")
+	assert.True(t, os.IsNotExist(err), "debug.log should not remain in old dir")
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -68,12 +70,8 @@ func bridgeAgentClientToMux(t *testing.T, h http.Handler) {
 func chdirTo(t *testing.T, dir string) {
 	t.Helper()
 	prev, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir %q: %v", dir, err)
-	}
+	require.NoError(t, err, "getwd")
+	require.NoError(t, os.Chdir(dir), "chdir %q", dir)
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 }
 
@@ -114,20 +112,15 @@ func TestSpawnCLI_DefaultsCwdToCallersCwd(t *testing.T) {
 		&agent.SpawnParams{Group: "alpha", Alias: "worker"},
 		stdout, new(bytes.Buffer),
 	)
-	if rc != 0 {
-		t.Fatalf("RunSpawn rc=%d stdout=%s", rc, stdout.String())
-	}
-	if resp == nil || resp.ConvID == "" {
-		t.Fatalf("RunSpawn returned empty response: %+v", resp)
-	}
+	require.Equal(t, 0, rc, "RunSpawn stdout=%s", stdout.String())
+	require.NotNil(t, resp, "RunSpawn returned nil response")
+	require.NotEmpty(t, resp.ConvID, "RunSpawn returned empty ConvID: %+v", resp)
 
 	rows, err := db.FindSessionsByConvID(resp.ConvID)
-	if err != nil || len(rows) == 0 {
-		t.Fatalf("no session row for conv %s: %v", resp.ConvID, err)
-	}
-	if got := resolveSym(t, rows[0].Cwd); got != callerCwd {
-		t.Errorf("SessionRow.Cwd = %q, want %q (caller's cwd)", got, callerCwd)
-	}
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	got := resolveSym(t, rows[0].Cwd)
+	assert.Equal(t, callerCwd, got, "SessionRow.Cwd (caller's cwd)")
 }
 
 // Scenario: explicit `-C /some/path` must still override the auto-
@@ -146,17 +139,14 @@ func TestSpawnCLI_ExplicitCwdOverridesCallersCwd(t *testing.T) {
 		&agent.SpawnParams{Group: "alpha", Alias: "worker", Cwd: explicitCwd},
 		new(bytes.Buffer), new(bytes.Buffer),
 	)
-	if rc != 0 || resp == nil {
-		t.Fatalf("RunSpawn rc=%d resp=%v", rc, resp)
-	}
+	require.Equal(t, 0, rc, "RunSpawn rc")
+	require.NotNil(t, resp, "RunSpawn resp")
 
 	rows, err := db.FindSessionsByConvID(resp.ConvID)
-	if err != nil || len(rows) == 0 {
-		t.Fatalf("no session row for conv %s: %v", resp.ConvID, err)
-	}
-	if got := resolveSym(t, rows[0].Cwd); got != explicitCwd {
-		t.Errorf("SessionRow.Cwd = %q, want %q (explicit -C override)", got, explicitCwd)
-	}
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	got := resolveSym(t, rows[0].Cwd)
+	assert.Equal(t, explicitCwd, got, "SessionRow.Cwd (explicit -C override)")
 }
 
 // Scenario: `tclaude --join-group <group>` and `tclaude session new
@@ -177,19 +167,14 @@ func TestJoinGroupCLI_DefaultsCwdToCallersCwd(t *testing.T) {
 		JoinGroup: "alpha",
 		Detached:  true,
 	})
-	if err != nil {
-		t.Fatalf("RunJoinGroup: %v", err)
-	}
+	require.NoError(t, err, "RunJoinGroup")
 
 	members, err := db.ListAgentGroupMembers(g.ID)
-	if err != nil || len(members) != 1 {
-		t.Fatalf("expected 1 member in alpha, got %d (err=%v)", len(members), err)
-	}
+	require.NoError(t, err, "ListAgentGroupMembers")
+	require.Len(t, members, 1, "expected 1 member in alpha")
 	rows, err := db.FindSessionsByConvID(members[0].ConvID)
-	if err != nil || len(rows) == 0 {
-		t.Fatalf("no session row for conv %s: %v", members[0].ConvID, err)
-	}
-	if got := resolveSym(t, rows[0].Cwd); got != callerCwd {
-		t.Errorf("SessionRow.Cwd = %q, want %q (caller's cwd)", got, callerCwd)
-	}
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", members[0].ConvID)
+	got := resolveSym(t, rows[0].Cwd)
+	assert.Equal(t, callerCwd, got, "SessionRow.Cwd (caller's cwd)")
 }

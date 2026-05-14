@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -29,18 +31,12 @@ func upsertConvIndex(t *testing.T, convID, customTitle, summary, firstPrompt str
 	// to the same value we record on the row so the freshness check
 	// sees no rescan as needed.
 	dir := filepath.Join(t.TempDir(), "proj")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755), "mkdir")
 	fullPath := filepath.Join(dir, convID+".jsonl")
-	if err := os.WriteFile(fullPath, []byte(""), 0o600); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
+	require.NoError(t, os.WriteFile(fullPath, []byte(""), 0o600), "write fixture")
 	mtime := time.Now().Unix()
-	if err := os.Chtimes(fullPath, time.Unix(mtime, 0), time.Unix(mtime, 0)); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, os.Chtimes(fullPath, time.Unix(mtime, 0), time.Unix(mtime, 0)), "chtimes")
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      convID,
 		ProjectDir:  dir,
 		FullPath:    fullPath,
@@ -49,9 +45,7 @@ func upsertConvIndex(t *testing.T, convID, customTitle, summary, firstPrompt str
 		Summary:     summary,
 		FirstPrompt: firstPrompt,
 		IndexedAt:   time.Now(),
-	}); err != nil {
-		t.Fatalf("UpsertConvIndex: %v", err)
-	}
+	}), "UpsertConvIndex")
 }
 
 func TestResolveSelector_ByID(t *testing.T) {
@@ -59,12 +53,8 @@ func TestResolveSelector_ByID(t *testing.T) {
 	upsertConvIndex(t, "11111111-2222-3333-4444-555555555555", "planner", "", "")
 
 	r, _, err := resolveSelector("11111111-2222-3333-4444-555555555555")
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if r.ConvID != "11111111-2222-3333-4444-555555555555" {
-		t.Fatalf("convID = %q", r.ConvID)
-	}
+	require.NoError(t, err, "resolveSelector")
+	assert.Equal(t, "11111111-2222-3333-4444-555555555555", r.ConvID)
 }
 
 func TestResolveSelector_ByPrefix(t *testing.T) {
@@ -72,12 +62,8 @@ func TestResolveSelector_ByPrefix(t *testing.T) {
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")
 
 	r, _, err := resolveSelector("abcd1234")
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if !strings.HasPrefix(r.ConvID, "abcd1234") {
-		t.Fatalf("convID = %q", r.ConvID)
-	}
+	require.NoError(t, err, "resolveSelector")
+	assert.True(t, strings.HasPrefix(r.ConvID, "abcd1234"), "convID = %q", r.ConvID)
 }
 
 func TestResolveSelector_ByTitle(t *testing.T) {
@@ -86,12 +72,8 @@ func TestResolveSelector_ByTitle(t *testing.T) {
 	upsertConvIndex(t, "22222222-2222-3333-4444-555555555555", "reviewer", "", "")
 
 	r, _, err := resolveSelector("planner")
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if !strings.HasPrefix(r.ConvID, "11111111") {
-		t.Fatalf("convID = %q", r.ConvID)
-	}
+	require.NoError(t, err, "resolveSelector")
+	assert.True(t, strings.HasPrefix(r.ConvID, "11111111"), "convID = %q", r.ConvID)
 }
 
 func TestResolveSelector_AmbiguousByTitle(t *testing.T) {
@@ -101,20 +83,14 @@ func TestResolveSelector_AmbiguousByTitle(t *testing.T) {
 	upsertConvIndex(t, "22222222-2222-3333-4444-555555555555", "", "", "shared")
 
 	_, matches, err := resolveSelector("shared")
-	if !errors.Is(err, errAmbiguous) {
-		t.Fatalf("expected errAmbiguous, got %v", err)
-	}
-	if len(matches) != 2 {
-		t.Fatalf("expected 2 matches, got %d", len(matches))
-	}
+	require.True(t, errors.Is(err, errAmbiguous), "expected errAmbiguous, got %v", err)
+	require.Len(t, matches, 2)
 }
 
 func TestResolveSelector_NotFound(t *testing.T) {
 	setupTestDB(t)
 	_, _, err := resolveSelector("nope-no-such-conv")
-	if err == nil {
-		t.Fatal("expected error for missing selector")
-	}
+	require.Error(t, err, "expected error for missing selector")
 }
 
 // TestResolveSelector_ByGroupAlias covers the v2 fallback: a conv that
@@ -123,23 +99,15 @@ func TestResolveSelector_NotFound(t *testing.T) {
 func TestResolveSelector_ByGroupAlias(t *testing.T) {
 	setupTestDB(t)
 	g, _ := db.CreateAgentGroup("alpha", "")
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g, ConvID: "f6c6e261-deaf-bead-cafe-feedfacefeed",
 		Alias: "second-banana", Role: "builder",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
+	}), "AddAgentGroupMember")
 
 	r, _, err := resolveSelector("second-banana")
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if r.ConvID != "f6c6e261-deaf-bead-cafe-feedfacefeed" {
-		t.Errorf("conv_id = %q, want freshly-spawned uuid", r.ConvID)
-	}
-	if r.Row != nil {
-		t.Errorf("Row should be nil for non-indexed conv, got %+v", r.Row)
-	}
+	require.NoError(t, err, "resolveSelector")
+	assert.Equal(t, "f6c6e261-deaf-bead-cafe-feedfacefeed", r.ConvID, "conv_id, want freshly-spawned uuid")
+	assert.Nil(t, r.Row, "Row should be nil for non-indexed conv")
 }
 
 // TestResolveSelector_ByGroupConvPrefix covers the same fallback for
@@ -148,20 +116,14 @@ func TestResolveSelector_ByGroupAlias(t *testing.T) {
 func TestResolveSelector_ByGroupConvPrefix(t *testing.T) {
 	setupTestDB(t)
 	g, _ := db.CreateAgentGroup("alpha", "")
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g, ConvID: "f6c6e261-deaf-bead-cafe-feedfacefeed",
 		Alias: "x",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
+	}), "AddAgentGroupMember")
 
 	r, _, err := resolveSelector("f6c6e261")
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if r.ConvID != "f6c6e261-deaf-bead-cafe-feedfacefeed" {
-		t.Errorf("conv_id = %q, want freshly-spawned uuid", r.ConvID)
-	}
+	require.NoError(t, err, "resolveSelector")
+	assert.Equal(t, "f6c6e261-deaf-bead-cafe-feedfacefeed", r.ConvID, "conv_id, want freshly-spawned uuid")
 }
 
 // TestResolveSelector_GroupAliasAmbiguous: same alias in two groups
@@ -170,24 +132,16 @@ func TestResolveSelector_GroupAliasAmbiguous(t *testing.T) {
 	setupTestDB(t)
 	g1, _ := db.CreateAgentGroup("alpha", "")
 	g2, _ := db.CreateAgentGroup("beta", "")
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g1, ConvID: "11111111-1111-1111-1111-111111111111", Alias: "dup",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+	}))
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g2, ConvID: "22222222-2222-2222-2222-222222222222", Alias: "dup",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	_, matches, err := resolveSelector("dup")
-	if !errors.Is(err, errAmbiguous) {
-		t.Fatalf("expected errAmbiguous, got %v matches=%d", err, len(matches))
-	}
-	if len(matches) != 2 {
-		t.Errorf("expected 2 distinct matches, got %d", len(matches))
-	}
+	require.True(t, errors.Is(err, errAmbiguous), "expected errAmbiguous, got %v matches=%d", err, len(matches))
+	assert.Len(t, matches, 2, "expected 2 distinct matches")
 }
 
 // TestResolveSelector_PrefersConvIndexOverMembers: when both have
@@ -199,21 +153,15 @@ func TestResolveSelector_PrefersConvIndexOverMembers(t *testing.T) {
 	upsertConvIndex(t, convID, "indexed-title", "", "")
 
 	g, _ := db.CreateAgentGroup("alpha", "")
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g, ConvID: convID, Alias: "alias-only",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	// A conv-index hit on the prefix returns the Row; we don't fall
 	// through to the agent_group_members step.
 	r, _, err := resolveSelector("abcd1234")
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if r.Row == nil {
-		t.Error("expected conv_index row on prefix hit, got nil")
-	}
+	require.NoError(t, err, "resolveSelector")
+	assert.NotNil(t, r.Row, "expected conv_index row on prefix hit, got nil")
 }
 
 // TestFreshConvRowAt_ScansJSONLOnMissingRow covers the reincarnate
@@ -228,31 +176,21 @@ func TestResolveSelector_PrefersConvIndexOverMembers(t *testing.T) {
 func TestFreshConvRowAt_ScansJSONLOnMissingRow(t *testing.T) {
 	setupTestDB(t)
 	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
-	}
+	require.NoError(t, err, "UserHomeDir")
 	cwd := "/home/u/myproj"
 	convID := "12345678-1234-1234-1234-123456789012"
 
 	projectDir := filepath.Join(home, ".claude", "projects", "-home-u-myproj")
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		t.Fatalf("mkdir project: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0o755), "mkdir project")
 	fixture := strings.Join([]string{
 		`{"type":"user","sessionId":"` + convID + `","timestamp":"2026-05-10T01:00:00Z","cwd":"/home/u/myproj","message":{"role":"user","content":"hi"}}`,
 		`{"type":"custom-title","customTitle":"my-agent","sessionId":"` + convID + `"}`,
 	}, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(projectDir, convID+".jsonl"), []byte(fixture), 0o600); err != nil {
-		t.Fatalf("write jsonl: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, convID+".jsonl"), []byte(fixture), 0o600), "write jsonl")
 
 	row := FreshConvRowAt(convID, cwd)
-	if row == nil {
-		t.Fatal("FreshConvRowAt returned nil; expected row from .jsonl scan")
-	}
-	if row.CustomTitle != "my-agent" {
-		t.Errorf("CustomTitle = %q, want %q", row.CustomTitle, "my-agent")
-	}
+	require.NotNil(t, row, "FreshConvRowAt returned nil; expected row from .jsonl scan")
+	assert.Equal(t, "my-agent", row.CustomTitle)
 }
 
 // TestFreshConvRowAt_CacheHitWinsOverDiskWalk: once the row is in the
@@ -265,12 +203,8 @@ func TestFreshConvRowAt_CacheHitWinsOverDiskWalk(t *testing.T) {
 	upsertConvIndex(t, convID, "cached", "", "")
 
 	row := FreshConvRowAt(convID, "/no/such/dir")
-	if row == nil {
-		t.Fatal("FreshConvRowAt returned nil for cached row")
-	}
-	if row.CustomTitle != "cached" {
-		t.Errorf("CustomTitle = %q, want %q (disk walk should not have fired)", row.CustomTitle, "cached")
-	}
+	require.NotNil(t, row, "FreshConvRowAt returned nil for cached row")
+	assert.Equal(t, "cached", row.CustomTitle, "disk walk should not have fired")
 }
 
 // TestFreshConvRowAt_EmptyCwdReturnsNil: with neither a cached row nor
@@ -279,9 +213,7 @@ func TestFreshConvRowAt_CacheHitWinsOverDiskWalk(t *testing.T) {
 func TestFreshConvRowAt_EmptyCwdReturnsNil(t *testing.T) {
 	setupTestDB(t)
 	row := FreshConvRowAt("11111111-1111-1111-1111-111111111111", "")
-	if row != nil {
-		t.Errorf("expected nil with empty cwd + no cache, got %+v", row)
-	}
+	assert.Nil(t, row, "expected nil with empty cwd + no cache")
 }
 
 // TestFreshConvRowAt_NoFileNoRow: known cwd but the .jsonl doesn't
@@ -289,9 +221,7 @@ func TestFreshConvRowAt_EmptyCwdReturnsNil(t *testing.T) {
 func TestFreshConvRowAt_NoFileNoRow(t *testing.T) {
 	setupTestDB(t)
 	row := FreshConvRowAt("99999999-9999-9999-9999-999999999999", "/home/u/empty")
-	if row != nil {
-		t.Errorf("expected nil for missing conv + missing file, got %+v", row)
-	}
+	assert.Nil(t, row, "expected nil for missing conv + missing file")
 }
 
 // TestFreshConvRowResolved_UsesSessionRowCwd covers the dashboard
@@ -307,41 +237,29 @@ func TestFreshConvRowAt_NoFileNoRow(t *testing.T) {
 func TestFreshConvRowResolved_UsesSessionRowCwd(t *testing.T) {
 	setupTestDB(t)
 	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
-	}
+	require.NoError(t, err, "UserHomeDir")
 	cwd := "/home/u/myproj"
 	convID := "22222222-3333-4444-5555-666666666666"
 
 	projectDir := filepath.Join(home, ".claude", "projects", "-home-u-myproj")
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		t.Fatalf("mkdir project: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0o755), "mkdir project")
 	fixture := strings.Join([]string{
 		`{"type":"user","sessionId":"` + convID + `","timestamp":"2026-05-10T01:00:00Z","cwd":"/home/u/myproj","message":{"role":"user","content":"hi"}}`,
 		`{"type":"custom-title","customTitle":"my-resolved-agent","sessionId":"` + convID + `"}`,
 	}, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(projectDir, convID+".jsonl"), []byte(fixture), 0o600); err != nil {
-		t.Fatalf("write jsonl: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, convID+".jsonl"), []byte(fixture), 0o600), "write jsonl")
 
-	if err := db.SaveSession(&db.SessionRow{
+	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID:        "spwn-deadbe",
 		ConvID:    convID,
 		Cwd:       cwd,
 		Status:    "idle",
 		CreatedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
+	}), "SaveSession")
 
 	row := FreshConvRowResolved(convID)
-	if row == nil {
-		t.Fatal("FreshConvRowResolved returned nil; expected row via session-row cwd fallback")
-	}
-	if row.CustomTitle != "my-resolved-agent" {
-		t.Errorf("CustomTitle = %q, want %q", row.CustomTitle, "my-resolved-agent")
-	}
+	require.NotNil(t, row, "FreshConvRowResolved returned nil; expected row via session-row cwd fallback")
+	assert.Equal(t, "my-resolved-agent", row.CustomTitle)
 }
 
 // TestFreshConvRowResolved_NoSessionRow: conv has no session row → no
@@ -350,9 +268,7 @@ func TestFreshConvRowResolved_UsesSessionRowCwd(t *testing.T) {
 func TestFreshConvRowResolved_NoSessionRow(t *testing.T) {
 	setupTestDB(t)
 	row := FreshConvRowResolved("77777777-8888-9999-aaaa-bbbbbbbbbbbb")
-	if row != nil {
-		t.Errorf("expected nil with no session row + no cache, got %+v", row)
-	}
+	assert.Nil(t, row, "expected nil with no session row + no cache")
 }
 
 // TestResolveSelector_FollowsSuccession: typing the original conv-id
@@ -367,24 +283,16 @@ func TestResolveSelector_FollowsSuccession(t *testing.T) {
 	upsertConvIndex(t, newID, "new-name", "", "")
 
 	// Record the succession edge old → new.
-	if err := db.RecordConvSuccession(oldID, newID, "reincarnate"); err != nil {
-		t.Fatalf("RecordConvSuccession: %v", err)
-	}
+	require.NoError(t, db.RecordConvSuccession(oldID, newID, "reincarnate"), "RecordConvSuccession")
 
 	// Resolving the old ID should redirect to the new one + carry the
 	// new conv-index row (so display titles reflect the live conv).
 	r, _, err := resolveSelector(oldID)
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if r == nil {
-		t.Fatal("expected a resolved match, got nil")
-	}
-	if r.ConvID != newID {
-		t.Errorf("ConvID = %q, want %q (succession redirect missed)", r.ConvID, newID)
-	}
-	if r.Row == nil || r.Row.CustomTitle != "new-name" {
-		t.Errorf("Row.CustomTitle should reflect the new conv, got %+v", r.Row)
+	require.NoError(t, err, "resolveSelector")
+	require.NotNil(t, r, "expected a resolved match, got nil")
+	assert.Equal(t, newID, r.ConvID, "succession redirect missed")
+	if assert.NotNil(t, r.Row, "Row.CustomTitle should reflect the new conv") {
+		assert.Equal(t, "new-name", r.Row.CustomTitle, "Row.CustomTitle should reflect the new conv")
 	}
 }
 
@@ -396,12 +304,9 @@ func TestResolveSelector_NoSuccession_LeavesAsIs(t *testing.T) {
 	const id = "33333333-aaaa-bbbb-cccc-333333333333"
 	upsertConvIndex(t, id, "self", "", "")
 	r, _, err := resolveSelector(id)
-	if err != nil {
-		t.Fatalf("resolveSelector: %v", err)
-	}
-	if r == nil || r.ConvID != id {
-		t.Errorf("expected ConvID=%q, got %+v", id, r)
-	}
+	require.NoError(t, err, "resolveSelector")
+	require.NotNil(t, r)
+	assert.Equal(t, id, r.ConvID)
 }
 
 func TestRunLookup(t *testing.T) {
@@ -410,12 +315,8 @@ func TestRunLookup(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	rc := runLookupDirect(&lookupParams{Selector: "planner"}, &stdout, &stderr)
-	if rc != rcOK {
-		t.Fatalf("runLookup rc = %d, stderr = %s", rc, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "abcd1234") {
-		t.Fatalf("expected stdout to contain conv id, got %q", stdout.String())
-	}
+	require.Equal(t, rcOK, rc, "runLookup rc = %d, stderr = %s", rc, stderr.String())
+	assert.Contains(t, stdout.String(), "abcd1234", "expected stdout to contain conv id")
 }
 
 func TestRunWhoami_HumanFallback(t *testing.T) {
@@ -428,12 +329,8 @@ func TestRunWhoami_HumanFallback(t *testing.T) {
 	t.Cleanup(func() { findClaudePID = prev })
 	var stdout, stderr bytes.Buffer
 	rc := runWhoamiDirect(&stdout, &stderr)
-	if rc != rcOK {
-		t.Fatalf("rc = %d, stderr = %q", rc, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), HumanIdentity) {
-		t.Fatalf("stdout = %q, want %q", stdout.String(), HumanIdentity)
-	}
+	require.Equal(t, rcOK, rc, "stderr = %q", stderr.String())
+	assert.Contains(t, stdout.String(), HumanIdentity)
 }
 
 func TestRunWhoami_KnownConv(t *testing.T) {
@@ -443,13 +340,10 @@ func TestRunWhoami_KnownConv(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	rc := runWhoamiDirect(&stdout, &stderr)
-	if rc != rcOK {
-		t.Fatalf("rc = %d, stderr = %q", rc, stderr.String())
-	}
+	require.Equal(t, rcOK, rc, "stderr = %q", stderr.String())
 	out := stdout.String()
-	if !strings.Contains(out, "abcd1234") || !strings.Contains(out, "planner") {
-		t.Fatalf("stdout = %q", out)
-	}
+	assert.Contains(t, out, "abcd1234")
+	assert.Contains(t, out, "planner")
 }
 
 func TestRunLookup_Ambiguous(t *testing.T) {
@@ -459,10 +353,6 @@ func TestRunLookup_Ambiguous(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	rc := runLookupDirect(&lookupParams{Selector: "dup"}, &stdout, &stderr)
-	if rc != rcAmbiguous {
-		t.Fatalf("runLookup rc = %d", rc)
-	}
-	if !strings.Contains(stderr.String(), "matches 2 conversations") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
+	require.Equal(t, rcAmbiguous, rc, "runLookup rc")
+	assert.Contains(t, stderr.String(), "matches 2 conversations")
 }

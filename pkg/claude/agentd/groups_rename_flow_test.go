@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -22,46 +24,35 @@ func TestGroupsRename_BasicMembersSurvive(t *testing.T) {
 	const memberB = "bbb-aaaa-bbbb-cccc-2222"
 	f.HaveMember("alpha", memberA, "alice")
 	f.HaveMember("alpha", memberB, "bob")
-	if err := db.AddAgentGroupOwner(g.ID, memberA, "test"); err != nil {
-		t.Fatalf("AddAgentGroupOwner: %v", err)
-	}
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, memberA, "test"), "AddAgentGroupOwner")
 
 	rec := postRename(t, f, "alpha", "alpha-renamed")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("rename: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
 
 	// Old name no longer resolves.
-	if got, _ := db.GetAgentGroupByName("alpha"); got != nil {
-		t.Errorf("old name should 404 after rename; got %+v", got)
-	}
+	got, _ := db.GetAgentGroupByName("alpha")
+	assert.Nil(t, got, "old name should 404 after rename")
 	// New name resolves to the same id (foreign keys still match).
 	got, err := db.GetAgentGroupByName("alpha-renamed")
-	if err != nil || got == nil {
-		t.Fatalf("new name should resolve; got=%v err=%v", got, err)
-	}
-	if got.ID != g.ID {
-		t.Errorf("rename should keep id stable; was %d, now %d", g.ID, got.ID)
-	}
+	require.NoError(t, err, "new name should resolve")
+	require.NotNil(t, got, "new name should resolve")
+	assert.Equal(t, g.ID, got.ID, "rename should keep id stable")
 
 	// Members still attached via the stable id.
 	members, _ := db.ListAgentGroupMembers(got.ID)
-	if len(members) != 2 {
-		t.Errorf("members should survive rename; got %d, want 2", len(members))
-	}
+	assert.Len(t, members, 2, "members should survive rename")
 	// Owners likewise.
 	owners, _ := db.ListAgentGroupOwners(got.ID)
-	if len(owners) != 1 || owners[0].ConvID != memberA {
-		t.Errorf("owner should survive rename; got %+v", owners)
+	if assert.Len(t, owners, 1, "owner should survive rename") {
+		assert.Equal(t, memberA, owners[0].ConvID, "owner conv-id")
 	}
 
 	// Audit row recorded.
 	hist, err := db.ListAgentGroupRenames(got.ID)
-	if err != nil {
-		t.Fatalf("ListAgentGroupRenames: %v", err)
-	}
-	if len(hist) != 1 || hist[0].OldName != "alpha" || hist[0].NewName != "alpha-renamed" {
-		t.Errorf("audit row missing or wrong; got %+v", hist)
+	require.NoError(t, err, "ListAgentGroupRenames")
+	if assert.Len(t, hist, 1, "audit row") {
+		assert.Equal(t, "alpha", hist[0].OldName, "OldName")
+		assert.Equal(t, "alpha-renamed", hist[0].NewName, "NewName")
 	}
 }
 
@@ -73,18 +64,14 @@ func TestGroupsRename_NameCollisionIsConflict(t *testing.T) {
 	other := f.HaveGroup("beta")
 
 	rec := postRename(t, f, "alpha", "beta")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("collision: status=%d body=%s, want 409", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusConflict, rec.Code, "collision body=%s", rec.Body.String())
 	// alpha untouched.
 	a, _ := db.GetAgentGroupByName("alpha")
-	if a == nil {
-		t.Error("alpha should still exist after collision")
-	}
+	assert.NotNil(t, a, "alpha should still exist after collision")
 	// beta still has its original id.
 	b, _ := db.GetAgentGroupByName("beta")
-	if b == nil || b.ID != other.ID {
-		t.Errorf("beta should be untouched; got %+v want id=%d", b, other.ID)
+	if assert.NotNil(t, b, "beta should be untouched") {
+		assert.Equal(t, other.ID, b.ID, "beta id should be stable")
 	}
 }
 
@@ -98,15 +85,10 @@ func TestGroupsRename_RejectsInvalidNames(t *testing.T) {
 
 	for _, bad := range []string{"", "has/slash", "has\\backslash", "  trailing-space  ", "\x01control"} {
 		rec := postRename(t, f, "alpha", bad)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("bad name %q: status=%d body=%s, want 400",
-				bad, rec.Code, rec.Body.String())
-			// If the rename slipped through, surface that distinctly
-			// from "alpha was already gone for a different reason".
-		}
-		if a, _ := db.GetAgentGroupByName("alpha"); a == nil {
-			t.Fatalf("alpha disappeared after rejecting %q — validator let a mutation through", bad)
-		}
+		assert.Equal(t, http.StatusBadRequest, rec.Code,
+			"bad name %q: body=%s", bad, rec.Body.String())
+		a, _ := db.GetAgentGroupByName("alpha")
+		require.NotNil(t, a, "alpha disappeared after rejecting %q — validator let a mutation through", bad)
 	}
 }
 
@@ -119,18 +101,14 @@ func TestGroupsRename_SameNameIsNoop(t *testing.T) {
 	g := f.HaveGroup("alpha")
 
 	rec := postRename(t, f, "alpha", "alpha")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("same-name rename: status=%d body=%s, want 200",
-			rec.Code, rec.Body.String())
-	}
-	if got, _ := db.GetAgentGroupByName("alpha"); got == nil || got.ID != g.ID {
-		t.Errorf("group should still exist with same id; got %+v", got)
+	require.Equal(t, http.StatusOK, rec.Code, "same-name rename body=%s", rec.Body.String())
+	got, _ := db.GetAgentGroupByName("alpha")
+	if assert.NotNil(t, got, "group should still exist with same id") {
+		assert.Equal(t, g.ID, got.ID, "group id should be stable")
 	}
 	// Audit row still recorded.
 	hist, _ := db.ListAgentGroupRenames(g.ID)
-	if len(hist) != 1 {
-		t.Errorf("same-name rename should still log audit; got %d rows", len(hist))
-	}
+	assert.Len(t, hist, 1, "same-name rename should still log audit")
 }
 
 // Scenario: rename a 404'd group → 404 from the dispatcher (the
@@ -139,10 +117,8 @@ func TestGroupsRename_MissingSourceIs404(t *testing.T) {
 	f := newFlow(t)
 
 	rec := postRename(t, f, "no-such-group", "whatever")
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("missing source: status=%d body=%s, want 404",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusNotFound, rec.Code,
+		"missing source body=%s", rec.Body.String())
 }
 
 // Scenario: rename an archived group. archived_at must be preserved
@@ -151,24 +127,14 @@ func TestGroupsRename_MissingSourceIs404(t *testing.T) {
 func TestGroupsRename_PreservesArchivedState(t *testing.T) {
 	f := newFlow(t)
 	g := f.HaveGroup("alpha")
-	if err := db.ArchiveAgentGroup("alpha"); err != nil {
-		t.Fatalf("archive: %v", err)
-	}
+	require.NoError(t, db.ArchiveAgentGroup("alpha"), "archive")
 
 	rec := postRename(t, f, "alpha", "alpha-renamed")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("rename: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
 	got, _ := db.GetAgentGroupByName("alpha-renamed")
-	if got == nil {
-		t.Fatal("renamed group missing")
-	}
-	if got.ID != g.ID {
-		t.Errorf("id should be stable; was %d, now %d", g.ID, got.ID)
-	}
-	if !got.IsArchived() {
-		t.Error("archived state should survive rename")
-	}
+	require.NotNil(t, got, "renamed group missing")
+	assert.Equal(t, g.ID, got.ID, "id should be stable")
+	assert.True(t, got.IsArchived(), "archived state should survive rename")
 }
 
 // postRename is a small helper to keep the call sites concise.

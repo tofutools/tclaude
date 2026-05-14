@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -35,48 +37,34 @@ func TestInboxDelete_RecipientPurgesSharedRow(t *testing.T) {
 		Subject:  "to be deleted",
 		Body:     "payload",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	// Recipient sees one message in their inbox.
-	if got := inboxCount(t, f.Mux, recipConv); got != 1 {
-		t.Fatalf("pre-delete recipient inbox count = %d, want 1", got)
-	}
+	require.Equal(t, 1, inboxCount(t, f.Mux, recipConv), "pre-delete recipient inbox count")
 
 	// DELETE as recipient — the inbox-watch use case.
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/v1/messages/"+strconv.FormatInt(id, 10), nil), recipConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("DELETE: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "DELETE: body=%s", rec.Body.String())
 
 	// Recipient inbox no longer surfaces it (production read path).
-	if got := inboxCount(t, f.Mux, recipConv); got != 0 {
-		t.Errorf("post-delete recipient inbox count = %d, want 0", got)
-	}
+	assert.Equal(t, 0, inboxCount(t, f.Mux, recipConv), "post-delete recipient inbox count")
 
 	// Sender's outgoing list also no longer surfaces it — single shared
 	// row, deleted once. Mirrors prune semantics the CLI already exposes.
 	rows, err := db.ListAgentMessagesFromConv(senderConv, 100)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesFromConv: %v", err)
-	}
+	require.NoError(t, err, "ListAgentMessagesFromConv")
 	for _, m := range rows {
-		if m.ID == id {
-			t.Errorf("sender still sees deleted message id %d", id)
-		}
+		assert.NotEqual(t, id, m.ID, "sender still sees deleted message id %d", id)
 	}
 
 	// Re-deleting the same id returns 404 — observable, not silent.
 	r2 := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/v1/messages/"+strconv.FormatInt(id, 10), nil), recipConv)
 	rec2 := testharness.Serve(f.Mux, r2)
-	if rec2.Code != http.StatusNotFound {
-		t.Errorf("re-delete: status=%d body=%s, want 404",
-			rec2.Code, rec2.Body.String())
-	}
+	assert.Equal(t, http.StatusNotFound, rec2.Code,
+		"re-delete: body=%s", rec2.Body.String())
 }
 
 // Scenario: a third-party agent (NOT sender, NOT recipient) tries to
@@ -99,22 +87,18 @@ func TestInboxDelete_ThirdPartyForbidden(t *testing.T) {
 		Subject:  "private",
 		Body:     "payload",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/v1/messages/"+strconv.FormatInt(id, 10), nil), stranger)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("third-party DELETE: status=%d body=%s, want 403",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusForbidden, rec.Code,
+		"third-party DELETE: body=%s", rec.Body.String())
 
 	// Row must still exist for both parties.
 	got, err := db.GetAgentMessage(id)
-	if err != nil || got == nil {
-		t.Errorf("row should still exist after third-party 403; got %v err=%v", got, err)
+	if assert.NoError(t, err) {
+		assert.NotNil(t, got, "row should still exist after third-party 403")
 	}
 }
 
@@ -126,13 +110,9 @@ func inboxCount(t *testing.T, mux http.Handler, convID string) int {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/inbox?limit=100", nil), convID)
 	rec := testharness.Serve(mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/v1/inbox: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "/v1/inbox: body=%s", rec.Body.String())
 	var out []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode inbox: %v body=%s", err, rec.Body.String())
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "decode inbox: body=%s", rec.Body.String())
 	return len(out)
 }
 

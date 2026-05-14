@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -74,17 +76,11 @@ func TestPickWithLiveness(t *testing.T) {
 			}
 			got := pickWithLiveness(tt.candidates, isAlive)
 			if tt.wantID == "" {
-				if got != nil {
-					t.Fatalf("got %+v, want nil", got)
-				}
+				assert.Nil(t, got, "got %+v, want nil", got)
 				return
 			}
-			if got == nil {
-				t.Fatalf("got nil, want id=%q", tt.wantID)
-			}
-			if got.ID != tt.wantID {
-				t.Errorf("got id=%q, want id=%q", got.ID, tt.wantID)
-			}
+			require.NotNil(t, got, "got nil, want id=%q", tt.wantID)
+			assert.Equal(t, tt.wantID, got.ID, "got id mismatch")
 		})
 	}
 }
@@ -110,33 +106,19 @@ func TestContextPctLookupByConvID(t *testing.T) {
 		ConvID:      convID,
 		CreatedAt:   time.Now(),
 	}
-	if err := db.SaveSession(sess); err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
+	require.NoError(t, db.SaveSession(sess), "SaveSession")
 
 	// Statusbar writes by session ID (not conv-id).
-	if err := db.UpdateContextPct("tmux-label-1", 47.0); err != nil {
-		t.Fatalf("UpdateContextPct: %v", err)
-	}
+	require.NoError(t, db.UpdateContextPct("tmux-label-1", 47.0), "UpdateContextPct")
 
 	// Replay the handler's lookup chain.
 	rows, err := db.FindSessionsByConvID(convID)
-	if err != nil {
-		t.Fatalf("FindSessionsByConvID: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 session row for conv, got %d", len(rows))
-	}
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.Len(t, rows, 1, "expected 1 session row for conv")
 	pct, pending, err := db.GetCompactState(rows[0].ID)
-	if err != nil {
-		t.Fatalf("GetCompactState: %v", err)
-	}
-	if pct != 47.0 {
-		t.Errorf("context_pct via conv-id lookup = %v, want 47", pct)
-	}
-	if pending != 0 {
-		t.Errorf("compact_pending = %v, want 0", pending)
-	}
+	require.NoError(t, err, "GetCompactState")
+	assert.Equal(t, 47.0, pct, "context_pct via conv-id lookup")
+	assert.Equal(t, float64(0), pending, "compact_pending")
 
 	// Regression guard: querying compact state with the conv-id
 	// directly (the buggy path) must not return the populated value.
@@ -145,8 +127,9 @@ func TestContextPctLookupByConvID(t *testing.T) {
 	// rows) or return zero — either is fine, what matters is it does
 	// NOT return 47.0.
 	pctBuggy, _, errBuggy := db.GetCompactState(convID)
-	if errBuggy == nil && pctBuggy == 47.0 {
-		t.Error("buggy path (GetCompactState by conv-id) should not return populated value")
+	if errBuggy == nil {
+		assert.NotEqual(t, 47.0, pctBuggy,
+			"buggy path (GetCompactState by conv-id) should not return populated value")
 	}
 }
 
@@ -186,9 +169,7 @@ func TestIsValidFollowUp(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isValidFollowUp(tt.in); got != tt.want {
-				t.Errorf("isValidFollowUp(%q) = %v, want %v", tt.in, got, tt.want)
-			}
+			assert.Equal(t, tt.want, isValidFollowUp(tt.in), "isValidFollowUp(%q)", tt.in)
 		})
 	}
 }
@@ -244,9 +225,7 @@ func TestIsValidRenameTitle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isValidRenameTitle(tt.in); got != tt.want {
-				t.Errorf("isValidRenameTitle(%q) = %v, want %v", tt.in, got, tt.want)
-			}
+			assert.Equal(t, tt.want, isValidRenameTitle(tt.in), "isValidRenameTitle(%q)", tt.in)
 		})
 	}
 }

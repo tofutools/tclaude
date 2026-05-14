@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -27,28 +29,20 @@ func TestResortAndFilter_InMemoryOnly(t *testing.T) {
 	m.sortInPlace(m.entries)
 	m.applySearchFilter()
 
-	if m.filtered[0].SessionID != "bbbb0000-0000-0000-0000-000000000002" {
-		t.Errorf("expected bbbb first (most recent), got %s", m.filtered[0].SessionID[:8])
-	}
+	assert.Equal(t, "bbbb0000-0000-0000-0000-000000000002", m.filtered[0].SessionID, "expected bbbb first (most recent)")
 
 	// Sort by size ascending
 	m.sort = table.SortState{Key: "size", Direction: table.SortAsc}
 	m.resortAndFilter()
 
-	if m.filtered[0].FileSize != 100 {
-		t.Errorf("expected size 100 first (asc), got %d", m.filtered[0].FileSize)
-	}
-	if m.filtered[2].FileSize != 300 {
-		t.Errorf("expected size 300 last (asc), got %d", m.filtered[2].FileSize)
-	}
+	assert.Equal(t, int64(100), m.filtered[0].FileSize, "expected size 100 first (asc)")
+	assert.Equal(t, int64(300), m.filtered[2].FileSize, "expected size 300 last (asc)")
 
 	// Sort by size descending
 	m.sort = table.SortState{Key: "size", Direction: table.SortDesc}
 	m.resortAndFilter()
 
-	if m.filtered[0].FileSize != 300 {
-		t.Errorf("expected size 300 first (desc), got %d", m.filtered[0].FileSize)
-	}
+	assert.Equal(t, int64(300), m.filtered[0].FileSize, "expected size 300 first (desc)")
 }
 
 func TestResortAndFilter_AllSortKeys(t *testing.T) {
@@ -81,10 +75,7 @@ func TestResortAndFilter_AllSortKeys(t *testing.T) {
 	for _, tt := range tests {
 		m.sort = table.SortState{Key: tt.key, Direction: tt.dir}
 		m.resortAndFilter()
-		if m.filtered[0].SessionID != tt.firstID {
-			t.Errorf("sort key=%s dir=%d: expected first=%s, got %s",
-				tt.key, tt.dir, tt.firstID[:8], m.filtered[0].SessionID[:8])
-		}
+		assert.Equal(t, tt.firstID, m.filtered[0].SessionID, "sort key=%s dir=%d", tt.key, tt.dir)
 	}
 }
 
@@ -103,13 +94,9 @@ func TestResortPreservesSearchFilter(t *testing.T) {
 	m.sort = table.SortState{Key: "size", Direction: table.SortAsc}
 	m.resortAndFilter()
 
-	if len(m.filtered) != 2 {
-		t.Fatalf("expected 2 filtered entries, got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 2, "expected 2 filtered entries")
 	// Should be sorted by size asc within the "fix" filter
-	if m.filtered[0].FileSize != 100 {
-		t.Errorf("expected smallest first, got %d", m.filtered[0].FileSize)
-	}
+	assert.Equal(t, int64(100), m.filtered[0].FileSize, "expected smallest first")
 }
 
 // --- Entry management tests ---
@@ -124,12 +111,8 @@ func TestUpsertEntry_UpdatesExisting(t *testing.T) {
 
 	m.upsertEntry(SessionEntry{SessionID: "aaaa0000-0000-0000-0000-000000000001", FirstPrompt: "new"})
 
-	if len(m.entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(m.entries))
-	}
-	if m.entries[0].FirstPrompt != "new" {
-		t.Errorf("expected updated prompt 'new', got '%s'", m.entries[0].FirstPrompt)
-	}
+	require.Len(t, m.entries, 1, "expected 1 entry")
+	assert.Equal(t, "new", m.entries[0].FirstPrompt, "expected updated prompt")
 }
 
 func TestUpsertEntry_AppendsNew(t *testing.T) {
@@ -142,9 +125,7 @@ func TestUpsertEntry_AppendsNew(t *testing.T) {
 
 	m.upsertEntry(SessionEntry{SessionID: "bbbb0000-0000-0000-0000-000000000002"})
 
-	if len(m.entries) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(m.entries))
-	}
+	require.Len(t, m.entries, 2, "expected 2 entries")
 }
 
 func TestRemoveEntry(t *testing.T) {
@@ -159,13 +140,9 @@ func TestRemoveEntry(t *testing.T) {
 
 	m.removeEntry("bbbb0000-0000-0000-0000-000000000002")
 
-	if len(m.entries) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(m.entries))
-	}
+	require.Len(t, m.entries, 2, "expected 2 entries")
 	for _, e := range m.entries {
-		if e.SessionID == "bbbb0000-0000-0000-0000-000000000002" {
-			t.Error("entry bbbb should have been removed")
-		}
+		assert.NotEqual(t, "bbbb0000-0000-0000-0000-000000000002", e.SessionID, "entry bbbb should have been removed")
 	}
 }
 
@@ -179,9 +156,7 @@ func TestRemoveEntry_NonExistent(t *testing.T) {
 
 	m.removeEntry("zzzz0000-0000-0000-0000-000000000099")
 
-	if len(m.entries) != 1 {
-		t.Fatalf("removing non-existent entry should not change length, got %d", len(m.entries))
-	}
+	assert.Len(t, m.entries, 1, "removing non-existent entry should not change length")
 }
 
 // --- Search filter tests ---
@@ -200,17 +175,13 @@ func TestApplySearchFilter(t *testing.T) {
 	m.searchInput.SetValue("login")
 	m.applySearchFilter()
 
-	if len(m.filtered) != 2 {
-		t.Fatalf("expected 2 matches for 'login', got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 2, "expected 2 matches for 'login'")
 
 	// Clear search
 	m.searchInput.SetValue("")
 	m.applySearchFilter()
 
-	if len(m.filtered) != 3 {
-		t.Fatalf("expected all 3 entries with empty search, got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 3, "expected all 3 entries with empty search")
 }
 
 func TestApplySearchFilter_MatchesMultipleFields(t *testing.T) {
@@ -227,9 +198,7 @@ func TestApplySearchFilter_MatchesMultipleFields(t *testing.T) {
 	m.searchInput.SetValue("myproject")
 	m.applySearchFilter()
 
-	if len(m.filtered) != 2 {
-		t.Fatalf("expected 2 matches across project path and git branch, got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 2, "expected 2 matches across project path and git branch")
 }
 
 func TestApplySearchFilter_CaseInsensitive(t *testing.T) {
@@ -244,9 +213,7 @@ func TestApplySearchFilter_CaseInsensitive(t *testing.T) {
 	m.searchInput.SetValue("fix the bug")
 	m.applySearchFilter()
 
-	if len(m.filtered) != 1 {
-		t.Fatalf("expected case-insensitive match, got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 1, "expected case-insensitive match")
 }
 
 // --- Group filter tests ---
@@ -273,13 +240,9 @@ func TestApplyGroupFilter_FiltersByGroupName(t *testing.T) {
 	m.groupFilter = "alpha"
 	m.applySearchFilter()
 
-	if len(m.filtered) != 2 {
-		t.Fatalf("expected 2 matches for group=alpha, got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 2, "expected 2 matches for group=alpha")
 	gotIDs := map[string]bool{m.filtered[0].SessionID: true, m.filtered[1].SessionID: true}
-	if !gotIDs["a"] || !gotIDs["c"] {
-		t.Errorf("expected a and c in filter result, got %+v", gotIDs)
-	}
+	assert.True(t, gotIDs["a"] && gotIDs["c"], "expected a and c in filter result, got %+v", gotIDs)
 }
 
 // Group names compare case-insensitively at the filter layer — DB
@@ -300,9 +263,7 @@ func TestApplyGroupFilter_CaseInsensitive(t *testing.T) {
 	m.groupFilter = "alpha-TEAM"
 	m.applySearchFilter()
 
-	if len(m.filtered) != 1 {
-		t.Fatalf("expected case-insensitive match, got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 1, "expected case-insensitive match")
 }
 
 // Group filter and search filter compose: an entry must pass BOTH to
@@ -329,12 +290,8 @@ func TestApplyGroupFilter_ComposesWithSearch(t *testing.T) {
 	m.groupFilter = "alpha"
 	m.applySearchFilter()
 
-	if len(m.filtered) != 1 {
-		t.Fatalf("expected intersection (login AND alpha) to yield 1, got %d", len(m.filtered))
-	}
-	if m.filtered[0].SessionID != "a" {
-		t.Errorf("expected entry a, got %s", m.filtered[0].SessionID)
-	}
+	require.Len(t, m.filtered, 1, "expected intersection (login AND alpha) to yield 1")
+	assert.Equal(t, "a", m.filtered[0].SessionID)
 }
 
 // Empty groupFilter passes every entry through (the filter is opt-in).
@@ -354,9 +311,7 @@ func TestApplyGroupFilter_EmptyShowsAll(t *testing.T) {
 	m.groupFilter = ""
 	m.applySearchFilter()
 
-	if len(m.filtered) != 2 {
-		t.Fatalf("empty group filter should pass all entries, got %d", len(m.filtered))
-	}
+	require.Len(t, m.filtered, 2, "empty group filter should pass all entries")
 }
 
 // matchesGroupFilter is the core predicate used by both
@@ -388,10 +343,7 @@ func TestMatchesGroupFilter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m.groupFilter = tc.filter
 			got := m.matchesGroupFilter(tc.entry)
-			if got != tc.want {
-				t.Errorf("matchesGroupFilter(filter=%q, entry=%s) = %v, want %v",
-					tc.filter, tc.entry.SessionID, got, tc.want)
-			}
+			assert.Equal(t, tc.want, got, "matchesGroupFilter(filter=%q, entry=%s)", tc.filter, tc.entry.SessionID)
 		})
 	}
 }
@@ -411,18 +363,14 @@ func TestApplySearchFilter_ResetsCursorWhenOutOfBounds(t *testing.T) {
 	m.searchInput.SetValue("match")
 	m.applySearchFilter()
 
-	if m.cursor != 0 {
-		t.Errorf("cursor should have been reset to 0, got %d", m.cursor)
-	}
+	assert.Equal(t, 0, m.cursor, "cursor should have been reset to 0")
 }
 
 // --- shouldAcceptFSEvent tests ---
 
 func TestShouldAcceptFSEvent_GlobalAcceptsAll(t *testing.T) {
 	m := &watchModel{global: true}
-	if !m.shouldAcceptFSEvent("/any/path/file.jsonl") {
-		t.Error("global mode should accept all events")
-	}
+	assert.True(t, m.shouldAcceptFSEvent("/any/path/file.jsonl"), "global mode should accept all events")
 }
 
 func TestShouldAcceptFSEvent_SingleProjectFilters(t *testing.T) {
@@ -431,12 +379,8 @@ func TestShouldAcceptFSEvent_SingleProjectFilters(t *testing.T) {
 		claudeProjectDir: "/home/.claude/projects/-Users-foo-bar",
 	}
 
-	if !m.shouldAcceptFSEvent("/home/.claude/projects/-Users-foo-bar/abc.jsonl") {
-		t.Error("should accept event from own project dir")
-	}
-	if m.shouldAcceptFSEvent("/home/.claude/projects/-Users-other/abc.jsonl") {
-		t.Error("should reject event from different project dir")
-	}
+	assert.True(t, m.shouldAcceptFSEvent("/home/.claude/projects/-Users-foo-bar/abc.jsonl"), "should accept event from own project dir")
+	assert.False(t, m.shouldAcceptFSEvent("/home/.claude/projects/-Users-other/abc.jsonl"), "should reject event from different project dir")
 }
 
 // --- fsnotify debounce tests ---
@@ -444,36 +388,26 @@ func TestShouldAcceptFSEvent_SingleProjectFilters(t *testing.T) {
 func TestFsDebounceLoop_CreateSentImmediately(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
 	defer close(closeCh)
 
 	w, err := newTestWatcher(projectDir)
-	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
-	}
+	require.NoError(t, err, "failed to create watcher")
 	defer w.Close()
 
 	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
 
 	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	filePath := filepath.Join(projectDir, convID+".jsonl")
-	if err := os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644))
 
 	select {
 	case msg := <-outCh:
-		if msg.FilePath != filePath {
-			t.Errorf("expected path %s, got %s", filePath, msg.FilePath)
-		}
-		if msg.Removed {
-			t.Error("expected Removed=false for create")
-		}
+		assert.Equal(t, filePath, msg.FilePath)
+		assert.False(t, msg.Removed, "expected Removed=false for create")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for create event")
 	}
@@ -482,40 +416,28 @@ func TestFsDebounceLoop_CreateSentImmediately(t *testing.T) {
 func TestFsDebounceLoop_DeleteSentImmediately(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
 	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	filePath := filepath.Join(projectDir, convID+".jsonl")
-	if err := os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644))
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
 	defer close(closeCh)
 
 	w, err := newTestWatcher(projectDir)
-	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
-	}
+	require.NoError(t, err, "failed to create watcher")
 	defer w.Close()
 
 	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
 
-	if err := os.Remove(filePath); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Remove(filePath))
 
 	select {
 	case msg := <-outCh:
-		if msg.FilePath != filePath {
-			t.Errorf("expected path %s, got %s", filePath, msg.FilePath)
-		}
-		if !msg.Removed {
-			t.Error("expected Removed=true for delete")
-		}
+		assert.Equal(t, filePath, msg.FilePath)
+		assert.True(t, msg.Removed, "expected Removed=true for delete")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for delete event")
 	}
@@ -524,32 +446,24 @@ func TestFsDebounceLoop_DeleteSentImmediately(t *testing.T) {
 func TestFsDebounceLoop_WritesAreDebounced(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
 	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	filePath := filepath.Join(projectDir, convID+".jsonl")
-	if err := os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644))
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
 	defer close(closeCh)
 
 	w, err := newTestWatcher(projectDir)
-	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
-	}
+	require.NoError(t, err, "failed to create watcher")
 	defer w.Close()
 
 	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
 
 	// Write to the existing file — should NOT be sent immediately (debounced)
-	if err := os.WriteFile(filePath, []byte(`{"type":"user","timestamp":"2026-01-01"}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user","timestamp":"2026-01-01"}`), 0644))
 
 	select {
 	case <-outCh:
@@ -564,25 +478,19 @@ func TestFsDebounceLoop_WritesAreDebounced(t *testing.T) {
 func TestFsDebounceLoop_IgnoresNonJsonl(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
 	defer close(closeCh)
 
 	w, err := newTestWatcher(projectDir)
-	if err != nil {
-		t.Fatalf("failed to create watcher: %v", err)
-	}
+	require.NoError(t, err, "failed to create watcher")
 	defer w.Close()
 
 	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
 
-	if err := os.WriteFile(filepath.Join(projectDir, "notes.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "notes.txt"), []byte("hello"), 0644))
 
 	select {
 	case msg := <-outCh:
@@ -596,18 +504,14 @@ func TestFsDebounceLoop_IgnoresWrongDepth(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectDir := filepath.Join(projectsDir, "-Users-test-project")
 	deepDir := filepath.Join(projectDir, "subdir")
-	if err := os.MkdirAll(deepDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(deepDir, 0755))
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
 	defer close(closeCh)
 
 	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer w.Close()
 	// Watch both the project dir and the deep subdir
 	_ = w.Add(projectDir)
@@ -617,9 +521,7 @@ func TestFsDebounceLoop_IgnoresWrongDepth(t *testing.T) {
 
 	// Create a .jsonl file at the wrong depth (too deep)
 	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-	if err := os.WriteFile(filepath.Join(deepDir, convID+".jsonl"), []byte(`{}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(deepDir, convID+".jsonl"), []byte(`{}`), 0644))
 
 	select {
 	case msg := <-outCh:
@@ -632,18 +534,14 @@ func TestFsDebounceLoop_IgnoresWrongDepth(t *testing.T) {
 func TestFsDebounceLoop_IgnoresShortUUID(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectDir := filepath.Join(projectsDir, "-Users-test-project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
 	defer close(closeCh)
 
 	w, err := newTestWatcher(projectDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer w.Close()
 
 	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
@@ -651,18 +549,14 @@ func TestFsDebounceLoop_IgnoresShortUUID(t *testing.T) {
 	// .jsonl file with non-UUID name (wrong length) — still passes through the
 	// debounce loop (which only checks .jsonl + depth), but handleFSChange
 	// will reject it based on convID length.
-	if err := os.WriteFile(filepath.Join(projectDir, "short.jsonl"), []byte(`{}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "short.jsonl"), []byte(`{}`), 0644))
 
 	// The debounce loop lets any .jsonl at the right depth through —
 	// the UUID validation happens in handleFSChange. So we expect an event here.
 	select {
 	case msg := <-outCh:
 		// Verify handleFSChange would reject this
-		if msg.FilePath == "" {
-			t.Error("got empty path")
-		}
+		assert.NotEmpty(t, msg.FilePath, "got empty path")
 	case <-time.After(2 * time.Second):
 		// Also acceptable — some platforms may not report this
 	}
@@ -677,18 +571,14 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 
 	// Watch the projects dir itself (simulates startup with no project dirs)
 	w, err := newTestWatcher(projectsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer w.Close()
 
 	go fsDebounceLoop(w, projectsDir, outCh, closeCh)
 
 	// Create a new project subdir
 	projectDir := filepath.Join(projectsDir, "-Users-new-project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
 	// Give fsnotify time to process the dir creation and w.Add it
 	time.Sleep(200 * time.Millisecond)
@@ -696,15 +586,11 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 	// Now create a .jsonl file inside the new subdir
 	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	filePath := filepath.Join(projectDir, convID+".jsonl")
-	if err := os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(`{"type":"user"}`), 0644))
 
 	select {
 	case msg := <-outCh:
-		if msg.FilePath != filePath {
-			t.Errorf("expected path %s, got %s", filePath, msg.FilePath)
-		}
+		assert.Equal(t, filePath, msg.FilePath)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out — new subdir was not auto-watched")
 	}
@@ -713,17 +599,13 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 func TestFsDebounceLoop_CloseChStopsLoop(t *testing.T) {
 	projectsDir := t.TempDir()
 	projectDir := filepath.Join(projectsDir, "-Users-test")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 
 	outCh := make(chan fsFileChangeMsg, 16)
 	closeCh := make(chan struct{})
 
 	w, err := newTestWatcher(projectDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer w.Close()
 
 	done := make(chan struct{})

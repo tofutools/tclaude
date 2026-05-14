@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -28,9 +30,7 @@ func TestDashboardSudo_RevokeByID(t *testing.T) {
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
-	if err != nil {
-		t.Fatalf("seed grant 1: %v", err)
-	}
+	require.NoError(t, err, "seed grant 1")
 	id2, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "alice",
 		Slug:      "member.add",
@@ -38,20 +38,15 @@ func TestDashboardSudo_RevokeByID(t *testing.T) {
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
-	if err != nil {
-		t.Fatalf("seed grant 2: %v", err)
-	}
+	require.NoError(t, err, "seed grant 2")
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/sudo/"+strconv.FormatInt(id1, 10), "")
 	handleDashboardSudoAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	rows, _ := db.ListActiveSudoGrants("alice")
-	if len(rows) != 1 || rows[0].ID != id2 {
-		t.Errorf("after revoke id=%d: got %d rows, want 1 (id=%d); rows=%+v",
-			id1, len(rows), id2, rows)
+	if assert.Len(t, rows, 1, "after revoke id=%d (id2=%d); rows=%+v", id1, id2, rows) {
+		assert.Equal(t, id2, rows[0].ID, "remaining row")
 	}
 }
 
@@ -65,51 +60,41 @@ func TestDashboardSudo_RevokeByConv(t *testing.T) {
 
 	const aliceConv = "alic-aaaa-bbbb-cccc-1111"
 	const bobConv = "bobl-aaaa-bbbb-cccc-2222"
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: aliceConv, CustomTitle: "alice", IndexedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("seed alice conv_index: %v", err)
-	}
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	}), "seed alice conv_index")
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: bobConv, CustomTitle: "bob", IndexedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("seed bob conv_index: %v", err)
-	}
+	}), "seed bob conv_index")
 
 	now := time.Now()
 	// Two grants for alice, one for bob — only alice's should die.
 	for _, slug := range []string{"groups.spawn", "member.add"} {
-		if _, err := db.InsertSudoGrant(&db.SudoGrant{
+		_, err := db.InsertSudoGrant(&db.SudoGrant{
 			ConvID: aliceConv, Slug: slug,
 			GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 			GrantedBy: "human:popup-id=test",
-		}); err != nil {
-			t.Fatalf("seed alice grant %s: %v", slug, err)
-		}
+		})
+		require.NoError(t, err, "seed alice grant %s", slug)
 	}
-	if _, err := db.InsertSudoGrant(&db.SudoGrant{
+	_, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID: bobConv, Slug: "groups.spawn",
 		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
-	}); err != nil {
-		t.Fatalf("seed bob grant: %v", err)
-	}
+	})
+	require.NoError(t, err, "seed bob grant")
 
 	w := httptest.NewRecorder()
 	// Use the alice conv-id directly as the selector. ResolveSelector
 	// matches a full UUID-shape on conv-id.
 	r := dashboardRequest(http.MethodDelete, "/api/sudo?conv="+aliceConv, "")
 	handleDashboardSudoAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
-	if rows, _ := db.ListActiveSudoGrants(aliceConv); len(rows) != 0 {
-		t.Errorf("alice after bulk revoke: got %d rows, want 0", len(rows))
-	}
-	if rows, _ := db.ListActiveSudoGrants(bobConv); len(rows) != 1 {
-		t.Errorf("bob after alice's bulk revoke (collateral): got %d rows, want 1", len(rows))
-	}
+	aliceRows, _ := db.ListActiveSudoGrants(aliceConv)
+	assert.Empty(t, aliceRows, "alice after bulk revoke")
+	bobRows, _ := db.ListActiveSudoGrants(bobConv)
+	assert.Len(t, bobRows, 1, "bob after alice's bulk revoke (collateral)")
 }
 
 // TestDashboardSudo_RevokeAll nukes every active grant. Pins the
@@ -120,26 +105,21 @@ func TestDashboardSudo_RevokeAll(t *testing.T) {
 
 	now := time.Now()
 	for _, conv := range []string{"alice", "bob", "carol"} {
-		if _, err := db.InsertSudoGrant(&db.SudoGrant{
+		_, err := db.InsertSudoGrant(&db.SudoGrant{
 			ConvID: conv, Slug: "groups.spawn",
 			GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 			GrantedBy: "human:popup-id=test",
-		}); err != nil {
-			t.Fatalf("seed %s grant: %v", conv, err)
-		}
+		})
+		require.NoError(t, err, "seed %s grant", conv)
 	}
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/sudo?all=1", "")
 	handleDashboardSudoAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
 	rows, _ := db.ListAllActiveSudoGrants()
-	if len(rows) != 0 {
-		t.Errorf("after all-revoke: got %d rows, want 0", len(rows))
-	}
+	assert.Empty(t, rows, "after all-revoke")
 }
 
 // TestDashboardSudo_BadRequest_NoSelector pins the validation: a
@@ -151,24 +131,19 @@ func TestDashboardSudo_BadRequest_NoSelector(t *testing.T) {
 	withDashboardAuth(t)
 
 	now := time.Now()
-	if _, err := db.InsertSudoGrant(&db.SudoGrant{
+	_, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID: "alice", Slug: "groups.spawn",
 		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
-	}); err != nil {
-		t.Fatalf("seed grant: %v", err)
-	}
+	})
+	require.NoError(t, err, "seed grant")
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/sudo", "")
 	handleDashboardSudoAPI(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d body=%s, want 400", w.Code, w.Body.String())
-	}
-	if rows, _ := db.ListActiveSudoGrants("alice"); len(rows) != 1 {
-		t.Errorf("invalid request must not touch existing grants; got %d rows after, want 1",
-			len(rows))
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	rows, _ := db.ListActiveSudoGrants("alice")
+	assert.Len(t, rows, 1, "invalid request must not touch existing grants")
 }
 
 // TestDashboardSudo_AuthRequired pins the cookie-auth gate. A
@@ -184,20 +159,15 @@ func TestDashboardSudo_AuthRequired(t *testing.T) {
 		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
-	if err != nil {
-		t.Fatalf("seed grant: %v", err)
-	}
+	require.NoError(t, err, "seed grant")
 
 	w := httptest.NewRecorder()
 	// Request without cookie / Origin.
 	r := httptest.NewRequest(http.MethodDelete, "/api/sudo/"+strconv.FormatInt(id, 10), nil)
 	handleDashboardSudoAPI(w, r)
-	if w.Code == http.StatusOK {
-		t.Errorf("unauth DELETE succeeded; status = %d, want non-200", w.Code)
-	}
-	if rows, _ := db.ListActiveSudoGrants("alice"); len(rows) != 1 {
-		t.Errorf("unauth call must not touch grants; got %d rows, want 1", len(rows))
-	}
+	assert.NotEqual(t, http.StatusOK, w.Code, "unauth DELETE succeeded")
+	rows, _ := db.ListActiveSudoGrants("alice")
+	assert.Len(t, rows, 1, "unauth call must not touch grants")
 }
 
 // TestSnapshot_ActiveSudoSurfaces pins the snapshot extension that
@@ -210,11 +180,9 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 
 	gID, _ := db.CreateAgentGroup("team", "")
 	const aliceConv = "alic-aaaa-bbbb-cccc-1111"
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: aliceConv, Alias: "alice",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
+	}), "AddAgentGroupMember")
 
 	now := time.Now()
 	grantID, err := db.InsertSudoGrant(&db.SudoGrant{
@@ -225,38 +193,23 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 		GrantedBy: "human:popup-id=test",
 		Reason:    "team-bootstrap",
 	})
-	if err != nil {
-		t.Fatalf("InsertSudoGrant: %v", err)
-	}
+	require.NoError(t, err, "InsertSudoGrant")
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodGet, "/api/snapshot", "")
 	handleDashboardSnapshot(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("snapshot status = %d body=%s, want 200", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "snapshot body=%s", w.Body.String())
 
 	var got snapshotPayload
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal snapshot: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got), "unmarshal snapshot")
 
 	// Top-level Sudo carries the row.
-	if len(got.Sudo) != 1 {
-		t.Fatalf("snapshot Sudo: got %d entries, want 1; body=%s", len(got.Sudo), w.Body.String())
-	}
-	if got.Sudo[0].ID != grantID {
-		t.Errorf("snapshot Sudo[0].ID = %d, want %d", got.Sudo[0].ID, grantID)
-	}
-	if got.Sudo[0].ConvID != aliceConv {
-		t.Errorf("snapshot Sudo[0].ConvID = %q, want %q", got.Sudo[0].ConvID, aliceConv)
-	}
-	if got.Sudo[0].Slug != "groups.spawn" {
-		t.Errorf("snapshot Sudo[0].Slug = %q, want groups.spawn", got.Sudo[0].Slug)
-	}
-	if got.Sudo[0].RemainingSeconds <= 0 {
-		t.Errorf("snapshot Sudo[0].RemainingSeconds = %d, want positive", got.Sudo[0].RemainingSeconds)
-	}
+	require.Len(t, got.Sudo, 1, "snapshot Sudo entries; body=%s", w.Body.String())
+	assert.Equal(t, grantID, got.Sudo[0].ID, "snapshot Sudo[0].ID")
+	assert.Equal(t, aliceConv, got.Sudo[0].ConvID, "snapshot Sudo[0].ConvID")
+	assert.Equal(t, "groups.spawn", got.Sudo[0].Slug, "snapshot Sudo[0].Slug")
+	assert.Greater(t, got.Sudo[0].RemainingSeconds, int64(0),
+		"snapshot Sudo[0].RemainingSeconds should be positive")
 
 	// Per-agent ActiveSudo surfaces on alice's row, omits ConvID
 	// (caller already knows who).
@@ -267,23 +220,12 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 			break
 		}
 	}
-	if alice == nil {
-		t.Fatalf("alice agent row not found in snapshot; agents=%+v", got.Agents)
-	}
-	if len(alice.ActiveSudo) != 1 {
-		t.Fatalf("alice.ActiveSudo: got %d entries, want 1", len(alice.ActiveSudo))
-	}
-	if alice.ActiveSudo[0].ID != grantID {
-		t.Errorf("alice.ActiveSudo[0].ID = %d, want %d", alice.ActiveSudo[0].ID, grantID)
-	}
-	if alice.ActiveSudo[0].ConvID != "" {
-		t.Errorf("alice.ActiveSudo[0].ConvID = %q, want empty (already implied by row)",
-			alice.ActiveSudo[0].ConvID)
-	}
-	if !strings.Contains(alice.ActiveSudo[0].Slug, "groups.spawn") {
-		t.Errorf("alice.ActiveSudo[0].Slug = %q, want groups.spawn",
-			alice.ActiveSudo[0].Slug)
-	}
+	require.NotNil(t, alice, "alice agent row not found in snapshot; agents=%+v", got.Agents)
+	require.Len(t, alice.ActiveSudo, 1, "alice.ActiveSudo entries")
+	assert.Equal(t, grantID, alice.ActiveSudo[0].ID, "alice.ActiveSudo[0].ID")
+	assert.Empty(t, alice.ActiveSudo[0].ConvID,
+		"alice.ActiveSudo[0].ConvID should be empty (already implied by row)")
+	assert.Contains(t, alice.ActiveSudo[0].Slug, "groups.spawn", "alice.ActiveSudo[0].Slug")
 }
 
 // TestDashboardSudo_GrantProactive exercises the cookie-auth twin
@@ -296,42 +238,27 @@ func TestDashboardSudo_GrantProactive(t *testing.T) {
 	withDashboardAuth(t)
 
 	const conv = "alic-aaaa-bbbb-cccc-1111"
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("seed conv_index: %v", err)
-	}
+	}), "seed conv_index")
 
 	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"5m","reason":"bootstrap"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
 	rows, err := db.ListActiveSudoGrants(conv)
-	if err != nil {
-		t.Fatalf("ListActiveSudoGrants: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("active grants: got %d, want 1", len(rows))
-	}
+	require.NoError(t, err, "ListActiveSudoGrants")
+	require.Len(t, rows, 1, "active grants")
 	got := rows[0]
-	if got.Slug != "groups.spawn" {
-		t.Errorf("slug = %q, want %q", got.Slug, "groups.spawn")
-	}
-	if got.Reason != "bootstrap" {
-		t.Errorf("reason = %q, want %q", got.Reason, "bootstrap")
-	}
-	if got.GrantedBy != dashboardSudoGranter {
-		t.Errorf("granted_by = %q, want %q (proactive label distinguishes from popup-approved)",
-			got.GrantedBy, dashboardSudoGranter)
-	}
-	if !got.IsActive(time.Now()) {
-		t.Errorf("freshly-inserted grant must be active; expires_at=%v revoked_at=%v",
-			got.ExpiresAt, got.RevokedAt)
-	}
+	assert.Equal(t, "groups.spawn", got.Slug, "slug")
+	assert.Equal(t, "bootstrap", got.Reason, "reason")
+	assert.Equal(t, dashboardSudoGranter, got.GrantedBy,
+		"granted_by (proactive label distinguishes from popup-approved)")
+	assert.True(t, got.IsActive(time.Now()),
+		"freshly-inserted grant must be active; expires_at=%v revoked_at=%v",
+		got.ExpiresAt, got.RevokedAt)
 }
 
 // TestDashboardSudo_GrantBlocklist pins the policy-applies rule.
@@ -344,27 +271,21 @@ func TestDashboardSudo_GrantBlocklist(t *testing.T) {
 	withDashboardAuth(t)
 
 	const conv = "blok-aaaa-bbbb-cccc-1111"
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("seed conv_index: %v", err)
-	}
+	}), "seed conv_index")
 
 	body := `{"conv":"` + conv + `","slugs":["groups.spawn","permissions.grant"],"duration":"5m"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("blocklisted POST: status = %d body=%s, want 403",
-			w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "permissions.grant") {
-		t.Errorf("error must name the blocked slug; body=%s", w.Body.String())
-	}
-	if rows, _ := db.ListActiveSudoGrants(conv); len(rows) != 0 {
-		t.Errorf("blocklisted POST must not insert ANY rows (even the non-blocked ones); got %d",
-			len(rows))
-	}
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"blocklisted POST body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "permissions.grant",
+		"error must name the blocked slug")
+	rows, _ := db.ListActiveSudoGrants(conv)
+	assert.Empty(t, rows,
+		"blocklisted POST must not insert ANY rows (even the non-blocked ones)")
 }
 
 // TestDashboardSudo_GrantDurationCap pins the cap rule: a dashboard
@@ -375,23 +296,18 @@ func TestDashboardSudo_GrantDurationCap(t *testing.T) {
 	withDashboardAuth(t)
 
 	const conv = "capd-aaaa-bbbb-cccc-1111"
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("seed conv_index: %v", err)
-	}
+	}), "seed conv_index")
 
 	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"24h"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("over-cap POST: status = %d body=%s, want 400",
-			w.Code, w.Body.String())
-	}
-	if rows, _ := db.ListActiveSudoGrants(conv); len(rows) != 0 {
-		t.Errorf("over-cap POST must not insert rows; got %d", len(rows))
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code,
+		"over-cap POST body=%s", w.Body.String())
+	rows, _ := db.ListActiveSudoGrants(conv)
+	assert.Empty(t, rows, "over-cap POST must not insert rows")
 }
 
 // TestDashboardSudo_GrantAuthRequired pins the cookie gate on the
@@ -402,11 +318,9 @@ func TestDashboardSudo_GrantAuthRequired(t *testing.T) {
 	withDashboardAuth(t)
 
 	const conv = "auth-aaaa-bbbb-cccc-1111"
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("seed conv_index: %v", err)
-	}
+	}), "seed conv_index")
 
 	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"5m"}`
 	w := httptest.NewRecorder()
@@ -414,12 +328,9 @@ func TestDashboardSudo_GrantAuthRequired(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/sudo", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	handleDashboardSudoAPI(w, r)
-	if w.Code == http.StatusOK {
-		t.Errorf("unauth POST succeeded; status = %d, want non-200", w.Code)
-	}
-	if rows, _ := db.ListActiveSudoGrants(conv); len(rows) != 0 {
-		t.Errorf("unauth call must not insert grants; got %d rows, want 0", len(rows))
-	}
+	assert.NotEqual(t, http.StatusOK, w.Code, "unauth POST succeeded")
+	rows, _ := db.ListActiveSudoGrants(conv)
+	assert.Empty(t, rows, "unauth call must not insert grants")
 }
 
 // TestSnapshot_ActiveSudoEmptyByDefault pins the no-grants case:
@@ -431,22 +342,17 @@ func TestSnapshot_ActiveSudoEmptyByDefault(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "alice", Alias: "alice",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
+	}), "AddAgentGroupMember")
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodGet, "/api/snapshot", "")
 	handleDashboardSnapshot(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("snapshot status = %d body=%s, want 200", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "snapshot body=%s", w.Body.String())
 
 	// The top-level Sudo[] field MUST serialize as [] (not null) so
 	// the dashboard's JS can call .length on it without a guard.
-	if !strings.Contains(w.Body.String(), `"sudo":[]`) {
-		t.Errorf("snapshot must surface Sudo as [] when empty; body=%s", w.Body.String())
-	}
+	assert.Contains(t, w.Body.String(), `"sudo":[]`,
+		"snapshot must surface Sudo as [] when empty")
 }

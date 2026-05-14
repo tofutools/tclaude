@@ -8,10 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -21,27 +22,19 @@ import (
 func upsertConvIndexLocal(t *testing.T, convID, customTitle string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "proj")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755), "mkdir")
 	fullPath := filepath.Join(dir, convID+".jsonl")
-	if err := os.WriteFile(fullPath, []byte(""), 0o600); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
+	require.NoError(t, os.WriteFile(fullPath, []byte(""), 0o600), "write fixture")
 	mtime := time.Now().Unix()
-	if err := os.Chtimes(fullPath, time.Unix(mtime, 0), time.Unix(mtime, 0)); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, os.Chtimes(fullPath, time.Unix(mtime, 0), time.Unix(mtime, 0)), "chtimes")
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      convID,
 		ProjectDir:  dir,
 		FullPath:    fullPath,
 		FileMtime:   mtime,
 		CustomTitle: customTitle,
 		IndexedAt:   time.Now(),
-	}); err != nil {
-		t.Fatalf("UpsertConvIndex: %v", err)
-	}
+	}), "UpsertConvIndex")
 }
 
 // TestHandleMessages_MultiRecipient_WritesOnePerRecipient drives
@@ -62,15 +55,11 @@ func TestHandleMessages_MultiRecipient_WritesOnePerRecipient(t *testing.T) {
 	upsertConvIndexLocal(t, cc2Conv, "cc2")
 
 	gID, err := db.CreateAgentGroup("alpha", "")
-	if err != nil {
-		t.Fatalf("CreateAgentGroup: %v", err)
-	}
+	require.NoError(t, err, "CreateAgentGroup")
 	for _, c := range []string{senderConv, primaryConv, cc1Conv, cc2Conv} {
-		if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 			GroupID: gID, ConvID: c,
-		}); err != nil {
-			t.Fatalf("AddAgentGroupMember: %v", err)
-		}
+		}), "AddAgentGroupMember")
 	}
 
 	body, _ := json.Marshal(map[string]any{
@@ -84,48 +73,31 @@ func TestHandleMessages_MultiRecipient_WritesOnePerRecipient(t *testing.T) {
 	w := httptest.NewRecorder()
 	handleMessages(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body = %s", w.Body.String())
 	var resp sendResp
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode resp: %v body=%s", err, w.Body.String())
-	}
-	if resp.ViaGroup != "alpha" {
-		t.Errorf("ViaGroup = %q, want %q", resp.ViaGroup, "alpha")
-	}
-	if len(resp.Recipients) != 3 {
-		t.Fatalf("Recipients len = %d, want 3 (primary + 2 cc); got %+v",
-			len(resp.Recipients), resp.Recipients)
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode resp body=%s", w.Body.String())
+	assert.Equal(t, "alpha", resp.ViaGroup, "ViaGroup")
+	require.Len(t, resp.Recipients, 3,
+		"Recipients (primary + 2 cc); got %+v", resp.Recipients)
 	// Order: primary first, then cc1, cc2.
 	want := []string{primaryConv, cc1Conv, cc2Conv}
 	for i, w := range want {
-		if resp.Recipients[i].ConvID != w {
-			t.Errorf("Recipients[%d].ConvID = %q, want %q", i, resp.Recipients[i].ConvID, w)
-		}
+		assert.Equal(t, w, resp.Recipients[i].ConvID, "Recipients[%d].ConvID", i)
 	}
 
 	// Verify the DB landed three rows, each with the same audience arrays.
 	for _, target := range want {
 		msgs, err := db.ListAgentMessagesForConv(target, 0)
-		if err != nil {
-			t.Fatalf("ListAgentMessagesForConv(%s): %v", target, err)
-		}
-		if len(msgs) != 1 {
-			t.Errorf("rows for %s: got %d, want 1", target, len(msgs))
+		require.NoError(t, err, "ListAgentMessagesForConv(%s)", target)
+		if !assert.Len(t, msgs, 1, "rows for %s", target) {
 			continue
 		}
 		m := msgs[0]
-		if m.Body != "hello team" {
-			t.Errorf("body for %s: got %q", target, m.Body)
-		}
-		if len(m.ToRecipients) != 1 || m.ToRecipients[0] != primaryConv {
-			t.Errorf("to_recipients for %s: %v, want [%s]", target, m.ToRecipients, primaryConv)
-		}
-		if len(m.CcRecipients) != 2 || m.CcRecipients[0] != cc1Conv || m.CcRecipients[1] != cc2Conv {
-			t.Errorf("cc_recipients for %s: %v", target, m.CcRecipients)
-		}
+		assert.Equal(t, "hello team", m.Body, "body for %s", target)
+		assert.Equal(t, []string{primaryConv}, m.ToRecipients,
+			"to_recipients for %s", target)
+		assert.Equal(t, []string{cc1Conv, cc2Conv}, m.CcRecipients,
+			"cc_recipients for %s", target)
 	}
 }
 
@@ -143,11 +115,9 @@ func TestHandleMessages_SingleRecipient_StillRecordsToRecipient(t *testing.T) {
 
 	gID, _ := db.CreateAgentGroup("alpha", "")
 	for _, c := range []string{senderConv, targetConv} {
-		if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 			GroupID: gID, ConvID: c,
-		}); err != nil {
-			t.Fatalf("AddAgentGroupMember: %v", err)
-		}
+		}), "AddAgentGroupMember")
 	}
 
 	body, _ := json.Marshal(map[string]any{
@@ -159,24 +129,14 @@ func TestHandleMessages_SingleRecipient_StillRecordsToRecipient(t *testing.T) {
 		&peer{PID: 999, HasClaudeAncestor: true, ConvID: senderConv}))
 	w := httptest.NewRecorder()
 	handleMessages(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body = %s", w.Body.String())
 
 	msgs, err := db.ListAgentMessagesForConv(targetConv, 0)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesForConv: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("got %d rows, want 1", len(msgs))
-	}
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, msgs, 1, "rows")
 	m := msgs[0]
-	if len(m.ToRecipients) != 1 || m.ToRecipients[0] != targetConv {
-		t.Errorf("ToRecipients = %v, want [%s]", m.ToRecipients, targetConv)
-	}
-	if len(m.CcRecipients) != 0 {
-		t.Errorf("CcRecipients should be empty, got %v", m.CcRecipients)
-	}
+	assert.Equal(t, []string{targetConv}, m.ToRecipients, "ToRecipients")
+	assert.Empty(t, m.CcRecipients, "CcRecipients should be empty")
 }
 
 // TestHandleMessages_UnknownCC_RejectsBeforeAnyInsert validates the
@@ -208,15 +168,9 @@ func TestHandleMessages_UnknownCC_RejectsBeforeAnyInsert(t *testing.T) {
 	w := httptest.NewRecorder()
 	handleMessages(w, r)
 
-	if w.Code == http.StatusOK {
-		t.Fatalf("expected non-OK; got 200 body=%s", w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "CC") {
-		t.Errorf("error body should mention CC; got %s", w.Body.String())
-	}
+	require.NotEqual(t, http.StatusOK, w.Code, "expected non-OK; body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "CC", "error body should mention CC")
 	// Crucially: NO row should have landed.
 	msgs, _ := db.ListAgentMessagesForConv(primaryConv, 0)
-	if len(msgs) != 0 {
-		t.Errorf("primary should have 0 rows after a rejected multi-recipient send; got %d", len(msgs))
-	}
+	assert.Empty(t, msgs, "primary should have 0 rows after a rejected multi-recipient send")
 }

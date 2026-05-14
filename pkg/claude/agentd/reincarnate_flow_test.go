@@ -3,6 +3,8 @@ package agentd_test
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Scenario: a worker on its third reincarnation gets reincarnated
@@ -41,9 +43,8 @@ func TestReincarnate_OfRN_ProducesRNplus1(t *testing.T) {
 	f.AssertReincarnateTitle(r, "worker-r-4")
 	f.AssertSentContains(r.TmuxTarget(), "/rename worker-r-4", 5*time.Second)
 
-	if !f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 1*time.Second) {
-		t.Errorf("old pane should have received /exit; sent=%+v", f.World.Tmux.Sent())
-	}
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 1*time.Second),
+		"old pane should have received /exit; sent=%+v", f.World.Tmux.Sent())
 
 	// Surface-level invariants the human would see post-reincarnate
 	// in `tclaude agent groups members alpha`:

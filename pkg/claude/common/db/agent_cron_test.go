@@ -3,6 +3,9 @@ package db
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentCronJob_InsertGetList(t *testing.T) {
@@ -18,43 +21,23 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 		Body:            "What's the latest?",
 		Enabled:         true,
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentCronJob: %v", err)
-	}
-	if id <= 0 {
-		t.Fatalf("expected positive id, got %d", id)
-	}
+	require.NoError(t, err, "InsertAgentCronJob")
+	require.Greater(t, id, int64(0), "expected positive id")
 
 	got, err := GetAgentCronJob(id)
-	if err != nil {
-		t.Fatalf("GetAgentCronJob: %v", err)
-	}
-	if got == nil {
-		t.Fatal("got nil row")
-	}
-	if got.Name != "po-pings" || got.OwnerConv != "po-conv" || got.TargetConv != "worker-conv" {
-		t.Errorf("round-trip mismatch: %+v", got)
-	}
-	if got.IntervalSeconds != 600 {
-		t.Errorf("interval: got %d, want 600", got.IntervalSeconds)
-	}
-	if !got.Enabled {
-		t.Error("expected enabled=true")
-	}
-	if got.CreatedAt.IsZero() {
-		t.Error("created_at should be stamped on insert")
-	}
-	if !got.LastRunAt.IsZero() {
-		t.Error("last_run_at should be zero before any fire")
-	}
+	require.NoError(t, err, "GetAgentCronJob")
+	require.NotNil(t, got, "got nil row")
+	assert.Equal(t, "po-pings", got.Name, "round-trip mismatch: %+v", got)
+	assert.Equal(t, "po-conv", got.OwnerConv, "round-trip mismatch: %+v", got)
+	assert.Equal(t, "worker-conv", got.TargetConv, "round-trip mismatch: %+v", got)
+	assert.Equal(t, int64(600), got.IntervalSeconds, "interval")
+	assert.True(t, got.Enabled, "expected enabled=true")
+	assert.False(t, got.CreatedAt.IsZero(), "created_at should be stamped on insert")
+	assert.True(t, got.LastRunAt.IsZero(), "last_run_at should be zero before any fire")
 
 	all, err := ListAgentCronJobs()
-	if err != nil {
-		t.Fatalf("ListAgentCronJobs: %v", err)
-	}
-	if len(all) != 1 {
-		t.Fatalf("expected 1 job, got %d", len(all))
-	}
+	require.NoError(t, err, "ListAgentCronJobs")
+	require.Len(t, all, 1, "expected 1 job")
 }
 
 func TestAgentCronJob_DueLogic(t *testing.T) {
@@ -82,36 +65,20 @@ func TestAgentCronJob_DueLogic(t *testing.T) {
 	})
 
 	now := time.Now()
-	if err := UpdateAgentCronJobLastRun(j2, now.Add(-30*time.Second), "ok"); err != nil {
-		t.Fatalf("stamp j2: %v", err)
-	}
-	if err := UpdateAgentCronJobLastRun(j3, now.Add(-90*time.Second), "ok"); err != nil {
-		t.Fatalf("stamp j3: %v", err)
-	}
-	if err := UpdateAgentCronJobLastRun(j4, now.Add(-90*time.Second), "ok"); err != nil {
-		t.Fatalf("stamp j4: %v", err)
-	}
+	require.NoError(t, UpdateAgentCronJobLastRun(j2, now.Add(-30*time.Second), "ok"), "stamp j2")
+	require.NoError(t, UpdateAgentCronJobLastRun(j3, now.Add(-90*time.Second), "ok"), "stamp j3")
+	require.NoError(t, UpdateAgentCronJobLastRun(j4, now.Add(-90*time.Second), "ok"), "stamp j4")
 
 	due, err := ListDueAgentCronJobs(now)
-	if err != nil {
-		t.Fatalf("ListDueAgentCronJobs: %v", err)
-	}
+	require.NoError(t, err, "ListDueAgentCronJobs")
 	dueIDs := map[int64]bool{}
 	for _, j := range due {
 		dueIDs[j.ID] = true
 	}
-	if !dueIDs[j1] {
-		t.Errorf("j1 (never run) should be due")
-	}
-	if dueIDs[j2] {
-		t.Errorf("j2 (30s ago, 60s interval) should NOT be due")
-	}
-	if !dueIDs[j3] {
-		t.Errorf("j3 (90s ago, 60s interval) should be due")
-	}
-	if dueIDs[j4] {
-		t.Errorf("j4 (disabled) should never be due")
-	}
+	assert.True(t, dueIDs[j1], "j1 (never run) should be due")
+	assert.False(t, dueIDs[j2], "j2 (30s ago, 60s interval) should NOT be due")
+	assert.True(t, dueIDs[j3], "j3 (90s ago, 60s interval) should be due")
+	assert.False(t, dueIDs[j4], "j4 (disabled) should never be due")
 }
 
 func TestAgentCronRun_InsertListCascade(t *testing.T) {
@@ -130,37 +97,23 @@ func TestAgentCronRun_InsertListCascade(t *testing.T) {
 			FiredAt: t0.Add(dt),
 			Status:  "ok",
 		})
-		if err != nil {
-			t.Fatalf("insert run %d: %v", i, err)
-		}
+		require.NoError(t, err, "insert run %d", i)
 	}
 
 	// Newest first.
 	runs, err := ListAgentCronRunsForJob(id, 0)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(runs) != 3 {
-		t.Fatalf("expected 3 runs, got %d", len(runs))
-	}
-	if !runs[0].FiredAt.After(runs[1].FiredAt) || !runs[1].FiredAt.After(runs[2].FiredAt) {
-		t.Errorf("runs not sorted newest-first: %+v", runs)
-	}
+	require.NoError(t, err, "list")
+	require.Len(t, runs, 3, "expected 3 runs")
+	assert.True(t, runs[0].FiredAt.After(runs[1].FiredAt) && runs[1].FiredAt.After(runs[2].FiredAt), "runs not sorted newest-first: %+v", runs)
 
 	// Limit truncates from the head (newest).
 	limited, _ := ListAgentCronRunsForJob(id, 2)
-	if len(limited) != 2 {
-		t.Errorf("limit=2 → got %d", len(limited))
-	}
+	assert.Len(t, limited, 2, "limit=2")
 
 	// Cascade on job delete.
-	if err := DeleteAgentCronJob(id); err != nil {
-		t.Fatalf("delete job: %v", err)
-	}
+	require.NoError(t, DeleteAgentCronJob(id), "delete job")
 	after, _ := ListAgentCronRunsForJob(id, 0)
-	if len(after) != 0 {
-		t.Errorf("expected runs cascaded with job delete; got %d", len(after))
-	}
+	assert.Len(t, after, 0, "expected runs cascaded with job delete")
 }
 
 func TestAgentCronJob_UpdateFields_Partial(t *testing.T) {
@@ -179,39 +132,27 @@ func TestAgentCronJob_UpdateFields_Partial(t *testing.T) {
 	// Stamp a non-zero last_run_at so we can prove UpdateAgentCronJobFields
 	// leaves it alone.
 	prevRun := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
-	if err := UpdateAgentCronJobLastRun(id, prevRun, "ok"); err != nil {
-		t.Fatalf("stamp: %v", err)
-	}
+	require.NoError(t, UpdateAgentCronJobLastRun(id, prevRun, "ok"), "stamp")
 
 	// Touch only name + enabled. All other fields should be unchanged.
 	newName := "after"
 	enabled := false
 	n, err := UpdateAgentCronJobFields(id, UpdateCronPatch{Name: &newName, Enabled: &enabled})
-	if err != nil {
-		t.Fatalf("UpdateAgentCronJobFields: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("rows affected = %d, want 1", n)
-	}
+	require.NoError(t, err, "UpdateAgentCronJobFields")
+	require.Equal(t, 1, n, "rows affected")
 	got, _ := GetAgentCronJob(id)
-	if got.Name != "after" {
-		t.Errorf("name: got %q, want %q", got.Name, "after")
-	}
-	if got.Enabled {
-		t.Errorf("expected enabled=false after patch")
-	}
+	assert.Equal(t, "after", got.Name, "name")
+	assert.False(t, got.Enabled, "expected enabled=false after patch")
 	// Untouched.
-	if got.OwnerConv != "owner" || got.TargetConv != "target" || got.GroupID != 7 ||
-		got.IntervalSeconds != 300 || got.Subject != "subj-before" || got.Body != "body-before" {
-		t.Errorf("untouched fields changed: %+v", got)
-	}
+	assert.Equal(t, "owner", got.OwnerConv, "untouched fields changed: %+v", got)
+	assert.Equal(t, "target", got.TargetConv, "untouched fields changed: %+v", got)
+	assert.Equal(t, int64(7), got.GroupID, "untouched fields changed: %+v", got)
+	assert.Equal(t, int64(300), got.IntervalSeconds, "untouched fields changed: %+v", got)
+	assert.Equal(t, "subj-before", got.Subject, "untouched fields changed: %+v", got)
+	assert.Equal(t, "body-before", got.Body, "untouched fields changed: %+v", got)
 	// last_run_at preserved.
-	if !got.LastRunAt.Equal(prevRun) {
-		t.Errorf("last_run_at must not be touched; got %v, want %v", got.LastRunAt, prevRun)
-	}
-	if got.LastRunStatus != "ok" {
-		t.Errorf("last_run_status must not be touched; got %q, want %q", got.LastRunStatus, "ok")
-	}
+	assert.True(t, got.LastRunAt.Equal(prevRun), "last_run_at must not be touched; got %v, want %v", got.LastRunAt, prevRun)
+	assert.Equal(t, "ok", got.LastRunStatus, "last_run_status must not be touched")
 }
 
 func TestAgentCronJob_UpdateFields_IntervalLeavesLastRunAlone(t *testing.T) {
@@ -226,21 +167,14 @@ func TestAgentCronJob_UpdateFields_IntervalLeavesLastRunAlone(t *testing.T) {
 		Enabled:         true,
 	})
 	stamped := time.Now().Add(-90 * time.Second).UTC().Truncate(time.Second)
-	if err := UpdateAgentCronJobLastRun(id, stamped, "ok"); err != nil {
-		t.Fatalf("stamp: %v", err)
-	}
+	require.NoError(t, UpdateAgentCronJobLastRun(id, stamped, "ok"), "stamp")
 
 	newInterval := int64(3600)
-	if _, err := UpdateAgentCronJobFields(id, UpdateCronPatch{IntervalSeconds: &newInterval}); err != nil {
-		t.Fatalf("UpdateAgentCronJobFields: %v", err)
-	}
+	_, err := UpdateAgentCronJobFields(id, UpdateCronPatch{IntervalSeconds: &newInterval})
+	require.NoError(t, err, "UpdateAgentCronJobFields")
 	got, _ := GetAgentCronJob(id)
-	if got.IntervalSeconds != 3600 {
-		t.Errorf("interval: got %d, want 3600", got.IntervalSeconds)
-	}
-	if !got.LastRunAt.Equal(stamped) {
-		t.Errorf("last_run_at changed after interval patch: got %v, want %v", got.LastRunAt, stamped)
-	}
+	assert.Equal(t, int64(3600), got.IntervalSeconds, "interval")
+	assert.True(t, got.LastRunAt.Equal(stamped), "last_run_at changed after interval patch: got %v, want %v", got.LastRunAt, stamped)
 }
 
 func TestAgentCronJob_UpdateFields_EmptyPatchNoop(t *testing.T) {
@@ -250,24 +184,16 @@ func TestAgentCronJob_UpdateFields_EmptyPatchNoop(t *testing.T) {
 		IntervalSeconds: 60, Body: "x", Enabled: true,
 	})
 	n, err := UpdateAgentCronJobFields(id, UpdateCronPatch{})
-	if err != nil {
-		t.Fatalf("UpdateAgentCronJobFields: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("empty patch should affect 0 rows; got %d", n)
-	}
+	require.NoError(t, err, "UpdateAgentCronJobFields")
+	assert.Equal(t, 0, n, "empty patch should affect 0 rows")
 }
 
 func TestAgentCronJob_UpdateFields_NotFound(t *testing.T) {
 	setupTestDB(t)
 	newName := "x"
 	n, err := UpdateAgentCronJobFields(9999, UpdateCronPatch{Name: &newName})
-	if err != nil {
-		t.Fatalf("UpdateAgentCronJobFields: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("missing id should affect 0 rows; got %d", n)
-	}
+	require.NoError(t, err, "UpdateAgentCronJobFields")
+	assert.Equal(t, 0, n, "missing id should affect 0 rows")
 }
 
 func TestAgentCronJob_DeleteAndEnable(t *testing.T) {
@@ -278,23 +204,13 @@ func TestAgentCronJob_DeleteAndEnable(t *testing.T) {
 		IntervalSeconds: 60, Body: "x", Enabled: true,
 	})
 
-	if err := SetAgentCronJobEnabled(id, false); err != nil {
-		t.Fatalf("disable: %v", err)
-	}
+	require.NoError(t, SetAgentCronJobEnabled(id, false), "disable")
 	got, _ := GetAgentCronJob(id)
-	if got.Enabled {
-		t.Errorf("expected enabled=false after disable")
-	}
+	assert.False(t, got.Enabled, "expected enabled=false after disable")
 
-	if err := DeleteAgentCronJob(id); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	require.NoError(t, DeleteAgentCronJob(id), "delete")
 	got, _ = GetAgentCronJob(id)
-	if got != nil {
-		t.Errorf("expected nil after delete; got %+v", got)
-	}
+	assert.Nil(t, got, "expected nil after delete")
 	// Idempotent on re-delete.
-	if err := DeleteAgentCronJob(id); err != nil {
-		t.Errorf("re-delete should be no-op; got %v", err)
-	}
+	assert.NoError(t, DeleteAgentCronJob(id), "re-delete should be no-op")
 }

@@ -3,6 +3,9 @@ package db
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestSetConvIndexArchived_Roundtrip locks in the archived-flag
@@ -14,45 +17,30 @@ func TestSetConvIndexArchived_Roundtrip(t *testing.T) {
 
 	// Seed a conv_index row.
 	convID := "11111111-aaaa-bbbb-cccc-111111111111"
-	if err := UpsertConvIndex(&ConvIndexRow{
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
 		ConvID:      convID,
 		ProjectDir:  "/tmp/proj",
 		FullPath:    "/tmp/proj/" + convID + ".jsonl",
 		CustomTitle: "worker",
 		IndexedAt:   time.Now(),
-	}); err != nil {
-		t.Fatalf("UpsertConvIndex: %v", err)
-	}
+	}), "UpsertConvIndex")
 
 	// Initially active — column empty.
 	row, err := GetConvIndex(convID)
-	if err != nil || row == nil {
-		t.Fatalf("GetConvIndex: %v / nil=%v", err, row == nil)
-	}
-	if row.IsArchived() {
-		t.Errorf("expected active row, got archived: %+v", row)
-	}
+	require.NoError(t, err, "GetConvIndex")
+	require.NotNil(t, row, "GetConvIndex returned nil")
+	assert.False(t, row.IsArchived(), "expected active row, got archived: %+v", row)
 
 	// Stamp archived.
-	if err := SetConvIndexArchived(convID, true); err != nil {
-		t.Fatalf("SetConvIndexArchived(true): %v", err)
-	}
+	require.NoError(t, SetConvIndexArchived(convID, true), "SetConvIndexArchived(true)")
 	row, _ = GetConvIndex(convID)
-	if !row.IsArchived() {
-		t.Errorf("expected archived row, got active: %+v", row)
-	}
-	if row.ArchivedAt.IsZero() {
-		t.Errorf("ArchivedAt should be non-zero, got %v", row.ArchivedAt)
-	}
+	assert.True(t, row.IsArchived(), "expected archived row, got active: %+v", row)
+	assert.False(t, row.ArchivedAt.IsZero(), "ArchivedAt should be non-zero, got %v", row.ArchivedAt)
 
 	// Clear it back.
-	if err := SetConvIndexArchived(convID, false); err != nil {
-		t.Fatalf("SetConvIndexArchived(false): %v", err)
-	}
+	require.NoError(t, SetConvIndexArchived(convID, false), "SetConvIndexArchived(false)")
 	row, _ = GetConvIndex(convID)
-	if row.IsArchived() {
-		t.Errorf("expected active row after clear, got archived: %+v", row)
-	}
+	assert.False(t, row.IsArchived(), "expected active row after clear, got archived: %+v", row)
 }
 
 // TestUpsertConvIndex_PreservesArchivedAt locks in the contract that
@@ -64,35 +52,27 @@ func TestUpsertConvIndex_PreservesArchivedAt(t *testing.T) {
 	setupTestDB(t)
 
 	convID := "22222222-aaaa-bbbb-cccc-222222222222"
-	if err := UpsertConvIndex(&ConvIndexRow{
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
 		ConvID:      convID,
 		ProjectDir:  "/tmp/proj",
 		FullPath:    "/tmp/proj/" + convID + ".jsonl",
 		CustomTitle: "worker",
 		IndexedAt:   time.Now(),
-	}); err != nil {
-		t.Fatalf("first upsert: %v", err)
-	}
-	if err := SetConvIndexArchived(convID, true); err != nil {
-		t.Fatalf("SetConvIndexArchived: %v", err)
-	}
+	}), "first upsert")
+	require.NoError(t, SetConvIndexArchived(convID, true), "SetConvIndexArchived")
 
 	// Re-upsert — simulates a routine .jsonl rescan after the user
 	// pokes the file (mtime bump).
-	if err := UpsertConvIndex(&ConvIndexRow{
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
 		ConvID:      convID,
 		ProjectDir:  "/tmp/proj",
 		FullPath:    "/tmp/proj/" + convID + ".jsonl",
 		CustomTitle: "worker-x", // post-rename title
 		IndexedAt:   time.Now(),
-	}); err != nil {
-		t.Fatalf("re-upsert: %v", err)
-	}
+	}), "re-upsert")
 
 	row, _ := GetConvIndex(convID)
-	if !row.IsArchived() {
-		t.Errorf("upsert clobbered archived flag; got %+v", row)
-	}
+	assert.True(t, row.IsArchived(), "upsert clobbered archived flag; got %+v", row)
 }
 
 // TestSetConvIndexArchived_MissingRow returns sql.ErrNoRows so the
@@ -100,7 +80,5 @@ func TestUpsertConvIndex_PreservesArchivedAt(t *testing.T) {
 func TestSetConvIndexArchived_MissingRow(t *testing.T) {
 	setupTestDB(t)
 	err := SetConvIndexArchived("nonexistent-conv-id", true)
-	if err == nil {
-		t.Error("expected error on missing row, got nil")
-	}
+	assert.Error(t, err, "expected error on missing row")
 }

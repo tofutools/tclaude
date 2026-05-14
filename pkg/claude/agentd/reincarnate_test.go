@@ -3,6 +3,8 @@ package agentd
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -16,12 +18,10 @@ import (
 
 func upsertCustomTitle(t *testing.T, convID, title string) {
 	t.Helper()
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      convID,
 		CustomTitle: title,
-	}); err != nil {
-		t.Fatalf("UpsertConvIndex(%q): %v", convID, err)
-	}
+	}), "UpsertConvIndex(%q)", convID)
 }
 
 func TestUniqueReincarnateTitle_NoExistingStartsAt1(t *testing.T) {
@@ -29,9 +29,7 @@ func TestUniqueReincarnateTitle_NoExistingStartsAt1(t *testing.T) {
 	upsertCustomTitle(t, "a", "worker")
 
 	got := uniqueReincarnateTitle("worker")
-	if got != "worker-r-1" {
-		t.Errorf("first reincarnation: got %q, want %q", got, "worker-r-1")
-	}
+	assert.Equal(t, "worker-r-1", got, "first reincarnation")
 }
 
 func TestUniqueReincarnateTitle_GlobalCounter(t *testing.T) {
@@ -41,9 +39,7 @@ func TestUniqueReincarnateTitle_GlobalCounter(t *testing.T) {
 	upsertCustomTitle(t, "c", "worker-r-2")
 
 	got := uniqueReincarnateTitle("worker")
-	if got != "worker-r-3" {
-		t.Errorf("global counter: got %q, want %q", got, "worker-r-3")
-	}
+	assert.Equal(t, "worker-r-3", got, "global counter")
 }
 
 func TestUniqueReincarnateTitle_FillsHoles(t *testing.T) {
@@ -52,9 +48,7 @@ func TestUniqueReincarnateTitle_FillsHoles(t *testing.T) {
 	upsertCustomTitle(t, "b", "worker-r-3")
 
 	got := uniqueReincarnateTitle("worker")
-	if got != "worker-r-2" {
-		t.Errorf("hole-filling: got %q, want %q", got, "worker-r-2")
-	}
+	assert.Equal(t, "worker-r-2", got, "hole-filling")
 }
 
 func TestUniqueReincarnateTitle_StripsExistingSuffix(t *testing.T) {
@@ -69,9 +63,7 @@ func TestUniqueReincarnateTitle_StripsExistingSuffix(t *testing.T) {
 	upsertCustomTitle(t, "b", "worker-r-3")
 
 	got := uniqueReincarnateTitle("worker-r-3")
-	if got != "worker-r-4" {
-		t.Errorf("reincarnate-of-reincarnate: got %q, want %q", got, "worker-r-4")
-	}
+	assert.Equal(t, "worker-r-4", got, "reincarnate-of-reincarnate")
 }
 
 // TestUniqueReincarnateTitle_MonotonicFromPrev_PrunedAncestor pins the
@@ -87,9 +79,7 @@ func TestUniqueReincarnateTitle_MonotonicFromPrev_PrunedAncestor(t *testing.T) {
 	upsertCustomTitle(t, "parent", "tclaude-dev-r-2")
 
 	got := uniqueReincarnateTitle("tclaude-dev-r-2")
-	if got != "tclaude-dev-r-3" {
-		t.Errorf("monotonic-from-prev: got %q, want %q", got, "tclaude-dev-r-3")
-	}
+	assert.Equal(t, "tclaude-dev-r-3", got, "monotonic-from-prev")
 }
 
 func TestUniqueReincarnateTitle_EmptyPrevUsesPrefix(t *testing.T) {
@@ -97,9 +87,7 @@ func TestUniqueReincarnateTitle_EmptyPrevUsesPrefix(t *testing.T) {
 	upsertCustomTitle(t, "a", "r-1")
 
 	got := uniqueReincarnateTitle("")
-	if got != "r-2" {
-		t.Errorf("empty base: got %q, want %q", got, "r-2")
-	}
+	assert.Equal(t, "r-2", got, "empty base")
 }
 
 func TestUniqueReincarnateTitle_DifferentBasesIndependent(t *testing.T) {
@@ -108,9 +96,7 @@ func TestUniqueReincarnateTitle_DifferentBasesIndependent(t *testing.T) {
 	upsertCustomTitle(t, "b", "frontend-r-2")
 
 	got := uniqueReincarnateTitle("worker")
-	if got != "worker-r-1" {
-		t.Errorf("base independence: got %q, want %q", got, "worker-r-1")
-	}
+	assert.Equal(t, "worker-r-1", got, "base independence")
 }
 
 // TestUniqueReincarnateTitle_LegacyFormStripsCleanlyOnReincarnateOfReincarnate
@@ -129,10 +115,7 @@ func TestUniqueReincarnateTitle_DifferentBasesIndependent(t *testing.T) {
 func TestUniqueReincarnateTitle_LegacyFormStripsCleanlyOnReincarnateOfReincarnate(t *testing.T) {
 	setupTestDB(t)
 	got := uniqueReincarnateTitle("worker-reincarnate-3")
-	if got != "worker-r-4" {
-		t.Errorf("legacy-form reincarnate-of-reincarnate: got %q, want %q",
-			got, "worker-r-4")
-	}
+	assert.Equal(t, "worker-r-4", got, "legacy-form reincarnate-of-reincarnate")
 }
 
 // TestUniqueReincarnateTitle_LegacyTitlesDoNotReserveNewN documents
@@ -146,10 +129,7 @@ func TestUniqueReincarnateTitle_LegacyTitlesDoNotReserveNewN(t *testing.T) {
 	upsertCustomTitle(t, "b", "worker-reincarnate-2")
 
 	got := uniqueReincarnateTitle("worker")
-	if got != "worker-r-1" {
-		t.Errorf("legacy titles must not reserve new N: got %q, want %q",
-			got, "worker-r-1")
-	}
+	assert.Equal(t, "worker-r-1", got, "legacy titles must not reserve new N")
 }
 
 // TestUniqueReincarnateTitle_NumericSuffixInBaseName covers the
@@ -165,26 +145,17 @@ func TestUniqueReincarnateTitle_NumericSuffixInBaseName(t *testing.T) {
 
 	// First reincarnation of worker-1 keeps the "1" as part of the base.
 	got := uniqueReincarnateTitle("worker-1")
-	if got != "worker-1-r-1" {
-		t.Errorf("worker-1 first reincarnation: got %q, want %q",
-			got, "worker-1-r-1")
-	}
+	assert.Equal(t, "worker-1-r-1", got, "worker-1 first reincarnation")
 
 	// After one reincarnation: the "-r-1" IS recognised and stripped, so
 	// the next bump still anchors on `worker-1` as base.
 	upsertCustomTitle(t, "a", "worker-1-r-1")
 	got = uniqueReincarnateTitle("worker-1-r-1")
-	if got != "worker-1-r-2" {
-		t.Errorf("worker-1 second reincarnation: got %q, want %q",
-			got, "worker-1-r-2")
-	}
+	assert.Equal(t, "worker-1-r-2", got, "worker-1 second reincarnation")
 
 	// worker-2's namespace is independent from worker-1's. The
 	// `worker-1-r-1` row sitting in the DB doesn't reserve N=1 for
 	// `worker-2-r-N`.
 	got = uniqueReincarnateTitle("worker-2")
-	if got != "worker-2-r-1" {
-		t.Errorf("worker-2 first reincarnation: got %q, want %q",
-			got, "worker-2-r-1")
-	}
+	assert.Equal(t, "worker-2-r-1", got, "worker-2 first reincarnation")
 }

@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -40,9 +42,7 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 	f.HaveAliveSession(target, label, tmuxSess, "/tmp/work")
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", target, "doomed")
-	if err := db.GrantAgentPermission(target, "self.compact", "test"); err != nil {
-		t.Fatalf("grant: %v", err)
-	}
+	require.NoError(t, db.GrantAgentPermission(target, "self.compact", "test"), "grant")
 
 	// Capture the recorded cwd BEFORE delete clears the session row.
 	// AssertConvNotListed needs it to derive the project dir for the
@@ -50,20 +50,14 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 	// there's no way to recover.
 	preDeleteCwd := func() string {
 		rows, _ := db.FindSessionsByConvID(target)
-		if len(rows) == 0 {
-			t.Fatalf("expected session row for %s pre-delete", target)
-		}
+		require.NotEmpty(t, rows, "expected session row for %s pre-delete", target)
 		return rows[0].Cwd
 	}()
 
 	resp := f.AsHuman().Delete(target, true /* force */)
 
-	if resp.Action != "deleted" {
-		t.Errorf("action = %q, want %q", resp.Action, "deleted")
-	}
-	if resp.DBCounts == nil {
-		t.Errorf("expected db_counts in response; got nil (raw=%s)", resp.Raw)
-	}
+	assert.Equal(t, "deleted", resp.Action, "action")
+	assert.NotNil(t, resp.DBCounts, "expected db_counts in response; got nil (raw=%s)", resp.Raw)
 
 	f.AssertDeleted(target)
 	f.AssertNotGroupMember("alpha", target)
@@ -77,8 +71,8 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 	f.AssertConvNotListed(target, preDeleteCwd)
 
 	stillThere, err := db.GetAgentGroupByName("alpha")
-	if err != nil || stillThere == nil || stillThere.ID != g.ID {
-		t.Errorf("group alpha should still exist; got %v err=%v", stillThere, err)
+	if assert.NoError(t, err) && assert.NotNil(t, stillThere) {
+		assert.Equal(t, g.ID, stillThere.ID, "group alpha should still exist")
 	}
 
 	// Re-delete — the DSL's Delete fatals on non-200, so drop to
@@ -86,8 +80,5 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 	r2 := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/v1/agent/"+target+"/delete", nil))
 	rec := testharness.Serve(f.Mux, r2)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("re-delete: status=%d body=%s, want 404",
-			rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusNotFound, rec.Code, "re-delete: body=%s", rec.Body.String())
 }

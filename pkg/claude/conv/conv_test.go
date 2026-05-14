@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseJSONLSession_ExtractsProjectPathAndGitBranch(t *testing.T) {
@@ -14,24 +17,14 @@ func TestParseJSONLSession_ExtractsProjectPathAndGitBranch(t *testing.T) {
 	content := `{"type":"user","cwd":"/home/alice/git/myproject","sessionId":"b6075720-0f5f-46e5-b382-efb055c6d25b","gitBranch":"main","message":{"role":"user","content":"please say hello"},"timestamp":"2026-02-01T00:35:46.567Z"}
 {"type":"assistant","cwd":"/home/alice/git/myproject","sessionId":"b6075720-0f5f-46e5-b382-efb055c6d25b","gitBranch":"main","message":{"role":"assistant","content":"Hello!"},"timestamp":"2026-02-01T00:35:48.557Z"}
 `
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644), "Failed to write test file")
 
 	entry := ParseJSONLSessionPublic(filePath, sessionID)
-	if entry == nil {
-		t.Fatal("ParseJSONLSessionPublic returned nil")
-	}
+	require.NotNil(t, entry, "ParseJSONLSessionPublic returned nil")
 
-	if entry.ProjectPath != "/home/alice/git/myproject" {
-		t.Errorf("Expected ProjectPath '/home/alice/git/myproject', got '%s'", entry.ProjectPath)
-	}
-	if entry.GitBranch != "main" {
-		t.Errorf("Expected GitBranch 'main', got '%s'", entry.GitBranch)
-	}
-	if entry.FirstPrompt != "please say hello" {
-		t.Errorf("Expected FirstPrompt 'please say hello', got '%s'", entry.FirstPrompt)
-	}
+	assert.Equal(t, "/home/alice/git/myproject", entry.ProjectPath)
+	assert.Equal(t, "main", entry.GitBranch)
+	assert.Equal(t, "please say hello", entry.FirstPrompt)
 }
 
 func TestParseJSONLSession_ExtractsFromFirstMessageWithData(t *testing.T) {
@@ -42,21 +35,13 @@ func TestParseJSONLSession_ExtractsFromFirstMessageWithData(t *testing.T) {
 	content := `{"type":"file-history-snapshot","timestamp":"2026-02-01T00:35:46.000Z"}
 {"type":"user","cwd":"/projects/myapp","gitBranch":"feature-branch","message":{"role":"user","content":"test prompt"},"timestamp":"2026-02-01T00:35:46.567Z"}
 `
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644), "Failed to write test file")
 
 	entry := ParseJSONLSessionPublic(filePath, sessionID)
-	if entry == nil {
-		t.Fatal("ParseJSONLSessionPublic returned nil")
-	}
+	require.NotNil(t, entry, "ParseJSONLSessionPublic returned nil")
 
-	if entry.ProjectPath != "/projects/myapp" {
-		t.Errorf("Expected ProjectPath '/projects/myapp', got '%s'", entry.ProjectPath)
-	}
-	if entry.GitBranch != "feature-branch" {
-		t.Errorf("Expected GitBranch 'feature-branch', got '%s'", entry.GitBranch)
-	}
+	assert.Equal(t, "/projects/myapp", entry.ProjectPath)
+	assert.Equal(t, "feature-branch", entry.GitBranch)
 }
 
 func TestParseJSONLSession_FindsCustomTitle(t *testing.T) {
@@ -70,21 +55,13 @@ func TestParseJSONLSession_FindsCustomTitle(t *testing.T) {
 {"type":"system","timestamp":"2026-03-01T10:00:07Z"}
 {"type":"custom-title","customTitle":"initial-greeting","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
 `
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644), "Failed to write test file")
 
 	entry := ParseJSONLSessionPublic(filePath, sessionID)
-	if entry == nil {
-		t.Fatal("ParseJSONLSessionPublic returned nil")
-	}
+	require.NotNil(t, entry, "ParseJSONLSessionPublic returned nil")
 
-	if entry.FirstPrompt != "hello" {
-		t.Errorf("Expected FirstPrompt 'hello', got %q", entry.FirstPrompt)
-	}
-	if entry.CustomTitle != "initial-greeting" {
-		t.Errorf("Expected CustomTitle 'initial-greeting', got %q", entry.CustomTitle)
-	}
+	assert.Equal(t, "hello", entry.FirstPrompt)
+	assert.Equal(t, "initial-greeting", entry.CustomTitle)
 }
 
 func TestParseJSONLSession_FindsSummaryAfterPrompt(t *testing.T) {
@@ -96,27 +73,15 @@ func TestParseJSONLSession_FindsSummaryAfterPrompt(t *testing.T) {
 {"type":"assistant","message":{"role":"assistant","content":"Sure, let me look."},"timestamp":"2026-03-01T10:00:05Z"}
 {"type":"summary","summary":"Fixed a critical authentication bug","timestamp":"2026-03-01T10:05:00Z"}
 `
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644), "Failed to write test file")
 
 	entry := ParseJSONLSessionPublic(filePath, sessionID)
-	if entry == nil {
-		t.Fatal("ParseJSONLSessionPublic returned nil")
-	}
+	require.NotNil(t, entry, "ParseJSONLSessionPublic returned nil")
 
-	if entry.FirstPrompt != "fix the bug" {
-		t.Errorf("Expected FirstPrompt 'fix the bug', got %q", entry.FirstPrompt)
-	}
-	if entry.Summary != "Fixed a critical authentication bug" {
-		t.Errorf("Expected Summary 'Fixed a critical authentication bug', got %q", entry.Summary)
-	}
-	if entry.ProjectPath != "/myproject" {
-		t.Errorf("Expected ProjectPath '/myproject', got %q", entry.ProjectPath)
-	}
-	if entry.GitBranch != "main" {
-		t.Errorf("Expected GitBranch 'main', got %q", entry.GitBranch)
-	}
+	assert.Equal(t, "fix the bug", entry.FirstPrompt)
+	assert.Equal(t, "Fixed a critical authentication bug", entry.Summary)
+	assert.Equal(t, "/myproject", entry.ProjectPath)
+	assert.Equal(t, "main", entry.GitBranch)
 }
 
 func TestParseJSONLSession_StopsWhenAllFound(t *testing.T) {
@@ -128,21 +93,13 @@ func TestParseJSONLSession_StopsWhenAllFound(t *testing.T) {
 {"type":"user","cwd":"/myproject","message":{"role":"user","content":"continue where we left off"},"timestamp":"2026-03-01T10:00:00Z"}
 {"type":"assistant","message":{"role":"assistant","content":"OK"},"timestamp":"2026-03-01T10:00:05Z"}
 `
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644), "Failed to write test file")
 
 	entry := ParseJSONLSessionPublic(filePath, sessionID)
-	if entry == nil {
-		t.Fatal("ParseJSONLSessionPublic returned nil")
-	}
+	require.NotNil(t, entry, "ParseJSONLSessionPublic returned nil")
 
-	if entry.Summary != "Resumed session summary" {
-		t.Errorf("Expected Summary 'Resumed session summary', got %q", entry.Summary)
-	}
-	if entry.FirstPrompt != "continue where we left off" {
-		t.Errorf("Expected FirstPrompt 'continue where we left off', got %q", entry.FirstPrompt)
-	}
+	assert.Equal(t, "Resumed session summary", entry.Summary)
+	assert.Equal(t, "continue where we left off", entry.FirstPrompt)
 }
 
 func TestParseJSONLSession_FindsSummaryAfterManyLines(t *testing.T) {
@@ -159,19 +116,11 @@ func TestParseJSONLSession_FindsSummaryAfterManyLines(t *testing.T) {
 	}
 	lines += `{"type":"summary","summary":"Refactored auth module for better separation of concerns","timestamp":"2026-03-01T11:00:00Z"}
 `
-	if err := os.WriteFile(filePath, []byte(lines), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(lines), 0644), "Failed to write test file")
 
 	entry := ParseJSONLSessionPublic(filePath, sessionID)
-	if entry == nil {
-		t.Fatal("ParseJSONLSessionPublic returned nil")
-	}
+	require.NotNil(t, entry, "ParseJSONLSessionPublic returned nil")
 
-	if entry.FirstPrompt != "refactor the auth module" {
-		t.Errorf("Expected FirstPrompt 'refactor the auth module', got %q", entry.FirstPrompt)
-	}
-	if entry.Summary != "Refactored auth module for better separation of concerns" {
-		t.Errorf("Expected Summary 'Refactored auth module for better separation of concerns', got %q", entry.Summary)
-	}
+	assert.Equal(t, "refactor the auth module", entry.FirstPrompt)
+	assert.Equal(t, "Refactored auth module for better separation of concerns", entry.Summary)
 }

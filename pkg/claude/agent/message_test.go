@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -15,13 +17,9 @@ func TestRunMessage_HappyPath(t *testing.T) {
 	upsertConvIndex(t, "bbbbbbbb-2222-3333-4444-555555555555", "reviewer", "", "")
 
 	gID, err := db.CreateAgentGroup("alpha", "")
-	if err != nil {
-		t.Fatalf("CreateAgentGroup: %v", err)
-	}
+	require.NoError(t, err, "CreateAgentGroup")
 	for _, c := range []string{"aaaaaaaa-2222-3333-4444-555555555555", "bbbbbbbb-2222-3333-4444-555555555555"} {
-		if err := db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: c}); err != nil {
-			t.Fatalf("AddAgentGroupMember: %v", err)
-		}
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: c}), "AddAgentGroupMember")
 	}
 	t.Setenv("TCLAUDE_SESSION_ID", "aaaaaaaa-2222-3333-4444-555555555555")
 
@@ -45,37 +43,22 @@ func TestRunMessage_HappyPath(t *testing.T) {
 		Body:    "hello there",
 		Subject: "ping",
 	}, deps, "hello there", &stdout, &stderr)
-	if rc != rcOK {
-		t.Fatalf("rc = %d, stderr = %q", rc, stderr.String())
-	}
+	require.Equal(t, rcOK, rc, "stderr = %q", stderr.String())
 
 	// The target has no live tmux session row, so the nudge isn't called
 	// in this test; we still expect persistence + queued status.
-	if captured.called {
-		t.Fatalf("nudge should not fire without an alive tmux session: %+v", captured)
-	}
-	if !strings.Contains(stdout.String(), "queued") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
+	require.False(t, captured.called, "nudge should not fire without an alive tmux session: %+v", captured)
+	assert.Contains(t, stdout.String(), "queued")
 
 	msgs, err := db.ListAgentMessagesForConv("bbbbbbbb-2222-3333-4444-555555555555", 0)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesForConv: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(msgs))
-	}
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, msgs, 1)
 	got := msgs[0]
-	if got.Body != "hello there" || got.Subject != "ping" {
-		t.Fatalf("unexpected message: %+v", got)
-	}
-	if got.GroupID != gID {
-		t.Fatalf("group_id = %d, want %d", got.GroupID, gID)
-	}
+	assert.Equal(t, "hello there", got.Body)
+	assert.Equal(t, "ping", got.Subject)
+	assert.Equal(t, gID, got.GroupID, "group_id")
 	// `delivered_at` should remain unset since no tmux session ran.
-	if !got.DeliveredAt.IsZero() {
-		t.Fatalf("expected delivered_at unset, got %v", got.DeliveredAt)
-	}
+	assert.True(t, got.DeliveredAt.IsZero(), "expected delivered_at unset, got %v", got.DeliveredAt)
 }
 
 func TestRunMessage_RefusesWithoutSharedGroup(t *testing.T) {
@@ -84,9 +67,7 @@ func TestRunMessage_RefusesWithoutSharedGroup(t *testing.T) {
 	upsertConvIndex(t, "bbbbbbbb-2222-3333-4444-555555555555", "reviewer", "", "")
 
 	gID, _ := db.CreateAgentGroup("alpha", "")
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "aaaaaaaa-2222-3333-4444-555555555555"}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "aaaaaaaa-2222-3333-4444-555555555555"}), "AddAgentGroupMember")
 	// reviewer is not in any group with planner.
 
 	t.Setenv("TCLAUDE_SESSION_ID", "aaaaaaaa-2222-3333-4444-555555555555")
@@ -97,12 +78,8 @@ func TestRunMessage_RefusesWithoutSharedGroup(t *testing.T) {
 		Body:   "hello",
 	}, &messageDeps{nudge: func(string, string) error { return nil }}, "hello",
 		&stdout, &stderr)
-	if rc != rcAuth {
-		t.Fatalf("rc = %d (want %d), stderr = %q", rc, rcAuth, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "shared group") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
+	require.Equal(t, rcAuth, rc, "stderr = %q", stderr.String())
+	assert.Contains(t, stderr.String(), "shared group")
 }
 
 func TestRunMessage_RefusesSelfMessage(t *testing.T) {
@@ -117,38 +94,28 @@ func TestRunMessage_RefusesSelfMessage(t *testing.T) {
 		Body:   "hi self",
 	}, &messageDeps{nudge: func(string, string) error { return nil }}, "hi self",
 		&stdout, &stderr)
-	if rc != rcInvalidArg {
-		t.Fatalf("rc = %d (want %d)", rc, rcInvalidArg)
-	}
-	if !strings.Contains(stderr.String(), "cannot message self") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
+	require.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "cannot message self")
 }
 
 func TestReadBody(t *testing.T) {
 	var stderr bytes.Buffer
 
 	body, rc := readBody(&messageParams{Body: "literal"}, strings.NewReader(""), &stderr)
-	if rc != rcOK || body != "literal" {
-		t.Errorf("literal body: rc=%d body=%q", rc, body)
-	}
+	assert.Equal(t, rcOK, rc, "literal body rc")
+	assert.Equal(t, "literal", body, "literal body")
 
 	body, rc = readBody(&messageParams{Stdin: true}, strings.NewReader("from stdin"), &stderr)
-	if rc != rcOK || body != "from stdin" {
-		t.Errorf("stdin body: rc=%d body=%q", rc, body)
-	}
+	assert.Equal(t, rcOK, rc, "stdin body rc")
+	assert.Equal(t, "from stdin", body, "stdin body")
 
 	stderr.Reset()
 	_, rc = readBody(&messageParams{}, strings.NewReader(""), &stderr)
-	if rc != rcInvalidArg {
-		t.Errorf("no body: rc=%d", rc)
-	}
+	assert.Equal(t, rcInvalidArg, rc, "no body")
 
 	stderr.Reset()
 	_, rc = readBody(&messageParams{Body: "x", Stdin: true}, strings.NewReader(""), &stderr)
-	if rc != rcInvalidArg {
-		t.Errorf("conflicting body sources should fail: rc=%d", rc)
-	}
+	assert.Equal(t, rcInvalidArg, rc, "conflicting body sources should fail")
 }
 
 // TestFormatRecipientList covers the audience renderer in inbox read:
@@ -171,9 +138,7 @@ func TestFormatRecipientList(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatRecipientList(tt.in)
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -189,9 +154,7 @@ func TestRunInboxRead_RefusesWrongRecipient(t *testing.T) {
 		"aaaaaaaa-2222-3333-4444-555555555555",
 		"bbbbbbbb-2222-3333-4444-555555555555",
 	} {
-		if err := db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: c}); err != nil {
-			t.Fatalf("AddAgentGroupMember: %v", err)
-		}
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: c}), "AddAgentGroupMember")
 	}
 
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
@@ -201,17 +164,13 @@ func TestRunInboxRead_RefusesWrongRecipient(t *testing.T) {
 		Subject:  "hi",
 		Body:     "hello reviewer",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	t.Setenv("TCLAUDE_SESSION_ID", "cccccccc-2222-3333-4444-555555555555")
 
 	var stdout, stderr bytes.Buffer
 	rc := runInboxReadDirect(&inboxReadParams{ID: itoa(id)}, id, &stdout, &stderr)
-	if rc != rcAuth {
-		t.Fatalf("rc = %d (want %d), stderr = %q", rc, rcAuth, stderr.String())
-	}
+	require.Equal(t, rcAuth, rc, "stderr = %q", stderr.String())
 }
 
 func itoa(i int64) string {

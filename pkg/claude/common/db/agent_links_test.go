@@ -3,6 +3,9 @@ package db
 import (
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAgentGroupLink_InsertAndList covers the bare CRUD: insert one
@@ -13,36 +16,31 @@ func TestAgentGroupLink_InsertAndList(t *testing.T) {
 	b, _ := CreateAgentGroup("beta", "")
 
 	id, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, "")
-	if err != nil || id == 0 {
-		t.Fatalf("InsertAgentGroupLink = %d %v", id, err)
-	}
+	require.NoError(t, err, "InsertAgentGroupLink")
+	require.NotZero(t, id, "InsertAgentGroupLink id")
 
 	// Duplicate (same triple) → ErrLinkExists.
-	if _, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, ""); !errors.Is(err, ErrLinkExists) {
-		t.Errorf("duplicate insert err = %v, want ErrLinkExists", err)
-	}
+	_, err = InsertAgentGroupLink(a, b, LinkModeMembersToMembers, "")
+	assert.True(t, errors.Is(err, ErrLinkExists), "duplicate insert err = %v, want ErrLinkExists", err)
 
 	out, err := ListAgentGroupLinks(a, LinkOut)
-	if err != nil || len(out) != 1 || out[0].ID != id {
-		t.Fatalf("ListAgentGroupLinks(a, out) = %v %v", out, err)
-	}
+	require.NoError(t, err, "ListAgentGroupLinks(a, out)")
+	require.Len(t, out, 1, "ListAgentGroupLinks(a, out)")
+	require.Equal(t, id, out[0].ID)
 	in, err := ListAgentGroupLinks(b, LinkIn)
-	if err != nil || len(in) != 1 || in[0].ID != id {
-		t.Fatalf("ListAgentGroupLinks(b, in) = %v %v", in, err)
-	}
+	require.NoError(t, err, "ListAgentGroupLinks(b, in)")
+	require.Len(t, in, 1, "ListAgentGroupLinks(b, in)")
+	require.Equal(t, id, in[0].ID)
 	both, _ := ListAgentGroupLinks(a, LinkBoth)
-	if len(both) != 1 {
-		t.Errorf("ListAgentGroupLinks(a, both) len = %d, want 1", len(both))
-	}
+	assert.Len(t, both, 1, "ListAgentGroupLinks(a, both)")
 }
 
 // TestAgentGroupLink_SelfLinkRejected: A→A is meaningless and refused.
 func TestAgentGroupLink_SelfLinkRejected(t *testing.T) {
 	setupTestDB(t)
 	a, _ := CreateAgentGroup("alpha", "")
-	if _, err := InsertAgentGroupLink(a, a, LinkModeMembersToMembers, ""); err == nil {
-		t.Fatal("self-link should be rejected")
-	}
+	_, err := InsertAgentGroupLink(a, a, LinkModeMembersToMembers, "")
+	require.Error(t, err, "self-link should be rejected")
 }
 
 // TestAgentGroupLink_InvalidModeRejected: unknown modes refused.
@@ -50,9 +48,8 @@ func TestAgentGroupLink_InvalidModeRejected(t *testing.T) {
 	setupTestDB(t)
 	a, _ := CreateAgentGroup("alpha", "")
 	b, _ := CreateAgentGroup("beta", "")
-	if _, err := InsertAgentGroupLink(a, b, "nonsense->stuff", ""); err == nil {
-		t.Fatal("invalid mode should be rejected")
-	}
+	_, err := InsertAgentGroupLink(a, b, "nonsense->stuff", "")
+	require.Error(t, err, "invalid mode should be rejected")
 }
 
 // TestAgentGroupLink_UpdateMode: changing mode succeeds, rejects unknown
@@ -63,48 +60,41 @@ func TestAgentGroupLink_UpdateMode(t *testing.T) {
 	b, _ := CreateAgentGroup("beta", "")
 
 	id, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	n, err := UpdateAgentGroupLinkMode(id, LinkModeOwnersToMembers)
-	if err != nil || n != 1 {
-		t.Fatalf("UpdateAgentGroupLinkMode = %d %v", n, err)
-	}
+	require.NoError(t, err, "UpdateAgentGroupLinkMode")
+	require.Equal(t, int64(1), n, "UpdateAgentGroupLinkMode rows")
 	got, err := GetAgentGroupLinkByID(id)
-	if err != nil || got == nil || got.Mode != LinkModeOwnersToMembers {
-		t.Fatalf("post-update link = %+v %v", got, err)
-	}
+	require.NoError(t, err, "GetAgentGroupLinkByID")
+	require.NotNil(t, got, "post-update link")
+	require.Equal(t, LinkModeOwnersToMembers, got.Mode, "post-update link mode")
 
 	// Unknown mode rejected; row unchanged.
-	if _, err := UpdateAgentGroupLinkMode(id, "garbage"); err == nil {
-		t.Errorf("invalid mode should reject")
-	}
-	if got, _ := GetAgentGroupLinkByID(id); got == nil || got.Mode != LinkModeOwnersToMembers {
-		t.Errorf("invalid update should leave row unchanged, got %+v", got)
+	_, err = UpdateAgentGroupLinkMode(id, "garbage")
+	assert.Error(t, err, "invalid mode should reject")
+	got, _ = GetAgentGroupLinkByID(id)
+	if assert.NotNil(t, got, "invalid update should leave row unchanged") {
+		assert.Equal(t, LinkModeOwnersToMembers, got.Mode, "invalid update should leave row unchanged, got %+v", got)
 	}
 
 	// Insert a second row at the new mode, then try to update the
 	// first into the same triple — should hit the UNIQUE constraint
 	// and surface ErrLinkExists.
 	id2, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UpdateAgentGroupLinkMode(id2, LinkModeOwnersToMembers); !errors.Is(err, ErrLinkExists) {
-		t.Errorf("collision update err = %v, want ErrLinkExists", err)
-	}
+	require.NoError(t, err)
+	_, err = UpdateAgentGroupLinkMode(id2, LinkModeOwnersToMembers)
+	assert.True(t, errors.Is(err, ErrLinkExists), "collision update err = %v, want ErrLinkExists", err)
 
 	// Update to the same mode is a no-op (rows-affected = 0 on SQLite
 	// when nothing changes; the helper still returns the count).
-	if _, err := UpdateAgentGroupLinkMode(id, LinkModeOwnersToMembers); err != nil {
-		t.Errorf("no-op update err = %v", err)
-	}
+	_, err = UpdateAgentGroupLinkMode(id, LinkModeOwnersToMembers)
+	assert.NoError(t, err, "no-op update")
 
 	// Updating a missing id returns 0 rows + no error.
-	if n, err := UpdateAgentGroupLinkMode(9999, LinkModeMembersToMembers); err != nil || n != 0 {
-		t.Errorf("missing id update = %d %v, want 0 nil", n, err)
-	}
+	n, err = UpdateAgentGroupLinkMode(9999, LinkModeMembersToMembers)
+	assert.NoError(t, err, "missing id update")
+	assert.Equal(t, int64(0), n, "missing id update rows")
 }
 
 // TestAgentGroupLink_DeleteAndCascade: explicit delete works; deleting
@@ -117,17 +107,13 @@ func TestAgentGroupLink_DeleteAndCascade(t *testing.T) {
 	id2, _ := InsertAgentGroupLink(b, a, LinkModeMembersToMembers, "")
 
 	n, err := DeleteAgentGroupLink(id)
-	if err != nil || n != 1 {
-		t.Fatalf("DeleteAgentGroupLink = %d %v", n, err)
-	}
+	require.NoError(t, err, "DeleteAgentGroupLink")
+	require.Equal(t, int64(1), n, "DeleteAgentGroupLink rows")
 
-	if err := DeleteAgentGroup("beta"); err != nil {
-		t.Fatalf("DeleteAgentGroup: %v", err)
-	}
+	require.NoError(t, DeleteAgentGroup("beta"), "DeleteAgentGroup")
 	// Both link rows referencing beta should have cascaded.
-	if l, _ := GetAgentGroupLinkByID(id2); l != nil {
-		t.Errorf("link %d should cascade-delete with beta, got %+v", id2, l)
-	}
+	l, _ := GetAgentGroupLinkByID(id2)
+	assert.Nil(t, l, "link %d should cascade-delete with beta, got %+v", id2, l)
 }
 
 // TestCanSenderReachTarget_ViaLink: alice in proj-falcon, security in
@@ -138,52 +124,34 @@ func TestCanSenderReachTarget_ViaLink(t *testing.T) {
 	falcon, _ := CreateAgentGroup("proj-falcon", "")
 	secReview, _ := CreateAgentGroup("proj-security", "")
 
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: falcon, ConvID: "alice"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: secReview, ConvID: "security"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: falcon, ConvID: "alice"}))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: secReview, ConvID: "security"}))
 
 	// Without the link, alice cannot reach security.
 	via, _, _ := CanSenderReachTarget("alice", "security")
-	if via != nil {
-		t.Fatalf("pre-link alice→security should fail, got %q", via.Name)
-	}
+	require.Nil(t, via, "pre-link alice→security should fail")
 
 	// Add the link; alice→security should now succeed via-link.
 	linkID, err := InsertAgentGroupLink(falcon, secReview, LinkModeMembersToMembers, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	via, reason, err := CanSenderReachTarget("alice", "security")
-	if err != nil || via == nil {
-		t.Fatalf("alice→security should reach via-link: %+v %q %v", via, reason, err)
-	}
-	if via.Name != "proj-falcon" {
-		t.Errorf("via group = %q, want proj-falcon (sender's group)", via.Name)
-	}
+	require.NoError(t, err, "alice→security should reach via-link")
+	require.NotNil(t, via, "alice→security should reach via-link: reason=%q", reason)
+	assert.Equal(t, "proj-falcon", via.Name, "via group, want proj-falcon (sender's group)")
 	wantReason := "via-link:" // followed by the id; prefix check is enough
-	if len(reason) < len(wantReason) || reason[:len(wantReason)] != wantReason {
-		t.Errorf("reason = %q, want prefix %q", reason, wantReason)
-	}
+	assert.True(t, len(reason) >= len(wantReason) && reason[:len(wantReason)] == wantReason, "reason = %q, want prefix %q", reason, wantReason)
 
 	// Link direction matters: security→alice still fails (reverse not
 	// configured).
 	via, _, _ = CanSenderReachTarget("security", "alice")
-	if via != nil {
-		t.Errorf("reverse direction should fail, got %q", via.Name)
-	}
+	assert.Nil(t, via, "reverse direction should fail")
 
 	// Remove the link; alice→security fails again.
-	if _, err := DeleteAgentGroupLink(linkID); err != nil {
-		t.Fatal(err)
-	}
+	_, err = DeleteAgentGroupLink(linkID)
+	require.NoError(t, err)
 	via, _, _ = CanSenderReachTarget("alice", "security")
-	if via != nil {
-		t.Errorf("post-delete alice→security should fail, got %q", via.Name)
-	}
+	assert.Nil(t, via, "post-delete alice→security should fail")
 }
 
 // TestCanSenderReachTarget_OwnerOnlyMode: owners->members lets an
@@ -195,30 +163,20 @@ func TestCanSenderReachTarget_OwnerOnlyMode(t *testing.T) {
 	floor, _ := CreateAgentGroup("floor", "")
 
 	// owner-only-member of mgmt; alice is just a member.
-	if err := AddAgentGroupOwner(mgmt, "boss", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: mgmt, ConvID: "alice"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: floor, ConvID: "worker"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InsertAgentGroupLink(mgmt, floor, LinkModeOwnersToMembers, ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, AddAgentGroupOwner(mgmt, "boss", ""))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: mgmt, ConvID: "alice"}))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: floor, ConvID: "worker"}))
+	_, err := InsertAgentGroupLink(mgmt, floor, LinkModeOwnersToMembers, "")
+	require.NoError(t, err)
 
 	// boss → worker: owner side satisfied, target member, via-link OK.
 	via, reason, _ := CanSenderReachTarget("boss", "worker")
-	if via == nil || via.Name != "mgmt" {
-		t.Fatalf("boss→worker via=%+v reason=%q", via, reason)
-	}
+	require.NotNil(t, via, "boss→worker reason=%q", reason)
+	assert.Equal(t, "mgmt", via.Name, "boss→worker via")
 
 	// alice → worker: member of mgmt, but mode requires owner; fail.
 	via, _, _ = CanSenderReachTarget("alice", "worker")
-	if via != nil {
-		t.Errorf("alice→worker should fail (members can't use owners->members), got %q", via.Name)
-	}
+	assert.Nil(t, via, "alice→worker should fail (members can't use owners->members)")
 }
 
 // TestCanSenderReachTarget_DualRole: a conv that is BOTH a member and
@@ -236,23 +194,15 @@ func TestCanSenderReachTarget_DualRole(t *testing.T) {
 	floor, _ := CreateAgentGroup("floor", "")
 
 	// alice is both a member AND an owner of mgmt.
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: mgmt, ConvID: "alice"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupOwner(mgmt, "alice", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: floor, ConvID: "worker"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InsertAgentGroupLink(mgmt, floor, LinkModeOwnersToMembers, ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: mgmt, ConvID: "alice"}))
+	require.NoError(t, AddAgentGroupOwner(mgmt, "alice", ""))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: floor, ConvID: "worker"}))
+	_, err := InsertAgentGroupLink(mgmt, floor, LinkModeOwnersToMembers, "")
+	require.NoError(t, err)
 
 	via, reason, _ := CanSenderReachTarget("alice", "worker")
-	if via == nil || via.Name != "mgmt" {
-		t.Errorf("alice (member+owner) → worker via owners->members link should succeed, got via=%+v reason=%q",
-			via, reason)
+	if assert.NotNil(t, via, "alice (member+owner) → worker via owners->members link should succeed, reason=%q", reason) {
+		assert.Equal(t, "mgmt", via.Name, "alice (member+owner) → worker via owners->members link should succeed, got via=%+v reason=%q", via, reason)
 	}
 }
 
@@ -263,21 +213,15 @@ func TestCanSenderReachTarget_SharedGroupPriority(t *testing.T) {
 	setupTestDB(t)
 	a, _ := CreateAgentGroup("alpha", "")
 	b, _ := CreateAgentGroup("beta", "")
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: a, ConvID: "alice"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: a, ConvID: "bob"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: b, ConvID: "bob"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: a, ConvID: "alice"}))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: a, ConvID: "bob"}))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: b, ConvID: "bob"}))
+	_, err := InsertAgentGroupLink(a, b, LinkModeMembersToMembers, "")
+	require.NoError(t, err)
 
 	via, reason, _ := CanSenderReachTarget("alice", "bob")
-	if via == nil || via.Name != "alpha" || reason != "shared-group" {
-		t.Errorf("alice→bob via=%+v reason=%q, want alpha/shared-group", via, reason)
+	if assert.NotNil(t, via, "alice→bob reason=%q, want alpha/shared-group", reason) {
+		assert.Equal(t, "alpha", via.Name, "alice→bob via")
+		assert.Equal(t, "shared-group", reason, "alice→bob reason")
 	}
 }

@@ -1,6 +1,10 @@
 package notify
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestTruncate(t *testing.T) {
 	cases := []struct {
@@ -20,9 +24,7 @@ func TestTruncate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := truncate(tc.s, tc.maxLen)
-			if got != tc.want {
-				t.Errorf("truncate(%q, %d) = %q, want %q", tc.s, tc.maxLen, got, tc.want)
-			}
+			assert.Equal(t, tc.want, got, "truncate(%q, %d)", tc.s, tc.maxLen)
 		})
 	}
 }

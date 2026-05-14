@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // asKey wraps a key string into a KeyMsg for Update. The bubbletea v2
@@ -27,15 +29,9 @@ func TestInboxWatch_LoadedReplacesEntries(t *testing.T) {
 		{ID: 2, Subject: "second"},
 	}})
 	mm := m2.(*inboxWatchModel)
-	if len(mm.entries) != 2 {
-		t.Fatalf("entries = %d, want 2", len(mm.entries))
-	}
-	if mm.loadErr != "" {
-		t.Errorf("loadErr should be cleared, got %q", mm.loadErr)
-	}
-	if mm.cursor != 0 {
-		t.Errorf("cursor was 5 (out of bounds for new list of 2); want reset to 0, got %d", mm.cursor)
-	}
+	require.Len(t, mm.entries, 2)
+	assert.Empty(t, mm.loadErr, "loadErr should be cleared")
+	assert.Equal(t, 0, mm.cursor, "cursor was 5 (out of bounds for new list of 2); want reset to 0")
 }
 
 // Load error surfaces in loadErr without dropping existing entries.
@@ -46,12 +42,8 @@ func TestInboxWatch_LoadErrorPreservesEntries(t *testing.T) {
 
 	m2, _ := m.Update(inboxLoadedMsg{err: errors.New("daemon down")})
 	mm := m2.(*inboxWatchModel)
-	if mm.loadErr != "daemon down" {
-		t.Errorf("loadErr = %q, want %q", mm.loadErr, "daemon down")
-	}
-	if len(mm.entries) != 1 {
-		t.Errorf("entries should be preserved on load error, got %d", len(mm.entries))
-	}
+	assert.Equal(t, "daemon down", mm.loadErr)
+	assert.Len(t, mm.entries, 1, "entries should be preserved on load error")
 }
 
 // Up/down navigation respects bounds.
@@ -62,39 +54,29 @@ func TestInboxWatch_NavigationBounds(t *testing.T) {
 	// down advances
 	m2, _ := m.Update(asKey("j"))
 	mm := m2.(*inboxWatchModel)
-	if mm.cursor != 1 {
-		t.Errorf("after j, cursor = %d, want 1", mm.cursor)
-	}
+	assert.Equal(t, 1, mm.cursor, "after j, cursor")
 
 	// down past end stays at last
 	mm.cursor = 2
 	m3, _ := mm.Update(asKey("j"))
 	mm = m3.(*inboxWatchModel)
-	if mm.cursor != 2 {
-		t.Errorf("j at end should stay at 2, got %d", mm.cursor)
-	}
+	assert.Equal(t, 2, mm.cursor, "j at end should stay at 2")
 
 	// up at top stays at 0
 	mm.cursor = 0
 	m4, _ := mm.Update(asKey("k"))
 	mm = m4.(*inboxWatchModel)
-	if mm.cursor != 0 {
-		t.Errorf("k at top should stay at 0, got %d", mm.cursor)
-	}
+	assert.Equal(t, 0, mm.cursor, "k at top should stay at 0")
 
 	// G jumps to end
 	m5, _ := mm.Update(asKey("G"))
 	mm = m5.(*inboxWatchModel)
-	if mm.cursor != 2 {
-		t.Errorf("G should jump to last (2), got %d", mm.cursor)
-	}
+	assert.Equal(t, 2, mm.cursor, "G should jump to last (2)")
 
 	// g jumps to top
 	m6, _ := mm.Update(asKey("g"))
 	mm = m6.(*inboxWatchModel)
-	if mm.cursor != 0 {
-		t.Errorf("g should jump to first (0), got %d", mm.cursor)
-	}
+	assert.Equal(t, 0, mm.cursor, "g should jump to first (0)")
 }
 
 // Loaded message body switches into read view; esc returns to list.
@@ -104,22 +86,14 @@ func TestInboxWatch_ReadViewToggle(t *testing.T) {
 	// Simulate the message-loaded message arriving.
 	m2, _ := m.Update(inboxMessageLoadedMsg{id: 42, body: "From: x · Subject: y\n\nhello"})
 	mm := m2.(*inboxWatchModel)
-	if mm.readingID != 42 {
-		t.Errorf("readingID = %d, want 42", mm.readingID)
-	}
-	if mm.readingBody == "" {
-		t.Error("readingBody should be populated")
-	}
+	assert.Equal(t, int64(42), mm.readingID)
+	assert.NotEmpty(t, mm.readingBody, "readingBody should be populated")
 
 	// Esc returns to list.
 	m3, _ := mm.Update(asKey("esc"))
 	mm = m3.(*inboxWatchModel)
-	if mm.readingID != 0 {
-		t.Errorf("readingID should be 0 after esc, got %d", mm.readingID)
-	}
-	if mm.readingBody != "" {
-		t.Errorf("readingBody should be cleared after esc, got %q", mm.readingBody)
-	}
+	assert.Equal(t, int64(0), mm.readingID, "readingID should be 0 after esc")
+	assert.Empty(t, mm.readingBody, "readingBody should be cleared after esc")
 }
 
 // Read-failure flips back to the list view with a status message.
@@ -130,12 +104,8 @@ func TestInboxWatch_ReadErrorFlipsBack(t *testing.T) {
 
 	m2, _ := m.Update(inboxMessageLoadedMsg{id: 42, err: errors.New("not found")})
 	mm := m2.(*inboxWatchModel)
-	if mm.readingID != 0 {
-		t.Errorf("readingID should be 0 on read error, got %d", mm.readingID)
-	}
-	if mm.statusMsg == "" {
-		t.Error("statusMsg should describe the read failure")
-	}
+	assert.Equal(t, int64(0), mm.readingID, "readingID should be 0 on read error")
+	assert.NotEmpty(t, mm.statusMsg, "statusMsg should describe the read failure")
 }
 
 // `r` in the read view opens the reply textarea. While the textarea
@@ -149,32 +119,22 @@ func TestInboxWatch_ReplyOpensAndIsolatesKeys(t *testing.T) {
 	// Press r to open reply.
 	m2, _ := m.Update(asKey("r"))
 	mm := m2.(*inboxWatchModel)
-	if !mm.replyFocused {
-		t.Fatal("r should set replyFocused = true")
-	}
+	require.True(t, mm.replyFocused, "r should set replyFocused = true")
 
 	// While in reply mode, list keys must NOT mutate cursor or close
 	// the read view.
 	for _, k := range []string{"j", "k", "q", "G", "g"} {
 		m3, _ := mm.Update(asKey(k))
 		mm = m3.(*inboxWatchModel)
-		if mm.cursor != 0 {
-			t.Errorf("key %q while replyFocused should not move cursor; got %d", k, mm.cursor)
-		}
-		if mm.readingID != 42 {
-			t.Errorf("key %q while replyFocused should not exit read view; readingID=%d", k, mm.readingID)
-		}
+		assert.Equal(t, 0, mm.cursor, "key %q while replyFocused should not move cursor", k)
+		assert.Equal(t, int64(42), mm.readingID, "key %q while replyFocused should not exit read view", k)
 	}
 
 	// Esc cancels reply mode and returns to read view (NOT to list).
 	m4, _ := mm.Update(asKey("esc"))
 	mm = m4.(*inboxWatchModel)
-	if mm.replyFocused {
-		t.Error("esc in reply mode should clear replyFocused")
-	}
-	if mm.readingID != 42 {
-		t.Errorf("esc in reply mode should keep read view open; readingID=%d", mm.readingID)
-	}
+	assert.False(t, mm.replyFocused, "esc in reply mode should clear replyFocused")
+	assert.Equal(t, int64(42), mm.readingID, "esc in reply mode should keep read view open")
 }
 
 // A successful reply send clears the textarea and exits reply mode.
@@ -188,15 +148,9 @@ func TestInboxWatch_ReplySentSuccessClearsTextarea(t *testing.T) {
 
 	m2, _ := m.Update(inboxReplySentMsg{id: 42, err: nil})
 	mm := m2.(*inboxWatchModel)
-	if mm.replyFocused {
-		t.Error("successful send should clear replyFocused")
-	}
-	if mm.replyTextarea.Value() != "" {
-		t.Errorf("textarea should be cleared on success, got %q", mm.replyTextarea.Value())
-	}
-	if !contains(mm.statusMsg, "sent") {
-		t.Errorf("statusMsg should announce success, got %q", mm.statusMsg)
-	}
+	assert.False(t, mm.replyFocused, "successful send should clear replyFocused")
+	assert.Empty(t, mm.replyTextarea.Value(), "textarea should be cleared on success")
+	assert.Contains(t, mm.statusMsg, "sent", "statusMsg should announce success")
 }
 
 func TestInboxWatch_ReplyFailureKeepsDraft(t *testing.T) {
@@ -207,24 +161,9 @@ func TestInboxWatch_ReplyFailureKeepsDraft(t *testing.T) {
 
 	m2, _ := m.Update(inboxReplySentMsg{id: 42, err: errors.New("daemon down")})
 	mm := m2.(*inboxWatchModel)
-	if !mm.replyFocused {
-		t.Error("failed send should keep replyFocused so user can retry")
-	}
-	if mm.replyTextarea.Value() != "hello" {
-		t.Errorf("draft should be preserved on failure, got %q", mm.replyTextarea.Value())
-	}
-	if !contains(mm.statusMsg, "failed") {
-		t.Errorf("statusMsg should mention the failure, got %q", mm.statusMsg)
-	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	assert.True(t, mm.replyFocused, "failed send should keep replyFocused so user can retry")
+	assert.Equal(t, "hello", mm.replyTextarea.Value(), "draft should be preserved on failure")
+	assert.Contains(t, mm.statusMsg, "failed", "statusMsg should mention the failure")
 }
 
 // While in read view, list-mode keys (j, k, /) are ignored — only
@@ -239,18 +178,12 @@ func TestInboxWatch_ListKeysIgnoredInReadView(t *testing.T) {
 	for _, k := range []string{"j", "k", "g", "G", "/", "r"} {
 		m2, _ := m.Update(asKey(k))
 		mm := m2.(*inboxWatchModel)
-		if mm.cursor != 0 {
-			t.Errorf("key %q in read view should not move list cursor; got %d", k, mm.cursor)
-		}
-		if mm.readingID != 42 {
-			t.Errorf("key %q in read view should not exit read mode; readingID = %d", k, mm.readingID)
-		}
+		assert.Equal(t, 0, mm.cursor, "key %q in read view should not move list cursor", k)
+		assert.Equal(t, int64(42), mm.readingID, "key %q in read view should not exit read mode", k)
 		// And `/` must NOT slip through to enable search mode while
 		// the user is reading — that would surprise the user the next
 		// time they esc back to the list.
-		if mm.searchFocused {
-			t.Errorf("key %q in read view should not enable search mode", k)
-		}
+		assert.False(t, mm.searchFocused, "key %q in read view should not enable search mode", k)
 	}
 }
 
@@ -262,27 +195,19 @@ func TestInboxWatch_SearchEscapeLadder(t *testing.T) {
 
 	m2, _ := m.Update(asKey("/"))
 	mm := m2.(*inboxWatchModel)
-	if !mm.searchFocused {
-		t.Fatal("/ should focus the search input")
-	}
+	require.True(t, mm.searchFocused, "/ should focus the search input")
 	mm.searchInput.SetValue("foo")
 
 	// First esc: clears value, stays focused.
 	m3, _ := mm.Update(asKey("esc"))
 	mm = m3.(*inboxWatchModel)
-	if !mm.searchFocused {
-		t.Error("esc with non-empty filter should keep search focused")
-	}
-	if mm.searchInput.Value() != "" {
-		t.Errorf("esc should clear the filter; got %q", mm.searchInput.Value())
-	}
+	assert.True(t, mm.searchFocused, "esc with non-empty filter should keep search focused")
+	assert.Empty(t, mm.searchInput.Value(), "esc should clear the filter")
 
 	// Second esc: exits search mode entirely.
 	m4, _ := mm.Update(asKey("esc"))
 	mm = m4.(*inboxWatchModel)
-	if mm.searchFocused {
-		t.Error("esc on empty filter should exit search mode")
-	}
+	assert.False(t, mm.searchFocused, "esc on empty filter should exit search mode")
 }
 
 // visibleEntries filters by case-insensitive substring across multiple
@@ -298,37 +223,31 @@ func TestInboxWatch_FilterMatchesAcrossFields(t *testing.T) {
 	// Subject substring (case-insensitive).
 	m.searchInput.SetValue("HOTFIX")
 	v := m.visibleEntries()
-	if len(v) != 1 || v[0].ID != 1 {
-		t.Errorf("HOTFIX should match #1 only, got %+v", v)
+	if assert.Len(t, v, 1, "HOTFIX should match #1 only") {
+		assert.Equal(t, int64(1), v[0].ID)
 	}
 
 	// From substring.
 	m.searchInput.SetValue("alice")
 	v = m.visibleEntries()
-	if len(v) != 1 || v[0].ID != 2 {
-		t.Errorf("alice should match #2 only, got %+v", v)
+	if assert.Len(t, v, 1, "alice should match #2 only") {
+		assert.Equal(t, int64(2), v[0].ID)
 	}
 
 	// Group substring matches multiple.
 	m.searchInput.SetValue("team-a")
 	v = m.visibleEntries()
-	if len(v) != 2 {
-		t.Errorf("team-a should match 2 entries, got %d", len(v))
-	}
+	assert.Len(t, v, 2, "team-a should match 2 entries")
 
 	// Empty filter passes everything through unchanged.
 	m.searchInput.SetValue("")
 	v = m.visibleEntries()
-	if len(v) != 3 {
-		t.Errorf("empty filter should pass all 3 entries, got %d", len(v))
-	}
+	assert.Len(t, v, 3, "empty filter should pass all 3 entries")
 
 	// Whitespace-only filter is treated as empty.
 	m.searchInput.SetValue("   ")
 	v = m.visibleEntries()
-	if len(v) != 3 {
-		t.Errorf("whitespace-only filter should pass all 3 entries, got %d", len(v))
-	}
+	assert.Len(t, v, 3, "whitespace-only filter should pass all 3 entries")
 }
 
 // Cursor stays in bounds against the FILTERED list. After the filter
@@ -345,31 +264,23 @@ func TestInboxWatch_NavigationRespectsFilter(t *testing.T) {
 
 	m.searchInput.SetValue("alpha")
 	m.clampCursor()
-	if m.cursor != 0 {
-		t.Errorf("cursor 2 should snap to 0 when filter shrinks list to 2 visible entries past cursor; got %d", m.cursor)
-	}
+	assert.Equal(t, 0, m.cursor, "cursor 2 should snap to 0 when filter shrinks list to 2 visible entries past cursor")
 
 	// j moves to filtered index 1.
 	m2, _ := m.Update(asKey("j"))
 	mm := m2.(*inboxWatchModel)
-	if mm.cursor != 1 {
-		t.Errorf("j should move to 1 (still inside filtered len=2), got %d", mm.cursor)
-	}
+	assert.Equal(t, 1, mm.cursor, "j should move to 1 (still inside filtered len=2)")
 
 	// j again must NOT advance past filtered end (len=2 → max index 1).
 	m3, _ := mm.Update(asKey("j"))
 	mm = m3.(*inboxWatchModel)
-	if mm.cursor != 1 {
-		t.Errorf("j past filtered end should clamp at 1, got %d", mm.cursor)
-	}
+	assert.Equal(t, 1, mm.cursor, "j past filtered end should clamp at 1")
 
 	// G also clamps to filtered end.
 	mm.cursor = 0
 	m4, _ := mm.Update(asKey("G"))
 	mm = m4.(*inboxWatchModel)
-	if mm.cursor != 1 {
-		t.Errorf("G should jump to filtered end (1), got %d", mm.cursor)
-	}
+	assert.Equal(t, 1, mm.cursor, "G should jump to filtered end (1)")
 }
 
 // Enter on a filtered list reads the message at the FILTERED cursor
@@ -387,9 +298,7 @@ func TestInboxWatch_EnterOnFilteredCursorReadsCorrectID(t *testing.T) {
 
 	m2, _ := m.Update(asKey("enter"))
 	mm := m2.(*inboxWatchModel)
-	if mm.readingID != 30 {
-		t.Errorf("enter on filtered cursor=1 should read ID 30 (alphabet), got %d", mm.readingID)
-	}
+	assert.Equal(t, int64(30), mm.readingID, "enter on filtered cursor=1 should read ID 30 (alphabet)")
 }
 
 // Background reload (inboxLoadedMsg) preserves the active filter and
@@ -405,12 +314,8 @@ func TestInboxWatch_FilterPersistsAcrossReload(t *testing.T) {
 		{ID: 3, Subject: "alpha-two"},
 	}})
 	mm := m2.(*inboxWatchModel)
-	if mm.searchInput.Value() != "alpha" {
-		t.Errorf("filter should survive reload, got %q", mm.searchInput.Value())
-	}
-	if got := len(mm.visibleEntries()); got != 2 {
-		t.Errorf("filtered visible count after reload = %d, want 2", got)
-	}
+	assert.Equal(t, "alpha", mm.searchInput.Value(), "filter should survive reload")
+	assert.Len(t, mm.visibleEntries(), 2, "filtered visible count after reload")
 }
 
 // `delete` opens a y/n confirm modal pinned to the cursor's entry.
@@ -423,9 +328,7 @@ func TestInboxWatch_DeleteOpensConfirmModal(t *testing.T) {
 
 	m2, _ := m.Update(asKey("delete"))
 	mm := m2.(*inboxWatchModel)
-	if mm.deleteConfirmID != 20 {
-		t.Fatalf("deleteConfirmID = %d, want 20 (cursor row)", mm.deleteConfirmID)
-	}
+	require.Equal(t, int64(20), mm.deleteConfirmID, "deleteConfirmID should be 20 (cursor row)")
 
 	// While modal open, j/k must NOT move cursor or commit deletion.
 	for _, k := range []string{"j", "k", "down", "up", "enter"} {
@@ -433,16 +336,10 @@ func TestInboxWatch_DeleteOpensConfirmModal(t *testing.T) {
 		mm.cursor = 1
 		m3, _ := mm.Update(asKey(k))
 		mm = m3.(*inboxWatchModel)
-		if mm.cursor != 1 {
-			t.Errorf("key %q during delete-confirm should not move cursor; got %d", k, mm.cursor)
-		}
-		if mm.deleteConfirmID != 0 {
-			t.Errorf("key %q during delete-confirm should cancel (clear deleteConfirmID); got %d", k, mm.deleteConfirmID)
-		}
+		assert.Equal(t, 1, mm.cursor, "key %q during delete-confirm should not move cursor", k)
+		assert.Equal(t, int64(0), mm.deleteConfirmID, "key %q during delete-confirm should cancel (clear deleteConfirmID)", k)
 		// Entries must be untouched on cancel.
-		if len(mm.entries) != 3 {
-			t.Errorf("key %q should not remove entries; got %d", k, len(mm.entries))
-		}
+		assert.Len(t, mm.entries, 3, "key %q should not remove entries", k)
 	}
 }
 
@@ -457,20 +354,12 @@ func TestInboxWatch_DeleteConfirmYRemovesOptimistically(t *testing.T) {
 
 	m2, cmd := m.Update(asKey("y"))
 	mm := m2.(*inboxWatchModel)
-	if mm.deleteConfirmID != 0 {
-		t.Errorf("y should clear deleteConfirmID; got %d", mm.deleteConfirmID)
-	}
-	if len(mm.entries) != 2 {
-		t.Fatalf("y should optimistically remove the row; entries = %d", len(mm.entries))
-	}
+	assert.Equal(t, int64(0), mm.deleteConfirmID, "y should clear deleteConfirmID")
+	require.Len(t, mm.entries, 2, "y should optimistically remove the row")
 	for _, e := range mm.entries {
-		if e.ID == 20 {
-			t.Errorf("entry #20 should be removed; still present")
-		}
+		assert.NotEqual(t, int64(20), e.ID, "entry #20 should be removed; still present")
 	}
-	if cmd == nil {
-		t.Error("y should return a cmd to POST the delete")
-	}
+	assert.NotNil(t, cmd, "y should return a cmd to POST the delete")
 }
 
 // On a delete error, the model reloads (which restores the entry from
@@ -482,12 +371,8 @@ func TestInboxWatch_DeleteSentErrorTriggersReload(t *testing.T) {
 
 	m2, cmd := m.Update(inboxDeleteSentMsg{id: 20, err: errors.New("boom")})
 	mm := m2.(*inboxWatchModel)
-	if cmd == nil {
-		t.Error("delete error should trigger a reload cmd to restore state")
-	}
-	if !contains(mm.statusMsg, "failed") {
-		t.Errorf("statusMsg should announce failure; got %q", mm.statusMsg)
-	}
+	assert.NotNil(t, cmd, "delete error should trigger a reload cmd to restore state")
+	assert.Contains(t, mm.statusMsg, "failed", "statusMsg should announce failure")
 }
 
 // `delete` in the read view must NOT open the confirm modal — that
@@ -500,12 +385,8 @@ func TestInboxWatch_DeleteIgnoredInReadView(t *testing.T) {
 	for _, k := range []string{"delete", "backspace"} {
 		m2, _ := m.Update(asKey(k))
 		mm := m2.(*inboxWatchModel)
-		if mm.deleteConfirmID != 0 {
-			t.Errorf("key %q in read view should not open delete-confirm; got %d", k, mm.deleteConfirmID)
-		}
-		if mm.readingID != 42 {
-			t.Errorf("key %q in read view should not exit read mode; got %d", k, mm.readingID)
-		}
+		assert.Equal(t, int64(0), mm.deleteConfirmID, "key %q in read view should not open delete-confirm", k)
+		assert.Equal(t, int64(42), mm.readingID, "key %q in read view should not exit read mode", k)
 	}
 }
 
@@ -516,9 +397,7 @@ func TestInboxWatch_DeleteOnEmptyListNoOp(t *testing.T) {
 	// no entries
 	m2, _ := m.Update(asKey("delete"))
 	mm := m2.(*inboxWatchModel)
-	if mm.deleteConfirmID != 0 {
-		t.Errorf("delete on empty list should not open modal; got %d", mm.deleteConfirmID)
-	}
+	assert.Equal(t, int64(0), mm.deleteConfirmID, "delete on empty list should not open modal")
 }
 
 // removeEntryByID drops the matching row, leaves order otherwise
@@ -526,13 +405,12 @@ func TestInboxWatch_DeleteOnEmptyListNoOp(t *testing.T) {
 func TestInboxWatch_RemoveEntryByID(t *testing.T) {
 	in := []inboxEntry{{ID: 1}, {ID: 2}, {ID: 3}}
 	out := removeEntryByID(in, 2)
-	if len(out) != 2 || out[0].ID != 1 || out[1].ID != 3 {
-		t.Errorf("removeEntryByID(2) = %+v, want [1, 3]", out)
+	if assert.Len(t, out, 2, "removeEntryByID(2)") {
+		assert.Equal(t, int64(1), out[0].ID)
+		assert.Equal(t, int64(3), out[1].ID)
 	}
 	out2 := removeEntryByID(in, 99)
-	if len(out2) != 3 {
-		t.Errorf("removeEntryByID for missing ID should return original; got %+v", out2)
-	}
+	assert.Len(t, out2, 3, "removeEntryByID for missing ID should return original")
 }
 
 // Operator mode (--target set) disables `r` (reply) in the read view
@@ -546,24 +424,16 @@ func TestInboxWatch_OperatorViewIsReadOnly(t *testing.T) {
 	// `r` in read view: must NOT open the reply textarea.
 	m2, _ := m.Update(asKey("r"))
 	mm := m2.(*inboxWatchModel)
-	if mm.replyFocused {
-		t.Error("operator-view r should not open reply textarea")
-	}
-	if !contains(mm.statusMsg, "operator") {
-		t.Errorf("statusMsg should explain why reply was blocked; got %q", mm.statusMsg)
-	}
+	assert.False(t, mm.replyFocused, "operator-view r should not open reply textarea")
+	assert.Contains(t, mm.statusMsg, "operator", "statusMsg should explain why reply was blocked")
 
 	// `del` in list view: must NOT open the confirm modal.
 	mm.readingID = 0
 	mm.statusMsg = ""
 	m3, _ := mm.Update(asKey("delete"))
 	mm = m3.(*inboxWatchModel)
-	if mm.deleteConfirmID != 0 {
-		t.Errorf("operator-view delete should not open confirm modal; got %d", mm.deleteConfirmID)
-	}
-	if !contains(mm.statusMsg, "operator") {
-		t.Errorf("statusMsg should explain why delete was blocked; got %q", mm.statusMsg)
-	}
+	assert.Equal(t, int64(0), mm.deleteConfirmID, "operator-view delete should not open confirm modal")
+	assert.Contains(t, mm.statusMsg, "operator", "statusMsg should explain why delete was blocked")
 }
 
 // Up/down arrows from search-focused mode unfocus and move the cursor
@@ -577,10 +447,6 @@ func TestInboxWatch_ArrowFromSearchUnfocusesAndMoves(t *testing.T) {
 
 	m2, _ := m.Update(asKey("down"))
 	mm := m2.(*inboxWatchModel)
-	if mm.searchFocused {
-		t.Error("down arrow should unfocus search")
-	}
-	if mm.cursor != 1 {
-		t.Errorf("down arrow should advance cursor to 1; got %d", mm.cursor)
-	}
+	assert.False(t, mm.searchFocused, "down arrow should unfocus search")
+	assert.Equal(t, 1, mm.cursor, "down arrow should advance cursor to 1")
 }

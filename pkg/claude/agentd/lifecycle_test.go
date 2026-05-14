@@ -3,6 +3,8 @@ package agentd
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestBuildSpawnWelcome_IncludesIdentityFields confirms the welcome
@@ -52,14 +54,10 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := buildSpawnWelcome(tt.alias, tt.role, tt.descr, tt.groupName)
 			for _, s := range tt.mustContain {
-				if !strings.Contains(got, s) {
-					t.Errorf("welcome should contain %q, got %q", s, got)
-				}
+				assert.Contains(t, got, s, "welcome should contain %q", s)
 			}
 			for _, s := range tt.mustOmit {
-				if strings.Contains(got, s) {
-					t.Errorf("welcome should NOT contain %q, got %q", s, got)
-				}
+				assert.NotContains(t, got, s, "welcome should NOT contain %q", s)
 			}
 		})
 	}
@@ -77,10 +75,6 @@ func TestBuildSpawnWelcome_SingleLineNoControlChars(t *testing.T) {
 		"reviews PRs and posts notes",
 		"reviewers",
 	)
-	if strings.ContainsAny(got, "\n\t\r") {
-		t.Errorf("welcome must be a single line, got %q", got)
-	}
-	if !isValidFollowUp(got) {
-		t.Errorf("welcome should pass isValidFollowUp; got %q", got)
-	}
+	assert.False(t, strings.ContainsAny(got, "\n\t\r"), "welcome must be a single line, got %q", got)
+	assert.True(t, isValidFollowUp(got), "welcome should pass isValidFollowUp; got %q", got)
 }

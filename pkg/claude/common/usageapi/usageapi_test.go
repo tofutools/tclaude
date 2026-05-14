@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -70,25 +72,17 @@ func TestGetCached_FreshCacheSkipsFetch(t *testing.T) {
 
 	// First call should fetch
 	result, err := GetCached()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.FiveHour == nil || result.FiveHour.Pct != 42.0 {
-		t.Fatalf("expected 42%%, got %+v", result.FiveHour)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, result.FiveHour, "expected non-nil FiveHour")
+	require.Equal(t, 42.0, result.FiveHour.Pct, "expected 42%%, got %+v", result.FiveHour)
 
 	// Second call within TTL should use cache, not fetch again
 	result2, err := GetCached()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result2.FiveHour == nil || result2.FiveHour.Pct != 42.0 {
-		t.Fatalf("expected 42%%, got %+v", result2.FiveHour)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, result2.FiveHour, "expected non-nil FiveHour")
+	require.Equal(t, 42.0, result2.FiveHour.Pct, "expected 42%%, got %+v", result2.FiveHour)
 
-	if fetchCount.Load() != 1 {
-		t.Errorf("expected 1 fetch call, got %d", fetchCount.Load())
-	}
+	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch call")
 }
 
 func TestGetCached_ErrorReturnsStaleCacheAndError(t *testing.T) {
@@ -96,30 +90,22 @@ func TestGetCached_ErrorReturnsStaleCacheAndError(t *testing.T) {
 
 	// Seed the cache with a successful fetch
 	stubFuncs(t, okToken, okFetch(50.0))
-	if _, err := GetCached(); err != nil {
-		t.Fatalf("seed fetch failed: %v", err)
-	}
+	_, err := GetCached()
+	require.NoError(t, err, "seed fetch failed")
 
 	// Expire the cache by backdating LastAttemptAt
 	stale := loadCacheStale()
-	if stale == nil {
-		t.Fatal("expected stale cache")
-	}
+	require.NotNil(t, stale, "expected stale cache")
 	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
 	saveCache(stale)
 
 	// Now make fetch fail
 	stubFuncs(t, okToken, failFetch)
 	result, err := GetCached()
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if result == nil {
-		t.Fatal("expected stale data, got nil")
-	}
-	if result.FiveHour == nil || result.FiveHour.Pct != 50.0 {
-		t.Fatalf("expected stale 50%%, got %+v", result.FiveHour)
-	}
+	require.Error(t, err, "expected error")
+	require.NotNil(t, result, "expected stale data")
+	require.NotNil(t, result.FiveHour, "expected non-nil FiveHour")
+	require.Equal(t, 50.0, result.FiveHour.Pct, "expected stale 50%%, got %+v", result.FiveHour)
 }
 
 func TestGetCached_BackoffAfterError(t *testing.T) {
@@ -127,9 +113,8 @@ func TestGetCached_BackoffAfterError(t *testing.T) {
 
 	// Seed cache
 	stubFuncs(t, okToken, okFetch(25.0))
-	if _, err := GetCached(); err != nil {
-		t.Fatalf("seed fetch failed: %v", err)
-	}
+	_, err := GetCached()
+	require.NoError(t, err, "seed fetch failed")
 
 	// Expire
 	stale := loadCacheStale()
@@ -148,9 +133,7 @@ func TestGetCached_BackoffAfterError(t *testing.T) {
 	// Second call should NOT fetch — backoff is active
 	_, _ = GetCached()
 
-	if fetchCount.Load() != 1 {
-		t.Errorf("expected 1 fetch during backoff, got %d", fetchCount.Load())
-	}
+	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch during backoff")
 }
 
 func TestRefreshCache_BackoffAfterError(t *testing.T) {
@@ -177,9 +160,7 @@ func TestRefreshCache_BackoffAfterError(t *testing.T) {
 	// Second call should be backed off
 	RefreshCache()
 
-	if fetchCount.Load() != 1 {
-		t.Errorf("expected 1 fetch during backoff, got %d", fetchCount.Load())
-	}
+	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch during backoff")
 }
 
 func TestGetCached_NoStaleCache_ReturnsNilAndError(t *testing.T) {
@@ -188,21 +169,16 @@ func TestGetCached_NoStaleCache_ReturnsNilAndError(t *testing.T) {
 	stubFuncs(t, okToken, failFetch)
 
 	result, err := GetCached()
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	require.Error(t, err, "expected error")
 	// No prior successful fetch, so no usage data to return
-	if result != nil {
-		t.Fatalf("expected nil result, got %+v", result)
-	}
+	assert.Nil(t, result, "expected nil result")
 }
 
 func TestLoadCacheStale_NoCacheFile_ReturnsNil(t *testing.T) {
 	setupTestCache(t)
 	// No cache file exists — loadCacheStale should return nil
-	if stale := loadCacheStale(); stale != nil {
-		t.Fatalf("expected nil, got %+v", stale)
-	}
+	stale := loadCacheStale()
+	require.Nil(t, stale, "expected nil")
 }
 
 func TestLoadCacheWithTTL_RespectsLastAttemptAt(t *testing.T) {
@@ -218,18 +194,14 @@ func TestLoadCacheWithTTL_RespectsLastAttemptAt(t *testing.T) {
 
 	// Should be considered fresh (LastAttemptAt is recent)
 	result := loadCache()
-	if result == nil {
-		t.Fatal("expected fresh cache based on LastAttemptAt, got nil")
-	}
+	require.NotNil(t, result, "expected fresh cache based on LastAttemptAt")
 
 	// Now backdate LastAttemptAt too
 	cached.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
 	saveCache(cached)
 
 	result = loadCache()
-	if result != nil {
-		t.Fatal("expected expired cache, got non-nil")
-	}
+	require.Nil(t, result, "expected expired cache")
 }
 
 func TestStampLastAttempt_NoCacheFile_CreatesMinimalEntry(t *testing.T) {
@@ -239,15 +211,9 @@ func TestStampLastAttempt_NoCacheFile_CreatesMinimalEntry(t *testing.T) {
 
 	// Should create a minimal cache entry with just LastAttemptAt
 	cached := loadCacheStale()
-	if cached == nil {
-		t.Fatal("expected minimal cache entry, got nil")
-	}
-	if cached.FiveHour != nil || cached.SevenDay != nil {
-		t.Fatal("expected no usage data in minimal entry")
-	}
-	if time.Since(cached.LastAttemptAt) > time.Second {
-		t.Fatal("expected recent LastAttemptAt")
-	}
+	require.NotNil(t, cached, "expected minimal cache entry")
+	require.True(t, cached.FiveHour == nil && cached.SevenDay == nil, "expected no usage data in minimal entry")
+	require.LessOrEqual(t, time.Since(cached.LastAttemptAt), time.Second, "expected recent LastAttemptAt")
 }
 
 func TestGetCached_BackoffEvenWithoutStaleCache(t *testing.T) {
@@ -265,9 +231,7 @@ func TestGetCached_BackoffEvenWithoutStaleCache(t *testing.T) {
 	// Second call should NOT fetch — backoff is active even without stale data
 	_, _ = GetCached()
 
-	if fetchCount.Load() != 1 {
-		t.Errorf("expected 1 fetch during backoff, got %d", fetchCount.Load())
-	}
+	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch during backoff")
 }
 
 func TestGetCached_429ReturnsErrorByDefault(t *testing.T) {
@@ -275,9 +239,8 @@ func TestGetCached_429ReturnsErrorByDefault(t *testing.T) {
 
 	// Seed cache so we get stale fallback
 	stubFuncs(t, okToken, okFetch(42.0))
-	if _, err := GetCached(); err != nil {
-		t.Fatalf("seed fetch failed: %v", err)
-	}
+	_, err := GetCached()
+	require.NoError(t, err, "seed fetch failed")
 	stale := loadCacheStale()
 	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
 	saveCache(stale)
@@ -285,12 +248,10 @@ func TestGetCached_429ReturnsErrorByDefault(t *testing.T) {
 	stubFuncs(t, okToken, rateLimitFetch)
 
 	result, err := GetCached()
-	if err == nil {
-		t.Fatal("expected error on 429, got nil")
-	}
-	if result == nil || result.FiveHour == nil || result.FiveHour.Pct != 42.0 {
-		t.Fatalf("expected stale 42%%, got %+v", result)
-	}
+	require.Error(t, err, "expected error on 429")
+	require.NotNil(t, result, "expected stale 42%%, got %+v", result)
+	require.NotNil(t, result.FiveHour, "expected stale 42%%, got %+v", result)
+	require.Equal(t, 42.0, result.FiveHour.Pct, "expected stale 42%%, got %+v", result)
 }
 
 func TestGetCached_429RefreshesTokenWhenEnvSet(t *testing.T) {
@@ -315,18 +276,11 @@ func TestGetCached_429RefreshesTokenWhenEnvSet(t *testing.T) {
 	)
 
 	result, err := GetCached()
-	if err != nil {
-		t.Fatalf("expected success after refresh, got error: %v", err)
-	}
-	if result.FiveHour == nil || result.FiveHour.Pct != 77.0 {
-		t.Fatalf("expected 77%%, got %+v", result.FiveHour)
-	}
-	if fetchCount.Load() != 2 {
-		t.Errorf("expected 2 fetches (original + retry), got %d", fetchCount.Load())
-	}
-	if refreshCount.Load() != 1 {
-		t.Errorf("expected 1 refresh, got %d", refreshCount.Load())
-	}
+	require.NoError(t, err, "expected success after refresh")
+	require.NotNil(t, result.FiveHour, "expected 77%%, got %+v", result.FiveHour)
+	require.Equal(t, 77.0, result.FiveHour.Pct, "expected 77%%, got %+v", result.FiveHour)
+	assert.Equal(t, int32(2), fetchCount.Load(), "expected 2 fetches (original + retry)")
+	assert.Equal(t, int32(1), refreshCount.Load(), "expected 1 refresh")
 }
 
 func TestGetCached_429RefreshFailsFallsBackToStale(t *testing.T) {
@@ -334,9 +288,8 @@ func TestGetCached_429RefreshFailsFallsBackToStale(t *testing.T) {
 
 	// Seed cache
 	stubFuncs(t, okToken, okFetch(33.0))
-	if _, err := GetCached(); err != nil {
-		t.Fatalf("seed fetch failed: %v", err)
-	}
+	_, err := GetCached()
+	require.NoError(t, err, "seed fetch failed")
 
 	// Expire cache
 	stale := loadCacheStale()
@@ -351,15 +304,10 @@ func TestGetCached_429RefreshFailsFallsBackToStale(t *testing.T) {
 	)
 
 	result, err := GetCached()
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if result == nil {
-		t.Fatal("expected stale data, got nil")
-	}
-	if result.FiveHour == nil || result.FiveHour.Pct != 33.0 {
-		t.Fatalf("expected stale 33%%, got %+v", result.FiveHour)
-	}
+	require.Error(t, err, "expected error")
+	require.NotNil(t, result, "expected stale data")
+	require.NotNil(t, result.FiveHour, "expected stale 33%%, got %+v", result.FiveHour)
+	require.Equal(t, 33.0, result.FiveHour.Pct, "expected stale 33%%, got %+v", result.FiveHour)
 }
 
 func TestRefreshCache_429DoesNotRetryByDefault(t *testing.T) {
@@ -374,9 +322,7 @@ func TestRefreshCache_429DoesNotRetryByDefault(t *testing.T) {
 
 	RefreshCache()
 
-	if fetchCount.Load() != 1 {
-		t.Errorf("expected 1 fetch (no retry), got %d", fetchCount.Load())
-	}
+	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch (no retry)")
 }
 
 func TestRefreshCache_429RefreshesTokenWhenEnvSet(t *testing.T) {
@@ -401,13 +347,8 @@ func TestRefreshCache_429RefreshesTokenWhenEnvSet(t *testing.T) {
 	RefreshCache()
 
 	cached := loadCacheStale()
-	if cached == nil {
-		t.Fatal("expected cache to be populated after refresh+retry")
-	}
-	if cached.FiveHour == nil || cached.FiveHour.Pct != 55.0 {
-		t.Fatalf("expected 55%%, got %+v", cached.FiveHour)
-	}
-	if fetchCount.Load() != 2 {
-		t.Errorf("expected 2 fetches, got %d", fetchCount.Load())
-	}
+	require.NotNil(t, cached, "expected cache to be populated after refresh+retry")
+	require.NotNil(t, cached.FiveHour, "expected 55%%, got %+v", cached.FiveHour)
+	require.Equal(t, 55.0, cached.FiveHour.Pct, "expected 55%%, got %+v", cached.FiveHour)
+	assert.Equal(t, int32(2), fetchCount.Load(), "expected 2 fetches")
 }

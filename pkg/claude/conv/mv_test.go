@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunMv_PreservesAllFields(t *testing.T) {
@@ -13,22 +16,14 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 	srcRealPath := filepath.Join(tmpDir, "src-project")
 	dstRealPath := filepath.Join(tmpDir, "dst-project")
 
-	if err := os.MkdirAll(srcRealPath, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstRealPath, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(srcRealPath, 0755))
+	require.NoError(t, os.MkdirAll(dstRealPath, 0755))
 
 	srcProjectDir := filepath.Join(tmpDir, "claude-projects", PathToProjectDir(srcRealPath))
 	dstProjectDir := filepath.Join(tmpDir, "claude-projects", PathToProjectDir(dstRealPath))
 
-	if err := os.MkdirAll(srcProjectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dstProjectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(srcProjectDir, 0755))
+	require.NoError(t, os.MkdirAll(dstProjectDir, 0755))
 
 	// Create source conversation file with all metadata
 	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -38,67 +33,41 @@ func TestRunMv_PreservesAllFields(t *testing.T) {
 {"type":"summary","summary":"Move test summary - must be preserved","timestamp":"2024-01-01T00:05:00Z"}
 `
 	srcConvFile := filepath.Join(srcProjectDir, sessionID+".jsonl")
-	if err := os.WriteFile(srcConvFile, []byte(convContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(srcConvFile, []byte(convContent), 0644))
 
 	// Load source - scans .jsonl, populates DB
 	loadedIndex, err := LoadSessionsIndex(srcProjectDir)
-	if err != nil {
-		t.Fatalf("Failed to load source index: %v", err)
-	}
+	require.NoError(t, err, "Failed to load source index")
 
 	found, _ := FindSessionByID(loadedIndex, sessionID)
-	if found == nil {
-		t.Fatal("Source session not found")
-	}
+	require.NotNil(t, found, "Source session not found")
 
-	if found.Summary != "Move test summary - must be preserved" {
-		t.Errorf("Source Summary mismatch: got %q", found.Summary)
-	}
-	if found.CustomTitle != "Move Custom Title" {
-		t.Errorf("Source CustomTitle mismatch: got %q", found.CustomTitle)
-	}
+	assert.Equal(t, "Move test summary - must be preserved", found.Summary, "Source Summary mismatch")
+	assert.Equal(t, "Move Custom Title", found.CustomTitle, "Source CustomTitle mismatch")
 
 	// Simulate move: rename file to destination
 	dstConvFile := filepath.Join(dstProjectDir, sessionID+".jsonl")
 	if err := os.Rename(srcConvFile, dstConvFile); err != nil {
-		if err := CopyFile(srcConvFile, dstConvFile); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, CopyFile(srcConvFile, dstConvFile))
 		os.Remove(srcConvFile)
 	}
 
 	// Load destination - scans moved .jsonl
 	loadedDstIndex, err := LoadSessionsIndex(dstProjectDir)
-	if err != nil {
-		t.Fatalf("Failed to load destination index: %v", err)
-	}
+	require.NoError(t, err, "Failed to load destination index")
 
 	dstEntry, _ := FindSessionByID(loadedDstIndex, sessionID)
-	if dstEntry == nil {
-		t.Fatal("Destination session not found")
-	}
+	require.NotNil(t, dstEntry, "Destination session not found")
 
 	// Verify fields preserved (scanned from file)
-	if dstEntry.Summary != "Move test summary - must be preserved" {
-		t.Errorf("Summary not preserved: got %q", dstEntry.Summary)
-	}
-	if dstEntry.CustomTitle != "Move Custom Title" {
-		t.Errorf("CustomTitle not preserved: got %q", dstEntry.CustomTitle)
-	}
-	if dstEntry.FirstPrompt != "Test prompt for move" {
-		t.Errorf("FirstPrompt not preserved: got %q", dstEntry.FirstPrompt)
-	}
-	if dstEntry.GitBranch != "feature-branch" {
-		t.Errorf("GitBranch not preserved: got %q", dstEntry.GitBranch)
-	}
+	assert.Equal(t, "Move test summary - must be preserved", dstEntry.Summary, "Summary not preserved")
+	assert.Equal(t, "Move Custom Title", dstEntry.CustomTitle, "CustomTitle not preserved")
+	assert.Equal(t, "Test prompt for move", dstEntry.FirstPrompt, "FirstPrompt not preserved")
+	assert.Equal(t, "feature-branch", dstEntry.GitBranch, "GitBranch not preserved")
 
 	// Verify source no longer has the entry (file was moved)
 	loadedSrcIndex, _ := LoadSessionsIndex(srcProjectDir)
-	if len(loadedSrcIndex.Entries) != 0 {
-		t.Errorf("expected 0 entries in source after move, got %d", len(loadedSrcIndex.Entries))
-	}
+	assert.Empty(t, loadedSrcIndex.Entries, "expected 0 entries in source after move")
 }
 
 func TestRemoveSessionByID(t *testing.T) {
@@ -112,21 +81,13 @@ func TestRemoveSessionByID(t *testing.T) {
 	}
 
 	removed := RemoveSessionByID(index, "bbb")
-	if !removed {
-		t.Error("RemoveSessionByID should return true when entry exists")
-	}
-	if len(index.Entries) != 2 {
-		t.Errorf("Expected 2 entries after removal, got %d", len(index.Entries))
-	}
+	assert.True(t, removed, "RemoveSessionByID should return true when entry exists")
+	assert.Len(t, index.Entries, 2, "Expected 2 entries after removal")
 
 	for _, e := range index.Entries {
-		if e.SessionID == "bbb" {
-			t.Error("Entry 'bbb' should have been removed")
-		}
+		assert.NotEqual(t, "bbb", e.SessionID, "Entry 'bbb' should have been removed")
 	}
 
 	removed = RemoveSessionByID(index, "zzz")
-	if removed {
-		t.Error("RemoveSessionByID should return false when entry doesn't exist")
-	}
+	assert.False(t, removed, "RemoveSessionByID should return false when entry doesn't exist")
 }

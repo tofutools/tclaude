@@ -3,9 +3,10 @@ package notify
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common"
 )
 
@@ -67,19 +68,12 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := BuildDarwinNotifyCmd(tt.title, tt.body, tt.sessionID, tt.clPath, tt.tmuxDir)
 
-			if cmd.Program != "terminal-notifier" {
-				t.Errorf("Program = %q, want %q", cmd.Program, "terminal-notifier")
-			}
+			assert.Equal(t, "terminal-notifier", cmd.Program, "Program")
 
-			if len(cmd.Args) != len(tt.wantArgs) {
-				t.Errorf("Args length = %d, want %d\nGot:  %v\nWant: %v", len(cmd.Args), len(tt.wantArgs), cmd.Args, tt.wantArgs)
-				return
-			}
+			require.Len(t, cmd.Args, len(tt.wantArgs), "Args length\nGot:  %v\nWant: %v", cmd.Args, tt.wantArgs)
 
 			for i, arg := range cmd.Args {
-				if arg != tt.wantArgs[i] {
-					t.Errorf("Args[%d] = %q, want %q", i, arg, tt.wantArgs[i])
-				}
+				assert.Equal(t, tt.wantArgs[i], arg, "Args[%d]", i)
 			}
 		})
 	}
@@ -88,22 +82,13 @@ func TestBuildDarwinNotifyCmd(t *testing.T) {
 func TestBuildDarwinFallbackCmd(t *testing.T) {
 	cmd := BuildDarwinFallbackCmd("Claude: Idle", "test | proj")
 
-	if cmd.Program != "osascript" {
-		t.Errorf("Program = %q, want %q", cmd.Program, "osascript")
-	}
+	assert.Equal(t, "osascript", cmd.Program, "Program")
 
-	if len(cmd.Args) != 2 {
-		t.Errorf("Args length = %d, want 2", len(cmd.Args))
-		return
-	}
+	require.Len(t, cmd.Args, 2, "Args length")
 
-	if cmd.Args[0] != "-e" {
-		t.Errorf("Args[0] = %q, want %q", cmd.Args[0], "-e")
-	}
+	assert.Equal(t, "-e", cmd.Args[0], "Args[0]")
 
-	if !strings.Contains(cmd.Args[1], "display notification") {
-		t.Errorf("Args[1] should contain 'display notification', got %q", cmd.Args[1])
-	}
+	assert.Contains(t, cmd.Args[1], "display notification", "Args[1] should contain 'display notification'")
 }
 
 func TestBuildWSLNotifyCmd(t *testing.T) {
@@ -114,26 +99,13 @@ func TestBuildWSLNotifyCmd(t *testing.T) {
 		"tclaude://focus/abc123",
 	)
 
-	if cmd.Program != "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" {
-		t.Errorf("Program = %q, want powershell path", cmd.Program)
-	}
+	assert.Equal(t, "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", cmd.Program, "Program")
 
-	if len(cmd.Args) < 4 {
-		t.Errorf("Args length = %d, want at least 4", len(cmd.Args))
-		return
-	}
+	require.GreaterOrEqual(t, len(cmd.Args), 4, "Args length")
 
-	if cmd.Args[0] != "-NoProfile" {
-		t.Errorf("Args[0] = %q, want %q", cmd.Args[0], "-NoProfile")
-	}
-
-	if cmd.Args[1] != "-NonInteractive" {
-		t.Errorf("Args[1] = %q, want %q", cmd.Args[1], "-NonInteractive")
-	}
-
-	if cmd.Args[2] != "-Command" {
-		t.Errorf("Args[2] = %q, want %q", cmd.Args[2], "-Command")
-	}
+	assert.Equal(t, "-NoProfile", cmd.Args[0], "Args[0]")
+	assert.Equal(t, "-NonInteractive", cmd.Args[1], "Args[1]")
+	assert.Equal(t, "-Command", cmd.Args[2], "Args[2]")
 
 	// Check script contains expected elements
 	script := cmd.Args[3]
@@ -145,9 +117,7 @@ func TestBuildWSLNotifyCmd(t *testing.T) {
 	}
 
 	for _, part := range expectedParts {
-		if !strings.Contains(script, part) {
-			t.Errorf("Script should contain %q", part)
-		}
+		assert.Contains(t, script, part, "Script should contain %q", part)
 	}
 }
 
@@ -185,9 +155,7 @@ func TestNotificationBody(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := NotificationBody(tt.sessionID, tt.projectName, tt.convTitle)
-			if got != tt.want {
-				t.Errorf("NotificationBody() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "NotificationBody()")
 		})
 	}
 }
@@ -208,9 +176,7 @@ func TestNotificationTitle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
 			got := NotificationTitle(tt.status)
-			if got != tt.want {
-				t.Errorf("NotificationTitle(%q) = %q, want %q", tt.status, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "NotificationTitle(%q)", tt.status)
 		})
 	}
 }
@@ -218,14 +184,9 @@ func TestNotificationTitle(t *testing.T) {
 func TestBuildDarwiniTermFocusCmd(t *testing.T) {
 	cmd := BuildDarwiniTermFocusCmd("/dev/ttys003")
 
-	if cmd.Program != "osascript" {
-		t.Errorf("Program = %q, want %q", cmd.Program, "osascript")
-	}
+	assert.Equal(t, "osascript", cmd.Program, "Program")
 
-	if len(cmd.Args) != 2 {
-		t.Errorf("Args length = %d, want 2", len(cmd.Args))
-		return
-	}
+	require.Len(t, cmd.Args, 2, "Args length")
 
 	script := cmd.Args[1]
 	expectedParts := []string{
@@ -237,9 +198,7 @@ func TestBuildDarwiniTermFocusCmd(t *testing.T) {
 	}
 
 	for _, part := range expectedParts {
-		if !strings.Contains(script, part) {
-			t.Errorf("Script should contain %q", part)
-		}
+		assert.Contains(t, script, part, "Script should contain %q", part)
 	}
 }
 
@@ -284,9 +243,8 @@ func TestFocusCommandString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := FocusCommandString(tt.clPath, tt.tmuxDir, tt.sessionID)
 			want := tt.wantFunc(tt.tmuxDir)
-			if got != want {
-				t.Errorf("FocusCommandString() = %q, want %q", got, want)
-			}
+			assert.Equal(t, want, got, "FocusCommandString()")
 		})
 	}
 }
+

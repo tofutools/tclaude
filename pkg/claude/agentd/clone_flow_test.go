@@ -3,6 +3,8 @@ package agentd_test
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Scenario: the human clones a worker that was added to a group
@@ -42,9 +44,7 @@ func TestClone_EmptyAlias_DerivesFromOriginalTitle(t *testing.T) {
 
 	f.AssertCloneAliasInGroup(c, "alpha", "worker-c-1")
 
-	if c.OldConv != oldConv {
-		t.Errorf("OldConv = %q, want %q", c.OldConv, oldConv)
-	}
+	assert.Equal(t, oldConv, c.OldConv, "OldConv")
 
 	// Surface-level invariants the human would see post-clone in
 	// `tclaude agent groups members alpha`:
