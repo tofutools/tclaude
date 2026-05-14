@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -147,12 +149,8 @@ func TestHasTrackedChanges_Clean(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	got, err := hasTrackedChanges(dir, false, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got {
-		t.Error("expected false for clean repo")
-	}
+	require.NoError(t, err)
+	assert.False(t, got, "expected false for clean repo")
 }
 
 func TestHasTrackedChanges_ModifiedTrackedFile(t *testing.T) {
@@ -164,12 +162,8 @@ func TestHasTrackedChanges_ModifiedTrackedFile(t *testing.T) {
 	gitRun(t, dir, "commit", "-m", "add file")
 	os.WriteFile(path, []byte("modified"), 0644)
 	got, err := hasTrackedChanges(dir, false, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Error("expected true for modified tracked file")
-	}
+	require.NoError(t, err)
+	assert.True(t, got, "expected true for modified tracked file")
 }
 
 func TestHasTrackedChanges_UntrackedFile(t *testing.T) {
@@ -177,12 +171,8 @@ func TestHasTrackedChanges_UntrackedFile(t *testing.T) {
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
 	got, err := hasTrackedChanges(dir, false, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Error("expected true for untracked file")
-	}
+	require.NoError(t, err)
+	assert.True(t, got, "expected true for untracked file")
 }
 
 func TestHasTrackedChanges_OnlyTaskFilesExcluded(t *testing.T) {
@@ -191,12 +181,8 @@ func TestHasTrackedChanges_OnlyTaskFilesExcluded(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "DOING.md"), []byte("## t\n\np\n"), 0644)
 	got, err := hasTrackedChanges(dir, true, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got {
-		t.Error("expected false when only task files present and excludeTaskFiles=true")
-	}
+	require.NoError(t, err)
+	assert.False(t, got, "expected false when only task files present and excludeTaskFiles=true")
 }
 
 func TestHasTrackedChanges_TaskAndOtherFilesExcluded(t *testing.T) {
@@ -205,70 +191,48 @@ func TestHasTrackedChanges_TaskAndOtherFilesExcluded(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("work"), 0644)
 	got, err := hasTrackedChanges(dir, true, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Error("expected true when non-task file is also present")
-	}
+	require.NoError(t, err)
+	assert.True(t, got, "expected true when non-task file is also present")
 }
 
 func TestHasTrackedChanges_AgentCommit(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	baseCommit, err := getCurrentCommit(dir)
-	if err != nil {
-		t.Fatalf("getCurrentCommit: %v", err)
-	}
+	require.NoError(t, err)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
 	gitRun(t, dir, "add", "result.txt")
 	gitRun(t, dir, "commit", "-m", "agent work")
 	got, err := hasTrackedChanges(dir, false, baseCommit)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Error("expected true when agent committed a file")
-	}
+	require.NoError(t, err)
+	assert.True(t, got, "expected true when agent committed a file")
 }
 
 func TestHasTrackedChanges_AgentCommitOnlyTaskFiles(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	baseCommit, err := getCurrentCommit(dir)
-	if err != nil {
-		t.Fatalf("getCurrentCommit: %v", err)
-	}
+	require.NoError(t, err)
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte(""), 0644)
 	gitRun(t, dir, "add", "TODO.md")
 	gitRun(t, dir, "commit", "-m", "update tasks")
 	got, err := hasTrackedChanges(dir, true, baseCommit)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got {
-		t.Error("expected false when agent only committed task files and excludeTaskFiles=true")
-	}
+	require.NoError(t, err)
+	assert.False(t, got, "expected false when agent only committed task files and excludeTaskFiles=true")
 }
 
 func TestHasTrackedChanges_AgentCommitNonTaskFile(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	baseCommit, err := getCurrentCommit(dir)
-	if err != nil {
-		t.Fatalf("getCurrentCommit: %v", err)
-	}
+	require.NoError(t, err)
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
 	gitRun(t, dir, "add", "TODO.md", "result.txt")
 	gitRun(t, dir, "commit", "-m", "agent work")
 	got, err := hasTrackedChanges(dir, true, baseCommit)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !got {
-		t.Error("expected true when agent committed result.txt alongside task files")
-	}
+	require.NoError(t, err)
+	assert.True(t, got, "expected true when agent committed result.txt alongside task files")
 }
 
 // ── getCurrentCommit ──────────────────────────────────────────────────────────
@@ -277,23 +241,15 @@ func TestGetCurrentCommit_ValidRepo(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	commit, err := getCurrentCommit(dir)
-	if err != nil {
-		t.Fatalf("expected no error for valid repo, got: %v", err)
-	}
-	if commit == "" {
-		t.Fatal("expected non-empty commit hash for valid repo")
-	}
-	if len(commit) < 40 {
-		t.Errorf("expected hex SHA of at least 40 characters, got %q (len %d)", commit, len(commit))
-	}
+	require.NoError(t, err, "expected no error for valid repo")
+	assert.NotEmpty(t, commit, "expected non-empty commit hash for valid repo")
+	assert.GreaterOrEqual(t, len(commit), 40, "expected hex SHA of at least 40 characters")
 }
 
 func TestGetCurrentCommit_NotARepo(t *testing.T) {
 	dir := t.TempDir()
-	commit, err := getCurrentCommit(dir)
-	if err == nil {
-		t.Errorf("expected error for non-repo directory, got commit %q", commit)
-	}
+	_, err := getCurrentCommit(dir)
+	require.Error(t, err, "expected error for non-repo directory")
 }
 
 // ── uncommittedDiffHash ───────────────────────────────────────────────────────
@@ -302,28 +258,18 @@ func TestUncommittedDiffHash_CleanRepo(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	h, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if h == "" {
-		t.Fatal("expected non-empty hash for clean repo")
-	}
+	require.NoError(t, err)
+	assert.NotEmpty(t, h, "expected non-empty hash for clean repo")
 }
 
 func TestUncommittedDiffHash_Deterministic(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	h1, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("first call: %v", err)
-	}
+	require.NoError(t, err, "first call")
 	h2, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("second call: %v", err)
-	}
-	if h1 != h2 {
-		t.Errorf("same state produced different hashes: %q vs %q", h1, h2)
-	}
+	require.NoError(t, err, "second call")
+	assert.Equal(t, h1, h2, "same state produced different hashes")
 }
 
 func TestUncommittedDiffHash_ChangesAfterModify(t *testing.T) {
@@ -335,27 +281,19 @@ func TestUncommittedDiffHash_ChangesAfterModify(t *testing.T) {
 	gitRun(t, dir, "commit", "-m", "add file")
 
 	before, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("before modify: %v", err)
-	}
+	require.NoError(t, err, "before modify")
 
 	os.WriteFile(path, []byte("modified"), 0644)
 	after, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("after modify: %v", err)
-	}
+	require.NoError(t, err, "after modify")
 
-	if before == after {
-		t.Error("hash should change after modifying a tracked file")
-	}
+	assert.NotEqual(t, before, after, "hash should change after modifying a tracked file")
 }
 
 func TestUncommittedDiffHash_NotARepo(t *testing.T) {
 	dir := t.TempDir()
 	_, err := uncommittedDiffHash(dir)
-	if err == nil {
-		t.Error("expected error for non-repo directory")
-	}
+	require.Error(t, err, "expected error for non-repo directory")
 }
 
 func TestUncommittedDiffHash_ChangesWhenUntrackedFileAdded(t *testing.T) {
@@ -363,19 +301,13 @@ func TestUncommittedDiffHash_ChangesWhenUntrackedFileAdded(t *testing.T) {
 	initGitRepo(t, dir)
 
 	before, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("before add: %v", err)
-	}
+	require.NoError(t, err, "before add")
 
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("untracked"), 0644)
 	after, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("after add: %v", err)
-	}
+	require.NoError(t, err, "after add")
 
-	if before == after {
-		t.Error("hash should change when an untracked file is added")
-	}
+	assert.NotEqual(t, before, after, "hash should change when an untracked file is added")
 }
 
 func TestUncommittedDiffHash_ChangesWhenUntrackedFileModified(t *testing.T) {
@@ -385,19 +317,13 @@ func TestUncommittedDiffHash_ChangesWhenUntrackedFileModified(t *testing.T) {
 	os.WriteFile(path, []byte("v1"), 0644)
 
 	before, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("before modify: %v", err)
-	}
+	require.NoError(t, err, "before modify")
 
 	os.WriteFile(path, []byte("v2"), 0644)
 	after, err := uncommittedDiffHash(dir)
-	if err != nil {
-		t.Fatalf("after modify: %v", err)
-	}
+	require.NoError(t, err, "after modify")
 
-	if before == after {
-		t.Error("hash should change when an untracked file's content changes")
-	}
+	assert.NotEqual(t, before, after, "hash should change when an untracked file's content changes")
 }
 
 // ── runVerifyCmd ─────────────────────────────────────────────────────────────
@@ -407,12 +333,8 @@ func TestRunVerifyCmd_Pass(t *testing.T) {
 		t.Skip("bash not available")
 	}
 	out, err := runVerifyCmd(context.Background(), "echo hello", t.TempDir(), 5*time.Second)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out != "hello" {
-		t.Errorf("output = %q, want %q", out, "hello")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "hello", out)
 }
 
 func TestRunVerifyCmd_Fail(t *testing.T) {
@@ -420,12 +342,8 @@ func TestRunVerifyCmd_Fail(t *testing.T) {
 		t.Skip("bash not available")
 	}
 	out, err := runVerifyCmd(context.Background(), "echo 'build failed'; exit 1", t.TempDir(), 5*time.Second)
-	if err == nil {
-		t.Fatal("expected error for failing command")
-	}
-	if !strings.Contains(out, "build failed") {
-		t.Errorf("output %q should contain 'build failed'", out)
-	}
+	require.Error(t, err, "expected error for failing command")
+	assert.Contains(t, out, "build failed")
 }
 
 func TestRunVerifyCmd_Timeout(t *testing.T) {
@@ -433,9 +351,7 @@ func TestRunVerifyCmd_Timeout(t *testing.T) {
 		t.Skip("bash not available")
 	}
 	_, err := runVerifyCmd(context.Background(), "sleep 10", t.TempDir(), 100*time.Millisecond)
-	if err == nil {
-		t.Fatal("expected error for timed-out command")
-	}
+	require.Error(t, err, "expected error for timed-out command")
 }
 
 func TestRunVerifyCmd_CancelledContext(t *testing.T) {
@@ -445,9 +361,7 @@ func TestRunVerifyCmd_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := runVerifyCmd(ctx, "echo hi", t.TempDir(), 5*time.Second)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
+	require.Error(t, err, "expected error for cancelled context")
 }
 
 // ── gitCommitAll ─────────────────────────────────────────────────────────────
@@ -455,9 +369,7 @@ func TestRunVerifyCmd_CancelledContext(t *testing.T) {
 func TestGitCommitAll_NothingToCommit(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	if hash := gitCommitAll(dir, "test", false); hash != "" {
-		t.Errorf("expected empty hash for clean repo, got %q", hash)
-	}
+	assert.Empty(t, gitCommitAll(dir, "test", false), "expected empty hash for clean repo")
 }
 
 func TestGitCommitAll_NewFile(t *testing.T) {
@@ -465,15 +377,11 @@ func TestGitCommitAll_NewFile(t *testing.T) {
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
 	hash := gitCommitAll(dir, "add result", false)
-	if hash == "" {
-		t.Fatal("expected non-empty commit hash")
-	}
+	assert.NotEmpty(t, hash, "expected non-empty commit hash")
 	cmd := exec.Command("git", "log", "--oneline", "-1")
 	cmd.Dir = dir
 	out, _ := cmd.Output()
-	if !strings.Contains(string(out), "add result") {
-		t.Errorf("commit not in log: %s", out)
-	}
+	assert.Contains(t, string(out), "add result", "commit not in log")
 }
 
 func TestGitCommitAll_ExcludeTaskFiles_OnlyTaskFiles(t *testing.T) {
@@ -481,9 +389,7 @@ func TestGitCommitAll_ExcludeTaskFiles_OnlyTaskFiles(t *testing.T) {
 	initGitRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "DOING.md"), []byte("## t\n\np\n"), 0644)
-	if hash := gitCommitAll(dir, "test", true); hash != "" {
-		t.Errorf("expected empty hash when only task files changed, got %q", hash)
-	}
+	assert.Empty(t, gitCommitAll(dir, "test", true), "expected empty hash when only task files changed")
 }
 
 func TestGitCommitAll_ExcludeTaskFiles_MixedFiles(t *testing.T) {
@@ -492,19 +398,13 @@ func TestGitCommitAll_ExcludeTaskFiles_MixedFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("## t\n\np\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("done"), 0644)
 	hash := gitCommitAll(dir, "test", true)
-	if hash == "" {
-		t.Fatal("expected commit hash for non-task file")
-	}
+	assert.NotEmpty(t, hash, "expected commit hash for non-task file")
 	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
 	cmd.Dir = dir
 	out, _ := cmd.Output()
 	committed := string(out)
-	if strings.Contains(committed, "TODO.md") {
-		t.Error("TODO.md should not have been committed")
-	}
-	if !strings.Contains(committed, "result.txt") {
-		t.Errorf("result.txt should be in commit; committed: %s", committed)
-	}
+	assert.NotContains(t, committed, "TODO.md", "TODO.md should not have been committed")
+	assert.Contains(t, committed, "result.txt", "result.txt should be in commit")
 }
 
 // ── runTaskLoop integration ───────────────────────────────────────────────────
@@ -519,28 +419,18 @@ func TestRunTaskLoop_SingleTaskCompletes(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, dir, nil, false, false); err != nil {
-		t.Fatalf("runTaskLoop: %v", err)
-	}
+	require.NoError(t, runTaskLoop(io.Discard, dir, dir, nil, false, false), "runTaskLoop")
 
 	remaining, _ := ParseTodoMD(TodoPath(dir))
-	if len(remaining) != 0 {
-		t.Errorf("expected empty TODO.md, got %d tasks", len(remaining))
-	}
-	if _, err := os.Stat(DoingPath(dir)); !os.IsNotExist(err) {
-		t.Error("DOING.md should not exist after completion")
-	}
+	assert.Empty(t, remaining, "expected empty TODO.md")
+	_, err := os.Stat(DoingPath(dir))
+	assert.True(t, os.IsNotExist(err), "DOING.md should not exist after completion")
+
 	doneData, err := os.ReadFile(DonePath(dir))
-	if err != nil {
-		t.Fatalf("read DONE.md: %v", err)
-	}
+	require.NoError(t, err, "read DONE.md")
 	content := string(doneData)
-	if !strings.Contains(content, "## Test task") {
-		t.Error("DONE.md missing task title")
-	}
-	if !strings.Contains(content, "**Status:** completed") {
-		t.Error("DONE.md missing completed status")
-	}
+	assert.Contains(t, content, "## Test task", "DONE.md missing task title")
+	assert.Contains(t, content, "**Status:** completed", "DONE.md missing completed status")
 }
 
 func TestRunTaskLoop_ClaudeFails(t *testing.T) {
@@ -554,16 +444,10 @@ func TestRunTaskLoop_ClaudeFails(t *testing.T) {
 	}
 
 	err := runTaskLoop(io.Discard, dir, dir, nil, false, false)
-	if err == nil {
-		t.Fatal("expected error from failing claude")
-	}
-	if !strings.Contains(err.Error(), "Failing task") {
-		t.Errorf("error should mention task title, got: %v", err)
-	}
+	require.Error(t, err, "expected error from failing claude")
+	assert.Contains(t, err.Error(), "Failing task", "error should mention task title")
 	doneData, _ := os.ReadFile(DonePath(dir))
-	if !strings.Contains(string(doneData), "**Status:** failed") {
-		t.Error("DONE.md missing failed status")
-	}
+	assert.Contains(t, string(doneData), "**Status:** failed", "DONE.md missing failed status")
 }
 
 func TestRunTaskLoop_NoFileChanges(t *testing.T) {
@@ -578,12 +462,8 @@ func TestRunTaskLoop_NoFileChanges(t *testing.T) {
 
 	// excludeTaskFiles=true so that writing empty TODO.md doesn't count as work.
 	err := runTaskLoop(io.Discard, dir, dir, nil, false, true)
-	if err == nil {
-		t.Fatal("expected error when no files changed")
-	}
-	if !strings.Contains(err.Error(), "no files were changed") {
-		t.Errorf("expected 'no files were changed' in error, got: %v", err)
-	}
+	require.Error(t, err, "expected error when no files changed")
+	assert.Contains(t, err.Error(), "no files were changed")
 }
 
 func TestRunTaskLoop_MultipleTasksSequential(t *testing.T) {
@@ -600,22 +480,15 @@ func TestRunTaskLoop_MultipleTasksSequential(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, dir, nil, false, false); err != nil {
-		t.Fatalf("runTaskLoop: %v", err)
-	}
+	require.NoError(t, runTaskLoop(io.Discard, dir, dir, nil, false, false), "runTaskLoop")
 
 	doneData, _ := os.ReadFile(DonePath(dir))
 	content := string(doneData)
-	if !strings.Contains(content, "## Task one") {
-		t.Error("DONE.md missing 'Task one'")
-	}
-	if !strings.Contains(content, "## Task two") {
-		t.Error("DONE.md missing 'Task two'")
-	}
+	assert.Contains(t, content, "## Task one", "DONE.md missing 'Task one'")
+	assert.Contains(t, content, "## Task two", "DONE.md missing 'Task two'")
 	for _, f := range []string{"result_1.txt", "result_2.txt"} {
-		if _, err := os.Stat(filepath.Join(dir, f)); os.IsNotExist(err) {
-			t.Errorf("expected %s to exist", f)
-		}
+		_, err := os.Stat(filepath.Join(dir, f))
+		assert.NoError(t, err, "expected %s to exist", f)
 	}
 }
 
@@ -629,22 +502,16 @@ func TestRunTaskLoop_ExcludeTaskFiles(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, dir, dir, nil, false, true); err != nil {
-		t.Fatalf("runTaskLoop: %v", err)
-	}
+	require.NoError(t, runTaskLoop(io.Discard, dir, dir, nil, false, true), "runTaskLoop")
 
 	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
 	cmd.Dir = dir
 	out, _ := cmd.Output()
 	committed := string(out)
 	for _, f := range []string{"TODO.md", "DOING.md", "DONE.md"} {
-		if strings.Contains(committed, f) {
-			t.Errorf("task file %s should not be in commit", f)
-		}
+		assert.NotContains(t, committed, f, "task file %s should not be in commit", f)
 	}
-	if !strings.Contains(committed, "result.txt") {
-		t.Errorf("result.txt should be committed; committed files:\n%s", committed)
-	}
+	assert.Contains(t, committed, "result.txt", "result.txt should be committed")
 }
 
 func TestRunTaskLoop_SeparateTaskDir(t *testing.T) {
@@ -663,36 +530,23 @@ func TestRunTaskLoop_SeparateTaskDir(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, cwd, taskDir, nil, false, false); err != nil {
-		t.Fatalf("runTaskLoop: %v", err)
-	}
+	require.NoError(t, runTaskLoop(io.Discard, cwd, taskDir, nil, false, false), "runTaskLoop")
 
 	// Task management files should be in taskDir.
 	remaining, _ := ParseTodoMD(TodoPath(taskDir))
-	if len(remaining) != 0 {
-		t.Errorf("expected empty TODO.md in taskDir, got %d tasks", len(remaining))
-	}
+	assert.Empty(t, remaining, "expected empty TODO.md in taskDir")
 	doneData, err := os.ReadFile(DonePath(taskDir))
-	if err != nil {
-		t.Fatalf("DONE.md should exist in taskDir: %v", err)
-	}
-	if !strings.Contains(string(doneData), "## Separate dir task") {
-		t.Error("DONE.md in taskDir missing task title")
-	}
+	require.NoError(t, err, "DONE.md should exist in taskDir")
+	assert.Contains(t, string(doneData), "## Separate dir task", "DONE.md in taskDir missing task title")
 	// result.txt was created in cwd (where fake claude ran), and committed there.
-	if _, err := os.Stat(filepath.Join(cwd, "result.txt")); err != nil {
-		t.Errorf("result.txt should exist in cwd: %v", err)
-	}
+	_, err = os.Stat(filepath.Join(cwd, "result.txt"))
+	assert.NoError(t, err, "result.txt should exist in cwd")
 	// The commit should be on cwd's repo, not inside taskDir.
 	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
 	cmd.Dir = cwd
 	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git show: %v", err)
-	}
-	if !strings.Contains(string(out), "result.txt") {
-		t.Errorf("result.txt should be committed in cwd repo; got:\n%s", out)
-	}
+	require.NoError(t, err, "git show")
+	assert.Contains(t, string(out), "result.txt", "result.txt should be committed in cwd repo")
 }
 
 func TestRunTaskLoop_ExternalTaskDir(t *testing.T) {
@@ -709,45 +563,30 @@ func TestRunTaskLoop_ExternalTaskDir(t *testing.T) {
 		t.Fatalf("WriteTodoMD: %v", err)
 	}
 
-	if err := runTaskLoop(io.Discard, cwd, taskDir, nil, false, false); err != nil {
-		t.Fatalf("runTaskLoop: %v", err)
-	}
+	require.NoError(t, runTaskLoop(io.Discard, cwd, taskDir, nil, false, false), "runTaskLoop")
 
 	// Task management files must be in taskDir, not in the git repo.
 	remaining, _ := ParseTodoMD(TodoPath(taskDir))
-	if len(remaining) != 0 {
-		t.Errorf("expected empty TODO.md in taskDir, got %d tasks", len(remaining))
-	}
+	assert.Empty(t, remaining, "expected empty TODO.md in taskDir")
 	doneData, err := os.ReadFile(DonePath(taskDir))
-	if err != nil {
-		t.Fatalf("DONE.md should exist in taskDir: %v", err)
-	}
-	if !strings.Contains(string(doneData), "## External dir task") {
-		t.Error("DONE.md in taskDir missing task title")
-	}
+	require.NoError(t, err, "DONE.md should exist in taskDir")
+	assert.Contains(t, string(doneData), "## External dir task", "DONE.md in taskDir missing task title")
 	// No task files should have leaked into cwd.
 	for _, name := range []string{"TODO.md", "DOING.md", "DONE.md"} {
-		if _, err := os.Stat(filepath.Join(cwd, name)); !os.IsNotExist(err) {
-			t.Errorf("%s should not exist in cwd", name)
-		}
+		_, err := os.Stat(filepath.Join(cwd, name))
+		assert.True(t, os.IsNotExist(err), "%s should not exist in cwd", name)
 	}
 	// result.txt was committed in cwd's repo, not in taskDir.
-	if _, err := os.Stat(filepath.Join(cwd, "result.txt")); err != nil {
-		t.Errorf("result.txt should exist in cwd: %v", err)
-	}
+	_, err = os.Stat(filepath.Join(cwd, "result.txt"))
+	assert.NoError(t, err, "result.txt should exist in cwd")
 	cmd := exec.Command("git", "show", "--name-only", "--format=", "HEAD")
 	cmd.Dir = cwd
 	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git show: %v", err)
-	}
-	if !strings.Contains(string(out), "result.txt") {
-		t.Errorf("result.txt should be committed in cwd repo; got:\n%s", out)
-	}
+	require.NoError(t, err, "git show")
+	assert.Contains(t, string(out), "result.txt", "result.txt should be committed in cwd repo")
 	// taskDir should not be a git repo (sanity check that we never ran git there).
-	if _, err := os.Stat(filepath.Join(taskDir, ".git")); !os.IsNotExist(err) {
-		t.Error("taskDir should not have a .git directory")
-	}
+	_, err = os.Stat(filepath.Join(taskDir, ".git"))
+	assert.True(t, os.IsNotExist(err), "taskDir should not have a .git directory")
 }
 
 // ── getGitDiff ────────────────────────────────────────────────────────────────
@@ -756,12 +595,8 @@ func TestGetGitDiff_CleanRepo(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	diff, err := getGitDiff(dir, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if diff != "" {
-		t.Errorf("expected empty diff for clean repo, got %q", diff)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, diff, "expected empty diff for clean repo")
 }
 
 func TestGetGitDiff_WithChanges(t *testing.T) {
@@ -773,15 +608,9 @@ func TestGetGitDiff_WithChanges(t *testing.T) {
 	gitRun(t, dir, "commit", "-m", "add file")
 	os.WriteFile(path, []byte("modified"), 0644)
 	diff, err := getGitDiff(dir, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if diff == "" {
-		t.Fatal("expected non-empty diff for modified file")
-	}
-	if !strings.Contains(diff, "modified") {
-		t.Errorf("diff should mention modified content, got: %s", diff)
-	}
+	require.NoError(t, err)
+	assert.NotEmpty(t, diff, "expected non-empty diff for modified file")
+	assert.Contains(t, diff, "modified", "diff should mention modified content")
 }
 
 func TestGetGitDiff_UntrackedFileIgnored(t *testing.T) {
@@ -790,43 +619,29 @@ func TestGetGitDiff_UntrackedFileIgnored(t *testing.T) {
 	// Untracked files don't appear in git diff HEAD
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
 	diff, err := getGitDiff(dir, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if diff != "" {
-		t.Errorf("expected empty diff for untracked-only changes, got %q", diff)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, diff, "expected empty diff for untracked-only changes")
 }
 
 func TestGetGitDiff_WithBaseCommit(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	baseCommit, err := getCurrentCommit(dir)
-	if err != nil {
-		t.Fatalf("getCurrentCommit: %v", err)
-	}
+	require.NoError(t, err)
 	os.WriteFile(filepath.Join(dir, "result.txt"), []byte("agent output"), 0644)
 	gitRun(t, dir, "add", "result.txt")
 	gitRun(t, dir, "commit", "-m", "agent work")
 	diff, err := getGitDiff(dir, baseCommit)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if diff == "" {
-		t.Fatal("expected non-empty diff when baseCommit predates a commit")
-	}
-	if !strings.Contains(diff, "agent output") {
-		t.Errorf("diff should contain committed content, got: %s", diff)
-	}
+	require.NoError(t, err)
+	assert.NotEmpty(t, diff, "expected non-empty diff when baseCommit predates a commit")
+	assert.Contains(t, diff, "agent output", "diff should contain committed content")
 }
 
 func TestGetGitDiff_WithBaseCommitAndUncommitted(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	baseCommit, err := getCurrentCommit(dir)
-	if err != nil {
-		t.Fatalf("getCurrentCommit: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Agent commits one file.
 	os.WriteFile(filepath.Join(dir, "committed.txt"), []byte("committed content"), 0644)
@@ -838,15 +653,9 @@ func TestGetGitDiff_WithBaseCommitAndUncommitted(t *testing.T) {
 	gitRun(t, dir, "add", "uncommitted.txt")
 
 	diff, err := getGitDiff(dir, baseCommit)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(diff, "committed content") {
-		t.Errorf("diff should contain committed content, got: %s", diff)
-	}
-	if !strings.Contains(diff, "uncommitted content") {
-		t.Errorf("diff should contain uncommitted content, got: %s", diff)
-	}
+	require.NoError(t, err)
+	assert.Contains(t, diff, "committed content", "diff should contain committed content")
+	assert.Contains(t, diff, "uncommitted content", "diff should contain uncommitted content")
 }
 
 // ── runReviewAgent ────────────────────────────────────────────────────────────
@@ -854,37 +663,23 @@ func TestGetGitDiff_WithBaseCommitAndUncommitted(t *testing.T) {
 func TestRunReviewAgent_DiffPrependedToPrompt(t *testing.T) {
 	setupFakeClaude(t, "print_stdin")
 	out, err := runReviewAgent(context.Background(), "review this", "some diff content", t.TempDir(), 5*time.Second)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(out, "some diff content") {
-		t.Errorf("output should contain diff content, got: %q", out)
-	}
-	if strings.Contains(out, "review this") {
-		t.Errorf("output should not contain review prompt, got: %q", out)
-	}
+	require.NoError(t, err)
+	assert.Contains(t, out, "some diff content", "output should contain diff content")
+	assert.NotContains(t, out, "review this", "output should not contain review prompt")
 }
 
 func TestRunReviewAgent_EmptyDiffOmitsDiffBlock(t *testing.T) {
 	setupFakeClaude(t, "print_stdin")
 	out, err := runReviewAgent(context.Background(), "review this", "", t.TempDir(), 5*time.Second)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if strings.Contains(out, "review this") {
-		t.Errorf("output should not contain review prompt, got: %q", out)
-	}
-	if strings.Contains(out, "```diff") {
-		t.Errorf("output should not contain diff block for empty diff, got: %q", out)
-	}
+	require.NoError(t, err)
+	assert.NotContains(t, out, "review this", "output should not contain review prompt")
+	assert.NotContains(t, out, "```diff", "output should not contain diff block for empty diff")
 }
 
 func TestRunReviewAgent_Timeout(t *testing.T) {
 	setupFakeClaude(t, "sleep")
 	_, err := runReviewAgent(context.Background(), "review prompt", "some diff", t.TempDir(), 100*time.Millisecond)
-	if err == nil {
-		t.Fatal("expected error for timed-out review agent")
-	}
+	require.Error(t, err, "expected error for timed-out review agent")
 }
 
 // ── reviewDiff flag ───────────────────────────────────────────────────────────
@@ -916,9 +711,7 @@ func TestReviewDiff_TrueSkipsReviewWhenDiffEmpty(t *testing.T) {
 		reviewTimeout: 5 * time.Second,
 		reviewDiff:    true,
 	})
-	if called {
-		t.Error("review should be skipped when reviewDiff=true and diff is empty")
-	}
+	assert.False(t, called, "review should be skipped when reviewDiff=true and diff is empty")
 }
 
 func TestReviewDiff_FalseRunsReviewWithoutDiff(t *testing.T) {
@@ -932,9 +725,7 @@ func TestReviewDiff_FalseRunsReviewWithoutDiff(t *testing.T) {
 		reviewTimeout: 5 * time.Second,
 		reviewDiff:    false,
 	})
-	if !called {
-		t.Error("review should run when reviewDiff=false regardless of empty diff")
-	}
+	assert.True(t, called, "review should run when reviewDiff=false regardless of empty diff")
 }
 
 // ── review iteration loop ─────────────────────────────────────────────────────
@@ -966,18 +757,14 @@ func TestReviewLoop_StopsAtMaxIterations(t *testing.T) {
 
 	const maxIter = 3
 	feedbackSent := simulateReviewLoop(t, dir, maxIter)
-	if feedbackSent != maxIter {
-		t.Errorf("feedbackSent = %d, want %d", feedbackSent, maxIter)
-	}
+	assert.Equal(t, maxIter, feedbackSent)
 
 	// Verify the fake claude was called maxIter+1 times:
 	// maxIter sends that triggered a loop, plus 1 final call that hit the cap.
 	data, _ := os.ReadFile(filepath.Join(dir, ".review_counter"))
 	n := 0
 	_, _ = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
-	if n != maxIter+1 {
-		t.Errorf("review agent called %d times, want %d", n, maxIter+1)
-	}
+	assert.Equal(t, maxIter+1, n, "review agent called wrong number of times")
 }
 
 func TestReviewLoop_ExitsImmediatelyWhenNoFeedback(t *testing.T) {
@@ -985,9 +772,7 @@ func TestReviewLoop_ExitsImmediatelyWhenNoFeedback(t *testing.T) {
 	dir := t.TempDir()
 
 	feedbackSent := simulateReviewLoop(t, dir, 3)
-	if feedbackSent != 0 {
-		t.Errorf("expected 0 feedback rounds for agent with no output, got %d", feedbackSent)
-	}
+	assert.Zero(t, feedbackSent, "expected 0 feedback rounds for agent with no output")
 }
 
 // ── isAgentStuck ─────────────────────────────────────────────────────────────
@@ -1093,9 +878,7 @@ func TestIsAgentStuck(t *testing.T) {
 				tc.setup(t)
 			}
 			got := isAgentStuck(tc.sessionID, tc.timeout)
-			if got != tc.want {
-				t.Errorf("isAgentStuck(%q, %v) = %v, want %v", tc.sessionID, tc.timeout, got, tc.want)
-			}
+			assert.Equal(t, tc.want, got, "isAgentStuck(%q, %v)", tc.sessionID, tc.timeout)
 		})
 	}
 }
