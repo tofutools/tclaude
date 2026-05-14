@@ -3,9 +3,11 @@ package task
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseTasks(t *testing.T) {
@@ -125,22 +127,12 @@ Fix it.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseTasks(tt.input)
-			if len(got) != len(tt.want) {
-				t.Fatalf("got %d tasks, want %d", len(got), len(tt.want))
-			}
+			require.Equal(t, len(tt.want), len(got), "got %d tasks, want %d", len(got), len(tt.want))
 			for i := range got {
-				if got[i].Title != tt.want[i].Title {
-					t.Errorf("task %d title = %q, want %q", i, got[i].Title, tt.want[i].Title)
-				}
-				if got[i].Prompt != tt.want[i].Prompt {
-					t.Errorf("task %d prompt = %q, want %q", i, got[i].Prompt, tt.want[i].Prompt)
-				}
-				if got[i].PlanMode != tt.want[i].PlanMode {
-					t.Errorf("task %d PlanMode = %v, want %v", i, got[i].PlanMode, tt.want[i].PlanMode)
-				}
-				if got[i].PlanAutoAccept != tt.want[i].PlanAutoAccept {
-					t.Errorf("task %d PlanAutoAccept = %v, want %v", i, got[i].PlanAutoAccept, tt.want[i].PlanAutoAccept)
-				}
+				assert.Equal(t, tt.want[i].Title, got[i].Title, "task %d title", i)
+				assert.Equal(t, tt.want[i].Prompt, got[i].Prompt, "task %d prompt", i)
+				assert.Equal(t, tt.want[i].PlanMode, got[i].PlanMode, "task %d PlanMode", i)
+				assert.Equal(t, tt.want[i].PlanAutoAccept, got[i].PlanAutoAccept, "task %d PlanAutoAccept", i)
 			}
 		})
 	}
@@ -155,42 +147,28 @@ func TestWriteTodoMD(t *testing.T) {
 		{Title: "Second task", Prompt: "Do the second thing"},
 	}
 
-	if err := WriteTodoMD(path, tasks); err != nil {
-		t.Fatalf("WriteTodoMD failed: %v", err)
-	}
+	err := WriteTodoMD(path, tasks)
+	require.NoError(t, err, "WriteTodoMD failed")
 
 	// Read back and parse
 	parsed, err := ParseTodoMD(path)
-	if err != nil {
-		t.Fatalf("ParseTodoMD failed: %v", err)
-	}
+	require.NoError(t, err, "ParseTodoMD failed")
 
-	if len(parsed) != 2 {
-		t.Fatalf("got %d tasks, want 2", len(parsed))
-	}
-	if parsed[0].Title != "First task" {
-		t.Errorf("task 0 title = %q, want %q", parsed[0].Title, "First task")
-	}
-	if parsed[1].Title != "Second task" {
-		t.Errorf("task 1 title = %q, want %q", parsed[1].Title, "Second task")
-	}
+	require.Len(t, parsed, 2)
+	assert.Equal(t, "First task", parsed[0].Title)
+	assert.Equal(t, "Second task", parsed[1].Title)
 }
 
 func TestWriteTodoMDEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "TODO.md")
 
-	if err := WriteTodoMD(path, nil); err != nil {
-		t.Fatalf("WriteTodoMD failed: %v", err)
-	}
+	err := WriteTodoMD(path, nil)
+	require.NoError(t, err, "WriteTodoMD failed")
 
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	if string(data) != "" {
-		t.Errorf("expected empty file, got %q", string(data))
-	}
+	require.NoError(t, err, "ReadFile failed")
+	assert.Empty(t, string(data), "expected empty file")
 }
 
 func TestAppendDoneMD(t *testing.T) {
@@ -207,34 +185,19 @@ func TestAppendDoneMD(t *testing.T) {
 		Timestamp: time.Date(2026, 3, 7, 14, 30, 0, 0, time.UTC),
 	}
 
-	if err := AppendDoneMD(path, result); err != nil {
-		t.Fatalf("AppendDoneMD failed: %v", err)
-	}
+	err := AppendDoneMD(path, result)
+	require.NoError(t, err, "AppendDoneMD failed")
 
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
+	require.NoError(t, err, "ReadFile failed")
 
 	content := string(data)
-	if !strings.Contains(content, "## Test task") {
-		t.Error("missing task title")
-	}
-	if !strings.Contains(content, "**Status:** completed") {
-		t.Error("missing status")
-	}
-	if !strings.Contains(content, "**Commit:** abc1234") {
-		t.Error("missing commit hash")
-	}
-	if !strings.Contains(content, "**Plan:** ~/.claude/plans/enchanted-meandering-mountain.md") {
-		t.Error("missing plan file")
-	}
-	if !strings.Contains(content, "Do something") {
-		t.Error("missing prompt")
-	}
-	if !strings.Contains(content, "I did the thing.") {
-		t.Error("missing report")
-	}
+	assert.Contains(t, content, "## Test task", "missing task title")
+	assert.Contains(t, content, "**Status:** completed", "missing status")
+	assert.Contains(t, content, "**Commit:** abc1234", "missing commit hash")
+	assert.Contains(t, content, "**Plan:** ~/.claude/plans/enchanted-meandering-mountain.md", "missing plan file")
+	assert.Contains(t, content, "Do something", "missing prompt")
+	assert.Contains(t, content, "I did the thing.", "missing report")
 
 	// Append a second result
 	result2 := TaskResult{
@@ -245,25 +208,16 @@ func TestAppendDoneMD(t *testing.T) {
 		Timestamp: time.Date(2026, 3, 7, 15, 0, 0, 0, time.UTC),
 	}
 
-	if err := AppendDoneMD(path, result2); err != nil {
-		t.Fatalf("AppendDoneMD (second) failed: %v", err)
-	}
+	err = AppendDoneMD(path, result2)
+	require.NoError(t, err, "AppendDoneMD (second) failed")
 
 	data, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile (second) failed: %v", err)
-	}
+	require.NoError(t, err, "ReadFile (second) failed")
 
 	content = string(data)
-	if !strings.Contains(content, "## Second task") {
-		t.Error("missing second task title")
-	}
-	if !strings.Contains(content, "**Status:** failed") {
-		t.Error("missing failed status")
-	}
-	if !strings.Contains(content, "**Error:** something broke") {
-		t.Error("missing error message")
-	}
+	assert.Contains(t, content, "## Second task", "missing second task title")
+	assert.Contains(t, content, "**Status:** failed", "missing failed status")
+	assert.Contains(t, content, "**Error:** something broke", "missing error message")
 }
 
 func TestRunAddComma(t *testing.T) {
@@ -290,26 +244,19 @@ func TestRunAddComma(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			subdir := filepath.Join(t.TempDir(), tt.name)
-			if err := os.MkdirAll(subdir, 0755); err != nil {
-				t.Fatalf("unable to create directory %s: %v", subdir, err)
-			}
+			err := os.MkdirAll(subdir, 0755)
+			require.NoError(t, err, "unable to create directory %s", subdir)
+
 			params := &AddParams{Dir: subdir}
-			if err := runAdd(params, tt.args); err != nil {
-				t.Fatalf("runAdd failed: %v", err)
-			}
+			err = runAdd(params, tt.args)
+			require.NoError(t, err, "runAdd failed")
+
 			tasks, err := ParseTodoMD(filepath.Join(subdir, "TODO.md"))
-			if err != nil {
-				t.Fatalf("ParseTodoMD failed: %v", err)
-			}
-			if len(tasks) != 1 {
-				t.Fatalf("got %d tasks, want 1", len(tasks))
-			}
-			if tasks[0].Title != tt.wantTitle {
-				t.Errorf("title = %q, want %q", tasks[0].Title, tt.wantTitle)
-			}
-			if tasks[0].Prompt != tt.wantPrompt {
-				t.Errorf("prompt = %q, want %q", tasks[0].Prompt, tt.wantPrompt)
-			}
+			require.NoError(t, err, "ParseTodoMD failed")
+
+			require.Len(t, tasks, 1)
+			assert.Equal(t, tt.wantTitle, tasks[0].Title, "title")
+			assert.Equal(t, tt.wantPrompt, tasks[0].Prompt, "prompt")
 		})
 	}
 }
@@ -347,22 +294,15 @@ func TestRunAddPlanFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.params.Dir = t.TempDir()
-			if err := runAdd(&tt.params, tt.args); err != nil {
-				t.Fatalf("runAdd failed: %v", err)
-			}
+			err := runAdd(&tt.params, tt.args)
+			require.NoError(t, err, "runAdd failed")
+
 			tasks, err := ParseTodoMD(filepath.Join(tt.params.Dir, "TODO.md"))
-			if err != nil {
-				t.Fatalf("ParseTodoMD failed: %v", err)
-			}
-			if len(tasks) != 1 {
-				t.Fatalf("got %d tasks, want 1", len(tasks))
-			}
-			if tasks[0].PlanMode != tt.wantPlanMode {
-				t.Errorf("PlanMode = %v, want %v", tasks[0].PlanMode, tt.wantPlanMode)
-			}
-			if tasks[0].PlanAutoAccept != tt.wantPlanAuto {
-				t.Errorf("PlanAutoAccept = %v, want %v", tasks[0].PlanAutoAccept, tt.wantPlanAuto)
-			}
+			require.NoError(t, err, "ParseTodoMD failed")
+
+			require.Len(t, tasks, 1)
+			assert.Equal(t, tt.wantPlanMode, tasks[0].PlanMode, "PlanMode")
+			assert.Equal(t, tt.wantPlanAuto, tasks[0].PlanAutoAccept, "PlanAutoAccept")
 		})
 	}
 }
@@ -371,332 +311,226 @@ func TestRunAddAppend(t *testing.T) {
 	dir := t.TempDir()
 	params := &AddParams{Dir: dir}
 
-	if err := runAdd(params, []string{"First task", "Do first thing"}); err != nil {
-		t.Fatalf("first runAdd failed: %v", err)
-	}
-	if err := runAdd(params, []string{"Second task", "Do second thing"}); err != nil {
-		t.Fatalf("second runAdd failed: %v", err)
-	}
+	err := runAdd(params, []string{"First task", "Do first thing"})
+	require.NoError(t, err, "first runAdd failed")
+
+	err = runAdd(params, []string{"Second task", "Do second thing"})
+	require.NoError(t, err, "second runAdd failed")
 
 	tasks, err := ParseTodoMD(filepath.Join(dir, "TODO.md"))
-	if err != nil {
-		t.Fatalf("ParseTodoMD failed: %v", err)
-	}
-	if len(tasks) != 2 {
-		t.Fatalf("got %d tasks, want 2", len(tasks))
-	}
-	if tasks[0].Title != "First task" || tasks[0].Prompt != "Do first thing" {
-		t.Errorf("task 0 = {%q, %q}, want {First task, Do first thing}", tasks[0].Title, tasks[0].Prompt)
-	}
-	if tasks[1].Title != "Second task" || tasks[1].Prompt != "Do second thing" {
-		t.Errorf("task 1 = {%q, %q}, want {Second task, Do second thing}", tasks[1].Title, tasks[1].Prompt)
-	}
+	require.NoError(t, err, "ParseTodoMD failed")
+
+	require.Len(t, tasks, 2)
+	assert.Equal(t, "First task", tasks[0].Title)
+	assert.Equal(t, "Do first thing", tasks[0].Prompt)
+	assert.Equal(t, "Second task", tasks[1].Title)
+	assert.Equal(t, "Do second thing", tasks[1].Prompt)
 }
 
 func writeTasksConfig(t *testing.T, dir string, content string) {
 	t.Helper()
 	path := TasksConfigPath(dir)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("failed to create tasks config dir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write tasks config: %v", err)
-	}
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	require.NoError(t, err, "failed to create tasks config dir")
+
+	err = os.WriteFile(path, []byte(content), 0644)
+	require.NoError(t, err, "failed to write tasks config")
 }
 
 func TestLoadTasksConfig(t *testing.T) {
 	t.Run("missing file returns defaults", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.VerifyCmd != "" {
-			t.Errorf("VerifyCmd = %q, want empty", cfg.VerifyCmd)
-		}
-		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
-			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Empty(t, cfg.VerifyCmd)
+		assert.Equal(t, defaultMaxVerifyIterations, cfg.MaxVerifyIterations)
 	})
 
 	t.Run("verify only", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"verify":"go test ./..."}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.VerifyCmd != "go test ./..." {
-			t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, "go test ./...")
-		}
-		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
-			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, "go test ./...", cfg.VerifyCmd)
+		assert.Equal(t, defaultMaxVerifyIterations, cfg.MaxVerifyIterations)
 	})
 
 	t.Run("verify and max iterations", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"verify":"make test","max_verify_iterations":5}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.VerifyCmd != "make test" {
-			t.Errorf("VerifyCmd = %q, want %q", cfg.VerifyCmd, "make test")
-		}
-		if cfg.MaxVerifyIterations != 5 {
-			t.Errorf("MaxVerifyIterations = %d, want 5", cfg.MaxVerifyIterations)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, "make test", cfg.VerifyCmd)
+		assert.Equal(t, 5, cfg.MaxVerifyIterations)
 	})
 
 	t.Run("zero max_verify_iterations falls back to default", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"max_verify_iterations":0}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.MaxVerifyIterations != defaultMaxVerifyIterations {
-			t.Errorf("MaxVerifyIterations = %d, want %d", cfg.MaxVerifyIterations, defaultMaxVerifyIterations)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultMaxVerifyIterations, cfg.MaxVerifyIterations)
 	})
 
 	t.Run("timeout", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"max_verify_iterations":0,"verify_timeout":"2m"}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.VerifyTimeout != 2*time.Minute {
-			t.Errorf("VerifyTimeout = %d, want %d", cfg.VerifyTimeout, 2*time.Minute)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, 2*time.Minute, cfg.VerifyTimeout)
 	})
 
 	t.Run("max_review_iterations default", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.MaxReviewIterations != defaultMaxReviewIterations {
-			t.Errorf("MaxReviewIterations = %d, want %d", cfg.MaxReviewIterations, defaultMaxReviewIterations)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultMaxReviewIterations, cfg.MaxReviewIterations)
 	})
 
 	t.Run("max_review_iterations custom", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"max_review_iterations":3}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.MaxReviewIterations != 3 {
-			t.Errorf("MaxReviewIterations = %d, want 3", cfg.MaxReviewIterations)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, 3, cfg.MaxReviewIterations)
 	})
 
 	t.Run("zero max_review_iterations falls back to default", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"max_review_iterations":0}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.MaxReviewIterations != defaultMaxReviewIterations {
-			t.Errorf("MaxReviewIterations = %d, want %d", cfg.MaxReviewIterations, defaultMaxReviewIterations)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultMaxReviewIterations, cfg.MaxReviewIterations)
 	})
 
 	t.Run("review_prefix default", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.ReviewPrefix != defaultReviewPrefix {
-			t.Errorf("ReviewPrefix = %s, want %s", cfg.ReviewPrefix, defaultReviewPrefix)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultReviewPrefix, cfg.ReviewPrefix)
 	})
 
 	t.Run("review_prefix custom", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"review_prefix":"some prefix:"}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.ReviewPrefix != "some prefix:" {
-			t.Errorf("ReviewPrefix = %s, want %s", cfg.ReviewPrefix, "some prefix:")
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, "some prefix:", cfg.ReviewPrefix)
 	})
 
 	t.Run("review_timeout default", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.ReviewTimeout != defaultReviewTimeout {
-			t.Errorf("ReviewTimeout = %v, want %v", cfg.ReviewTimeout, defaultReviewTimeout)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultReviewTimeout, cfg.ReviewTimeout)
 	})
 
 	t.Run("review_timeout custom", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"review_timeout":"10m"}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.ReviewTimeout != 10*time.Minute {
-			t.Errorf("ReviewTimeout = %v, want 10m", cfg.ReviewTimeout)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, 10*time.Minute, cfg.ReviewTimeout)
 	})
 
 	t.Run("invalid review_timeout returns error", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"review_timeout":"notaduratiokn"}`)
 		_, err := LoadTasksConfig(dir)
-		if err == nil {
-			t.Error("expected error for invalid review_timeout, got nil")
-		}
+		assert.Error(t, err, "expected error for invalid review_timeout")
 	})
 
 	t.Run("invalid JSON returns error", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `not json`)
 		_, err := LoadTasksConfig(dir)
-		if err == nil {
-			t.Error("expected error for invalid JSON, got nil")
-		}
+		assert.Error(t, err, "expected error for invalid JSON")
 	})
 
 	t.Run("review_diff defaults to true when absent", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.ReviewDiff == nil || !*cfg.ReviewDiff {
-			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
-		}
+		require.NoError(t, err, "unexpected error")
+		require.NotNil(t, cfg.ReviewDiff)
+		assert.True(t, *cfg.ReviewDiff)
 	})
 
 	t.Run("review_diff false", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"review_diff":false}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.ReviewDiff == nil || *cfg.ReviewDiff {
-			t.Errorf("ReviewDiff = %v, want false", cfg.ReviewDiff)
-		}
+		require.NoError(t, err, "unexpected error")
+		require.NotNil(t, cfg.ReviewDiff)
+		assert.False(t, *cfg.ReviewDiff)
 	})
 
 	t.Run("review_diff true explicit", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"review_diff":true}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.ReviewDiff == nil || !*cfg.ReviewDiff {
-			t.Errorf("ReviewDiff = %v, want true", cfg.ReviewDiff)
-		}
+		require.NoError(t, err, "unexpected error")
+		require.NotNil(t, cfg.ReviewDiff)
+		assert.True(t, *cfg.ReviewDiff)
 	})
 
 	t.Run("stuck_timeout default", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.StuckTimeout != defaultStuckTimeout {
-			t.Errorf("StuckTimeout = %v, want %v", cfg.StuckTimeout, defaultStuckTimeout)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultStuckTimeout, cfg.StuckTimeout)
 	})
 
 	t.Run("stuck_timeout custom", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"stuck_timeout":"10m"}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.StuckTimeout != 10*time.Minute {
-			t.Errorf("StuckTimeout = %v, want 10m", cfg.StuckTimeout)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, 10*time.Minute, cfg.StuckTimeout)
 	})
 
 	t.Run("stuck_timeout zero disables detection", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"stuck_timeout":"0s"}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.StuckTimeout != 0 {
-			t.Errorf("StuckTimeout = %v, want 0", cfg.StuckTimeout)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, time.Duration(0), cfg.StuckTimeout)
 	})
 
 	t.Run("stuck_timeout below minimum returns error", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"stuck_timeout":"20s"}`)
 		_, err := LoadTasksConfig(dir)
-		if err == nil {
-			t.Error("expected error for stuck_timeout below minimum, got nil")
-		}
+		assert.Error(t, err, "expected error for stuck_timeout below minimum")
 	})
 
 	t.Run("invalid stuck_timeout returns error", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"stuck_timeout":"notaduration"}`)
 		_, err := LoadTasksConfig(dir)
-		if err == nil {
-			t.Error("expected error for invalid stuck_timeout, got nil")
-		}
+		assert.Error(t, err, "expected error for invalid stuck_timeout")
 	})
 
 	t.Run("max_stuck_nudges default", func(t *testing.T) {
 		cfg, err := LoadTasksConfig(t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.MaxStuckNudges != defaultMaxStuckNudges {
-			t.Errorf("MaxStuckNudges = %d, want %d", cfg.MaxStuckNudges, defaultMaxStuckNudges)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultMaxStuckNudges, cfg.MaxStuckNudges)
 	})
 
 	t.Run("max_stuck_nudges custom", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"max_stuck_nudges":5}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.MaxStuckNudges != 5 {
-			t.Errorf("MaxStuckNudges = %d, want 5", cfg.MaxStuckNudges)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, 5, cfg.MaxStuckNudges)
 	})
 
 	t.Run("zero max_stuck_nudges falls back to default", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTasksConfig(t, dir, `{"max_stuck_nudges":0}`)
 		cfg, err := LoadTasksConfig(dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.MaxStuckNudges != defaultMaxStuckNudges {
-			t.Errorf("MaxStuckNudges = %d, want %d", cfg.MaxStuckNudges, defaultMaxStuckNudges)
-		}
+		require.NoError(t, err, "unexpected error")
+		assert.Equal(t, defaultMaxStuckNudges, cfg.MaxStuckNudges)
 	})
 }
 
 func TestParseTodoMDNotFound(t *testing.T) {
 	tasks, err := ParseTodoMD("/nonexistent/TODO.md")
-	if err != nil {
-		t.Fatalf("expected nil error for missing file, got: %v", err)
-	}
-	if tasks != nil {
-		t.Fatalf("expected nil tasks for missing file, got: %v", tasks)
-	}
+	assert.NoError(t, err, "expected nil error for missing file")
+	assert.Nil(t, tasks, "expected nil tasks for missing file")
 }
 
 func TestRoundTrip(t *testing.T) {
@@ -710,31 +544,18 @@ func TestRoundTrip(t *testing.T) {
 		{Title: "Task D", Prompt: "Plan and implement", PlanMode: true, PlanAutoAccept: true},
 	}
 
-	if err := WriteTodoMD(path, original); err != nil {
-		t.Fatalf("WriteTodoMD failed: %v", err)
-	}
+	err := WriteTodoMD(path, original)
+	require.NoError(t, err, "WriteTodoMD failed")
 
 	parsed, err := ParseTodoMD(path)
-	if err != nil {
-		t.Fatalf("ParseTodoMD failed: %v", err)
-	}
+	require.NoError(t, err, "ParseTodoMD failed")
 
-	if len(parsed) != len(original) {
-		t.Fatalf("got %d tasks, want %d", len(parsed), len(original))
-	}
+	require.Len(t, parsed, len(original))
 
 	for i := range original {
-		if parsed[i].Title != original[i].Title {
-			t.Errorf("task %d title = %q, want %q", i, parsed[i].Title, original[i].Title)
-		}
-		if parsed[i].Prompt != original[i].Prompt {
-			t.Errorf("task %d prompt = %q, want %q", i, parsed[i].Prompt, original[i].Prompt)
-		}
-		if parsed[i].PlanMode != original[i].PlanMode {
-			t.Errorf("task %d PlanMode = %v, want %v", i, parsed[i].PlanMode, original[i].PlanMode)
-		}
-		if parsed[i].PlanAutoAccept != original[i].PlanAutoAccept {
-			t.Errorf("task %d PlanAutoAccept = %v, want %v", i, parsed[i].PlanAutoAccept, original[i].PlanAutoAccept)
-		}
+		assert.Equal(t, original[i].Title, parsed[i].Title, "task %d title", i)
+		assert.Equal(t, original[i].Prompt, parsed[i].Prompt, "task %d prompt", i)
+		assert.Equal(t, original[i].PlanMode, parsed[i].PlanMode, "task %d PlanMode", i)
+		assert.Equal(t, original[i].PlanAutoAccept, parsed[i].PlanAutoAccept, "task %d PlanAutoAccept", i)
 	}
 }
