@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -40,41 +42,26 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), conv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("POST /v1/sudo status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"POST /v1/sudo body=%s", rec.Body.String())
 
 	// Active grant exists in DB.
 	rows, err := db.ListActiveSudoGrants(conv)
-	if err != nil {
-		t.Fatalf("ListActiveSudoGrants: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("active grants for %s: got %d, want 1", conv, len(rows))
-	}
+	require.NoError(t, err, "ListActiveSudoGrants")
+	require.Len(t, rows, 1, "active grants for %s", conv)
 	got := rows[0]
-	if got.Slug != "groups.spawn" {
-		t.Errorf("slug = %q, want %q", got.Slug, "groups.spawn")
-	}
-	if got.Reason != "team-bootstrap" {
-		t.Errorf("reason = %q, want %q", got.Reason, "team-bootstrap")
-	}
-	if !strings.HasPrefix(got.GrantedBy, "human:popup-id=") {
-		t.Errorf("granted_by = %q, want prefix human:popup-id=", got.GrantedBy)
-	}
-	if !got.IsActive(time.Now()) {
-		t.Errorf("freshly-inserted grant must be active; expires_at=%v revoked_at=%v",
-			got.ExpiresAt, got.RevokedAt)
-	}
+	assert.Equal(t, "groups.spawn", got.Slug, "slug")
+	assert.Equal(t, "team-bootstrap", got.Reason, "reason")
+	assert.True(t, strings.HasPrefix(got.GrantedBy, "human:popup-id="),
+		"granted_by = %q, want prefix human:popup-id=", got.GrantedBy)
+	assert.True(t, got.IsActive(time.Now()),
+		"freshly-inserted grant must be active; expires_at=%v revoked_at=%v",
+		got.ExpiresAt, got.RevokedAt)
 
 	// HasActiveSudoGrant — the hot path requirePermission calls.
 	ok, err := db.HasActiveSudoGrant(conv, "groups.spawn")
-	if err != nil {
-		t.Fatalf("HasActiveSudoGrant: %v", err)
-	}
-	if !ok {
-		t.Errorf("HasActiveSudoGrant must return true for the freshly-granted slug")
-	}
+	require.NoError(t, err, "HasActiveSudoGrant")
+	assert.True(t, ok, "HasActiveSudoGrant must return true for the freshly-granted slug")
 }
 
 // Scenario: popup denies; no rows are inserted. Pins the explicit
@@ -97,13 +84,10 @@ func TestSudo_Denied_NoGrant(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), conv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("denied request: status=%d body=%s, want 403", rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"denied request body=%s", rec.Body.String())
 	rows, _ := db.ListActiveSudoGrants(conv)
-	if len(rows) != 0 {
-		t.Errorf("denied request must not insert rows; got %d", len(rows))
-	}
+	assert.Empty(t, rows, "denied request must not insert rows")
 }
 
 // Scenario: blocklisted slugs (`permissions.grant` / `permissions.revoke`)
@@ -129,16 +113,13 @@ func TestSudo_Blocklist_RefusesWithoutPopup(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), conv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("blocklisted request: status=%d body=%s, want 403", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "permissions.grant") {
-		t.Errorf("response must name the blocked slug; body=%s", rec.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"blocklisted request body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "permissions.grant",
+		"response must name the blocked slug")
 	rows, _ := db.ListActiveSudoGrants(conv)
-	if len(rows) != 0 {
-		t.Errorf("blocklisted request must not insert ANY rows (even the non-blocklisted ones); got %d", len(rows))
-	}
+	assert.Empty(t, rows,
+		"blocklisted request must not insert ANY rows (even the non-blocklisted ones)")
 }
 
 // Scenario: a duration that exceeds sudoMaxDuration is rejected
@@ -161,13 +142,10 @@ func TestSudo_DurationCap_RejectedWithoutPopup(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), conv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("over-cap request: status=%d body=%s, want 400", rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"over-cap request body=%s", rec.Body.String())
 	rows, _ := db.ListActiveSudoGrants(conv)
-	if len(rows) != 0 {
-		t.Errorf("over-cap request must not insert rows; got %d", len(rows))
-	}
+	assert.Empty(t, rows, "over-cap request must not insert rows")
 }
 
 // Scenario: human revokes a grant via DELETE /v1/sudo/{id} mid-window;
@@ -189,39 +167,32 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), conv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var resp struct {
 		Grants []struct {
 			ID int64 `json:"id"`
 		} `json:"grants"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if len(resp.Grants) != 1 || resp.Grants[0].ID == 0 {
-		t.Fatalf("expected one grant with a non-zero id; got %+v", resp.Grants)
-	}
+	require.Len(t, resp.Grants, 1, "grants")
+	require.NotZero(t, resp.Grants[0].ID, "grant id")
 	grantID := resp.Grants[0].ID
 
 	// Pre-revoke: HasActiveSudoGrant returns true.
-	if ok, _ := db.HasActiveSudoGrant(conv, "groups.spawn"); !ok {
-		t.Fatalf("pre-revoke: grant should be active")
-	}
+	ok, _ := db.HasActiveSudoGrant(conv, "groups.spawn")
+	require.True(t, ok, "pre-revoke: grant should be active")
 
 	// Revoke as human.
 	delPath := "/v1/sudo/" + itoa64(grantID)
 	delReq := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodDelete, delPath, nil))
 	delRec := testharness.Serve(f.Mux, delReq)
-	if delRec.Code != http.StatusOK {
-		t.Fatalf("DELETE status=%d body=%s", delRec.Code, delRec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, delRec.Code, "DELETE body=%s", delRec.Body.String())
 
 	// Post-revoke: HasActiveSudoGrant returns false (no time travel
 	// needed — revoked_at filter does the work).
-	if ok, _ := db.HasActiveSudoGrant(conv, "groups.spawn"); ok {
-		t.Errorf("post-revoke: grant must NOT be active")
-	}
+	ok, _ = db.HasActiveSudoGrant(conv, "groups.spawn")
+	assert.False(t, ok, "post-revoke: grant must NOT be active")
 }
 
 // Scenario: GET /v1/sudo from an agent returns its own active grants;
@@ -245,47 +216,38 @@ func TestSudo_Ls_AgentSeesOnlyOwnGrants(t *testing.T) {
 		body := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "5m"}
 		r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 			http.MethodPost, "/v1/sudo", body), conv)
-		if rec := testharness.Serve(f.Mux, r); rec.Code != http.StatusOK {
-			t.Fatalf("POST for %s: status=%d body=%s", conv, rec.Code, rec.Body.String())
-		}
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusOK, rec.Code,
+			"POST for %s: body=%s", conv, rec.Body.String())
 	}
 
 	// Alice GET /v1/sudo — sees only her own row.
 	lsReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/sudo", nil), aliceConv)
 	lsRec := testharness.Serve(f.Mux, lsReq)
-	if lsRec.Code != http.StatusOK {
-		t.Fatalf("GET /v1/sudo as alice status=%d body=%s", lsRec.Code, lsRec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, lsRec.Code,
+		"GET /v1/sudo as alice body=%s", lsRec.Body.String())
 	var rows []map[string]any
 	_ = json.Unmarshal(lsRec.Body.Bytes(), &rows)
-	if len(rows) != 1 {
-		t.Fatalf("alice ls: got %d rows, want 1; body=%s", len(rows), lsRec.Body.String())
-	}
-	if rows[0]["conv_id"] != aliceConv {
-		t.Errorf("alice ls row conv_id = %v, want %s", rows[0]["conv_id"], aliceConv)
-	}
+	require.Len(t, rows, 1, "alice ls; body=%s", lsRec.Body.String())
+	assert.Equal(t, aliceConv, rows[0]["conv_id"], "alice ls row conv_id")
 
 	// Human ls --all — sees both. Cross-conv listing is human-only.
 	allReq := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/sudo?all=1", nil))
 	allRec := testharness.Serve(f.Mux, allReq)
-	if allRec.Code != http.StatusOK {
-		t.Fatalf("GET /v1/sudo?all=1 status=%d body=%s", allRec.Code, allRec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, allRec.Code,
+		"GET /v1/sudo?all=1 body=%s", allRec.Body.String())
 	var allRows []map[string]any
 	_ = json.Unmarshal(allRec.Body.Bytes(), &allRows)
-	if len(allRows) != 2 {
-		t.Errorf("human ls --all: got %d rows, want 2", len(allRows))
-	}
+	assert.Len(t, allRows, 2, "human ls --all")
 
 	// Agent ls --all — refused.
 	agentAllReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/sudo?all=1", nil), aliceConv)
 	agentAllRec := testharness.Serve(f.Mux, agentAllReq)
-	if agentAllRec.Code != http.StatusForbidden {
-		t.Errorf("agent ls --all: status=%d body=%s, want 403", agentAllRec.Code, agentAllRec.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, agentAllRec.Code,
+		"agent ls --all body=%s", agentAllRec.Body.String())
 }
 
 // writeSudoConfig drops a config.json under $HOME/.tclaude with the
@@ -295,12 +257,8 @@ func TestSudo_Ls_AgentSeesOnlyOwnGrants(t *testing.T) {
 func writeSudoConfig(t *testing.T, body string) {
 	t.Helper()
 	dir := filepath.Join(os.Getenv("HOME"), ".tclaude")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir tclaude config dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write config.json: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755), "mkdir tclaude config dir")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644), "write config.json")
 }
 
 // Scenario: config sets agent.sudo.max_duration to 30m. A request for
@@ -332,18 +290,12 @@ func TestSudo_ConfigMaxDuration_LowersTheCap(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), conv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("over-config-cap request: status=%d body=%s, want 400",
-			rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "30m") {
-		t.Errorf("error must surface the resolved cap (30m) so the human knows what was overridden; body=%s",
-			rec.Body.String())
-	}
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"over-config-cap request body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "30m",
+		"error must surface the resolved cap (30m) so the human knows what was overridden")
 	rows, _ := db.ListActiveSudoGrants(conv)
-	if len(rows) != 0 {
-		t.Errorf("over-config-cap request must not insert rows; got %d", len(rows))
-	}
+	assert.Empty(t, rows, "over-config-cap request must not insert rows")
 }
 
 // Scenario: config sets a tight global cap (15m) AND a per-conv
@@ -381,26 +333,20 @@ func TestSudo_PerConvOverrideMaxDuration_AppliedByTitle(t *testing.T) {
 	mgrReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", mgrBody), managerConv)
 	mgrRec := testharness.Serve(f.Mux, mgrReq)
-	if mgrRec.Code != http.StatusOK {
-		t.Errorf("manager 30m under override (45m): status=%d body=%s, want 200",
-			mgrRec.Code, mgrRec.Body.String())
-	}
-	if rows, _ := db.ListActiveSudoGrants(managerConv); len(rows) != 1 {
-		t.Errorf("manager grant must land; got %d rows", len(rows))
-	}
+	assert.Equal(t, http.StatusOK, mgrRec.Code,
+		"manager 30m under override (45m) body=%s", mgrRec.Body.String())
+	mgrRows, _ := db.ListActiveSudoGrants(managerConv)
+	assert.Len(t, mgrRows, 1, "manager grant must land")
 
 	// Worker: same 30m is rejected against the global 15m cap.
 	wrkBody := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "30m"}
 	wrkReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", wrkBody), workerConv)
 	wrkRec := testharness.Serve(f.Mux, wrkReq)
-	if wrkRec.Code != http.StatusBadRequest {
-		t.Errorf("worker 30m over global cap (15m): status=%d body=%s, want 400",
-			wrkRec.Code, wrkRec.Body.String())
-	}
-	if rows, _ := db.ListActiveSudoGrants(workerConv); len(rows) != 0 {
-		t.Errorf("worker over-cap request must not insert rows; got %d", len(rows))
-	}
+	assert.Equal(t, http.StatusBadRequest, wrkRec.Code,
+		"worker 30m over global cap (15m) body=%s", wrkRec.Body.String())
+	wrkRows, _ := db.ListActiveSudoGrants(workerConv)
+	assert.Empty(t, wrkRows, "worker over-cap request must not insert rows")
 }
 
 // Scenario: human runs `tclaude agent sudo request --target alice
@@ -426,25 +372,16 @@ func TestSudo_Proactive_HumanWithTarget_NoPopup(t *testing.T) {
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body))
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("proactive POST: status=%d body=%s, want 200", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"proactive POST body=%s", rec.Body.String())
 
 	rows, err := db.ListActiveSudoGrants(targetConv)
-	if err != nil {
-		t.Fatalf("ListActiveSudoGrants: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("active grants: got %d, want 1", len(rows))
-	}
+	require.NoError(t, err, "ListActiveSudoGrants")
+	require.Len(t, rows, 1, "active grants")
 	got := rows[0]
-	if got.Slug != "groups.spawn" {
-		t.Errorf("slug = %q, want groups.spawn", got.Slug)
-	}
-	if got.GrantedBy != "<human-cli>:proactive" {
-		t.Errorf("granted_by = %q, want <human-cli>:proactive (CLI label distinguishes from dashboard + popup-approved)",
-			got.GrantedBy)
-	}
+	assert.Equal(t, "groups.spawn", got.Slug, "slug")
+	assert.Equal(t, "<human-cli>:proactive", got.GrantedBy,
+		"granted_by (CLI label distinguishes from dashboard + popup-approved)")
 }
 
 // Scenario: an AGENT calls /v1/sudo with target set. That's
@@ -467,12 +404,10 @@ func TestSudo_Proactive_AgentWithTarget_Refused(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), callerConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("agent + target: status=%d body=%s, want 403", rec.Code, rec.Body.String())
-	}
-	if rows, _ := db.ListActiveSudoGrants(targetConv); len(rows) != 0 {
-		t.Errorf("agent + target must not insert rows on the target; got %d", len(rows))
-	}
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"agent + target body=%s", rec.Body.String())
+	rows, _ := db.ListActiveSudoGrants(targetConv)
+	assert.Empty(t, rows, "agent + target must not insert rows on the target")
 }
 
 // Scenario: agent sudoes groups.create then creates a group. The
@@ -506,18 +441,16 @@ func TestSudo_DownstreamAuditAnnotation_GroupsCreateOwner(t *testing.T) {
 	sudoReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", sudoBody), conv)
 	sudoRec := testharness.Serve(f.Mux, sudoReq)
-	if sudoRec.Code != http.StatusOK {
-		t.Fatalf("sudo request: status=%d body=%s", sudoRec.Code, sudoRec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, sudoRec.Code,
+		"sudo request body=%s", sudoRec.Body.String())
 	var sudoResp struct {
 		Grants []struct {
 			ID int64 `json:"id"`
 		} `json:"grants"`
 	}
 	_ = json.Unmarshal(sudoRec.Body.Bytes(), &sudoResp)
-	if len(sudoResp.Grants) != 1 || sudoResp.Grants[0].ID == 0 {
-		t.Fatalf("expected a single grant with non-zero id; got %+v", sudoResp.Grants)
-	}
+	require.Len(t, sudoResp.Grants, 1, "grants")
+	require.NotZero(t, sudoResp.Grants[0].ID, "grant id")
 	grantID := sudoResp.Grants[0].ID
 
 	// 2. Create a group. The auto-owner write inside handleGroupCreate
@@ -528,27 +461,18 @@ func TestSudo_DownstreamAuditAnnotation_GroupsCreateOwner(t *testing.T) {
 	createReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/groups", createBody), conv)
 	createRec := testharness.Serve(f.Mux, createReq)
-	if createRec.Code != http.StatusCreated {
-		t.Fatalf("groups create under sudo: status=%d body=%s",
-			createRec.Code, createRec.Body.String())
-	}
+	require.Equal(t, http.StatusCreated, createRec.Code,
+		"groups create under sudo body=%s", createRec.Body.String())
 
 	// 3. Inspect the auto-granted ownership row.
 	g, err := db.GetAgentGroupByName("team-via-sudo")
-	if err != nil || g == nil {
-		t.Fatalf("get group: err=%v g=%v", err, g)
-	}
+	require.NoError(t, err, "get group")
+	require.NotNil(t, g, "get group nil")
 	owners, err := db.ListAgentGroupOwners(g.ID)
-	if err != nil {
-		t.Fatalf("ListAgentGroupOwners: %v", err)
-	}
-	if len(owners) != 1 {
-		t.Fatalf("owner rows: got %d, want 1", len(owners))
-	}
+	require.NoError(t, err, "ListAgentGroupOwners")
+	require.Len(t, owners, 1, "owner rows")
 	want := fmt.Sprintf("%s:via-sudo:grant-id=%d", conv, grantID)
-	if owners[0].GrantedBy != want {
-		t.Errorf("granted_by = %q, want %q", owners[0].GrantedBy, want)
-	}
+	assert.Equal(t, want, owners[0].GrantedBy, "granted_by")
 }
 
 // Scenario: agent has groups.create via the normal permission_overrides
@@ -560,31 +484,22 @@ func TestSudo_DownstreamAuditAnnotation_NoSudoNoAnnotation(t *testing.T) {
 	f := newFlow(t)
 	const conv = "nau-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(conv, "trusted-worker")
-	if err := db.GrantAgentPermission(conv, "groups.create", "<test>"); err != nil {
-		t.Fatalf("seed permission: %v", err)
-	}
+	require.NoError(t, db.GrantAgentPermission(conv, "groups.create", "<test>"), "seed permission")
 
 	createBody := map[string]any{"name": "team-no-sudo"}
 	createReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/groups", createBody), conv)
 	createRec := testharness.Serve(f.Mux, createReq)
-	if createRec.Code != http.StatusCreated {
-		t.Fatalf("groups create with permission row: status=%d body=%s",
-			createRec.Code, createRec.Body.String())
-	}
+	require.Equal(t, http.StatusCreated, createRec.Code,
+		"groups create with permission row body=%s", createRec.Body.String())
 
 	g, err := db.GetAgentGroupByName("team-no-sudo")
-	if err != nil || g == nil {
-		t.Fatalf("get group: err=%v g=%v", err, g)
-	}
+	require.NoError(t, err, "get group")
+	require.NotNil(t, g, "get group nil")
 	owners, _ := db.ListAgentGroupOwners(g.ID)
-	if len(owners) != 1 {
-		t.Fatalf("owner rows: got %d, want 1", len(owners))
-	}
-	if owners[0].GrantedBy != conv {
-		t.Errorf("granted_by = %q, want plain %q (no via-sudo annotation when sudo wasn't load-bearing)",
-			owners[0].GrantedBy, conv)
-	}
+	require.Len(t, owners, 1, "owner rows")
+	assert.Equal(t, conv, owners[0].GrantedBy,
+		"granted_by should be plain conv-id (no via-sudo annotation when sudo wasn't load-bearing)")
 }
 
 // Scenario: config-supplied blocklist replaces the hardcoded default.
@@ -616,21 +531,17 @@ func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
 	allowReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", allowBody), conv)
 	allowRec := testharness.Serve(f.Mux, allowReq)
-	if allowRec.Code != http.StatusOK {
-		t.Errorf("config replaced blocklist; permissions.grant should be allowable now: status=%d body=%s",
-			allowRec.Code, allowRec.Body.String())
-	}
+	assert.Equal(t, http.StatusOK, allowRec.Code,
+		"config replaced blocklist; permissions.grant should be allowable now: body=%s",
+		allowRec.Body.String())
 
 	// groups.own — newly blocked by config. Should 403 without popup.
 	denyBody := map[string]any{"slugs": []string{"groups.own"}, "duration": "5m"}
 	denyReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", denyBody), conv)
 	denyRec := testharness.Serve(f.Mux, denyReq)
-	if denyRec.Code != http.StatusForbidden {
-		t.Errorf("groups.own newly blocked by config: status=%d body=%s, want 403",
-			denyRec.Code, denyRec.Body.String())
-	}
-	if !strings.Contains(denyRec.Body.String(), "groups.own") {
-		t.Errorf("error must name the blocked slug; body=%s", denyRec.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, denyRec.Code,
+		"groups.own newly blocked by config body=%s", denyRec.Body.String())
+	assert.Contains(t, denyRec.Body.String(), "groups.own",
+		"error must name the blocked slug")
 }

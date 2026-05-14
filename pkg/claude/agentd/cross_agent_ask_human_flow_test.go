@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -43,10 +45,8 @@ func TestCrossAgentAskHuman_NoHeaderStillRefuses(t *testing.T) {
 		"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})
 	r = agentd.AsAgentPeer(r, callerConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without slug + without --ask-human, got %d body=%s",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusForbidden, rec.Code,
+		"expected 403 without slug + without --ask-human, body=%s", rec.Body.String())
 }
 
 // Scenario: same caller, same denied paths, BUT the caller adds
@@ -81,19 +81,13 @@ func TestCrossAgentAskHuman_HeaderAndApprovalAllowsCall(t *testing.T) {
 	r.Header.Set("X-Tclaude-Ask-Human", "30s")
 	r = agentd.AsAgentPeer(r, callerConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 after popup-approve, got %d body=%s",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"expected 200 after popup-approve, body=%s", rec.Body.String())
 	// reincarnate orchestration ran: there should be a succession row
 	// from the old conv to a new one.
 	successor, err := db.GetConvSuccessor(targetConv)
-	if err != nil {
-		t.Fatalf("GetConvSuccessor: %v", err)
-	}
-	if successor == "" {
-		t.Fatal("reincarnate did not record a successor; the orchestration was not actually run")
-	}
+	require.NoError(t, err, "GetConvSuccessor")
+	require.NotEmpty(t, successor, "reincarnate did not record a successor; the orchestration was not actually run")
 }
 
 // Same setup but popup DENIES. The cross-agent call must still
@@ -119,13 +113,9 @@ func TestCrossAgentAskHuman_HeaderAndDenialStillRefuses(t *testing.T) {
 	r.Header.Set("X-Tclaude-Ask-Human", "30s")
 	r = agentd.AsAgentPeer(r, callerConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 after popup-deny, got %d body=%s",
-			rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusForbidden, rec.Code,
+		"expected 403 after popup-deny, body=%s", rec.Body.String())
 	// And no succession row was written.
 	successor, _ := db.GetConvSuccessor(targetConv)
-	if successor != "" {
-		t.Errorf("reincarnate ran despite popup-deny — successor %s recorded", successor)
-	}
+	assert.Empty(t, successor, "reincarnate ran despite popup-deny — successor %s recorded", successor)
 }

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -35,28 +37,22 @@ func TestCronPatch_PartialFields(t *testing.T) {
 		Body:            "body-pre",
 		Enabled:         true,
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentCronJob: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentCronJob")
 
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodPatch, "/v1/cron/"+strconv.FormatInt(id, 10),
 		map[string]any{"enabled": false}))
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "PATCH body=%s", rec.Body.String())
 	got, _ := db.GetAgentCronJob(id)
-	if got == nil {
-		t.Fatalf("job vanished after PATCH")
-	}
-	if got.Enabled {
-		t.Errorf("expected enabled=false after PATCH, got true")
-	}
-	if got.Name != "before" || got.Subject != "subj" || got.Body != "body-pre" ||
-		got.IntervalSeconds != 600 || got.OwnerConv != convA || got.TargetConv != convB {
-		t.Errorf("non-patched fields changed: %+v", got)
-	}
+	require.NotNil(t, got, "job vanished after PATCH")
+	assert.False(t, got.Enabled, "expected enabled=false after PATCH")
+	assert.Equal(t, "before", got.Name, "name")
+	assert.Equal(t, "subj", got.Subject, "subject")
+	assert.Equal(t, "body-pre", got.Body, "body")
+	assert.EqualValues(t, 600, got.IntervalSeconds, "interval")
+	assert.Equal(t, convA, got.OwnerConv, "owner")
+	assert.Equal(t, convB, got.TargetConv, "target")
 }
 
 // Scenario: PATCH that touches `interval` must NOT bump last_run_at.
@@ -73,29 +69,19 @@ func TestCronPatch_IntervalDoesNotBumpLastRunAt(t *testing.T) {
 		Name: "n", OwnerConv: conv, TargetConv: conv,
 		IntervalSeconds: 60, Body: "x", Enabled: true,
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentCronJob: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentCronJob")
 	stamped := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Second)
-	if err := db.UpdateAgentCronJobLastRun(id, stamped, "ok"); err != nil {
-		t.Fatalf("stamp: %v", err)
-	}
+	require.NoError(t, db.UpdateAgentCronJobLastRun(id, stamped, "ok"), "stamp")
 
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodPatch, "/v1/cron/"+strconv.FormatInt(id, 10),
 		map[string]any{"interval": "5m"}))
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "PATCH body=%s", rec.Body.String())
 	got, _ := db.GetAgentCronJob(id)
-	if got.IntervalSeconds != 300 {
-		t.Errorf("interval after PATCH = %d, want 300", got.IntervalSeconds)
-	}
-	if !got.LastRunAt.Equal(stamped) {
-		t.Errorf("last_run_at changed after interval PATCH: got %v, want %v",
-			got.LastRunAt, stamped)
-	}
+	assert.EqualValues(t, 300, got.IntervalSeconds, "interval after PATCH")
+	assert.True(t, got.LastRunAt.Equal(stamped),
+		"last_run_at changed after interval PATCH: got %v, want %v", got.LastRunAt, stamped)
 }
 
 // Scenario: PATCH with a name containing spaces / special chars is
@@ -124,16 +110,12 @@ func TestCronPatch_RejectsBadCharset(t *testing.T) {
 			http.MethodPatch, "/v1/cron/"+strconv.FormatInt(id, 10),
 			map[string]any{"name": bad}))
 		rec := testharness.Serve(f.Mux, r)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("PATCH name=%q status=%d body=%s, want 400",
-				bad, rec.Code, rec.Body.String())
-		}
+		assert.Equal(t, http.StatusBadRequest, rec.Code,
+			"PATCH name=%q body=%s", bad, rec.Body.String())
 	}
 	// And the name we stored is unchanged.
 	got, _ := db.GetAgentCronJob(id)
-	if got.Name != "ok-name" {
-		t.Errorf("name should be unchanged after rejected PATCHes; got %q", got.Name)
-	}
+	assert.Equal(t, "ok-name", got.Name, "name should be unchanged after rejected PATCHes")
 }
 
 // Scenario: PATCH /v1/cron/{id} with an interval shorter than the
@@ -154,10 +136,8 @@ func TestCronPatch_RejectsTooShortInterval(t *testing.T) {
 		http.MethodPatch, "/v1/cron/"+strconv.FormatInt(id, 10),
 		map[string]any{"interval": "5s"}))
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("PATCH interval=5s status=%d body=%s, want 400",
-			rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"PATCH interval=5s body=%s", rec.Body.String())
 }
 
 // Scenario: PATCH /v1/cron/{id} on a missing id returns 404.
@@ -168,10 +148,8 @@ func TestCronPatch_NotFound(t *testing.T) {
 		http.MethodPatch, "/v1/cron/9999",
 		map[string]any{"enabled": false}))
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("PATCH unknown id: status=%d body=%s, want 404",
-			rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusNotFound, rec.Code,
+		"PATCH unknown id body=%s", rec.Body.String())
 }
 
 // Scenario: an agent without `agent.schedule` or group-ownership over
@@ -196,14 +174,11 @@ func TestCronPatch_AuthGate_DeniesUnrelatedAgent(t *testing.T) {
 		http.MethodPatch, "/v1/cron/"+strconv.FormatInt(id, 10),
 		map[string]any{"enabled": false}), otherConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("unrelated agent PATCH: status=%d body=%s, want 403",
-			rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"unrelated agent PATCH body=%s", rec.Body.String())
 	got, _ := db.GetAgentCronJob(id)
-	if !got.Enabled {
-		t.Errorf("denied PATCH must not change state; enabled=false leaked through")
-	}
+	assert.True(t, got.Enabled,
+		"denied PATCH must not change state; enabled=false leaked through")
 }
 
 // Scenario: dashboard cookie-auth twin PATCH /api/cron/{id} flows the
@@ -233,17 +208,14 @@ func TestDashboardCron_Patch_RoundTrips(t *testing.T) {
 		"/api/cron/"+strconv.FormatInt(id, 10), strings.NewReader(string(body)))
 	r.Header.Set("Content-Type", "application/json")
 	rec := testharness.Serve(mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("dashboard PATCH: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "dashboard PATCH body=%s", rec.Body.String())
 	got, _ := db.GetAgentCronJob(id)
-	if got.Name != "new-name" || got.Subject != "new-subj" || got.Body != "new-body" {
-		t.Errorf("PATCH didn't apply: %+v", got)
-	}
+	assert.Equal(t, "new-name", got.Name, "name")
+	assert.Equal(t, "new-subj", got.Subject, "subject")
+	assert.Equal(t, "new-body", got.Body, "body")
 	// Untouched.
-	if got.IntervalSeconds != 60 || !got.Enabled {
-		t.Errorf("untouched fields changed: %+v", got)
-	}
+	assert.EqualValues(t, 60, got.IntervalSeconds, "interval untouched")
+	assert.True(t, got.Enabled, "enabled untouched")
 }
 
 // Scenario: dashboard cookie-auth twin POST /api/cron creates a job
@@ -272,24 +244,19 @@ func TestDashboardCron_Create_OwnerOverride(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(string(body)))
 	r.Header.Set("Content-Type", "application/json")
 	rec := testharness.Serve(mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("dashboard POST /api/cron: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"dashboard POST /api/cron body=%s", rec.Body.String())
 	var resp struct {
 		ID         int64  `json:"id"`
 		OwnerConv  string `json:"owner_conv"`
 		TargetConv string `json:"target_conv"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp.OwnerConv != ownerConv {
-		t.Errorf("owner_conv = %q, want %q", resp.OwnerConv, ownerConv)
-	}
-	if resp.TargetConv != targetConv {
-		t.Errorf("target_conv = %q, want %q", resp.TargetConv, targetConv)
-	}
+	assert.Equal(t, ownerConv, resp.OwnerConv, "owner_conv")
+	assert.Equal(t, targetConv, resp.TargetConv, "target_conv")
 	got, _ := db.GetAgentCronJob(resp.ID)
-	if got == nil || got.OwnerConv != ownerConv {
-		t.Errorf("DB row owner mismatch: %+v", got)
+	if assert.NotNil(t, got, "DB row missing") {
+		assert.Equal(t, ownerConv, got.OwnerConv, "DB row owner")
 	}
 }
 
@@ -312,9 +279,8 @@ func TestDashboardCron_CreateAuthRequired(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/cron", strings.NewReader(string(body)))
 	r.Header.Set("Content-Type", "application/json")
 	rec := testharness.Serve(mux, r)
-	if rec.Code == http.StatusOK {
-		t.Errorf("dashboard POST /api/cron without cookie should fail; got 200 body=%s", rec.Body.String())
-	}
+	assert.NotEqual(t, http.StatusOK, rec.Code,
+		"dashboard POST /api/cron without cookie should fail; body=%s", rec.Body.String())
 }
 
 // Scenario: PATCH /api/cron/{id} without the dashboard cookie returns
@@ -342,11 +308,8 @@ func TestDashboardCron_PatchAuthRequired(t *testing.T) {
 		strings.NewReader(`{"enabled":false}`))
 	r.Header.Set("Content-Type", "application/json")
 	rec := testharness.Serve(mux, r)
-	if rec.Code == http.StatusOK {
-		t.Errorf("dashboard PATCH without cookie should fail; got 200 body=%s", rec.Body.String())
-	}
+	assert.NotEqual(t, http.StatusOK, rec.Code,
+		"dashboard PATCH without cookie should fail; body=%s", rec.Body.String())
 	got, _ := db.GetAgentCronJob(id)
-	if !got.Enabled {
-		t.Errorf("auth-failed PATCH must not change state")
-	}
+	assert.True(t, got.Enabled, "auth-failed PATCH must not change state")
 }

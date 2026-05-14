@@ -3,6 +3,8 @@ package common
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestBuildEnvExports(t *testing.T) {
@@ -62,29 +64,24 @@ func TestBuildEnvExports(t *testing.T) {
 
 			// Check that wanted variables are present
 			for varName := range tt.wantVars {
-				if !strings.Contains(result, "export "+varName+"=") {
-					t.Errorf("BuildEnvExports() missing variable %s", varName)
-				}
+				assert.Contains(t, result, "export "+varName+"=", "BuildEnvExports() missing variable %s", varName)
 			}
 
 			// Check that skipped variables are not present
 			for varName := range tt.skipVars {
-				if strings.Contains(result, "export "+varName+"=") {
-					t.Errorf("BuildEnvExports() should skip variable %s", varName)
-				}
+				assert.NotContains(t, result, "export "+varName+"=", "BuildEnvExports() should skip variable %s", varName)
 			}
 
 			// Verify it ends with "; " if there are exports
-			if len(result) > 0 && !strings.HasSuffix(result, "; ") {
-				t.Errorf("BuildEnvExports() should end with '; ', got: %q", result[len(result)-10:])
+			if len(result) > 0 {
+				assert.True(t, strings.HasSuffix(result, "; "), "BuildEnvExports() should end with '; ', got: %q", result[len(result)-10:])
 			}
 
 			// Test specific override case
 			if tt.name == "override existing var" && tt.additional != nil {
 				// Accept either quoted or unquoted (simple values don't need quotes)
-				if !strings.Contains(result, "TEST_VAR1=overridden") && !strings.Contains(result, "TEST_VAR1='overridden'") {
-					t.Errorf("BuildEnvExports() should override TEST_VAR1 with 'overridden', got: %s", result)
-				}
+				hasOverride := strings.Contains(result, "TEST_VAR1=overridden") || strings.Contains(result, "TEST_VAR1='overridden'")
+				assert.True(t, hasOverride, "BuildEnvExports() should override TEST_VAR1 with 'overridden', got: %s", result)
 			}
 		})
 	}
@@ -121,9 +118,7 @@ func TestBuildEnvExports_Quoting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := BuildEnvExports(tt.envVars)
-			if !strings.Contains(result, tt.wantPart) {
-				t.Errorf("BuildEnvExports() = %q, want to contain %q", result, tt.wantPart)
-			}
+			assert.Contains(t, result, tt.wantPart, "BuildEnvExports() = %q, want to contain %q", result, tt.wantPart)
 		})
 	}
 }
@@ -131,7 +126,5 @@ func TestBuildEnvExports_Quoting(t *testing.T) {
 func TestBuildEnvExports_EmptyAdditional(t *testing.T) {
 	result := BuildEnvExports(map[string]string{})
 	// Should still export current environment (minus skipped vars)
-	if len(result) == 0 {
-		t.Error("BuildEnvExports() with empty map should still export current environment")
-	}
+	assert.NotEmpty(t, result, "BuildEnvExports() with empty map should still export current environment")
 }

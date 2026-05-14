@@ -4,8 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTestRepo creates a temporary git repository for testing.
@@ -18,22 +20,16 @@ func setupTestRepo(t *testing.T) (repoPath string, worktreeDir string) {
 
 	// Resolve symlinks (macOS /var -> /private/var) so paths match git output
 	parentDir, err := filepath.EvalSymlinks(parentDir)
-	if err != nil {
-		t.Fatalf("failed to resolve symlinks: %v", err)
-	}
+	require.NoError(t, err, "failed to resolve symlinks")
 
 	// Create repo inside the parent dir
 	repoPath = filepath.Join(parentDir, "test-repo")
-	if err := os.MkdirAll(repoPath, 0755); err != nil {
-		t.Fatalf("failed to create repo dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(repoPath, 0755), "failed to create repo dir")
 
 	// Initialize git repo
 	cmd := exec.Command("git", "init")
 	cmd.Dir = repoPath
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
-	}
+	require.NoError(t, cmd.Run(), "failed to init git repo")
 
 	// Configure git user for commits
 	_ = exec.Command("git", "-C", repoPath, "config", "user.email", "test@example.com").Run()
@@ -41,21 +37,15 @@ func setupTestRepo(t *testing.T) (repoPath string, worktreeDir string) {
 
 	// Create initial commit
 	testFile := filepath.Join(repoPath, "README.md")
-	if err := os.WriteFile(testFile, []byte("# Test Repo\n"), 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFile, []byte("# Test Repo\n"), 0644), "failed to create test file")
 
 	cmd = exec.Command("git", "add", ".")
 	cmd.Dir = repoPath
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to git add: %v", err)
-	}
+	require.NoError(t, cmd.Run(), "failed to git add")
 
 	cmd = exec.Command("git", "commit", "-m", "Initial commit")
 	cmd.Dir = repoPath
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to git commit: %v", err)
-	}
+	require.NoError(t, cmd.Run(), "failed to git commit")
 
 	// Rename branch to main
 	cmd = exec.Command("git", "branch", "-M", "main")
@@ -69,12 +59,8 @@ func setupTestRepo(t *testing.T) (repoPath string, worktreeDir string) {
 func withWorkingDir(t *testing.T, dir string, fn func()) {
 	t.Helper()
 	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working dir: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("failed to chdir to %s: %v", dir, err)
-	}
+	require.NoError(t, err, "failed to get working dir")
+	require.NoErrorf(t, os.Chdir(dir), "failed to chdir to %s", dir)
 	defer func() { _ = os.Chdir(oldWd) }()
 	fn()
 }
@@ -90,22 +76,13 @@ func TestGetGitInfo(t *testing.T) {
 
 	withWorkingDir(t, repoPath, func() {
 		info, err := GetGitInfo()
-		if err != nil {
-			t.Fatalf("GetGitInfo failed: %v", err)
-		}
+		require.NoError(t, err, "GetGitInfo failed")
 
-		if normalizePath(info.RepoRoot) != normalizePath(repoPath) {
-			t.Errorf("expected RepoRoot=%s, got %s", repoPath, info.RepoRoot)
-		}
-
-		if info.IsWorktree {
-			t.Error("expected IsWorktree=false for main repo")
-		}
+		assert.Equal(t, normalizePath(repoPath), normalizePath(info.RepoRoot))
+		assert.False(t, info.IsWorktree, "expected IsWorktree=false for main repo")
 
 		expectedName := filepath.Base(repoPath)
-		if info.RepoName != expectedName {
-			t.Errorf("expected RepoName=%s, got %s", expectedName, info.RepoName)
-		}
+		assert.Equal(t, expectedName, info.RepoName)
 	})
 }
 
@@ -114,13 +91,9 @@ func TestGetDefaultBranch(t *testing.T) {
 
 	withWorkingDir(t, repoPath, func() {
 		branch, err := GetDefaultBranch()
-		if err != nil {
-			t.Fatalf("GetDefaultBranch failed: %v", err)
-		}
+		require.NoError(t, err, "GetDefaultBranch failed")
 
-		if branch != "main" && branch != "master" {
-			t.Errorf("expected branch to be main or master, got %s", branch)
-		}
+		assert.Truef(t, branch == "main" || branch == "master", "expected branch to be main or master, got %s", branch)
 	})
 }
 
@@ -128,13 +101,8 @@ func TestBranchExists(t *testing.T) {
 	repoPath, _ := setupTestRepo(t)
 
 	withWorkingDir(t, repoPath, func() {
-		if !BranchExists("main") {
-			t.Error("expected main branch to exist")
-		}
-
-		if BranchExists("nonexistent-branch") {
-			t.Error("expected nonexistent-branch to not exist")
-		}
+		assert.True(t, BranchExists("main"), "expected main branch to exist")
+		assert.False(t, BranchExists("nonexistent-branch"), "expected nonexistent-branch to not exist")
 	})
 }
 
@@ -144,21 +112,13 @@ func TestListWorktrees(t *testing.T) {
 	withWorkingDir(t, repoPath, func() {
 		// Initially should have just one worktree (main)
 		worktrees, err := ListWorktrees()
-		if err != nil {
-			t.Fatalf("ListWorktrees failed: %v", err)
-		}
+		require.NoError(t, err, "ListWorktrees failed")
 
-		if len(worktrees) != 1 {
-			t.Errorf("expected 1 worktree, got %d", len(worktrees))
-		}
+		assert.Len(t, worktrees, 1)
 
 		if len(worktrees) > 0 {
-			if !worktrees[0].IsMain {
-				t.Error("expected first worktree to be marked as main")
-			}
-			if worktrees[0].Branch != "main" {
-				t.Errorf("expected branch=main, got %s", worktrees[0].Branch)
-			}
+			assert.True(t, worktrees[0].IsMain, "expected first worktree to be marked as main")
+			assert.Equal(t, "main", worktrees[0].Branch)
 		}
 	})
 }
@@ -177,53 +137,38 @@ func TestWorktreeAddAndRemove(t *testing.T) {
 		}
 
 		err := runAdd(params)
-		if err != nil {
-			t.Fatalf("runAdd failed: %v", err)
-		}
+		require.NoError(t, err, "runAdd failed")
 
 		// Verify worktree was created
-		if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
-			t.Error("worktree directory was not created")
-		}
+		_, statErr := os.Stat(worktreePath)
+		assert.False(t, os.IsNotExist(statErr), "worktree directory was not created")
 
 		// Verify it appears in list
 		worktrees, err := ListWorktrees()
-		if err != nil {
-			t.Fatalf("ListWorktrees failed: %v", err)
-		}
+		require.NoError(t, err, "ListWorktrees failed")
 
-		if len(worktrees) != 2 {
-			t.Errorf("expected 2 worktrees, got %d", len(worktrees))
-		}
+		assert.Len(t, worktrees, 2)
 
 		// Find the new worktree
 		var found bool
 		for _, wt := range worktrees {
 			if wt.Branch == "feature-test" {
 				found = true
-				if normalizePath(wt.Path) != normalizePath(worktreePath) {
-					t.Errorf("expected path=%s, got %s", worktreePath, wt.Path)
-				}
+				assert.Equal(t, normalizePath(worktreePath), normalizePath(wt.Path))
 			}
 		}
-		if !found {
-			t.Error("feature-test worktree not found in list")
-		}
+		assert.True(t, found, "feature-test worktree not found in list")
 
 		// Test FindWorktreeByBranch
 		wt, err := FindWorktreeByBranch("feature-test")
-		if err != nil {
-			t.Errorf("FindWorktreeByBranch failed: %v", err)
-		} else if normalizePath(wt.Path) != normalizePath(worktreePath) {
-			t.Errorf("FindWorktreeByBranch returned wrong path")
+		if assert.NoError(t, err, "FindWorktreeByBranch failed") {
+			assert.Equal(t, normalizePath(worktreePath), normalizePath(wt.Path), "FindWorktreeByBranch returned wrong path")
 		}
 
 		// Test FindWorktreeByPath - use normalized path for lookup on Windows
 		wt, err = FindWorktreeByPath(normalizePath(worktreePath))
-		if err != nil {
-			t.Errorf("FindWorktreeByPath failed: %v", err)
-		} else if wt.Branch != "feature-test" {
-			t.Errorf("FindWorktreeByPath returned wrong branch")
+		if assert.NoError(t, err, "FindWorktreeByPath failed") {
+			assert.Equal(t, "feature-test", wt.Branch, "FindWorktreeByPath returned wrong branch")
 		}
 
 		// Remove the worktree
@@ -233,19 +178,13 @@ func TestWorktreeAddAndRemove(t *testing.T) {
 		}
 
 		err = runRemove(removeParams)
-		if err != nil {
-			t.Fatalf("runRemove failed: %v", err)
-		}
+		require.NoError(t, err, "runRemove failed")
 
 		// Verify worktree was removed
 		worktrees, err = ListWorktrees()
-		if err != nil {
-			t.Fatalf("ListWorktrees failed: %v", err)
-		}
+		require.NoError(t, err, "ListWorktrees failed")
 
-		if len(worktrees) != 1 {
-			t.Errorf("expected 1 worktree after removal, got %d", len(worktrees))
-		}
+		assert.Len(t, worktrees, 1)
 	})
 }
 
@@ -255,9 +194,7 @@ func TestAddWorktreePathAlreadyExists(t *testing.T) {
 	withWorkingDir(t, repoPath, func() {
 		// Create a directory where the worktree would go
 		existingPath := filepath.Join(parentDir, "test-repo-exists")
-		if err := os.MkdirAll(existingPath, 0755); err != nil {
-			t.Fatalf("failed to create existing dir: %v", err)
-		}
+		require.NoError(t, os.MkdirAll(existingPath, 0755), "failed to create existing dir")
 
 		params := &AddParams{
 			Branch:   "exists-test",
@@ -266,13 +203,8 @@ func TestAddWorktreePathAlreadyExists(t *testing.T) {
 		}
 
 		err := runAdd(params)
-		if err == nil {
-			t.Error("expected error when path already exists")
-		}
-
-		if !strings.Contains(err.Error(), "already exists") {
-			t.Errorf("expected 'already exists' error, got: %v", err)
-		}
+		require.Error(t, err, "expected error when path already exists")
+		assert.Contains(t, err.Error(), "already exists", "expected 'already exists' error")
 	})
 }
 
@@ -283,9 +215,7 @@ func TestAddWorktreeWithExistingBranch(t *testing.T) {
 		// Create a branch first
 		cmd := exec.Command("git", "branch", "existing-branch")
 		cmd.Dir = repoPath
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("failed to create branch: %v", err)
-		}
+		require.NoError(t, cmd.Run(), "failed to create branch")
 
 		// Create worktree for existing branch
 		worktreePath := filepath.Join(parentDir, "test-repo-existing")
@@ -297,16 +227,12 @@ func TestAddWorktreeWithExistingBranch(t *testing.T) {
 		}
 
 		err := runAdd(params)
-		if err != nil {
-			t.Fatalf("runAdd failed for existing branch: %v", err)
-		}
+		require.NoError(t, err, "runAdd failed for existing branch")
 
 		// Verify
 		wt, err := FindWorktreeByBranch("existing-branch")
-		if err != nil {
-			t.Errorf("FindWorktreeByBranch failed: %v", err)
-		} else if normalizePath(wt.Path) != normalizePath(worktreePath) {
-			t.Errorf("wrong path for existing branch worktree")
+		if assert.NoError(t, err, "FindWorktreeByBranch failed") {
+			assert.Equal(t, normalizePath(worktreePath), normalizePath(wt.Path), "wrong path for existing branch worktree")
 		}
 	})
 }
@@ -321,13 +247,8 @@ func TestRemoveMainWorktree(t *testing.T) {
 		}
 
 		err := runRemove(params)
-		if err == nil {
-			t.Error("expected error when removing main worktree")
-		}
-
-		if !strings.Contains(err.Error(), "cannot remove the main worktree") {
-			t.Errorf("expected 'cannot remove main' error, got: %v", err)
-		}
+		require.Error(t, err, "expected error when removing main worktree")
+		assert.Contains(t, err.Error(), "cannot remove the main worktree", "expected 'cannot remove main' error")
 	})
 }
 
@@ -343,9 +264,7 @@ func TestGetBranchCompletions(t *testing.T) {
 		}
 
 		completions := GetBranchCompletions()
-		if len(completions) < 4 { // main + 3 new branches
-			t.Errorf("expected at least 4 completions, got %d", len(completions))
-		}
+		assert.GreaterOrEqual(t, len(completions), 4, "expected at least 4 completions") // main + 3 new branches
 
 		// Check that our branches are in there
 		branchSet := make(map[string]bool)
@@ -354,9 +273,7 @@ func TestGetBranchCompletions(t *testing.T) {
 		}
 
 		for _, expected := range []string{"main", "feature-a", "feature-b", "bugfix-1"} {
-			if !branchSet[expected] {
-				t.Errorf("expected %s in completions", expected)
-			}
+			assert.Truef(t, branchSet[expected], "expected %s in completions", expected)
 		}
 	})
 }
@@ -372,22 +289,17 @@ func TestAddWorktreeWithSlashInBranchName(t *testing.T) {
 		}
 
 		err := runAdd(params)
-		if err != nil {
-			t.Fatalf("runAdd failed: %v", err)
-		}
+		require.NoError(t, err, "runAdd failed")
 
 		// The path should be test-repo-feat--my-feature, not test-repo-feat/my-feature
 		expectedPath := filepath.Join(parentDir, "test-repo-feat--my-feature")
-		if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
-			t.Errorf("expected worktree at %s but it doesn't exist", expectedPath)
-		}
+		_, statErr := os.Stat(expectedPath)
+		assert.Falsef(t, os.IsNotExist(statErr), "expected worktree at %s but it doesn't exist", expectedPath)
 
 		// Verify the branch name is preserved in git
 		wt, err := FindWorktreeByBranch("feat/my-feature")
-		if err != nil {
-			t.Errorf("FindWorktreeByBranch failed: %v", err)
-		} else if normalizePath(wt.Path) != normalizePath(expectedPath) {
-			t.Errorf("expected path=%s, got %s", expectedPath, wt.Path)
+		if assert.NoError(t, err, "FindWorktreeByBranch failed") {
+			assert.Equal(t, normalizePath(expectedPath), normalizePath(wt.Path))
 		}
 	})
 }

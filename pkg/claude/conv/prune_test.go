@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -16,13 +18,11 @@ import (
 // helpers actually read.
 func indexInDB(t *testing.T, projectDir, sessionID, filePath string) {
 	t.Helper()
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:     sessionID,
 		ProjectDir: projectDir,
 		FullPath:   filePath,
-	}); err != nil {
-		t.Fatalf("UpsertConvIndex: %v", err)
-	}
+	}), "UpsertConvIndex")
 }
 
 
@@ -39,9 +39,7 @@ func createConvFile(t *testing.T, dir, sessionID string, withUserMsg bool) strin
 		content = `{"type":"assistant","message":{"role":"assistant","content":"hi"},"timestamp":"2026-01-01T00:00:01Z"}
 `
 	}
-	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write conv file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filePath, []byte(content), 0644), "Failed to write conv file")
 	return filePath
 }
 
@@ -50,12 +48,8 @@ func createIndex(t *testing.T, dir string, entries []SessionEntry) {
 	t.Helper()
 	index := SessionsIndex{Version: 1, Entries: entries}
 	data, err := json.MarshalIndent(index, "", "  ")
-	if err != nil {
-		t.Fatalf("Failed to marshal index: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "sessions-index.json"), data, 0644); err != nil {
-		t.Fatalf("Failed to write index: %v", err)
-	}
+	require.NoError(t, err, "Failed to marshal index")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sessions-index.json"), data, 0644), "Failed to write index")
 }
 
 // helper to create a companion directory with a subagent file
@@ -63,13 +57,9 @@ func createCompanionDir(t *testing.T, dir, sessionID string) string {
 	t.Helper()
 	companionDir := filepath.Join(dir, sessionID)
 	subagentDir := filepath.Join(companionDir, "subagents")
-	if err := os.MkdirAll(subagentDir, 0755); err != nil {
-		t.Fatalf("Failed to create companion dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(subagentDir, 0755), "Failed to create companion dir")
 	subagentFile := filepath.Join(subagentDir, "agent-aprompt_suggestion-abc123.jsonl")
-	if err := os.WriteFile(subagentFile, []byte(`{"type":"assistant"}`), 0644); err != nil {
-		t.Fatalf("Failed to write subagent file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(subagentFile, []byte(`{"type":"assistant"}`), 0644), "Failed to write subagent file")
 	return companionDir
 }
 
@@ -84,12 +74,8 @@ func TestFindEmptyConversations(t *testing.T) {
 
 	result := findEmptyConversations(dir)
 
-	if len(result) != 1 {
-		t.Fatalf("Expected 1 empty conversation, got %d", len(result))
-	}
-	if result[0].SessionID != emptyID {
-		t.Errorf("Expected session ID %s, got %s", emptyID, result[0].SessionID)
-	}
+	require.Len(t, result, 1, "Expected 1 empty conversation")
+	assert.Equal(t, emptyID, result[0].SessionID)
 }
 
 func TestFindEmptyConversations_IndexedFlag(t *testing.T) {
@@ -105,22 +91,16 @@ func TestFindEmptyConversations_IndexedFlag(t *testing.T) {
 
 	result := findEmptyConversations(dir)
 
-	if len(result) != 2 {
-		t.Fatalf("Expected 2 empty conversations, got %d", len(result))
-	}
+	require.Len(t, result, 2, "Expected 2 empty conversations")
 
 	indexed := 0
 	for _, c := range result {
 		if c.IsIndexed {
 			indexed++
-			if c.SessionID != indexedID {
-				t.Errorf("Expected indexed session %s, got %s", indexedID, c.SessionID)
-			}
+			assert.Equal(t, indexedID, c.SessionID, "Expected indexed session %s", indexedID)
 		}
 	}
-	if indexed != 1 {
-		t.Errorf("Expected 1 indexed conversation, got %d", indexed)
-	}
+	assert.Equal(t, 1, indexed, "Expected 1 indexed conversation")
 }
 
 func TestFindMissingFileEntries(t *testing.T) {
@@ -138,15 +118,9 @@ func TestFindMissingFileEntries(t *testing.T) {
 
 	result := findMissingFileEntries(dir)
 
-	if len(result) != 1 {
-		t.Fatalf("Expected 1 missing entry, got %d", len(result))
-	}
-	if result[0].SessionID != missingID {
-		t.Errorf("Expected session ID %s, got %s", missingID, result[0].SessionID)
-	}
-	if !result[0].IsIndexed {
-		t.Error("Expected IsIndexed to be true for missing-file entry")
-	}
+	require.Len(t, result, 1, "Expected 1 missing entry")
+	assert.Equal(t, missingID, result[0].SessionID)
+	assert.True(t, result[0].IsIndexed, "Expected IsIndexed to be true for missing-file entry")
 }
 
 func TestFindDanglingDirectories(t *testing.T) {
@@ -164,12 +138,8 @@ func TestFindDanglingDirectories(t *testing.T) {
 
 	result := findDanglingDirectories(dir)
 
-	if len(result) != 1 {
-		t.Fatalf("Expected 1 dangling directory, got %d", len(result))
-	}
-	if result[0].SessionID != danglingID {
-		t.Errorf("Expected session ID %s, got %s", danglingID, result[0].SessionID)
-	}
+	require.Len(t, result, 1, "Expected 1 dangling directory")
+	assert.Equal(t, danglingID, result[0].SessionID)
 }
 
 func TestFindDanglingDirectories_IgnoresNonUUID(t *testing.T) {
@@ -177,16 +147,12 @@ func TestFindDanglingDirectories_IgnoresNonUUID(t *testing.T) {
 
 	// Create directories that don't look like UUIDs
 	for _, name := range []string{"subagents", "cache", "short", "not-a-uuid-but-has-36-chars-in-name!"} {
-		if err := os.MkdirAll(filepath.Join(dir, name), 0755); err != nil {
-			t.Fatalf("Failed to create dir: %v", err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, name), 0755), "Failed to create dir")
 	}
 
 	result := findDanglingDirectories(dir)
 
-	if len(result) != 0 {
-		t.Errorf("Expected 0 dangling directories, got %d", len(result))
-	}
+	assert.Empty(t, result, "Expected 0 dangling directories")
 }
 
 func TestHasUserMessages(t *testing.T) {
@@ -222,13 +188,9 @@ func TestHasUserMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			filePath := filepath.Join(dir, tt.name+".jsonl")
-			if err := os.WriteFile(filePath, []byte(tt.content), 0644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(filePath, []byte(tt.content), 0644))
 			got := hasUserMessages(filePath)
-			if got != tt.expected {
-				t.Errorf("hasUserMessages() = %v, want %v", got, tt.expected)
-			}
+			assert.Equal(t, tt.expected, got, "hasUserMessages()")
 		})
 	}
 }
@@ -243,9 +205,8 @@ func TestRunPruneEmpty_DeletesEmptyAndCompanionDirs(t *testing.T) {
 	createIndex(t, dir, []SessionEntry{{SessionID: emptyID}})
 
 	// Verify setup
-	if _, err := os.Stat(companionDir); err != nil {
-		t.Fatalf("Companion dir should exist before prune: %v", err)
-	}
+	_, err := os.Stat(companionDir)
+	require.NoError(t, err, "Companion dir should exist before prune")
 
 	stdout, _ := os.CreateTemp(dir, "stdout")
 	stderr, _ := os.CreateTemp(dir, "stderr")
@@ -257,29 +218,21 @@ func TestRunPruneEmpty_DeletesEmptyAndCompanionDirs(t *testing.T) {
 	// Override project path resolution by running against dir directly
 	// Since RunPruneEmpty uses GetClaudeProjectPath, we test the lower-level functions
 	emptyConvs := findEmptyConversations(dir)
-	if len(emptyConvs) != 1 {
-		t.Fatalf("Expected 1 empty conv, got %d", len(emptyConvs))
-	}
+	require.Len(t, emptyConvs, 1, "Expected 1 empty conv")
 
 	// Simulate what RunPruneEmpty does for deletion
 	convFile := filepath.Join(dir, emptyID+".jsonl")
-	if err := os.Remove(convFile); err != nil {
-		t.Fatalf("Failed to remove conv file: %v", err)
-	}
+	require.NoError(t, os.Remove(convFile), "Failed to remove conv file")
 	// Remove companion directory
 	if info, err := os.Stat(companionDir); err == nil && info.IsDir() {
-		if err := os.RemoveAll(companionDir); err != nil {
-			t.Fatalf("Failed to remove companion dir: %v", err)
-		}
+		require.NoError(t, os.RemoveAll(companionDir), "Failed to remove companion dir")
 	}
 
 	// Verify both are gone
-	if _, err := os.Stat(convFile); !os.IsNotExist(err) {
-		t.Error("Conv file should be deleted")
-	}
-	if _, err := os.Stat(companionDir); !os.IsNotExist(err) {
-		t.Error("Companion directory should be deleted")
-	}
+	_, err = os.Stat(convFile)
+	assert.True(t, os.IsNotExist(err), "Conv file should be deleted")
+	_, err = os.Stat(companionDir)
+	assert.True(t, os.IsNotExist(err), "Companion directory should be deleted")
 
 	_ = params // used for context
 }
@@ -324,26 +277,19 @@ func TestRunPruneEmpty_DryRunDeletesNothing(t *testing.T) {
 
 	// emptyID has a .jsonl, so its companion dir is NOT dangling
 	// danglingID has no .jsonl, so its dir IS dangling
-	if len(danglingDirs) != 1 {
-		t.Fatalf("Expected 1 dangling dir, got %d", len(danglingDirs))
-	}
-	if danglingDirs[0].SessionID != danglingID {
-		t.Errorf("Expected dangling dir %s, got %s", danglingID, danglingDirs[0].SessionID)
-	}
+	require.Len(t, danglingDirs, 1, "Expected 1 dangling dir")
+	assert.Equal(t, danglingID, danglingDirs[0].SessionID)
 
 	// Verify nothing was deleted
 	convFile := filepath.Join(dir, emptyID+".jsonl")
-	if _, err := os.Stat(convFile); os.IsNotExist(err) {
-		t.Error("Conv file should still exist (dry run)")
-	}
+	_, err := os.Stat(convFile)
+	assert.False(t, os.IsNotExist(err), "Conv file should still exist (dry run)")
 	companionDir := filepath.Join(dir, emptyID)
-	if _, err := os.Stat(companionDir); os.IsNotExist(err) {
-		t.Error("Companion dir should still exist (dry run)")
-	}
+	_, err = os.Stat(companionDir)
+	assert.False(t, os.IsNotExist(err), "Companion dir should still exist (dry run)")
 	danglingDir := filepath.Join(dir, danglingID)
-	if _, err := os.Stat(danglingDir); os.IsNotExist(err) {
-		t.Error("Dangling dir should still exist (dry run)")
-	}
+	_, err = os.Stat(danglingDir)
+	assert.False(t, os.IsNotExist(err), "Dangling dir should still exist (dry run)")
 }
 
 func TestRunPruneEmpty_DanglingDirExclusion(t *testing.T) {
@@ -359,15 +305,11 @@ func TestRunPruneEmpty_DanglingDirExclusion(t *testing.T) {
 	createCompanionDir(t, dir, missingID)
 
 	missing := findMissingFileEntries(dir)
-	if len(missing) != 1 {
-		t.Fatalf("Expected 1 missing entry, got %d", len(missing))
-	}
+	require.Len(t, missing, 1, "Expected 1 missing entry")
 
 	// Raw dangling dirs would include this ID
 	rawDangling := findDanglingDirectories(dir)
-	if len(rawDangling) != 1 {
-		t.Fatalf("Expected 1 raw dangling dir, got %d", len(rawDangling))
-	}
+	require.Len(t, rawDangling, 1, "Expected 1 raw dangling dir")
 
 	// After exclusion, it should be filtered out
 	coveredIDs := make(map[string]bool)
@@ -381,9 +323,7 @@ func TestRunPruneEmpty_DanglingDirExclusion(t *testing.T) {
 		}
 	}
 
-	if len(filtered) != 0 {
-		t.Errorf("Expected 0 dangling dirs after exclusion, got %d", len(filtered))
-	}
+	assert.Empty(t, filtered, "Expected 0 dangling dirs after exclusion")
 }
 
 func TestRunPruneEmpty_OutputFormat(t *testing.T) {
@@ -399,19 +339,11 @@ func TestRunPruneEmpty_OutputFormat(t *testing.T) {
 	dangling := findDanglingDirectories(dir)
 
 	// Verify the output would show the right prefixes
-	if len(empty) != 1 {
-		t.Fatalf("Expected 1 empty conv, got %d", len(empty))
-	}
-	if !strings.HasPrefix(empty[0].SessionID, "aaaaaaaa") {
-		t.Errorf("Unexpected session ID prefix: %s", empty[0].SessionID)
-	}
+	require.Len(t, empty, 1, "Expected 1 empty conv")
+	assert.True(t, strings.HasPrefix(empty[0].SessionID, "aaaaaaaa"), "Unexpected session ID prefix: %s", empty[0].SessionID)
 
-	if len(dangling) != 1 {
-		t.Fatalf("Expected 1 dangling dir, got %d", len(dangling))
-	}
-	if !strings.HasPrefix(dangling[0].SessionID, "11111111") {
-		t.Errorf("Unexpected session ID prefix: %s", dangling[0].SessionID)
-	}
+	require.Len(t, dangling, 1, "Expected 1 dangling dir")
+	assert.True(t, strings.HasPrefix(dangling[0].SessionID, "11111111"), "Unexpected session ID prefix: %s", dangling[0].SessionID)
 }
 
 func TestRunPruneEmpty_NothingToDelete(t *testing.T) {
@@ -425,13 +357,7 @@ func TestRunPruneEmpty_NothingToDelete(t *testing.T) {
 	missing := findMissingFileEntries(dir)
 	dangling := findDanglingDirectories(dir)
 
-	if len(empty) != 0 {
-		t.Errorf("Expected 0 empty, got %d", len(empty))
-	}
-	if len(missing) != 0 {
-		t.Errorf("Expected 0 missing, got %d", len(missing))
-	}
-	if len(dangling) != 0 {
-		t.Errorf("Expected 0 dangling, got %d", len(dangling))
-	}
+	assert.Empty(t, empty, "Expected 0 empty")
+	assert.Empty(t, missing, "Expected 0 missing")
+	assert.Empty(t, dangling, "Expected 0 dangling")
 }

@@ -3,47 +3,37 @@ package db
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentGroupCRUD(t *testing.T) {
 	setupTestDB(t)
 
 	id, err := CreateAgentGroup("alpha", "test group")
-	if err != nil {
-		t.Fatalf("CreateAgentGroup: %v", err)
-	}
-	if id == 0 {
-		t.Fatal("expected non-zero group id")
-	}
+	require.NoError(t, err, "CreateAgentGroup")
+	require.NotZero(t, id, "expected non-zero group id")
 
 	g, err := GetAgentGroupByName("alpha")
-	if err != nil {
-		t.Fatalf("GetAgentGroupByName: %v", err)
-	}
-	if g == nil || g.Name != "alpha" || g.Descr != "test group" {
-		t.Fatalf("unexpected group: %+v", g)
-	}
+	require.NoError(t, err, "GetAgentGroupByName")
+	require.NotNil(t, g, "unexpected group: nil")
+	assert.Equal(t, "alpha", g.Name, "unexpected group: %+v", g)
+	assert.Equal(t, "test group", g.Descr, "unexpected group: %+v", g)
 
 	// Duplicate names should fail at the UNIQUE constraint.
-	if _, err := CreateAgentGroup("alpha", ""); err == nil {
-		t.Fatal("expected error creating duplicate group")
-	}
+	_, err = CreateAgentGroup("alpha", "")
+	require.Error(t, err, "expected error creating duplicate group")
 
 	groups, err := ListAgentGroups()
-	if err != nil {
-		t.Fatalf("ListAgentGroups: %v", err)
-	}
-	if len(groups) != 1 || groups[0].Name != "alpha" {
-		t.Fatalf("ListAgentGroups returned %+v", groups)
-	}
+	require.NoError(t, err, "ListAgentGroups")
+	require.Len(t, groups, 1, "ListAgentGroups returned %+v", groups)
+	assert.Equal(t, "alpha", groups[0].Name)
 
 	// Delete with no members or messages: ok.
-	if err := DeleteAgentGroup("alpha"); err != nil {
-		t.Fatalf("DeleteAgentGroup: %v", err)
-	}
-	if g, _ := GetAgentGroupByName("alpha"); g != nil {
-		t.Fatal("expected group to be gone")
-	}
+	require.NoError(t, DeleteAgentGroup("alpha"), "DeleteAgentGroup")
+	g, _ = GetAgentGroupByName("alpha")
+	assert.Nil(t, g, "expected group to be gone")
 }
 
 func TestAgentGroupMembershipAndShared(t *testing.T) {
@@ -52,61 +42,38 @@ func TestAgentGroupMembershipAndShared(t *testing.T) {
 	a, _ := CreateAgentGroup("alpha", "")
 	b, _ := CreateAgentGroup("beta", "")
 
-	if err := AddAgentGroupMember(&AgentGroupMember{
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
 		GroupID: a, ConvID: "conv-1", Alias: "planner", Role: "lead",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{
+	}), "AddAgentGroupMember")
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
 		GroupID: a, ConvID: "conv-2", Alias: "reviewer",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{
+	}), "AddAgentGroupMember")
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
 		GroupID: b, ConvID: "conv-2",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{
+	}), "AddAgentGroupMember")
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
 		GroupID: b, ConvID: "conv-3",
-	}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
+	}), "AddAgentGroupMember")
 
 	// conv-1 and conv-2 share alpha; conv-2 and conv-3 share beta.
 	shared, err := SharedGroupsForConvs("conv-1", "conv-2")
-	if err != nil {
-		t.Fatalf("SharedGroupsForConvs: %v", err)
-	}
-	if len(shared) != 1 || shared[0].Name != "alpha" {
-		t.Fatalf("expected [alpha], got %+v", names(shared))
-	}
+	require.NoError(t, err, "SharedGroupsForConvs")
+	require.Len(t, shared, 1, "expected [alpha], got %+v", names(shared))
+	assert.Equal(t, "alpha", shared[0].Name)
 
 	shared, err = SharedGroupsForConvs("conv-1", "conv-3")
-	if err != nil {
-		t.Fatalf("SharedGroupsForConvs: %v", err)
-	}
-	if len(shared) != 0 {
-		t.Fatalf("expected no shared groups for conv-1/conv-3, got %+v", names(shared))
-	}
+	require.NoError(t, err, "SharedGroupsForConvs")
+	require.Len(t, shared, 0, "expected no shared groups for conv-1/conv-3, got %+v", names(shared))
 
 	// ListGroupsForConv returns all groups for conv-2.
 	gs, err := ListGroupsForConv("conv-2")
-	if err != nil {
-		t.Fatalf("ListGroupsForConv: %v", err)
-	}
-	if len(gs) != 2 {
-		t.Fatalf("expected 2 groups for conv-2, got %d", len(gs))
-	}
+	require.NoError(t, err, "ListGroupsForConv")
+	require.Len(t, gs, 2, "expected 2 groups for conv-2")
 
 	// Remove conv-2 from beta and the shared set with conv-3 should empty.
-	if err := RemoveAgentGroupMember(b, "conv-2"); err != nil {
-		t.Fatalf("RemoveAgentGroupMember: %v", err)
-	}
+	require.NoError(t, RemoveAgentGroupMember(b, "conv-2"), "RemoveAgentGroupMember")
 	shared, _ = SharedGroupsForConvs("conv-2", "conv-3")
-	if len(shared) != 0 {
-		t.Fatalf("expected no shared groups after remove, got %+v", names(shared))
-	}
+	require.Len(t, shared, 0, "expected no shared groups after remove, got %+v", names(shared))
 }
 
 func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
@@ -115,56 +82,44 @@ func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	conv := "abcd1234-0000-0000-0000-000000000001"
 
 	// Empty initially.
-	if perms, err := ListAgentPermissionsForConv(conv); err != nil || len(perms) != 0 {
-		t.Fatalf("expected empty list, got %v err=%v", perms, err)
-	}
-	if ok, err := HasAgentPermissionRow(conv, "self.rename"); err != nil || ok {
-		t.Fatalf("expected no perm, got ok=%v err=%v", ok, err)
-	}
+	perms, err := ListAgentPermissionsForConv(conv)
+	require.NoError(t, err, "expected empty list")
+	require.Len(t, perms, 0, "expected empty list, got %v", perms)
+	ok, err := HasAgentPermissionRow(conv, "self.rename")
+	require.NoError(t, err, "expected no perm")
+	require.False(t, ok, "expected no perm")
 
 	// Grant.
-	if err := GrantAgentPermission(conv, "self.rename", "<human>"); err != nil {
-		t.Fatalf("GrantAgentPermission: %v", err)
-	}
+	require.NoError(t, GrantAgentPermission(conv, "self.rename", "<human>"), "GrantAgentPermission")
 	// Idempotent.
-	if err := GrantAgentPermission(conv, "self.rename", "<human>"); err != nil {
-		t.Fatalf("idempotent grant: %v", err)
-	}
-	if ok, err := HasAgentPermissionRow(conv, "self.rename"); err != nil || !ok {
-		t.Fatalf("expected perm, got ok=%v err=%v", ok, err)
-	}
+	require.NoError(t, GrantAgentPermission(conv, "self.rename", "<human>"), "idempotent grant")
+	ok, err = HasAgentPermissionRow(conv, "self.rename")
+	require.NoError(t, err, "expected perm")
+	require.True(t, ok, "expected perm")
 
 	// Multiple slugs sort correctly.
-	if err := GrantAgentPermission(conv, "member.add", ""); err != nil {
-		t.Fatal(err)
-	}
-	perms, err := ListAgentPermissionsForConv(conv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(perms) != 2 || perms[0] != "member.add" || perms[1] != "self.rename" {
-		t.Fatalf("expected sorted list [member.add self.rename], got %v", perms)
-	}
+	require.NoError(t, GrantAgentPermission(conv, "member.add", ""))
+	perms, err = ListAgentPermissionsForConv(conv)
+	require.NoError(t, err)
+	require.Len(t, perms, 2, "expected sorted list [member.add self.rename], got %v", perms)
+	assert.Equal(t, "member.add", perms[0])
+	assert.Equal(t, "self.rename", perms[1])
 
 	// Revoke.
 	n, err := RevokeAgentPermission(conv, "self.rename")
-	if err != nil || n != 1 {
-		t.Fatalf("RevokeAgentPermission: n=%d err=%v", n, err)
-	}
+	require.NoError(t, err, "RevokeAgentPermission")
+	require.Equal(t, int64(1), n, "RevokeAgentPermission n")
 	// Idempotent revoke returns 0.
 	n, err = RevokeAgentPermission(conv, "self.rename")
-	if err != nil || n != 0 {
-		t.Fatalf("idempotent revoke: n=%d err=%v", n, err)
-	}
+	require.NoError(t, err, "idempotent revoke")
+	require.Equal(t, int64(0), n, "idempotent revoke n")
 
 	// ListAllAgentPermissions sees the remaining slug.
 	all, err := ListAllAgentPermissions()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := all[conv]; len(got) != 1 || got[0] != "member.add" {
-		t.Fatalf("expected [member.add], got %v", got)
-	}
+	require.NoError(t, err)
+	got := all[conv]
+	require.Len(t, got, 1, "expected [member.add], got %v", got)
+	assert.Equal(t, "member.add", got[0])
 }
 
 func TestAgentMessageInsertAndList(t *testing.T) {
@@ -179,63 +134,39 @@ func TestAgentMessageInsertAndList(t *testing.T) {
 		Subject:  "hello",
 		Body:     "first",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 	id2, err := InsertAgentMessage(&AgentMessage{
 		GroupID:  g,
 		FromConv: "conv-1",
 		ToConv:   "conv-2",
 		Body:     "second",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage")
 
 	msgs, err := ListAgentMessagesForConv("conv-2", 0)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesForConv: %v", err)
-	}
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(msgs))
-	}
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, msgs, 2, "expected 2 messages")
 
 	got, err := GetAgentMessage(id1)
-	if err != nil || got == nil {
-		t.Fatalf("GetAgentMessage(%d): %v %+v", id1, err, got)
-	}
-	if got.Subject != "hello" || got.Body != "first" {
-		t.Fatalf("unexpected message contents: %+v", got)
-	}
+	require.NoError(t, err, "GetAgentMessage(%d)", id1)
+	require.NotNil(t, got, "GetAgentMessage(%d)", id1)
+	assert.Equal(t, "hello", got.Subject, "unexpected message contents: %+v", got)
+	assert.Equal(t, "first", got.Body, "unexpected message contents: %+v", got)
 
-	if err := MarkAgentMessageDelivered(id1); err != nil {
-		t.Fatalf("MarkAgentMessageDelivered: %v", err)
-	}
-	if err := MarkAgentMessageRead(id1); err != nil {
-		t.Fatalf("MarkAgentMessageRead: %v", err)
-	}
+	require.NoError(t, MarkAgentMessageDelivered(id1), "MarkAgentMessageDelivered")
+	require.NoError(t, MarkAgentMessageRead(id1), "MarkAgentMessageRead")
 	got, _ = GetAgentMessage(id1)
-	if got.DeliveredAt.IsZero() {
-		t.Error("delivered_at should be set")
-	}
-	if got.ReadAt.IsZero() {
-		t.Error("read_at should be set")
-	}
+	assert.False(t, got.DeliveredAt.IsZero(), "delivered_at should be set")
+	assert.False(t, got.ReadAt.IsZero(), "read_at should be set")
 
 	// Deleting a group cascades through membership/ownership AND
 	// purges any lingering messages (the helper opens a transaction
 	// to bypass the agent_messages ON DELETE RESTRICT FK).
-	if err := DeleteAgentGroup("alpha"); err != nil {
-		t.Fatalf("DeleteAgentGroup with messages still present: %v", err)
-	}
+	require.NoError(t, DeleteAgentGroup("alpha"), "DeleteAgentGroup with messages still present")
 	for _, mid := range []int64{id1, id2} {
 		got, err := GetAgentMessage(mid)
-		if err != nil {
-			t.Fatalf("GetAgentMessage(%d) after delete: %v", mid, err)
-		}
-		if got != nil {
-			t.Errorf("expected message %d purged with the group; still present: %+v", mid, got)
-		}
+		require.NoError(t, err, "GetAgentMessage(%d) after delete", mid)
+		assert.Nil(t, got, "expected message %d purged with the group; still present: %+v", mid, got)
 	}
 }
 
@@ -253,42 +184,32 @@ func TestAgentGroupOwnerCRUD(t *testing.T) {
 	setupTestDB(t)
 	g, _ := CreateAgentGroup("alpha", "")
 
-	if err := AddAgentGroupOwner(g, "boss", ""); err != nil {
-		t.Fatalf("AddAgentGroupOwner: %v", err)
-	}
+	require.NoError(t, AddAgentGroupOwner(g, "boss", ""), "AddAgentGroupOwner")
 	// Idempotent — second call must not error.
-	if err := AddAgentGroupOwner(g, "boss", ""); err != nil {
-		t.Fatalf("AddAgentGroupOwner second: %v", err)
-	}
+	require.NoError(t, AddAgentGroupOwner(g, "boss", ""), "AddAgentGroupOwner second")
 
 	is, err := IsAgentGroupOwner(g, "boss")
-	if err != nil || !is {
-		t.Fatalf("IsAgentGroupOwner(g, boss) = %v %v, want true", is, err)
-	}
+	require.NoError(t, err, "IsAgentGroupOwner(g, boss)")
+	require.True(t, is, "IsAgentGroupOwner(g, boss)")
 	is, _ = IsAgentGroupOwner(g, "stranger")
-	if is {
-		t.Errorf("IsAgentGroupOwner(stranger) should be false")
-	}
+	assert.False(t, is, "IsAgentGroupOwner(stranger) should be false")
 
 	owners, err := ListAgentGroupOwners(g)
-	if err != nil || len(owners) != 1 || owners[0].ConvID != "boss" {
-		t.Fatalf("ListAgentGroupOwners = %+v %v", owners, err)
-	}
+	require.NoError(t, err, "ListAgentGroupOwners")
+	require.Len(t, owners, 1, "ListAgentGroupOwners")
+	assert.Equal(t, "boss", owners[0].ConvID, "ListAgentGroupOwners")
 
 	groups, err := ListGroupsOwnedBy("boss")
-	if err != nil || len(groups) != 1 || groups[0] != g {
-		t.Fatalf("ListGroupsOwnedBy = %+v %v", groups, err)
-	}
+	require.NoError(t, err, "ListGroupsOwnedBy")
+	require.Len(t, groups, 1, "ListGroupsOwnedBy")
+	assert.Equal(t, g, groups[0], "ListGroupsOwnedBy")
 
 	n, err := RemoveAgentGroupOwner(g, "boss")
-	if err != nil || n != 1 {
-		t.Fatalf("RemoveAgentGroupOwner = %d %v, want 1", n, err)
-	}
+	require.NoError(t, err, "RemoveAgentGroupOwner")
+	require.Equal(t, int64(1), n, "RemoveAgentGroupOwner")
 	// Second remove returns 0.
 	n, _ = RemoveAgentGroupOwner(g, "boss")
-	if n != 0 {
-		t.Errorf("second RemoveAgentGroupOwner = %d, want 0", n)
-	}
+	assert.Equal(t, int64(0), n, "second RemoveAgentGroupOwner")
 }
 
 // TestCanSenderReachTarget exercises the auth helper that drives
@@ -304,51 +225,33 @@ func TestCanSenderReachTarget(t *testing.T) {
 
 	// alice and bob both in alpha; carl alone in beta; dave is owner
 	// of beta but not a member.
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: "alice"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: "bob"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: beta, ConvID: "carl"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupOwner(beta, "dave", ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: "alice"}))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: alpha, ConvID: "bob"}))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: beta, ConvID: "carl"}))
+	require.NoError(t, AddAgentGroupOwner(beta, "dave", ""))
 
 	// Shared-group: alice → bob picks alpha.
 	via, reason, err := CanSenderReachTarget("alice", "bob")
-	if err != nil || via == nil {
-		t.Fatalf("alice→bob failed: %v %v %v", via, reason, err)
-	}
-	if via.Name != "alpha" || reason != "shared-group" {
-		t.Errorf("alice→bob via=%q reason=%q, want alpha/shared-group", via.Name, reason)
-	}
+	require.NoError(t, err, "alice→bob err")
+	require.NotNil(t, via, "alice→bob failed: reason=%v", reason)
+	assert.Equal(t, "alpha", via.Name, "alice→bob via")
+	assert.Equal(t, "shared-group", reason, "alice→bob reason")
 
 	// Owner-of: dave (no membership) → carl (member of beta).
 	via, reason, err = CanSenderReachTarget("dave", "carl")
-	if err != nil || via == nil {
-		t.Fatalf("dave→carl failed: %v %v %v", via, reason, err)
-	}
-	if via.Name != "beta" || reason != "owner-of-group" {
-		t.Errorf("dave→carl via=%q reason=%q, want beta/owner-of-group", via.Name, reason)
-	}
+	require.NoError(t, err, "dave→carl err")
+	require.NotNil(t, via, "dave→carl failed: reason=%v", reason)
+	assert.Equal(t, "beta", via.Name, "dave→carl via")
+	assert.Equal(t, "owner-of-group", reason, "dave→carl reason")
 
 	// Neither: alice (not in beta, doesn't own it) → carl.
 	via, reason, err = CanSenderReachTarget("alice", "carl")
-	if err != nil {
-		t.Fatalf("alice→carl error: %v", err)
-	}
-	if via != nil {
-		t.Errorf("alice→carl should fail, got via=%q reason=%q", via.Name, reason)
-	}
+	require.NoError(t, err, "alice→carl error")
+	assert.Nil(t, via, "alice→carl should fail, got via reason=%q", reason)
 
 	// Stranger → stranger: also nil.
 	via, _, _ = CanSenderReachTarget("nobody", "nobody-else")
-	if via != nil {
-		t.Errorf("stranger→stranger should fail, got %+v", via)
-	}
+	assert.Nil(t, via, "stranger→stranger should fail, got %+v", via)
 }
 
 // TestAgentGroupOwner_AutoOwnAfterCreate: documents the daemon's
@@ -361,24 +264,14 @@ func TestAgentGroupOwner_AutoOwnAfterCreate(t *testing.T) {
 	creator := "ab887fe0"
 
 	id, err := CreateAgentGroup("auto-own-team", "")
-	if err != nil {
-		t.Fatalf("CreateAgentGroup: %v", err)
-	}
-	if err := AddAgentGroupOwner(id, creator, creator); err != nil {
-		t.Fatalf("AddAgentGroupOwner: %v", err)
-	}
-	if err := AddAgentGroupMember(&AgentGroupMember{GroupID: id, ConvID: "peer"}); err != nil {
-		t.Fatalf("AddAgentGroupMember: %v", err)
-	}
+	require.NoError(t, err, "CreateAgentGroup")
+	require.NoError(t, AddAgentGroupOwner(id, creator, creator), "AddAgentGroupOwner")
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: id, ConvID: "peer"}), "AddAgentGroupMember")
 
 	via, reason, err := CanSenderReachTarget(creator, "peer")
-	if err != nil || via == nil {
-		t.Fatalf("creator→peer should reach via owner-of-group: via=%+v reason=%q err=%v",
-			via, reason, err)
-	}
-	if reason != "owner-of-group" {
-		t.Errorf("reason = %q, want owner-of-group", reason)
-	}
+	require.NoError(t, err, "creator→peer err")
+	require.NotNil(t, via, "creator→peer should reach via owner-of-group: reason=%q", reason)
+	assert.Equal(t, "owner-of-group", reason, "reason")
 }
 
 // TestAgentGroupOwnerCascadesOnGroupDelete: deleting a group removes
@@ -386,16 +279,10 @@ func TestAgentGroupOwner_AutoOwnAfterCreate(t *testing.T) {
 func TestAgentGroupOwnerCascadesOnGroupDelete(t *testing.T) {
 	setupTestDB(t)
 	g, _ := CreateAgentGroup("alpha", "")
-	if err := AddAgentGroupOwner(g, "boss", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := DeleteAgentGroup("alpha"); err != nil {
-		t.Fatalf("DeleteAgentGroup: %v", err)
-	}
+	require.NoError(t, AddAgentGroupOwner(g, "boss", ""))
+	require.NoError(t, DeleteAgentGroup("alpha"), "DeleteAgentGroup")
 	owners, _ := ListGroupsOwnedBy("boss")
-	if len(owners) != 0 {
-		t.Errorf("owner rows should cascade-delete with the group, got %v", owners)
-	}
+	assert.Len(t, owners, 0, "owner rows should cascade-delete with the group, got %v", owners)
 }
 
 // TestAgentMessageThreading checks the parent_id round-trip through
@@ -409,49 +296,33 @@ func TestAgentMessageThreading(t *testing.T) {
 	parentID, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "a", ToConv: "b", Body: "ping",
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage parent: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage parent")
 	replyID, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "b", ToConv: "a", Body: "pong", ParentID: parentID,
 	})
-	if err != nil {
-		t.Fatalf("InsertAgentMessage reply: %v", err)
-	}
+	require.NoError(t, err, "InsertAgentMessage reply")
 
 	parent, err := GetAgentMessage(parentID)
-	if err != nil || parent == nil {
-		t.Fatalf("GetAgentMessage parent: %v %+v", err, parent)
-	}
-	if parent.ParentID != 0 {
-		t.Errorf("top-of-thread parent_id should be 0, got %d", parent.ParentID)
-	}
+	require.NoError(t, err, "GetAgentMessage parent")
+	require.NotNil(t, parent, "GetAgentMessage parent")
+	assert.Equal(t, int64(0), parent.ParentID, "top-of-thread parent_id should be 0")
 
 	reply, err := GetAgentMessage(replyID)
-	if err != nil || reply == nil {
-		t.Fatalf("GetAgentMessage reply: %v %+v", err, reply)
-	}
-	if reply.ParentID != parentID {
-		t.Errorf("reply.parent_id = %d, want %d", reply.ParentID, parentID)
-	}
+	require.NoError(t, err, "GetAgentMessage reply")
+	require.NotNil(t, reply, "GetAgentMessage reply")
+	assert.Equal(t, parentID, reply.ParentID, "reply.parent_id")
 
 	// list endpoints should also surface parent_id.
 	inbox, err := ListAgentMessagesForConv("a", 0)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesForConv: %v", err)
-	}
+	require.NoError(t, err, "ListAgentMessagesForConv")
 	var foundReply *AgentMessage
 	for _, m := range inbox {
 		if m.ID == replyID {
 			foundReply = m
 		}
 	}
-	if foundReply == nil {
-		t.Fatalf("reply not in inbox")
-	}
-	if foundReply.ParentID != parentID {
-		t.Errorf("inbox reply.parent_id = %d, want %d", foundReply.ParentID, parentID)
-	}
+	require.NotNil(t, foundReply, "reply not in inbox")
+	assert.Equal(t, parentID, foundReply.ParentID, "inbox reply.parent_id")
 }
 
 // TestPruneAgentMessagesForConv exercises caller-scoping (only rows
@@ -469,13 +340,9 @@ func TestPruneAgentMessagesForConv(t *testing.T) {
 			GroupID: g, FromConv: from, ToConv: to,
 			Body: "x", CreatedAt: createdAt,
 		})
-		if err != nil {
-			t.Fatalf("insert: %v", err)
-		}
+		require.NoError(t, err, "insert")
 		if read {
-			if err := MarkAgentMessageRead(id); err != nil {
-				t.Fatalf("mark read: %v", err)
-			}
+			require.NoError(t, MarkAgentMessageRead(id), "mark read")
 		}
 		return id
 	}
@@ -492,39 +359,25 @@ func TestPruneAgentMessagesForConv(t *testing.T) {
 	// --read-only mode: deletes only old + read in caller's pile.
 	cutoff := now.Add(-30 * 24 * time.Hour)
 	deleted, err := PruneAgentMessagesForConv("me", cutoff, true)
-	if err != nil {
-		t.Fatalf("prune readOnly: %v", err)
-	}
-	if deleted != 1 {
-		t.Errorf("readOnly deleted = %d, want 1", deleted)
-	}
-	if got, _ := GetAgentMessage(oldRead); got != nil {
-		t.Error("oldRead should have been deleted")
-	}
-	if got, _ := GetAgentMessage(oldUnread); got == nil {
-		t.Error("oldUnread should have survived --read-only")
-	}
-	if got, _ := GetAgentMessage(recent); got == nil {
-		t.Error("recent should not be touched")
-	}
-	if got, _ := GetAgentMessage(other); got == nil {
-		t.Error("other-caller's message should never be touched")
-	}
+	require.NoError(t, err, "prune readOnly")
+	assert.Equal(t, int64(1), deleted, "readOnly deleted")
+	got, _ := GetAgentMessage(oldRead)
+	assert.Nil(t, got, "oldRead should have been deleted")
+	got, _ = GetAgentMessage(oldUnread)
+	assert.NotNil(t, got, "oldUnread should have survived --read-only")
+	got, _ = GetAgentMessage(recent)
+	assert.NotNil(t, got, "recent should not be touched")
+	got, _ = GetAgentMessage(other)
+	assert.NotNil(t, got, "other-caller's message should never be touched")
 
 	// Default mode: deletes any old caller row.
 	deleted, err = PruneAgentMessagesForConv("me", cutoff, false)
-	if err != nil {
-		t.Fatalf("prune all: %v", err)
-	}
-	if deleted != 1 {
-		t.Errorf("all-mode deleted = %d, want 1", deleted)
-	}
-	if got, _ := GetAgentMessage(oldUnread); got != nil {
-		t.Error("oldUnread should have been deleted in all-mode")
-	}
-	if got, _ := GetAgentMessage(other); got == nil {
-		t.Error("other-caller's message must still be untouched")
-	}
+	require.NoError(t, err, "prune all")
+	assert.Equal(t, int64(1), deleted, "all-mode deleted")
+	got, _ = GetAgentMessage(oldUnread)
+	assert.Nil(t, got, "oldUnread should have been deleted in all-mode")
+	got, _ = GetAgentMessage(other)
+	assert.NotNil(t, got, "other-caller's message must still be untouched")
 }
 
 // TestListUndeliveredAgentMessagesFor covers the queue read used by
@@ -538,53 +391,37 @@ func TestListUndeliveredAgentMessagesFor(t *testing.T) {
 	id1, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "first",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	time.Sleep(2 * time.Millisecond)
 	id2, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "second",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	time.Sleep(2 * time.Millisecond)
 	id3, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "third",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Mark id2 delivered. Should be excluded.
-	if err := MarkAgentMessageDelivered(id2); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, MarkAgentMessageDelivered(id2))
 
 	// Add a message to a different conv. Should be excluded.
-	if _, err := InsertAgentMessage(&AgentMessage{
+	_, err = InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "x", ToConv: "y", Body: "noise",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+	require.NoError(t, err)
 
 	out, err := ListUndeliveredAgentMessagesFor("me")
-	if err != nil {
-		t.Fatalf("ListUndeliveredAgentMessagesFor: %v", err)
-	}
-	if len(out) != 2 {
-		t.Fatalf("expected 2 undelivered, got %d", len(out))
-	}
-	if out[0].ID != id1 || out[1].ID != id3 {
-		t.Errorf("expected oldest-first [%d, %d], got [%d, %d]",
-			id1, id3, out[0].ID, out[1].ID)
-	}
+	require.NoError(t, err, "ListUndeliveredAgentMessagesFor")
+	require.Len(t, out, 2, "expected 2 undelivered")
+	assert.Equal(t, id1, out[0].ID, "expected oldest-first")
+	assert.Equal(t, id3, out[1].ID, "expected oldest-first")
 
 	// Empty toConv must short-circuit to nil (no SQL).
 	out, err = ListUndeliveredAgentMessagesFor("")
-	if err != nil || out != nil {
-		t.Errorf("empty toConv: got %v, %v; want nil, nil", out, err)
-	}
+	assert.NoError(t, err, "empty toConv err")
+	assert.Nil(t, out, "empty toConv out")
 }
 
 // TestClaimAgentMessageDelivery validates the race-safe claim
@@ -597,36 +434,28 @@ func TestClaimAgentMessageDelivery(t *testing.T) {
 	id, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "queued",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	got, err := ClaimAgentMessageDelivery(id)
-	if err != nil || !got {
-		t.Fatalf("first claim: got=%v err=%v, want true/nil", got, err)
-	}
+	require.NoError(t, err, "first claim err")
+	require.True(t, got, "first claim: want true")
 
 	// Second claim must lose: the row is no longer delivered_at = ''.
 	got, err = ClaimAgentMessageDelivery(id)
-	if err != nil || got {
-		t.Fatalf("second claim: got=%v err=%v, want false/nil", got, err)
-	}
+	require.NoError(t, err, "second claim err")
+	require.False(t, got, "second claim: want false")
 
 	// And delivered_at must be populated.
 	m, err := GetAgentMessage(id)
-	if err != nil || m == nil {
-		t.Fatalf("GetAgentMessage: %v %+v", err, m)
-	}
-	if m.DeliveredAt.IsZero() {
-		t.Errorf("delivered_at should be set after a successful claim")
-	}
+	require.NoError(t, err, "GetAgentMessage")
+	require.NotNil(t, m, "GetAgentMessage")
+	assert.False(t, m.DeliveredAt.IsZero(), "delivered_at should be set after a successful claim")
 
 	// Claiming an already-delivered or unknown row must return false
 	// (not error) so the flush goroutine can keep going.
 	got, err = ClaimAgentMessageDelivery(99999)
-	if err != nil || got {
-		t.Errorf("nonexistent id: got=%v err=%v, want false/nil", got, err)
-	}
+	assert.NoError(t, err, "nonexistent id err")
+	assert.False(t, got, "nonexistent id got")
 }
 
 // TestListAgentMessagesFromConv covers the outbox direction: rows
@@ -635,34 +464,26 @@ func TestListAgentMessagesFromConv(t *testing.T) {
 	setupTestDB(t)
 	g, _ := CreateAgentGroup("alpha", "")
 
-	if _, err := InsertAgentMessage(&AgentMessage{
+	_, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "me", ToConv: "peer", Body: "first",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+	require.NoError(t, err)
 	// Sleep a tick so created_at differs and ORDER BY is meaningful.
 	time.Sleep(2 * time.Millisecond)
-	if _, err := InsertAgentMessage(&AgentMessage{
+	_, err = InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "me", ToConv: "peer", Body: "second",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InsertAgentMessage(&AgentMessage{
+	})
+	require.NoError(t, err)
+	_, err = InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "other", ToConv: "peer", Body: "noise",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+	require.NoError(t, err)
 
 	out, err := ListAgentMessagesFromConv("me", 0)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesFromConv: %v", err)
-	}
-	if len(out) != 2 {
-		t.Fatalf("expected 2 outgoing rows, got %d", len(out))
-	}
-	if out[0].Body != "second" || out[1].Body != "first" {
-		t.Errorf("expected most-recent-first, got %q then %q", out[0].Body, out[1].Body)
-	}
+	require.NoError(t, err, "ListAgentMessagesFromConv")
+	require.Len(t, out, 2, "expected 2 outgoing rows")
+	assert.Equal(t, "second", out[0].Body, "expected most-recent-first")
+	assert.Equal(t, "first", out[1].Body, "expected most-recent-first")
 }
 
 // TestDeleteAgentByConvID_PurgesAllReferencingTables guards the
@@ -678,123 +499,79 @@ func TestDeleteAgentByConvID_PurgesAllReferencingTables(t *testing.T) {
 	g, _ := CreateAgentGroup("alpha", "")
 
 	// Membership + ownership.
-	if err := AddAgentGroupMember(&AgentGroupMember{
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
 		GroupID: g, ConvID: target, Alias: "victim",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := AddAgentGroupOwner(g, target, ""); err != nil {
-		t.Fatal(err)
-	}
+	}))
+	require.NoError(t, AddAgentGroupOwner(g, target, ""))
 	// A peer member so messages can route through the group.
-	if err := AddAgentGroupMember(&AgentGroupMember{
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
 		GroupID: g, ConvID: peer,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	// Messages: one outgoing (target -> peer), one incoming (peer -> target).
-	if _, err := InsertAgentMessage(&AgentMessage{
+	_, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: target, ToConv: peer, Body: "out",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InsertAgentMessage(&AgentMessage{
+	})
+	require.NoError(t, err)
+	_, err = InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: peer, ToConv: target, Body: "in",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+	require.NoError(t, err)
 
 	// Permission grant.
-	if err := GrantAgentPermission(target, "self.rename", ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, GrantAgentPermission(target, "self.rename", ""))
 
 	// Sessions row.
-	if err := SaveSession(&SessionRow{
+	require.NoError(t, SaveSession(&SessionRow{
 		ID: "label-victim", TmuxSession: "tmux-victim", ConvID: target,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	// Conv index row.
-	if err := UpsertConvIndex(&ConvIndexRow{
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
 		ConvID: target, CustomTitle: "victim-title",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	// Succession trail (target was once the OLD side of a reincarnation).
-	if err := RecordConvSuccession(target, "newer-conv", "reincarnate"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, RecordConvSuccession(target, "newer-conv", "reincarnate"))
 
 	counts, err := DeleteAgentByConvID(target)
-	if err != nil {
-		t.Fatalf("DeleteAgentByConvID: %v", err)
-	}
+	require.NoError(t, err, "DeleteAgentByConvID")
 
 	// Spot-check the counts. Every populated table should be > 0; the
 	// untouched ones (cron, embeddings, succession-new) stay at 0.
-	if counts.GroupMembers != 1 {
-		t.Errorf("GroupMembers = %d, want 1", counts.GroupMembers)
-	}
-	if counts.GroupOwners != 1 {
-		t.Errorf("GroupOwners = %d, want 1", counts.GroupOwners)
-	}
-	if counts.MessagesFrom != 1 {
-		t.Errorf("MessagesFrom = %d, want 1", counts.MessagesFrom)
-	}
-	if counts.MessagesTo != 1 {
-		t.Errorf("MessagesTo = %d, want 1", counts.MessagesTo)
-	}
-	if counts.Permissions != 1 {
-		t.Errorf("Permissions = %d, want 1", counts.Permissions)
-	}
-	if counts.Sessions != 1 {
-		t.Errorf("Sessions = %d, want 1", counts.Sessions)
-	}
-	if counts.ConvIndex != 1 {
-		t.Errorf("ConvIndex = %d, want 1", counts.ConvIndex)
-	}
-	if counts.SuccessionOld != 1 {
-		t.Errorf("SuccessionOld = %d, want 1", counts.SuccessionOld)
-	}
+	assert.Equal(t, int64(1), counts.GroupMembers, "GroupMembers")
+	assert.Equal(t, int64(1), counts.GroupOwners, "GroupOwners")
+	assert.Equal(t, int64(1), counts.MessagesFrom, "MessagesFrom")
+	assert.Equal(t, int64(1), counts.MessagesTo, "MessagesTo")
+	assert.Equal(t, int64(1), counts.Permissions, "Permissions")
+	assert.Equal(t, int64(1), counts.Sessions, "Sessions")
+	assert.Equal(t, int64(1), counts.ConvIndex, "ConvIndex")
+	assert.Equal(t, int64(1), counts.SuccessionOld, "SuccessionOld")
 
 	// Tables are actually empty for this conv now.
-	if got, _ := ListAgentMessagesForConv(target, 0); len(got) != 0 {
-		t.Errorf("messages-to remain after delete: %d", len(got))
-	}
-	if got, _ := ListAgentMessagesFromConv(target, 0); len(got) != 0 {
-		t.Errorf("messages-from remain after delete: %d", len(got))
-	}
-	if row, _ := GetConvIndex(target); row != nil {
-		t.Errorf("conv_index row remains: %+v", row)
-	}
-	if rows, _ := FindSessionsByConvID(target); len(rows) != 0 {
-		t.Errorf("session rows remain: %d", len(rows))
-	}
-	if perms, _ := ListAgentPermissionsForConv(target); len(perms) != 0 {
-		t.Errorf("permissions remain: %v", perms)
-	}
+	gotMsgs, _ := ListAgentMessagesForConv(target, 0)
+	assert.Len(t, gotMsgs, 0, "messages-to remain after delete")
+	gotFrom, _ := ListAgentMessagesFromConv(target, 0)
+	assert.Len(t, gotFrom, 0, "messages-from remain after delete")
+	row, _ := GetConvIndex(target)
+	assert.Nil(t, row, "conv_index row remains: %+v", row)
+	rows, _ := FindSessionsByConvID(target)
+	assert.Len(t, rows, 0, "session rows remain")
+	gotPerms, _ := ListAgentPermissionsForConv(target)
+	assert.Len(t, gotPerms, 0, "permissions remain")
 
 	// Peer's untouched: their inbox / outbox should still hold their
 	// half of the (now-deleted) thread? No — the thread rows had
 	// from_conv=target OR to_conv=target, so both got removed. The
 	// peer's standalone presence (membership) is unaffected.
 	peerMember, err := FindMemberInGroup(g, peer)
-	if err != nil || peerMember == nil {
-		t.Errorf("peer membership should survive: %v %+v", err, peerMember)
-	}
+	require.NoError(t, err, "peer membership should survive")
+	assert.NotNil(t, peerMember, "peer membership should survive")
 
 	// Idempotent re-run: every count is zero, no error.
 	again, err := DeleteAgentByConvID(target)
-	if err != nil {
-		t.Errorf("idempotent re-delete errored: %v", err)
-	}
-	if again != (AgentDeletionCounts{}) {
-		t.Errorf("idempotent re-delete returned non-zero counts: %+v", again)
-	}
+	assert.NoError(t, err, "idempotent re-delete errored")
+	assert.Equal(t, AgentDeletionCounts{}, again, "idempotent re-delete returned non-zero counts")
 }
 
 // TestAgentMessageRecipientsRoundTrip verifies the email-style
@@ -816,32 +593,22 @@ func TestAgentMessageRecipientsRoundTrip(t *testing.T) {
 		ToRecipients: []string{"primary"},
 		CcRecipients: []string{"c1", "c2"},
 	})
-	if err != nil {
-		t.Fatalf("Insert: %v", err)
-	}
+	require.NoError(t, err, "Insert")
 
 	got, err := GetAgentMessage(id)
-	if err != nil || got == nil {
-		t.Fatalf("GetAgentMessage: %v %+v", err, got)
-	}
-	if len(got.ToRecipients) != 1 || got.ToRecipients[0] != "primary" {
-		t.Errorf("ToRecipients = %v, want [primary]", got.ToRecipients)
-	}
-	if len(got.CcRecipients) != 2 || got.CcRecipients[0] != "c1" || got.CcRecipients[1] != "c2" {
-		t.Errorf("CcRecipients = %v, want [c1 c2]", got.CcRecipients)
-	}
+	require.NoError(t, err, "GetAgentMessage")
+	require.NotNil(t, got, "GetAgentMessage")
+	require.Len(t, got.ToRecipients, 1, "ToRecipients = %v, want [primary]", got.ToRecipients)
+	assert.Equal(t, "primary", got.ToRecipients[0], "ToRecipients")
+	require.Len(t, got.CcRecipients, 2, "CcRecipients = %v, want [c1 c2]", got.CcRecipients)
+	assert.Equal(t, "c1", got.CcRecipients[0], "CcRecipients[0]")
+	assert.Equal(t, "c2", got.CcRecipients[1], "CcRecipients[1]")
 
 	// List path scans the same columns; check it picks them up too.
 	msgs, err := ListAgentMessagesForConv("primary", 0)
-	if err != nil {
-		t.Fatalf("ListAgentMessagesForConv: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 inbox row, got %d", len(msgs))
-	}
-	if len(msgs[0].CcRecipients) != 2 {
-		t.Errorf("list CcRecipients lost: %v", msgs[0].CcRecipients)
-	}
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, msgs, 1, "expected 1 inbox row")
+	assert.Len(t, msgs[0].CcRecipients, 2, "list CcRecipients lost: %v", msgs[0].CcRecipients)
 
 	// Legacy single-recipient (no audience): both arrays decode to nil.
 	idLegacy, err := InsertAgentMessage(&AgentMessage{
@@ -850,15 +617,10 @@ func TestAgentMessageRecipientsRoundTrip(t *testing.T) {
 		ToConv:   "lone",
 		Body:     "old shape",
 	})
-	if err != nil {
-		t.Fatalf("Insert legacy: %v", err)
-	}
+	require.NoError(t, err, "Insert legacy")
 	legacy, err := GetAgentMessage(idLegacy)
-	if err != nil || legacy == nil {
-		t.Fatalf("GetAgentMessage legacy: %v %+v", err, legacy)
-	}
-	if legacy.ToRecipients != nil || legacy.CcRecipients != nil {
-		t.Errorf("legacy row should decode to nil arrays, got to=%v cc=%v",
-			legacy.ToRecipients, legacy.CcRecipients)
-	}
+	require.NoError(t, err, "GetAgentMessage legacy")
+	require.NotNil(t, legacy, "GetAgentMessage legacy")
+	assert.Nil(t, legacy.ToRecipients, "legacy row should decode to nil arrays, got to=%v", legacy.ToRecipients)
+	assert.Nil(t, legacy.CcRecipients, "legacy row should decode to nil arrays, got cc=%v", legacy.CcRecipients)
 }

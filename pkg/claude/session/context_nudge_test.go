@@ -3,16 +3,18 @@ package session
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // nextNudgeTarget is the ladder-position helper for the context-nudge
 // Stop-hook path. Pin the rule shape and the "below min skip" path.
 func TestNextNudgeTarget(t *testing.T) {
 	cases := []struct {
-		name           string
-		pct            float64
+		name            string
+		pct             float64
 		minPct, stepPct int
-		want           int
+		want            int
 	}{
 		{"below min skips", 25, 30, 10, 0},
 		{"at min fires", 30, 30, 10, 30},
@@ -31,10 +33,7 @@ func TestNextNudgeTarget(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := nextNudgeTarget(c.pct, c.minPct, c.stepPct)
-			if got != c.want {
-				t.Errorf("nextNudgeTarget(%v, %d, %d) = %d, want %d",
-					c.pct, c.minPct, c.stepPct, got, c.want)
-			}
+			assert.Equalf(t, c.want, got, "nextNudgeTarget(%v, %d, %d)", c.pct, c.minPct, c.stepPct)
 		})
 	}
 }
@@ -44,13 +43,7 @@ func TestNextNudgeTarget(t *testing.T) {
 // reader of the agent transcript can tell it's a context nudge).
 func TestFormatContextNudgeMessage(t *testing.T) {
 	msg := formatContextNudgeMessage(50)
-	if !strings.HasPrefix(msg, "[system: ") {
-		t.Errorf("message must start with [system: ...]; got %q", msg)
-	}
-	if !strings.Contains(msg, "50%") {
-		t.Errorf("message must include the threshold; got %q", msg)
-	}
-	if !strings.Contains(msg, "/reincarnate") {
-		t.Errorf("message must suggest /reincarnate; got %q", msg)
-	}
+	assert.Truef(t, strings.HasPrefix(msg, "[system: "), "message must start with [system: ...]; got %q", msg)
+	assert.Containsf(t, msg, "50%", "message must include the threshold; got %q", msg)
+	assert.Containsf(t, msg, "/reincarnate", "message must suggest /reincarnate; got %q", msg)
 }

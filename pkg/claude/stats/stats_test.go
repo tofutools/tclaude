@@ -3,6 +3,9 @@ package stats
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFormatNumber(t *testing.T) {
@@ -23,9 +26,7 @@ func TestFormatNumber(t *testing.T) {
 
 	for _, tt := range tests {
 		result := formatNumber(tt.input)
-		if result != tt.expected {
-			t.Errorf("formatNumber(%d) = %q, want %q", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "formatNumber(%d)", tt.input)
 	}
 }
 
@@ -42,9 +43,7 @@ func TestFormatModelName(t *testing.T) {
 
 	for _, tt := range tests {
 		result := formatModelName(tt.input)
-		if result != tt.expected {
-			t.Errorf("formatModelName(%q) = %q, want %q", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "formatModelName(%q)", tt.input)
 	}
 }
 
@@ -69,27 +68,14 @@ func TestStatsCache_Parsing(t *testing.T) {
 	}`
 
 	var stats StatsCache
-	if err := json.Unmarshal([]byte(jsonData), &stats); err != nil {
-		t.Fatalf("Failed to parse stats JSON: %v", err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(jsonData), &stats), "Failed to parse stats JSON")
 
-	if stats.TotalSessions != 10 {
-		t.Errorf("TotalSessions = %d, want 10", stats.TotalSessions)
-	}
+	assert.Equal(t, 10, stats.TotalSessions)
+	assert.Equal(t, 100, stats.TotalMessages)
+	assert.Len(t, stats.DailyActivity, 1)
 
-	if stats.TotalMessages != 100 {
-		t.Errorf("TotalMessages = %d, want 100", stats.TotalMessages)
-	}
-
-	if len(stats.DailyActivity) != 1 {
-		t.Errorf("DailyActivity length = %d, want 1", len(stats.DailyActivity))
-	}
-
-	if usage, ok := stats.ModelUsage["claude-opus-4-5-20251101"]; ok {
-		if usage.InputTokens != 1000 {
-			t.Errorf("InputTokens = %d, want 1000", usage.InputTokens)
-		}
-	} else {
-		t.Error("Expected model usage entry not found")
+	usage, ok := stats.ModelUsage["claude-opus-4-5-20251101"]
+	if assert.True(t, ok, "Expected model usage entry not found") {
+		assert.Equal(t, 1000, usage.InputTokens)
 	}
 }

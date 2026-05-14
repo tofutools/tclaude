@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setTestHookCommand overrides HookCommand and rebuilds RequiredHooks for testing
@@ -48,9 +51,8 @@ func TestIsOurHook(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := isOurHook(tt.command); got != tt.want {
-			t.Errorf("isOurHook(%q) = %v, want %v", tt.command, got, tt.want)
-		}
+		got := isOurHook(tt.command)
+		assert.Equalf(t, tt.want, got, "isOurHook(%q)", tt.command)
 	}
 }
 
@@ -113,9 +115,8 @@ func TestNeedsHookCleanup(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			data, _ := json.Marshal(tt.matchers)
-			if got := needsHookCleanup(string(data)); got != tt.want {
-				t.Errorf("needsHookCleanup() = %v, want %v", got, tt.want)
-			}
+			got := needsHookCleanup(string(data))
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -173,24 +174,14 @@ func TestRemoveOurHooksFromEvent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			data, _ := json.Marshal(tt.matchers)
 			result, removed, err := removeOurHooksFromEvent(data)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if removed != tt.wantRemoved {
-				t.Errorf("removed = %v, want %v", removed, tt.wantRemoved)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRemoved, removed, "removed")
 			if tt.wantNil {
-				if result != nil {
-					t.Errorf("expected nil result, got %s", string(result))
-				}
+				assert.Nilf(t, result, "expected nil result, got %s", string(result))
 			} else if result != nil {
 				var remaining []HookMatcher
-				if err := json.Unmarshal(result, &remaining); err != nil {
-					t.Fatalf("failed to unmarshal result: %v", err)
-				}
-				if len(remaining) != tt.wantCount {
-					t.Errorf("remaining matchers = %d, want %d", len(remaining), tt.wantCount)
-				}
+				require.NoError(t, json.Unmarshal(result, &remaining), "failed to unmarshal result")
+				assert.Len(t, remaining, tt.wantCount, "remaining matchers")
 			}
 		})
 	}
@@ -204,29 +195,19 @@ func TestInstallHooks_Idempotent(t *testing.T) {
 	settingsPath := filepath.Join(tmpDir, ".claude", "settings.json")
 
 	// Verify our override works
-	if got := ClaudeSettingsPath(); got != settingsPath {
-		t.Fatalf("ClaudeSettingsPath() = %q, want %q", got, settingsPath)
-	}
+	require.Equal(t, settingsPath, ClaudeSettingsPath())
 
 	countHooks := func() map[string]int {
 		data, err := os.ReadFile(settingsPath)
-		if err != nil {
-			t.Fatalf("read settings: %v", err)
-		}
+		require.NoError(t, err, "read settings")
 		var settings map[string]json.RawMessage
-		if err := json.Unmarshal(data, &settings); err != nil {
-			t.Fatalf("parse settings: %v", err)
-		}
+		require.NoError(t, json.Unmarshal(data, &settings), "parse settings")
 		var hooks map[string]json.RawMessage
-		if err := json.Unmarshal(settings["hooks"], &hooks); err != nil {
-			t.Fatalf("parse hooks: %v", err)
-		}
+		require.NoError(t, json.Unmarshal(settings["hooks"], &hooks), "parse hooks")
 		counts := make(map[string]int)
 		for event, raw := range hooks {
 			var matchers []HookMatcher
-			if err := json.Unmarshal(raw, &matchers); err != nil {
-				t.Fatalf("parse %s: %v", event, err)
-			}
+			require.NoErrorf(t, json.Unmarshal(raw, &matchers), "parse %s", event)
 			for _, m := range matchers {
 				for _, h := range m.Hooks {
 					if isOurHook(h.Command) {
@@ -240,14 +221,10 @@ func TestInstallHooks_Idempotent(t *testing.T) {
 
 	// Install 3 times, verify exactly 1 hook per event each time
 	for i := 1; i <= 3; i++ {
-		if err := InstallHooks(); err != nil {
-			t.Fatalf("InstallHooks (round %d): %v", i, err)
-		}
+		require.NoErrorf(t, InstallHooks(), "InstallHooks (round %d)", i)
 		counts := countHooks()
 		for event := range RequiredHooks {
-			if counts[event] != 1 {
-				t.Errorf("after install %d: %s has %d tclaude hooks, want 1", i, event, counts[event])
-			}
+			assert.Equalf(t, 1, counts[event], "after install %d: %s has %d tclaude hooks, want 1", i, event, counts[event])
 		}
 	}
 }
@@ -260,9 +237,7 @@ func TestInstallHooks_PreservesNonTclaudeHooks(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	// Create settings with a non-tclaude hook on an event we also use
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(settingsPath), 0755))
 	initialSettings := map[string]any{
 		"hooks": map[string]any{
 			"Stop": []any{
@@ -275,13 +250,9 @@ func TestInstallHooks_PreservesNonTclaudeHooks(t *testing.T) {
 		},
 	}
 	data, _ := json.MarshalIndent(initialSettings, "", "  ")
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(settingsPath, data, 0644))
 
-	if err := InstallHooks(); err != nil {
-		t.Fatalf("InstallHooks: %v", err)
-	}
+	require.NoError(t, InstallHooks(), "InstallHooks")
 
 	// Read back and check
 	result, _ := os.ReadFile(settingsPath)
@@ -306,12 +277,8 @@ func TestInstallHooks_PreservesNonTclaudeHooks(t *testing.T) {
 		}
 	}
 
-	if !customFound {
-		t.Error("non-tclaude hook was removed")
-	}
-	if tclaudeCount != 1 {
-		t.Errorf("Stop has %d tclaude hooks, want 1", tclaudeCount)
-	}
+	assert.True(t, customFound, "non-tclaude hook was removed")
+	assert.Equal(t, 1, tclaudeCount, "Stop tclaude hooks")
 }
 
 func TestInstallHooks_CleansDuplicates(t *testing.T) {
@@ -322,9 +289,7 @@ func TestInstallHooks_CleansDuplicates(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	// Create settings with duplicate tclaude hooks (simulating the bug)
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(settingsPath), 0755))
 	hook := map[string]any{"type": "command", "command": HookCommand}
 	matcher := map[string]any{"hooks": []any{hook}}
 	duplicateHooks := map[string]any{
@@ -334,24 +299,20 @@ func TestInstallHooks_CleansDuplicates(t *testing.T) {
 		},
 	}
 	data, _ := json.MarshalIndent(duplicateHooks, "", "  ")
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(settingsPath, data, 0644))
 
-	if err := InstallHooks(); err != nil {
-		t.Fatalf("InstallHooks: %v", err)
-	}
+	require.NoError(t, InstallHooks(), "InstallHooks")
 
 	// Verify all events now have exactly 1 hook
 	result, _ := os.ReadFile(settingsPath)
 	var settings map[string]json.RawMessage
-	json.Unmarshal(result, &settings)
+	_ = json.Unmarshal(result, &settings)
 	var hooks map[string]json.RawMessage
-	json.Unmarshal(settings["hooks"], &hooks)
+	_ = json.Unmarshal(settings["hooks"], &hooks)
 
 	for event := range RequiredHooks {
 		var matchers []HookMatcher
-		json.Unmarshal(hooks[event], &matchers)
+		_ = json.Unmarshal(hooks[event], &matchers)
 		count := 0
 		for _, m := range matchers {
 			for _, h := range m.Hooks {
@@ -360,9 +321,7 @@ func TestInstallHooks_CleansDuplicates(t *testing.T) {
 				}
 			}
 		}
-		if count != 1 {
-			t.Errorf("%s has %d tclaude hooks after cleanup, want 1", event, count)
-		}
+		assert.Equalf(t, 1, count, "%s has %d tclaude hooks after cleanup, want 1", event, count)
 	}
 }
 
@@ -373,30 +332,22 @@ func TestCheckHooksInstalled_DetectsDuplicates(t *testing.T) {
 	settingsPath := filepath.Join(tmpDir, ".claude", "settings.json")
 	t.Setenv("HOME", tmpDir)
 
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(settingsPath), 0755))
 
 	// Install hooks normally first
-	if err := InstallHooks(); err != nil {
-		t.Fatalf("InstallHooks: %v", err)
-	}
+	require.NoError(t, InstallHooks(), "InstallHooks")
 
 	// Verify clean state
 	installed, _, needsRepair := CheckHooksInstalled()
-	if !installed {
-		t.Error("expected installed = true")
-	}
-	if needsRepair {
-		t.Error("expected needsRepair = false for clean install")
-	}
+	assert.True(t, installed, "expected installed = true")
+	assert.False(t, needsRepair, "expected needsRepair = false for clean install")
 
 	// Manually inject a duplicate to simulate the bug
 	data, _ := os.ReadFile(settingsPath)
 	var settings map[string]json.RawMessage
-	json.Unmarshal(data, &settings)
+	_ = json.Unmarshal(data, &settings)
 	var hooks map[string]json.RawMessage
-	json.Unmarshal(settings["hooks"], &hooks)
+	_ = json.Unmarshal(settings["hooks"], &hooks)
 
 	// Double up the Stop hook
 	var stopMatchers []json.RawMessage
@@ -405,16 +356,10 @@ func TestCheckHooksInstalled_DetectsDuplicates(t *testing.T) {
 	hooks["Stop"], _ = json.Marshal(stopMatchers)
 	settings["hooks"], _ = json.Marshal(hooks)
 	output, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(settingsPath, output, 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(settingsPath, output, 0644))
 
 	// Check should detect the duplicate
 	installed, _, needsRepair = CheckHooksInstalled()
-	if !installed {
-		t.Error("expected installed = true (hooks are present, just duplicated)")
-	}
-	if !needsRepair {
-		t.Error("expected needsRepair = true for duplicate hooks")
-	}
+	assert.True(t, installed, "expected installed = true (hooks are present, just duplicated)")
+	assert.True(t, needsRepair, "expected needsRepair = true for duplicate hooks")
 }

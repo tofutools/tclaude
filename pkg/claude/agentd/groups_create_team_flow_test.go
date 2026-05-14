@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -44,56 +46,38 @@ func TestGroupsCreateTeam_BootstrapsMembers(t *testing.T) {
 			"alias=tester,role=test-runner",
 		},
 	}, stdout, new(bytes.Buffer))
-	if rc != 0 {
-		t.Fatalf("RunGroupsCreate rc=%d stdout=%s", rc, stdout.String())
-	}
+	require.Equal(t, 0, rc, "RunGroupsCreate stdout=%s", stdout.String())
 
 	g, err := db.GetAgentGroupByName("reviewer-team")
-	if err != nil || g == nil {
-		t.Fatalf("group not found: err=%v g=%v", err, g)
-	}
+	require.NoError(t, err, "group lookup")
+	require.NotNil(t, g, "group not found")
 	members, err := db.ListAgentGroupMembers(g.ID)
-	if err != nil {
-		t.Fatalf("ListAgentGroupMembers: %v", err)
-	}
-	if len(members) != 2 {
-		t.Fatalf("expected 2 members, got %d: %+v", len(members), members)
-	}
+	require.NoError(t, err, "ListAgentGroupMembers")
+	require.Len(t, members, 2, "expected 2 members: %+v", members)
 	byAlias := map[string]*db.AgentGroupMember{}
 	for _, m := range members {
 		byAlias[m.Alias] = m
 	}
 	lead := byAlias["lead"]
-	if lead == nil {
-		t.Fatal("lead member missing")
-	}
-	if lead.Role != "tech-lead" {
-		t.Errorf("lead.Role = %q, want %q", lead.Role, "tech-lead")
-	}
-	if lead.Descr != "Owns the diff" {
-		t.Errorf("lead.Descr = %q, want %q", lead.Descr, "Owns the diff")
-	}
+	require.NotNil(t, lead, "lead member missing")
+	assert.Equal(t, "tech-lead", lead.Role, "lead.Role")
+	assert.Equal(t, "Owns the diff", lead.Descr, "lead.Descr")
 
 	tester := byAlias["tester"]
-	if tester == nil {
-		t.Fatal("tester member missing")
-	}
-	if tester.Role != "test-runner" {
-		t.Errorf("tester.Role = %q, want %q", tester.Role, "test-runner")
-	}
+	require.NotNil(t, tester, "tester member missing")
+	assert.Equal(t, "test-runner", tester.Role, "tester.Role")
 
 	// Each member should have a live SessionRow whose cwd is the
 	// caller's cwd (since neither --member spec pinned `cwd=`).
 	for _, m := range members {
 		rows, err := db.FindSessionsByConvID(m.ConvID)
-		if err != nil || len(rows) == 0 {
-			t.Errorf("member %q (conv %s) has no session row: %v", m.Alias, m.ConvID, err)
+		if !assert.NoError(t, err) || !assert.NotEmpty(t, rows,
+			"member %q (conv %s) has no session row", m.Alias, m.ConvID) {
 			continue
 		}
-		if got := resolveSym(t, rows[0].Cwd); got != callerCwd {
-			t.Errorf("member %q SessionRow.Cwd = %q, want %q (caller's cwd)",
-				m.Alias, got, callerCwd)
-		}
+		got := resolveSym(t, rows[0].Cwd)
+		assert.Equal(t, callerCwd, got,
+			"member %q SessionRow.Cwd (caller's cwd)", m.Alias)
 	}
 }
 
@@ -114,23 +98,15 @@ func TestGroupsCreateTeam_PerMemberCwdOverride(t *testing.T) {
 			"alias=worker,cwd=" + memberCwd,
 		},
 	}, stdout, new(bytes.Buffer))
-	if rc != 0 {
-		t.Fatalf("RunGroupsCreate rc=%d stdout=%s", rc, stdout.String())
-	}
+	require.Equal(t, 0, rc, "RunGroupsCreate stdout=%s", stdout.String())
 
 	g, _ := db.GetAgentGroupByName("team")
 	members, _ := db.ListAgentGroupMembers(g.ID)
-	if len(members) != 1 {
-		t.Fatalf("want 1 member, got %d", len(members))
-	}
+	require.Len(t, members, 1, "want 1 member")
 	rows, _ := db.FindSessionsByConvID(members[0].ConvID)
-	if len(rows) == 0 {
-		t.Fatal("no session row")
-	}
-	if got := resolveSym(t, rows[0].Cwd); got != memberCwd {
-		t.Errorf("member SessionRow.Cwd = %q, want %q (per-member override)",
-			got, memberCwd)
-	}
+	require.NotEmpty(t, rows, "no session row")
+	got := resolveSym(t, rows[0].Cwd)
+	assert.Equal(t, memberCwd, got, "member SessionRow.Cwd (per-member override)")
 }
 
 // Scenario: the parser rejects a malformed spec before any DB work.
@@ -149,12 +125,11 @@ func TestGroupsCreateTeam_BadSpecAbortsBeforeCreate(t *testing.T) {
 			"role=tester", // missing alias — should fail
 		},
 	}, new(bytes.Buffer), stderr)
-	if rc == 0 {
-		t.Fatalf("expected non-zero rc on bad spec; stderr=%s", stderr.String())
-	}
+	require.NotEqual(t, 0, rc, "expected non-zero rc on bad spec; stderr=%s", stderr.String())
 
-	if g, err := db.GetAgentGroupByName("doomed"); err == nil && g != nil {
-		t.Errorf("group %q should not have been created on bad spec", g.Name)
+	g, err := db.GetAgentGroupByName("doomed")
+	if err == nil {
+		assert.Nil(t, g, "group should not have been created on bad spec")
 	}
 }
 

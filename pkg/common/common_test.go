@@ -2,6 +2,9 @@ package common
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseSize_Bytes(t *testing.T) {
@@ -18,13 +21,10 @@ func TestParseSize_Bytes(t *testing.T) {
 
 	for _, tt := range tests {
 		result, err := ParseSize(tt.input)
-		if err != nil {
-			t.Errorf("ParseSize(%q) returned error: %v", tt.input, err)
+		if !assert.NoErrorf(t, err, "ParseSize(%q) returned error", tt.input) {
 			continue
 		}
-		if result != tt.expected {
-			t.Errorf("ParseSize(%q) = %d, want %d", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "ParseSize(%q)", tt.input)
 	}
 }
 
@@ -43,13 +43,10 @@ func TestParseSize_Kilobytes(t *testing.T) {
 
 	for _, tt := range tests {
 		result, err := ParseSize(tt.input)
-		if err != nil {
-			t.Errorf("ParseSize(%q) returned error: %v", tt.input, err)
+		if !assert.NoErrorf(t, err, "ParseSize(%q) returned error", tt.input) {
 			continue
 		}
-		if result != tt.expected {
-			t.Errorf("ParseSize(%q) = %d, want %d", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "ParseSize(%q)", tt.input)
 	}
 }
 
@@ -68,13 +65,10 @@ func TestParseSize_Megabytes(t *testing.T) {
 
 	for _, tt := range tests {
 		result, err := ParseSize(tt.input)
-		if err != nil {
-			t.Errorf("ParseSize(%q) returned error: %v", tt.input, err)
+		if !assert.NoErrorf(t, err, "ParseSize(%q) returned error", tt.input) {
 			continue
 		}
-		if result != tt.expected {
-			t.Errorf("ParseSize(%q) = %d, want %d", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "ParseSize(%q)", tt.input)
 	}
 }
 
@@ -92,13 +86,10 @@ func TestParseSize_Gigabytes(t *testing.T) {
 
 	for _, tt := range tests {
 		result, err := ParseSize(tt.input)
-		if err != nil {
-			t.Errorf("ParseSize(%q) returned error: %v", tt.input, err)
+		if !assert.NoErrorf(t, err, "ParseSize(%q) returned error", tt.input) {
 			continue
 		}
-		if result != tt.expected {
-			t.Errorf("ParseSize(%q) = %d, want %d", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "ParseSize(%q)", tt.input)
 	}
 }
 
@@ -115,13 +106,10 @@ func TestParseSize_Terabytes(t *testing.T) {
 
 	for _, tt := range tests {
 		result, err := ParseSize(tt.input)
-		if err != nil {
-			t.Errorf("ParseSize(%q) returned error: %v", tt.input, err)
+		if !assert.NoErrorf(t, err, "ParseSize(%q) returned error", tt.input) {
 			continue
 		}
-		if result != tt.expected {
-			t.Errorf("ParseSize(%q) = %d, want %d", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "ParseSize(%q)", tt.input)
 	}
 }
 
@@ -137,13 +125,10 @@ func TestParseSize_WithWhitespace(t *testing.T) {
 
 	for _, tt := range tests {
 		result, err := ParseSize(tt.input)
-		if err != nil {
-			t.Errorf("ParseSize(%q) returned error: %v", tt.input, err)
+		if !assert.NoErrorf(t, err, "ParseSize(%q) returned error", tt.input) {
 			continue
 		}
-		if result != tt.expected {
-			t.Errorf("ParseSize(%q) = %d, want %d", tt.input, result, tt.expected)
-		}
+		assert.Equalf(t, tt.expected, result, "ParseSize(%q)", tt.input)
 	}
 }
 
@@ -159,8 +144,6 @@ func TestParseSize_Invalid(t *testing.T) {
 
 	for _, tt := range tests {
 		_, err := ParseSize(tt)
-		if err == nil {
-			t.Errorf("ParseSize(%q) should return error", tt)
-		}
+		require.Errorf(t, err, "ParseSize(%q) should return error", tt)
 	}
 }

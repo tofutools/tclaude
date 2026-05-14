@@ -1,10 +1,12 @@
 package agentd
 
 import (
-	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // pickTrayIcon's policy: priority yellow (pending) > orange (sudo) >
@@ -15,12 +17,8 @@ func TestPickTrayIcon_GreenWhenIdle(t *testing.T) {
 	yellow := []byte("yellow")
 	orange := []byte("orange")
 	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 0, "")
-	if string(icon) != "green" {
-		t.Errorf("idle: icon = %q, want green", icon)
-	}
-	if tooltip != "tclaude agentd" {
-		t.Errorf("idle: tooltip = %q, want %q", tooltip, "tclaude agentd")
-	}
+	assert.Equal(t, "green", string(icon), "idle: icon")
+	assert.Equal(t, "tclaude agentd", tooltip, "idle: tooltip")
 }
 
 func TestPickTrayIcon_YellowWhenPending(t *testing.T) {
@@ -28,12 +26,8 @@ func TestPickTrayIcon_YellowWhenPending(t *testing.T) {
 	yellow := []byte("yellow")
 	orange := []byte("orange")
 	icon, tooltip := pickTrayIcon(green, yellow, orange, 1, 0, "")
-	if string(icon) != "yellow" {
-		t.Errorf("pending=1: icon = %q, want yellow", icon)
-	}
-	if !strings.Contains(tooltip, "1 pending") {
-		t.Errorf("pending=1: tooltip should mention count, got %q", tooltip)
-	}
+	assert.Equal(t, "yellow", string(icon), "pending=1: icon")
+	assert.Contains(t, tooltip, "1 pending", "pending=1: tooltip should mention count")
 }
 
 func TestPickTrayIcon_YellowCountUpdatesWithMultiple(t *testing.T) {
@@ -41,9 +35,7 @@ func TestPickTrayIcon_YellowCountUpdatesWithMultiple(t *testing.T) {
 	yellow := []byte("yellow")
 	orange := []byte("orange")
 	_, tooltip := pickTrayIcon(green, yellow, orange, 7, 0, "")
-	if !strings.Contains(tooltip, "7 pending") {
-		t.Errorf("pending=7 tooltip should mention 7, got %q", tooltip)
-	}
+	assert.Contains(t, tooltip, "7 pending", "pending=7 tooltip should mention 7")
 }
 
 // pending=0, sudoActive>0 → orange + count + expiry hint. Pins the
@@ -53,15 +45,9 @@ func TestPickTrayIcon_OrangeWhenSudoActive(t *testing.T) {
 	yellow := []byte("yellow")
 	orange := []byte("orange")
 	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 2, "soonest expires in 4m12s")
-	if string(icon) != "orange" {
-		t.Errorf("sudoActive=2: icon = %q, want orange", icon)
-	}
-	if !strings.Contains(tooltip, "2 active sudo") {
-		t.Errorf("sudoActive=2: tooltip should mention count, got %q", tooltip)
-	}
-	if !strings.Contains(tooltip, "soonest expires in 4m12s") {
-		t.Errorf("sudoActive=2: tooltip should include expiry hint, got %q", tooltip)
-	}
+	assert.Equal(t, "orange", string(icon), "sudoActive=2: icon")
+	assert.Contains(t, tooltip, "2 active sudo", "sudoActive=2: tooltip should mention count")
+	assert.Contains(t, tooltip, "soonest expires in 4m12s", "sudoActive=2: tooltip should include expiry hint")
 }
 
 // Yellow takes priority over orange when BOTH are non-zero — the
@@ -72,15 +58,9 @@ func TestPickTrayIcon_YellowBeatsOrange(t *testing.T) {
 	yellow := []byte("yellow")
 	orange := []byte("orange")
 	icon, tooltip := pickTrayIcon(green, yellow, orange, 1, 3, "soonest expires in 1m")
-	if string(icon) != "yellow" {
-		t.Errorf("pending=1 sudoActive=3: icon = %q, want yellow (blocking > passive)", icon)
-	}
-	if !strings.Contains(tooltip, "1 pending") {
-		t.Errorf("pending=1 sudoActive=3: tooltip should mention pending, got %q", tooltip)
-	}
-	if strings.Contains(tooltip, "sudo") {
-		t.Errorf("yellow tooltip should NOT mention sudo (different state); got %q", tooltip)
-	}
+	assert.Equal(t, "yellow", string(icon), "pending=1 sudoActive=3: icon (blocking > passive)")
+	assert.Contains(t, tooltip, "1 pending", "pending=1 sudoActive=3: tooltip should mention pending")
+	assert.NotContains(t, tooltip, "sudo", "yellow tooltip should NOT mention sudo (different state)")
 }
 
 // Orange tooltip without an expiry hint — the SELECT-then-format
@@ -92,15 +72,9 @@ func TestPickTrayIcon_OrangeWithoutExpiryHint(t *testing.T) {
 	yellow := []byte("yellow")
 	orange := []byte("orange")
 	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 1, "")
-	if string(icon) != "orange" {
-		t.Errorf("sudoActive=1, no hint: icon = %q, want orange", icon)
-	}
-	if !strings.Contains(tooltip, "1 active sudo") {
-		t.Errorf("tooltip should mention count, got %q", tooltip)
-	}
-	if strings.Contains(tooltip, "expires in") {
-		t.Errorf("tooltip should NOT have expiry hint when none provided, got %q", tooltip)
-	}
+	assert.Equal(t, "orange", string(icon), "sudoActive=1, no hint: icon")
+	assert.Contains(t, tooltip, "1 active sudo", "tooltip should mention count")
+	assert.NotContains(t, tooltip, "expires in", "tooltip should NOT have expiry hint when none provided")
 }
 
 // snapshot must order rows oldest-first so the longest-blocked
@@ -113,14 +87,10 @@ func TestApprovalRegistry_SnapshotSortsOldestFirst(t *testing.T) {
 		"mid": {id: "mid", createdAt: now.Add(-1 * time.Minute)},
 	}}
 	got := r.snapshot()
-	if len(got) != 3 {
-		t.Fatalf("snapshot len = %d, want 3", len(got))
-	}
+	require.Len(t, got, 3, "snapshot len")
 	want := []string{"old", "mid", "new"}
 	for i, w := range want {
-		if got[i].ID != w {
-			t.Errorf("position %d: got %q, want %q (full: %+v)", i, got[i].ID, w, got)
-		}
+		assert.Equal(t, w, got[i].ID, "position %d (full: %+v)", i, got)
 	}
 }
 
@@ -135,15 +105,9 @@ func TestFormatApprovalSlotLabel_UsesConvTitleWhenPresent(t *testing.T) {
 		CreatedAt: time.Now().Add(-90 * time.Second),
 	}
 	label := formatApprovalSlotLabel(row)
-	if !strings.Contains(label, "groups.spawn") {
-		t.Errorf("label %q should mention perm", label)
-	}
-	if !strings.Contains(label, "alice") {
-		t.Errorf("label %q should mention conv title", label)
-	}
-	if !strings.Contains(label, "ago") {
-		t.Errorf("label %q should mention age", label)
-	}
+	assert.Contains(t, label, "groups.spawn", "label should mention perm")
+	assert.Contains(t, label, "alice", "label should mention conv title")
+	assert.Contains(t, label, "ago", "label should mention age")
 }
 
 func TestFormatApprovalSlotLabel_FallsBackToShortIDWhenNoTitle(t *testing.T) {
@@ -155,12 +119,8 @@ func TestFormatApprovalSlotLabel_FallsBackToShortIDWhenNoTitle(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 	label := formatApprovalSlotLabel(row)
-	if !strings.Contains(label, "12345678") {
-		t.Errorf("label %q should fall back to 8-char conv prefix when no title", label)
-	}
-	if strings.Contains(label, "abcdef") {
-		t.Errorf("label %q should truncate at 8 chars; full conv-id leaked", label)
-	}
+	assert.Contains(t, label, "12345678", "label should fall back to 8-char conv prefix when no title")
+	assert.NotContains(t, label, "abcdef", "label should truncate at 8 chars; full conv-id leaked")
 }
 
 // sliceEq is the change-detector the poller uses to decide whether to
@@ -181,9 +141,7 @@ func TestSliceEq(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := sliceEq(c.a, c.b); got != c.wantEq {
-				t.Errorf("sliceEq(%v, %v) = %v, want %v", c.a, c.b, got, c.wantEq)
-			}
+			assert.Equal(t, c.wantEq, sliceEq(c.a, c.b), "sliceEq(%v, %v)", c.a, c.b)
 		})
 	}
 }
@@ -234,7 +192,5 @@ func TestApprovalRegistry_PendingCountConcurrent(t *testing.T) {
 	close(done)
 
 	// Final state should be empty since each writer balances add+delete.
-	if got := r.pendingCount(); got != 0 {
-		t.Errorf("after balanced add/delete, count = %d, want 0", got)
-	}
+	assert.Equal(t, 0, r.pendingCount(), "after balanced add/delete, count")
 }

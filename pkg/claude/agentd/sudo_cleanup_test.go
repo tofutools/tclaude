@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -31,9 +33,7 @@ func TestSudoGrantsCleanup_PurgesAgedExpiredRows(t *testing.T) {
 		ExpiresAt: now.Add(-long),
 		GrantedBy: "human:popup-id=test",
 	})
-	if err != nil {
-		t.Fatalf("seed old grant: %v", err)
-	}
+	require.NoError(t, err, "seed old grant")
 	recent, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "recent",
 		Slug:      "groups.spawn",
@@ -41,9 +41,7 @@ func TestSudoGrantsCleanup_PurgesAgedExpiredRows(t *testing.T) {
 		ExpiresAt: now.Add(-time.Hour),
 		GrantedBy: "human:popup-id=test",
 	})
-	if err != nil {
-		t.Fatalf("seed recent grant: %v", err)
-	}
+	require.NoError(t, err, "seed recent grant")
 	active, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "active",
 		Slug:      "groups.spawn",
@@ -51,23 +49,18 @@ func TestSudoGrantsCleanup_PurgesAgedExpiredRows(t *testing.T) {
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
-	if err != nil {
-		t.Fatalf("seed active grant: %v", err)
-	}
+	require.NoError(t, err, "seed active grant")
 
 	runSudoGrantsCleanup(now)
 
 	// Old row gone.
-	if g, _ := db.GetSudoGrant(old); g != nil {
-		t.Errorf("old grant should be purged; got %+v", g)
-	}
+	g, _ := db.GetSudoGrant(old)
+	assert.Nil(t, g, "old grant should be purged; got %+v", g)
 	// Recent + active still there.
-	if g, _ := db.GetSudoGrant(recent); g == nil {
-		t.Errorf("recent grant must survive (inside retention window)")
-	}
-	if g, _ := db.GetSudoGrant(active); g == nil {
-		t.Errorf("active grant must survive (in-window expires_at)")
-	}
+	g, _ = db.GetSudoGrant(recent)
+	assert.NotNil(t, g, "recent grant must survive (inside retention window)")
+	g, _ = db.GetSudoGrant(active)
+	assert.NotNil(t, g, "active grant must survive (in-window expires_at)")
 }
 
 // TestSudoGrantsCleanup_QuietWhenNothingToPurge pins the no-op
@@ -84,11 +77,8 @@ func TestSudoGrantsCleanup_QuietWhenNothingToPurge(t *testing.T) {
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	require.NoError(t, err, "seed")
 	runSudoGrantsCleanup(now)
-	if g, _ := db.GetSudoGrant(id); g == nil {
-		t.Errorf("active grant must not be touched by cleanup")
-	}
+	g, _ := db.GetSudoGrant(id)
+	assert.NotNil(t, g, "active grant must not be touched by cleanup")
 }

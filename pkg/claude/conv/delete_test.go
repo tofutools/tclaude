@@ -3,8 +3,10 @@ package conv
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFindJSONLByPrefix_ExactMatch(t *testing.T) {
@@ -13,9 +15,7 @@ func TestFindJSONLByPrefix_ExactMatch(t *testing.T) {
 	createConvFile(t, dir, id, true)
 
 	got := findJSONLByPrefix(dir, id)
-	if got != id {
-		t.Errorf("Expected %s, got %s", id, got)
-	}
+	assert.Equal(t, id, got)
 }
 
 func TestFindJSONLByPrefix_PrefixMatch(t *testing.T) {
@@ -24,9 +24,7 @@ func TestFindJSONLByPrefix_PrefixMatch(t *testing.T) {
 	createConvFile(t, dir, id, true)
 
 	got := findJSONLByPrefix(dir, "aaaaaaaa")
-	if got != id {
-		t.Errorf("Expected %s, got %s", id, got)
-	}
+	assert.Equal(t, id, got)
 }
 
 func TestFindJSONLByPrefix_AmbiguousPrefix(t *testing.T) {
@@ -35,9 +33,7 @@ func TestFindJSONLByPrefix_AmbiguousPrefix(t *testing.T) {
 	createConvFile(t, dir, "aaaaaaaa-2222-cccc-dddd-eeeeeeeeeeee", true)
 
 	got := findJSONLByPrefix(dir, "aaaaaaaa")
-	if got != "" {
-		t.Errorf("Expected empty string for ambiguous prefix, got %s", got)
-	}
+	assert.Empty(t, got, "Expected empty string for ambiguous prefix")
 }
 
 func TestFindJSONLByPrefix_NoMatch(t *testing.T) {
@@ -45,38 +41,28 @@ func TestFindJSONLByPrefix_NoMatch(t *testing.T) {
 	createConvFile(t, dir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", true)
 
 	got := findJSONLByPrefix(dir, "bbbbbbbb")
-	if got != "" {
-		t.Errorf("Expected empty string, got %s", got)
-	}
+	assert.Empty(t, got)
 }
 
 func TestFindJSONLByPrefix_IgnoresDirectories(t *testing.T) {
 	dir := t.TempDir()
 	// Create a directory that matches the prefix (companion dir without .jsonl)
-	if err := os.MkdirAll(filepath.Join(dir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 0755))
 
 	got := findJSONLByPrefix(dir, "aaaaaaaa")
-	if got != "" {
-		t.Errorf("Expected empty string (no .jsonl file), got %s", got)
-	}
+	assert.Empty(t, got, "Expected empty string (no .jsonl file)")
 }
 
 func TestFindJSONLByPrefix_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 
 	got := findJSONLByPrefix(dir, "aaaaaaaa")
-	if got != "" {
-		t.Errorf("Expected empty string, got %s", got)
-	}
+	assert.Empty(t, got)
 }
 
 func TestFindJSONLByPrefix_NonexistentDir(t *testing.T) {
 	got := findJSONLByPrefix("/nonexistent/path", "aaaaaaaa")
-	if got != "" {
-		t.Errorf("Expected empty string, got %s", got)
-	}
+	assert.Empty(t, got)
 }
 
 func TestRunDelete_NotInIndex_DeletesFiles(t *testing.T) {
@@ -98,39 +84,27 @@ func TestRunDelete_NotInIndex_DeletesFiles(t *testing.T) {
 	// We can't use RunDelete because it resolves projectPath from cwd,
 	// so we test the components instead
 	fullID := findJSONLByPrefix(dir, "aaaaaaaa")
-	if fullID != id {
-		t.Fatalf("Expected to find %s on disk, got %s", id, fullID)
-	}
+	require.Equal(t, id, fullID, "Expected to find %s on disk", id)
 
 	// Delete the conversation file
 	convFile := filepath.Join(dir, fullID+".jsonl")
-	if err := os.Remove(convFile); err != nil {
-		t.Fatalf("Failed to remove conv file: %v", err)
-	}
+	require.NoError(t, os.Remove(convFile), "Failed to remove conv file")
 
 	// Delete companion dir
 	if info, err := os.Stat(companionDir); err == nil && info.IsDir() {
-		if err := os.RemoveAll(companionDir); err != nil {
-			t.Fatalf("Failed to remove companion dir: %v", err)
-		}
+		require.NoError(t, os.RemoveAll(companionDir), "Failed to remove companion dir")
 	}
 
 	// Verify both are gone
-	if _, err := os.Stat(convFile); !os.IsNotExist(err) {
-		t.Error("Conv file should be deleted")
-	}
-	if _, err := os.Stat(companionDir); !os.IsNotExist(err) {
-		t.Error("Companion dir should be deleted")
-	}
+	_, err := os.Stat(convFile)
+	assert.True(t, os.IsNotExist(err), "Conv file should be deleted")
+	_, err = os.Stat(companionDir)
+	assert.True(t, os.IsNotExist(err), "Companion dir should be deleted")
 
 	// Verify the index file is unchanged (still empty entries)
 	index, err := LoadSessionsIndex(dir)
-	if err != nil {
-		t.Fatalf("Failed to load index: %v", err)
-	}
-	if len(index.Entries) != 0 {
-		t.Errorf("Index should still be empty, got %d entries", len(index.Entries))
-	}
+	require.NoError(t, err, "Failed to load index")
+	assert.Empty(t, index.Entries, "Index should still be empty")
 }
 
 func TestRunDelete_NotInIndex_OutputShowsNotInIndex(t *testing.T) {
@@ -142,15 +116,11 @@ func TestRunDelete_NotInIndex_OutputShowsNotInIndex(t *testing.T) {
 
 	// Find the conversation on disk (not in index)
 	fullID := findJSONLByPrefix(dir, "aaaaaaaa")
-	if fullID == "" {
-		t.Fatal("Expected to find conversation on disk")
-	}
+	require.NotEmpty(t, fullID, "Expected to find conversation on disk")
 
 	// Verify the "not in index" label would be shown
 	output := fullID[:8] + " (not in index)"
-	if !strings.Contains(output, "not in index") {
-		t.Error("Expected 'not in index' in output for unindexed conversation")
-	}
+	assert.Contains(t, output, "not in index", "Expected 'not in index' in output for unindexed conversation")
 }
 
 func TestRunDelete_InIndex_DoesNotFallbackToDisk(t *testing.T) {
@@ -165,23 +135,15 @@ func TestRunDelete_InIndex_DoesNotFallbackToDisk(t *testing.T) {
 
 	// When entry is in the index, we should find it via the index
 	index, err := LoadSessionsIndex(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	entry, _ := FindSessionByID(index, "aaaaaaaa")
-	if entry == nil {
-		t.Fatal("Expected to find entry in index")
-	}
-	if entry.SessionID != id {
-		t.Errorf("Expected %s, got %s", id, entry.SessionID)
-	}
+	require.NotNil(t, entry, "Expected to find entry in index")
+	assert.Equal(t, id, entry.SessionID)
 
 	// The disk fallback should not be needed
 	// But verify it would also work for the same ID
 	diskID := findJSONLByPrefix(dir, "aaaaaaaa")
-	if diskID != id {
-		t.Errorf("Disk fallback should also find %s, got %s", id, diskID)
-	}
+	assert.Equal(t, id, diskID, "Disk fallback should also find %s", id)
 }
 
 // Tests for watchModel.deleteConversation (watch.go)
@@ -205,26 +167,18 @@ func TestDeleteConversation_UsesFullPath(t *testing.T) {
 	}
 
 	err := m.deleteConversation(entry)
-	if err != nil {
-		t.Fatalf("deleteConversation failed: %v", err)
-	}
+	require.NoError(t, err, "deleteConversation failed")
 
 	// Verify files are deleted
-	if _, err := os.Stat(filepath.Join(dir, id+".jsonl")); !os.IsNotExist(err) {
-		t.Error("Conv file should be deleted")
-	}
-	if _, err := os.Stat(companionDir); !os.IsNotExist(err) {
-		t.Error("Companion dir should be deleted")
-	}
+	_, err = os.Stat(filepath.Join(dir, id+".jsonl"))
+	assert.True(t, os.IsNotExist(err), "Conv file should be deleted")
+	_, err = os.Stat(companionDir)
+	assert.True(t, os.IsNotExist(err), "Companion dir should be deleted")
 
 	// Verify entry was removed from index
 	index, err := LoadSessionsIndex(dir)
-	if err != nil {
-		t.Fatalf("Failed to load index: %v", err)
-	}
-	if len(index.Entries) != 0 {
-		t.Errorf("Expected 0 entries after delete, got %d", len(index.Entries))
-	}
+	require.NoError(t, err, "Failed to load index")
+	assert.Empty(t, index.Entries, "Expected 0 entries after delete")
 }
 
 func TestDeleteConversation_NotInIndex_NoSaveError(t *testing.T) {
@@ -242,14 +196,11 @@ func TestDeleteConversation_NotInIndex_NoSaveError(t *testing.T) {
 	}
 
 	err := m.deleteConversation(entry)
-	if err != nil {
-		t.Fatalf("deleteConversation should not fail for unindexed conv: %v", err)
-	}
+	require.NoError(t, err, "deleteConversation should not fail for unindexed conv")
 
 	// Verify file is deleted
-	if _, err := os.Stat(filepath.Join(dir, id+".jsonl")); !os.IsNotExist(err) {
-		t.Error("Conv file should be deleted")
-	}
+	_, err = os.Stat(filepath.Join(dir, id+".jsonl"))
+	assert.True(t, os.IsNotExist(err), "Conv file should be deleted")
 }
 
 func TestDeleteConversation_NoIndexFile_NoSaveError(t *testing.T) {
@@ -267,13 +218,10 @@ func TestDeleteConversation_NoIndexFile_NoSaveError(t *testing.T) {
 	}
 
 	err := m.deleteConversation(entry)
-	if err != nil {
-		t.Fatalf("deleteConversation should not fail without index file: %v", err)
-	}
+	require.NoError(t, err, "deleteConversation should not fail without index file")
 
-	if _, err := os.Stat(filepath.Join(dir, id+".jsonl")); !os.IsNotExist(err) {
-		t.Error("Conv file should be deleted")
-	}
+	_, err = os.Stat(filepath.Join(dir, id+".jsonl"))
+	assert.True(t, os.IsNotExist(err), "Conv file should be deleted")
 }
 
 func TestDeleteConversation_NonexistentProjectDir_ViaProjectPath(t *testing.T) {
@@ -291,9 +239,7 @@ func TestDeleteConversation_NonexistentProjectDir_ViaProjectPath(t *testing.T) {
 
 	// This should not error - there's nothing to delete but it shouldn't crash
 	err := m.deleteConversation(entry)
-	if err != nil {
-		t.Fatalf("deleteConversation should not fail for non-existent project dir: %v", err)
-	}
+	require.NoError(t, err, "deleteConversation should not fail for non-existent project dir")
 	_ = dir
 }
 
@@ -317,26 +263,17 @@ func TestDeleteConversation_IndexPreservedForOtherEntries(t *testing.T) {
 	}
 
 	err := m.deleteConversation(entry)
-	if err != nil {
-		t.Fatalf("deleteConversation failed: %v", err)
-	}
+	require.NoError(t, err, "deleteConversation failed")
 
 	// Verify the kept entry is still in the index
 	index, err := LoadSessionsIndex(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(index.Entries) != 1 {
-		t.Fatalf("Expected 1 entry remaining, got %d", len(index.Entries))
-	}
-	if index.Entries[0].SessionID != keepID {
-		t.Errorf("Expected remaining entry %s, got %s", keepID, index.Entries[0].SessionID)
-	}
+	require.NoError(t, err)
+	require.Len(t, index.Entries, 1, "Expected 1 entry remaining")
+	assert.Equal(t, keepID, index.Entries[0].SessionID, "Expected remaining entry %s", keepID)
 
 	// Verify the kept .jsonl file still exists
-	if _, err := os.Stat(filepath.Join(dir, keepID+".jsonl")); err != nil {
-		t.Error("Kept conv file should still exist")
-	}
+	_, err = os.Stat(filepath.Join(dir, keepID+".jsonl"))
+	assert.NoError(t, err, "Kept conv file should still exist")
 }
 
 func TestDeleteConversation_LocalMode_UsesModelProjectPath(t *testing.T) {
@@ -346,9 +283,7 @@ func TestDeleteConversation_LocalMode_UsesModelProjectPath(t *testing.T) {
 
 	// Create files under the Claude project path for some fake working dir
 	projectDir := GetClaudeProjectPath(dir)
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(projectDir, 0755))
 	createConvFile(t, projectDir, id, true)
 	createIndex(t, projectDir, []SessionEntry{
 		{SessionID: id},
@@ -361,16 +296,11 @@ func TestDeleteConversation_LocalMode_UsesModelProjectPath(t *testing.T) {
 	}
 
 	err := m.deleteConversation(entry)
-	if err != nil {
-		t.Fatalf("deleteConversation failed: %v", err)
-	}
+	require.NoError(t, err, "deleteConversation failed")
 
-	if _, err := os.Stat(filepath.Join(projectDir, id+".jsonl")); !os.IsNotExist(err) {
-		t.Error("Conv file should be deleted")
-	}
+	_, err = os.Stat(filepath.Join(projectDir, id+".jsonl"))
+	assert.True(t, os.IsNotExist(err), "Conv file should be deleted")
 
 	idx, _ := LoadSessionsIndex(projectDir)
-	if len(idx.Entries) != 0 {
-		t.Errorf("Expected 0 entries after delete, got %d", len(idx.Entries))
-	}
+	assert.Empty(t, idx.Entries, "Expected 0 entries after delete")
 }

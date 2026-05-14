@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -33,24 +35,17 @@ func TestHeadAlias_SurvivesReincarnationChain(t *testing.T) {
 	f.HaveMember("alpha", bobV2, "bob") // only the head is a live group member
 
 	// Human sets the global handle pointing at the original Bob.
-	if err := db.SetHeadAlias("po", bobV0, ""); err != nil {
-		t.Fatalf("SetHeadAlias: %v", err)
-	}
+	require.NoError(t, db.SetHeadAlias("po", bobV0, ""), "SetHeadAlias")
 	// Reincarnation chain: bob-v0 → bob-v1 → bob-v2.
-	if err := db.RecordConvSuccession(bobV0, bobV1, "test"); err != nil {
-		t.Fatalf("RecordConvSuccession v0→v1: %v", err)
-	}
-	if err := db.RecordConvSuccession(bobV1, bobV2, "test"); err != nil {
-		t.Fatalf("RecordConvSuccession v1→v2: %v", err)
-	}
+	require.NoError(t, db.RecordConvSuccession(bobV0, bobV1, "test"), "RecordConvSuccession v0→v1")
+	require.NoError(t, db.RecordConvSuccession(bobV1, bobV2, "test"), "RecordConvSuccession v1→v2")
 
 	// Resolution surface — what tryResolve does internally for any
 	// caller. Bypasses the message handler so we test the resolver's
 	// guarantee in isolation.
 	head, err := db.ResolveHeadAlias("po")
-	if err != nil || head != bobV2 {
-		t.Errorf("ResolveHeadAlias(po) = (%q, %v), want (%q, nil)", head, err, bobV2)
-	}
+	assert.NoError(t, err, "ResolveHeadAlias")
+	assert.Equal(t, bobV2, head, "ResolveHeadAlias(po)")
 
 	// End-to-end: Alice messages "po", and the daemon's ResolveSelector
 	// should walk handle → anchor → head and land on bob-v2's inbox.
@@ -58,16 +53,11 @@ func TestHeadAlias_SurvivesReincarnationChain(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/messages", body), aliceConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("POST /v1/messages: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"POST /v1/messages body=%s", rec.Body.String())
 	rows, _ := db.ListAgentMessagesForConv(bobV2, 100)
-	if len(rows) != 1 {
-		t.Fatalf("Bob-v2 inbox: got %d, want 1", len(rows))
-	}
-	if rows[0].Body != "head-alias smoke" {
-		t.Errorf("body = %q, want %q", rows[0].Body, "head-alias smoke")
-	}
+	require.Len(t, rows, 1, "Bob-v2 inbox")
+	assert.Equal(t, "head-alias smoke", rows[0].Body, "body")
 }
 
 // Scenario: the daemon's mutation endpoints. POST sets, GET reads,
@@ -86,59 +76,43 @@ func TestHeadAlias_DaemonEndpointsHappyPath(t *testing.T) {
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/agent/aliases", body))
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("POST: status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "POST body=%s", rec.Body.String())
 	var setResp struct {
 		Handle string `json:"handle"`
 		Anchor string `json:"anchor_conv_id"`
 		Head   string `json:"head_conv_id"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &setResp); err != nil {
-		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
-	}
-	if setResp.Handle != "po" {
-		t.Errorf("handle = %q, want %q (lower-cased)", setResp.Handle, "po")
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &setResp), "decode body=%s", rec.Body.String())
+	assert.Equal(t, "po", setResp.Handle, "handle (lower-cased)")
 
 	// GET single — the daemon walks the chain at lookup time even
 	// when no chain exists yet (head == anchor).
 	getR := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/agent/aliases/po", nil), bobConv)
 	getRec := testharness.Serve(f.Mux, getR)
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("GET: status=%d body=%s", getRec.Code, getRec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, getRec.Code, "GET body=%s", getRec.Body.String())
 
 	// LIST — open to agents (read-only metadata).
 	listR := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/agent/aliases", nil), bobConv)
 	listRec := testharness.Serve(f.Mux, listR)
-	if listRec.Code != http.StatusOK {
-		t.Fatalf("LIST: status=%d body=%s", listRec.Code, listRec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, listRec.Code, "LIST body=%s", listRec.Body.String())
 	var rows []map[string]any
-	if err := json.Unmarshal(listRec.Body.Bytes(), &rows); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	if len(rows) != 1 || rows[0]["handle"] != "po" {
-		t.Errorf("LIST rows = %+v, want one with handle=po", rows)
+	require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &rows), "decode list")
+	if assert.Len(t, rows, 1, "LIST rows") {
+		assert.Equal(t, "po", rows[0]["handle"], "LIST row handle")
 	}
 
 	// DELETE as human — drops the row.
 	delR := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/v1/agent/aliases/po", nil))
 	delRec := testharness.Serve(f.Mux, delR)
-	if delRec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE: status=%d body=%s", delRec.Code, delRec.Body.String())
-	}
+	require.Equal(t, http.StatusNoContent, delRec.Code, "DELETE body=%s", delRec.Body.String())
 	// Re-deleting is observable as 404.
 	delAgain := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/v1/agent/aliases/po", nil))
 	delAgainRec := testharness.Serve(f.Mux, delAgain)
-	if delAgainRec.Code != http.StatusNotFound {
-		t.Errorf("re-DELETE: status=%d, want 404", delAgainRec.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, delAgainRec.Code, "re-DELETE")
 }
 
 // Scenario: an agent (claude ancestor) tries to mutate the head-alias
@@ -157,25 +131,18 @@ func TestHeadAlias_AgentMutationsRejected(t *testing.T) {
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/agent/aliases", body), someConv)
 	rec := testharness.Serve(f.Mux, r)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("agent POST: status=%d body=%s, want 403", rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, rec.Code, "agent POST body=%s", rec.Body.String())
 
 	// Pre-populate via the DB so the DELETE has something to refuse.
-	if err := db.SetHeadAlias("po", bobConv, ""); err != nil {
-		t.Fatalf("SetHeadAlias: %v", err)
-	}
+	require.NoError(t, db.SetHeadAlias("po", bobConv, ""), "SetHeadAlias")
 	delR := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodDelete, "/v1/agent/aliases/po", nil), someConv)
 	delRec := testharness.Serve(f.Mux, delR)
-	if delRec.Code != http.StatusForbidden {
-		t.Errorf("agent DELETE: status=%d body=%s, want 403", delRec.Code, delRec.Body.String())
-	}
+	assert.Equal(t, http.StatusForbidden, delRec.Code, "agent DELETE body=%s", delRec.Body.String())
 
 	// Sanity: row still exists after the rejection.
-	if h, _ := db.GetHeadAlias("po"); h == nil {
-		t.Errorf("row should survive a rejected agent DELETE")
-	}
+	h, _ := db.GetHeadAlias("po")
+	assert.NotNil(t, h, "row should survive a rejected agent DELETE")
 }
 
 // Scenario: validation rejects unsafe handles before they hit the DB.
@@ -202,8 +169,7 @@ func TestHeadAlias_ValidationRejectsUnsafeHandles(t *testing.T) {
 		r := agentd.AsHumanPeer(testharness.JSONRequest(t,
 			http.MethodPost, "/v1/agent/aliases", body))
 		rec := testharness.Serve(f.Mux, r)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("handle %q: status=%d body=%s, want 400", h, rec.Code, rec.Body.String())
-		}
+		assert.Equal(t, http.StatusBadRequest, rec.Code,
+			"handle %q: body=%s", h, rec.Body.String())
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -37,45 +39,36 @@ func TestDashboardDnDMove_AddThenRemoveLeavesConvInTargetOnly(t *testing.T) {
 
 	// Pre-condition: in alpha, not in beta.
 	pre := fetchDashSnapshot(t, mux)
-	if !groupHasMember(pre, "alpha", conv) {
-		t.Fatalf("pre-move: %s should be in alpha; snapshot=%+v", conv, pre.Agents)
-	}
-	if groupHasMember(pre, "beta", conv) {
-		t.Fatalf("pre-move: %s already in beta; setup is wrong", conv)
-	}
+	require.True(t, groupHasMember(pre, "alpha", conv),
+		"pre-move: %s should be in alpha; snapshot=%+v", conv, pre.Agents)
+	require.False(t, groupHasMember(pre, "beta", conv),
+		"pre-move: %s already in beta; setup is wrong", conv)
 
 	// Step 1: add to beta (POST first, the order the JS uses).
 	addBody := strings.NewReader(`{"conv":"` + conv + `"}`)
 	addReq, _ := http.NewRequest(http.MethodPost, "/api/groups/beta/members", addBody)
 	addReq.Header.Set("Content-Type", "application/json")
-	if rec := testharness.Serve(mux, addReq); rec.Code != http.StatusOK {
-		t.Fatalf("POST /api/groups/beta/members status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	rec := testharness.Serve(mux, addReq)
+	require.Equal(t, http.StatusOK, rec.Code,
+		"POST /api/groups/beta/members body=%s", rec.Body.String())
 
 	// Step 2: remove from alpha.
 	delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/alpha/members/"+conv, nil)
-	if rec := testharness.Serve(mux, delReq); rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE /api/groups/alpha/members/%s status=%d body=%s", conv, rec.Code, rec.Body.String())
-	}
+	rec = testharness.Serve(mux, delReq)
+	require.Equal(t, http.StatusNoContent, rec.Code,
+		"DELETE /api/groups/alpha/members/%s body=%s", conv, rec.Body.String())
 
 	// Post-condition: in beta, not in alpha. Asserts at the same
 	// surface the dashboard's renderer reads.
 	post := fetchDashSnapshot(t, mux)
-	if !groupHasMember(post, "beta", conv) {
-		t.Errorf("post-move: %s should be in beta", conv)
-	}
-	if groupHasMember(post, "alpha", conv) {
-		t.Errorf("post-move: %s should NOT be in alpha after DELETE", conv)
-	}
+	assert.True(t, groupHasMember(post, "beta", conv), "post-move: %s should be in beta", conv)
+	assert.False(t, groupHasMember(post, "alpha", conv), "post-move: %s should NOT be in alpha after DELETE", conv)
 
 	// Snapshot's per-agent groups[] array should reflect the move too.
 	a := findAgent(post.Agents, conv)
-	if a == nil {
-		t.Fatalf("post-move: %s missing from agents[]", conv)
-	}
-	if !containsString(a.Groups, "beta") || containsString(a.Groups, "alpha") {
-		t.Errorf("post-move: agent groups = %v, want [beta] only", a.Groups)
-	}
+	require.NotNil(t, a, "post-move: %s missing from agents[]", conv)
+	assert.True(t, containsString(a.Groups, "beta") && !containsString(a.Groups, "alpha"),
+		"post-move: agent groups = %v, want [beta] only", a.Groups)
 }
 
 // Scenario: the JS rollback path. If the POST B succeeds but DELETE A
@@ -106,30 +99,26 @@ func TestDashboardDnDMove_PartialFailureLeavesConvInBoth(t *testing.T) {
 	addBody := strings.NewReader(`{"conv":"` + conv + `"}`)
 	addReq, _ := http.NewRequest(http.MethodPost, "/api/groups/beta/members", addBody)
 	addReq.Header.Set("Content-Type", "application/json")
-	if rec := testharness.Serve(mux, addReq); rec.Code != http.StatusOK {
-		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	rec := testharness.Serve(mux, addReq)
+	require.Equal(t, http.StatusOK, rec.Code, "POST body=%s", rec.Body.String())
 
 	// Step 2: synthetically force a DELETE failure by passing a
 	// nonexistent conv selector. The handler returns 404; the JS
 	// would surface a partial-failure toast and keep the optimistic
 	// add in place.
 	delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/alpha/members/no-such-conv-anywhere", nil)
-	rec := testharness.Serve(mux, delReq)
-	if rec.Code == http.StatusNoContent || rec.Code == http.StatusOK {
-		t.Fatalf("synthetic DELETE was supposed to fail; got %d body=%s", rec.Code, rec.Body.String())
-	}
+	rec = testharness.Serve(mux, delReq)
+	require.False(t, rec.Code == http.StatusNoContent || rec.Code == http.StatusOK,
+		"synthetic DELETE was supposed to fail; got %d body=%s", rec.Code, rec.Body.String())
 
 	// Snapshot must show the conv in BOTH groups: the recoverable
 	// state the dashboard's partial-failure toast points the human
 	// at.
 	post := fetchDashSnapshot(t, mux)
-	if !groupHasMember(post, "alpha", conv) {
-		t.Errorf("partial-failure: %s should still be in alpha (DELETE failed)", conv)
-	}
-	if !groupHasMember(post, "beta", conv) {
-		t.Errorf("partial-failure: %s should be in beta (POST succeeded)", conv)
-	}
+	assert.True(t, groupHasMember(post, "alpha", conv),
+		"partial-failure: %s should still be in alpha (DELETE failed)", conv)
+	assert.True(t, groupHasMember(post, "beta", conv),
+		"partial-failure: %s should be in beta (POST succeeded)", conv)
 }
 
 // groupHasMember walks the snapshot's per-group members list (the same

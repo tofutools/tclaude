@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -40,45 +42,31 @@ func TestDashboardAddMember_FromUngrouped(t *testing.T) {
 	// Pre-condition: loose conv shows up in ungrouped[] so the
 	// candidate list would surface it.
 	pre := fetchDashSnapshot(t, mux)
-	if !containsConv(pre.Ungrouped, looseConv) {
-		t.Fatalf("pre-add: loose conv %s should appear in ungrouped[]; got %d rows",
-			looseConv, len(pre.Ungrouped))
-	}
+	require.True(t, containsConv(pre.Ungrouped, looseConv),
+		"pre-add: loose conv %s should appear in ungrouped[]; got %d rows", looseConv, len(pre.Ungrouped))
 
 	// Add via the dashboard endpoint (the POST the overlay fires).
 	body := strings.NewReader(`{"conv":"` + looseConv + `"}`)
 	r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	require.NoError(t, err, "build request")
 	r.Header.Set("Content-Type", "application/json")
 	rec := testharness.Serve(mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("POST /api/groups/alpha/members status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code,
+		"POST /api/groups/alpha/members body=%s", rec.Body.String())
 	var addResp struct {
 		ConvID string `json:"conv_id"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &addResp); err != nil {
-		t.Fatalf("decode add response: %v", err)
-	}
-	if addResp.ConvID != looseConv {
-		t.Errorf("response conv_id = %q, want %q", addResp.ConvID, looseConv)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &addResp), "decode add response")
+	assert.Equal(t, looseConv, addResp.ConvID, "response conv_id")
 
 	// Post-condition: snapshot now has the conv under group alpha
 	// AND drops it from ungrouped[].
 	post := fetchDashSnapshot(t, mux)
-	if containsConv(post.Ungrouped, looseConv) {
-		t.Errorf("post-add: loose conv %s should NOT be in ungrouped[] after joining alpha", looseConv)
-	}
+	assert.False(t, containsConv(post.Ungrouped, looseConv),
+		"post-add: loose conv %s should NOT be in ungrouped[] after joining alpha", looseConv)
 	postAgent := findAgent(post.Agents, looseConv)
-	if postAgent == nil {
-		t.Fatalf("post-add: loose conv %s missing from agents[]", looseConv)
-	}
-	if !containsString(postAgent.Groups, "alpha") {
-		t.Errorf("post-add: agent groups = %v; want includes \"alpha\"", postAgent.Groups)
-	}
+	require.NotNil(t, postAgent, "post-add: loose conv %s missing from agents[]", looseConv)
+	assert.Contains(t, postAgent.Groups, "alpha", "post-add: agent groups = %v", postAgent.Groups)
 }
 
 // Scenario: re-adding the same conv via the overlay is idempotent —
@@ -103,27 +91,20 @@ func TestDashboardAddMember_RepeatIsIdempotent(t *testing.T) {
 	doAdd := func() *http.Request {
 		body := strings.NewReader(`{"conv":"` + conv + `"}`)
 		r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
-		if err != nil {
-			t.Fatalf("build request: %v", err)
-		}
+		require.NoError(t, err, "build request")
 		r.Header.Set("Content-Type", "application/json")
 		return r
 	}
 
 	first := testharness.Serve(mux, doAdd())
-	if first.Code != http.StatusOK {
-		t.Fatalf("first add status=%d body=%s", first.Code, first.Body.String())
-	}
+	require.Equal(t, http.StatusOK, first.Code, "first add body=%s", first.Body.String())
 	second := testharness.Serve(mux, doAdd())
-	if second.Code != http.StatusOK {
-		t.Fatalf("second add status=%d body=%s; want 200 (idempotent)", second.Code, second.Body.String())
-	}
+	require.Equal(t, http.StatusOK, second.Code,
+		"second add body=%s; want 200 (idempotent)", second.Body.String())
 	// Membership row count: still exactly one across the snapshot's
 	// per-group view, despite two adds.
 	count := countMembersInGroup(t, mux, "alpha", conv)
-	if count != 1 {
-		t.Errorf("membership rows for %s in alpha = %d; want 1", conv, count)
-	}
+	assert.Equal(t, 1, count, "membership rows for %s in alpha", conv)
 }
 
 // Scenario: an unknown conv-id (no resolver match) returns 404 from
@@ -140,14 +121,10 @@ func TestDashboardAddMember_UnknownConvReturns404(t *testing.T) {
 	mux := agentd.BuildDashboardHandlerForTest()
 	body := strings.NewReader(`{"conv":"no-such-conv-anywhere"}`)
 	r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	require.NoError(t, err, "build request")
 	r.Header.Set("Content-Type", "application/json")
 	rec := testharness.Serve(mux, r)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status=%d, want 404; body=%s", rec.Code, rec.Body.String())
-	}
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
 }
 
 // --- helpers ---
@@ -188,9 +165,7 @@ func countMembersInGroup(t *testing.T, mux http.Handler, group, convID string) i
 	t.Helper()
 	r := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
 	rec := testharness.Serve(mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/api/snapshot status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "/api/snapshot body=%s", rec.Body.String())
 	var snap struct {
 		Groups []struct {
 			Name    string `json:"name"`
@@ -199,9 +174,7 @@ func countMembersInGroup(t *testing.T, mux http.Handler, group, convID string) i
 			} `json:"members"`
 		} `json:"groups"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
-		t.Fatalf("decode snapshot: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap), "decode snapshot")
 	count := 0
 	for _, g := range snap.Groups {
 		if g.Name != group {

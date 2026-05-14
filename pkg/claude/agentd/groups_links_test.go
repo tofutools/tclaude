@@ -4,6 +4,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -19,9 +21,8 @@ func TestRequireScopedLinkAuthority_HumanPasses(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: false})
-	if _, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm); !ok {
-		t.Fatalf("human should pass; body=%s", w.Body.String())
-	}
+	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
+	require.True(t, ok, "human should pass; body=%s", w.Body.String())
 }
 
 // TestRequireScopedLinkAuthority_OwnerOfFromBypasses: an owner of the
@@ -33,19 +34,13 @@ func TestRequireScopedLinkAuthority_OwnerOfFromBypasses(t *testing.T) {
 	id, _ := db.InsertAgentGroupLink(a, b, db.LinkModeMembersToMembers, "")
 	link, _ := db.GetAgentGroupLinkByID(id)
 	groupA, _ := db.GetAgentGroupByID(a)
-	if err := db.AddAgentGroupOwner(a, "manager", "<test>"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, db.AddAgentGroupOwner(a, "manager", "<test>"))
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
 	caller, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
-	if !ok {
-		t.Fatalf("owner of FROM should bypass slug; body=%s", w.Body.String())
-	}
-	if caller != "manager" {
-		t.Errorf("caller = %q, want manager", caller)
-	}
+	require.True(t, ok, "owner of FROM should bypass slug; body=%s", w.Body.String())
+	assert.Equal(t, "manager", caller, "caller")
 }
 
 // TestRequireScopedLinkAuthority_OwnerOfToDoesNotBypass: an owner of
@@ -59,15 +54,12 @@ func TestRequireScopedLinkAuthority_OwnerOfToDoesNotBypass(t *testing.T) {
 	id, _ := db.InsertAgentGroupLink(a, b, db.LinkModeMembersToMembers, "")
 	link, _ := db.GetAgentGroupLinkByID(id)
 	groupB, _ := db.GetAgentGroupByID(b)
-	if err := db.AddAgentGroupOwner(b, "manager", "<test>"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, db.AddAgentGroupOwner(b, "manager", "<test>"))
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
-	if _, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRm); ok {
-		t.Errorf("owner of TO should NOT bypass; expected 403 forcing the slug")
-	}
+	_, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRm)
+	assert.False(t, ok, "owner of TO should NOT bypass; expected 403 forcing the slug")
 }
 
 // TestRequireScopedLinkAuthority_GrantedSlugAllowsRegardlessOfSide: an
@@ -79,17 +71,11 @@ func TestRequireScopedLinkAuthority_GrantedSlugAllowsRegardlessOfSide(t *testing
 	id, _ := db.InsertAgentGroupLink(a, b, db.LinkModeMembersToMembers, "")
 	link, _ := db.GetAgentGroupLinkByID(id)
 	groupB, _ := db.GetAgentGroupByID(b)
-	if err := db.GrantAgentPermission("manager", PermGroupsLinkRm, "<test>"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, db.GrantAgentPermission("manager", PermGroupsLinkRm, "<test>"))
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
 	caller, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRm)
-	if !ok {
-		t.Fatalf("slug holder should pass even on TO side; body=%s", w.Body.String())
-	}
-	if caller != "manager" {
-		t.Errorf("caller = %q, want manager", caller)
-	}
+	require.True(t, ok, "slug holder should pass even on TO side; body=%s", w.Body.String())
+	assert.Equal(t, "manager", caller, "caller")
 }

@@ -3,6 +3,7 @@ package agentd
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -18,9 +19,7 @@ func TestUniqueCloneAlias_NoExistingCloneStartsAt1(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "a", Alias: "worker"})
 
 	got := uniqueCloneAlias("worker")
-	if got != "worker-c-1" {
-		t.Errorf("first clone: got %q, want %q", got, "worker-c-1")
-	}
+	assert.Equal(t, "worker-c-1", got, "first clone")
 }
 
 func TestUniqueCloneAlias_GlobalCounterAcrossGroups(t *testing.T) {
@@ -36,9 +35,7 @@ func TestUniqueCloneAlias_GlobalCounterAcrossGroups(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "c", Alias: "worker-c-2"})
 
 	got := uniqueCloneAlias("worker")
-	if got != "worker-c-3" {
-		t.Errorf("global counter: got %q, want %q", got, "worker-c-3")
-	}
+	assert.Equal(t, "worker-c-3", got, "global counter")
 }
 
 func TestUniqueCloneAlias_FillsHoles(t *testing.T) {
@@ -49,9 +46,7 @@ func TestUniqueCloneAlias_FillsHoles(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "b", Alias: "worker-c-3"})
 
 	got := uniqueCloneAlias("worker")
-	if got != "worker-c-2" {
-		t.Errorf("hole-filling: got %q, want %q", got, "worker-c-2")
-	}
+	assert.Equal(t, "worker-c-2", got, "hole-filling")
 }
 
 func TestUniqueCloneAlias_CloneOfACloneStripsSuffix(t *testing.T) {
@@ -67,9 +62,7 @@ func TestUniqueCloneAlias_CloneOfACloneStripsSuffix(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "b", Alias: "worker-c-3"})
 
 	got := uniqueCloneAlias("worker-c-3")
-	if got != "worker-c-4" {
-		t.Errorf("clone-of-clone: got %q, want %q", got, "worker-c-4")
-	}
+	assert.Equal(t, "worker-c-4", got, "clone-of-clone")
 }
 
 // TestUniqueCloneAlias_MonotonicFromPrev_PrunedAncestor mirrors the
@@ -83,9 +76,7 @@ func TestUniqueCloneAlias_MonotonicFromPrev_PrunedAncestor(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "a", Alias: "worker-c-2"})
 
 	got := uniqueCloneAlias("worker-c-2")
-	if got != "worker-c-3" {
-		t.Errorf("monotonic-from-prev: got %q, want %q", got, "worker-c-3")
-	}
+	assert.Equal(t, "worker-c-3", got, "monotonic-from-prev")
 }
 
 func TestUniqueCloneAlias_EmptyOriginalAliasUsesPrefix(t *testing.T) {
@@ -96,9 +87,7 @@ func TestUniqueCloneAlias_EmptyOriginalAliasUsesPrefix(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "a", Alias: "c-1"})
 
 	got := uniqueCloneAlias("")
-	if got != "c-2" {
-		t.Errorf("empty base: got %q, want %q", got, "c-2")
-	}
+	assert.Equal(t, "c-2", got, "empty base")
 }
 
 func TestUniqueCloneAlias_DifferentBasesIndependent(t *testing.T) {
@@ -110,9 +99,7 @@ func TestUniqueCloneAlias_DifferentBasesIndependent(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "b", Alias: "frontend-c-2"})
 
 	got := uniqueCloneAlias("worker")
-	if got != "worker-c-1" {
-		t.Errorf("independent base: got %q, want %q", got, "worker-c-1")
-	}
+	assert.Equal(t, "worker-c-1", got, "independent base")
 }
 
 // TestUniqueCloneAlias_LegacyFormStripsCleanlyOnCloneOfClone covers
@@ -127,9 +114,7 @@ func TestUniqueCloneAlias_DifferentBasesIndependent(t *testing.T) {
 func TestUniqueCloneAlias_LegacyFormStripsCleanlyOnCloneOfClone(t *testing.T) {
 	setupTestDB(t)
 	got := uniqueCloneAlias("worker-clone-3")
-	if got != "worker-c-4" {
-		t.Errorf("legacy-form clone-of-clone: got %q, want %q", got, "worker-c-4")
-	}
+	assert.Equal(t, "worker-c-4", got, "legacy-form clone-of-clone")
 }
 
 // TestUniqueCloneAlias_LegacyAliasesDoNotReserveNewN documents the
@@ -144,9 +129,7 @@ func TestUniqueCloneAlias_LegacyAliasesDoNotReserveNewN(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "b", Alias: "worker-clone-2"})
 
 	got := uniqueCloneAlias("worker")
-	if got != "worker-c-1" {
-		t.Errorf("legacy aliases must not reserve new N: got %q, want %q", got, "worker-c-1")
-	}
+	assert.Equal(t, "worker-c-1", got, "legacy aliases must not reserve new N")
 }
 
 // TestUniqueCloneAlias_NumericSuffixInBaseName covers the same
@@ -163,25 +146,16 @@ func TestUniqueCloneAlias_NumericSuffixInBaseName(t *testing.T) {
 
 	// Cloning worker-1: the "1" stays as part of the base.
 	got := uniqueCloneAlias("worker-1")
-	if got != "worker-1-c-1" {
-		t.Errorf("worker-1 first clone: got %q, want %q",
-			got, "worker-1-c-1")
-	}
+	assert.Equal(t, "worker-1-c-1", got, "worker-1 first clone")
 
 	// After one clone, the next bump anchors on `worker-1`. Mirroring
 	// the reincarnate test: register the prior clone, then ask again.
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "b", Alias: "worker-1-c-1"})
 	got = uniqueCloneAlias("worker-1-c-1")
-	if got != "worker-1-c-2" {
-		t.Errorf("worker-1 second clone: got %q, want %q",
-			got, "worker-1-c-2")
-	}
+	assert.Equal(t, "worker-1-c-2", got, "worker-1 second clone")
 
 	// worker-2's namespace is independent from worker-1's.
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "c", Alias: "worker-2"})
 	got = uniqueCloneAlias("worker-2")
-	if got != "worker-2-c-1" {
-		t.Errorf("worker-2 first clone: got %q, want %q",
-			got, "worker-2-c-1")
-	}
+	assert.Equal(t, "worker-2-c-1", got, "worker-2 first clone")
 }

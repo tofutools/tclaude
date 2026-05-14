@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -18,9 +20,7 @@ import (
 func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 	setupTestDB(t)
 	gID, err := db.CreateAgentGroup("team", "")
-	if err != nil {
-		t.Fatalf("CreateAgentGroup: %v", err)
-	}
+	require.NoError(t, err, "CreateAgentGroup")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "worker-1", Alias: "w",
 	})
@@ -30,19 +30,14 @@ func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/groups/team/archive", nil)
 	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1}))
 	handleGroupByName(w, r) // dispatcher entry point with selector
-	if w.Code != http.StatusOK {
-		t.Fatalf("archive status %d, body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "archive body=%s", w.Body.String())
 
 	// Re-fetch the group via the daemon helper (NOT the cached pointer)
 	// to confirm archived_at landed.
 	g, err := db.GetAgentGroupByName("team")
-	if err != nil || g == nil {
-		t.Fatalf("re-fetch group: %v / nil=%v", err, g == nil)
-	}
-	if !g.IsArchived() {
-		t.Fatalf("expected archived flag, got %+v", g)
-	}
+	require.NoError(t, err, "re-fetch group")
+	require.NotNil(t, g, "re-fetch group nil")
+	require.True(t, g.IsArchived(), "expected archived flag, got %+v", g)
 
 	// Subsequent add-member attempts must 409. Use the dispatcher so
 	// the request goes through the same path as a real CLI call.
@@ -52,10 +47,8 @@ func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 		bytes.NewReader(memberBody))
 	r2 = r2.WithContext(context.WithValue(r2.Context(), peerKey{}, &peer{PID: 1}))
 	handleGroupByName(w2, r2)
-	if w2.Code != http.StatusConflict {
-		t.Errorf("add-member on archived group: status %d, want 409; body=%s",
-			w2.Code, w2.Body.String())
-	}
+	assert.Equal(t, http.StatusConflict, w2.Code,
+		"add-member on archived group: body=%s", w2.Body.String())
 }
 
 // Unarchiving clears archived_at and re-allows mutations. Mirrors
@@ -66,22 +59,16 @@ func TestHandleGroupUnarchive_ClearsAndAllows(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "worker-1", Alias: "w",
 	})
-	if err := db.ArchiveAgentGroup("team"); err != nil {
-		t.Fatalf("ArchiveAgentGroup: %v", err)
-	}
+	require.NoError(t, db.ArchiveAgentGroup("team"), "ArchiveAgentGroup")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/groups/team/unarchive", nil)
 	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1}))
 	handleGroupByName(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("unarchive status %d, body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "unarchive body=%s", w.Body.String())
 
 	g, _ := db.GetAgentGroupByName("team")
-	if g.IsArchived() {
-		t.Errorf("expected active after unarchive, got archived")
-	}
+	assert.False(t, g.IsArchived(), "expected active after unarchive, got archived")
 }
 
 // Listing endpoint defaults to filtering archived groups out;
@@ -89,55 +76,40 @@ func TestHandleGroupUnarchive_ClearsAndAllows(t *testing.T) {
 // CLI's --archived flag depends on.
 func TestHandleGroupsList_HidesArchivedByDefault(t *testing.T) {
 	setupTestDB(t)
-	if _, err := db.CreateAgentGroup("active-team", ""); err != nil {
-		t.Fatalf("active: %v", err)
-	}
-	if _, err := db.CreateAgentGroup("retired-team", ""); err != nil {
-		t.Fatalf("retired: %v", err)
-	}
-	if err := db.ArchiveAgentGroup("retired-team"); err != nil {
-		t.Fatalf("archive: %v", err)
-	}
+	_, err := db.CreateAgentGroup("active-team", "")
+	require.NoError(t, err, "active")
+	_, err = db.CreateAgentGroup("retired-team", "")
+	require.NoError(t, err, "retired")
+	require.NoError(t, db.ArchiveAgentGroup("retired-team"), "archive")
 
 	// Default GET → archived hidden.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/groups", nil)
 	handleGroups(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("list status %d", w.Code)
-	}
+	require.Equal(t, http.StatusOK, w.Code, "list status")
 	var out []groupSummary
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out), "decode")
 	names := map[string]bool{}
 	for _, g := range out {
 		names[g.Name] = true
 	}
-	if !names["active-team"] {
-		t.Errorf("active group missing from default list")
-	}
-	if names["retired-team"] {
-		t.Errorf("archived group present in default list — should be hidden")
-	}
+	assert.True(t, names["active-team"], "active group missing from default list")
+	assert.False(t, names["retired-team"], "archived group present in default list — should be hidden")
 
 	// ?archived=1 → both shown, archived flag set on the retired row.
 	w2 := httptest.NewRecorder()
 	r2 := httptest.NewRequest(http.MethodGet, "/v1/groups?archived=1", nil)
 	handleGroups(w2, r2)
 	var withArchived []groupSummary
-	if err := json.Unmarshal(w2.Body.Bytes(), &withArchived); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &withArchived), "decode")
 	var foundArchived bool
 	for _, g := range withArchived {
 		if g.Name == "retired-team" && g.Archived {
 			foundArchived = true
 		}
 	}
-	if !foundArchived {
-		t.Errorf("?archived=1 should surface the archived group with archived=true; got %+v", withArchived)
-	}
+	assert.True(t, foundArchived,
+		"?archived=1 should surface the archived group with archived=true; got %+v", withArchived)
 }
 
 // requireGroupActive returns false (and writes 409) for archived
@@ -146,19 +118,13 @@ func TestHandleGroupsList_HidesArchivedByDefault(t *testing.T) {
 func TestRequireGroupActive(t *testing.T) {
 	active := &db.AgentGroup{Name: "active"}
 	w1 := httptest.NewRecorder()
-	if !requireGroupActive(w1, active) {
-		t.Errorf("active group rejected; body=%s", w1.Body.String())
-	}
+	assert.True(t, requireGroupActive(w1, active), "active group rejected; body=%s", w1.Body.String())
 
 	archived := &db.AgentGroup{Name: "archived"}
 	// Set archived_at via direct field mutation (the helper uses
 	// IsZero/IsArchived which checks the time field).
 	archived.ArchivedAt = time.Now()
 	w2 := httptest.NewRecorder()
-	if requireGroupActive(w2, archived) {
-		t.Error("archived group should be rejected")
-	}
-	if w2.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409", w2.Code)
-	}
+	assert.False(t, requireGroupActive(w2, archived), "archived group should be rejected")
+	assert.Equal(t, http.StatusConflict, w2.Code, "status")
 }

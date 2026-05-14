@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFormatTokens(t *testing.T) {
@@ -22,9 +24,7 @@ func TestFormatTokens(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := formatTokens(tt.in)
-		if got != tt.want {
-			t.Errorf("formatTokens(%d) = %q, want %q", tt.in, got, tt.want)
-		}
+		assert.Equal(t, tt.want, got, "formatTokens(%d)", tt.in)
 	}
 }
 
@@ -51,9 +51,8 @@ func TestIsValidFollowUp(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isValidFollowUp(tt.in); got != tt.want {
-				t.Errorf("isValidFollowUp(%q) = %v, want %v", tt.in, got, tt.want)
-			}
+			got := isValidFollowUp(tt.in)
+			assert.Equal(t, tt.want, got, "isValidFollowUp(%q)", tt.in)
 		})
 	}
 }

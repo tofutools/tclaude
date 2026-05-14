@@ -2,8 +2,10 @@ package agent
 
 import (
 	"bytes"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRunRename_AutoAndTitleAreMutuallyExclusive: passing both --auto
@@ -14,13 +16,8 @@ func TestRunRename_AutoAndTitleAreMutuallyExclusive(t *testing.T) {
 		Title: "explicit-title",
 		Auto:  true,
 	}, &stdout, &stderr)
-	if rc != rcInvalidArg {
-		t.Fatalf("rc = %d, want rcInvalidArg (%d). stdout=%q stderr=%q",
-			rc, rcInvalidArg, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "mutually exclusive") {
-		t.Errorf("stderr should explain the conflict, got %q", stderr.String())
-	}
+	require.Equal(t, rcInvalidArg, rc, "stdout=%q stderr=%q", stdout.String(), stderr.String())
+	assert.Contains(t, stderr.String(), "mutually exclusive", "stderr should explain the conflict")
 }
 
 // TestRunRename_EmptyTitleWithoutAutoRejected: the existing
@@ -32,9 +29,7 @@ func TestRunRename_EmptyTitleWithoutAutoRejected(t *testing.T) {
 		Title: "",
 		Auto:  false,
 	}, &stdout, &stderr)
-	if rc != rcInvalidArg {
-		t.Errorf("empty title without --auto should be rejected, got rc=%d", rc)
-	}
+	assert.Equal(t, rcInvalidArg, rc, "empty title without --auto should be rejected")
 }
 
 // TestRunRename_AutoSkipsLocalTitleValidation: with --auto set, an
@@ -75,17 +70,9 @@ func TestRunRename_AutoSkipsLocalTitleValidation(t *testing.T) {
 		Title: "",
 		Auto:  true,
 	}, &stdout, &stderr)
-	if rc != rcOK {
-		t.Fatalf("rc = %d, want rcOK. stderr=%q", rc, stderr.String())
-	}
-	if strings.Contains(stderr.String(), "REJECTED. Title must be") {
-		t.Errorf("auto path should NOT hit the title-charset rejection, got: %q",
-			stderr.String())
-	}
-	if capturedBody["auto"] != true {
-		t.Errorf("daemon body should include auto:true, got %#v", capturedBody)
-	}
-	if _, hasTitle := capturedBody["title"]; hasTitle {
-		t.Errorf("daemon body should NOT include title on auto path, got %#v", capturedBody)
-	}
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	assert.NotContains(t, stderr.String(), "REJECTED. Title must be", "auto path should NOT hit the title-charset rejection")
+	assert.Equal(t, true, capturedBody["auto"], "daemon body should include auto:true, got %#v", capturedBody)
+	_, hasTitle := capturedBody["title"]
+	assert.False(t, hasTitle, "daemon body should NOT include title on auto path, got %#v", capturedBody)
 }

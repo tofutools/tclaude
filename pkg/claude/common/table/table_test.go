@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTruncateWithEllipsis(t *testing.T) {
@@ -33,9 +35,7 @@ func TestTruncateWithEllipsis(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := TruncateWithEllipsis(tt.input, tt.maxLen)
-			if got != tt.want {
-				t.Errorf("TruncateWithEllipsis(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "TruncateWithEllipsis(%q, %d)", tt.input, tt.maxLen)
 		})
 	}
 }
@@ -60,9 +60,7 @@ func TestShortenPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ShortenPath(tt.path, tt.maxLen)
-			if got != tt.want {
-				t.Errorf("ShortenPath(%q, %d) = %q, want %q", tt.path, tt.maxLen, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "ShortenPath(%q, %d)", tt.path, tt.maxLen)
 		})
 	}
 }
@@ -86,9 +84,7 @@ func TestTruncateFromStart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := TruncateFromStart(tt.input, tt.maxLen)
-			if got != tt.want {
-				t.Errorf("TruncateFromStart(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "TruncateFromStart(%q, %d)", tt.input, tt.maxLen)
 		})
 	}
 }
@@ -115,9 +111,7 @@ func TestPadFunctions(t *testing.T) {
 		}
 		for _, tt := range tests {
 			got := PadRight(tt.input, tt.width)
-			if got != tt.want {
-				t.Errorf("PadRight(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "PadRight(%q, %d)", tt.input, tt.width)
 		}
 	})
 
@@ -133,9 +127,7 @@ func TestPadFunctions(t *testing.T) {
 		}
 		for _, tt := range tests {
 			got := PadLeft(tt.input, tt.width)
-			if got != tt.want {
-				t.Errorf("PadLeft(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "PadLeft(%q, %d)", tt.input, tt.width)
 		}
 	})
 
@@ -151,9 +143,7 @@ func TestPadFunctions(t *testing.T) {
 		}
 		for _, tt := range tests {
 			got := PadCenter(tt.input, tt.width)
-			if got != tt.want {
-				t.Errorf("PadCenter(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "PadCenter(%q, %d)", tt.input, tt.width)
 		}
 	})
 }
@@ -236,14 +226,9 @@ func TestCalculateColumnWidths(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := CalculateColumnWidths(tt.columns, tt.termWidth, tt.padding)
-			if len(got) != len(tt.want) {
-				t.Errorf("CalculateColumnWidths() length = %d, want %d", len(got), len(tt.want))
-				return
-			}
+			require.Len(t, got, len(tt.want), "CalculateColumnWidths() length = %d, want %d", len(got), len(tt.want))
 			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("CalculateColumnWidths()[%d] = %d, want %d", i, got[i], tt.want[i])
-				}
+				assert.Equal(t, tt.want[i], got[i], "CalculateColumnWidths()[%d]", i)
 			}
 		})
 	}
@@ -265,12 +250,8 @@ func TestContentAwareWidths(t *testing.T) {
 
 	// PATH column should be capped at content width (14), not expand to MaxWidth (50)
 	// or fill remaining space
-	if widths[1] > 20 {
-		t.Errorf("PATH column width = %d, expected <= 20 (content-aware)", widths[1])
-	}
-	if widths[1] < 14 {
-		t.Errorf("PATH column width = %d, expected >= 14 (content width)", widths[1])
-	}
+	assert.LessOrEqual(t, widths[1], 20, "PATH column width = %d, expected <= 20 (content-aware)", widths[1])
+	assert.GreaterOrEqual(t, widths[1], 14, "PATH column width = %d, expected >= 14 (content width)", widths[1])
 }
 
 func TestTableNew(t *testing.T) {
@@ -279,15 +260,9 @@ func TestTableNew(t *testing.T) {
 		Column{Header: "Name", MinWidth: 20},
 	)
 
-	if len(tbl.Columns) != 2 {
-		t.Errorf("expected 2 columns, got %d", len(tbl.Columns))
-	}
-	if tbl.SelectedIndex != -1 {
-		t.Errorf("expected SelectedIndex -1, got %d", tbl.SelectedIndex)
-	}
-	if tbl.Padding != 2 {
-		t.Errorf("expected Padding 2, got %d", tbl.Padding)
-	}
+	assert.Len(t, tbl.Columns, 2, "expected 2 columns")
+	assert.Equal(t, -1, tbl.SelectedIndex, "expected SelectedIndex -1")
+	assert.Equal(t, 2, tbl.Padding, "expected Padding 2")
 }
 
 func TestTableAddRow(t *testing.T) {
@@ -296,14 +271,10 @@ func TestTableAddRow(t *testing.T) {
 	tbl.AddRow(Row{Cells: []string{"1", "2"}})
 	tbl.AddRow(Row{Cells: []string{"3", "4"}})
 
-	if len(tbl.Rows) != 2 {
-		t.Errorf("expected 2 rows, got %d", len(tbl.Rows))
-	}
+	assert.Len(t, tbl.Rows, 2, "expected 2 rows")
 
 	tbl.ClearRows()
-	if len(tbl.Rows) != 0 {
-		t.Errorf("expected 0 rows after clear, got %d", len(tbl.Rows))
-	}
+	assert.Len(t, tbl.Rows, 0, "expected 0 rows after clear")
 }
 
 func TestTableRenderHeader(t *testing.T) {
@@ -315,12 +286,8 @@ func TestTableRenderHeader(t *testing.T) {
 
 	header := tbl.RenderHeader()
 
-	if !strings.Contains(header, "ID") {
-		t.Error("header should contain 'ID'")
-	}
-	if !strings.Contains(header, "NAME") {
-		t.Error("header should contain 'NAME'")
-	}
+	assert.Contains(t, header, "ID", "header should contain 'ID'")
+	assert.Contains(t, header, "NAME", "header should contain 'NAME'")
 }
 
 func TestTableRenderHeaderWithSort(t *testing.T) {
@@ -333,9 +300,7 @@ func TestTableRenderHeaderWithSort(t *testing.T) {
 
 	header := tbl.RenderHeader()
 
-	if !strings.Contains(header, "▼") {
-		t.Error("header should contain sort indicator ▼")
-	}
+	assert.Contains(t, header, "▼", "header should contain sort indicator ▼")
 }
 
 func TestTableRenderSeparator(t *testing.T) {
@@ -349,9 +314,7 @@ func TestTableRenderSeparator(t *testing.T) {
 
 	// Total width should be 5 + 2 (padding) + 10 = 17 display cells
 	displayWidth := StringWidth(sep)
-	if displayWidth != 17 {
-		t.Errorf("separator display width = %d, want 17", displayWidth)
-	}
+	assert.Equal(t, 17, displayWidth, "separator display width")
 }
 
 func TestTableRenderRows(t *testing.T) {
@@ -365,15 +328,9 @@ func TestTableRenderRows(t *testing.T) {
 
 	rows := tbl.RenderRows()
 
-	if !strings.Contains(rows, "1") {
-		t.Error("rows should contain '1'")
-	}
-	if !strings.Contains(rows, "Alice") {
-		t.Error("rows should contain 'Alice'")
-	}
-	if !strings.Contains(rows, "Bob") {
-		t.Error("rows should contain 'Bob'")
-	}
+	assert.Contains(t, rows, "1", "rows should contain '1'")
+	assert.Contains(t, rows, "Alice", "rows should contain 'Alice'")
+	assert.Contains(t, rows, "Bob", "rows should contain 'Bob'")
 }
 
 func TestTableViewport(t *testing.T) {
@@ -389,18 +346,12 @@ func TestTableViewport(t *testing.T) {
 	tbl.ViewportOffset = 0
 
 	visible := tbl.VisibleRows()
-	if len(visible) != 3 {
-		t.Errorf("expected 3 visible rows, got %d", len(visible))
-	}
-	if visible[0].Cells[0] != "A" {
-		t.Errorf("first visible row should be 'A', got %q", visible[0].Cells[0])
-	}
+	assert.Len(t, visible, 3, "expected 3 visible rows")
+	assert.Equal(t, "A", visible[0].Cells[0], "first visible row should be 'A'")
 
 	tbl.ViewportOffset = 5
 	visible = tbl.VisibleRows()
-	if visible[0].Cells[0] != "F" {
-		t.Errorf("first visible row should be 'F', got %q", visible[0].Cells[0])
-	}
+	assert.Equal(t, "F", visible[0].Cells[0], "first visible row should be 'F'")
 }
 
 func TestTableScrollIndicator(t *testing.T) {
@@ -412,24 +363,16 @@ func TestTableScrollIndicator(t *testing.T) {
 	}
 
 	// No viewport = no scroll indicator
-	if tbl.NeedsScrollIndicator() {
-		t.Error("should not need scroll indicator without viewport")
-	}
+	assert.False(t, tbl.NeedsScrollIndicator(), "should not need scroll indicator without viewport")
 
 	tbl.ViewportHeight = 5
-	if !tbl.NeedsScrollIndicator() {
-		t.Error("should need scroll indicator with viewport smaller than rows")
-	}
+	assert.True(t, tbl.NeedsScrollIndicator(), "should need scroll indicator with viewport smaller than rows")
 
 	tbl.ViewportOffset = 0
-	if tbl.ScrollPercentage() != 0 {
-		t.Errorf("scroll at top should be 0%%, got %d%%", tbl.ScrollPercentage())
-	}
+	assert.Equal(t, 0, tbl.ScrollPercentage(), "scroll at top should be 0%%")
 
 	tbl.ViewportOffset = 5 // max offset for 10 rows with viewport 5
-	if tbl.ScrollPercentage() != 100 {
-		t.Errorf("scroll at bottom should be 100%%, got %d%%", tbl.ScrollPercentage())
-	}
+	assert.Equal(t, 100, tbl.ScrollPercentage(), "scroll at bottom should be 100%%")
 }
 
 func TestTableEnsureCursorVisible(t *testing.T) {
@@ -447,16 +390,12 @@ func TestTableEnsureCursorVisible(t *testing.T) {
 	tbl.EnsureCursorVisible()
 
 	// Selection at 5, viewport 3, offset should be 3 to show rows 3,4,5
-	if tbl.ViewportOffset != 3 {
-		t.Errorf("viewport offset should be 3, got %d", tbl.ViewportOffset)
-	}
+	assert.Equal(t, 3, tbl.ViewportOffset, "viewport offset should be 3")
 
 	// Move selection up
 	tbl.SelectedIndex = 1
 	tbl.EnsureCursorVisible()
-	if tbl.ViewportOffset != 1 {
-		t.Errorf("viewport offset should be 1, got %d", tbl.ViewportOffset)
-	}
+	assert.Equal(t, 1, tbl.ViewportOffset, "viewport offset should be 1")
 }
 
 func TestTableMoveSelection(t *testing.T) {
@@ -471,19 +410,13 @@ func TestTableMoveSelection(t *testing.T) {
 	tbl.ViewportHeight = 3
 
 	tbl.MoveSelection(1)
-	if tbl.SelectedIndex != 1 {
-		t.Errorf("selection should be 1, got %d", tbl.SelectedIndex)
-	}
+	assert.Equal(t, 1, tbl.SelectedIndex, "selection should be 1")
 
 	tbl.MoveSelection(10) // Should clamp to max
-	if tbl.SelectedIndex != 4 {
-		t.Errorf("selection should be 4, got %d", tbl.SelectedIndex)
-	}
+	assert.Equal(t, 4, tbl.SelectedIndex, "selection should be 4")
 
 	tbl.MoveSelection(-10) // Should clamp to 0
-	if tbl.SelectedIndex != 0 {
-		t.Errorf("selection should be 0, got %d", tbl.SelectedIndex)
-	}
+	assert.Equal(t, 0, tbl.SelectedIndex, "selection should be 0")
 }
 
 func TestTableSelectedRow(t *testing.T) {
@@ -491,18 +424,12 @@ func TestTableSelectedRow(t *testing.T) {
 	tbl.AddRow(Row{Cells: []string{"A"}})
 	tbl.AddRow(Row{Cells: []string{"B"}})
 
-	if tbl.SelectedRow() != nil {
-		t.Error("should return nil when no selection")
-	}
+	assert.Nil(t, tbl.SelectedRow(), "should return nil when no selection")
 
 	tbl.SelectedIndex = 1
 	row := tbl.SelectedRow()
-	if row == nil {
-		t.Fatal("should return row when selected")
-	}
-	if row.Cells[0] != "B" {
-		t.Errorf("selected row should be 'B', got %q", row.Cells[0])
-	}
+	require.NotNil(t, row, "should return row when selected")
+	assert.Equal(t, "B", row.Cells[0], "selected row should be 'B'")
 }
 
 func TestTableRender(t *testing.T) {
@@ -517,9 +444,7 @@ func TestTableRender(t *testing.T) {
 
 	// Should contain header, separator, and row
 	lines := strings.Split(output, "\n")
-	if len(lines) != 3 {
-		t.Errorf("expected 3 lines, got %d", len(lines))
-	}
+	assert.Len(t, lines, 3, "expected 3 lines")
 }
 
 func TestTableRowStyle(t *testing.T) {
@@ -533,12 +458,8 @@ func TestTableRowStyle(t *testing.T) {
 	rows := tbl.RenderRows()
 
 	// Both rows should be present
-	if !strings.Contains(rows, "normal") {
-		t.Error("should contain 'normal'")
-	}
-	if !strings.Contains(rows, "styled") {
-		t.Error("should contain 'styled'")
-	}
+	assert.Contains(t, rows, "normal", "should contain 'normal'")
+	assert.Contains(t, rows, "styled", "should contain 'styled'")
 }
 
 func TestSortStateToggle(t *testing.T) {
@@ -546,28 +467,24 @@ func TestSortStateToggle(t *testing.T) {
 
 	// First toggle: none -> asc
 	s.Toggle("id")
-	if s.Key != "id" || s.Direction != SortAsc {
-		t.Errorf("after first toggle: Key=%q Dir=%v, want id/Asc", s.Key, s.Direction)
-	}
+	assert.Equal(t, "id", s.Key, "after first toggle: Key, want id")
+	assert.Equal(t, SortAsc, s.Direction, "after first toggle: Dir, want Asc")
 
 	// Second toggle same key: asc -> desc
 	s.Toggle("id")
-	if s.Key != "id" || s.Direction != SortDesc {
-		t.Errorf("after second toggle: Key=%q Dir=%v, want id/Desc", s.Key, s.Direction)
-	}
+	assert.Equal(t, "id", s.Key, "after second toggle: Key, want id")
+	assert.Equal(t, SortDesc, s.Direction, "after second toggle: Dir, want Desc")
 
 	// Third toggle same key: desc -> none
 	s.Toggle("id")
-	if s.Key != "" || s.Direction != SortNone {
-		t.Errorf("after third toggle: Key=%q Dir=%v, want empty/None", s.Key, s.Direction)
-	}
+	assert.Equal(t, "", s.Key, "after third toggle: Key, want empty")
+	assert.Equal(t, SortNone, s.Direction, "after third toggle: Dir, want None")
 
 	// Toggle different key while sorted
 	s.Toggle("id")
 	s.Toggle("name")
-	if s.Key != "name" || s.Direction != SortAsc {
-		t.Errorf("after switching column: Key=%q Dir=%v, want name/Asc", s.Key, s.Direction)
-	}
+	assert.Equal(t, "name", s.Key, "after switching column: Key, want name")
+	assert.Equal(t, SortAsc, s.Direction, "after switching column: Dir, want Asc")
 }
 
 func TestSortStateToConfig(t *testing.T) {
@@ -581,23 +498,19 @@ func TestSortStateToConfig(t *testing.T) {
 	// No sort
 	s := SortState{}
 	cfg := s.ToConfig(columns)
-	if cfg.Column != -1 || cfg.Direction != SortNone {
-		t.Errorf("empty sort: Column=%d Dir=%v, want -1/None", cfg.Column, cfg.Direction)
-	}
+	assert.Equal(t, -1, cfg.Column, "empty sort: Column, want -1")
+	assert.Equal(t, SortNone, cfg.Direction, "empty sort: Dir, want None")
 
 	// Sort by name (column index 2)
 	s = SortState{Key: "name", Direction: SortDesc}
 	cfg = s.ToConfig(columns)
-	if cfg.Column != 2 || cfg.Direction != SortDesc {
-		t.Errorf("sort by name: Column=%d Dir=%v, want 2/Desc", cfg.Column, cfg.Direction)
-	}
+	assert.Equal(t, 2, cfg.Column, "sort by name: Column, want 2")
+	assert.Equal(t, SortDesc, cfg.Direction, "sort by name: Dir, want Desc")
 
 	// Sort by unknown key
 	s = SortState{Key: "unknown", Direction: SortAsc}
 	cfg = s.ToConfig(columns)
-	if cfg.Column != -1 {
-		t.Errorf("sort by unknown: Column=%d, want -1", cfg.Column)
-	}
+	assert.Equal(t, -1, cfg.Column, "sort by unknown: Column, want -1")
 }
 
 func TestHandleSortKey(t *testing.T) {
@@ -612,45 +525,31 @@ func TestHandleSortKey(t *testing.T) {
 	s := SortState{}
 
 	// Press "1" -> sorts by ID (1st sortable column)
-	if !s.HandleSortKey(columns, "1") {
-		t.Error("HandleSortKey('1') should return true")
-	}
-	if s.Key != "id" {
-		t.Errorf("after pressing 1: Key=%q, want 'id'", s.Key)
-	}
+	assert.True(t, s.HandleSortKey(columns, "1"), "HandleSortKey('1') should return true")
+	assert.Equal(t, "id", s.Key, "after pressing 1: Key")
 
 	// Press "2" -> sorts by NAME (2nd sortable column)
 	s = SortState{}
 	s.HandleSortKey(columns, "2")
-	if s.Key != "name" {
-		t.Errorf("after pressing 2: Key=%q, want 'name'", s.Key)
-	}
+	assert.Equal(t, "name", s.Key, "after pressing 2: Key")
 
 	// Press "3" -> sorts by DATE (3rd sortable column, skipping non-sortable TITLE)
 	s = SortState{}
 	s.HandleSortKey(columns, "3")
-	if s.Key != "date" {
-		t.Errorf("after pressing 3: Key=%q, want 'date'", s.Key)
-	}
+	assert.Equal(t, "date", s.Key, "after pressing 3: Key")
 
 	// Press "4" -> no 4th sortable column, should not change
 	s = SortState{}
-	if s.HandleSortKey(columns, "4") {
-		t.Error("HandleSortKey('4') should return false (no 4th sortable column)")
-	}
+	assert.False(t, s.HandleSortKey(columns, "4"), "HandleSortKey('4') should return false (no 4th sortable column)")
 
 	// F-keys work too
 	s = SortState{}
 	s.HandleSortKey(columns, "f2")
-	if s.Key != "name" {
-		t.Errorf("after pressing f2: Key=%q, want 'name'", s.Key)
-	}
+	assert.Equal(t, "name", s.Key, "after pressing f2: Key")
 
 	// Non-sort key returns false
 	s = SortState{}
-	if s.HandleSortKey(columns, "q") {
-		t.Error("HandleSortKey('q') should return false")
-	}
+	assert.False(t, s.HandleSortKey(columns, "q"), "HandleSortKey('q') should return false")
 }
 
 func TestSortableColumnIndex(t *testing.T) {
@@ -661,15 +560,9 @@ func TestSortableColumnIndex(t *testing.T) {
 		{Header: "D", SortKey: "d"}, // Sortable #2
 	}
 
-	if idx := SortableColumnIndex(columns, 1); idx != 1 {
-		t.Errorf("SortableColumnIndex(1) = %d, want 1", idx)
-	}
-	if idx := SortableColumnIndex(columns, 2); idx != 3 {
-		t.Errorf("SortableColumnIndex(2) = %d, want 3", idx)
-	}
-	if idx := SortableColumnIndex(columns, 3); idx != -1 {
-		t.Errorf("SortableColumnIndex(3) = %d, want -1", idx)
-	}
+	assert.Equal(t, 1, SortableColumnIndex(columns, 1), "SortableColumnIndex(1)")
+	assert.Equal(t, 3, SortableColumnIndex(columns, 2), "SortableColumnIndex(2)")
+	assert.Equal(t, -1, SortableColumnIndex(columns, 3), "SortableColumnIndex(3)")
 }
 
 func TestSortableColumnsHelp(t *testing.T) {
@@ -680,21 +573,15 @@ func TestSortableColumnsHelp(t *testing.T) {
 	}
 
 	lines := SortableColumnsHelp(columns)
-	if len(lines) != 3 { // 2 columns + toggle hint
-		t.Errorf("expected 3 help lines, got %d", len(lines))
-	}
-	if !strings.Contains(lines[0], "1/F1") || !strings.Contains(lines[0], "ID") {
-		t.Errorf("first line should mention 1/F1 and ID, got: %s", lines[0])
-	}
-	if !strings.Contains(lines[1], "2/F2") || !strings.Contains(lines[1], "NAME") {
-		t.Errorf("second line should mention 2/F2 and NAME, got: %s", lines[1])
-	}
+	require.Len(t, lines, 3, "expected 3 help lines") // 2 columns + toggle hint
+	assert.Contains(t, lines[0], "1/F1", "first line should mention 1/F1")
+	assert.Contains(t, lines[0], "ID", "first line should mention ID")
+	assert.Contains(t, lines[1], "2/F2", "second line should mention 2/F2")
+	assert.Contains(t, lines[1], "NAME", "second line should mention NAME")
 
 	// No sortable columns
 	noSort := []Column{{Header: "A"}, {Header: "B"}}
-	if lines := SortableColumnsHelp(noSort); len(lines) != 0 {
-		t.Errorf("expected 0 help lines for no sortable columns, got %d", len(lines))
-	}
+	assert.Len(t, SortableColumnsHelp(noSort), 0, "expected 0 help lines for no sortable columns")
 }
 
 func TestParseSortKeyNumber(t *testing.T) {
@@ -707,9 +594,7 @@ func TestParseSortKeyNumber(t *testing.T) {
 		{"q", 0}, {"enter", 0}, {"", 0},
 	}
 	for _, tt := range tests {
-		if got := ParseSortKeyNumber(tt.key); got != tt.want {
-			t.Errorf("ParseSortKeyNumber(%q) = %d, want %d", tt.key, got, tt.want)
-		}
+		assert.Equal(t, tt.want, ParseSortKeyNumber(tt.key), "ParseSortKeyNumber(%q)", tt.key)
 	}
 }
 
@@ -768,9 +653,7 @@ func TestFormatCell(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := FormatCell(tt.value, tt.col, tt.width)
-			if got != tt.want {
-				t.Errorf("FormatCell(%q, ..., %d) = %q, want %q", tt.value, tt.width, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got, "FormatCell(%q, ..., %d)", tt.value, tt.width)
 		})
 	}
 }

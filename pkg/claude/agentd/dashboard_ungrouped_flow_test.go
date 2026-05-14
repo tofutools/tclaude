@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -28,13 +30,9 @@ func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {
 	t.Helper()
 	r := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
 	rec := testharness.Serve(mux, r)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/api/snapshot status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rec.Code, "/api/snapshot body=%s", rec.Body.String())
 	var snap dashSnapshot
-	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
-		t.Fatalf("decode snapshot: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap), "decode snapshot")
 	return snap
 }
 
@@ -86,23 +84,17 @@ func TestDashboardSnapshot_UngroupedSurfacesLooseConvs(t *testing.T) {
 		return false
 	}
 
-	if !inUngrouped(looseConv) {
-		t.Errorf("loose conv %s should be in Ungrouped; got %d ungrouped rows",
-			looseConv, len(snap.Ungrouped))
+	if !assert.True(t, inUngrouped(looseConv),
+		"loose conv %s should be in Ungrouped; got %d ungrouped rows", looseConv, len(snap.Ungrouped)) {
 		for _, a := range snap.Ungrouped {
 			t.Logf("  ungrouped row: %+v", a)
 		}
 	}
-	if inUngrouped(joinedConv) {
-		t.Errorf("joined conv %s should NOT be in Ungrouped (it's in group alpha)", joinedConv)
-	}
+	assert.False(t, inUngrouped(joinedConv),
+		"joined conv %s should NOT be in Ungrouped (it's in group alpha)", joinedConv)
 	// Both should appear in the broader Agents list.
-	if !inAgents(looseConv) {
-		t.Errorf("loose conv %s should be in Agents (broader list)", looseConv)
-	}
-	if !inAgents(joinedConv) {
-		t.Errorf("joined conv %s should be in Agents (member of alpha)", joinedConv)
-	}
+	assert.True(t, inAgents(looseConv), "loose conv %s should be in Agents (broader list)", looseConv)
+	assert.True(t, inAgents(joinedConv), "joined conv %s should be in Agents (member of alpha)", joinedConv)
 }
 
 // Scenario: an offline session row (no live tmux) does NOT pollute
@@ -135,10 +127,6 @@ func TestDashboardSnapshot_UngroupedFiltersOfflineSessions(t *testing.T) {
 			offline = true
 		}
 	}
-	if !online {
-		t.Errorf("online ungrouped conv should appear; got %d rows", len(snap.Ungrouped))
-	}
-	if offline {
-		t.Errorf("offline conv %s should NOT appear in Ungrouped", offlineConv)
-	}
+	assert.True(t, online, "online ungrouped conv should appear; got %d rows", len(snap.Ungrouped))
+	assert.False(t, offline, "offline conv %s should NOT appear in Ungrouped", offlineConv)
 }

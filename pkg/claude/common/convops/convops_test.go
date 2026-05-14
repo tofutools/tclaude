@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -50,9 +52,7 @@ func TestSessionEntry_DisplayTitle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.entry.DisplayTitle(); got != tt.expected {
-				t.Errorf("DisplayTitle() = %q, want %q", got, tt.expected)
-			}
+			assert.Equal(t, tt.expected, tt.entry.DisplayTitle(), "DisplayTitle()")
 		})
 	}
 }
@@ -87,9 +87,7 @@ func TestSessionEntry_HasTitle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.entry.HasTitle(); got != tt.expected {
-				t.Errorf("HasTitle() = %v, want %v", got, tt.expected)
-			}
+			assert.Equal(t, tt.expected, tt.entry.HasTitle(), "HasTitle()")
 		})
 	}
 }
@@ -102,28 +100,23 @@ func TestSessionEntry_HasTitle(t *testing.T) {
 // markers.
 func TestIsArchivedTitle(t *testing.T) {
 	cases := map[string]bool{
-		"":                false, // empty
-		"worker":          false, // no -x at all
-		"unix":            false, // ends in x but no hyphen — not a marker
-		"x":               false, // single 'x' isn't `-x`
-		"foo-x":           true,  // simplest match
-		"worker-r-1-x":    true,  // archived reincarnate-1 form
-		"worker-c-2-x":    true,  // archived clone form (unusual but possible)
-		"foo-x-x":         true,  // already-archived-twice (edge case; reincarnate skips this but still detected)
-		"foo-extra":       false, // ends in something other than -x
-		"-x":              true,  // bare suffix is technically a match — title shouldn't be just "-x" but be permissive
+		"":             false, // empty
+		"worker":       false, // no -x at all
+		"unix":         false, // ends in x but no hyphen — not a marker
+		"x":            false, // single 'x' isn't `-x`
+		"foo-x":        true,  // simplest match
+		"worker-r-1-x": true,  // archived reincarnate-1 form
+		"worker-c-2-x": true,  // archived clone form (unusual but possible)
+		"foo-x-x":      true,  // already-archived-twice (edge case; reincarnate skips this but still detected)
+		"foo-extra":    false, // ends in something other than -x
+		"-x":           true,  // bare suffix is technically a match — title shouldn't be just "-x" but be permissive
 	}
 	for in, want := range cases {
 		t.Run(in, func(t *testing.T) {
-			if got := IsArchivedTitle(in); got != want {
-				t.Errorf("IsArchivedTitle(%q) = %v, want %v", in, got, want)
-			}
+			assert.Equal(t, want, IsArchivedTitle(in), "IsArchivedTitle(%q)", in)
 			// Method form mirrors the helper.
 			e := SessionEntry{CustomTitle: in}
-			if got := e.IsArchived(); got != want {
-				t.Errorf("(SessionEntry).IsArchived() with CustomTitle=%q = %v, want %v",
-					in, got, want)
-			}
+			assert.Equal(t, want, e.IsArchived(), "(SessionEntry).IsArchived() with CustomTitle=%q", in)
 		})
 	}
 
@@ -131,9 +124,7 @@ func TestIsArchivedTitle(t *testing.T) {
 	// a Summary that happens to end in `-x` is coincidence, not an
 	// archive mark.
 	e := SessionEntry{Summary: "summary-x", FirstPrompt: "prompt-x"}
-	if e.IsArchived() {
-		t.Error("Summary/FirstPrompt ending in -x must NOT mark a conv as archived")
-	}
+	assert.False(t, e.IsArchived(), "Summary/FirstPrompt ending in -x must NOT mark a conv as archived")
 }
 
 // TestSessionEntry_IsArchived_PrefersColumn covers the canonical
@@ -175,10 +166,7 @@ func TestSessionEntry_IsArchived_PrefersColumn(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.entry.IsArchived(); got != tc.wantArchd {
-				t.Errorf("IsArchived() = %v, want %v (entry=%+v)",
-					got, tc.wantArchd, tc.entry)
-			}
+			assert.Equal(t, tc.wantArchd, tc.entry.IsArchived(), "IsArchived() (entry=%+v)", tc.entry)
 		})
 	}
 }
@@ -189,9 +177,7 @@ func TestPathToProjectDir(t *testing.T) {
 	}
 	// Test basic path conversion
 	result := PathToProjectDir("/home/user/project")
-	if result != "-home-user-project" {
-		t.Errorf("PathToProjectDir() = %q, want %q", result, "-home-user-project")
-	}
+	assert.Equal(t, "-home-user-project", result, "PathToProjectDir()")
 }
 
 func TestFindSessionByID(t *testing.T) {
@@ -205,24 +191,19 @@ func TestFindSessionByID(t *testing.T) {
 
 	// Test exact match
 	entry, idx := FindSessionByID(index, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-	if entry == nil || idx != 0 {
-		t.Fatal("Exact match failed")
-	}
-	if entry.FirstPrompt != "First" {
-		t.Errorf("Wrong entry returned: %q", entry.FirstPrompt)
-	}
+	require.NotNil(t, entry, "Exact match failed")
+	require.Equal(t, 0, idx, "Exact match failed")
+	assert.Equal(t, "First", entry.FirstPrompt, "Wrong entry returned")
 
 	// Test prefix match
 	entry, idx = FindSessionByID(index, "11111111")
-	if entry == nil || idx != 1 {
-		t.Error("Prefix match failed")
+	if assert.NotNil(t, entry, "Prefix match failed") {
+		assert.Equal(t, 1, idx, "Prefix match failed")
 	}
 
 	// Test no match
 	entry, _ = FindSessionByID(index, "zzzzzzzz")
-	if entry != nil {
-		t.Error("Should not find non-existent ID")
-	}
+	assert.Nil(t, entry, "Should not find non-existent ID")
 }
 
 func TestRemoveSessionByID(t *testing.T) {
@@ -236,24 +217,16 @@ func TestRemoveSessionByID(t *testing.T) {
 	}
 
 	// Remove existing
-	if !RemoveSessionByID(index, "bbb") {
-		t.Error("RemoveSessionByID should return true for existing entry")
-	}
-	if len(index.Entries) != 2 {
-		t.Errorf("Expected 2 entries, got %d", len(index.Entries))
-	}
+	assert.True(t, RemoveSessionByID(index, "bbb"), "RemoveSessionByID should return true for existing entry")
+	assert.Len(t, index.Entries, 2, "Expected 2 entries")
 
 	// Verify correct one removed
 	for _, e := range index.Entries {
-		if e.SessionID == "bbb" {
-			t.Error("Entry 'bbb' should have been removed")
-		}
+		assert.NotEqual(t, "bbb", e.SessionID, "Entry 'bbb' should have been removed")
 	}
 
 	// Remove non-existing
-	if RemoveSessionByID(index, "zzz") {
-		t.Error("RemoveSessionByID should return false for non-existent entry")
-	}
+	assert.False(t, RemoveSessionByID(index, "zzz"), "RemoveSessionByID should return false for non-existent entry")
 }
 
 // Upsert+Remove perform surgical updates to the legacy
@@ -273,75 +246,47 @@ func TestSessionsIndex_SurgicalUpdatesPreserveUnknownFields(t *testing.T) {
     {"sessionId": "bbb", "firstPrompt": "bbb-prompt", "futureField": "keep-bbb"}
   ]
 }`
-	if err := os.WriteFile(indexPath, []byte(seed), 0600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	require.NoError(t, os.WriteFile(indexPath, []byte(seed), 0600), "seed")
 
 	// Replace aaa with a new payload; bbb is untouched.
-	if err := UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "aaa", FirstPrompt: "new"}); err != nil {
-		t.Fatalf("Upsert (replace) failed: %v", err)
-	}
+	require.NoError(t, UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "aaa", FirstPrompt: "new"}), "Upsert (replace) failed")
 
 	// Add a brand-new entry ccc.
-	if err := UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "ccc", FirstPrompt: "ccc-prompt"}); err != nil {
-		t.Fatalf("Upsert (insert) failed: %v", err)
-	}
+	require.NoError(t, UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "ccc", FirstPrompt: "ccc-prompt"}), "Upsert (insert) failed")
 
 	// Remove bbb.
-	if err := RemoveSessionsIndexEntry(tmpDir, "bbb"); err != nil {
-		t.Fatalf("Remove failed: %v", err)
-	}
+	require.NoError(t, RemoveSessionsIndexEntry(tmpDir, "bbb"), "Remove failed")
 
 	data, err := os.ReadFile(indexPath)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	require.NoError(t, err, "read")
 
 	// Parse loosely to assert unknown fields survived.
 	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
-		t.Fatalf("unparseable JSON: %v", err)
-	}
-	if string(top["futureToplevelField"]) != `"preserve-me"` {
-		t.Errorf("unknown top-level field dropped: %s", string(top["futureToplevelField"]))
-	}
+	require.NoError(t, json.Unmarshal(data, &top), "unparseable JSON")
+	assert.Equal(t, `"preserve-me"`, string(top["futureToplevelField"]), "unknown top-level field dropped")
 	var entries []map[string]any
-	if err := json.Unmarshal(top["entries"], &entries); err != nil {
-		t.Fatalf("entries unparseable: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 entries (aaa updated, ccc inserted, bbb removed); got %d: %+v", len(entries), entries)
-	}
+	require.NoError(t, json.Unmarshal(top["entries"], &entries), "entries unparseable")
+	require.Len(t, entries, 2, "expected 2 entries (aaa updated, ccc inserted, bbb removed); got %+v", entries)
 	byID := map[string]map[string]any{}
 	for _, e := range entries {
 		id, _ := e["sessionId"].(string)
 		byID[id] = e
 	}
-	if byID["aaa"] == nil {
-		t.Error("aaa missing after replace")
-	} else if byID["aaa"]["firstPrompt"] != "new" {
-		t.Errorf("aaa not replaced: %+v", byID["aaa"])
+	if assert.NotNil(t, byID["aaa"], "aaa missing after replace") {
+		assert.Equal(t, "new", byID["aaa"]["firstPrompt"], "aaa not replaced: %+v", byID["aaa"])
 	}
-	if byID["ccc"] == nil {
-		t.Error("ccc missing after insert")
-	}
-	if _, ok := byID["bbb"]; ok {
-		t.Error("bbb not removed")
-	}
+	assert.NotNil(t, byID["ccc"], "ccc missing after insert")
+	_, ok := byID["bbb"]
+	assert.False(t, ok, "bbb not removed")
 }
 
 // When the file doesn't exist, helpers no-op — they never create it.
 func TestSessionsIndex_NoFileNoCreate(t *testing.T) {
 	tmpDir := t.TempDir()
-	if err := UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "aaa"}); err != nil {
-		t.Fatalf("upsert into missing file should no-op: %v", err)
-	}
-	if err := RemoveSessionsIndexEntry(tmpDir, "aaa"); err != nil {
-		t.Fatalf("remove from missing file should no-op: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "sessions-index.json")); !os.IsNotExist(err) {
-		t.Errorf("file should not have been created (err=%v)", err)
-	}
+	require.NoError(t, UpsertSessionsIndexEntry(tmpDir, SessionEntry{SessionID: "aaa"}), "upsert into missing file should no-op")
+	require.NoError(t, RemoveSessionsIndexEntry(tmpDir, "aaa"), "remove from missing file should no-op")
+	_, err := os.Stat(filepath.Join(tmpDir, "sessions-index.json"))
+	assert.True(t, os.IsNotExist(err), "file should not have been created (err=%v)", err)
 }
 
 func TestLoadSessionsIndex_NonExistent(t *testing.T) {
@@ -350,15 +295,9 @@ func TestLoadSessionsIndex_NonExistent(t *testing.T) {
 
 	// Loading from non-existent directory should return empty index.
 	index, err := LoadSessionsIndex(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadSessionsIndex should not error for non-existent file: %v", err)
-	}
-	if index == nil {
-		t.Fatal("Index should not be nil")
-	}
-	if len(index.Entries) != 0 {
-		t.Errorf("Expected 0 entries, got %d", len(index.Entries))
-	}
+	require.NoError(t, err, "LoadSessionsIndex should not error for non-existent file")
+	require.NotNil(t, index, "Index should not be nil")
+	assert.Len(t, index.Entries, 0, "Expected 0 entries")
 }
 
 func TestLoadSessionsIndex_ScansJsonlOnDisk(t *testing.T) {
@@ -369,24 +308,14 @@ func TestLoadSessionsIndex_ScansJsonlOnDisk(t *testing.T) {
 	content := `{"type":"user","cwd":"/myproject","message":{"role":"user","content":"hello"},"timestamp":"2026-03-01T10:00:00Z"}
 {"type":"custom-title","customTitle":"my-agent","sessionId":"` + sessionID + `"}
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600); err != nil {
-		t.Fatalf("write jsonl: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600), "write jsonl")
 
 	idx, err := LoadSessionsIndex(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadSessionsIndex: %v", err)
-	}
-	if len(idx.Entries) != 1 {
-		t.Fatalf("Expected 1 entry, got %d", len(idx.Entries))
-	}
+	require.NoError(t, err, "LoadSessionsIndex")
+	require.Len(t, idx.Entries, 1, "Expected 1 entry")
 	got := idx.Entries[0]
-	if got.SessionID != sessionID {
-		t.Errorf("SessionID: got %q want %q", got.SessionID, sessionID)
-	}
-	if got.CustomTitle != "my-agent" {
-		t.Errorf("CustomTitle: got %q want %q", got.CustomTitle, "my-agent")
-	}
+	assert.Equal(t, sessionID, got.SessionID, "SessionID")
+	assert.Equal(t, "my-agent", got.CustomTitle, "CustomTitle")
 }
 
 // Regression: agent-spawn artifacts — .jsonl files that only carry
@@ -406,44 +335,29 @@ func TestLoadSessionsIndex_HidesStubFromAgentSpawnArtifact(t *testing.T) {
 {"type":"agent-name","agentName":"dev-c-1","sessionId":"` + sessionID + `"}
 {"type":"permission-mode","permissionMode":"auto","sessionId":"` + sessionID + `"}
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600); err != nil {
-		t.Fatalf("write jsonl: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600), "write jsonl")
 
 	// First call: stub gets written to the DB.
 	idx, err := LoadSessionsIndex(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadSessionsIndex (first): %v", err)
-	}
-	if len(idx.Entries) != 0 {
-		t.Fatalf("first call: expected 0 entries (stub should not surface), got %d: %+v", len(idx.Entries), idx.Entries)
-	}
+	require.NoError(t, err, "LoadSessionsIndex (first)")
+	require.Len(t, idx.Entries, 0, "first call: expected 0 entries (stub should not surface), got %+v", idx.Entries)
 
 	// Stub should be persisted so we don't re-scan on startup.
-	if row, err := db.GetConvIndex(sessionID); err != nil || row == nil {
-		t.Fatalf("stub row should be persisted in DB; row=%v err=%v", row, err)
-	} else if row.Created != "" {
-		t.Errorf("stub row Created should be empty, got %q", row.Created)
-	}
+	row, err := db.GetConvIndex(sessionID)
+	require.NoError(t, err, "stub row should be persisted in DB")
+	require.NotNil(t, row, "stub row should be persisted in DB")
+	assert.Equal(t, "", row.Created, "stub row Created should be empty")
 
 	// Second call: hits the freshness-passes-cache branch. Stub must
 	// still be filtered out.
 	idx2, err := LoadSessionsIndex(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadSessionsIndex (second): %v", err)
-	}
-	if len(idx2.Entries) != 0 {
-		t.Fatalf("second call: expected 0 entries, got %d: %+v", len(idx2.Entries), idx2.Entries)
-	}
+	require.NoError(t, err, "LoadSessionsIndex (second)")
+	require.Len(t, idx2.Entries, 0, "second call: expected 0 entries, got %+v", idx2.Entries)
 
 	// LoadEntriesFromDB (the watch-mode fast path) must also filter.
 	dbEntries, err := LoadEntriesFromDB(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadEntriesFromDB: %v", err)
-	}
-	if len(dbEntries) != 0 {
-		t.Fatalf("LoadEntriesFromDB: expected 0 entries, got %d: %+v", len(dbEntries), dbEntries)
-	}
+	require.NoError(t, err, "LoadEntriesFromDB")
+	require.Len(t, dbEntries, 0, "LoadEntriesFromDB: expected 0 entries, got %+v", dbEntries)
 }
 
 func TestCopyFile(t *testing.T) {
@@ -453,22 +367,14 @@ func TestCopyFile(t *testing.T) {
 	dst := filepath.Join(tmpDir, "dst.txt")
 	content := "test content"
 
-	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(src, []byte(content), 0644))
 
-	if err := CopyFile(src, dst); err != nil {
-		t.Fatalf("CopyFile failed: %v", err)
-	}
+	require.NoError(t, CopyFile(src, dst), "CopyFile failed")
 
 	data, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if string(data) != content {
-		t.Errorf("Content mismatch: got %q, want %q", string(data), content)
-	}
+	assert.Equal(t, content, string(data), "Content mismatch")
 }
 
 func TestCopyConversationFile(t *testing.T) {
@@ -483,31 +389,21 @@ func TestCopyConversationFile(t *testing.T) {
 	content := `{"sessionId":"old-id-12345","type":"user"}
 {"sessionId":"old-id-12345","type":"assistant"}`
 
-	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(src, []byte(content), 0644))
 
-	if err := CopyConversationFile(src, dst, oldID, newID); err != nil {
-		t.Fatalf("CopyConversationFile failed: %v", err)
-	}
+	require.NoError(t, CopyConversationFile(src, dst, oldID, newID), "CopyConversationFile failed")
 
 	data, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	// Verify old ID replaced
-	if string(data) == content {
-		t.Error("Content should have been modified")
-	}
+	assert.NotEqual(t, content, string(data), "Content should have been modified")
 
 	// Parse to verify
 	var msg struct {
 		SessionID string `json:"sessionId"`
 	}
 	if err := json.Unmarshal([]byte(`{"sessionId":"new-id-67890"}`), &msg); err == nil {
-		if msg.SessionID != newID {
-			t.Errorf("ConvID not replaced correctly")
-		}
+		assert.Equal(t, newID, msg.SessionID, "ConvID not replaced correctly")
 	}
 }

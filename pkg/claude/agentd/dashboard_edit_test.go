@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -50,13 +52,9 @@ func TestDashboardEdit_RemoveMember(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team/members/w", "")
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	members, _ := db.ListAgentGroupMembers(gID)
-	if len(members) != 0 {
-		t.Errorf("expected member removed; got %d remaining", len(members))
-	}
+	assert.Empty(t, members, "expected member removed")
 }
 
 func TestDashboardEdit_GrantOwner(t *testing.T) {
@@ -69,15 +67,11 @@ func TestDashboardEdit_GrantOwner(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team/owners", `{"conv":"w"}`)
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	owners, _ := db.ListAgentGroupOwners(gID)
-	if len(owners) != 1 || owners[0].ConvID != "worker" {
-		t.Errorf("expected worker as owner, got %+v", owners)
-	}
-	if owners[0].GrantedBy != dashboardGranter {
-		t.Errorf("granted_by = %q, want %q", owners[0].GrantedBy, dashboardGranter)
+	if assert.Len(t, owners, 1, "expected one owner") {
+		assert.Equal(t, "worker", owners[0].ConvID, "owner conv")
+		assert.Equal(t, dashboardGranter, owners[0].GrantedBy, "granted_by")
 	}
 }
 
@@ -92,13 +86,9 @@ func TestDashboardEdit_RevokeOwner(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/w", "")
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	owners, _ := db.ListAgentGroupOwners(gID)
-	if len(owners) != 0 {
-		t.Errorf("expected owner revoked; got %d remaining", len(owners))
-	}
+	assert.Empty(t, owners, "expected owner revoked")
 }
 
 func TestDashboardEdit_RevokeOwner_NotAnOwner(t *testing.T) {
@@ -112,9 +102,7 @@ func TestDashboardEdit_RevokeOwner_NotAnOwner(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/w", "")
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 func TestDashboardEdit_DeleteGroup(t *testing.T) {
@@ -128,13 +116,9 @@ func TestDashboardEdit_DeleteGroup(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team", "")
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	g, _ := db.GetAgentGroupByName("team")
-	if g != nil {
-		t.Errorf("expected group deleted; still exists: %+v", g)
-	}
+	assert.Nil(t, g, "expected group deleted; still exists: %+v", g)
 }
 
 // PATCH /api/groups/{name}/members/{conv} with one or more of
@@ -155,17 +139,13 @@ func TestDashboardEdit_UpdateMember(t *testing.T) {
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker",
 		`{"alias":"new-alias","role":"new-role","descr":"new descr"}`)
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	members, _ := db.ListAgentGroupMembers(gID)
-	if len(members) != 1 {
-		t.Fatalf("expected 1 member, got %d", len(members))
-	}
+	require.Len(t, members, 1, "expected 1 member")
 	got := members[0]
-	if got.Alias != "new-alias" || got.Role != "new-role" || got.Descr != "new descr" {
-		t.Errorf("update did not land; got %+v", got)
-	}
+	assert.Equal(t, "new-alias", got.Alias, "alias")
+	assert.Equal(t, "new-role", got.Role, "role")
+	assert.Equal(t, "new descr", got.Descr, "descr")
 }
 
 // PATCH with only one field touches only that field — the others
@@ -185,17 +165,12 @@ func TestDashboardEdit_UpdateMember_PartialFields(t *testing.T) {
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker",
 		`{"role":"only-role-changed"}`)
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
+	require.Equal(t, http.StatusOK, w.Code, "status")
 	members, _ := db.ListAgentGroupMembers(gID)
 	got := members[0]
-	if got.Role != "only-role-changed" {
-		t.Errorf("role should be updated; got %q", got.Role)
-	}
-	if got.Alias != "stay-alias" || got.Descr != "stay-descr" {
-		t.Errorf("untouched fields should remain; got alias=%q descr=%q", got.Alias, got.Descr)
-	}
+	assert.Equal(t, "only-role-changed", got.Role, "role should be updated")
+	assert.Equal(t, "stay-alias", got.Alias, "alias untouched")
+	assert.Equal(t, "stay-descr", got.Descr, "descr untouched")
 }
 
 // PATCH with an empty body (or all-nil fields) → 400. Pins the
@@ -211,9 +186,7 @@ func TestDashboardEdit_UpdateMember_EmptyBodyIs400(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker", `{}`)
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("empty body: status = %d, want 400", w.Code)
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code, "empty body")
 }
 
 // PATCH on a missing member → 404 (not 200 with zero rows updated).
@@ -228,9 +201,7 @@ func TestDashboardEdit_UpdateMember_MissingIs404(t *testing.T) {
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/no-such-conv",
 		`{"alias":"x"}`)
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("missing member: status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "missing member")
 }
 
 func TestDashboardEdit_RenameGroup(t *testing.T) {
@@ -243,21 +214,16 @@ func TestDashboardEdit_RenameGroup(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", `{"new_name":"team-renamed"}`)
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	if got, _ := db.GetAgentGroupByName("team"); got != nil {
-		t.Errorf("old name should 404 after rename; got %+v", got)
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	oldGroup, _ := db.GetAgentGroupByName("team")
+	assert.Nil(t, oldGroup, "old name should 404 after rename")
 	got, _ := db.GetAgentGroupByName("team-renamed")
-	if got == nil || got.ID != gID {
-		t.Errorf("new name should resolve to same id %d; got %+v", gID, got)
+	if assert.NotNil(t, got, "new name should resolve") {
+		assert.Equal(t, gID, got.ID, "new name should resolve to same id")
 	}
 	// Members survived via stable id.
 	members, _ := db.ListAgentGroupMembers(gID)
-	if len(members) != 1 {
-		t.Errorf("members should survive dashboard rename; got %d", len(members))
-	}
+	assert.Len(t, members, 1, "members should survive dashboard rename")
 }
 
 func TestDashboardEdit_RenameGroup_Collision(t *testing.T) {
@@ -270,9 +236,7 @@ func TestDashboardEdit_RenameGroup_Collision(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", `{"new_name":"team-renamed"}`)
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409", w.Code)
-	}
+	assert.Equal(t, http.StatusConflict, w.Code, "status")
 }
 
 func TestDashboardEdit_RenameGroup_BadName(t *testing.T) {
@@ -284,13 +248,10 @@ func TestDashboardEdit_RenameGroup_BadName(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", bad)
 		handleDashboardGroupsAPI(w, r)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("body %q: status = %d, want 400", bad, w.Code)
-		}
+		assert.Equal(t, http.StatusBadRequest, w.Code, "body %q", bad)
 		// team untouched.
-		if got, _ := db.GetAgentGroupByName("team"); got == nil {
-			t.Fatalf("team should still exist after rejecting %q", bad)
-		}
+		got, _ := db.GetAgentGroupByName("team")
+		require.NotNil(t, got, "team should still exist after rejecting %q", bad)
 	}
 }
 
@@ -301,9 +262,7 @@ func TestDashboardEdit_DeleteGroup_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/nope", "")
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 func TestDashboardEdit_DeleteGroup_WrongMethod(t *testing.T) {
@@ -315,9 +274,7 @@ func TestDashboardEdit_DeleteGroup_WrongMethod(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team", "")
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", w.Code)
-	}
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "status")
 }
 
 func TestDashboardEdit_DeleteAgent_OrphanCleanup(t *testing.T) {
@@ -339,18 +296,14 @@ func TestDashboardEdit_DeleteAgent_OrphanCleanup(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/agents/"+orphanConv, "")
 	handleDashboardAgentsAPI(w, r)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("orphan delete: status = %d, want 204; body=%s", w.Code, w.Body.String())
-	}
-	if members, _ := db.ListAgentGroupMembers(gID); len(members) != 0 {
-		t.Errorf("expected membership row dropped; got %d", len(members))
-	}
-	if owners, _ := db.ListAgentGroupOwners(gID); len(owners) != 0 {
-		t.Errorf("expected ownership row dropped; got %d", len(owners))
-	}
-	if perms, _ := db.ListAgentPermissionsForConv(orphanConv); len(perms) != 0 {
-		t.Errorf("expected permission rows dropped; got %d", len(perms))
-	}
+	require.Equal(t, http.StatusNoContent, w.Code,
+		"orphan delete body=%s", w.Body.String())
+	members, _ := db.ListAgentGroupMembers(gID)
+	assert.Empty(t, members, "expected membership row dropped")
+	owners, _ := db.ListAgentGroupOwners(gID)
+	assert.Empty(t, owners, "expected ownership row dropped")
+	perms, _ := db.ListAgentPermissionsForConv(orphanConv)
+	assert.Empty(t, perms, "expected permission rows dropped")
 }
 
 func TestDashboardEdit_DeleteAgent_RejectsNonUUIDInput(t *testing.T) {
@@ -363,9 +316,7 @@ func TestDashboardEdit_DeleteAgent_RejectsNonUUIDInput(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/agents/not-a-uuid", "")
 	handleDashboardAgentsAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("non-UUID input: status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "non-UUID input")
 }
 
 func TestDashboardEdit_DeleteAgent_WrongMethod(t *testing.T) {
@@ -375,9 +326,7 @@ func TestDashboardEdit_DeleteAgent_WrongMethod(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodGet, "/api/agents/00000000-1111-2222-3333-444444444444", "")
 	handleDashboardAgentsAPI(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", w.Code)
-	}
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "status")
 }
 
 // POST /api/agents/{conv}/stop on an offline conv → 200 with action
@@ -389,20 +338,14 @@ func TestDashboardEdit_StopAgent_OfflineSkipped(t *testing.T) {
 	withDashboardAuth(t)
 
 	const convID = "11111111-2222-3333-4444-555555555555"
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "alice"}); err != nil {
-		t.Fatalf("UpsertConvIndex: %v", err)
-	}
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "alice"}), "UpsertConvIndex")
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/agents/"+convID+"/stop", "")
 	handleDashboardAgentsAPI(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	body := w.Body.String()
-	if !strings.Contains(body, "skipped:already_offline") {
-		t.Errorf("body should announce already_offline; got %s", body)
-	}
+	assert.Contains(t, body, "skipped:already_offline", "body should announce already_offline")
 }
 
 // Stop on an unresolvable selector → 404.
@@ -413,9 +356,7 @@ func TestDashboardEdit_StopAgent_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/agents/no-such-conv/stop", "")
 	handleDashboardAgentsAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 // Resume on an unresolvable selector → 404. (We don't exercise the
@@ -428,9 +369,7 @@ func TestDashboardEdit_ResumeAgent_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/agents/no-such-conv/resume", "")
 	handleDashboardAgentsAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 // GET on the lifecycle subpaths → 405.
@@ -439,17 +378,13 @@ func TestDashboardEdit_StopResume_WrongMethod(t *testing.T) {
 	withDashboardAuth(t)
 
 	const convID = "11111111-2222-3333-4444-555555555555"
-	if err := db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "alice"}); err != nil {
-		t.Fatalf("UpsertConvIndex: %v", err)
-	}
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "alice"}), "UpsertConvIndex")
 
 	for _, verb := range []string{"stop", "resume"} {
 		w := httptest.NewRecorder()
 		r := dashboardRequest(http.MethodGet, "/api/agents/"+convID+"/"+verb, "")
 		handleDashboardAgentsAPI(w, r)
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("GET %s: status = %d, want 405", verb, w.Code)
-		}
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "GET %s", verb)
 	}
 }
 
@@ -460,9 +395,7 @@ func TestDashboardEdit_DeleteAgent_MissingConv(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/agents/", "")
 	handleDashboardAgentsAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 func TestDashboardEdit_Jump_NoLiveSession(t *testing.T) {
@@ -473,9 +406,7 @@ func TestDashboardEdit_Jump_NoLiveSession(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/jump/00000000-1111-2222-3333-444444444444", "")
 	handleDashboardJumpAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404; body=%s", w.Code, w.Body.String())
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "body=%s", w.Body.String())
 }
 
 func TestDashboardEdit_Jump_WrongMethod(t *testing.T) {
@@ -485,9 +416,7 @@ func TestDashboardEdit_Jump_WrongMethod(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodGet, "/api/jump/00000000-1111-2222-3333-444444444444", "")
 	handleDashboardJumpAPI(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", w.Code)
-	}
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "status")
 }
 
 func TestDashboardEdit_Jump_MissingConv(t *testing.T) {
@@ -497,9 +426,7 @@ func TestDashboardEdit_Jump_MissingConv(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/jump/", "")
 	handleDashboardJumpAPI(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
+	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
 func TestDashboardEdit_NoCookieRefused(t *testing.T) {
@@ -511,9 +438,7 @@ func TestDashboardEdit_NoCookieRefused(t *testing.T) {
 	r.Header.Set("Origin", popupBaseURL)
 	// no cookie added
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("missing cookie should 403; got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusForbidden, w.Code, "missing cookie should 403")
 }
 
 func TestDashboardEdit_BadOriginRefused(t *testing.T) {
@@ -525,7 +450,5 @@ func TestDashboardEdit_BadOriginRefused(t *testing.T) {
 	r.Header.Set("Origin", "http://evil.example.com")
 	r.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: dashboardSessionToken})
 	handleDashboardGroupsAPI(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("bad Origin should 403; got %d", w.Code)
-	}
+	assert.Equal(t, http.StatusForbidden, w.Code, "bad Origin should 403")
 }
