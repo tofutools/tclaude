@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -151,6 +153,45 @@ func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"url": popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard),
 	})
+}
+
+// dashboardBrowserOpener is the browser-launch hook used by
+// autoLaunchDashboard. Production points it at openBrowser; tests swap
+// it for a capture func so the launch path runs without spawning a
+// real browser.
+var dashboardBrowserOpener = openBrowser
+
+// shouldAutoLaunchDashboard reports whether `tclaude agentd serve`
+// should open the dashboard at startup. The --auto-launch-dashboard
+// flag (flagSet) and the persistent agent.auto_launch_dashboard config
+// field OR together — either one opts in — so a service/autostart
+// launch can enable it without carrying the flag.
+func shouldAutoLaunchDashboard(flagSet bool, cfg *config.Config) bool {
+	if flagSet {
+		return true
+	}
+	return cfg != nil && cfg.Agent != nil && cfg.Agent.AutoLaunchDashboard
+}
+
+// autoLaunchDashboard mints a single-use init token in-process and
+// opens the dashboard in the default browser. Mirrors the tray's "Open
+// dashboard" click: the daemon IS the human side, so no socket round-
+// trip through the human-only /v1/dashboard/open is needed.
+//
+// Best-effort — a missing loopback listener or a failed browser launch
+// is logged and otherwise ignored; the daemon keeps running and the
+// human can still run `tclaude agent dashboard`.
+func autoLaunchDashboard() {
+	if popupBaseURL == "" {
+		slog.Warn("auto-launch-dashboard: no loopback URL bound; dashboard unavailable in this process")
+		return
+	}
+	url := popupBaseURL + "/?init_token=" + mintDashboardInitToken()
+	if err := dashboardBrowserOpener(url); err != nil {
+		slog.Warn("auto-launch-dashboard: failed to open browser", "error", err, "url", url)
+		return
+	}
+	fmt.Println("  opening dashboard in your browser…")
 }
 
 // checkDashboardAuth mirrors checkPopupAuth: cookie value match +

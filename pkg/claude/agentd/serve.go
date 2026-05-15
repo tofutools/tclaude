@@ -16,12 +16,14 @@ import (
 	"fyne.io/systray"
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type serveParams struct {
-	Socket string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
-	NoTray bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts."`
+	Socket              string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
+	NoTray              bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts."`
+	AutoLaunchDashboard bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 }
 
 func serveCmd() *cobra.Command {
@@ -103,6 +105,16 @@ func runServe(p *serveParams) error {
 	// without --ask-human.
 	popupSrv, popupURL := startPopupServer()
 	popupBaseURL = popupURL
+
+	// Auto-launch the dashboard in the browser when the human opted in
+	// — either via --auto-launch-dashboard or the persistent
+	// agent.auto_launch_dashboard config field. Saves a separate
+	// `tclaude agent dashboard` after every daemon start. Best-effort:
+	// a failed launch is logged, never fatal.
+	cfg, _ := config.Load()
+	if shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
+		autoLaunchDashboard()
+	}
 
 	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
 	// and stops when the daemon-wide quit channel closes.

@@ -39,10 +39,17 @@ type Config struct {
 // same selector-shaped keys (conv-id / alias / title, with prefix
 // match against title and conv-id) the historical permission_overrides
 // block did.
+//
+// AutoLaunchDashboard, when true, makes `tclaude agentd serve` open the
+// browser dashboard on startup — the persistent twin of the
+// --auto-launch-dashboard serve flag. The flag and this field OR
+// together: either one turns it on, so an autostart/service launch can
+// opt in without carrying the flag.
 type AgentConfig struct {
-	DefaultPermissions []string            `json:"default_permissions,omitempty"`
-	Sudo               *SudoConfig         `json:"sudo,omitempty"`
-	ContextNudge       *ContextNudgeConfig `json:"context_nudge,omitempty"`
+	DefaultPermissions  []string            `json:"default_permissions,omitempty"`
+	Sudo                *SudoConfig         `json:"sudo,omitempty"`
+	ContextNudge        *ContextNudgeConfig `json:"context_nudge,omitempty"`
+	AutoLaunchDashboard bool                `json:"auto_launch_dashboard,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"
