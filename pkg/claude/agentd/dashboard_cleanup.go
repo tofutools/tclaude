@@ -17,11 +17,14 @@ import (
 //
 //	/api/cleanup/group   — remove confirmed-offline members from ONE
 //	                       group (the per-group cleanup button).
-//	/api/cleanup/agents  — operate on confirmed-offline agents across
-//	                       the whole system: strip them from every
-//	                       group, or (delete=true) permanently delete
-//	                       them. Powers the Agents-tab cleanup button
-//	                       and the Groups-tab "clean up all groups" one.
+//	/api/cleanup/agents  — operate on a human-picked set of
+//	                       conversations across the whole system —
+//	                       active agents, retired agents and plain
+//	                       (never-enrolled) conversations alike. One of
+//	                       four tiers per request: unjoin, retire,
+//	                       delete or reinstate (see dashboardCleanupAgents).
+//	                       Powers the Agents-tab cleanup button and the
+//	                       Groups-tab "clean up all groups" one.
 //
 // Cleanup is human-only by construction: these routes live on the
 // loopback dashboard server and are gated by the dashboard cookie +
@@ -31,8 +34,11 @@ import (
 // Safety model. The browser sends an explicit, human-edited list of
 // conv-ids — the daemon never trusts the "offline" label the snapshot
 // rendered. Every conv-id is re-checked against live tmux
-// (isConvOnline) at execute time and any that turns out still-alive is
-// skipped, not touched. A few races remain unavoidable (an agent could
+// (isConvOnline) at execute time; a conv that turns out still-alive is
+// skipped, not touched — unless the request opts in with
+// include_online, which lets the tier act on running sessions (delete
+// force-stops them first). The non-destructive reinstate tier ignores
+// liveness entirely. A few races remain unavoidable (an agent could
 // spawn a pane in the window between the check and the DB write); the
 // session reaper resolves those on its next sweep. The endpoints are
 // idempotent — re-running a cleanup over already-cleaned conv-ids just
@@ -44,7 +50,7 @@ import (
 type cleanupOutcome struct {
 	ConvID string   `json:"conv_id"`
 	Title  string   `json:"title,omitempty"`
-	Result string   `json:"result"`           // removed | retired | deleted | skipped | failed
+	Result string   `json:"result"`           // removed | retired | deleted | reinstated | skipped | failed
 	Detail string   `json:"detail,omitempty"` // human-readable reason
 	Groups []string `json:"groups,omitempty"` // groups touched (agents mode)
 }
@@ -53,14 +59,15 @@ type cleanupOutcome struct {
 // sub-paths. Outcomes is always non-nil so the dashboard can .map()
 // over it unconditionally.
 type cleanupResponse struct {
-	Mode     string           `json:"mode"`
-	Outcomes []cleanupOutcome `json:"outcomes"`
-	Removed  int              `json:"removed"`
-	Retired  int              `json:"retired"`
-	Deleted  int              `json:"deleted"`
-	Skipped  int              `json:"skipped"`
-	Failed   int              `json:"failed"`
-	Warnings []string         `json:"warnings,omitempty"`
+	Mode       string           `json:"mode"`
+	Outcomes   []cleanupOutcome `json:"outcomes"`
+	Removed    int              `json:"removed"`
+	Retired    int              `json:"retired"`
+	Deleted    int              `json:"deleted"`
+	Reinstated int              `json:"reinstated"`
+	Skipped    int              `json:"skipped"`
+	Failed     int              `json:"failed"`
+	Warnings   []string         `json:"warnings,omitempty"`
 }
 
 // handleDashboardCleanup dispatches the /api/cleanup/{group,agents}
@@ -188,17 +195,19 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// dashboardCleanupAgents operates on confirmed-offline agents across
-// the whole system. Body:
+// dashboardCleanupAgents operates on a human-picked set of
+// conversations across the whole system — active agents, retired
+// agents and plain (never-enrolled) conversations alike. Body:
 //
 //	{
 //	  "agents":           ["<conv-id>", ...], // the human-edited list
-//	  "mode":             "unjoin",           // unjoin | retire | delete
+//	  "mode":             "unjoin",           // unjoin | retire | delete | reinstate
 //	  "include_owners":   false,              // (unjoin) strip owner rows?
+//	  "include_online":   false,              // act on still-running sessions too?
 //	  "delete_worktrees": false               // (delete) also remove git worktrees?
 //	}
 //
-// Three tiers, least to most destructive:
+// Four tiers:
 //
 //   - unjoin — the agent is removed from every group it belongs to;
 //     it stays an agent (its enrollment is untouched) and its
@@ -206,23 +215,36 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 //   - retire — the agent is demoted to a plain conversation:
 //     retireAgentConv unjoins all groups, revokes every permission and
 //     sudo grant, and flips the enrollment bit. The .jsonl is left
-//     intact and the agent can be reinstated. This is the
-//     non-destructive soft-delete.
+//     intact and the agent can be reinstated. The non-destructive
+//     soft-delete.
 //   - delete — a full purge via conv.DeleteConvByID (the per-agent
 //     delete button's path), which unlinks the .jsonl and cascades
-//     every group/owner/perm/enrollment row. Irreversible.
+//     every group/owner/perm/enrollment row. Irreversible. Works on
+//     any conversation, agent or not.
+//   - reinstate — the inverse of retire: db.ReinstateAgent clears the
+//     retired flag on a retired enrollment, returning it to the active
+//     roster. Groups and grants are NOT restored (retire stripped
+//     them). A no-op skip for anything that isn't a retired agent.
 //
-// The legacy boolean `delete` is still honoured when `mode` is absent
-// (delete=true → "delete", else → "unjoin") so an older dashboard
-// build keeps working. delete_worktrees (delete mode only) also
-// removes each purged agent's git worktree — skipping the repo's main
-// worktree and any worktree a surviving agent still works in.
+// A target whose tier doesn't apply to it is reported skipped, never
+// failed — so a mixed-category selection degrades gracefully:
+// retire/unjoin skip non-agents, reinstate skips non-retired convs.
+//
+// include_online lets a tier act on a conv whose tmux session is still
+// alive instead of skipping it; delete force-stops the session first.
+// reinstate ignores liveness regardless. The legacy boolean `delete`
+// is still honoured when `mode` is absent (delete=true → "delete",
+// else → "unjoin") so an older dashboard build keeps working.
+// delete_worktrees (delete mode only) also removes each purged agent's
+// git worktree — skipping the repo's main worktree and any worktree a
+// surviving agent still works in.
 func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Agents          []string `json:"agents"`
 		Mode            string   `json:"mode"`
 		Delete          bool     `json:"delete"` // legacy — superseded by Mode
 		IncludeOwners   bool     `json:"include_owners"`
+		IncludeOnline   bool     `json:"include_online"`
 		DeleteWorktrees bool     `json:"delete_worktrees"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -240,9 +262,9 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	switch mode {
-	case "unjoin", "retire", "delete":
+	case "unjoin", "retire", "delete", "reinstate":
 	default:
-		http.Error(w, "invalid mode "+mode+" (expected unjoin, retire or delete)", http.StatusBadRequest)
+		http.Error(w, "invalid mode "+mode+" (expected unjoin, retire, delete or reinstate)", http.StatusBadRequest)
 		return
 	}
 
@@ -264,7 +286,10 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		convID, ok := resolveCleanupConv(raw)
 		online := ok && isConvOnline(convID)
 		targets = append(targets, cleanupTarget{convID: convID, ok: ok, online: online})
-		if mode == "delete" && ok && !online {
+		// An online target is deleted only when include_online lifts the
+		// skip — otherwise it survives, so its worktree still counts as
+		// in-use for the survivor check.
+		if mode == "delete" && ok && (!online || body.IncludeOnline) {
 			willDelete[convID] = true
 		}
 	}
@@ -289,9 +314,30 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		case !tg.ok:
 			out.Result, out.Detail = "skipped", "could not resolve conv-id"
 			resp.Skipped++
-		case tg.online:
-			out.Result, out.Detail = "skipped", "still online — tmux session is alive"
+		case tg.online && !body.IncludeOnline && mode != "reinstate":
+			// The tmux double-check: snapshot said offline (or the human
+			// ticked it anyway), reality says alive — leave it untouched
+			// unless the request opted in. Reinstate is non-destructive,
+			// so it never blocks on liveness.
+			out.Result, out.Detail = "skipped", "still online — enable \"include online sessions\" to act on it"
 			resp.Skipped++
+		case mode == "reinstate":
+			// The inverse of retire: clear the retired flag, returning a
+			// demoted agent to the active roster. Groups and grants stay
+			// gone — retire stripped them.
+			did, rerr := db.ReinstateAgent(tg.convID)
+			switch {
+			case rerr != nil:
+				out.Result, out.Detail = "failed", "reinstate: "+rerr.Error()
+				resp.Failed++
+			case !did:
+				out.Result, out.Detail = "skipped", "not a retired agent — nothing to reinstate"
+				resp.Skipped++
+			default:
+				out.Result = "reinstated"
+				out.Detail = "returned to the active roster — groups and permissions were not restored"
+				resp.Reinstated++
+			}
 		case mode == "retire":
 			// Soft-delete: demote to a plain conversation. The .jsonl
 			// and conv_index row are left intact and the agent can be
