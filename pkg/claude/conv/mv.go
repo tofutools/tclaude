@@ -164,18 +164,19 @@ func RunMv(params *MvParams, stdout, stderr *os.File, stdin *os.File) int {
 	dstInfo, err := os.Stat(dstConvFile)
 	if err == nil {
 		dstEntry := SessionEntry{
-			SessionID:    srcEntry.SessionID,
-			FullPath:     dstConvFile,
-			FileMtime:    dstInfo.ModTime().UnixMilli(),
-			FirstPrompt:  srcEntry.FirstPrompt,
-			Summary:      srcEntry.Summary,
-			CustomTitle:  srcEntry.CustomTitle,
-			MessageCount: srcEntry.MessageCount,
-			Created:      srcEntry.Created,
-			Modified:     srcEntry.Modified,
-			GitBranch:    srcEntry.GitBranch,
-			ProjectPath:  params.DestPath,
-			IsSidechain:  srcEntry.IsSidechain,
+			SessionID:        srcEntry.SessionID,
+			FullPath:         dstConvFile,
+			FileMtime:        dstInfo.ModTime().UnixMilli(),
+			FirstPrompt:      srcEntry.FirstPrompt,
+			Summary:          srcEntry.Summary,
+			CustomTitle:      srcEntry.CustomTitle,
+			MessageCount:     srcEntry.MessageCount,
+			Created:          srcEntry.Created,
+			Modified:         srcEntry.Modified,
+			GitBranch:        srcEntry.GitBranch,
+			GitBranchStartup: srcEntry.GitBranchStartup,
+			ProjectPath:      params.DestPath,
+			IsSidechain:      srcEntry.IsSidechain,
 		}
 		if err := UpsertSessionsIndexEntry(dstProjectPath, dstEntry); err != nil {
 			fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", dstProjectPath, err)
