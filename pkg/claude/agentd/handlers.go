@@ -109,10 +109,9 @@ type peerEntry struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
-	// Branch is the git branch / worktree the agent is working on,
-	// sourced from its conv_index row (Claude Code stamps gitBranch
-	// into every .jsonl turn). Empty when the conv isn't indexed yet.
-	Branch string   `json:"branch,omitempty"`
+	// agentLocationView carries `branch` (current branch) plus the
+	// startup/current directory split — see agent_location_view.go.
+	agentLocationView
 	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
 }
@@ -164,13 +163,13 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				// member shows its real name and branch instead of stale
 				// values.
 				pe = &peerEntry{
-					ConvID: m.ConvID,
-					Title:  agent.FreshTitle(m.ConvID),
-					Alias:  m.Alias,
-					Role:   m.Role,
-					Descr:  m.Descr,
-					Branch: agent.FreshBranch(m.ConvID),
-					Online: isConvOnline(m.ConvID),
+					ConvID:            m.ConvID,
+					Title:             agent.FreshTitle(m.ConvID),
+					Alias:             m.Alias,
+					Role:              m.Role,
+					Descr:             m.Descr,
+					agentLocationView: locationView(m.ConvID),
+					Online:            isConvOnline(m.ConvID),
 				}
 				byConv[m.ConvID] = pe
 			}
@@ -192,10 +191,10 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			byConv[s.ConvID] = &peerEntry{
-				ConvID: s.ConvID,
-				Title:  agent.FreshTitle(s.ConvID),
-				Branch: agent.FreshBranch(s.ConvID),
-				Online: true,
+				ConvID:            s.ConvID,
+				Title:             agent.FreshTitle(s.ConvID),
+				agentLocationView: locationView(s.ConvID),
+				Online:            true,
 			}
 		}
 	}
@@ -213,7 +212,11 @@ func peerEntriesFromResolved(rs []*agent.Resolved) []*peerEntry {
 		if r.Row != nil {
 			title = agent.DisplayTitle(r.Row)
 		}
-		out = append(out, &peerEntry{ConvID: r.ConvID, Title: title})
+		out = append(out, &peerEntry{
+			ConvID:            r.ConvID,
+			Title:             title,
+			agentLocationView: locationView(r.ConvID),
+		})
 	}
 	return out
 }
@@ -1964,11 +1967,11 @@ type memberJSON struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
-	// Branch is the git branch / worktree the member is working on,
-	// from its conv_index row. Empty when not indexed / not in a repo.
-	Branch string `json:"branch,omitempty"`
-	Online bool   `json:"online"`
-	Owner  bool   `json:"owner,omitempty"`
+	// agentLocationView carries `branch` (current branch) plus the
+	// startup/current directory split — see agent_location_view.go.
+	agentLocationView
+	Online bool `json:"online"`
+	Owner  bool `json:"owner,omitempty"`
 }
 
 func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
@@ -1991,14 +1994,14 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 	for _, m := range members {
 		memberSet[m.ConvID] = true
 		out = append(out, memberJSON{
-			ConvID: m.ConvID,
-			Title:  agent.FreshTitle(m.ConvID),
-			Alias:  m.Alias,
-			Role:   m.Role,
-			Descr:  m.Descr,
-			Branch: agent.FreshBranch(m.ConvID),
-			Online: isConvOnline(m.ConvID),
-			Owner:  ownerSet[m.ConvID],
+			ConvID:            m.ConvID,
+			Title:             agent.FreshTitle(m.ConvID),
+			Alias:             m.Alias,
+			Role:              m.Role,
+			Descr:             m.Descr,
+			agentLocationView: locationView(m.ConvID),
+			Online:            isConvOnline(m.ConvID),
+			Owner:             ownerSet[m.ConvID],
 		})
 	}
 	// Surface owners who aren't members so the list is comprehensive.
@@ -2009,12 +2012,12 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			continue
 		}
 		out = append(out, memberJSON{
-			ConvID: ownerConv,
-			Title:  agent.FreshTitle(ownerConv),
-			Role:   "owner",
-			Branch: agent.FreshBranch(ownerConv),
-			Online: isConvOnline(ownerConv),
-			Owner:  true,
+			ConvID:            ownerConv,
+			Title:             agent.FreshTitle(ownerConv),
+			Role:              "owner",
+			agentLocationView: locationView(ownerConv),
+			Online:            isConvOnline(ownerConv),
+			Owner:             true,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -312,21 +312,25 @@ type dashboardGroup struct {
 //   - true on a row with Role=="owner" and no alias/descr → a
 //     pure owner who isn't a member (so the list stays comprehensive).
 type dashboardMember struct {
-	ConvID string     `json:"conv_id"`
-	Title  string     `json:"title"`
-	Alias  string     `json:"alias,omitempty"`
-	Role   string     `json:"role,omitempty"`
-	Descr  string     `json:"descr,omitempty"`
-	Branch string     `json:"branch,omitempty"` // git branch / worktree, from conv_index
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Alias  string `json:"alias,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Descr  string `json:"descr,omitempty"`
+	// agentLocationView carries `branch` (current branch) plus the
+	// startup/current directory split — see agent_location_view.go.
+	agentLocationView
 	Online bool       `json:"online"`
 	Owner  bool       `json:"owner,omitempty"`
 	State  agentState `json:"state"`
 }
 
 type dashboardAgent struct {
-	ConvID      string               `json:"conv_id"`
-	Title       string               `json:"title"`
-	Branch      string               `json:"branch,omitempty"` // git branch / worktree, from conv_index
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	// agentLocationView carries `branch` (current branch) plus the
+	// startup/current directory split — see agent_location_view.go.
+	agentLocationView
 	Online      bool                 `json:"online"`
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
@@ -436,11 +440,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			return existing
 		}
 		a := &dashboardAgent{
-			ConvID: convID,
-			Title:  agent.FreshTitle(convID),
-			Branch: agent.FreshBranch(convID),
-			Online: isConvOnline(convID),
-			State:  stateForConv(convID),
+			ConvID:            convID,
+			Title:             agent.FreshTitle(convID),
+			agentLocationView: locationView(convID),
+			Online:            isConvOnline(convID),
+			State:             stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
 			Groups:      []string{},
@@ -483,15 +487,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			memberSet[m.ConvID] = true
 			online := isConvOnline(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
-				ConvID: m.ConvID,
-				Title:  agent.FreshTitle(m.ConvID),
-				Alias:  m.Alias,
-				Role:   m.Role,
-				Descr:  m.Descr,
-				Branch: agent.FreshBranch(m.ConvID),
-				Online: online,
-				Owner:  ownerSet[m.ConvID],
-				State:  stateForConv(m.ConvID),
+				ConvID:            m.ConvID,
+				Title:             agent.FreshTitle(m.ConvID),
+				Alias:             m.Alias,
+				Role:              m.Role,
+				Descr:             m.Descr,
+				agentLocationView: locationView(m.ConvID),
+				Online:            online,
+				Owner:             ownerSet[m.ConvID],
+				State:             stateForConv(m.ConvID),
 			})
 			if online {
 				dg.Online++
@@ -511,13 +515,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			online := isConvOnline(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
-				ConvID: ownerConv,
-				Title:  agent.FreshTitle(ownerConv),
-				Role:   "owner",
-				Branch: agent.FreshBranch(ownerConv),
-				Online: online,
-				Owner:  true,
-				State:  stateForConv(ownerConv),
+				ConvID:            ownerConv,
+				Title:             agent.FreshTitle(ownerConv),
+				Role:              "owner",
+				agentLocationView: locationView(ownerConv),
+				Online:            online,
+				Owner:             true,
+				State:             stateForConv(ownerConv),
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so

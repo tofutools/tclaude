@@ -22,13 +22,13 @@ It is a deliberately flexible primitive: free-form text, injected as
 one extra turn, no enforced structure. The group decides what goes in
 it.
 
-## Schema bump (v28)
+## Schema bump (v29)
 
 ```sql
 ALTER TABLE agent_groups ADD COLUMN default_context TEXT NOT NULL DEFAULT '';
 ```
 
-`migrateV27toV28` in `pkg/claude/common/db/migrate.go`. Empty string =
+`migrateV28toV29` in `pkg/claude/common/db/migrate.go`. Empty string =
 no group context (the pre-feature behaviour).
 
 ## DB layer
@@ -154,7 +154,7 @@ the target pane's `CCSim` (and logging it like a send-keys) so
 
 ## Files
 
-- `pkg/claude/common/db/migrate.go` — `migrateV27toV28`, `currentVersion = 28`
+- `pkg/claude/common/db/migrate.go` — `migrateV28toV29`, `currentVersion = 29`
 - `pkg/claude/common/db/agent.go` — `DefaultContext`, `SetAgentGroupDefaultContext`,
   `scanAgentGroup` + group SELECTs
 - `pkg/claude/agentd/handlers.go` — `handleGroupUpdate` two-field patch,

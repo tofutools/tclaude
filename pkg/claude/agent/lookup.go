@@ -321,22 +321,19 @@ func FreshTitle(convID string) string {
 	return UnknownTitle
 }
 
-// FreshBranch resolves convID to the git branch / worktree the agent
-// is working on, as recorded in its conv_index row (Claude Code stamps
-// gitBranch into every .jsonl turn). Like FreshTitle it refreshes the
-// row from source first via FreshConvRowResolved, so a freshly-spawned
-// or branch-switched agent reports its real branch. Returns "" when
-// the branch can't be determined — no index row, or the session isn't
-// inside a git repo.
+// FreshBranch resolves convID to the git branch the agent is working
+// on *now*. It returns ResolveLocation's CurrentBranch — the branch of
+// the dir the agent last edited a file in, which tracks the agent as
+// it moves between sub-repos. When the agent hasn't edited anything
+// yet (or the hook predates worktree tracking) this falls back to the
+// launch dir's branch, so the value degrades sensibly rather than
+// going blank. Returns "" when no branch can be determined.
 //
-// The branch sibling of FreshTitle: prefer it over a bare
-// db.GetConvIndex in any handler that renders an agent's branch, so
-// every surface picks up source changes uniformly.
+// Prefer ResolveLocation directly in any handler that also needs the
+// startup branch or the directories; FreshBranch is the convenience
+// shorthand for callers that only want the one value.
 func FreshBranch(convID string) string {
-	if row := FreshConvRowResolved(convID); row != nil {
-		return row.GitBranch
-	}
-	return ""
+	return ResolveLocation(convID).CurrentBranch
 }
 
 // ShortID truncates a conv-id to the first 8 hex chars.

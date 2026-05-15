@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 28
+const currentVersion = 29
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -191,20 +191,51 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 29 {
+		if err := migrateV28toV29(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// migrateV27toV28 adds agent_groups.default_context — an optional
+// migrateV28toV29 adds agent_groups.default_context — an optional
 // block of shared startup guidance the human attaches to a group.
 // When set, agents spawned into the group have it injected into
 // their pane on startup (right after the spawn welcome), unless the
 // spawn opts out. Empty string = no group context (the pre-feature
 // behaviour). Multi-line text is fine: the spawn injector pastes it
 // via bracketed paste so embedded newlines survive intact.
-func migrateV27toV28(db *sql.DB) error {
+func migrateV28toV29(db *sql.DB) error {
 	_, err := db.Exec(`
 		ALTER TABLE agent_groups
 			ADD COLUMN default_context TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 29;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v28→v29: %w", err)
+	}
+	return nil
+}
+
+// migrateV27toV28 widens agent_workdir from a bare directory into a
+// full "current location" record: alongside the most-recent edit dir
+// it now stores that dir's git worktree root and branch. The
+// PostToolUse hook computes both at edit time, so every read surface
+// (dashboard, `agent ls`, `agent dir`) can report where an agent is
+// *actually* working — and on which branch — without shelling out to
+// git per refresh. This keeps tracking correct when the agent hops
+// between sub-repos of a monorepo launch dir, where Claude Code's own
+// per-turn gitBranch stamp (the launch dir's branch) goes stale.
+//
+// Both columns default to '' so rows written by a pre-v28 hook keep
+// working — readers fall back to an on-demand git resolution then.
+func migrateV27toV28(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_workdir ADD COLUMN worktree_root TEXT NOT NULL DEFAULT '';
+		ALTER TABLE agent_workdir ADD COLUMN branch        TEXT NOT NULL DEFAULT '';
 
 		UPDATE schema_version SET version = 28;
 	`)
