@@ -1,6 +1,9 @@
 package agent
 
-import "github.com/tofutools/tclaude/pkg/claude/common/db"
+import (
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
+)
 
 // Location is an agent's full directory + git-branch picture: where
 // Claude Code was launched (the Startup* pair) versus where the agent
@@ -38,9 +41,12 @@ func (l Location) Moved() bool {
 //
 // An agent that hasn't edited anything yet has no agent_workdir row;
 // its current location simply mirrors startup (Tracked == false). A
-// row written by a pre-v28 hook carries no worktree_root/branch — the
-// current dir then degrades to the edit dir and the branch to empty,
-// self-healing on the agent's next edit.
+// row written by a pre-v28 hook (or one whose edit-time git resolution
+// failed) carries no worktree_root/branch — ResolveLocation then
+// resolves the edit dir's git repo root + branch on demand and heals
+// the row, so "where it's working now" is always the repo root rather
+// than a deep sub-path. An edit dir outside any git repo keeps the
+// edit dir, with no branch.
 //
 // This is the branch sibling of FreshTitle: every surface that renders
 // where an agent is working should route through it so they all pick
@@ -68,14 +74,30 @@ func ResolveLocation(convID string) Location {
 	if w, err := db.GetAgentWorkdir(convID); err == nil && w.Dir != "" {
 		loc.Tracked = true
 		loc.EditDir = w.Dir
-		// worktree_root is empty when the edit dir isn't in a git repo,
-		// or on a row last written by a pre-v28 hook — fall back to the
-		// edit dir so CurrentDir is always a real directory.
-		loc.CurrentDir = w.WorktreeRoot
-		if loc.CurrentDir == "" {
-			loc.CurrentDir = w.Dir
-		}
+		// Default to the recorded values; CurrentDir mirrors the edit
+		// dir until a git root is known.
+		loc.CurrentDir = w.Dir
 		loc.CurrentBranch = w.Branch
+		switch {
+		case w.WorktreeRoot != "":
+			// A v28+ hook already resolved the git root + branch at
+			// edit time — trust it. An empty branch here is a real
+			// detached HEAD, not missing data.
+			loc.CurrentDir = w.WorktreeRoot
+		default:
+			// worktree_root is unset: a row from a pre-v28 hook, or one
+			// whose edit-time git resolution failed. Resolve the repo
+			// root on demand so the current dir is the repo root, not a
+			// deep sub-path — then heal the row so subsequent reads
+			// stay pure DB lookups (the v28 no-git-per-refresh goal).
+			// An edit dir outside any git repo resolves to nothing and
+			// keeps the edit dir / empty branch, as before.
+			if root, branch := session.GitLocationOf(w.Dir); root != "" {
+				loc.CurrentDir = root
+				loc.CurrentBranch = branch
+				_ = db.HealAgentWorkdirGit(convID, root, branch)
+			}
+		}
 	}
 	return loc
 }
