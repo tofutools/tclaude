@@ -853,6 +853,11 @@ summary.dnd-drop-over.dnd-effect-clone {
       <input id="agent-spawn-cwd" type="text" placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row">
+      <span class="cron-create-label">Worktree repo</span>
+      <input id="agent-spawn-wt-repo" type="text" list="agent-spawn-subrepo-list" placeholder="git repo to worktree — defaults to CWD; for a monorepo, pick a sub-repo" autocomplete="off" spellcheck="false" />
+      <datalist id="agent-spawn-subrepo-list"></datalist>
+    </label>
+    <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
       <select id="agent-spawn-worktree"><option value="">(enter a CWD to enable worktrees)</option></select>
     </label>
@@ -2764,8 +2769,15 @@ summary.dnd-drop-over.dnd-effect-clone {
     // while this fetch was in flight, drop the result.
     if ((select.dataset.pendingRepo || '') !== repo) return;
     if (!data || !data.is_repo) {
-      select.innerHTML = '<option value="">(not a git repo — worktrees unavailable)</option>';
+      // Not a git repo. If the daemon found nested repos under it
+      // (a "virtual monorepo" launch dir), point the human at the
+      // Worktree-repo field — wtFillSubRepos populates its datalist.
+      const hasSubs = data && Array.isArray(data.sub_repos) && data.sub_repos.length;
+      select.innerHTML = hasSubs
+        ? '<option value="">(not a git repo — pick a sub-repo in "Worktree repo" above)</option>'
+        : '<option value="">(not a git repo — worktrees unavailable)</option>';
       select.disabled = true;
+      wtFillSubRepos(prefix, data && data.sub_repos);
       return;
     }
     select.dataset.repoRoot = data.repo_root || '';
@@ -2773,7 +2785,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     (data.worktrees || []).forEach(wt => {
       const br = wt.branch || '(detached)';
       const tag = wt.is_main ? ' [main]' : '';
-      opts.push(`<option value="wt:${esc(wt.path)}">${esc(br)}${tag} — ${esc(shortCwd(wt.path))}</option>`);
+      opts.push(`<option value="wt:${esc(wt.path)}" data-branch="${esc(wt.branch || '')}">${esc(br)}${tag} — ${esc(shortCwd(wt.path))}</option>`);
     });
     opts.push(`<option value="${WT_NEW}">+ create new worktree…</option>`);
     select.innerHTML = opts.join('');
@@ -2797,28 +2809,57 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
-  // wtResolveCwd turns the current picker state into the cwd a
-  // spawn/clone should use. `repo` is the directory the picker loaded
-  // against; `fallback` is returned when no worktree is selected (the
-  // entered CWD for spawn, "" for clone = inherit the source's cwd).
-  // Throws on a worktree-creation failure so the caller surfaces it.
-  async function wtResolveCwd(prefix, repo, fallback) {
-    const val = $(`#${prefix}-worktree`).value || '';
-    if (!val) return fallback;
-    if (val.startsWith('wt:')) return val.slice(3);
+  // wtFillSubRepos populates a modal's sub-repo <datalist> from a
+  // /api/worktrees response's `sub_repos`. Only the spawn modal has
+  // the datalist (`<prefix>-subrepo-list`); for the clone picker this
+  // is a no-op. A null/empty list is left alone rather than cleared —
+  // once the human drills from the monorepo into one sub-repo the
+  // suggestions stay available so they can switch to a sibling.
+  function wtFillSubRepos(prefix, subRepos) {
+    const list = document.getElementById(`${prefix}-subrepo-list`);
+    if (!list) return;
+    if (Array.isArray(subRepos) && subRepos.length) {
+      list.innerHTML = subRepos
+        .map(s => `<option value="${esc(s.path)}">${esc(s.rel)}</option>`)
+        .join('');
+    }
+  }
+
+  // wtResolve turns the current worktree-picker state into a
+  // {path, branch} selection. An empty path means "no worktree
+  // chosen" — the caller applies its own fallback. `repo` is the
+  // directory the picker loaded against. Throws on a creation
+  // failure so the caller can surface it.
+  async function wtResolve(prefix, repo) {
+    const select = $(`#${prefix}-worktree`);
+    const val = select.value || '';
+    if (!val) return { path: '', branch: '' };
+    if (val.startsWith('wt:')) {
+      const opt = select.selectedOptions[0];
+      return { path: val.slice(3), branch: (opt && opt.dataset.branch) || '' };
+    }
     if (val === WT_NEW) {
       const branch = $(`#${prefix}-wt-branch`).value.trim();
       if (!branch) throw new Error('enter a branch name for the new worktree');
-      const root = $(`#${prefix}-worktree`).dataset.repoRoot || repo;
+      const root = select.dataset.repoRoot || repo;
       const r = await fetch('/api/worktrees', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repo: root, branch, from_branch: $(`#${prefix}-wt-base`).value || '' }),
       });
       if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
-      return (await r.json()).path;
+      const j = await r.json();
+      return { path: j.path || '', branch: j.branch || branch };
     }
-    return fallback;
+    return { path: '', branch: '' };
+  }
+
+  // wtResolveCwd is the cwd-only view of wtResolve, kept for the clone
+  // modal: it returns the worktree path or `fallback` when none is
+  // selected. Throws on a worktree-creation failure.
+  async function wtResolveCwd(prefix, repo, fallback) {
+    const sel = await wtResolve(prefix, repo);
+    return sel.path || fallback;
   }
 
   // ---- Agent spawn modal --------------------------------------------------
@@ -2833,6 +2874,11 @@ summary.dnd-drop-over.dnd-effect-clone {
   // default, so switching the group <select> can refresh the prefill
   // without clobbering a path the user typed by hand.
   let lastSpawnCwdPrefill = '';
+
+  // True once the human has typed in the "Worktree repo" field. Until
+  // then that field mirrors CWD; after, CWD changes leave it alone so
+  // a deliberately-pointed sub-repo path isn't clobbered.
+  let spawnWtRepoEdited = false;
 
   // groupDefaultCwd looks up a group's default spawn dir from the
   // latest snapshot. "" when the group is unknown or has no default.
@@ -2889,9 +2935,13 @@ summary.dnd-drop-over.dnd-effect-clone {
     // user-typed value to protect.
     prefillSpawnCwd(select.value, true);
     $('#agent-spawn-wt-branch').value = '';
-    // Load the worktree picker against whatever cwd the prefill
-    // landed (empty when the group has no default).
-    wtLoad('agent-spawn', $('#agent-spawn-cwd').value.trim(), '(no worktree — use CWD above)');
+    // The worktree picker targets a separate "Worktree repo" field.
+    // It mirrors CWD until the human edits it; for a monorepo CWD the
+    // field's datalist offers the nested repos to drill into.
+    spawnWtRepoEdited = false;
+    $('#agent-spawn-subrepo-list').innerHTML = '';
+    $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
+    wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
     $('#agent-spawn-error').textContent = '';
     const meta = $('#agent-spawn-meta');
     if (groupName) {
@@ -2917,6 +2967,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
     const cwd = $('#agent-spawn-cwd').value.trim();
+    const wtRepo = $('#agent-spawn-wt-repo').value.trim();
     const errEl = $('#agent-spawn-error');
     errEl.textContent = '';
     if (!group) {
@@ -2927,14 +2978,28 @@ summary.dnd-drop-over.dnd-effect-clone {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Spawning…';
     try {
-      // Resolve the worktree picker first — this may create a new
-      // worktree, whose path becomes the spawn cwd. With no worktree
-      // selected it just returns the entered CWD unchanged.
-      const effectiveCwd = await wtResolveCwd('agent-spawn', cwd, cwd);
+      // Resolve the worktree picker (it targets the "Worktree repo"
+      // field, which may differ from CWD). Two outcomes:
+      //   • Worktree repo == CWD → the worktree becomes the spawn cwd
+      //     (the long-standing single-directory behaviour).
+      //   • Worktree repo is a sub-repo of a monorepo CWD → the agent
+      //     still launches in CWD; the worktree path + branch ride
+      //     along so the daemon's welcome points the agent at it.
+      const sel = await wtResolve('agent-spawn', wtRepo);
+      const body = { alias, role, descr };
+      if (sel.path && wtRepo && wtRepo !== cwd) {
+        body.cwd = cwd;
+        body.worktree_path = sel.path;
+        body.worktree_branch = sel.branch;
+      } else if (sel.path) {
+        body.cwd = sel.path;
+      } else {
+        body.cwd = cwd;
+      }
       const r = await fetch(`/api/groups/${encodeURIComponent(group)}/spawn`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alias, role, descr, cwd: effectiveCwd }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -2959,22 +3024,35 @@ summary.dnd-drop-over.dnd-effect-clone {
   function bindAgentSpawnModal() {
     $('#agent-spawn-open').addEventListener('click', () => openAgentSpawnModal({}));
     // Agents-tab spawn: the group <select> is visible. Switching it
-    // re-prefills the cwd from the newly-chosen group's default and
-    // reloads the worktree picker so it tracks the new cwd.
+    // re-prefills the cwd from the newly-chosen group's default,
+    // mirrors it into Worktree-repo (unless the human pinned that),
+    // and reloads the picker.
     $('#agent-spawn-group').addEventListener('change', (e) => {
       prefillSpawnCwd(e.target.value, false);
-      wtLoad('agent-spawn', $('#agent-spawn-cwd').value.trim(), '(no worktree — use CWD above)');
+      if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
+      wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
     });
     $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
     $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
     bindWtPicker('agent-spawn');
-    // Re-list worktrees when the CWD field settles (debounced) — the
-    // picker operates on whatever repo the typed CWD lands in.
+    // Re-list worktrees when the CWD field settles (debounced). CWD
+    // mirrors into Worktree-repo until the human edits the latter.
     let spawnCwdTimer;
     $('#agent-spawn-cwd').addEventListener('input', () => {
       clearTimeout(spawnCwdTimer);
       spawnCwdTimer = setTimeout(() => {
-        wtLoad('agent-spawn', $('#agent-spawn-cwd').value.trim(), '(no worktree — use CWD above)');
+        if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
+        wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
+      }, 350);
+    });
+    // Editing "Worktree repo" detaches it from CWD and reloads the
+    // picker against the typed/picked repo (e.g. a monorepo sub-repo).
+    let spawnWtRepoTimer;
+    $('#agent-spawn-wt-repo').addEventListener('input', () => {
+      spawnWtRepoEdited = true;
+      clearTimeout(spawnWtRepoTimer);
+      spawnWtRepoTimer = setTimeout(() => {
+        wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
       }, 350);
     });
     $('#agent-spawn-modal').addEventListener('click', (e) => {

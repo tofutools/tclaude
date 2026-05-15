@@ -340,6 +340,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Descr          string `json:"descr,omitempty"`
 		Cwd            string `json:"cwd,omitempty"`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+
+		// WorktreePath / WorktreeBranch describe a git worktree the
+		// agent should do its code work in, when Cwd is a parent
+		// "monorepo" directory rather than the repo itself. They are
+		// purely informational — the agent still launches in Cwd; the
+		// worktree path rides into the welcome message so the agent
+		// knows where to make edits. Set by the dashboard's spawn
+		// modal after it creates the worktree; empty for an ordinary
+		// spawn where Cwd already is the repo.
+		WorktreePath   string `json:"worktree_path,omitempty"`
+		WorktreeBranch string `json:"worktree_branch,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -375,6 +386,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_cwd", cwdErr.Error())
 		return
 	}
+
+	// Validate the optional worktree dir the same way — it must exist
+	// (the dashboard creates it just before spawning). Caught here so
+	// a stale path becomes an immediate 400 rather than a welcome
+	// message pointing the agent at a directory that isn't there.
+	var worktreePath string
+	if strings.TrimSpace(body.WorktreePath) != "" {
+		wt, wtErr := resolveSpawnCwd(body.WorktreePath)
+		if wtErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_worktree", wtErr.Error())
+			return
+		}
+		worktreePath = wt
+	}
+	worktreeBranch := strings.TrimSpace(body.WorktreeBranch)
 
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
@@ -444,7 +470,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name)
+		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name, worktreePath, worktreeBranch)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -466,14 +492,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // landing a write on the .jsonl before any other turn happens. Even
 // if the welcome injection fails afterwards, the file exists and
 // `agent resume` can find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName string) {
+func runSpawnPostInit(convID, alias, role, descr, groupName, worktreePath, worktreeBranch string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; rename + welcome abandoned",
 			"conv", convID)
 		return
 	}
 
-	welcome := buildSpawnWelcome(alias, role, descr, groupName)
+	welcome := buildSpawnWelcome(alias, role, descr, groupName, worktreePath, worktreeBranch)
 
 	// Prefer the slash + follow-up combo when we can rename. /rename
 	// alone covers the .jsonl-materialisation half; the follow-up
@@ -517,7 +543,7 @@ func runSpawnPostInit(convID, alias, role, descr, groupName string) {
 // signal "this is metadata from tclaude, not a human prompt" — same
 // convention agent-message nudges use. Kept to a single line so it
 // renders cleanly in CC's prompt history.
-func buildSpawnWelcome(alias, role, descr, groupName string) string {
+func buildSpawnWelcome(alias, role, descr, groupName, worktreePath, worktreeBranch string) string {
 	parts := []string{"spawned by the human"}
 	if alias != "" {
 		parts = append(parts, fmt.Sprintf("as %q", alias))
@@ -532,6 +558,16 @@ func buildSpawnWelcome(alias, role, descr, groupName string) string {
 	body := header + "."
 	if descr != "" {
 		body += " Descr: " + descr + "."
+	}
+	// When the spawn targeted a sub-repo of a monorepo launch dir, the
+	// agent's cwd is the parent dir but its code work belongs in the
+	// worktree. Spell that out so it doesn't edit the parent's repos.
+	if worktreePath != "" {
+		body += " Your git worktree for code changes is at " + worktreePath
+		if worktreeBranch != "" {
+			body += " (branch " + worktreeBranch + ")"
+		}
+		body += " — make code edits there, not elsewhere under your start directory."
 	}
 	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate. Wait for the first instruction."
 	return "[system: " + body + "]"

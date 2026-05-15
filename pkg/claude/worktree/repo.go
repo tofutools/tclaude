@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -219,4 +220,86 @@ func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 		return "", fmt.Errorf("failed to create worktree: %w", err)
 	}
 	return worktreePath, nil
+}
+
+// SubRepo is one nested git repository discovered under a directory
+// that is not itself a git repo. The dashboard's spawn modal uses
+// these to populate a quick-pick list when the launch directory is a
+// "virtual monorepo" — a plain folder holding shared docs alongside
+// several independent git repos.
+type SubRepo struct {
+	Path string `json:"path"` // absolute path to the repo root
+	Rel  string `json:"rel"`  // path relative to the scanned directory
+}
+
+// FindSubRepos walks dir up to maxDepth directory levels deep and
+// returns every nested git repository it finds, sorted by relative
+// path. A directory counts as a repo when it contains a ".git" entry
+// — a directory for a normal clone, a file for a linked worktree. The
+// walk does not descend into a directory once it's identified as a
+// repo, so a repo's own nested worktrees and submodules don't
+// multiply the result. Hidden directories and a couple of notoriously
+// heavy non-source trees are skipped. dir itself is never returned.
+//
+// This is the discovery half of the spawn modal's "worktree a sub-repo
+// of a monorepo launch dir" flow — RepoRootForPath fails on the
+// monorepo dir, and this offers the nested repos to pick from instead.
+func FindSubRepos(dir string, maxDepth int) []SubRepo {
+	if dir == "" || maxDepth < 1 {
+		return nil
+	}
+	var out []SubRepo
+	var walk func(cur string, depth int)
+	walk = func(cur string, depth int) {
+		entries, err := os.ReadDir(cur)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if skipScanDir(name) {
+				continue
+			}
+			child := filepath.Join(cur, name)
+			if isGitRepoRoot(child) {
+				rel, relErr := filepath.Rel(dir, child)
+				if relErr != nil {
+					rel = child
+				}
+				out = append(out, SubRepo{Path: child, Rel: rel})
+				continue // a repo is a leaf — don't descend into it
+			}
+			if depth < maxDepth {
+				walk(child, depth+1)
+			}
+		}
+	}
+	walk(dir, 1)
+	sort.Slice(out, func(i, j int) bool { return out[i].Rel < out[j].Rel })
+	return out
+}
+
+// isGitRepoRoot reports whether path has a ".git" entry directly
+// inside it (a directory for a clone, a file for a linked worktree).
+func isGitRepoRoot(path string) bool {
+	_, err := os.Stat(filepath.Join(path, ".git"))
+	return err == nil
+}
+
+// skipScanDir reports whether FindSubRepos should ignore a directory
+// by name — hidden dirs (".git" included) and dependency trees that
+// are large to walk and never hold a repo worth worktreeing.
+func skipScanDir(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "node_modules", "vendor":
+		return true
+	default:
+		return false
+	}
 }
