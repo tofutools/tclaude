@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 )
@@ -308,4 +309,20 @@ func openShellCmd(dir string) string {
 // dir comes from our own DB, but it can legitimately contain spaces.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// openAttachCmd builds the `sh -c` payload that attaches a terminal to
+// a tclaude session by its label. Unlike openShellCmd — a bare shell in
+// a directory — this lands the human inside the agent's live Claude
+// Code TUI. The attach always goes through the `tclaude` wrapper (never
+// raw `tmux attach`) so the reattached session keeps its tclaude
+// features: status bar, window-title stamping, focus/notify wiring.
+//
+// Used by the spawn flow's "auto focus" option — a freshly-spawned
+// agent runs detached with no window of its own, so this is what gives
+// it one. The absolute tclaude path is used because the daemon launches
+// the terminal outside the human's login shell, where PATH may be
+// minimal (same reasoning as openShellCmd's exec-the-login-shell).
+func openAttachCmd(label string) string {
+	return clcommon.DetectAbsoluteCmd("session", "attach") + " " + shellSingleQuote(label)
 }
