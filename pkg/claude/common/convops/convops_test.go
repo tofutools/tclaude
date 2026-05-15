@@ -363,14 +363,15 @@ func TestLoadSessionsIndex_HidesStubFromAgentSpawnArtifact(t *testing.T) {
 // Regression: a conversation's git branch can change mid-session — the
 // agent runs `git checkout` or moves into a fresh worktree. Claude
 // Code stamps the *current* branch onto every .jsonl turn, so
-// parseJSONLSession must keep the LAST gitBranch it sees, not the
-// first. Before the fix it was first-wins, which froze `agent ls` and
-// the dashboard on whatever branch the session happened to start on.
+// parseJSONLSession keeps two values: GitBranch is LAST-wins (where
+// the agent is now) and GitBranchStartup is FIRST-wins (the branch it
+// launched on, immutable). Before the GitBranch fix it was first-wins
+// only, which froze `agent ls` and the dashboard on the launch branch.
 //
 // The project path, by contrast, stays first-wins — cwd is fixed for
-// the life of a conversation — so this also pins that the two fields
+// the life of a conversation — so this also pins that the fields
 // don't share a capture rule.
-func TestParseJSONLSession_GitBranchLastWins(t *testing.T) {
+func TestParseJSONLSession_GitBranchFirstAndLastWins(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -385,7 +386,8 @@ func TestParseJSONLSession_GitBranchLastWins(t *testing.T) {
 
 	entry := ParseJSONLSessionPublic(path, sessionID)
 	require.NotNil(t, entry, "parseJSONLSession returned nil")
-	assert.Equal(t, "feature-x", entry.GitBranch, "GitBranch should be the LAST branch seen, not the first")
+	assert.Equal(t, "feature-x", entry.GitBranch, "GitBranch should be the LAST branch seen")
+	assert.Equal(t, "main", entry.GitBranchStartup, "GitBranchStartup should be the FIRST branch seen")
 	assert.Equal(t, "/myproject", entry.ProjectPath, "ProjectPath stays first-wins")
 }
 

@@ -40,9 +40,13 @@ type SessionEntry struct {
 	Created      string `json:"created"`
 	Modified     string `json:"modified"`
 	GitBranch    string `json:"gitBranch"`
-	ProjectPath  string `json:"projectPath"`
-	IsSidechain  bool   `json:"isSidechain"`
-	FileSize     int64  `json:"-"` // Populated at load time, not persisted in index
+	// GitBranchStartup is the branch the FIRST turn was stamped with —
+	// the branch Claude Code was launched on. First-wins and immutable,
+	// the counterpart to GitBranch's last-wins "current branch".
+	GitBranchStartup string `json:"gitBranchStartup,omitempty"`
+	ProjectPath      string `json:"projectPath"`
+	IsSidechain      bool   `json:"isSidechain"`
+	FileSize         int64  `json:"-"` // Populated at load time, not persisted in index
 	// ArchivedAt is the canonical archived signal sourced from
 	// `conv_index.archived_at`. RFC3339 timestamp string when archived,
 	// empty when active. Populated at load time from the DB row;
@@ -289,41 +293,43 @@ func dbRowToEntry(r *db.ConvIndexRow, fileSize int64) SessionEntry {
 		archived = r.ArchivedAt.Format(time.RFC3339Nano)
 	}
 	return SessionEntry{
-		SessionID:    r.ConvID,
-		FullPath:     r.FullPath,
-		FileMtime:    r.FileMtime,
-		FirstPrompt:  r.FirstPrompt,
-		Summary:      r.Summary,
-		CustomTitle:  r.CustomTitle,
-		MessageCount: r.MessageCount,
-		Created:      r.Created,
-		Modified:     r.Modified,
-		GitBranch:    r.GitBranch,
-		ProjectPath:  r.ProjectPath,
-		IsSidechain:  r.IsSidechain,
-		FileSize:     fileSize,
-		ArchivedAt:   archived,
+		SessionID:        r.ConvID,
+		FullPath:         r.FullPath,
+		FileMtime:        r.FileMtime,
+		FirstPrompt:      r.FirstPrompt,
+		Summary:          r.Summary,
+		CustomTitle:      r.CustomTitle,
+		MessageCount:     r.MessageCount,
+		Created:          r.Created,
+		Modified:         r.Modified,
+		GitBranch:        r.GitBranch,
+		GitBranchStartup: r.GitBranchStartup,
+		ProjectPath:      r.ProjectPath,
+		IsSidechain:      r.IsSidechain,
+		FileSize:         fileSize,
+		ArchivedAt:       archived,
 	}
 }
 
 // entryToDBRow converts a SessionEntry to a DB row for storage.
 func entryToDBRow(e *SessionEntry, projectDir string) *db.ConvIndexRow {
 	return &db.ConvIndexRow{
-		ConvID:       e.SessionID,
-		ProjectDir:   projectDir,
-		FullPath:     e.FullPath,
-		FileMtime:    e.FileMtime,
-		FileSize:     e.FileSize,
-		FirstPrompt:  e.FirstPrompt,
-		Summary:      e.Summary,
-		CustomTitle:  e.CustomTitle,
-		MessageCount: e.MessageCount,
-		Created:      e.Created,
-		Modified:     e.Modified,
-		GitBranch:    e.GitBranch,
-		ProjectPath:  e.ProjectPath,
-		IsSidechain:  e.IsSidechain,
-		IndexedAt:    time.Now(),
+		ConvID:           e.SessionID,
+		ProjectDir:       projectDir,
+		FullPath:         e.FullPath,
+		FileMtime:        e.FileMtime,
+		FileSize:         e.FileSize,
+		FirstPrompt:      e.FirstPrompt,
+		Summary:          e.Summary,
+		CustomTitle:      e.CustomTitle,
+		MessageCount:     e.MessageCount,
+		Created:          e.Created,
+		Modified:         e.Modified,
+		GitBranch:        e.GitBranch,
+		GitBranchStartup: e.GitBranchStartup,
+		ProjectPath:      e.ProjectPath,
+		IsSidechain:      e.IsSidechain,
+		IndexedAt:        time.Now(),
 	}
 }
 
@@ -402,10 +408,14 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 		}
 		// Git branch, by contrast, can change mid-conversation (a
 		// `git checkout`, a new worktree). Claude Code stamps the
-		// *current* branch onto every turn, so keep the LAST one seen:
-		// the index then reflects where the agent is now, not the
-		// branch the session happened to start on.
+		// *current* branch onto every turn, so keep the LAST one seen
+		// in GitBranch: the index then reflects where the agent is now.
+		// GitBranchStartup keeps the FIRST one — the launch branch —
+		// so a UI can show an immutable "init" alongside "now".
 		if msg.GitBranch != "" {
+			if entry.GitBranchStartup == "" {
+				entry.GitBranchStartup = msg.GitBranch
+			}
 			entry.GitBranch = msg.GitBranch
 		}
 
@@ -932,18 +942,19 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 	}
 	now := FormatTime()
 	newEntry := SessionEntry{
-		SessionID:    newConvID,
-		FullPath:     dstConvFile,
-		FileMtime:    dstInfo.ModTime().UnixMilli(),
-		FirstPrompt:  srcEntry.FirstPrompt,
-		Summary:      srcEntry.Summary,
-		CustomTitle:  srcEntry.CustomTitle,
-		MessageCount: srcEntry.MessageCount,
-		Created:      now,
-		Modified:     now,
-		GitBranch:    srcEntry.GitBranch,
-		ProjectPath:  destPath,
-		IsSidechain:  srcEntry.IsSidechain,
+		SessionID:        newConvID,
+		FullPath:         dstConvFile,
+		FileMtime:        dstInfo.ModTime().UnixMilli(),
+		FirstPrompt:      srcEntry.FirstPrompt,
+		Summary:          srcEntry.Summary,
+		CustomTitle:      srcEntry.CustomTitle,
+		MessageCount:     srcEntry.MessageCount,
+		Created:          now,
+		Modified:         now,
+		GitBranch:        srcEntry.GitBranch,
+		GitBranchStartup: srcEntry.GitBranchStartup,
+		ProjectPath:      destPath,
+		IsSidechain:      srcEntry.IsSidechain,
 	}
 	if err := UpsertSessionsIndexEntry(dstProjectPath, newEntry); err != nil {
 		return nil, err
