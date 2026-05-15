@@ -116,6 +116,13 @@ func runServe(p *serveParams) error {
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
 
+	// Session reaper. Sweeps for sessions whose tmux session + process
+	// are gone and stamps status=exited — a crashed or kill -9'd agent
+	// fires no SessionEnd hook, so without this its row would stay
+	// frozen at its last hook status. Shares the daemon-wide stop
+	// channel.
+	startSessionReaper(cronStop)
+
 	// Both the Unix-socket server and the popup server run in
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).

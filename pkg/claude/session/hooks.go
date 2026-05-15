@@ -60,6 +60,7 @@ func initHookCommands() {
 		"SubagentStop":       {newMatcher()},
 		"Notification":       {{Hooks: []HookConfig{hook}}}, // No matcher = catch all
 		"SessionStart":       {newMatcher()},
+		"SessionEnd":         {newMatcher()},
 		"PostCompact":        {newMatcher()},
 	}
 }

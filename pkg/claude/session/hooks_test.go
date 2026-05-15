@@ -30,6 +30,7 @@ func setTestHookCommand(t *testing.T) {
 		"SubagentStop":       {newMatcher()},
 		"Notification":       {{Hooks: []HookConfig{hook}}},
 		"SessionStart":       {newMatcher()},
+		"SessionEnd":         {newMatcher()},
 		"PostCompact":        {newMatcher()},
 	}
 
