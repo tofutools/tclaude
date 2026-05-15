@@ -286,11 +286,11 @@ func backfillAgentEnrollment(db *sql.DB) error {
 
 // migrateV28toV29 adds agent_groups.default_context — an optional
 // block of shared startup guidance the human attaches to a group.
-// When set, agents spawned into the group have it injected into
-// their pane on startup (right after the spawn welcome), unless the
-// spawn opts out. Empty string = no group context (the pre-feature
-// behaviour). Multi-line text is fine: the spawn injector pastes it
-// via bracketed paste so embedded newlines survive intact.
+// When set, agents spawned into the group get it delivered to their
+// inbox as part of the spawn startup briefing, unless the spawn opts
+// out. Empty string = no group context (the pre-feature behaviour).
+// Multi-line text is fine: the inbox stores it as plain text so
+// embedded newlines survive intact.
 func migrateV28toV29(db *sql.DB) error {
 	_, err := db.Exec(`
 		ALTER TABLE agent_groups

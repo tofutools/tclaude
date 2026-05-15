@@ -380,17 +380,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
-	// The initial message is injected via tmux send-keys, so it must
-	// survive the same way a slash follow-up does: no control characters
-	// (each newline would land as a premature submit, fragmenting the
-	// prompt). The dashboard collapses newlines client-side; this is the
-	// backstop for CLI / API callers.
+	// The initial message is delivered to the new agent's inbox as an
+	// agent_messages row — not typed into its tmux pane — so newlines
+	// survive verbatim and a multi-line task brief arrives intact. We
+	// only cap the length and reject NUL / escape / other non-text
+	// control characters that would corrupt an `inbox read` render.
 	body.InitialMessage = strings.TrimSpace(body.InitialMessage)
-	if body.InitialMessage != "" && !isValidFollowUp(body.InitialMessage) {
+	if !isValidInitialMessage(body.InitialMessage) {
 		writeError(w, http.StatusBadRequest, "invalid_initial_message",
-			"initial_message must be 1-4096 printable characters; tabs, newlines, "+
-				"and other control characters are not allowed (each newline would be "+
-				"treated as a submit by tmux send-keys, splitting the prompt)")
+			"initial_message must be at most 4096 characters; newlines and tabs "+
+				"are allowed (it is delivered to the agent's inbox, not typed into "+
+				"its pane), but other control characters are not")
 		return
 	}
 
@@ -503,6 +503,46 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
+	// Spawn context: assemble the new agent's startup briefing and drop
+	// it in its inbox as a single agent_messages row. Two pieces feed in:
+	//
+	//   - the group's default_context — optional shared guidance the
+	//     human attached to the group, included unless this spawn opted
+	//     out (IncludeGroupContext == false; an omitted flag means
+	//     opt-in, the same way default_cwd is inherited).
+	//   - the per-spawn initial_message — this agent's specific task
+	//     brief.
+	//
+	// They go to the inbox rather than the pane: a large briefing
+	// bracketed-pasted into CC's input box risks overflowing its
+	// input-size limit, and the inbox keeps newlines verbatim
+	// regardless. The welcome line points the agent at the message;
+	// runSpawnPostInit marks it delivered once the welcome lands.
+	groupContext := ""
+	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
+		groupContext = g.DefaultContext
+	}
+	spawnContext := buildSpawnContextBody(g.Name, groupContext, body.InitialMessage)
+	var spawnContextMsgID int64
+	if spawnContext != "" {
+		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:      g.ID,
+			ToConv:       convID,
+			Subject:      "Startup context",
+			Body:         spawnContext,
+			ToRecipients: []string{convID},
+		})
+		if msgErr != nil {
+			// Best-effort: the agent has already spawned and joined the
+			// group. A failed insert just means no briefing — logged,
+			// not bubbled — and the welcome falls back to "wait".
+			slog.Warn("spawn: failed to deliver startup context to inbox",
+				"conv", convID, "error", msgErr)
+		} else {
+			spawnContextMsgID = mid
+		}
+	}
+
 	// Post-spawn injection: rename the new pane to the agent's alias
 	// and drop a [system: ...] welcome that describes the agent's
 	// identity. Two purposes:
@@ -516,25 +556,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	//      the file before anyone closes the pane.
 	//
 	//   2. Give the new agent its name + context up front. The agent
-	//      sees its alias in tmux/dashboard immediately, and the
-	//      welcome describes its role/descr/group so it can orient
-	//      itself before the human starts typing.
+	//      sees its alias in tmux/dashboard immediately, the welcome
+	//      describes its role/descr/group, and — when a startup
+	//      briefing was queued above — points it at the inbox message.
 	//
-	// Group startup context: optional shared guidance the human
-	// attached to the group. It's injected after the welcome unless
-	// this spawn opted out (IncludeGroupContext == false). An omitted
-	// flag means opt-in. An empty g.DefaultContext leaves nothing to
-	// inject, so the post-init goroutine skips the step entirely.
-	groupContext := ""
-	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
-		groupContext = g.DefaultContext
-	}
-
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name, groupContext,
-			body.InitialMessage, worktreePath, worktreeBranch)
+		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name,
+			spawnContextMsgID, body.InitialMessage != "", worktreePath, worktreeBranch)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -551,19 +581,22 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 //
 //  1. /rename <alias> — when alias is a valid rename title.
 //  2. The welcome [system: ...] line orienting the agent.
-//  3. The group startup context — when the group carries one and the
-//     spawn opted in — as a shared-guidance turn.
-//  4. The initial message — when one was supplied — as the agent's
-//     first real prompt.
 //
 // Each is its own turn. Failures are logged, never bubbled — the spawn
 // already succeeded as far as the caller is concerned.
+//
+// The agent's startup briefing (group context + task brief) is NOT
+// typed into the pane — the handler already placed it in the agent's
+// inbox as agent_messages row #spawnContextMsgID, which keeps newlines
+// verbatim and sidesteps CC's input-box size limit. The welcome line
+// names that message id; once the welcome lands we mark the message
+// delivered, since the welcome doubles as its inbox nudge.
 //
 // Why /rename first: it's a slash command CC processes immediately,
 // landing a write on the .jsonl before any other turn happens. Even
 // if a later injection fails, the file exists and `agent resume` can
 // find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName, groupContext, initialMessage, worktreePath, worktreeBranch string) {
+func runSpawnPostInit(convID, alias, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -592,49 +625,51 @@ func runSpawnPostInit(convID, alias, role, descr, groupName, groupContext, initi
 	}
 
 	// Welcome: a single-line [system: ...] turn orienting the agent
-	// (identity, role, descr, group, and — for a sub-repo worktree —
-	// where to make code edits).
-	welcome := buildSpawnWelcome(alias, role, descr, groupName, initialMessage != "",
-		worktreePath, worktreeBranch)
+	// (identity, role, descr, group, where its startup briefing waits,
+	// and — for a sub-repo worktree — where to make code edits).
+	welcome := buildSpawnWelcome(alias, role, descr, groupName,
+		spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch)
 	if err := injectTextAndSubmit(target, welcome); err != nil {
 		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
 		return
 	}
 
-	// Group startup context: optional shared guidance the human
-	// attached to the group, injected as its own turn right after the
-	// welcome — orientation before task. Bracketed paste so multi-line
-	// guidance lands intact (a raw send-keys would submit on every
-	// newline). Empty unless the group has a default_context and the
-	// spawn opted in.
-	if groupContext != "" {
-		if err := injectMultilineAndSubmit(target, buildGroupContextMessage(groupName, groupContext)); err != nil {
-			slog.Warn("spawn: group context injection failed", "conv", convID, "error", err)
-		}
-	}
-
-	// Initial message: the human's first real prompt for the agent.
-	// Kept separate from descr — descr is the short dashboard label,
-	// this is the (possibly long) task brief — and sent as its own
-	// turn after the welcome so the agent reads orientation first,
-	// task second.
-	if initialMessage != "" {
-		if err := injectTextAndSubmit(target, initialMessage); err != nil {
-			slog.Warn("spawn: initial-message injection failed",
-				"conv", convID, "error", err)
+	// The startup briefing (group context + task brief) already sits in
+	// the agent's inbox — the handler inserted the agent_messages row
+	// before this goroutine fired. The welcome line above named its
+	// message id, so the welcome itself is the inbox nudge: mark the
+	// message delivered now that it has landed in the pane.
+	if spawnContextMsgID > 0 {
+		if err := db.MarkAgentMessageDelivered(spawnContextMsgID); err != nil {
+			slog.Warn("spawn: failed to mark startup context delivered",
+				"conv", convID, "msg_id", spawnContextMsgID, "error", err)
 		}
 	}
 }
 
-// buildGroupContextMessage wraps a group's startup context in a
-// [system: …] header so the new agent reads it as group-level
-// guidance rather than a human prompt — the same bracket convention
-// the spawn welcome and agent-message nudges use. The raw context
-// follows the header verbatim and may span multiple lines.
-func buildGroupContextMessage(groupName, context string) string {
-	return fmt.Sprintf(
-		"[system: group %q startup context — shared guidance for every agent spawned into this group:]\n\n%s",
-		groupName, context)
+// buildSpawnContextBody assembles the startup briefing delivered to a
+// freshly-spawned agent's inbox. It stitches together up to two
+// sections — the group's shared startup context and the per-spawn
+// task brief — under plain-text headers, with a divider when both are
+// present.
+//
+// Either input may be empty (or whitespace-only); when both are, the
+// result is "" and the caller skips the inbox insert entirely, so an
+// agent with nothing to brief never gets an empty message.
+func buildSpawnContextBody(groupName, groupContext, initialMessage string) string {
+	groupContext = strings.TrimSpace(groupContext)
+	initialMessage = strings.TrimSpace(initialMessage)
+
+	var sections []string
+	if groupContext != "" {
+		sections = append(sections, fmt.Sprintf(
+			"Group %q startup context — shared guidance for every agent spawned into this group:\n\n%s",
+			groupName, groupContext))
+	}
+	if initialMessage != "" {
+		sections = append(sections, "Your task brief:\n\n"+initialMessage)
+	}
+	return strings.Join(sections, "\n\n---\n\n")
 }
 
 // buildSpawnWelcome composes the [system: ...] welcome text. Brackets
@@ -642,10 +677,16 @@ func buildGroupContextMessage(groupName, context string) string {
 // convention agent-message nudges use. Kept to a single line so it
 // renders cleanly in CC's prompt history.
 //
-// hasInitialMessage flips the trailing instruction: with an initial
-// message queued the agent should act on it, not sit idle, so the
-// "wait for the first instruction" line is replaced.
-func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
+// The trailing instruction has three forms, set by the spawn-context
+// inbox message the handler may have queued:
+//
+//   - spawnContextMsgID == 0 — no briefing at all → "wait for the
+//     first instruction".
+//   - a briefing that includes a task brief (hasInitialMessage) →
+//     point the agent at the inbox message and tell it to act.
+//   - a briefing with only the group's shared startup context →
+//     point at the inbox message, then tell it to wait.
+func buildSpawnWelcome(alias, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
 	parts := []string{"spawned by the human"}
 	if alias != "" {
 		parts = append(parts, fmt.Sprintf("as %q", alias))
@@ -672,10 +713,18 @@ func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage b
 		body += " — make code edits there, not elsewhere under your start directory."
 	}
 	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate."
-	if hasInitialMessage {
-		body += " Your first instructions follow in the next message."
-	} else {
+	switch {
+	case spawnContextMsgID <= 0:
 		body += " Wait for the first instruction."
+	case hasInitialMessage:
+		body += fmt.Sprintf(" Your startup context and task brief are waiting in your inbox"+
+			" as message #%d — read it with `tclaude agent inbox read %d`, then act on the brief.",
+			spawnContextMsgID, spawnContextMsgID)
+	default:
+		body += fmt.Sprintf(" Your group's startup context is waiting in your inbox as"+
+			" message #%d — read it with `tclaude agent inbox read %d`, then wait for the"+
+			" first instruction.",
+			spawnContextMsgID, spawnContextMsgID)
 	}
 	return "[system: " + body + "]"
 }

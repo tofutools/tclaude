@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -22,16 +23,28 @@ func patchGroup(t *testing.T, f *testharness.Flow, name string, body map[string]
 	return testharness.Serve(f.Mux, r).Code
 }
 
+// soleInboxMessage returns the one agent_messages row addressed to
+// convID, failing the test if there isn't exactly one. The spawn
+// handler inserts the "Startup context" briefing synchronously, so it
+// is already present by the time the spawn response returns.
+func soleInboxMessage(t *testing.T, convID string) *db.AgentMessage {
+	t.Helper()
+	rows, err := db.ListAgentMessagesForConv(convID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, rows, 1, "expected exactly one inbox message for %s", convID)
+	return rows[0]
+}
+
 // Scenario: a group carries a startup context. An agent spawned into
 // that group — with no include_group_context flag in the request —
-// has the context injected into its pane on startup, right after the
-// spawn welcome.
+// gets the context delivered to its inbox as the "Startup context"
+// message, and the welcome points it there.
 //
 // This is the feature's core promise: PATCH /v1/groups/{name} stores
-// default_context, and runSpawnPostInit pastes it into the new pane.
-// The Spawn DSL helper sends only {alias} (the flag omitted), which
-// exercises the opt-in default — every spawn path inherits the group
-// context unless it explicitly opts out.
+// default_context, and the spawn folds it into the agent's inbox
+// briefing. The Spawn DSL helper sends only {alias} (the flag
+// omitted), which exercises the opt-in default — every spawn path
+// inherits the group context unless it explicitly opts out.
 func TestGroupDefaultContext_InjectedOnSpawn(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -49,16 +62,23 @@ func TestGroupDefaultContext_InjectedOnSpawn(t *testing.T) {
 
 	spawn := f.AsHuman().Spawn("alpha", "worker")
 
-	// The welcome always lands first — wait for it so the assertion
-	// below isn't racing an un-started post-init goroutine.
+	// The group context was delivered to the agent's inbox.
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Equal(t, "Startup context", msg.Subject, "briefing subject")
+	assert.Contains(t, msg.Body, "Project Phoenix", "briefing carries the group context")
+	assert.Contains(t, msg.Body, "shared guidance", "group-context section header")
+
+	// The welcome lands and points the agent at that inbox message.
 	f.AssertSentContains(spawn.TmuxTarget(), "spawned by the human", 10*time.Second)
-	// The group startup context is pasted in right after.
-	f.AssertSentContains(spawn.TmuxTarget(), "Project Phoenix", 10*time.Second)
+	f.AssertSentContains(spawn.TmuxTarget(),
+		fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
 }
 
-// Scenario: a spawn opts out via include_group_context:false. The
-// group has a context, but this one agent must NOT receive it — the
-// dashboard's "include group default context" checkbox, unticked.
+// Scenario: a spawn opts out via include_group_context:false and
+// supplies no task brief. The group has a context, but this one agent
+// must NOT receive it — the dashboard's "include group default
+// context" checkbox, unticked. With nothing to brief, no inbox
+// message is created at all.
 func TestGroupDefaultContext_OptOutSkipsInjection(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -74,36 +94,35 @@ func TestGroupDefaultContext_OptOutSkipsInjection(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 
-	// Post-init still runs — the welcome lands.
-	f.AssertSentContains(spawn.TmuxTarget(), "spawned by the human", 10*time.Second)
-	// But the group context must not be injected. By the time the
-	// welcome has landed, a context paste (if it were going to happen)
-	// follows within ~2s; a 5s negative window is a comfortable margin.
-	if f.World.Tmux.WaitForSendKeys(spawn.TmuxTarget(), "Project Phoenix", 5*time.Second) {
-		t.Fatalf("opted-out spawn must not receive the group context; sent=%+v",
-			f.World.Tmux.Sent())
-	}
+	// No briefing message — the group context was opted out and there
+	// was no task brief, so buildSpawnContextBody had nothing to send.
+	rows, err := db.ListAgentMessagesForConv(spawn.ConvID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	assert.Empty(t, rows, "opted-out spawn with no brief must get no inbox message")
+
+	// The welcome lands and tells the agent to wait — no inbox pointer.
+	f.AssertSentContains(spawn.TmuxTarget(), "Wait for the first instruction", 10*time.Second)
 }
 
-// Scenario: a group with no startup context. Spawning into it injects
-// only the welcome — the post-init goroutine skips the context step
-// entirely (and doesn't crash on the empty string).
+// Scenario: a group with no startup context, spawned into with no task
+// brief. There is nothing to brief, so no inbox message is created and
+// the welcome tells the agent to wait.
 func TestGroupDefaultContext_NoContextNoInjection(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 
 	spawn := f.AsHuman().Spawn("alpha", "worker")
 
-	f.AssertSentContains(spawn.TmuxTarget(), "spawned by the human", 10*time.Second)
-	// No "startup context" header should ever be pasted.
-	if f.World.Tmux.WaitForSendKeys(spawn.TmuxTarget(), "startup context", 5*time.Second) {
-		t.Fatalf("group with no context must not inject one; sent=%+v",
-			f.World.Tmux.Sent())
-	}
+	rows, err := db.ListAgentMessagesForConv(spawn.ConvID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	assert.Empty(t, rows, "group with no context + no brief must get no inbox message")
+
+	f.AssertSentContains(spawn.TmuxTarget(), "Wait for the first instruction", 10*time.Second)
 }
 
 // Scenario: clearing the context (PATCH default_context:"") removes
-// it. A later spawn no longer picks up the old value.
+// it. A later spawn (no task brief) no longer picks up the old value
+// — and gets no inbox message at all.
 func TestGroupDefaultContext_PatchClears(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -123,10 +142,9 @@ func TestGroupDefaultContext_PatchClears(t *testing.T) {
 	assert.Empty(t, g.DefaultContext, "default_context should be cleared")
 
 	spawn := f.AsHuman().Spawn("alpha", "worker")
-	f.AssertSentContains(spawn.TmuxTarget(), "spawned by the human", 10*time.Second)
-	if f.World.Tmux.WaitForSendKeys(spawn.TmuxTarget(), "Project Phoenix", 5*time.Second) {
-		t.Fatalf("cleared context must not be injected; sent=%+v", f.World.Tmux.Sent())
-	}
+	rows, err := db.ListAgentMessagesForConv(spawn.ConvID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	assert.Empty(t, rows, "cleared context must not produce an inbox message")
 }
 
 // Scenario: a group created with a startup context in one shot —
@@ -150,9 +168,8 @@ func TestGroupDefaultContext_CreateWithContext(t *testing.T) {
 }
 
 // Scenario: a multi-line startup context survives the spawn-time
-// injection intact. The injector uses bracketed paste precisely so
-// embedded newlines don't each submit as a separate turn — a later
-// line of the context must reach the pane verbatim.
+// inbox delivery intact. The inbox stores the body as plain text, so a
+// later line of the context must reach the message verbatim.
 func TestGroupDefaultContext_MultilinePreserved(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -167,15 +184,50 @@ func TestGroupDefaultContext_MultilinePreserved(t *testing.T) {
 		"PATCH multi-line default_context")
 
 	spawn := f.AsHuman().Spawn("alpha", "worker")
-	f.AssertSentContains(spawn.TmuxTarget(), "spawned by the human", 10*time.Second)
-	// The third line — only reachable if the newlines survived as
-	// literal newlines rather than splitting the paste into turns.
-	f.AssertSentContains(spawn.TmuxTarget(), "Follow docs/conventions.md", 10*time.Second)
+
+	// Contains is an exact-substring match (newlines included), so this
+	// proves the whole multi-line block survived the round-trip.
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, ctx, "multi-line group context preserved verbatim")
+}
+
+// Scenario: a spawn with BOTH a group startup context AND a per-spawn
+// initial message. The two must be merged into a SINGLE inbox briefing
+// — group guidance first, task brief second — so the agent has one
+// `inbox read` to run, not two.
+func TestGroupDefaultContext_MergedWithInitialMessage(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	const groupCtx = "Project Phoenix conventions: small commits, tests first."
+	const brief = "Refactor the auth module and write a short report."
+	if _, err := db.SetAgentGroupDefaultContext("alpha", groupCtx); err != nil {
+		t.Fatalf("SetAgentGroupDefaultContext: %v", err)
+	}
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"alias":           "worker",
+		"initial_message": brief,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	// One message, carrying both sections in order.
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, groupCtx, "briefing carries the group context")
+	assert.Contains(t, msg.Body, brief, "briefing carries the task brief")
+	assert.Less(t, strings.Index(msg.Body, groupCtx), strings.Index(msg.Body, brief),
+		"group context should come before the task brief")
+	assert.Contains(t, msg.Body, "Your task brief:", "task-brief section header")
+
+	// With a task brief present, the welcome tells the agent to act.
+	f.AssertSentContains(spawn.TmuxTarget(),
+		fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
+	f.AssertSentContains(spawn.TmuxTarget(), "act on the brief", 10*time.Second)
 }
 
 // Scenario: a context over the size cap is rejected, and nothing is
-// persisted. The context is bracketed-pasted into a pane; an unbounded
-// blob has no business there.
+// persisted. 16 KiB is comfortably more than any reasonable block of
+// startup guidance.
 func TestGroupDefaultContext_PatchTooLongRejected(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -192,7 +244,7 @@ func TestGroupDefaultContext_PatchTooLongRejected(t *testing.T) {
 }
 
 // Scenario: CRLF / lone-CR line endings are folded to LF on store, so
-// the pasted block renders consistently regardless of where the human
+// the briefing renders consistently regardless of where the human
 // authored it.
 func TestGroupDefaultContext_PatchNormalizesCRLF(t *testing.T) {
 	f := newFlow(t)

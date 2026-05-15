@@ -232,12 +232,13 @@ type snapshotPayload struct {
 	GeneratedAt string           `json:"generated_at"`
 	Groups      []dashboardGroup `json:"groups"`
 	Agents      []dashboardAgent `json:"agents"`
-	// Ungrouped: every conv-id that has a live tmux session but is NOT
-	// a member of any group. Surfaces fresh-spawned agents and other
-	// loose convs so the eventual "Ungrouped virtual group" + the
-	// `+ add member` overlay can show them as drag/add sources without
-	// a second round-trip. Same wire shape as Agents — empty when no
-	// loose convs exist.
+	// Ungrouped: every online conv-id that is NOT a member of any
+	// group. Surfaces fresh-spawned agents and other loose convs so
+	// the dashboard's virtual "Ungrouped" group + the `+ add member`
+	// overlay can show them as drag/add sources without a second
+	// round-trip. Online-only by construction (see the a.Online gate
+	// where this is appended). Same wire shape as Agents — empty when
+	// no loose convs exist.
 	Ungrouped []dashboardAgent `json:"ungrouped"`
 	// Conversations: recent non-enrolled conversations — i.e. convs
 	// that are NOT agents. The Agents tab renders them in a second list
@@ -331,6 +332,9 @@ type dashboardMember struct {
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
+	// repoLinksView carries the GitHub web links for the branch cells
+	// — dashboard-only enrichment, see branchlinks.go.
+	repoLinksView
 	Online bool       `json:"online"`
 	Owner  bool       `json:"owner,omitempty"`
 	State  agentState `json:"state"`
@@ -342,6 +346,9 @@ type dashboardAgent struct {
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
+	// repoLinksView carries the GitHub web links for the branch cells
+	// — dashboard-only enrichment, see branchlinks.go.
+	repoLinksView
 	Online      bool                 `json:"online"`
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
@@ -477,10 +484,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := agentRows[convID]; ok {
 			return existing
 		}
+		loc := locationView(convID)
 		a := &dashboardAgent{
 			ConvID:            convID,
 			Title:             agent.FreshTitle(convID),
-			agentLocationView: locationView(convID),
+			agentLocationView: loc,
+			repoLinksView:     branchLinksFor(loc),
 			Online:            isConvOnline(convID),
 			State:             stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
@@ -524,13 +533,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		for _, m := range members {
 			memberSet[m.ConvID] = true
 			online := isConvOnline(m.ConvID)
+			loc := locationView(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            m.ConvID,
 				Title:             agent.FreshTitle(m.ConvID),
 				Alias:             m.Alias,
 				Role:              m.Role,
 				Descr:             m.Descr,
-				agentLocationView: locationView(m.ConvID),
+				agentLocationView: loc,
+				repoLinksView:     branchLinksFor(loc),
 				Online:            online,
 				Owner:             ownerSet[m.ConvID],
 				State:             stateForConv(m.ConvID),
@@ -552,11 +563,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			online := isConvOnline(ownerConv)
+			ownerLoc := locationView(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            ownerConv,
 				Title:             agent.FreshTitle(ownerConv),
 				Role:              "owner",
-				agentLocationView: locationView(ownerConv),
+				agentLocationView: ownerLoc,
+				repoLinksView:     branchLinksFor(ownerLoc),
 				Online:            online,
 				Owner:             true,
 				State:             stateForConv(ownerConv),
@@ -672,11 +685,18 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			a.ActiveSudo = rows
 		}
 		out.Agents = append(out.Agents, *a)
-		// An ONLINE agent with no group memberships is "ungrouped" —
-		// surfaces in the dedicated array so the `+ add member` overlay
-		// can list it as a drag/add source. Kept online-only on
-		// purpose: the overlay is a live-roster picker, so an offline
-		// agent (still in out.Agents) is not offered there.
+		// An online agent with no group memberships is "ungrouped" —
+		// surfaces in the dedicated array so the dashboard can list
+		// them as drag/add sources (and render the virtual "Ungrouped"
+		// group) without re-deriving the membership state. Effective
+		// perms still come from the broader Agents row, so the
+		// dashboard uses Ungrouped purely as a candidate-set hint.
+		//
+		// Kept online-only on purpose — the `+ add member` overlay is
+		// a live-roster picker, and an offline enrolled agent (still
+		// in out.Agents) is not offered there. The `a.Online` gate
+		// also keeps a long-dead grant-holder, which the per-conv
+		// permission loop above adds unconditionally, out of the array.
 		if len(a.Groups) == 0 && a.Online {
 			out.Ungrouped = append(out.Ungrouped, *a)
 		}

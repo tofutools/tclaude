@@ -4,9 +4,16 @@ Shipped 2026-05.
 
 A group can carry an optional **startup context** — a block of shared
 guidance the human attaches to the group. When an agent is spawned
-into that group, the daemon injects the context into the new agent's
-pane on startup, right after the spawn welcome. Each spawn can opt
+into that group, the daemon delivers the context to the new agent's
+**inbox** as part of its spawn startup briefing. Each spawn can opt
 out individually.
+
+> Delivery note: this feature originally pasted the context into the
+> new agent's pane via a bracketed tmux paste (`injectMultilineAndSubmit`).
+> That was changed to inbox delivery — see "Spawn-time delivery" below
+> — because a large briefing bracketed-pasted into CC's input box can
+> overflow its input-size limit. The config surface (this whole doc bar
+> that section) is unchanged.
 
 ## Why
 
@@ -18,9 +25,8 @@ that only covers one repo). A per-group context makes "spawn into
 group X" carry the right briefing for free, while staying optional —
 groups that don't want one simply don't set it.
 
-It is a deliberately flexible primitive: free-form text, injected as
-one extra turn, no enforced structure. The group decides what goes in
-it.
+It is a deliberately flexible primitive: free-form text, no enforced
+structure. The group decides what goes in it.
 
 ## Schema bump (v29)
 
@@ -45,17 +51,15 @@ no group context (the pre-feature behaviour).
 
 ### Update
 
-`PATCH /v1/groups/{name}` → `handleGroupUpdate` (`handlers.go`) now
+`PATCH /v1/groups/{name}` → `handleGroupUpdate` (`handlers.go`)
 patches **two** fields — `default_cwd` and `default_context`. Both are
 `*string`, so `""` clears and omitting leaves untouched; an empty body
 (neither field) is a 400. `default_context` is run through
 `normalizeGroupContext`: CRLF / lone-CR line endings are folded to LF
-(so the pasted block renders consistently regardless of where it was
+(so the briefing renders consistently regardless of where it was
 authored) and the result is rejected with a 400 when it exceeds
-`maxGroupContextBytes` (16 KiB) — the context is bracketed-pasted into
-a pane, so an unbounded blob has no business there. Gated on the
-**`groups.rename`** slug, same as `default_cwd` — human-curated group
-config, blast radius is a spawn-time injection. Default human-only.
+`maxGroupContextBytes` (16 KiB). Gated on the **`groups.rename`** slug,
+same as `default_cwd` — human-curated group config. Default human-only.
 
 ### Create
 
@@ -68,33 +72,30 @@ helpers).
 `PATCH /api/groups/{name}` and `POST /api/groups` (the dashboard
 cookie-auth twins) delegate straight to the same handlers.
 
-## Spawn-time injection
+## Spawn-time delivery
 
-`handleGroupSpawn` (`lifecycle.go`) takes a new request field
+`handleGroupSpawn` (`lifecycle.go`) takes a request field
 `include_group_context` — a `*bool` so an omitted field means **opt-in**:
 every spawn path (`tclaude agent spawn`, `/v1` API, `groups create
 --member`, dashboard) inherits the group context by default, the same
 way it inherits `default_cwd`. The dashboard sends `false` explicitly
 when the human unticks the checkbox.
 
-`runSpawnPostInit` was restructured: after the `/rename` + welcome
-injection it injects the group context (when present) as its own turn,
-via the new `injectMultilineAndSubmit`. Helpers extracted:
-`aliveTmuxTarget` (resolve the `<session>:0.0` pane address) and
-`buildGroupContextMessage` (wrap the raw context in a `[system: …]`
-header so the agent reads it as group guidance, not a human prompt).
+The group context does not get its own delivery turn. Instead it is
+folded — together with the per-spawn `initial_message` — into a single
+**startup briefing** that `handleGroupSpawn` inserts into the new
+agent's inbox as one `agent_messages` row (`Subject: "Startup
+context"`). `buildSpawnContextBody` assembles the body: a group-context
+section (when present and opted-in) and a task-brief section (when an
+initial message was supplied), `---`-separated, each under a plain-text
+header. When both inputs are empty no message is inserted at all.
 
-### `injectMultilineAndSubmit`
-
-`handlers.go`. The existing `injectTextAndSubmit` sends text with a raw
-`send-keys`, where every embedded newline is delivered as an Enter
-keypress — fine for the single-line welcome, but a multi-line context
-would submit on its first line and scatter the rest. The new helper
-instead stages the text into a tmux paste buffer (`set-buffer`) and
-pastes it with bracketed paste (`paste-buffer -p`) and no LF→CR
-translation (`-r`). CC, seeing bracketed paste, inserts the newlines
-literally into its input box; a separate Enter submits the whole block
-as one turn. `-d` drops the buffer afterwards.
+The spawn welcome line points the agent at that inbox message
+(`tclaude agent inbox read <id>`); `runSpawnPostInit` marks it
+delivered once the welcome lands. See
+`DONE/dashboard-spawn-initial-message.md` for the briefing assembly,
+the welcome's three-way trailing instruction, and the test coverage of
+the merged delivery.
 
 ## CLI
 
@@ -127,30 +128,27 @@ suggests existing group names.
 
 ## Test coverage
 
-`pkg/claude/agentd/group_default_context_flow_test.go` — 8 flow tests:
+`pkg/claude/agentd/group_default_context_flow_test.go`:
 
 - `TestGroupDefaultContext_InjectedOnSpawn` — PATCH stores it; a spawn
-  with the flag omitted (opt-in default) injects it after the welcome.
+  with the flag omitted (opt-in default) delivers it to the agent's
+  inbox; the welcome points there.
 - `TestGroupDefaultContext_OptOutSkipsInjection` — `include_group_context:
-  false` → welcome lands, context does not.
+  false` with no task brief → no inbox message; welcome says "wait".
 - `TestGroupDefaultContext_NoContextNoInjection` — a context-less group
-  injects only the welcome.
+  spawned with no brief → no inbox message.
 - `TestGroupDefaultContext_PatchClears` — `default_context:""` clears the
   row; a later spawn no longer inherits it.
 - `TestGroupDefaultContext_CreateWithContext` — `POST /v1/groups` with
   `default_context` stores it.
-- `TestGroupDefaultContext_MultilinePreserved` — a 3-line context's
-  last line reaches the pane verbatim (bracketed paste held the
-  newlines).
+- `TestGroupDefaultContext_MultilinePreserved` — a 3-line context
+  reaches the inbox message verbatim.
+- `TestGroupDefaultContext_MergedWithInitialMessage` — group context +
+  initial message land in ONE inbox briefing, group context first.
 - `TestGroupDefaultContext_PatchTooLongRejected` — >16 KiB → 400,
   nothing persisted.
 - `TestGroupDefaultContext_PatchNormalizesCRLF` — CRLF / lone-CR folded
   to LF on store.
-
-The simulator gained paste-buffer support: `pkg/testharness/tmux_sim.go`
-now models `set-buffer` / `paste-buffer`, routing the buffered text to
-the target pane's `CCSim` (and logging it like a send-keys) so
-`AssertSentContains` sees the bracketed-pasted context.
 
 ## Files
 
@@ -159,16 +157,15 @@ the target pane's `CCSim` (and logging it like a send-keys) so
   `scanAgentGroup` + group SELECTs
 - `pkg/claude/agentd/handlers.go` — `handleGroupUpdate` two-field patch,
   `handleGroups` create-time context, `normalizeGroupContext`,
-  `maxGroupContextBytes`, `injectMultilineAndSubmit`
-- `pkg/claude/agentd/lifecycle.go` — `handleGroupSpawn` `include_group_context`,
-  `runSpawnPostInit`, `aliveTmuxTarget`, `buildGroupContextMessage`
+  `maxGroupContextBytes`
+- `pkg/claude/agentd/lifecycle.go` — `handleGroupSpawn` `include_group_context`
+  + briefing assembly, `buildSpawnContextBody`
 - `pkg/claude/agentd/dashboard.go` — `dashboardGroup.DefaultContext`
 - `pkg/claude/agentd/dashboard.html` — create-modal textarea, header chip,
   group-context modal, spawn checkbox
 - `pkg/claude/agent/groups.go` — `groupsSetContextCmd`, `groups create
   --context` / `--context-file`
-- `pkg/testharness/tmux_sim.go` — `set-buffer` / `paste-buffer` modelling
-- `pkg/claude/agentd/group_default_context_flow_test.go` — 8 flow tests
+- `pkg/claude/agentd/group_default_context_flow_test.go` — flow tests
 
 ## Out of scope (deferred)
 

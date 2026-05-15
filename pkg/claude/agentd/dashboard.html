@@ -69,6 +69,17 @@ table tr:hover { background: #161b22; }
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
   font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e;
 }
+/* Clickable cell variants: a CWD path opens a terminal there; a branch
+   name links to its GitHub compare view, with an optional PR link. */
+.cwd-link { cursor: pointer; }
+.cwd-link:hover { color: #d4d4d4; text-decoration: underline; }
+a.branch-link { color: #8b949e; text-decoration: none; }
+a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
+.pr-link {
+  font-family: ui-monospace, monospace; font-size: 11px;
+  color: #3fb950; text-decoration: none; margin-left: 5px;
+}
+.pr-link:hover { text-decoration: underline; }
 /* loc-pair stacks an init/now value pair in one CWD or Branch cell,
    shown only when the agent's launch location differs from where it
    is working now — keeps the column narrow instead of adding a 2nd. */
@@ -264,6 +275,21 @@ summary.dnd-drop-over.dnd-effect-clone {
   border-color: #3fb950;
   color: #3fb950;
 }
+/* The virtual "Ungrouped" group: online agents in no group. Styled
+   distinctly from real groups — a dashed left rule + muted name — so
+   it reads as a derived bucket, not a real group you can operate on. */
+details.group-virtual > summary {
+  border-left: 2px dashed #2a3340;
+  padding-left: 6px;
+}
+details.group-virtual .group-name { color: #8aa0b8; }
+.group-virtual-badge {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px;
+  color: #7d8590; border: 1px solid #2a3340; border-radius: 3px;
+  vertical-align: 1px; cursor: help;
+}
+.group-virtual-hint { margin-left: 8px; font-size: 11px; font-style: italic; }
 .add-member-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);
@@ -677,6 +703,9 @@ summary.dnd-drop-over.dnd-effect-clone {
       <label class="filter-toggle" title="Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.">
         <input id="filter-groups-offline" type="checkbox" checked /> show offline
       </label>
+      <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.">
+        <input id="filter-groups-ungrouped" type="checkbox" checked /> show ungrouped
+      </label>
       <span class="spacer"></span>
       <button id="cleanup-all-open" class="tool" title="Clean up offline agents across every group (optionally delete them)">🧹 clean up</button>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
@@ -959,7 +988,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Startup context</span>
-      <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance auto-injected into every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
+      <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance delivered to the inbox of every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
     </label>
     <div class="cron-create-error" id="group-create-error"></div>
     <div class="modal-buttons">
@@ -1076,7 +1105,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
-      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — sent to the new agent as its first prompt, right after the welcome (newlines collapse to spaces)" spellcheck="false"></textarea>
+      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤4096 chars)" spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
@@ -1105,7 +1134,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     <label class="cron-create-enabled" id="agent-spawn-focus-row" title="After the agent spawns, open a terminal window attached to its tclaude session. A detached spawn has no window of its own — this lets you watch and talk to the new agent right away.">
       <input id="agent-spawn-focus" type="checkbox" checked /> Auto focus — open a terminal attached to the new agent
     </label>
-    <label class="cron-create-enabled" id="agent-spawn-group-context-row" style="display:none" title="Inject this group's shared startup context into the new agent, right after the spawn welcome. Shown only when the group has a startup context set.">
+    <label class="cron-create-enabled" id="agent-spawn-group-context-row" style="display:none" title="Include this group's shared startup context in the new agent's inbox briefing, alongside the initial message. Shown only when the group has a startup context set.">
       <input id="agent-spawn-group-context" type="checkbox" checked /> Include group default context
     </label>
     <div class="cron-create-error" id="agent-spawn-error"></div>
@@ -1355,6 +1384,18 @@ summary.dnd-drop-over.dnd-effect-clone {
     return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
   }
 
+  // ungroupedMemberActions renders the per-row action cell for a row
+  // in the virtual "Ungrouped" group. It deliberately OMITS every
+  // group-affecting button (edit alias/role/descr, owner toggle,
+  // remove-from-group) — the agent belongs to no group, so those are
+  // meaningless here. What remains is the agent-level lifecycle set,
+  // identical to the Agents tab: focus / term / shut down / wake,
+  // clone, reincarnate, rename, sudo, self-nudge cron, delete. To put
+  // an ungrouped agent INTO a group, drag its row onto a group header.
+  function ungroupedMemberActions(m) {
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${sudoMemberButton(m)}${cronMemberButton(m)}<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button></div>`;
+  }
+
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
   // Mirrors the session ls UPDATED column. Empty input → "" (no chip).
   function relTime(iso) {
@@ -1401,27 +1442,44 @@ summary.dnd-drop-over.dnd-effect-clone {
 
   // cwdCell renders the CWD column: the launch dir, or — when the
   // agent has moved into a sub-repo / worktree — a stacked init/now
-  // pair. startup_dir falls back to the live session's cwd.
+  // pair. startup_dir falls back to the live session's cwd. Each path
+  // is a click-to-open-a-terminal target: the launch dir maps to the
+  // `start` /api/term selector, the live worktree to `worktree` —
+  // the two selectors that resolve to those exact directories.
   function cwdCell(m) {
     const startup = m.startup_dir || (m.state || {}).cwd || '';
     const current = m.current_dir || '';
-    const fmt = d => `<span class="cwd" title="${esc(d || '')}">${esc(shortCwd(d))}</span>`;
+    const conv = m.conv_id || '';
+    const fmt = (d, which) => {
+      if (!d) return '<span class="cwd">—</span>';
+      return `<span class="cwd cwd-link" data-act="term-dir" data-conv="${esc(conv)}" data-which="${which}" title="Open a terminal here — ${esc(d)}">${esc(shortCwd(d))}</span>`;
+    };
     const differ = !!current && !!startup && current !== startup;
-    return stackedLoc(fmt(startup), fmt(current), differ);
+    return stackedLoc(fmt(startup, 'start'), fmt(current, 'worktree'), differ);
   }
 
   // branchCell renders the Branch column. `m.branch` is the agent's
   // *current* branch (the worktree it last edited in); startup_branch
   // is the launch dir's branch — empty for a virtual-monorepo launch
-  // dir. They stack as init/now whenever they differ. Empty / unknown
-  // renders as an em dash so the column stays aligned.
+  // dir. They stack as init/now whenever they differ. When the
+  // snapshot resolved a GitHub repo, the branch name becomes a link to
+  // its compare view and an open PR is appended as a `#<num>` link.
+  // Empty / unknown renders as an em dash so the column stays aligned.
   function branchCell(m) {
-    const startup = m.startup_branch || '';
-    const current = m.branch || '';
-    const fmt = b => b
-      ? `<span class="branch" title="git branch: ${esc(b)}">⎇ ${esc(b)}</span>`
-      : '<span class="muted">—</span>';
-    return stackedLoc(fmt(startup), fmt(current), startup !== current);
+    const fmt = (branch, url, prNum, prURL) => {
+      if (!branch) return '<span class="muted">—</span>';
+      const inner = `⎇ ${esc(branch)}`;
+      const branchEl = url
+        ? `<a class="branch branch-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open branch on GitHub — ${esc(branch)}">${inner}</a>`
+        : `<span class="branch" title="git branch: ${esc(branch)}">${inner}</span>`;
+      const prEl = (prNum && prURL)
+        ? ` <a class="pr-link" href="${esc(prURL)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open pull request #${prNum}">#${prNum}</a>`
+        : '';
+      return branchEl + prEl;
+    };
+    const startupEl = fmt(m.startup_branch || '', m.startup_branch_url || '', m.startup_pr_number || 0, m.startup_pr_url || '');
+    const currentEl = fmt(m.branch || '', m.branch_url || '', m.branch_pr_number || 0, m.branch_pr_url || '');
+    return stackedLoc(startupEl, currentEl, (m.startup_branch || '') !== (m.branch || ''));
   }
 
   // offlineDefault returns the tab-wide "show offline" checkbox state
@@ -1650,11 +1708,126 @@ summary.dnd-drop-over.dnd-effect-clone {
     created: l => l.created_at,
   };
 
+  // The virtual "Ungrouped" group. UNGROUPED_LABEL is the display
+  // name; UNGROUPED_VKEY is its identity for localStorage / DOM keying.
+  // The key has a leading space, which validateGroupName (server-side)
+  // rejects — so it can never collide with a real group's name, even
+  // if a human creates a real group literally called "Ungrouped".
+  const UNGROUPED_LABEL = 'Ungrouped';
+  const UNGROUPED_VKEY = ' ungrouped-virtual';
+
+  // virtualUngroupedGroup builds the synthetic group object from the
+  // snapshot's online-and-groupless agents. Always returns the object
+  // (with an empty members[] when there are none) — once the human
+  // has ticked "show ungrouped" the group stays visible even while
+  // empty, so it reads as a stable, discoverable drop target rather
+  // than something that blinks in and out as agents come and go. The
+  // `virtual` flag is the discriminator every group-affecting code
+  // path keys off to suppress rename / delete / multicast / cron /
+  // add-member.
+  function virtualUngroupedGroup(agents) {
+    // The snapshot's ungrouped[] is online-only by daemon construction;
+    // re-filter defensively so a future backend change can't leak an
+    // offline row into the virtual group.
+    const online = (agents || []).filter(a => a.online);
+    return {
+      name: UNGROUPED_LABEL,
+      key: UNGROUPED_VKEY,
+      virtual: true,
+      descr: 'online agents not in any group',
+      members: online,
+      online: online.length,
+    };
+  }
+
+  // ungroupedVisible reports the "show ungrouped" checkbox state.
+  // Defaults to true when the checkbox isn't in the DOM yet.
+  function ungroupedVisible() {
+    const el = $('#filter-groups-ungrouped');
+    return el ? el.checked : true;
+  }
+
+  // memberRowHTML renders one draggable member <tr>. `ctx` selects the
+  // drag wiring + action set:
+  //   - {group: <groupObj>}  — a real group member: the source group
+  //     is recorded for drag-and-drop; full memberActions (incl. owner
+  //     toggle / remove-from-group).
+  //   - {ungrouped: true}    — a row in the virtual Ungrouped group:
+  //     tagged as an ungrouped drag source; agent-level actions only.
+  function memberRowHTML(m, ctx) {
+    const state = m.state || {};
+    const subagents = state.subagent_count || 0;
+    const dndSource = ctx.ungrouped
+      ? 'data-dnd-source-ungrouped="1"'
+      : `data-dnd-source-group="${esc(ctx.group.name)}"`;
+    const actions = ctx.ungrouped ? ungroupedMemberActions(m) : memberActions(ctx.group, m);
+    return `
+                <tr class="dnd-draggable" draggable="true" ${dndSource}
+                    data-dnd-conv="${esc(m.conv_id)}"
+                    data-dnd-label="${esc(m.alias || m.title || m.conv_id)}">
+                  <td>${onlineDot(m.online)}</td>
+                  <td class="id">${esc(shortId(m.conv_id))}</td>
+                  <td>
+                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
+                    ${m.alias && m.title ? `<div class="title muted">${esc(m.title)}</div>` : ''}
+                  </td>
+                  <td>
+                    ${statePill(state, m.online)}
+                    ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
+                  </td>
+                  <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
+                  <td>${cwdCell(m)}</td>
+                  <td>${branchCell(m)}</td>
+                  <td>${roleCell(m)}</td>
+                  <td class="muted">${esc(m.descr || '')}</td>
+                  <td>${actions}</td>
+                </tr>`;
+  }
+
+  // renderVirtualGroup renders the synthetic "Ungrouped" group. It is
+  // intentionally inert AS A GROUP — no rename / delete / multicast /
+  // cron / add-member / spawn buttons, no default-cwd / default-context,
+  // no per-group offline toggle (its members are online by
+  // construction). Its only interactive role is drag-and-drop:
+  //   - member rows are draggable INTO real groups (→ join);
+  //   - the summary is a drop target for real-group members (→ leave
+  //     that group; if it was their only group they reappear here).
+  // The summary carries data-dnd-target-ungrouped (NOT -target-group),
+  // so the move/clone code paths can never mistake it for a real group.
+  function renderVirtualGroup(g) {
+    const members = g.members || [];
+    const key = g.key || g.name;
+    const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+    const body = members.length === 0
+      ? '<div class="muted">(no ungrouped agents)</div>'
+      : `
+          <table>
+            ${sortHead('members', MEMBER_COLS)}
+            <tbody>
+              ${applySort('members', members, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {ungrouped: true})).join('')}
+            </tbody>
+          </table>`;
+    return `
+      <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
+        <summary data-dnd-target-ungrouped="1">
+          <strong class="group-name">${esc(g.name)}</strong>
+          <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects online agents that aren't in any group.">virtual</span>
+          <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group</span>
+          <span class="muted group-virtual-hint">drag a row onto a group to add it · drag a group member here to remove it</span>
+        </summary>
+        <div class="subtable">
+          ${body}
+        </div>
+      </details>
+    `;
+  }
+
   function renderGroups(groups) {
     if (!groups || !groups.length) {
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
     }
     return groups.map(g => {
+      if (g.virtual) return renderVirtualGroup(g);
       const members = g.members || [];
       // Offline visibility: per-group override falls back to the
       // tab-wide checkbox. Hidden members still count toward the
@@ -1672,7 +1845,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           <span class="muted">— ${members.length} members, ${g.online || 0} online${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
-          <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) injected into agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
+          <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) delivered to the inbox of agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
           ${groupOfflineToggleHTML(g.name)}
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
@@ -1692,33 +1865,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           <table>
             ${sortHead('members', MEMBER_COLS)}
             <tbody>
-              ${applySort('members', visible, MEMBER_ACCESSORS).map(m => {
-                const state = m.state || {};
-                const subagents = state.subagent_count || 0;
-                return `
-                <tr class="dnd-draggable"
-                    draggable="true"
-                    data-dnd-source-group="${esc(g.name)}"
-                    data-dnd-conv="${esc(m.conv_id)}"
-                    data-dnd-label="${esc(m.alias || m.title || m.conv_id)}">
-                  <td>${onlineDot(m.online)}</td>
-                  <td class="id">${esc(shortId(m.conv_id))}</td>
-                  <td>
-                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
-                    ${m.alias && m.title ? `<div class="title muted">${esc(m.title)}</div>` : ''}
-                  </td>
-                  <td>
-                    ${statePill(state, m.online)}
-                    ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
-                  </td>
-                  <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
-                  <td>${cwdCell(m)}</td>
-                  <td>${branchCell(m)}</td>
-                  <td>${roleCell(m)}</td>
-                  <td class="muted">${esc(m.descr || '')}</td>
-                  <td>${memberActions(g, m)}</td>
-                </tr>`;
-              }).join('')}
+              ${applySort('members', visible, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {group: g})).join('')}
             </tbody>
           </table>`}
           ${renderGroupLinksSection(g.name)}
@@ -1996,11 +2143,25 @@ summary.dnd-drop-over.dnd-effect-clone {
   function renderGroupsTab() {
     if (!lastSnapshot) return;
     const q = $('#filter-groups').value;
-    const filtered = filterGroups(lastSnapshot.groups || [], q);
+    const realGroups = lastSnapshot.groups || [];
+    // Append the virtual "Ungrouped" group LAST so it always sorts to
+    // the bottom of the listing. filterGroups preserves order, so the
+    // text filter narrows it like any other group without moving it.
+    // Gated solely on the "show ungrouped" checkbox — once ticked, the
+    // group stays visible even when empty (a no-text filter never
+    // hides it; a text filter narrows it like any group).
+    const list = realGroups.slice();
+    if (ungroupedVisible()) {
+      list.push(virtualUngroupedGroup(lastSnapshot.ungrouped || []));
+    }
+    const filtered = filterGroups(list, q);
     $('#groups-list').innerHTML = renderGroups(filtered);
-    const total = (lastSnapshot.groups || []).length;
+    // The count reflects real groups only — the virtual group is a
+    // derived bucket, not a group the human created.
+    const total = realGroups.length;
+    const shownReal = filtered.filter(g => !g.virtual).length;
     $('#filter-groups-count').textContent = q
-      ? `${filtered.length} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
+      ? `${shownReal} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
   }
 
   // filterConvLike is a lightweight title / conv-id substring filter
@@ -3484,10 +3645,10 @@ summary.dnd-drop-over.dnd-effect-clone {
     const alias = $('#agent-spawn-alias').value.trim();
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
-    // The initial message rides in via tmux send-keys, where a raw
-    // newline would land as a premature submit — collapse to a single
-    // line, same as the clone modal's follow-up.
-    const initMsg = normaliseFollowUp($('#agent-spawn-init-msg').value);
+    // The initial message is delivered to the new agent's inbox (an
+    // agent_messages row), not typed into its pane — so newlines are
+    // preserved. Send the textarea verbatim; the daemon trims it.
+    const initMsg = $('#agent-spawn-init-msg').value;
     const cwd = $('#agent-spawn-cwd').value.trim();
     const wtRepo = $('#agent-spawn-wt-repo').value.trim();
     const autoFocus = $('#agent-spawn-focus').checked;
@@ -3909,6 +4070,19 @@ summary.dnd-drop-over.dnd-effect-clone {
       offline.checked = saved === null ? true : saved === '1';
       offline.addEventListener('change', () => {
         localStorage.setItem(okey, offline.checked ? '1' : '0');
+        rerender();
+      });
+    }
+    // Optional "show ungrouped" checkbox (groups tab only) — toggles
+    // the virtual Ungrouped group. Persisted like the offline toggle;
+    // defaults to checked when the user has never touched it.
+    const ungrouped = $(`#filter-${tab}-ungrouped`);
+    if (ungrouped) {
+      const ukey = `tclaude.dash.ungrouped.${tab}`;
+      const saved = localStorage.getItem(ukey);
+      ungrouped.checked = saved === null ? true : saved === '1';
+      ungrouped.addEventListener('change', () => {
+        localStorage.setItem(ukey, ungrouped.checked ? '1' : '0');
         rerender();
       });
     }
@@ -5000,6 +5174,21 @@ summary.dnd-drop-over.dnd-effect-clone {
             toast(`terminal opened: ${info.dir || label}`);
             return;
           }
+          case 'term-dir': {
+            // Click on a CWD path cell — the cell already names one
+            // specific directory, so open a terminal there straight
+            // away, skipping the term button's 3-way picker modal.
+            const which = btn.getAttribute('data-which') || 'current';
+            const r = await fetch(`/api/term/${encodeURIComponent(conv)}`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ which }),
+            });
+            if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
+            const info = await r.json().catch(() => ({}));
+            toast(`terminal opened: ${info.dir || which}`);
+            return;
+          }
           case 'sudo-grant': {
             // Per-row affordance: open the same modal the Sudo tab's
             // "+ Grant sudo" button uses, pre-filled with this conv.
@@ -5520,17 +5709,27 @@ summary.dnd-drop-over.dnd-effect-clone {
   // drag is in flight, so a 5s tick doesn't blow our optimistic
   // mutation away while the round-trip is mid-air.
   let dndDragActive = false;
-  // updateDndPill positions + labels the modifier-hint pill that
-  // tracks the cursor during a drag. Visible only while dragging
-  // over a valid drop target; clears on dragleave / drop / dragend.
-  function updateDndPill(e, hovering, isClone) {
+  // dndSourceUngrouped: true while the row being dragged comes from
+  // the virtual Ungrouped group. Set in dragstart, cleared in dragend.
+  // dragover can't read the DataTransfer payload (browsers gate
+  // getData to the drop event), so this module-level flag is how the
+  // hover handlers know whether a drop onto Ungrouped is a real op
+  // (grouped source) or an inert no-op (already-ungrouped source).
+  let dndSourceUngrouped = false;
+  // Every droppable summary — real group headers AND the virtual
+  // Ungrouped header. The four DnD listeners share this selector.
+  const DND_TARGET_SEL = 'summary[data-dnd-target-group],summary[data-dnd-target-ungrouped]';
+  // updateDndPill positions + labels the hint pill that tracks the
+  // cursor during a drag. `info` is null to hide the pill, else
+  // {text, clone} — text is the action label, clone tints it green.
+  function updateDndPill(e, info) {
     const pill = $('#dnd-pill');
-    if (!hovering) {
-      pill.classList.remove('show');
+    if (!info) {
+      pill.classList.remove('show', 'clone');
       return;
     }
-    pill.textContent = isClone ? '→ clone' : '→ move';
-    pill.classList.toggle('clone', isClone);
+    pill.textContent = info.text;
+    pill.classList.toggle('clone', !!info.clone);
     pill.classList.add('show');
     // Offset slightly from the cursor so the pill doesn't sit on top
     // of the user's pointer. clientX/clientY on `dragover` events
@@ -5543,20 +5742,24 @@ summary.dnd-drop-over.dnd-effect-clone {
       if (!row) return;
       const conv = row.getAttribute('data-dnd-conv');
       const sourceGroup = row.getAttribute('data-dnd-source-group');
+      const sourceUngrouped = row.hasAttribute('data-dnd-source-ungrouped');
       const label = row.getAttribute('data-dnd-label') || conv;
-      if (!conv || !sourceGroup) return;
-      // Stash the payload on the DataTransfer so other drag listeners
-      // (and the eventual drop) can read it without globals. The MIME
-      // type 'text/plain' is the most-supported channel; the JSON
-      // body keeps the encoding self-describing. We allow both move
-      // (default) and copy effects so Ctrl-drag can flip the cursor
-      // hint via dropEffect on dragover.
-      const payload = JSON.stringify({conv, sourceGroup, label});
+      // A draggable row is either a real-group member (has a source
+      // group) or a virtual-Ungrouped row (carries the ungrouped
+      // flag). Anything else isn't a valid drag.
+      if (!conv || (!sourceGroup && !sourceUngrouped)) return;
+      // Stash the payload on the DataTransfer so the eventual drop can
+      // read it without globals. The MIME type 'text/plain' is the
+      // most-supported channel; the JSON body keeps the encoding
+      // self-describing. We allow both move (default) and copy effects
+      // so Ctrl-drag can flip the cursor hint via dropEffect.
+      const payload = JSON.stringify({conv, sourceGroup: sourceGroup || '', sourceUngrouped, label});
       e.dataTransfer.setData('application/x-tclaude-member', payload);
       e.dataTransfer.setData('text/plain', payload);
       e.dataTransfer.effectAllowed = 'copyMove';
       row.classList.add('dnd-source-row');
       dndDragActive = true;
+      dndSourceUngrouped = sourceUngrouped;
       modalEditing = true; // suspend auto-refresh during the drag
     });
     document.addEventListener('dragend', (e) => {
@@ -5567,30 +5770,48 @@ summary.dnd-drop-over.dnd-effect-clone {
       $$('summary.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
       $('#dnd-pill').classList.remove('show', 'clone');
       dndDragActive = false;
+      dndSourceUngrouped = false;
       modalEditing = false;
       refresh();
     });
     document.addEventListener('dragover', (e) => {
       if (!dndDragActive) return;
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) {
-        updateDndPill(e, false, false);
+        updateDndPill(e, null);
+        return;
+      }
+      const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
+      // Dropping an already-ungrouped row onto the Ungrouped group is
+      // a pure no-op — don't preventDefault (so `drop` never fires)
+      // and don't show a hint.
+      if (targetUngrouped && dndSourceUngrouped) {
+        updateDndPill(e, null);
         return;
       }
       e.preventDefault(); // required for drop to fire on this element
-      const isClone = !!e.ctrlKey || !!e.metaKey;
+      // Clone is meaningful only for a real-group TARGET; dropping
+      // onto Ungrouped is always a plain "remove from group".
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped;
       e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
       summary.classList.toggle('dnd-effect-clone', isClone);
-      updateDndPill(e, true, isClone);
+      let text;
+      if (targetUngrouped) text = '↓ remove from group';
+      else if (isClone) text = '→ clone into group';
+      else if (dndSourceUngrouped) text = '→ add to group';
+      else text = '→ move to group';
+      updateDndPill(e, {text, clone: isClone});
     });
     document.addEventListener('dragenter', (e) => {
       if (!dndDragActive) return;
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
+      // No highlight for the inert ungrouped→Ungrouped no-op.
+      if (summary.hasAttribute('data-dnd-target-ungrouped') && dndSourceUngrouped) return;
       summary.classList.add('dnd-drop-over');
     });
     document.addEventListener('dragleave', (e) => {
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
       // dragleave fires when the cursor enters a child element too;
       // only remove the highlight when the cursor has actually left
@@ -5599,29 +5820,44 @@ summary.dnd-drop-over.dnd-effect-clone {
       summary.classList.remove('dnd-drop-over', 'dnd-effect-clone');
     });
     document.addEventListener('drop', async (e) => {
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
       e.preventDefault();
       summary.classList.remove('dnd-drop-over', 'dnd-effect-clone');
       $('#dnd-pill').classList.remove('show', 'clone');
-      const targetGroup = summary.getAttribute('data-dnd-target-group');
       const raw = e.dataTransfer.getData('application/x-tclaude-member')
         || e.dataTransfer.getData('text/plain');
       let payload;
       try { payload = JSON.parse(raw); } catch (_) { return; }
-      if (!payload || !payload.conv || !payload.sourceGroup) return;
-      const isClone = !!e.ctrlKey || !!e.metaKey;
-      if (!isClone && payload.sourceGroup === targetGroup) {
-        // Move-onto-self: no-op. (Clone-onto-source-group IS still
-        // meaningful: it forks a sibling that joins the same group
-        // alongside the original.)
+      if (!payload || !payload.conv) return;
+      const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
+      const targetGroup = summary.getAttribute('data-dnd-target-group');
+      const sourceUngrouped = !!payload.sourceUngrouped;
+      // Clone applies only to a real-group target.
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped;
+
+      // Target = the virtual Ungrouped group → "remove from group".
+      if (targetUngrouped) {
+        if (sourceUngrouped) return; // already ungrouped — no-op
+        await runDndRemoveFromGroup(payload);
         return;
       }
+      // Target = a real group.
       if (isClone) {
+        // Clone forks a sibling into the target group. Works whether
+        // the source is grouped or ungrouped — runDndClone clones the
+        // conv then POSTs the clone into the drop-target group.
         await runDndClone(payload, targetGroup);
-      } else {
-        await runDndMove(payload, targetGroup);
+        return;
       }
+      if (sourceUngrouped) {
+        // Ungrouped agent dragged onto a group → pure add.
+        await runDndAddToGroup(payload, targetGroup);
+        return;
+      }
+      // Real group → real group move. Move-onto-self is a no-op.
+      if (payload.sourceGroup === targetGroup) return;
+      await runDndMove(payload, targetGroup);
     });
   }
 
@@ -5732,6 +5968,65 @@ summary.dnd-drop-over.dnd-effect-clone {
     } catch (err) {
       toast(`move failed: ${err && err.message || err}`, true);
       rollback();
+    }
+  }
+
+  // runDndAddToGroup handles a drag FROM the virtual Ungrouped group
+  // ONTO a real group's header — the agent joins that group. Pure add:
+  // POST /api/groups/{B}/members. The agent was in no group, so there
+  // is nothing to remove; on success it drops out of the Ungrouped
+  // virtual group on the next snapshot.
+  //
+  // Non-optimistic (one round-trip, then refresh): the source isn't a
+  // real group in lastSnapshot.groups, so the optimistic splice
+  // runDndMove relies on doesn't apply. A single fast call + refresh
+  // keeps the code simple and the failure mode obvious.
+  async function runDndAddToGroup(payload, targetGroup) {
+    const {conv, label} = payload;
+    try {
+      const r = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({conv}),
+      });
+      if (!r.ok) {
+        toast(`add to ${targetGroup} failed: ${await r.text()}`, true);
+        return;
+      }
+      toast(`added ${label} → ${targetGroup}`);
+    } catch (err) {
+      toast(`add failed: ${err && err.message || err}`, true);
+    } finally {
+      // The dragend handler's refresh() can race ahead of this
+      // round-trip; refresh again once it has landed so the final
+      // render reflects the mutation.
+      await refresh();
+    }
+  }
+
+  // runDndRemoveFromGroup handles a drag FROM a real group's member
+  // row ONTO the virtual Ungrouped group — the agent leaves that
+  // group. Pure remove: DELETE /api/groups/{A}/members/{conv}. If A
+  // was the agent's only group it reappears in the Ungrouped virtual
+  // group on the next snapshot; if it was in other groups too it
+  // simply stays in those. Non-optimistic, same rationale as
+  // runDndAddToGroup.
+  async function runDndRemoveFromGroup(payload) {
+    const {conv, sourceGroup, label} = payload;
+    if (!sourceGroup) return; // not a real-group member — nothing to do
+    try {
+      const r = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        toast(`remove from ${sourceGroup} failed: ${await r.text()}`, true);
+        return;
+      }
+      toast(`removed ${label} from ${sourceGroup}`);
+    } catch (err) {
+      toast(`remove failed: ${err && err.message || err}`, true);
+    } finally {
+      await refresh();
     }
   }
 

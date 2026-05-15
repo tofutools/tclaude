@@ -162,7 +162,7 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 type GroupsCreateParams struct {
 	Name        string   `pos:"true" help:"Group name"`
 	Descr       string   `long:"descr" short:"d" optional:"true" help:"Optional description"`
-	Context     string   `long:"context" optional:"true" help:"Shared startup context auto-injected into agents spawned into this group. For multi-line context use --context-file."`
+	Context     string   `long:"context" optional:"true" help:"Shared startup context delivered to the inbox of agents spawned into this group. For multi-line context use --context-file."`
 	ContextFile string   `long:"context-file" optional:"true" help:"Read the group startup context from this file (alternative to --context)."`
 	Members     []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (alias=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'alias' is required; 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
 	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
@@ -1077,7 +1077,7 @@ func runGroupsSetDefaultDir(p *groupsSetDefaultDirParams, stdout, stderr io.Writ
 
 type groupsSetContextParams struct {
 	Group    string `pos:"true" help:"Group to configure"`
-	Context  string `pos:"true" optional:"true" help:"Startup context injected into agents spawned into this group. Omit (and omit --file) to clear it."`
+	Context  string `pos:"true" optional:"true" help:"Startup context delivered to the inbox of agents spawned into this group. Omit (and omit --file) to clear it."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the startup context from this file instead of the positional argument (handy for multi-line context)."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
@@ -1086,8 +1086,8 @@ func groupsSetContextCmd() *cobra.Command {
 	return boa.CmdT[groupsSetContextParams]{
 		Use:   "set-context",
 		Short: "Set (or clear) a group's shared startup context",
-		Long: "Set a block of guidance that the daemon auto-injects into every " +
-			"agent spawned into this group, right after the spawn welcome. Pass " +
+		Long: "Set a block of guidance that the daemon delivers to the inbox of every " +
+			"agent spawned into this group, as part of its startup briefing. Pass " +
 			"the context as the second argument, or with --file to load it from " +
 			"a file (better for multi-line context). Omit both to clear it. " +
 			"Each spawn can still opt out individually (the dashboard's 'include " +

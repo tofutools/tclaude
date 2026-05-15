@@ -100,6 +100,27 @@ func isValidFollowUp(s string) bool {
 	return true
 }
 
+// isValidInitialMessage mirrors the daemon-side isValidInitialMessage
+// check (agentd/handlers.go). Unlike a follow-up — which is typed into
+// a tmux pane — a spawn's initial message is delivered to the new
+// agent's inbox, so newlines and tabs are allowed; only NUL / escape /
+// other non-text control characters are rejected. An empty string is
+// valid (no initial message). Length is capped at 4096 bytes.
+func isValidInitialMessage(s string) bool {
+	if len(s) > 4096 {
+		return false
+	}
+	for _, r := range s {
+		if r == '\n' || r == '\t' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // runSlashWithOptionalTarget dispatches to either the self endpoint
 // (/v1/whoami/{verb}) or the cross-agent endpoint (/v1/agent/{target}/{verb})
 // based on whether target is set. The cross-agent path doesn't honour
