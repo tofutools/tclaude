@@ -33,3 +33,26 @@ func TestDashboardHTML_SubdirWorktreeWired(t *testing.T) {
 	must("worktree_branch", "submit sends worktree_branch")
 	must("spawnWtRepoEdited", "CWD-mirror detach flag")
 }
+
+// The CWD / Branch columns stack an init/now pair when an agent has
+// moved off its launch dir. That rendering lives in dashboard.html's
+// JS; this guards the helpers + the startup/current fields they read.
+func TestDashboardHTML_LocationCellsWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardHTML, needle) {
+			t.Errorf("dashboard.html missing %q (%s)", needle, why)
+		}
+	}
+
+	// The stacked-cell helpers.
+	must("function stackedLoc(", "init/now stacking helper")
+	must("function cwdCell(", "CWD column cell renderer")
+	must("function branchCell(", "Branch column cell renderer")
+	must("loc-pair", "stacked-pair CSS class")
+
+	// The cells read the startup/current split off the snapshot rows.
+	must("startup_dir", "cwdCell reads startup_dir")
+	must("current_dir", "cwdCell reads current_dir")
+	must("startup_branch", "branchCell reads startup_branch")
+}

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 27
+const currentVersion = 28
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -185,6 +185,37 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 28 {
+		if err := migrateV27toV28(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV27toV28 widens agent_workdir from a bare directory into a
+// full "current location" record: alongside the most-recent edit dir
+// it now stores that dir's git worktree root and branch. The
+// PostToolUse hook computes both at edit time, so every read surface
+// (dashboard, `agent ls`, `agent dir`) can report where an agent is
+// *actually* working — and on which branch — without shelling out to
+// git per refresh. This keeps tracking correct when the agent hops
+// between sub-repos of a monorepo launch dir, where Claude Code's own
+// per-turn gitBranch stamp (the launch dir's branch) goes stale.
+//
+// Both columns default to '' so rows written by a pre-v28 hook keep
+// working — readers fall back to an on-demand git resolution then.
+func migrateV27toV28(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_workdir ADD COLUMN worktree_root TEXT NOT NULL DEFAULT '';
+		ALTER TABLE agent_workdir ADD COLUMN branch        TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 28;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v27→v28: %w", err)
+	}
 	return nil
 }
 

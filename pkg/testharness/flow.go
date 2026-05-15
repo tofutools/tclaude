@@ -524,9 +524,15 @@ type MemberView struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
-	Branch string `json:"branch,omitempty"`
-	Online bool   `json:"online"`
-	Owner  bool   `json:"owner,omitempty"`
+	// Branch is the agent's *current* git branch; StartupBranch is the
+	// launch dir's branch and StartupDir / CurrentDir are the launch
+	// vs. live-worktree directories — see agentd.agentLocationView.
+	Branch        string `json:"branch,omitempty"`
+	StartupDir    string `json:"startup_dir,omitempty"`
+	StartupBranch string `json:"startup_branch,omitempty"`
+	CurrentDir    string `json:"current_dir,omitempty"`
+	Online        bool   `json:"online"`
+	Owner         bool   `json:"owner,omitempty"`
 }
 
 // PeerView is the parsed shape of one row in GET /v1/peers — what

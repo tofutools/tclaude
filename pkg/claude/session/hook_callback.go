@@ -157,12 +157,16 @@ func runHookCallback() error {
 		state.StatusDetail = input.ToolName
 		// Track where the agent is building: a file-editing tool just
 		// ran, so the file's directory is the most-relevant "working
-		// dir" — distinct from input.Cwd, which is the launch dir.
-		// Recorded per conv-id; the daemon's /v1/.../dir endpoints read
-		// it back. Best-effort: a failed UpsertAgentWorkdir just leaves
-		// the previous value in place.
+		// dir" — distinct from input.Cwd, which is the launch dir. We
+		// also resolve that dir's git worktree root + branch here, so
+		// read surfaces report the agent's *current* branch (correct
+		// when it hops between sub-repos) rather than the launch dir's.
+		// Recorded per conv-id; the daemon's read paths use it back.
+		// Best-effort: a failed UpsertAgentWorkdir just leaves the
+		// previous value in place.
 		if dir, ok := WorkDirFromToolUse(input.ToolName, input.ToolInput, input.Cwd); ok {
-			if err := db.UpsertAgentWorkdir(input.ConvID, dir); err != nil {
+			worktreeRoot, branch := GitLocationOf(dir)
+			if err := db.UpsertAgentWorkdir(input.ConvID, dir, worktreeRoot, branch); err != nil {
 				slog.Warn("failed to record agent workdir", "error", err, "module", "hooks")
 			}
 		}

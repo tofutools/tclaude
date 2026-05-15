@@ -2,7 +2,9 @@ package session
 
 import (
 	"encoding/json"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // fileMutatingTools are the Claude Code tool names that signal "the
@@ -53,4 +55,33 @@ func WorkDirFromToolUse(toolName string, toolInput json.RawMessage, cwd string) 
 		path = filepath.Join(cwd, path)
 	}
 	return filepath.Dir(filepath.Clean(path)), true
+}
+
+// GitLocationOf resolves dir to its git worktree root and the branch
+// checked out there. It shells out to git twice; both calls are
+// best-effort — a dir outside any git repo (or a missing git binary)
+// yields ("", ""), which is recorded faithfully as "not in a repo"
+// rather than treated as an error. A detached HEAD reports an empty
+// branch (there's no branch name to show).
+//
+// The PostToolUse hook calls this once per file edit so an agent's
+// current branch is stamped into agent_workdir at edit time — read
+// surfaces then never have to run git themselves.
+func GitLocationOf(dir string) (worktreeRoot, branch string) {
+	if dir == "" {
+		return "", ""
+	}
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
+		worktreeRoot = strings.TrimSpace(string(out))
+	}
+	if worktreeRoot == "" {
+		return "", ""
+	}
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
+		branch = strings.TrimSpace(string(out))
+		if branch == "HEAD" {
+			branch = "" // detached HEAD — no branch name to report
+		}
+	}
+	return worktreeRoot, branch
 }

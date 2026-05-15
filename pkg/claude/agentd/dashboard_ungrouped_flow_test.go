@@ -26,19 +26,25 @@ type dashGroup struct {
 }
 
 type dashMember struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
-	Branch string `json:"branch,omitempty"`
-	Online bool   `json:"online"`
+	ConvID        string `json:"conv_id"`
+	Title         string `json:"title"`
+	Alias         string `json:"alias,omitempty"`
+	Branch        string `json:"branch,omitempty"`
+	StartupDir    string `json:"startup_dir,omitempty"`
+	StartupBranch string `json:"startup_branch,omitempty"`
+	CurrentDir    string `json:"current_dir,omitempty"`
+	Online        bool   `json:"online"`
 }
 
 type dashAgent struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title"`
-	Branch string   `json:"branch,omitempty"`
-	Online bool     `json:"online"`
-	Groups []string `json:"groups"`
+	ConvID        string   `json:"conv_id"`
+	Title         string   `json:"title"`
+	Branch        string   `json:"branch,omitempty"`
+	StartupDir    string   `json:"startup_dir,omitempty"`
+	StartupBranch string   `json:"startup_branch,omitempty"`
+	CurrentDir    string   `json:"current_dir,omitempty"`
+	Online        bool     `json:"online"`
+	Groups        []string `json:"groups"`
 }
 
 func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {

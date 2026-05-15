@@ -68,12 +68,35 @@ agent is *told* about it in its welcome message.
 - `agentd/lifecycle_test.go::TestBuildSpawnWelcome_*` — extended with
   worktree-field cases.
 
-## Known limitation / follow-up
+## Live location tracking (follow-up — shipped)
 
-With cwd = the monorepo (not a git repo), the dashboard **BRANCH
-column stays blank** for these agents — conv-index captures the branch
-from cwd. A proper fix means recording the worktree branch on the
-`agent_group_members` row (a schema migration). Deferred.
+The first cut had a known gap: with cwd = the monorepo (not a git
+repo), the dashboard BRANCH column went blank, because branch was read
+from Claude Code's per-turn `gitBranch` stamp (the launch dir's
+branch). That's now fixed by tracking the agent's *current* location
+separately from its launch dir.
 
-Also deferred: a group-level `default_worktree_repo`, and
-`tclaude agent spawn --worktree` CLI parity (the CLI can pass `-C`).
+- `agent_workdir` (migration **v27→v28**) gained `worktree_root` +
+  `branch` columns. The PostToolUse hook computes both with
+  `session.GitLocationOf` at edit time and stores them — read surfaces
+  never shell out to git.
+- `agent.ResolveLocation(convID)` returns the full picture: `StartupDir`
+  / `StartupBranch` (launch dir) vs `EditDir` / `CurrentDir` /
+  `CurrentBranch` (where the agent is editing now). `FreshBranch` and
+  `dir.go`'s `resolveDirs` both delegate to it.
+- Every agent-listing wire shape embeds `agentLocationView`
+  (`branch` = current, plus `startup_dir` / `startup_branch` /
+  `current_dir`): `/v1/peers`, `/v1/groups/{name}/members`,
+  `/api/snapshot`, and the `/v1/.../dir` endpoints.
+- The dashboard CWD and Branch columns render one line normally and
+  stack an `init` / `now` pair when the agent has moved off its launch
+  dir — so the data fits without extra columns.
+
+This makes location/branch tracking correct as an agent hops between
+sub-repos of a monorepo mid-session. See
+`docs/plans/DONE/agent-location-tracking.md`.
+
+## Still deferred
+
+A group-level `default_worktree_repo`, and `tclaude agent spawn
+--worktree` CLI parity (the CLI can already pass `-C`).

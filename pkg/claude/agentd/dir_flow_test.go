@@ -15,12 +15,14 @@ import (
 
 // dirInfo mirrors the daemon's dirResp wire shape.
 type dirInfo struct {
-	ConvID      string `json:"conv_id"`
-	StartDir    string `json:"start_dir"`
-	CurrentDir  string `json:"current_dir"`
-	WorktreeDir string `json:"worktree_dir"`
-	Source      string `json:"source"`
-	CallerConv  string `json:"caller_conv"`
+	ConvID        string `json:"conv_id"`
+	StartDir      string `json:"start_dir"`
+	StartBranch   string `json:"start_branch"`
+	CurrentDir    string `json:"current_dir"`
+	WorktreeDir   string `json:"worktree_dir"`
+	CurrentBranch string `json:"current_branch"`
+	Source        string `json:"source"`
+	CallerConv    string `json:"caller_conv"`
 }
 
 // Scenario: an agent launched in ~/git has since been editing files
@@ -39,7 +41,7 @@ func TestDir_ReportsStartAndCurrent(t *testing.T) {
 
 	f.HaveConvWithTitle(conv, "builder")
 	f.HaveAliveSession(conv, "lbl-dir1", "tclaude-dir1", startDir)
-	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir), "seed workdir")
+	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir, "", ""), "seed workdir")
 
 	// Self route: the calling agent asks about itself.
 	rec := testharness.Serve(f.Mux,
@@ -99,7 +101,7 @@ func TestDir_OpenSpawnsTerminalInDir(t *testing.T) {
 
 	f.HaveConvWithTitle(conv, "opener")
 	f.HaveAliveSession(conv, "lbl-dir3", "tclaude-dir3", startDir)
-	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir), "seed workdir")
+	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir, "", ""), "seed workdir")
 
 	var gotCmd string
 	t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
@@ -138,7 +140,7 @@ func TestDir_DashboardTermButton(t *testing.T) {
 
 	f.HaveConvWithTitle(conv, "dash-term")
 	f.HaveAliveSession(conv, "lbl-dir4", "tclaude-dir4", startDir)
-	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir), "seed workdir")
+	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir, "", ""), "seed workdir")
 
 	var gotCmd string
 	t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
@@ -167,18 +169,14 @@ func TestDir_WorktreeDir(t *testing.T) {
 	const startDir = "/home/u/git"
 	const currentDir = "/home/u/git/repo/pkg/deep/nested"
 	const worktreeRoot = "/home/u/git/repo"
+	const worktreeBranch = "feature-x"
 
 	f.HaveConvWithTitle(conv, "wt")
 	f.HaveAliveSession(conv, "lbl-dir5", "tclaude-dir5", startDir)
-	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir), "seed workdir")
-
-	// Stub the git resolver: current_dir resolves to the worktree root.
-	t.Cleanup(agentd.SetGitToplevelForTest(func(dir string) (string, bool) {
-		if dir == currentDir {
-			return worktreeRoot, true
-		}
-		return "", false
-	}))
+	// The PostToolUse hook records the edit dir together with its git
+	// worktree root + branch; seed all three, as a real edit would.
+	require.NoError(t, db.UpsertAgentWorkdir(conv, currentDir, worktreeRoot, worktreeBranch),
+		"seed workdir")
 
 	rec := testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/whoami/dir", nil), conv))
@@ -186,6 +184,7 @@ func TestDir_WorktreeDir(t *testing.T) {
 	var info dirInfo
 	testharness.DecodeJSON(t, rec, &info)
 	assert.Equal(t, worktreeRoot, info.WorktreeDir, "worktree_dir")
+	assert.Equal(t, worktreeBranch, info.CurrentBranch, "current_branch")
 
 	var gotCmd string
 	t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
@@ -212,7 +211,7 @@ func TestDir_OpenForAnotherAgentIsHumanOnly(t *testing.T) {
 
 	f.HaveConvWithTitle(target, "victim")
 	f.HaveAliveSession(target, "lbl-dirt", "tclaude-dirt", "/home/u/git")
-	require.NoError(t, db.UpsertAgentWorkdir(target, "/home/u/git/repo"), "seed workdir")
+	require.NoError(t, db.UpsertAgentWorkdir(target, "/home/u/git/repo", "", ""), "seed workdir")
 
 	opened := false
 	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
@@ -260,7 +259,8 @@ func TestDir_OpenRejectsMalformedJSON(t *testing.T) {
 		"malformed body should be 400; body=%s", rec.Body.String())
 }
 
-// Scenario: the agent's current dir is not inside any git repo.
+// Scenario: a fresh agent that has not edited any files yet — no
+// agent_workdir row, so there's nothing to resolve a worktree from.
 //
 // Expected: worktree_dir falls back to the launch dir.
 func TestDir_WorktreeFallsBackToStart(t *testing.T) {
@@ -271,10 +271,6 @@ func TestDir_WorktreeFallsBackToStart(t *testing.T) {
 
 	f.HaveConvWithTitle(conv, "nowt")
 	f.HaveAliveSession(conv, "lbl-dir6", "tclaude-dir6", startDir)
-
-	t.Cleanup(agentd.SetGitToplevelForTest(func(string) (string, bool) {
-		return "", false
-	}))
 
 	rec := testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/whoami/dir", nil), conv))

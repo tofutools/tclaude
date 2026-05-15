@@ -2,9 +2,13 @@ package session
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWorkDirFromToolUse(t *testing.T) {
@@ -95,4 +99,44 @@ func TestWorkDirFromToolUse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGitLocationOf(t *testing.T) {
+	// Empty input and a dir outside any git repo both resolve to
+	// ("", "") — "not in a repo", recorded faithfully, never an error.
+	root, branch := GitLocationOf("")
+	assert.Empty(t, root)
+	assert.Empty(t, branch)
+
+	root, branch = GitLocationOf(t.TempDir())
+	assert.Empty(t, root, "worktree root of a non-repo dir")
+	assert.Empty(t, branch, "branch of a non-repo dir")
+
+	// A real repo on a known branch resolves both — including when
+	// asked about a nested subdirectory rather than the repo root.
+	repo := t.TempDir()
+	repo, err := filepath.EvalSymlinks(repo)
+	require.NoError(t, err, "resolve symlinks")
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		require.NoErrorf(t, cmd.Run(), "git %v", args)
+	}
+	git("init", "-b", "trunk")
+	git("config", "user.email", "t@example.com")
+	git("config", "user.name", "T")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o644))
+	git("add", ".")
+	git("commit", "-m", "init")
+
+	root, branch = GitLocationOf(repo)
+	assert.Equal(t, repo, root, "repo root")
+	assert.Equal(t, "trunk", branch, "branch")
+
+	sub := filepath.Join(repo, "pkg", "deep")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	root, branch = GitLocationOf(sub)
+	assert.Equal(t, repo, root, "repo root resolved from a subdir")
+	assert.Equal(t, "trunk", branch, "branch resolved from a subdir")
 }
