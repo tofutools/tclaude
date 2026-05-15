@@ -155,16 +155,12 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			}
 			pe, exists := byConv[m.ConvID]
 			if !exists {
-				row, _ := db.GetConvIndex(m.ConvID)
-				title := "(unknown)"
-				if row != nil {
-					if t := agent.DisplayTitle(row); t != "" {
-						title = t
-					}
-				}
+				// FreshTitle refreshes the conv_index row from the
+				// .jsonl first, so a renamed / freshly-spawned member
+				// shows its real name instead of a stale "(unknown)".
 				pe = &peerEntry{
 					ConvID: m.ConvID,
-					Title:  title,
+					Title:  agent.FreshTitle(m.ConvID),
 					Alias:  m.Alias,
 					Role:   m.Role,
 					Descr:  m.Descr,
@@ -189,16 +185,9 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
 				continue
 			}
-			row, _ := db.GetConvIndex(s.ConvID)
-			title := "(unknown)"
-			if row != nil {
-				if t := agent.DisplayTitle(row); t != "" {
-					title = t
-				}
-			}
 			byConv[s.ConvID] = &peerEntry{
 				ConvID: s.ConvID,
-				Title:  title,
+				Title:  agent.FreshTitle(s.ConvID),
 				Online: true,
 			}
 		}
@@ -1829,16 +1818,9 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 	out := make([]memberJSON, 0, len(members))
 	for _, m := range members {
 		memberSet[m.ConvID] = true
-		row, _ := db.GetConvIndex(m.ConvID)
-		title := "(unknown)"
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-		}
 		out = append(out, memberJSON{
 			ConvID: m.ConvID,
-			Title:  title,
+			Title:  agent.FreshTitle(m.ConvID),
 			Alias:  m.Alias,
 			Role:   m.Role,
 			Descr:  m.Descr,
@@ -1853,16 +1835,9 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		if memberSet[ownerConv] {
 			continue
 		}
-		row, _ := db.GetConvIndex(ownerConv)
-		title := "(unknown)"
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-		}
 		out = append(out, memberJSON{
 			ConvID: ownerConv,
-			Title:  title,
+			Title:  agent.FreshTitle(ownerConv),
 			Role:   "owner",
 			Online: isConvOnline(ownerConv),
 			Owner:  true,
@@ -1890,16 +1865,9 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 	}
 	out := make([]ownerJSON, 0, len(owners))
 	for _, o := range owners {
-		row, _ := db.GetConvIndex(o.ConvID)
-		title := "(unknown)"
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-		}
 		entry := ownerJSON{
 			ConvID: o.ConvID,
-			Title:  title,
+			Title:  agent.FreshTitle(o.ConvID),
 			Online: isConvOnline(o.ConvID),
 		}
 		if !o.GrantedAt.IsZero() {
