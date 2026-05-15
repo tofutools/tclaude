@@ -37,6 +37,12 @@ explicit permission grants, the snapshot now also iterates
 Then the partition step that produces the broader `agents[]` list
 ALSO emits any agent with `len(Groups) == 0` into `ungrouped[]`.
 
+> **Update (`dashboard-ungrouped-virtual-group.md`):** the partition
+> step now additionally requires `a.Online`. The per-conv permission
+> loop adds offline grant-holders to `agentRows`, which would
+> otherwise leak into `ungrouped[]`; the online gate keeps the array
+> to live loose convs as documented.
+
 This means an entry can appear in both arrays (the broader `agents`
 list is a superset; `ungrouped` is the subset with zero memberships).
 Effective permissions still come from the broader row — the dashboard

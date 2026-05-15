@@ -275,6 +275,21 @@ summary.dnd-drop-over.dnd-effect-clone {
   border-color: #3fb950;
   color: #3fb950;
 }
+/* The virtual "Ungrouped" group: online agents in no group. Styled
+   distinctly from real groups — a dashed left rule + muted name — so
+   it reads as a derived bucket, not a real group you can operate on. */
+details.group-virtual > summary {
+  border-left: 2px dashed #2a3340;
+  padding-left: 6px;
+}
+details.group-virtual .group-name { color: #8aa0b8; }
+.group-virtual-badge {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px;
+  color: #7d8590; border: 1px solid #2a3340; border-radius: 3px;
+  vertical-align: 1px; cursor: help;
+}
+.group-virtual-hint { margin-left: 8px; font-size: 11px; font-style: italic; }
 .add-member-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);
@@ -672,6 +687,9 @@ summary.dnd-drop-over.dnd-effect-clone {
       <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
       <label class="filter-toggle" title="Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.">
         <input id="filter-groups-offline" type="checkbox" checked /> show offline
+      </label>
+      <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.">
+        <input id="filter-groups-ungrouped" type="checkbox" checked /> show ungrouped
       </label>
       <span class="spacer"></span>
       <button id="cleanup-all-open" class="tool" title="Clean up offline agents across every group (optionally delete them)">🧹 clean up</button>
@@ -1337,6 +1355,18 @@ summary.dnd-drop-over.dnd-effect-clone {
     return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
   }
 
+  // ungroupedMemberActions renders the per-row action cell for a row
+  // in the virtual "Ungrouped" group. It deliberately OMITS every
+  // group-affecting button (edit alias/role/descr, owner toggle,
+  // remove-from-group) — the agent belongs to no group, so those are
+  // meaningless here. What remains is the agent-level lifecycle set,
+  // identical to the Agents tab: focus / term / shut down / wake,
+  // clone, reincarnate, rename, sudo, self-nudge cron, delete. To put
+  // an ungrouped agent INTO a group, drag its row onto a group header.
+  function ungroupedMemberActions(m) {
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${sudoMemberButton(m)}${cronMemberButton(m)}<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button></div>`;
+  }
+
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
   // Mirrors the session ls UPDATED column. Empty input → "" (no chip).
   function relTime(iso) {
@@ -1649,11 +1679,123 @@ summary.dnd-drop-over.dnd-effect-clone {
     created: l => l.created_at,
   };
 
+  // The virtual "Ungrouped" group. UNGROUPED_LABEL is the display
+  // name; UNGROUPED_VKEY is its identity for localStorage / DOM keying.
+  // The key has a leading space, which validateGroupName (server-side)
+  // rejects — so it can never collide with a real group's name, even
+  // if a human creates a real group literally called "Ungrouped".
+  const UNGROUPED_LABEL = 'Ungrouped';
+  const UNGROUPED_VKEY = ' ungrouped-virtual';
+
+  // virtualUngroupedGroup builds the synthetic group object from the
+  // snapshot's online-and-groupless agents. Returns null when there
+  // are none — an empty virtual group is just noise. The `virtual`
+  // flag is the discriminator every group-affecting code path keys
+  // off to suppress rename / delete / multicast / cron / add-member.
+  function virtualUngroupedGroup(agents) {
+    // The snapshot's ungrouped[] is online-only by daemon construction;
+    // re-filter defensively so a future backend change can't leak an
+    // offline row into the virtual group.
+    const online = (agents || []).filter(a => a.online);
+    if (!online.length) return null;
+    return {
+      name: UNGROUPED_LABEL,
+      key: UNGROUPED_VKEY,
+      virtual: true,
+      descr: 'online agents not in any group',
+      members: online,
+      online: online.length,
+    };
+  }
+
+  // ungroupedVisible reports the "show ungrouped" checkbox state.
+  // Defaults to true when the checkbox isn't in the DOM yet.
+  function ungroupedVisible() {
+    const el = $('#filter-groups-ungrouped');
+    return el ? el.checked : true;
+  }
+
+  // memberRowHTML renders one draggable member <tr>. `ctx` selects the
+  // drag wiring + action set:
+  //   - {group: <groupObj>}  — a real group member: the source group
+  //     is recorded for drag-and-drop; full memberActions (incl. owner
+  //     toggle / remove-from-group).
+  //   - {ungrouped: true}    — a row in the virtual Ungrouped group:
+  //     tagged as an ungrouped drag source; agent-level actions only.
+  function memberRowHTML(m, ctx) {
+    const state = m.state || {};
+    const subagents = state.subagent_count || 0;
+    const dndSource = ctx.ungrouped
+      ? 'data-dnd-source-ungrouped="1"'
+      : `data-dnd-source-group="${esc(ctx.group.name)}"`;
+    const actions = ctx.ungrouped ? ungroupedMemberActions(m) : memberActions(ctx.group, m);
+    return `
+                <tr class="dnd-draggable" draggable="true" ${dndSource}
+                    data-dnd-conv="${esc(m.conv_id)}"
+                    data-dnd-label="${esc(m.alias || m.title || m.conv_id)}">
+                  <td>${onlineDot(m.online)}</td>
+                  <td class="id">${esc(shortId(m.conv_id))}</td>
+                  <td>
+                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
+                    ${m.alias && m.title ? `<div class="title muted">${esc(m.title)}</div>` : ''}
+                  </td>
+                  <td>
+                    ${statePill(state, m.online)}
+                    ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
+                  </td>
+                  <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
+                  <td>${cwdCell(m)}</td>
+                  <td>${branchCell(m)}</td>
+                  <td>${roleCell(m)}</td>
+                  <td class="muted">${esc(m.descr || '')}</td>
+                  <td>${actions}</td>
+                </tr>`;
+  }
+
+  // renderVirtualGroup renders the synthetic "Ungrouped" group. It is
+  // intentionally inert AS A GROUP — no rename / delete / multicast /
+  // cron / add-member / spawn buttons, no default-cwd / default-context,
+  // no per-group offline toggle (its members are online by
+  // construction). Its only interactive role is drag-and-drop:
+  //   - member rows are draggable INTO real groups (→ join);
+  //   - the summary is a drop target for real-group members (→ leave
+  //     that group; if it was their only group they reappear here).
+  // The summary carries data-dnd-target-ungrouped (NOT -target-group),
+  // so the move/clone code paths can never mistake it for a real group.
+  function renderVirtualGroup(g) {
+    const members = g.members || [];
+    const key = g.key || g.name;
+    const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+    const body = members.length === 0
+      ? '<div class="muted">(no ungrouped agents)</div>'
+      : `
+          <table>
+            ${sortHead('members', MEMBER_COLS)}
+            <tbody>
+              ${applySort('members', members, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {ungrouped: true})).join('')}
+            </tbody>
+          </table>`;
+    return `
+      <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
+        <summary data-dnd-target-ungrouped="1">
+          <strong class="group-name">${esc(g.name)}</strong>
+          <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects online agents that aren't in any group.">virtual</span>
+          <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group</span>
+          <span class="muted group-virtual-hint">drag a row onto a group to add it · drag a group member here to remove it</span>
+        </summary>
+        <div class="subtable">
+          ${body}
+        </div>
+      </details>
+    `;
+  }
+
   function renderGroups(groups) {
     if (!groups || !groups.length) {
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
     }
     return groups.map(g => {
+      if (g.virtual) return renderVirtualGroup(g);
       const members = g.members || [];
       // Offline visibility: per-group override falls back to the
       // tab-wide checkbox. Hidden members still count toward the
@@ -1691,33 +1833,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           <table>
             ${sortHead('members', MEMBER_COLS)}
             <tbody>
-              ${applySort('members', visible, MEMBER_ACCESSORS).map(m => {
-                const state = m.state || {};
-                const subagents = state.subagent_count || 0;
-                return `
-                <tr class="dnd-draggable"
-                    draggable="true"
-                    data-dnd-source-group="${esc(g.name)}"
-                    data-dnd-conv="${esc(m.conv_id)}"
-                    data-dnd-label="${esc(m.alias || m.title || m.conv_id)}">
-                  <td>${onlineDot(m.online)}</td>
-                  <td class="id">${esc(shortId(m.conv_id))}</td>
-                  <td>
-                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
-                    ${m.alias && m.title ? `<div class="title muted">${esc(m.title)}</div>` : ''}
-                  </td>
-                  <td>
-                    ${statePill(state, m.online)}
-                    ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
-                  </td>
-                  <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
-                  <td>${cwdCell(m)}</td>
-                  <td>${branchCell(m)}</td>
-                  <td>${roleCell(m)}</td>
-                  <td class="muted">${esc(m.descr || '')}</td>
-                  <td>${memberActions(g, m)}</td>
-                </tr>`;
-              }).join('')}
+              ${applySort('members', visible, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {group: g})).join('')}
             </tbody>
           </table>`}
           ${renderGroupLinksSection(g.name)}
@@ -1948,11 +2064,24 @@ summary.dnd-drop-over.dnd-effect-clone {
   function renderGroupsTab() {
     if (!lastSnapshot) return;
     const q = $('#filter-groups').value;
-    const filtered = filterGroups(lastSnapshot.groups || [], q);
+    const realGroups = lastSnapshot.groups || [];
+    // Append the virtual "Ungrouped" group LAST so it always sorts to
+    // the bottom of the listing. filterGroups preserves order, so the
+    // text filter narrows it like any other group without moving it.
+    // Gated on the "show ungrouped" checkbox; omitted when empty.
+    const list = realGroups.slice();
+    if (ungroupedVisible()) {
+      const vg = virtualUngroupedGroup(lastSnapshot.ungrouped || []);
+      if (vg) list.push(vg);
+    }
+    const filtered = filterGroups(list, q);
     $('#groups-list').innerHTML = renderGroups(filtered);
-    const total = (lastSnapshot.groups || []).length;
+    // The count reflects real groups only — the virtual group is a
+    // derived bucket, not a group the human created.
+    const total = realGroups.length;
+    const shownReal = filtered.filter(g => !g.virtual).length;
     $('#filter-groups-count').textContent = q
-      ? `${filtered.length} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
+      ? `${shownReal} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
   }
 
   function renderAgentsTab() {
@@ -3835,6 +3964,19 @@ summary.dnd-drop-over.dnd-effect-clone {
         rerender();
       });
     }
+    // Optional "show ungrouped" checkbox (groups tab only) — toggles
+    // the virtual Ungrouped group. Persisted like the offline toggle;
+    // defaults to checked when the user has never touched it.
+    const ungrouped = $(`#filter-${tab}-ungrouped`);
+    if (ungrouped) {
+      const ukey = `tclaude.dash.ungrouped.${tab}`;
+      const saved = localStorage.getItem(ukey);
+      ungrouped.checked = saved === null ? true : saved === '1';
+      ungrouped.addEventListener('change', () => {
+        localStorage.setItem(ukey, ungrouped.checked ? '1' : '0');
+        rerender();
+      });
+    }
   }
 
   async function refresh() {
@@ -5368,17 +5510,27 @@ summary.dnd-drop-over.dnd-effect-clone {
   // drag is in flight, so a 5s tick doesn't blow our optimistic
   // mutation away while the round-trip is mid-air.
   let dndDragActive = false;
-  // updateDndPill positions + labels the modifier-hint pill that
-  // tracks the cursor during a drag. Visible only while dragging
-  // over a valid drop target; clears on dragleave / drop / dragend.
-  function updateDndPill(e, hovering, isClone) {
+  // dndSourceUngrouped: true while the row being dragged comes from
+  // the virtual Ungrouped group. Set in dragstart, cleared in dragend.
+  // dragover can't read the DataTransfer payload (browsers gate
+  // getData to the drop event), so this module-level flag is how the
+  // hover handlers know whether a drop onto Ungrouped is a real op
+  // (grouped source) or an inert no-op (already-ungrouped source).
+  let dndSourceUngrouped = false;
+  // Every droppable summary — real group headers AND the virtual
+  // Ungrouped header. The four DnD listeners share this selector.
+  const DND_TARGET_SEL = 'summary[data-dnd-target-group],summary[data-dnd-target-ungrouped]';
+  // updateDndPill positions + labels the hint pill that tracks the
+  // cursor during a drag. `info` is null to hide the pill, else
+  // {text, clone} — text is the action label, clone tints it green.
+  function updateDndPill(e, info) {
     const pill = $('#dnd-pill');
-    if (!hovering) {
-      pill.classList.remove('show');
+    if (!info) {
+      pill.classList.remove('show', 'clone');
       return;
     }
-    pill.textContent = isClone ? '→ clone' : '→ move';
-    pill.classList.toggle('clone', isClone);
+    pill.textContent = info.text;
+    pill.classList.toggle('clone', !!info.clone);
     pill.classList.add('show');
     // Offset slightly from the cursor so the pill doesn't sit on top
     // of the user's pointer. clientX/clientY on `dragover` events
@@ -5391,20 +5543,24 @@ summary.dnd-drop-over.dnd-effect-clone {
       if (!row) return;
       const conv = row.getAttribute('data-dnd-conv');
       const sourceGroup = row.getAttribute('data-dnd-source-group');
+      const sourceUngrouped = row.hasAttribute('data-dnd-source-ungrouped');
       const label = row.getAttribute('data-dnd-label') || conv;
-      if (!conv || !sourceGroup) return;
-      // Stash the payload on the DataTransfer so other drag listeners
-      // (and the eventual drop) can read it without globals. The MIME
-      // type 'text/plain' is the most-supported channel; the JSON
-      // body keeps the encoding self-describing. We allow both move
-      // (default) and copy effects so Ctrl-drag can flip the cursor
-      // hint via dropEffect on dragover.
-      const payload = JSON.stringify({conv, sourceGroup, label});
+      // A draggable row is either a real-group member (has a source
+      // group) or a virtual-Ungrouped row (carries the ungrouped
+      // flag). Anything else isn't a valid drag.
+      if (!conv || (!sourceGroup && !sourceUngrouped)) return;
+      // Stash the payload on the DataTransfer so the eventual drop can
+      // read it without globals. The MIME type 'text/plain' is the
+      // most-supported channel; the JSON body keeps the encoding
+      // self-describing. We allow both move (default) and copy effects
+      // so Ctrl-drag can flip the cursor hint via dropEffect.
+      const payload = JSON.stringify({conv, sourceGroup: sourceGroup || '', sourceUngrouped, label});
       e.dataTransfer.setData('application/x-tclaude-member', payload);
       e.dataTransfer.setData('text/plain', payload);
       e.dataTransfer.effectAllowed = 'copyMove';
       row.classList.add('dnd-source-row');
       dndDragActive = true;
+      dndSourceUngrouped = sourceUngrouped;
       modalEditing = true; // suspend auto-refresh during the drag
     });
     document.addEventListener('dragend', (e) => {
@@ -5415,30 +5571,48 @@ summary.dnd-drop-over.dnd-effect-clone {
       $$('summary.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
       $('#dnd-pill').classList.remove('show', 'clone');
       dndDragActive = false;
+      dndSourceUngrouped = false;
       modalEditing = false;
       refresh();
     });
     document.addEventListener('dragover', (e) => {
       if (!dndDragActive) return;
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) {
-        updateDndPill(e, false, false);
+        updateDndPill(e, null);
+        return;
+      }
+      const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
+      // Dropping an already-ungrouped row onto the Ungrouped group is
+      // a pure no-op — don't preventDefault (so `drop` never fires)
+      // and don't show a hint.
+      if (targetUngrouped && dndSourceUngrouped) {
+        updateDndPill(e, null);
         return;
       }
       e.preventDefault(); // required for drop to fire on this element
-      const isClone = !!e.ctrlKey || !!e.metaKey;
+      // Clone is meaningful only for a real-group TARGET; dropping
+      // onto Ungrouped is always a plain "remove from group".
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped;
       e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
       summary.classList.toggle('dnd-effect-clone', isClone);
-      updateDndPill(e, true, isClone);
+      let text;
+      if (targetUngrouped) text = '↓ remove from group';
+      else if (isClone) text = '→ clone into group';
+      else if (dndSourceUngrouped) text = '→ add to group';
+      else text = '→ move to group';
+      updateDndPill(e, {text, clone: isClone});
     });
     document.addEventListener('dragenter', (e) => {
       if (!dndDragActive) return;
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
+      // No highlight for the inert ungrouped→Ungrouped no-op.
+      if (summary.hasAttribute('data-dnd-target-ungrouped') && dndSourceUngrouped) return;
       summary.classList.add('dnd-drop-over');
     });
     document.addEventListener('dragleave', (e) => {
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
       // dragleave fires when the cursor enters a child element too;
       // only remove the highlight when the cursor has actually left
@@ -5447,29 +5621,44 @@ summary.dnd-drop-over.dnd-effect-clone {
       summary.classList.remove('dnd-drop-over', 'dnd-effect-clone');
     });
     document.addEventListener('drop', async (e) => {
-      const summary = e.target.closest('summary[data-dnd-target-group]');
+      const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
       e.preventDefault();
       summary.classList.remove('dnd-drop-over', 'dnd-effect-clone');
       $('#dnd-pill').classList.remove('show', 'clone');
-      const targetGroup = summary.getAttribute('data-dnd-target-group');
       const raw = e.dataTransfer.getData('application/x-tclaude-member')
         || e.dataTransfer.getData('text/plain');
       let payload;
       try { payload = JSON.parse(raw); } catch (_) { return; }
-      if (!payload || !payload.conv || !payload.sourceGroup) return;
-      const isClone = !!e.ctrlKey || !!e.metaKey;
-      if (!isClone && payload.sourceGroup === targetGroup) {
-        // Move-onto-self: no-op. (Clone-onto-source-group IS still
-        // meaningful: it forks a sibling that joins the same group
-        // alongside the original.)
+      if (!payload || !payload.conv) return;
+      const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
+      const targetGroup = summary.getAttribute('data-dnd-target-group');
+      const sourceUngrouped = !!payload.sourceUngrouped;
+      // Clone applies only to a real-group target.
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped;
+
+      // Target = the virtual Ungrouped group → "remove from group".
+      if (targetUngrouped) {
+        if (sourceUngrouped) return; // already ungrouped — no-op
+        await runDndRemoveFromGroup(payload);
         return;
       }
+      // Target = a real group.
       if (isClone) {
+        // Clone forks a sibling into the target group. Works whether
+        // the source is grouped or ungrouped — runDndClone clones the
+        // conv then POSTs the clone into the drop-target group.
         await runDndClone(payload, targetGroup);
-      } else {
-        await runDndMove(payload, targetGroup);
+        return;
       }
+      if (sourceUngrouped) {
+        // Ungrouped agent dragged onto a group → pure add.
+        await runDndAddToGroup(payload, targetGroup);
+        return;
+      }
+      // Real group → real group move. Move-onto-self is a no-op.
+      if (payload.sourceGroup === targetGroup) return;
+      await runDndMove(payload, targetGroup);
     });
   }
 
@@ -5580,6 +5769,65 @@ summary.dnd-drop-over.dnd-effect-clone {
     } catch (err) {
       toast(`move failed: ${err && err.message || err}`, true);
       rollback();
+    }
+  }
+
+  // runDndAddToGroup handles a drag FROM the virtual Ungrouped group
+  // ONTO a real group's header — the agent joins that group. Pure add:
+  // POST /api/groups/{B}/members. The agent was in no group, so there
+  // is nothing to remove; on success it drops out of the Ungrouped
+  // virtual group on the next snapshot.
+  //
+  // Non-optimistic (one round-trip, then refresh): the source isn't a
+  // real group in lastSnapshot.groups, so the optimistic splice
+  // runDndMove relies on doesn't apply. A single fast call + refresh
+  // keeps the code simple and the failure mode obvious.
+  async function runDndAddToGroup(payload, targetGroup) {
+    const {conv, label} = payload;
+    try {
+      const r = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({conv}),
+      });
+      if (!r.ok) {
+        toast(`add to ${targetGroup} failed: ${await r.text()}`, true);
+        return;
+      }
+      toast(`added ${label} → ${targetGroup}`);
+    } catch (err) {
+      toast(`add failed: ${err && err.message || err}`, true);
+    } finally {
+      // The dragend handler's refresh() can race ahead of this
+      // round-trip; refresh again once it has landed so the final
+      // render reflects the mutation.
+      await refresh();
+    }
+  }
+
+  // runDndRemoveFromGroup handles a drag FROM a real group's member
+  // row ONTO the virtual Ungrouped group — the agent leaves that
+  // group. Pure remove: DELETE /api/groups/{A}/members/{conv}. If A
+  // was the agent's only group it reappears in the Ungrouped virtual
+  // group on the next snapshot; if it was in other groups too it
+  // simply stays in those. Non-optimistic, same rationale as
+  // runDndAddToGroup.
+  async function runDndRemoveFromGroup(payload) {
+    const {conv, sourceGroup, label} = payload;
+    if (!sourceGroup) return; // not a real-group member — nothing to do
+    try {
+      const r = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        toast(`remove from ${sourceGroup} failed: ${await r.text()}`, true);
+        return;
+      }
+      toast(`removed ${label} from ${sourceGroup}`);
+    } catch (err) {
+      toast(`remove failed: ${err && err.message || err}`, true);
+    } finally {
+      await refresh();
     }
   }
 
