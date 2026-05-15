@@ -27,19 +27,20 @@ var safeSessionIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // HookCallbackInput represents the JSON input from any Claude Code hook
 type HookCallbackInput struct {
-	ConvID               string `json:"session_id"` // claude's session id, what we call conv_id
-	TranscriptPath       string `json:"transcript_path"`
-	Cwd                  string `json:"cwd"`
-	PermissionMode       string `json:"permission_mode,omitempty"`
-	HookEventName        string `json:"hook_event_name"`
-	NotificationType     string `json:"notification_type,omitempty"`
-	Message              string `json:"message,omitempty"`
-	Prompt               string `json:"prompt,omitempty"`
-	StopHookActive       bool   `json:"stop_hook_active,omitempty"`
-	ToolName             string `json:"tool_name,omitempty"`
-	AgentType            string `json:"agent_type,omitempty"`
-	AgentID              string `json:"agent_id,omitempty"`
-	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
+	ConvID               string          `json:"session_id"` // claude's session id, what we call conv_id
+	TranscriptPath       string          `json:"transcript_path"`
+	Cwd                  string          `json:"cwd"`
+	PermissionMode       string          `json:"permission_mode,omitempty"`
+	HookEventName        string          `json:"hook_event_name"`
+	NotificationType     string          `json:"notification_type,omitempty"`
+	Message              string          `json:"message,omitempty"`
+	Prompt               string          `json:"prompt,omitempty"`
+	StopHookActive       bool            `json:"stop_hook_active,omitempty"`
+	ToolName             string          `json:"tool_name,omitempty"`
+	ToolInput            json.RawMessage `json:"tool_input,omitempty"`
+	AgentType            string          `json:"agent_type,omitempty"`
+	AgentID              string          `json:"agent_id,omitempty"`
+	LastAssistantMessage string          `json:"last_assistant_message,omitempty"`
 }
 
 func HookCallbackCmd() *cobra.Command {
@@ -154,6 +155,17 @@ func runHookCallback() error {
 		// Tool completed (success or failure) - back to working
 		state.Status = StatusWorking
 		state.StatusDetail = input.ToolName
+		// Track where the agent is building: a file-editing tool just
+		// ran, so the file's directory is the most-relevant "working
+		// dir" — distinct from input.Cwd, which is the launch dir.
+		// Recorded per conv-id; the daemon's /v1/.../dir endpoints read
+		// it back. Best-effort: a failed UpsertAgentWorkdir just leaves
+		// the previous value in place.
+		if dir, ok := WorkDirFromToolUse(input.ToolName, input.ToolInput, input.Cwd); ok {
+			if err := db.UpsertAgentWorkdir(input.ConvID, dir); err != nil {
+				slog.Warn("failed to record agent workdir", "error", err, "module", "hooks")
+			}
+		}
 
 	case "SubagentStart":
 		state.SubagentCount += 1

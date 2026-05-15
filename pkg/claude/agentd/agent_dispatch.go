@@ -66,6 +66,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentResume(w, r, convID)
 	case "delete":
 		handleAgentDelete(w, r, convID)
+	case "dir":
+		handleAgentDir(w, r, convID)
 	default:
 		writeError(w, http.StatusNotFound, "not_found",
 			"unknown verb "+verb+" for /v1/agent/{selector}/...")
