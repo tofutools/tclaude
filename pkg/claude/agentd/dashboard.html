@@ -57,6 +57,11 @@ table tr:hover { background: #161b22; }
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
 }
+.branch {
+  display: inline-block; max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e;
+}
 .last-hook { color: #7d8590; font-size: 11px; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
 .alias { font-weight: 600; }
@@ -480,7 +485,7 @@ summary.dnd-drop-over.dnd-effect-clone {
 <main>
   <section id="tab-groups" class="active">
     <div class="filter-bar">
-      <input id="filter-groups" type="text" placeholder="Filter (group name + member alias/title/role/descr/cwd)" autocomplete="off" spellcheck="false" />
+      <input id="filter-groups" type="text" placeholder="Filter (group name + member alias/title/role/descr/cwd/branch)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-groups-count"></span>
       <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
@@ -490,7 +495,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   </section>
   <section id="tab-agents">
     <div class="filter-bar">
-      <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + alias/role/descr/cwd + group tags)" autocomplete="off" spellcheck="false" />
+      <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + alias/role/descr/cwd/branch + group tags)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-agents-count"></span>
       <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
@@ -1087,6 +1092,14 @@ summary.dnd-drop-over.dnd-effect-clone {
     return out;
   }
 
+  // branchCell renders the agent's git branch / worktree (from
+  // conv_index — Claude Code stamps gitBranch into every .jsonl turn).
+  // Empty / unknown renders as an em dash so the column stays aligned.
+  function branchCell(branch) {
+    if (!branch) return '<span class="muted">—</span>';
+    return `<span class="branch" title="git branch: ${esc(branch)}">⎇ ${esc(branch)}</span>`;
+  }
+
   function renderGroups(groups) {
     if (!groups || !groups.length) {
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
@@ -1116,7 +1129,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           <table>
             <thead>
               <tr>
-                <th></th><th>ID</th><th>Alias / Title</th><th>State</th><th>Last</th><th>CWD</th><th>Role</th><th>Description</th><th></th>
+                <th></th><th>ID</th><th>Alias / Title</th><th>State</th><th>Last</th><th>CWD</th><th>Branch</th><th>Role</th><th>Description</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -1141,6 +1154,7 @@ summary.dnd-drop-over.dnd-effect-clone {
                   </td>
                   <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
                   <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
+                  <td>${branchCell(m.branch)}</td>
                   <td>${roleCell(m)}</td>
                   <td class="muted">${esc(m.descr || '')}</td>
                   <td>${memberActions(g, m)}</td>
@@ -1214,7 +1228,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       <table>
         <thead>
           <tr>
-            <th></th><th>ID</th><th>Name</th><th>State</th><th>Last activity</th><th>CWD</th><th>Groups</th><th>Effective permissions</th><th></th>
+            <th></th><th>ID</th><th>Name</th><th>State</th><th>Last activity</th><th>CWD</th><th>Branch</th><th>Groups</th><th>Effective permissions</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -1236,6 +1250,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               </td>
               <td><span class="last-hook">${esc(lh)}</span></td>
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
+              <td>${branchCell(a.branch)}</td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
               <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
@@ -1320,6 +1335,7 @@ summary.dnd-drop-over.dnd-effect-clone {
                ((m.conv_id || '').toLowerCase().includes(needle)) ||
                ((m.role || '').toLowerCase().includes(needle)) ||
                ((m.descr || '').toLowerCase().includes(needle)) ||
+               ((m.branch || '').toLowerCase().includes(needle)) ||
                ((state.cwd || '').toLowerCase().includes(needle));
       });
       if (nameHit || descrHit) {
@@ -1360,6 +1376,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       const meta = memberMetaForAgent(a.conv_id);
       return ((a.title || '').toLowerCase().includes(needle)) ||
              ((a.conv_id || '').toLowerCase().includes(needle)) ||
+             ((a.branch || '').toLowerCase().includes(needle)) ||
              ((meta.alias || '').toLowerCase().includes(needle)) ||
              ((meta.role  || '').toLowerCase().includes(needle)) ||
              ((meta.descr || '').toLowerCase().includes(needle)) ||

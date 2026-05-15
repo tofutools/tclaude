@@ -217,9 +217,30 @@ func (f *Flow) HaveConvWithTitle(convID, customTitle string) {
 // tests that require a live pane on the target.
 func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 	f.T.Helper()
+	f.HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, "")
+}
+
+// HaveAliveSessionOnBranch is HaveAliveSession plus a git branch: the
+// CCSim stamps `branch` into a user turn's gitBranch field (exactly as
+// real Claude Code stamps every turn), so a conv_index scan resolves
+// the agent's worktree/branch the way production does. An empty branch
+// behaves identically to HaveAliveSession (no extra turn written).
+// Used by surfaces that render an agent's branch — `agent ls`,
+// `agent groups members`, and the dashboard.
+func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch string) {
+	f.T.Helper()
 	cc := NewCCSimWithID(f.T, f.World.HomeDir, convID, cwd)
+	cc.GitBranch = branch
 	if err := cc.Start(); err != nil {
-		f.T.Fatalf("HaveAliveSession: cc.Start: %v", err)
+		f.T.Fatalf("HaveAliveSessionOnBranch: cc.Start: %v", err)
+	}
+	if branch != "" {
+		// The initial summary turn carries no gitBranch; write one
+		// branch-bearing user turn so a conv_index scan has something
+		// to read the branch off of.
+		if err := cc.WriteUserTurn("working on " + branch); err != nil {
+			f.T.Fatalf("HaveAliveSessionOnBranch: WriteUserTurn: %v", err)
+		}
 	}
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
@@ -228,7 +249,7 @@ func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 		Cwd:         cwd,
 		Status:      "running",
 	}); err != nil {
-		f.T.Fatalf("HaveAliveSession: %v", err)
+		f.T.Fatalf("HaveAliveSessionOnBranch: %v", err)
 	}
 	f.World.Tmux.Register(tmuxSession, cwd, cc)
 	f.World.CCs.Set(label, cc)
@@ -503,6 +524,7 @@ type MemberView struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
+	Branch string `json:"branch,omitempty"`
 	Online bool   `json:"online"`
 	Owner  bool   `json:"owner,omitempty"`
 }
