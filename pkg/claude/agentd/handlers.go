@@ -1775,6 +1775,8 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 
 	// /v1/groups/{name}
 	switch r.Method {
+	case http.MethodPatch:
+		handleGroupUpdate(w, r, g)
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermGroupsRm); !ok {
 			return
@@ -1785,8 +1787,51 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method", "DELETE")
+		writeError(w, http.StatusMethodNotAllowed, "method", "PATCH or DELETE")
 	}
+}
+
+// handleGroupUpdate patches mutable group-level settings. Today the
+// only field is default_cwd — the working directory pre-filled into
+// the spawn form (and substituted server-side by handleGroupSpawn
+// when a spawn request leaves cwd blank).
+//
+// Partial-update contract, matching handleGroupMembersUpdate: only
+// fields present (non-nil) in the body are touched. default_cwd is a
+// *string so callers can clear it by sending "" — distinct from
+// omitting it.
+//
+// Permission: groups.rename. Setting a group's default cwd is the
+// same class of human-curated group config as renaming it (the
+// blast radius is a UI prefill / spawn fallback, strictly lower than
+// a rename), so it rides the existing slug rather than minting a new
+// one. Default human-only.
+func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if _, ok := requirePermission(w, r, PermGroupsRename); !ok {
+		return
+	}
+	if !requireGroupActive(w, g) {
+		return
+	}
+	var body struct {
+		DefaultCwd *string `json:"default_cwd,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	if body.DefaultCwd == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "nothing to update (expected default_cwd)")
+		return
+	}
+	if _, err := db.SetAgentGroupDefaultCwd(g.Name, *body.DefaultCwd); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"group":       g.Name,
+		"default_cwd": *body.DefaultCwd,
+	})
 }
 
 type memberJSON struct {

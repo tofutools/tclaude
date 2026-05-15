@@ -263,6 +263,7 @@ func looksLikeConvID(s string) bool {
 // handleDashboardGroupsAPI dispatches:
 //
 //	DELETE /api/groups/{name}                   → delete group
+//	PATCH  /api/groups/{name}                   → update settings (body: {default_cwd})
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
 //	POST   /api/groups/{name}/spawn             → spawn a new tclaude session and auto-join this group
 //	POST   /api/groups/{name}/members           → add member (body: {conv, alias?, role?, descr?})
@@ -296,11 +297,14 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 1 {
-		if r.Method != http.MethodDelete {
-			http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
-			return
+		switch r.Method {
+		case http.MethodDelete:
+			dashboardDeleteGroup(w, groupName)
+		case http.MethodPatch:
+			handleGroupUpdate(w, asDashboardHumanPeer(r), g)
+		default:
+			http.Error(w, "DELETE or PATCH", http.StatusMethodNotAllowed)
 		}
-		dashboardDeleteGroup(w, groupName)
 		return
 	}
 	switch parts[1] {

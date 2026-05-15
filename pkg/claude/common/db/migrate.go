@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 26
+const currentVersion = 27
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -179,6 +179,32 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 27 {
+		if err := migrateV26toV27(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV26toV27 adds agent_groups.default_cwd — the working
+// directory pre-filled into the spawn form for agents created
+// directly into a group. Empty string = no default (spawn falls
+// back to the daemon's own cwd, the pre-feature behaviour).
+// handleGroupSpawn substitutes this when the spawn request leaves
+// cwd blank, so the default reaches the CLI (`tclaude agent spawn`)
+// and API too, not just the dashboard's prefill.
+func migrateV26toV27(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_groups
+			ADD COLUMN default_cwd TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 27;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v26→v27: %w", err)
+	}
 	return nil
 }
 

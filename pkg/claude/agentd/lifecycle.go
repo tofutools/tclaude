@@ -355,6 +355,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
+	// When the request leaves cwd blank, fall back to the group's
+	// default_cwd (the "group default start dir" set via the
+	// dashboard or `groups set-default-dir`). This makes the default
+	// reach every spawn path — CLI, API, dashboard — not just the
+	// dashboard's client-side prefill. An empty default_cwd leaves
+	// cwd blank, so SpawnDetachedTclaudeNew keeps its prior behaviour
+	// of inheriting the daemon's own cwd.
+	if body.Cwd == "" {
+		body.Cwd = g.DefaultCwd
+	}
+
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
 	// random hex; we mirror that with a "spwn-" prefix so these

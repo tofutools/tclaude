@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,6 +48,7 @@ func groupsCmd() *cobra.Command {
 			groupsGrantOwnerCmd(),
 			groupsRevokeOwnerCmd(),
 			groupsRenameCmd(),
+			groupsSetDefaultDirCmd(),
 			groupsCloneCmd(),
 			groupsLinkCmd(),
 			groupsLinksAllCmd(),
@@ -966,6 +968,82 @@ func runGroupsRename(p *groupsRenameParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s: no-op (same name)\n", resp.Group)
 	} else {
 		fmt.Fprintf(stdout, "%s -> %s\n", resp.OldName, resp.Group)
+	}
+	return rcOK
+}
+
+// --- groups set-default-dir ---
+
+type groupsSetDefaultDirParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Dir      string `pos:"true" optional:"true" help:"Default working directory for agents spawned into this group. Relative paths resolve against the current directory. Omit to clear the default."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetDefaultDirCmd() *cobra.Command {
+	return boa.CmdT[groupsSetDefaultDirParams]{
+		Use:   "set-default-dir",
+		Short: "Set (or clear) a group's default spawn directory",
+		Long: "Set the working directory pre-filled into the spawn form for " +
+			"agents created directly into this group. The daemon also " +
+			"substitutes it server-side when a spawn request leaves cwd " +
+			"blank, so `tclaude agent spawn <group>` and the dashboard's " +
+			"'+ spawn agent' button both inherit it. Omit <dir> to clear " +
+			"the default (spawns then fall back to the daemon's own cwd). " +
+			"Gated on the `groups.rename` permission (default human-only).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDefaultDirParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetDefaultDirParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetDefaultDir(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetDefaultDir(p *groupsSetDefaultDirParams, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	// Resolve a non-empty path to absolute so the stored value is
+	// unambiguous regardless of where the spawn later runs from.
+	dir := strings.TrimSpace(p.Dir)
+	if dir != "" {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: resolving %q: %v\n", dir, err)
+			return rcInvalidArg
+		}
+		dir = abs
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group      string `json:"group"`
+		DefaultCwd string `json:"default_cwd"`
+	}
+	body := map[string]string{"default_cwd": dir}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.DefaultCwd == "" {
+		fmt.Fprintf(stdout, "%s: default spawn dir cleared\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s: default spawn dir set to %s\n", resp.Group, resp.DefaultCwd)
 	}
 	return rcOK
 }

@@ -193,10 +193,11 @@ type snapshotPermissionsView struct {
 }
 
 type dashboardGroup struct {
-	Name    string            `json:"name"`
-	Descr   string            `json:"descr"`
-	Members []dashboardMember `json:"members"`
-	Online  int               `json:"online"`
+	Name       string            `json:"name"`
+	Descr      string            `json:"descr"`
+	DefaultCwd string            `json:"default_cwd"` // pre-fills the spawn form's cwd; "" = none
+	Members    []dashboardMember `json:"members"`
+	Online     int               `json:"online"`
 }
 
 // dashboardMember.Owner mirrors the memberJSON convention from
@@ -344,7 +345,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.

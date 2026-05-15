@@ -13,6 +13,7 @@ type AgentGroup struct {
 	ID         int64
 	Name       string
 	Descr      string
+	DefaultCwd string    // pre-filled cwd for agents spawned into this group; "" = none
 	CreatedAt  time.Time
 	ArchivedAt time.Time // zero = active; non-zero = archived (soft-deleted)
 }
@@ -203,6 +204,22 @@ func CreateAgentGroup(name, descr string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// SetAgentGroupDefaultCwd sets (or, with cwd == "", clears) the
+// default working directory pre-filled for agents spawned into the
+// named group. Returns the number of rows affected — 0 means no
+// group by that name, so the caller can answer 404.
+func SetAgentGroupDefaultCwd(name, cwd string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET default_cwd = ? WHERE name = ?`, cwd, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeleteAgentGroup removes a group by name. Cascades to membership +
 // ownership rows (ON DELETE CASCADE in schema) and explicitly purges
 // the group's message history first within a single transaction
@@ -243,7 +260,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -258,7 +275,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -272,7 +289,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, created_at, archived_at FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, descr, default_cwd, created_at, archived_at FROM agent_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +338,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRow(
-		`SELECT id, name, descr, created_at, archived_at FROM agent_groups WHERE name = ?`,
+		`SELECT id, name, descr, default_cwd, created_at, archived_at FROM agent_groups WHERE name = ?`,
 		oldName)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -655,7 +672,7 @@ func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.conv_id = ?
@@ -712,7 +729,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.conv_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.conv_id = ?
@@ -1291,7 +1308,7 @@ type rowScanner interface {
 func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &createdAt, &archivedAt); err != nil {
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &createdAt, &archivedAt); err != nil {
 		return nil, err
 	}
 	g.CreatedAt = parseTimeOrZero(createdAt)
