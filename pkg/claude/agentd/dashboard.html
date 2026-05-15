@@ -587,7 +587,32 @@ details.group-virtual .group-name { color: #8aa0b8; }
   border-radius: 3px; color: #d4d4d4; padding: 1px 4px;
   font: inherit; font-size: 11px;
 }
+.cleanup-toolbar input[type=search] {
+  flex: 0 1 160px; min-width: 80px;
+  background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 3px; color: #d4d4d4; padding: 1px 6px;
+  font: inherit; font-size: 11px;
+}
 .cleanup-count { color: #c9d1d9; }
+/* Category-filter row — Agents-tab modal only. */
+.cleanup-cats {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: 11px; color: #7d8590;
+}
+.cleanup-cats-label { text-transform: uppercase; letter-spacing: 0.04em; }
+.cleanup-cat-toggle {
+  display: flex; gap: 4px; align-items: baseline;
+  cursor: pointer; color: #c9d1d9;
+}
+.cleanup-cat-toggle input { cursor: pointer; }
+/* Category sub-header inside the candidate list. */
+.cleanup-cat-head {
+  padding: 4px 10px; font-size: 10px; color: #7d8590;
+  background: #161b22; border-bottom: 1px solid #21262d;
+  position: sticky; top: 0;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.cleanup-cat-head span { color: #545d68; }
 .cleanup-list {
   flex: 1 1 auto; overflow-y: auto; min-height: 80px; max-height: 44vh;
   border: 1px solid #2a3340; border-radius: 4px; background: #0d1117;
@@ -615,7 +640,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
   border: 1px solid #2a3340; color: #7d8590; flex: 0 0 auto;
 }
 .cleanup-badge.owner { color: #d29922; border-color: #4d3c12; }
-.cleanup-badge.removed, .cleanup-badge.deleted, .cleanup-badge.retired {
+.cleanup-badge.online { color: #58a6ff; border-color: #1f3a5a; }
+.cleanup-badge.removed, .cleanup-badge.deleted, .cleanup-badge.retired,
+.cleanup-badge.reinstated {
   color: #3fb950; border-color: #1d3a23;
 }
 .cleanup-badge.skipped { color: #d29922; border-color: #4d3c12; }
@@ -645,6 +672,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .sub-list-head .muted { font-weight: normal; font-size: 11px; }
 .sub-list-head.collapsible { cursor: pointer; user-select: none; }
+/* The 🧹 cleanup button parked in a sub-list header (Retired agents). */
+.sub-list-head button.sub-list-tool {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 2px 8px; font-size: 11px;
+  font-weight: normal; cursor: pointer; font-family: inherit;
+  margin-left: 10px; vertical-align: middle;
+}
+.sub-list-head button.sub-list-tool:hover { border-color: #58a6ff; color: #d4d4d4; }
 #retired-caret, #conversations-caret { display: inline-block; width: 12px; color: #7d8590; }
 .cleanup-error { color: #f85149; font-size: 12px; min-height: 14px; }
 .cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
@@ -724,7 +759,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
         <input id="filter-agents-offline" type="checkbox" checked /> show offline
       </label>
       <span class="spacer"></span>
-      <button id="cleanup-agents-open" class="tool" title="Retire or delete confirmed-offline agents">🧹 cleanup</button>
+      <button id="cleanup-agents-open" class="tool" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 cleanup</button>
       <button id="agent-spawn-open" class="primary" title="Spawn a new tclaude session and add it to a group">+ new agent</button>
     </div>
     <div id="agents-list"></div>
@@ -732,6 +767,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <h3 class="sub-list-head collapsible" id="retired-toggle" title="Show / hide retired agents">
         <span id="retired-caret">▸</span> Retired agents
         <span class="muted" id="retired-count"></span>
+        <button type="button" id="cleanup-retired-open" class="tool sub-list-tool" title="Bulk-delete or reinstate retired agents">🧹 cleanup</button>
       </h3>
       <div id="retired-list" style="display:none"></div>
     </div>
@@ -1009,12 +1045,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
     <div class="cleanup-toolbar" id="cleanup-toolbar">
       <button type="button" id="cleanup-select-all">select all</button>
       <button type="button" id="cleanup-select-none">select none</button>
-      <span title="Tick every offline agent whose last activity is at least this many hours ago. 0 selects all.">
+      <span title="Tick every visible row whose last activity is at least this many hours ago. 0 selects all.">
         inactive ≥ <input type="number" id="cleanup-age" min="0" step="1" value="0" /> h
       </span>
+      <input type="search" id="cleanup-search" placeholder="filter title / id…" />
       <span class="spacer"></span>
       <span class="cleanup-count" id="cleanup-count"></span>
     </div>
+    <div class="cleanup-cats" id="cleanup-cats" style="display:none"></div>
     <div class="cleanup-list" id="cleanup-list"></div>
     <div class="cleanup-options" id="cleanup-options"></div>
     <div class="cleanup-warn" id="cleanup-warn" style="display:none"></div>
@@ -3177,9 +3215,16 @@ details.group-virtual .group-name { color: #8aa0b8; }
   function bindGroupCreateModal() {
     $('#group-create-open').addEventListener('click', openGroupCreateModal);
     // 🧹 cleanup buttons: Groups-tab "clean up" sweeps every group;
-    // Agents-tab "cleanup" deletes confirmed-offline agents.
+    // Agents-tab "cleanup" spans all three conversation categories;
+    // the Retired-section button opens that modal pre-scoped to
+    // retired agents (stopPropagation so it doesn't toggle the
+    // collapsible header).
     $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'all-groups' }));
     $('#cleanup-agents-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
+    $('#cleanup-retired-open').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCleanupModal({ mode: 'agents', categories: ['retired'], tier: 'delete' });
+    });
     // The Agents-tab secondary sections (Retired agents, Conversations)
     // are collapsed by default — clicking a header toggles it. Pure
     // client-side view state; not persisted.
@@ -4804,45 +4849,75 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // ---- 🧹 Cleanup modal ---------------------------------------------
   //
+  // CLEANUP_CATS — the three conversation categories the Agents-tab
+  // cleanup modal spans, in display order. Each maps to a disjoint
+  // snapshot list (agents / retired / conversations).
+  const CLEANUP_CATS = ['agent', 'retired', 'conversation'];
+  const CLEANUP_CAT_LABEL = {
+    agent: 'Active agents', retired: 'Retired agents', conversation: 'Conversations',
+  };
+
   // openCleanupModal drives the bulk-cleanup overlay. opts.mode:
   //   'group'      — remove confirmed-offline members from opts.group.
   //   'all-groups' — remove offline agents from every group they
   //                  belong to (Groups-tab "clean up" button); the
   //                  "delete permanently" option escalates to a purge.
-  //   'agents'     — permanently delete confirmed-offline agents
-  //                  (Agents-tab button).
+  //   'agents'     — the rich Agents-tab tool: spans all three
+  //                  categories (active agents, retired agents, plain
+  //                  conversations) with category / online / search
+  //                  filters and four tiers (unjoin, retire, delete,
+  //                  reinstate). opts.categories pre-scopes the
+  //                  category filter; opts.tier pre-selects the tier.
   //
   // The overlay builds its candidate list from the current snapshot,
   // lets the human edit the include/exclude selection (and bulk-pick
   // by inactivity age), POSTs the explicit conv-id list to
   // /api/cleanup/… and renders the per-item result back. The daemon
-  // re-checks tmux liveness for every conv-id, so an agent that came
-  // back online between snapshot and submit is reported skipped,
-  // never touched.
+  // re-checks tmux liveness for every conv-id, so a conv that came
+  // back online between snapshot and submit is reported skipped unless
+  // "include online sessions" was opted into.
   function openCleanupModal(opts) {
     const overlay = $('#cleanup-modal');
     const listEl = $('#cleanup-list');
     const optsEl = $('#cleanup-options');
+    const catsEl = $('#cleanup-cats');
     const hintEl = $('#cleanup-hint');
     const warnEl = $('#cleanup-warn');
     const errEl = $('#cleanup-error');
     const countEl = $('#cleanup-count');
     const toolbar = $('#cleanup-toolbar');
     const ageInput = $('#cleanup-age');
+    const searchInput = $('#cleanup-search');
     const submitBtn = $('#cleanup-submit');
     const cancelBtn = $('#cleanup-cancel');
     const mode = opts.mode;
     const groupName = opts.group || '';
     let phase = 'select';
-    // The cleanup tier for the agents / all-groups modes: unjoin |
-    // retire | delete. The Agents tab defaults to retire (the safe
-    // soft-delete declutter); the Groups tab defaults to unjoin.
-    // group mode always unjoins (single-group endpoint).
-    let tier = mode === 'agents' ? 'retire' : 'unjoin';
+    // multiCat — only the Agents-tab modal spans categories and gets
+    // the category / search filters and the reinstate tier.
+    const multiCat = mode === 'agents';
+    // The cleanup tier: unjoin | retire | delete | reinstate. The
+    // Agents tab defaults to delete so every category is visible on
+    // open (retire/reinstate would hide other categories); the Groups
+    // tab defaults to unjoin. group mode always unjoins.
+    let tier = multiCat ? 'delete' : 'unjoin';
+    if (opts.tier) tier = opts.tier;
+    // Category filter (Agents tab). opts.categories pre-scopes it — the
+    // Retired section's cleanup button opens straight onto ['retired'].
+    const catOn = {};
+    for (const k of CLEANUP_CATS) {
+      catOn[k] = opts.categories ? opts.categories.includes(k) : true;
+    }
+    // includeOnline — opt-in that lets a tier act on still-running
+    // sessions. Off by default: the offline-only safety stance.
+    let includeOnline = false;
+    let searchText = '';
 
     // Build the candidate list from the current snapshot. Each entry
-    // carries its own `checked` flag so re-renders (owner toggle, age
-    // filter) preserve the human's hand-tuned selection.
+    // carries its own `checked` flag so re-renders (filter changes)
+    // preserve the human's hand-tuned selection. `category` tags which
+    // snapshot list it came from; `lastActivity` is the per-category
+    // recency stamp (last_hook / retired_at / modified).
     function buildCandidates() {
       const out = [];
       if (mode === 'group') {
@@ -4850,31 +4925,55 @@ details.group-virtual .group-name { color: #8aa0b8; }
         for (const m of (g?.members || [])) {
           if (m.online) continue;
           out.push({
-            conv_id: m.conv_id, title: m.title || '',
-            lastHook: (m.state || {}).last_hook || '',
+            conv_id: m.conv_id, title: m.title || '', category: 'agent',
+            online: false, lastActivity: (m.state || {}).last_hook || '',
             owner: !!m.owner, groups: [],
             checked: !m.owner, // owners excluded by default
           });
         }
-      } else {
+      } else if (mode === 'all-groups') {
         for (const a of (lastSnapshot?.agents || [])) {
           if (a.online) continue;
-          if (mode === 'all-groups' && !(a.groups || []).length) continue;
+          if (!(a.groups || []).length) continue;
           out.push({
-            conv_id: a.conv_id, title: a.title || '',
-            lastHook: (a.state || {}).last_hook || '',
+            conv_id: a.conv_id, title: a.title || '', category: 'agent',
+            online: false, lastActivity: (a.state || {}).last_hook || '',
             owner: !!(a.owned_groups || []).length,
-            groups: a.groups || [],
-            checked: true,
+            groups: a.groups || [], checked: true,
+          });
+        }
+      } else {
+        // agents mode — all three categories, online + offline alike.
+        // Nothing is pre-checked: with delete as the default tier,
+        // auto-selection would be a footgun.
+        for (const a of (lastSnapshot?.agents || [])) {
+          out.push({
+            conv_id: a.conv_id, title: a.title || '', category: 'agent',
+            online: !!a.online, lastActivity: (a.state || {}).last_hook || '',
+            owner: !!(a.owned_groups || []).length,
+            groups: a.groups || [], checked: false,
+          });
+        }
+        for (const r of (lastSnapshot?.retired || [])) {
+          out.push({
+            conv_id: r.conv_id, title: r.title || '', category: 'retired',
+            online: !!r.online, lastActivity: r.retired_at || '',
+            owner: false, groups: [], checked: false,
+          });
+        }
+        for (const c of (lastSnapshot?.conversations || [])) {
+          out.push({
+            conv_id: c.conv_id, title: c.title || '', category: 'conversation',
+            online: !!c.online, lastActivity: c.modified || '',
+            owner: false, groups: [], checked: false,
           });
         }
       }
       // Longest-inactive first — what a human cleaning up wants at the
-      // top. Missing last_hook (orphan / never had a session) sorts
-      // oldest.
+      // top. Missing stamp (orphan / never had a session) sorts oldest.
       out.sort((x, y) => {
-        const tx = x.lastHook ? Date.parse(x.lastHook) : 0;
-        const ty = y.lastHook ? Date.parse(y.lastHook) : 0;
+        const tx = x.lastActivity ? Date.parse(x.lastActivity) : 0;
+        const ty = y.lastActivity ? Date.parse(y.lastActivity) : 0;
         return tx - ty;
       });
       return out;
@@ -4882,10 +4981,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const candidates = buildCandidates();
 
     function inactivityHours(c) {
-      if (!c.lastHook) return Infinity;
-      const t = Date.parse(c.lastHook);
+      if (!c.lastActivity) return Infinity;
+      const t = Date.parse(c.lastActivity);
       if (isNaN(t)) return Infinity;
       return (Date.now() - t) / 3600000;
+    }
+    // activityLabel — the per-category recency line shown on each row.
+    function activityLabel(c) {
+      if (!c.lastActivity) return 'no recent activity';
+      const rel = relTime(c.lastActivity);
+      if (c.category === 'retired') return 'retired ' + rel;
+      if (c.category === 'conversation') return 'last activity ' + rel;
+      return 'last seen ' + rel;
     }
 
     // cleanupTier is the effective tier for the current mode: group
@@ -4894,57 +5001,76 @@ details.group-virtual .group-name { color: #8aa0b8; }
     function cleanupTier() {
       return mode === 'group' ? 'unjoin' : tier;
     }
+    // tierCategories — which categories the current tier can act on.
+    // delete is universal; reinstate is retired-only; retire / unjoin
+    // are agent-only. The tier therefore doubles as a category gate.
+    function tierCategories() {
+      const t = cleanupTier();
+      if (t === 'delete') return CLEANUP_CATS;
+      if (t === 'reinstate') return ['retired'];
+      return ['agent'];
+    }
     function tierRadio(val, label, note) {
       return '<label><input type="radio" name="cleanup-tier" value="' + val + '"' +
         (val === tier ? ' checked' : '') + ' /> ' + label +
         ' <span class="opt-note">— ' + note + '</span></label>';
     }
     function renderOptions() {
-      const wtOpt =
-        '<label id="cleanup-opt-wt-row"><input type="checkbox" id="cleanup-opt-wt" checked /> ' +
-        'Delete associated git worktrees <span class="opt-note">— removes the worktree directory; ' +
-        'the branch and its commits are kept. The main repo and worktrees shared with another ' +
-        'agent are always skipped.</span></label>';
       if (mode === 'group') {
         optsEl.innerHTML =
           '<label><input type="checkbox" id="cleanup-opt-owners" /> ' +
           'Include offline owners <span class="opt-note">— also strips their owner status</span></label>';
         return;
       }
-      // agents / all-groups: a three-tier selector, least → most
-      // destructive. Retire is the soft-delete — demote without losing
-      // the conversation.
-      optsEl.innerHTML =
-        '<div class="cleanup-tier">' +
-          tierRadio('unjoin', 'Unjoin from groups',
-            'stays an agent — only its group memberships are dropped') +
-          tierRadio('retire', 'Retire (soft-delete)',
-            'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable') +
-          tierRadio('delete', 'Delete permanently',
-            'wipes the conversation from disk and every agent row — cannot be undone') +
-        '</div>' +
+      // agents / all-groups: the tier selector. The reinstate tier is
+      // Agents-tab only — it has no meaning for a group-membership
+      // cleanup.
+      let radios =
+        tierRadio('unjoin', 'Unjoin from groups',
+          'stays an agent — only its group memberships are dropped') +
+        tierRadio('retire', 'Retire (soft-delete)',
+          'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable') +
+        tierRadio('delete', 'Delete permanently',
+          'wipes the conversation from disk and every agent row — cannot be undone');
+      if (multiCat) {
+        radios += tierRadio('reinstate', 'Reinstate',
+          'return a retired agent to the active roster — groups and permissions are not restored');
+      }
+      const ownersOpt =
         '<label id="cleanup-opt-owners-row"><input type="checkbox" id="cleanup-opt-owners" /> ' +
-        'Include offline owners <span class="opt-note">— unjoin tier only; retire and delete drop owner rows anyway</span></label>' +
-        wtOpt;
+        'Include offline owners <span class="opt-note">— unjoin tier only; retire and delete drop owner rows anyway</span></label>';
+      const onlineOpt = multiCat
+        ? '<label id="cleanup-opt-online-row"><input type="checkbox" id="cleanup-opt-online"' +
+          (includeOnline ? ' checked' : '') + ' /> ' +
+          'Include online sessions <span class="opt-note">— also act on conversations whose tmux ' +
+          'session is still running. Delete force-stops them first; retire / unjoin leave the process ' +
+          'running. Reinstate ignores liveness either way.</span></label>'
+        : '';
+      const wtOpt =
+        '<label id="cleanup-opt-wt-row"><input type="checkbox" id="cleanup-opt-wt" checked /> ' +
+        'Delete associated git worktrees <span class="opt-note">— removes the worktree directory; ' +
+        'the branch and its commits are kept. The main repo and worktrees shared with another ' +
+        'agent are always skipped.</span></label>';
+      optsEl.innerHTML =
+        '<div class="cleanup-tier">' + radios + '</div>' +
+        ownersOpt + onlineOpt + wtOpt;
       syncTierLocks();
     }
-    // syncTierLocks enables the owners checkbox only for the unjoin
-    // tier and the worktree checkbox only for the delete tier.
+    // syncTierLocks enables each sub-option only for the tier it
+    // applies to: owners → unjoin, worktrees → delete, include-online
+    // → every tier except reinstate (which ignores liveness).
     function syncTierLocks() {
       if (mode === 'group') return;
       const tr = cleanupTier();
-      const ownCb = $('#cleanup-opt-owners');
-      const ownRow = $('#cleanup-opt-owners-row');
-      if (ownCb && ownRow) {
-        ownCb.disabled = tr !== 'unjoin';
-        ownRow.classList.toggle('disabled', tr !== 'unjoin');
-      }
-      const wtCb = $('#cleanup-opt-wt');
-      const wtRow = $('#cleanup-opt-wt-row');
-      if (wtCb && wtRow) {
-        wtCb.disabled = tr !== 'delete';
-        wtRow.classList.toggle('disabled', tr !== 'delete');
-      }
+      const lock = (id, rowId, enabledWhen) => {
+        const cb = $(id), row = $(rowId);
+        if (!cb || !row) return;
+        cb.disabled = !enabledWhen;
+        row.classList.toggle('disabled', !enabledWhen);
+      };
+      lock('#cleanup-opt-owners', '#cleanup-opt-owners-row', tr === 'unjoin');
+      lock('#cleanup-opt-wt', '#cleanup-opt-wt-row', tr === 'delete');
+      lock('#cleanup-opt-online', '#cleanup-opt-online-row', tr !== 'reinstate');
     }
     function optInclOwners() {
       const cb = $('#cleanup-opt-owners');
@@ -4954,40 +5080,94 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const cb = $('#cleanup-opt-wt');
       return !!(cb && cb.checked && !cb.disabled);
     }
+    function optIncludeOnline() {
+      const cb = $('#cleanup-opt-online');
+      return !!(cb && cb.checked && !cb.disabled);
+    }
 
-    // A row's checkbox is interactive only when it can be acted on:
-    // group-mode owner rows stay locked until "include offline
-    // owners" is ticked.
+    // matchesSearch / rowVisible / rowEnabled compose the filter
+    // pipeline. A row is visible when it passes the search box, the
+    // category checkboxes, the current tier's category gate and the
+    // online filter; it is selectable when, additionally, it is not a
+    // locked group-mode owner row.
+    function matchesSearch(c) {
+      if (!searchText) return true;
+      const q = searchText.toLowerCase();
+      return (c.title || '').toLowerCase().includes(q) ||
+             c.conv_id.toLowerCase().includes(q);
+    }
+    function rowVisible(c) {
+      if (!matchesSearch(c)) return false;
+      if (!multiCat) return true;
+      if (!catOn[c.category]) return false;
+      if (!tierCategories().includes(c.category)) return false;
+      // Online rows are hidden unless opted in — except under
+      // reinstate, which is non-destructive and ignores liveness.
+      if (c.online && !includeOnline && cleanupTier() !== 'reinstate') return false;
+      return true;
+    }
     function rowEnabled(c) {
       if (mode === 'group' && c.owner) return optInclOwners();
       return true;
     }
+    // selected() only counts rows the human can currently see — a row
+    // checked then hidden by a filter change is not submitted.
     function selected() {
-      return candidates.filter(c => rowEnabled(c) && c.checked);
+      return candidates.filter(c => rowVisible(c) && rowEnabled(c) && c.checked);
     }
 
+    // renderCategories draws the category-filter row (Agents tab only).
+    function renderCategories() {
+      if (!multiCat) { catsEl.style.display = 'none'; return; }
+      catsEl.style.display = '';
+      catsEl.innerHTML = '<span class="cleanup-cats-label">categories:</span>' +
+        CLEANUP_CATS.map(cat => {
+          const n = candidates.filter(c => c.category === cat).length;
+          return `<label class="cleanup-cat-toggle">
+            <input type="checkbox" data-cat="${cat}"${catOn[cat] ? ' checked' : ''} />
+            ${esc(CLEANUP_CAT_LABEL[cat])} <span class="muted">(${n})</span>
+          </label>`;
+        }).join('');
+    }
+
+    function rowHTML(c) {
+      const enabled = rowEnabled(c);
+      const checked = enabled && c.checked;
+      const ownerBadge = c.owner ? '<span class="cleanup-badge owner">owner</span>' : '';
+      const onlineBadge = c.online ? '<span class="cleanup-badge online">online</span>' : '';
+      const metaText = (c.groups && c.groups.length) ? 'in: ' + c.groups.join(', ') : '';
+      return `<div class="cleanup-row${enabled ? '' : ' disabled'}">
+        <label>
+          <input type="checkbox" data-conv="${esc(c.conv_id)}"${checked ? ' checked' : ''}${enabled ? '' : ' disabled'} />
+          <span class="title">${esc(c.title || shortId(c.conv_id))}</span>
+          <span class="id">${esc(shortId(c.conv_id))}</span>
+          ${ownerBadge}${onlineBadge}
+          <span class="meta">${esc(metaText)}</span>
+          <span class="seen">${esc(activityLabel(c))}</span>
+        </label>
+      </div>`;
+    }
     function renderList() {
-      if (!candidates.length) {
-        listEl.innerHTML = '<div class="cleanup-empty">No confirmed-offline agents to clean up.</div>';
+      const vis = candidates.filter(rowVisible);
+      if (!vis.length) {
+        listEl.innerHTML = '<div class="cleanup-empty">' +
+          (candidates.length ? 'No conversations match the current filters.'
+                             : 'Nothing to clean up.') + '</div>';
         return;
       }
-      listEl.innerHTML = candidates.map(c => {
-        const enabled = rowEnabled(c);
-        const checked = enabled && c.checked;
-        const seen = c.lastHook ? ('last seen ' + relTime(c.lastHook)) : 'no recent activity';
-        const ownerBadge = c.owner ? '<span class="cleanup-badge owner">owner</span>' : '';
-        const metaText = (mode !== 'group' && c.groups.length) ? 'in: ' + c.groups.join(', ') : '';
-        return `<div class="cleanup-row${enabled ? '' : ' disabled'}">
-          <label>
-            <input type="checkbox" data-conv="${esc(c.conv_id)}"${checked ? ' checked' : ''}${enabled ? '' : ' disabled'} />
-            <span class="title">${esc(c.title || shortId(c.conv_id))}</span>
-            <span class="id">${esc(shortId(c.conv_id))}</span>
-            ${ownerBadge}
-            <span class="meta">${esc(metaText)}</span>
-            <span class="seen">${esc(seen)}</span>
-          </label>
-        </div>`;
-      }).join('');
+      if (!multiCat) {
+        listEl.innerHTML = vis.map(rowHTML).join('');
+        return;
+      }
+      // Agents tab: group the visible rows under category sub-headers.
+      let html = '';
+      for (const cat of CLEANUP_CATS) {
+        const rows = vis.filter(c => c.category === cat);
+        if (!rows.length) continue;
+        html += `<div class="cleanup-cat-head">${esc(CLEANUP_CAT_LABEL[cat])} <span>(${rows.length})</span></div>`;
+        html += rows.map(rowHTML).join('');
+      }
+      listEl.innerHTML = html;
     }
 
     function recompute() {
@@ -4998,9 +5178,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (mode === 'group') {
         label = n ? `Remove ${n} from ${groupName}` : 'Remove from group';
       } else if (tr === 'delete') {
-        label = n ? `Delete ${n} agent${n === 1 ? '' : 's'} permanently` : 'Delete agents';
+        label = n ? `Delete ${n} conversation${n === 1 ? '' : 's'} permanently` : 'Delete conversations';
       } else if (tr === 'retire') {
         label = n ? `Retire ${n} agent${n === 1 ? '' : 's'}` : 'Retire agents';
+      } else if (tr === 'reinstate') {
+        label = n ? `Reinstate ${n} agent${n === 1 ? '' : 's'}` : 'Reinstate agents';
       } else {
         label = n ? `Remove ${n} agent${n === 1 ? '' : 's'} from all groups` : 'Remove from groups';
       }
@@ -5010,13 +5192,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
       applyHint();
     }
 
-    // Bulk-select every enabled row whose inactivity meets the age
-    // threshold (0 h selects all). A convenience on top of the
-    // per-row checkboxes the human can still hand-tune.
+    // Bulk-select every visible, selectable row whose inactivity meets
+    // the age threshold (0 h selects all visible). A convenience on top
+    // of the per-row checkboxes the human can still hand-tune.
     function applyAge() {
       const h = Math.max(0, parseFloat(ageInput.value) || 0);
       for (const c of candidates) {
-        if (!rowEnabled(c)) continue;
+        if (!rowVisible(c) || !rowEnabled(c)) continue;
         c.checked = inactivityHours(c) >= h;
       }
       renderList();
@@ -5030,13 +5212,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
       } else if (mode === 'all-groups') {
         titleEl.textContent = '🧹 Clean up all groups';
       } else {
-        titleEl.textContent = '🧹 Clean up agents';
+        titleEl.textContent = '🧹 Clean up conversations';
       }
       applyHint();
     }
     // applyHint sets the modal's explanatory line. For group mode it is
-    // static; for agents / all-groups it tracks the selected tier so
-    // the human always sees exactly what the action will do.
+    // static; otherwise it tracks the selected tier so the human always
+    // sees exactly what the action will do.
     function applyHint() {
       if (phase === 'result') return;
       if (mode === 'group') {
@@ -5049,16 +5231,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const tr = cleanupTier();
       if (tr === 'delete') {
         hintEl.className = 'cleanup-hint danger';
-        hintEl.textContent = 'Permanently deletes the selected confirmed-offline agents — wipes the '
-          + 'conversation history from disk and drops every group / owner / permission row. Cannot be undone.';
+        hintEl.textContent = 'Permanently deletes the selected conversations — wipes the history from '
+          + 'disk and drops every group / owner / permission row. Works on active agents, retired '
+          + 'agents and plain conversations alike. Cannot be undone.';
       } else if (tr === 'retire') {
         hintEl.className = 'cleanup-hint';
-        hintEl.textContent = 'Retires the selected confirmed-offline agents: revokes their group memberships '
-          + 'and permission grants so they stop being agents — but the conversations stay on disk and can '
+        hintEl.textContent = 'Retires the selected agents: revokes their group memberships and '
+          + 'permission grants so they stop being agents — the conversations stay on disk and can '
           + 'be reinstated later. The non-destructive soft-delete.';
+      } else if (tr === 'reinstate') {
+        hintEl.className = 'cleanup-hint';
+        hintEl.textContent = 'Reinstates the selected retired agents — returns them to the active '
+          + 'roster. Their former groups and permissions are not restored; they start fresh.';
       } else {
         hintEl.className = 'cleanup-hint';
-        hintEl.textContent = 'Removes the selected confirmed-offline agents from every group they belong to. '
+        hintEl.textContent = 'Removes the selected agents from every group they belong to. '
           + 'They stay agents (and stay on disk) — only the group memberships are dropped.';
       }
     }
@@ -5078,6 +5265,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           agents: picks,
           mode: cleanupTier(),
           include_owners: optInclOwners(),
+          include_online: optIncludeOnline(),
           delete_worktrees: optDeleteWorktrees(),
         };
       }
@@ -5107,6 +5295,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       phase = 'result';
       toolbar.style.display = 'none';
       optsEl.style.display = 'none';
+      catsEl.style.display = 'none';
       const outcomes = resp.outcomes || [];
       listEl.innerHTML = outcomes.length
         ? outcomes.map(o => `<div class="cleanup-row">
@@ -5119,6 +5308,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const bits = [];
       if (resp.removed) bits.push(resp.removed + ' removed');
       if (resp.retired) bits.push(resp.retired + ' retired');
+      if (resp.reinstated) bits.push(resp.reinstated + ' reinstated');
       if (resp.deleted) bits.push(resp.deleted + ' deleted');
       if (resp.skipped) bits.push(resp.skipped + ' skipped');
       if (resp.failed) bits.push(resp.failed + ' failed');
@@ -5144,6 +5334,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       $('#cleanup-select-all').removeEventListener('click', onSelectAll);
       $('#cleanup-select-none').removeEventListener('click', onSelectNone);
       ageInput.removeEventListener('input', applyAge);
+      searchInput.removeEventListener('input', onSearch);
+      catsEl.removeEventListener('change', onCatChange);
       optsEl.removeEventListener('change', onOptChange);
       listEl.removeEventListener('change', onListChange);
     }
@@ -5152,11 +5344,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
     function onOverlay(e) { if (e.target === overlay) close(); }
     function onKey(e) { if (e.key === 'Escape') close(); }
     function onSelectAll() {
-      for (const c of candidates) { if (rowEnabled(c)) c.checked = true; }
+      for (const c of candidates) { if (rowVisible(c) && rowEnabled(c)) c.checked = true; }
       renderList(); recompute();
     }
     function onSelectNone() {
       for (const c of candidates) c.checked = false;
+      renderList(); recompute();
+    }
+    function onSearch() {
+      searchText = searchInput.value.trim();
+      renderList(); recompute();
+    }
+    function onCatChange(e) {
+      const cb = e.target.closest('input[type=checkbox]');
+      if (!cb) return;
+      catOn[cb.getAttribute('data-cat')] = cb.checked;
       renderList(); recompute();
     }
     function onOptChange(e) {
@@ -5164,6 +5366,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
       // pre-selects them (the human can still hand-uncheck any).
       if (e.target.id === 'cleanup-opt-owners' && mode === 'group') {
         for (const c of candidates) { if (c.owner) c.checked = e.target.checked; }
+      }
+      // "Include online sessions" toggled — reveal / hide online rows.
+      if (e.target.id === 'cleanup-opt-online') {
+        includeOnline = e.target.checked;
       }
       // agents / all-groups: a tier radio changed — update the tier and
       // re-lock the dependent sub-options.
@@ -5191,10 +5397,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
     warnEl.textContent = '';
     errEl.textContent = '';
     ageInput.value = '0';
+    searchInput.value = '';
+    searchInput.style.display = multiCat ? '' : 'none';
     submitBtn.classList.remove('danger');
 
     applyChrome();
     renderOptions();
+    renderCategories();
     renderList();
     recompute();
 
@@ -5205,6 +5414,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#cleanup-select-all').addEventListener('click', onSelectAll);
     $('#cleanup-select-none').addEventListener('click', onSelectNone);
     ageInput.addEventListener('input', applyAge);
+    searchInput.addEventListener('input', onSearch);
+    catsEl.addEventListener('change', onCatChange);
     optsEl.addEventListener('change', onOptChange);
     listEl.addEventListener('change', onListChange);
     overlay.classList.add('show');

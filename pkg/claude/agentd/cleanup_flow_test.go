@@ -26,12 +26,13 @@ type cleanupResp struct {
 		Detail string   `json:"detail"`
 		Groups []string `json:"groups"`
 	} `json:"outcomes"`
-	Removed  int      `json:"removed"`
-	Retired  int      `json:"retired"`
-	Deleted  int      `json:"deleted"`
-	Skipped  int      `json:"skipped"`
-	Failed   int      `json:"failed"`
-	Warnings []string `json:"warnings"`
+	Removed    int      `json:"removed"`
+	Retired    int      `json:"retired"`
+	Deleted    int      `json:"deleted"`
+	Reinstated int      `json:"reinstated"`
+	Skipped    int      `json:"skipped"`
+	Failed     int      `json:"failed"`
+	Warnings   []string `json:"warnings"`
 }
 
 // postCleanup fires a cleanup request at the dashboard mux and decodes
@@ -388,4 +389,175 @@ func TestDeleteAgent_WithWorktree(t *testing.T) {
 	require.Equal(t, http.StatusOK, drec.Code, "body=%s", drec.Body.String())
 	assert.True(t, fw.wasRemoved(cwd), "worktree removed on ?delete_worktree=1")
 	f.AssertDeleted(conv)
+}
+
+// --- category coverage: retired agents & plain conversations -------
+//
+// The Agents-tab cleanup modal used to build its candidate list from
+// active agents alone. These scenarios pin the daemon side of the
+// widened tool: the delete tier reaches every category, the new
+// reinstate tier is the inverse of retire, and a tier that doesn't
+// apply to a target skips it gracefully instead of failing.
+
+// Scenario: the delete tier reaches a retired agent — a category the
+// modal previously couldn't see. The retired enrollment row is purged
+// alongside the conversation.
+func TestCleanup_Agents_DeleteRetiredAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "retd-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "demoted-worker")
+	f.HaveRetiredAgent(conv)
+	f.HaveAliveSession(conv, "spwn-retd", "tmux-retd", "/tmp/retd")
+	f.MarkOffline("tmux-retd")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"delete"}`)
+
+	assert.Equal(t, 1, resp.Deleted, "retired agent purged")
+	f.AssertDeleted(conv)
+	state, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentNone, state, "enrollment row gone after delete")
+}
+
+// Scenario: the delete tier also reaches a plain (never-enrolled)
+// conversation — the third category the old modal ignored.
+func TestCleanup_Agents_DeletePlainConversation(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "plan-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "just-a-chat")
+	f.HaveAliveSession(conv, "spwn-plan", "tmux-plan", "/tmp/plan")
+	f.MarkOffline("tmux-plan")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"delete"}`)
+
+	assert.Equal(t, 1, resp.Deleted, "plain conversation purged")
+	f.AssertDeleted(conv)
+	row, err := db.GetConvIndex(conv)
+	require.NoError(t, err)
+	assert.Nil(t, row, "conv_index row gone after delete")
+}
+
+// Scenario: the reinstate tier — the inverse of retire — returns a
+// retired agent to the active roster in bulk.
+func TestCleanup_Agents_ReinstateRetiredAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "rein-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "comeback")
+	f.HaveRetiredAgent(conv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"reinstate"}`)
+
+	assert.Equal(t, 1, resp.Reinstated, "retired agent reinstated")
+	require.Len(t, resp.Outcomes, 1)
+	assert.Equal(t, "reinstated", resp.Outcomes[0].Result)
+	state, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, state, "back on the active roster")
+}
+
+// Scenario: reinstate is a graceful no-op skip for a target that isn't
+// retired — an active agent caught in a mixed selection.
+func TestCleanup_Agents_ReinstateSkipsActiveAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "actv-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "still-working")
+	f.HaveEnrolledAgent(conv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"reinstate"}`)
+
+	assert.Equal(t, 0, resp.Reinstated)
+	assert.Equal(t, 1, resp.Skipped, "active agent skipped — nothing to reinstate")
+	require.Len(t, resp.Outcomes, 1)
+	assert.Contains(t, resp.Outcomes[0].Detail, "not a retired agent")
+}
+
+// Scenario: the retire tier gracefully skips a target that is already
+// retired — so a mixed-category selection never errors.
+func TestCleanup_Agents_RetireSkipsRetiredAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "altd-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "already-demoted")
+	f.HaveRetiredAgent(conv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"retire"}`)
+
+	assert.Equal(t, 0, resp.Retired)
+	assert.Equal(t, 1, resp.Skipped, "already retired — nothing to retire")
+}
+
+// Scenario: include_online lifts the skip-online guard. Without it a
+// running conversation is skipped; with it the session is force-stopped
+// and the conversation deleted.
+func TestCleanup_Agents_IncludeOnlineDeletesRunning(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "live-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "running-chat")
+	f.HaveAliveSession(conv, "spwn-live", "tmux-live", "/tmp/live")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Default: online → skipped, untouched.
+	skip := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"delete"}`)
+	assert.Equal(t, 0, skip.Deleted, "online conv not deleted without opt-in")
+	assert.Equal(t, 1, skip.Skipped, "online conv skipped")
+
+	// Opt-in: include_online → force-stopped and deleted.
+	del := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"delete","include_online":true}`)
+	assert.Equal(t, 1, del.Deleted, "online conv deleted with include_online")
+	f.AssertDeleted(conv)
+}
+
+// Scenario: one delete pass spanning all three categories — an active
+// agent, a retired agent and a plain conversation — purges every one.
+func TestCleanup_Agents_MixedCategoriesDelete(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const active = "amix-1111-2222-3333-4444"
+	const retired = "rmix-1111-2222-3333-4444"
+	const plain = "pmix-1111-2222-3333-4444"
+	f.HaveConvWithTitle(active, "active-one")
+	f.HaveConvWithTitle(retired, "retired-one")
+	f.HaveConvWithTitle(plain, "plain-one")
+	f.HaveEnrolledAgent(active)
+	f.HaveRetiredAgent(retired)
+	f.HaveAliveSession(active, "spwn-amix", "tmux-amix", "/tmp/amix")
+	f.HaveAliveSession(retired, "spwn-rmix", "tmux-rmix", "/tmp/rmix")
+	f.HaveAliveSession(plain, "spwn-pmix", "tmux-pmix", "/tmp/pmix")
+	f.MarkOffline("tmux-amix")
+	f.MarkOffline("tmux-rmix")
+	f.MarkOffline("tmux-pmix")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+active+`","`+retired+`","`+plain+`"],"mode":"delete"}`)
+
+	assert.Equal(t, 3, resp.Deleted, "all three categories purged")
+	f.AssertDeleted(active)
+	f.AssertDeleted(retired)
+	f.AssertDeleted(plain)
 }
