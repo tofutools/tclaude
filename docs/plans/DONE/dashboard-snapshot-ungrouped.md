@@ -42,6 +42,13 @@ ALSO emits any agent with `len(Groups) == 0` into `ungrouped[]`.
 > loop adds offline grant-holders to `agentRows`, which would
 > otherwise leak into `ungrouped[]`; the online gate keeps the array
 > to live loose convs as documented.
+>
+> **Superseded (`dashboard-enrollment-surface-fixes.md`):** the
+> `a.Online` gate has since been removed. `ungrouped[]` now carries
+> every active agent in no group, online or offline — a promoted
+> offline conversation must be visible in the virtual "Ungrouped"
+> group to be dragged into a real one. The `+ add member` overlay
+> applies its own online filter, so it does not regress.
 
 This means an entry can appear in both arrays (the broader `agents`
 list is a superset; `ungrouped` is the subset with zero memberships).

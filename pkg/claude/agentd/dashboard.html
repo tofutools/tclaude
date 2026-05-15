@@ -645,7 +645,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .sub-list-head .muted { font-weight: normal; font-size: 11px; }
 .sub-list-head.collapsible { cursor: pointer; user-select: none; }
-#retired-caret { display: inline-block; width: 12px; color: #7d8590; }
+#retired-caret, #conversations-caret { display: inline-block; width: 12px; color: #7d8590; }
 .cleanup-error { color: #f85149; font-size: 12px; min-height: 14px; }
 .cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
 .cleanup-modal .modal-buttons {
@@ -728,19 +728,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <button id="agent-spawn-open" class="primary" title="Spawn a new tclaude session and add it to a group">+ new agent</button>
     </div>
     <div id="agents-list"></div>
-    <div id="conversations-section">
-      <h3 class="sub-list-head">
-        Conversations
-        <span class="muted">— recent conversations that aren't agents; promote one to add it to the roster</span>
-      </h3>
-      <div id="conversations-list"></div>
-    </div>
     <div id="retired-section">
       <h3 class="sub-list-head collapsible" id="retired-toggle" title="Show / hide retired agents">
         <span id="retired-caret">▸</span> Retired agents
         <span class="muted" id="retired-count"></span>
       </h3>
       <div id="retired-list" style="display:none"></div>
+    </div>
+    <div id="conversations-section">
+      <h3 class="sub-list-head collapsible" id="conversations-toggle" title="Show / hide recent non-agent conversations">
+        <span id="conversations-caret">▸</span> Conversations
+        <span class="muted" id="conversations-count"></span>
+        <span class="muted">— recent conversations that aren't agents; promote one to add it to the roster</span>
+      </h3>
+      <div id="conversations-list" style="display:none"></div>
     </div>
   </section>
   <section id="tab-cron">
@@ -1720,26 +1721,27 @@ details.group-virtual .group-name { color: #8aa0b8; }
   const UNGROUPED_VKEY = ' ungrouped-virtual';
 
   // virtualUngroupedGroup builds the synthetic group object from the
-  // snapshot's online-and-groupless agents. Always returns the object
-  // (with an empty members[] when there are none) — once the human
-  // has ticked "show ungrouped" the group stays visible even while
-  // empty, so it reads as a stable, discoverable drop target rather
-  // than something that blinks in and out as agents come and go. The
-  // `virtual` flag is the discriminator every group-affecting code
-  // path keys off to suppress rename / delete / multicast / cron /
-  // add-member.
+  // snapshot's groupless agents. Always returns the object (with an
+  // empty members[] when there are none) — once the human has ticked
+  // "show ungrouped" the group stays visible even while empty, so it
+  // reads as a stable, discoverable drop target rather than something
+  // that blinks in and out as agents come and go. The `virtual` flag
+  // is the discriminator every group-affecting code path keys off to
+  // suppress rename / delete / multicast / cron / add-member.
+  //
+  // Online AND offline agents are kept: ungrouped[] carries both (a
+  // freshly-promoted offline conversation belongs here so it can be
+  // dragged into a group). renderVirtualGroup applies the "show
+  // offline" filter at render time, like a real group.
   function virtualUngroupedGroup(agents) {
-    // The snapshot's ungrouped[] is online-only by daemon construction;
-    // re-filter defensively so a future backend change can't leak an
-    // offline row into the virtual group.
-    const online = (agents || []).filter(a => a.online);
+    const rows = (agents || []).slice();
     return {
       name: UNGROUPED_LABEL,
       key: UNGROUPED_VKEY,
       virtual: true,
-      descr: 'online agents not in any group',
-      members: online,
-      online: online.length,
+      descr: 'agents not in any group',
+      members: rows,
+      online: rows.filter(a => a.online).length,
     };
   }
 
@@ -1820,33 +1822,40 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // renderVirtualGroup renders the synthetic "Ungrouped" group. It is
   // intentionally inert AS A GROUP — no rename / delete / multicast /
-  // cron / add-member / spawn buttons, no default-cwd / default-context,
-  // no per-group offline toggle (its members are online by
-  // construction). Its only interactive role is drag-and-drop:
+  // cron / add-member / spawn buttons, no default-cwd / default-context.
+  // Its only interactive role is drag-and-drop:
   //   - member rows are draggable INTO real groups (→ join);
   //   - the summary is a drop target for real-group members (→ leave
   //     that group; if it was their only group they reappear here).
   // The summary carries data-dnd-target-ungrouped (NOT -target-group),
   // so the move/clone code paths can never mistake it for a real group.
+  //
+  // Offline visibility: the group honours the tab-wide "show offline"
+  // checkbox (it has no per-group override). Hidden members still
+  // count toward the header total so it stays truthful.
   function renderVirtualGroup(g) {
     const members = g.members || [];
+    const visible = offlineDefault('groups') ? members : members.filter(m => m.online);
+    const hiddenOffline = members.length - visible.length;
     const key = g.key || g.name;
     const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
     const body = members.length === 0
       ? '<div class="muted">(no ungrouped agents)</div>'
+      : visible.length === 0
+      ? `<div class="muted">(${hiddenOffline} offline agent${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})</div>`
       : `
           <table>
             ${sortHead('members', MEMBER_COLS)}
             <tbody>
-              ${applySort('members', members, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {ungrouped: true})).join('')}
+              ${applySort('members', visible, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {ungrouped: true})).join('')}
             </tbody>
           </table>`;
     return `
       <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
         <summary data-dnd-target-ungrouped="1">
           <strong class="group-name">${esc(g.name)}</strong>
-          <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects online agents that aren't in any group.">virtual</span>
-          <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group</span>
+          <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group.">virtual</span>
+          <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
           <span class="muted group-virtual-hint">drag a row onto a group to add it · drag a group member here to remove it</span>
         </summary>
         <div class="subtable">
@@ -1858,10 +1867,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // renderVirtualConversationsGroup renders the synthetic
   // "Conversations" group — non-agent conversations. Like the virtual
-  // Ungrouped group it is inert AS A GROUP; its rows are drag sources
-  // (drop onto a real group → promote + join) and carry a promote
-  // button. It is NOT a drop target — retiring an agent is a deliberate
-  // act with its own button, not a drag gesture.
+  // Ungrouped group it is inert AS A GROUP, but it IS a drag source
+  // AND a drag target:
+  //   - its rows (data-dnd-source-conversation) drag onto a real group
+  //     → promote + join, or onto the Ungrouped header → promote with
+  //     no group;
+  //   - its summary (data-dnd-target-conversations) accepts an agent
+  //     row → retire it, demoting the agent back to a plain
+  //     conversation.
   function renderVirtualConversationsGroup(g) {
     const members = g.members || [];
     const key = g.key || g.name;
@@ -1873,7 +1886,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <thead><tr><th></th><th>conv</th><th>title</th><th>last activity</th><th></th></tr></thead>
             <tbody>
               ${members.map(c => `
-                <tr class="dnd-draggable" draggable="true" data-dnd-source-ungrouped="1"
+                <tr class="dnd-draggable" draggable="true" data-dnd-source-conversation="1"
                     data-dnd-conv="${esc(c.conv_id)}"
                     data-dnd-label="${esc(c.title || c.conv_id)}">
                   <td>${onlineDot(c.online)}</td>
@@ -1886,11 +1899,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
           </table>`;
     return `
       <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
-        <summary>
+        <summary data-dnd-target-conversations="1">
           <strong class="group-name">${esc(g.name)}</strong>
           <span class="group-virtual-badge" title="A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.">virtual</span>
           <span class="muted">— ${members.length} conversation${members.length === 1 ? '' : 's'} that aren't agents</span>
-          <span class="muted group-virtual-hint">drag a row onto a group to promote + add it</span>
+          <span class="muted group-virtual-hint">drag a row onto a group to promote + add it · drag an agent here to retire it</span>
         </summary>
         <div class="subtable">
           ${body}
@@ -2271,14 +2284,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#filter-agents-count').textContent = (q || !showOffline)
       ? `${filtered.length} / ${total}` : `${total} agent${total === 1 ? '' : 's'}`;
 
-    // Secondary lists: promotion candidates + retired agents. Both
-    // honour the same text filter as the agents table.
-    const convs = filterConvLike(lastSnapshot.conversations || [], q);
-    $('#conversations-list').innerHTML = renderConversations(convs);
+    // Secondary lists: retired agents + promotion candidates. Both
+    // honour the same text filter as the agents table, and both are
+    // collapsible sections (collapsed by default) — the click handler
+    // in bindEvents toggles their display, this only fills content +
+    // the header count, so the fold state survives the 5s re-render.
     const retired = filterConvLike(lastSnapshot.retired || [], q);
     $('#retired-list').innerHTML = renderRetired(retired);
     const retiredTotal = (lastSnapshot.retired || []).length;
     $('#retired-count').textContent = retiredTotal ? `(${retiredTotal})` : '(none)';
+
+    const convs = filterConvLike(lastSnapshot.conversations || [], q);
+    $('#conversations-list').innerHTML = renderConversations(convs);
+    const convTotal = (lastSnapshot.conversations || []).length;
+    $('#conversations-count').textContent = convTotal ? `(${convTotal})` : '(none)';
   }
 
   // formatInterval renders an integer second count as a coarse human
@@ -3161,15 +3180,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
     // Agents-tab "cleanup" deletes confirmed-offline agents.
     $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'all-groups' }));
     $('#cleanup-agents-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
-    // Retired-agents section is collapsed by default — clicking the
-    // header toggles it. Pure client-side view state.
-    $('#retired-toggle').addEventListener('click', () => {
-      const list = $('#retired-list');
-      const caret = $('#retired-caret');
-      const open = list.style.display === 'none';
-      list.style.display = open ? '' : 'none';
-      caret.textContent = open ? '▾' : '▸';
-    });
+    // The Agents-tab secondary sections (Retired agents, Conversations)
+    // are collapsed by default — clicking a header toggles it. Pure
+    // client-side view state; not persisted.
+    const bindSubListToggle = (toggleID, listID, caretID) => {
+      $(toggleID).addEventListener('click', () => {
+        const list = $(listID);
+        const caret = $(caretID);
+        const open = list.style.display === 'none';
+        list.style.display = open ? '' : 'none';
+        caret.textContent = open ? '▾' : '▸';
+      });
+    };
+    bindSubListToggle('#retired-toggle', '#retired-list', '#retired-caret');
+    bindSubListToggle('#conversations-toggle', '#conversations-list', '#conversations-caret');
     $('#group-create-cancel').addEventListener('click', closeGroupCreateModal);
     $('#group-create-submit').addEventListener('click', submitGroupCreate);
     $('#group-create-modal').addEventListener('click', (e) => {
@@ -5805,16 +5829,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // drag is in flight, so a 5s tick doesn't blow our optimistic
   // mutation away while the round-trip is mid-air.
   let dndDragActive = false;
-  // dndSourceUngrouped: true while the row being dragged comes from
-  // the virtual Ungrouped group. Set in dragstart, cleared in dragend.
-  // dragover can't read the DataTransfer payload (browsers gate
-  // getData to the drop event), so this module-level flag is how the
-  // hover handlers know whether a drop onto Ungrouped is a real op
-  // (grouped source) or an inert no-op (already-ungrouped source).
+  // dndSourceUngrouped / dndSourceConversation: which virtual group the
+  // dragged row comes from. Set in dragstart, cleared in dragend.
+  // dragover can't read the DataTransfer payload (browsers gate getData
+  // to the drop event), so these module-level flags are how the hover
+  // handlers tell an inert no-op (e.g. an ungrouped row onto Ungrouped,
+  // or a conversation onto Conversations) from a real op.
   let dndSourceUngrouped = false;
-  // Every droppable summary — real group headers AND the virtual
-  // Ungrouped header. The four DnD listeners share this selector.
-  const DND_TARGET_SEL = 'summary[data-dnd-target-group],summary[data-dnd-target-ungrouped]';
+  let dndSourceConversation = false;
+  // Every droppable summary — real group headers AND the two virtual
+  // group headers (Ungrouped, Conversations). The DnD listeners share
+  // this selector.
+  const DND_TARGET_SEL = 'summary[data-dnd-target-group],summary[data-dnd-target-ungrouped],summary[data-dnd-target-conversations]';
   // updateDndPill positions + labels the hint pill that tracks the
   // cursor during a drag. `info` is null to hide the pill, else
   // {text, clone} — text is the action label, clone tints it green.
@@ -5839,23 +5865,25 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const conv = row.getAttribute('data-dnd-conv');
       const sourceGroup = row.getAttribute('data-dnd-source-group');
       const sourceUngrouped = row.hasAttribute('data-dnd-source-ungrouped');
+      const sourceConversation = row.hasAttribute('data-dnd-source-conversation');
       const label = row.getAttribute('data-dnd-label') || conv;
-      // A draggable row is either a real-group member (has a source
-      // group) or a virtual-Ungrouped row (carries the ungrouped
-      // flag). Anything else isn't a valid drag.
-      if (!conv || (!sourceGroup && !sourceUngrouped)) return;
+      // A draggable row is a real-group member (has a source group), a
+      // virtual-Ungrouped row, or a virtual-Conversations row. Anything
+      // else isn't a valid drag.
+      if (!conv || (!sourceGroup && !sourceUngrouped && !sourceConversation)) return;
       // Stash the payload on the DataTransfer so the eventual drop can
       // read it without globals. The MIME type 'text/plain' is the
       // most-supported channel; the JSON body keeps the encoding
       // self-describing. We allow both move (default) and copy effects
       // so Ctrl-drag can flip the cursor hint via dropEffect.
-      const payload = JSON.stringify({conv, sourceGroup: sourceGroup || '', sourceUngrouped, label});
+      const payload = JSON.stringify({conv, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, label});
       e.dataTransfer.setData('application/x-tclaude-member', payload);
       e.dataTransfer.setData('text/plain', payload);
       e.dataTransfer.effectAllowed = 'copyMove';
       row.classList.add('dnd-source-row');
       dndDragActive = true;
       dndSourceUngrouped = sourceUngrouped;
+      dndSourceConversation = sourceConversation;
       modalEditing = true; // suspend auto-refresh during the drag
     });
     document.addEventListener('dragend', (e) => {
@@ -5867,6 +5895,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       $('#dnd-pill').classList.remove('show', 'clone');
       dndDragActive = false;
       dndSourceUngrouped = false;
+      dndSourceConversation = false;
       modalEditing = false;
       refresh();
     });
@@ -5878,22 +5907,25 @@ details.group-virtual .group-name { color: #8aa0b8; }
         return;
       }
       const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
-      // Dropping an already-ungrouped row onto the Ungrouped group is
-      // a pure no-op — don't preventDefault (so `drop` never fires)
-      // and don't show a hint.
-      if (targetUngrouped && dndSourceUngrouped) {
+      const targetConversation = summary.hasAttribute('data-dnd-target-conversations');
+      // Dropping a row onto the virtual group it already lives in is a
+      // pure no-op — don't preventDefault (so `drop` never fires) and
+      // don't show a hint.
+      if ((targetUngrouped && dndSourceUngrouped) ||
+          (targetConversation && dndSourceConversation)) {
         updateDndPill(e, null);
         return;
       }
       e.preventDefault(); // required for drop to fire on this element
-      // Clone is meaningful only for a real-group TARGET; dropping
-      // onto Ungrouped is always a plain "remove from group".
-      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped;
+      // Clone is meaningful only for a real-group TARGET.
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetConversation;
       e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
       summary.classList.toggle('dnd-effect-clone', isClone);
       let text;
-      if (targetUngrouped) text = '↓ remove from group';
+      if (targetConversation) text = '↓ retire — demote to conversation';
+      else if (targetUngrouped) text = dndSourceConversation ? '↓ promote (no group)' : '↓ remove from group';
       else if (isClone) text = '→ clone into group';
+      else if (dndSourceConversation) text = '→ promote into group';
       else if (dndSourceUngrouped) text = '→ add to group';
       else text = '→ move to group';
       updateDndPill(e, {text, clone: isClone});
@@ -5902,8 +5934,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (!dndDragActive) return;
       const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
-      // No highlight for the inert ungrouped→Ungrouped no-op.
-      if (summary.hasAttribute('data-dnd-target-ungrouped') && dndSourceUngrouped) return;
+      // No highlight for the inert "drop onto own group" no-ops.
+      if ((summary.hasAttribute('data-dnd-target-ungrouped') && dndSourceUngrouped) ||
+          (summary.hasAttribute('data-dnd-target-conversations') && dndSourceConversation)) return;
       summary.classList.add('dnd-drop-over');
     });
     document.addEventListener('dragleave', (e) => {
@@ -5927,14 +5960,29 @@ details.group-virtual .group-name { color: #8aa0b8; }
       try { payload = JSON.parse(raw); } catch (_) { return; }
       if (!payload || !payload.conv) return;
       const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
+      const targetConversation = summary.hasAttribute('data-dnd-target-conversations');
       const targetGroup = summary.getAttribute('data-dnd-target-group');
       const sourceUngrouped = !!payload.sourceUngrouped;
+      const sourceConversation = !!payload.sourceConversation;
       // Clone applies only to a real-group target.
-      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped;
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetConversation;
 
-      // Target = the virtual Ungrouped group → "remove from group".
+      // Target = the virtual Conversations group → retire the agent,
+      // demoting it back to a plain conversation.
+      if (targetConversation) {
+        if (sourceConversation) return; // already a conversation — no-op
+        await runDndRetireToConversation(payload);
+        return;
+      }
+      // Target = the virtual Ungrouped group.
       if (targetUngrouped) {
         if (sourceUngrouped) return; // already ungrouped — no-op
+        if (sourceConversation) {
+          // A conversation dropped here → promote to agent, no group.
+          await runDndPromoteToUngrouped(payload);
+          return;
+        }
+        // A real-group member → remove from that group.
         await runDndRemoveFromGroup(payload);
         return;
       }
@@ -5946,8 +5994,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
         await runDndClone(payload, targetGroup);
         return;
       }
-      if (sourceUngrouped) {
-        // Ungrouped agent dragged onto a group → pure add.
+      if (sourceUngrouped || sourceConversation) {
+        // An ungrouped agent OR a conversation dragged onto a group →
+        // pure add. The membership write promotes a conversation.
         await runDndAddToGroup(payload, targetGroup);
         return;
       }
@@ -6121,6 +6170,63 @@ details.group-virtual .group-name { color: #8aa0b8; }
       toast(`removed ${label} from ${sourceGroup}`);
     } catch (err) {
       toast(`remove failed: ${err && err.message || err}`, true);
+    } finally {
+      await refresh();
+    }
+  }
+
+  // runDndRetireToConversation handles a drag of an AGENT row (a real-
+  // group member or a virtual-Ungrouped row) ONTO the virtual
+  // Conversations group — the agent is retired, demoting it back to a
+  // plain conversation. Retire revokes group memberships + grants, so
+  // it gets the same confirm modal as the per-row retire button.
+  async function runDndRetireToConversation(payload) {
+    const {conv, label} = payload;
+    const confirmed = await confirmModal({
+      title: 'Retire this agent?',
+      body: 'Demotes the agent to a plain conversation: revokes its group memberships and '
+        + 'permission grants so it stops being an agent. The conversation itself stays on '
+        + 'disk and can be reinstated later — this is the non-destructive soft-delete.',
+      meta: label,
+      okLabel: 'Retire',
+    });
+    if (!confirmed) {
+      await refresh(); // undo the optimistic dragend state
+      return;
+    }
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        toast(`retire ${label} failed: ${await r.text()}`, true);
+        return;
+      }
+      toast(`retired ${label} — demoted to a conversation`);
+    } catch (err) {
+      toast(`retire failed: ${err && err.message || err}`, true);
+    } finally {
+      await refresh();
+    }
+  }
+
+  // runDndPromoteToUngrouped handles a drag of a CONVERSATION row ONTO
+  // the virtual Ungrouped group — the conversation is promoted to an
+  // agent but joins no group, so it lands directly in the Ungrouped
+  // virtual group on the next snapshot.
+  async function runDndPromoteToUngrouped(payload) {
+    const {conv, label} = payload;
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/promote`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        toast(`promote ${label} failed: ${await r.text()}`, true);
+        return;
+      }
+      toast(`promoted ${label} → agent (no group)`);
+    } catch (err) {
+      toast(`promote failed: ${err && err.message || err}`, true);
     } finally {
       await refresh();
     }

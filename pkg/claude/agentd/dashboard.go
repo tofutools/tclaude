@@ -232,13 +232,13 @@ type snapshotPayload struct {
 	GeneratedAt string           `json:"generated_at"`
 	Groups      []dashboardGroup `json:"groups"`
 	Agents      []dashboardAgent `json:"agents"`
-	// Ungrouped: every online conv-id that is NOT a member of any
-	// group. Surfaces fresh-spawned agents and other loose convs so
-	// the dashboard's virtual "Ungrouped" group + the `+ add member`
+	// Ungrouped: every active agent that is NOT a member of any group,
+	// online or offline alike. Surfaces fresh-spawned agents, loose
+	// convs and freshly-promoted offline conversations so the
+	// dashboard's virtual "Ungrouped" group + the `+ add member`
 	// overlay can show them as drag/add sources without a second
-	// round-trip. Online-only by construction (see the a.Online gate
-	// where this is appended). Same wire shape as Agents — empty when
-	// no loose convs exist.
+	// round-trip. (The overlay applies its own online filter on top.)
+	// Same wire shape as Agents — empty when no loose convs exist.
 	Ungrouped []dashboardAgent `json:"ungrouped"`
 	// Conversations: recent non-enrolled conversations — i.e. convs
 	// that are NOT agents. The Agents tab renders them in a second list
@@ -612,6 +612,21 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		retiredSet[e.ConvID] = true
 	}
 
+	// Superseded conversations — the predecessors of a reincarnation
+	// chain — are NOT agents: their identity moved to the chain head.
+	// The v29→v30 enrollment backfill used to mis-enroll them as active
+	// agents (migrateV30toV31 cleans existing DBs; the fixed backfill
+	// prevents new ones). supersededSet is the read-time belt-and-
+	// braces guard — symmetric with retiredSet — so a ghost predecessor
+	// never reaches out.Agents / out.Ungrouped even if a partially
+	// applied reincarnate left a stale enrollment row behind.
+	supersededSet := map[string]bool{}
+	if successions, err := db.ListAgentConvSuccessions(); err == nil {
+		for _, s := range successions {
+			supersededSet[s.OldConvID] = true
+		}
+	}
+
 	// Active sudo grants across every agent. One DB scan, then we
 	// bucket per conv-id so the per-agent Active rendering is O(1)
 	// inside the agent loop. The same rows feed the top-level Sudo[]
@@ -659,6 +674,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if retiredSet[a.ConvID] {
 			continue
 		}
+		// Same for a superseded reincarnation predecessor — it is a
+		// ghost of an agent that lives on under the chain head.
+		if supersededSet[a.ConvID] {
+			continue
+		}
 		// Effective = defaults ∪ grants. Defaults come from config;
 		// grants from agent_permissions for that conv.
 		seen := map[string]bool{}
@@ -685,19 +705,20 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			a.ActiveSudo = rows
 		}
 		out.Agents = append(out.Agents, *a)
-		// An online agent with no group memberships is "ungrouped" —
-		// surfaces in the dedicated array so the dashboard can list
-		// them as drag/add sources (and render the virtual "Ungrouped"
-		// group) without re-deriving the membership state. Effective
+		// An agent with no group memberships is "ungrouped" — surfaces
+		// in the dedicated array so the dashboard can render the
+		// virtual "Ungrouped" group (and feed the `+ add member`
+		// overlay) without re-deriving the membership state. Effective
 		// perms still come from the broader Agents row, so the
 		// dashboard uses Ungrouped purely as a candidate-set hint.
 		//
-		// Kept online-only on purpose — the `+ add member` overlay is
-		// a live-roster picker, and an offline enrolled agent (still
-		// in out.Agents) is not offered there. The `a.Online` gate
-		// also keeps a long-dead grant-holder, which the per-conv
-		// permission loop above adds unconditionally, out of the array.
-		if len(a.Groups) == 0 && a.Online {
+		// Online and offline alike: the virtual "Ungrouped" group is a
+		// membership-management surface, so a freshly-promoted offline
+		// conversation must show up there to be dragged into a group.
+		// The `+ add member` overlay applies its own online filter, so
+		// including offline rows here doesn't leak them into that
+		// live-roster picker.
+		if len(a.Groups) == 0 {
 			out.Ungrouped = append(out.Ungrouped, *a)
 		}
 	}
