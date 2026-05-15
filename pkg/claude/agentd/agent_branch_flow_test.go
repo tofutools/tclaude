@@ -98,3 +98,66 @@ func TestAgentBranch_SurfacedAcrossListings(t *testing.T) {
 	assert.Equal(t, wantBranch[aliceConv], groupMembersSeen[aliceConv], "dashboard groups-tab branch for alice")
 	assert.Equal(t, wantBranch[bobConv], groupMembersSeen[bobConv], "dashboard groups-tab branch for bob")
 }
+
+// Scenario: an agent starts a session on `main`, then runs
+// `git checkout -b feature-x` partway through. Claude Code stamps the
+// *current* branch onto every .jsonl turn, so the conv_index scan
+// must report the LATEST branch — where the agent is now — not the
+// branch the session opened on.
+//
+// Before the parseJSONLSession fix, GitBranch was captured first-wins
+// and never updated: an agent that branched mid-conversation kept
+// showing `main` on every listing forever. This stands an agent up on
+// `main`, writes a later turn on `feature-x` (as a real branch switch
+// would), rescans, and asserts the switch surfaces on the listings
+// the human and dashboard read from.
+func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+
+	const conv = "cccccccc-1111-2222-3333-444444444444"
+
+	f.HaveGroup("squad")
+	f.HaveAliveSessionOnBranch(conv, "spwn-x", "tmux-x", "/tmp/wt/x", "main")
+	f.HaveMember("squad", conv, "switcher")
+
+	// First scan: the agent is still on the branch it started on.
+	row := agent.FreshConvRowResolved(conv)
+	require.NotNil(t, row, "initial conv_index scan")
+	require.Equal(t, "main", row.GitBranch, "agent should start on main")
+
+	// The agent runs `git checkout -b feature-x` mid-conversation; CC
+	// stamps the new branch onto the next turn it writes to the .jsonl.
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "CCSim for conv")
+	cc.GitBranch = "feature-x"
+	require.NoError(t, cc.WriteUserTurn("after git checkout -b feature-x"), "write branch-switch turn")
+
+	// FreshBranch refreshes conv_index from the .jsonl — the file grew,
+	// so the mtime/size freshness check forces a rescan.
+	assert.Equal(t, "feature-x", agent.FreshBranch(conv), "FreshBranch after switch")
+
+	// Surface 1: GET /v1/groups/squad/members.
+	membersSeen := map[string]string{}
+	for _, m := range f.ListGroupMembers("squad") {
+		membersSeen[m.ConvID] = m.Branch
+	}
+	assert.Equal(t, "feature-x", membersSeen[conv], "groups members branch after switch")
+
+	// Surface 2: GET /api/snapshot — dashboard groups tab.
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	var squad *dashGroup
+	for i := range snap.Groups {
+		if snap.Groups[i].Name == "squad" {
+			squad = &snap.Groups[i]
+		}
+	}
+	require.NotNil(t, squad, "dashboard snapshot missing group squad")
+	groupMembersSeen := map[string]string{}
+	for _, m := range squad.Members {
+		groupMembersSeen[m.ConvID] = m.Branch
+	}
+	assert.Equal(t, "feature-x", groupMembersSeen[conv], "dashboard groups-tab branch after switch")
+}

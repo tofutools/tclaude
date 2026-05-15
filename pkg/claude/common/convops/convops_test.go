@@ -360,6 +360,35 @@ func TestLoadSessionsIndex_HidesStubFromAgentSpawnArtifact(t *testing.T) {
 	require.Len(t, dbEntries, 0, "LoadEntriesFromDB: expected 0 entries, got %+v", dbEntries)
 }
 
+// Regression: a conversation's git branch can change mid-session — the
+// agent runs `git checkout` or moves into a fresh worktree. Claude
+// Code stamps the *current* branch onto every .jsonl turn, so
+// parseJSONLSession must keep the LAST gitBranch it sees, not the
+// first. Before the fix it was first-wins, which froze `agent ls` and
+// the dashboard on whatever branch the session happened to start on.
+//
+// The project path, by contrast, stays first-wins — cwd is fixed for
+// the life of a conversation — so this also pins that the two fields
+// don't share a capture rule.
+func TestParseJSONLSession_GitBranchLastWins(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+	// Starts on main, branches to feature-x, then keeps working on
+	// feature-x. cwd is identical throughout.
+	content := `{"type":"user","cwd":"/myproject","gitBranch":"main","message":{"role":"user","content":"start work"},"timestamp":"2026-03-01T10:00:00Z"}
+{"type":"user","cwd":"/myproject","gitBranch":"feature-x","message":{"role":"user","content":"after git checkout -b"},"timestamp":"2026-03-01T10:05:00Z"}
+{"type":"user","cwd":"/myproject","gitBranch":"feature-x","message":{"role":"user","content":"more work"},"timestamp":"2026-03-01T10:10:00Z"}
+`
+	path := filepath.Join(tmpDir, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write jsonl")
+
+	entry := ParseJSONLSessionPublic(path, sessionID)
+	require.NotNil(t, entry, "parseJSONLSession returned nil")
+	assert.Equal(t, "feature-x", entry.GitBranch, "GitBranch should be the LAST branch seen, not the first")
+	assert.Equal(t, "/myproject", entry.ProjectPath, "ProjectPath stays first-wins")
+}
+
 func TestCopyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 

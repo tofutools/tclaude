@@ -80,11 +80,14 @@ default. Tab-completion suggests existing group names.
 
 - **Snapshot**: `dashboardGroup.DefaultCwd` (`json:"default_cwd"`).
 - **Group header**: a `.group-default-cwd` chip (`📁 <shortCwd>` or a
-  faint `📁 no default dir`) plus a **"start dir"** button next to
-  "rename". The button does an inline edit — replaces the chip with an
-  `<input>`, Enter saves (`PATCH /api/groups/{name}`), Esc / blur
-  cancels. Auto-refresh suspends via the existing `renameEditing`
-  flag so the 5s poll can't drop the input mid-keystroke.
+  faint `📁 no default dir`). The chip itself is click-to-edit
+  (`data-act="set-group-dir"` lives on the span) — clicking it
+  replaces the chip with an `<input>`, Enter saves (`PATCH
+  /api/groups/{name}`), Esc / blur cancels. Auto-refresh suspends via
+  the existing `renameEditing` flag so the 5s poll can't drop the
+  input mid-keystroke. (There is no separate "start dir" button — an
+  earlier cut had one next to "rename"; the chip absorbed it so the
+  affordance sits on the thing it edits.)
 - **Spawn modal**: `prefillSpawnCwd()` fills the CWD field from the
   selected group's `default_cwd` when the modal opens, and re-fills it
   when the group `<select>` changes (Agents-tab spawn). It never

@@ -38,6 +38,13 @@ table th, table td {
   vertical-align: top;
 }
 table th { color: #7d8590; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+table th.sortable { cursor: pointer; user-select: none; }
+table th.sortable:hover { color: #c9d1d9; }
+table th.sort-active { color: #58a6ff; }
+.sort-arrow { font-size: 8px; margin-left: 4px; }
+table th.sortable .sort-arrow { color: #484f58; opacity: 0; transition: opacity .1s; }
+table th.sortable:hover .sort-arrow { opacity: .7; }
+table th.sort-active .sort-arrow { color: #58a6ff; opacity: 1; }
 table tr:hover { background: #161b22; }
 .online { color: #3fb950; }
 .offline { color: #484f58; }
@@ -136,9 +143,12 @@ details[open] > summary .group-actions { opacity: 1; }
 }
 .group-default-cwd {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
-  margin-left: 8px;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent;
 }
+.group-default-cwd:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-cwd.unset { color: #484f58; font-style: italic; }
+.group-default-cwd.unset:hover { color: #d4d4d4; }
 .group-default-cwd-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
@@ -1173,6 +1183,190 @@ summary.dnd-drop-over.dnd-effect-clone {
     return `<span class="${cls}" data-act="cycle-group-offline" data-group="${esc(name)}" data-label="${esc(name)}" title="Per-group offline visibility — click to cycle: inherit tab default → always show → always hide">${esc(label)}</span>`;
   }
 
+  // --- column sorting --------------------------------------------------
+  // Every primary table (group members, agents, cron, sudo, links) has
+  // clickable headers. The active sort — a {col, dir} pair keyed by a
+  // stable table name — lives in sortState and is mirrored to
+  // localStorage so it survives reloads and the 5s auto-refresh.
+  // Clicking a header cycles asc → desc → unsorted; the third click
+  // drops back to the server's own ordering.
+  const SORT_LS_KEY = 'tclaude.dash.sort';
+  let sortState = {};
+  try { sortState = JSON.parse(localStorage.getItem(SORT_LS_KEY)) || {}; }
+  catch (_) { sortState = {}; }
+
+  // cycleSort advances one table's sort through the three-state cycle
+  // and persists the result.
+  function cycleSort(tableKey, col) {
+    const cur = sortState[tableKey];
+    if (!cur || cur.col !== col) {
+      sortState[tableKey] = { col, dir: 'asc' };
+    } else if (cur.dir === 'asc') {
+      sortState[tableKey] = { col, dir: 'desc' };
+    } else {
+      delete sortState[tableKey];
+    }
+    try { localStorage.setItem(SORT_LS_KEY, JSON.stringify(sortState)); }
+    catch (_) { /* private-mode / quota — sort still works in-memory */ }
+  }
+
+  // sortHead builds a table's <thead> from a column spec. Each spec
+  // entry is {label, col}; entries without a `col` (the online-dot and
+  // row-action columns) render as plain, non-clickable headers. The
+  // active column shows a solid ▲/▼; the rest carry a faint arrow that
+  // surfaces on hover, hinting they're clickable.
+  function sortHead(tableKey, cols) {
+    const active = sortState[tableKey];
+    const cells = cols.map(c => {
+      if (!c.col) return `<th>${esc(c.label || '')}</th>`;
+      const on = active && active.col === c.col;
+      const arrow = on ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
+      const cls = on ? 'sortable sort-active' : 'sortable';
+      return `<th class="${cls}" data-sort-table="${esc(tableKey)}" `
+           + `data-sort-col="${esc(c.col)}" title="Sort by ${esc(c.label)}">`
+           + `${esc(c.label)}<span class="sort-arrow">${arrow}</span></th>`;
+    });
+    return `<thead><tr>${cells.join('')}</tr></thead>`;
+  }
+
+  // cmpSortValues orders two non-empty accessor outputs: booleans and
+  // numbers compare naturally, everything else as case-insensitive
+  // strings (ISO timestamps included — lexical order is chronological).
+  function cmpSortValues(a, b) {
+    if (typeof a === 'boolean' || typeof b === 'boolean') {
+      return (a === b) ? 0 : (a ? -1 : 1);
+    }
+    if (typeof a === 'number' && typeof b === 'number') {
+      return a - b;
+    }
+    return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
+  }
+
+  // applySort returns a sorted copy of `rows` for the given table.
+  // With no active sort (or an accessor the table doesn't define) the
+  // original array is handed back untouched, preserving server order.
+  // Blank/nullish cells always sort last, whichever the direction, so
+  // empty values never crowd the top.
+  function applySort(tableKey, rows, accessors) {
+    const st = sortState[tableKey];
+    if (!st || !accessors || !accessors[st.col]) return rows;
+    const get = accessors[st.col];
+    const sign = st.dir === 'desc' ? -1 : 1;
+    return rows.slice().sort((ra, rb) => {
+      const a = get(ra), b = get(rb);
+      const ae = (a == null || a === ''), be = (b == null || b === '');
+      if (ae || be) return ae === be ? 0 : (ae ? 1 : -1);
+      return sign * cmpSortValues(a, b);
+    });
+  }
+
+  // Column specs + value accessors for each sortable table. The `col`
+  // strings are opaque keys shared between the header (sortHead) and
+  // the sorter (applySort); they need not match the data field name.
+  const MEMBER_COLS = [
+    { label: '' },
+    { label: 'ID', col: 'id' },
+    { label: 'Alias / Title', col: 'alias' },
+    { label: 'State', col: 'state' },
+    { label: 'Last', col: 'last' },
+    { label: 'CWD', col: 'cwd' },
+    { label: 'Branch', col: 'branch' },
+    { label: 'Role', col: 'role' },
+    { label: 'Description', col: 'descr' },
+    { label: '' },
+  ];
+  const MEMBER_ACCESSORS = {
+    id:     m => m.conv_id,
+    alias:  m => m.alias || m.title,
+    state:  m => (m.state || {}).status,
+    last:   m => (m.state || {}).last_hook,
+    cwd:    m => (m.state || {}).cwd,
+    branch: m => m.branch,
+    role:   m => m.role,
+    descr:  m => m.descr,
+  };
+
+  const AGENT_COLS = [
+    { label: '' },
+    { label: 'ID', col: 'id' },
+    { label: 'Name', col: 'name' },
+    { label: 'State', col: 'state' },
+    { label: 'Last activity', col: 'last' },
+    { label: 'CWD', col: 'cwd' },
+    { label: 'Branch', col: 'branch' },
+    { label: 'Groups', col: 'groups' },
+    { label: 'Effective permissions', col: 'perms' },
+    { label: '' },
+  ];
+  const AGENT_ACCESSORS = {
+    id:     a => a.conv_id,
+    name:   a => a.title,
+    state:  a => (a.state || {}).status,
+    last:   a => (a.state || {}).last_hook,
+    cwd:    a => (a.state || {}).cwd,
+    branch: a => a.branch,
+    groups: a => (a.groups || []).join(', '),
+    perms:  a => (a.effective || []).length,
+  };
+
+  const CRON_COLS = [
+    { label: '' },
+    { label: 'ID', col: 'id' },
+    { label: 'Name', col: 'name' },
+    { label: 'Owner', col: 'owner' },
+    { label: 'Target', col: 'target' },
+    { label: 'Every', col: 'every' },
+    { label: 'Last run', col: 'last' },
+    { label: 'Status', col: 'status' },
+    { label: 'Body', col: 'body' },
+    { label: '' },
+  ];
+  const CRON_ACCESSORS = {
+    id:     j => j.id,
+    name:   j => j.name,
+    owner:  j => j.owner_label || j.owner_conv,
+    target: j => j.group_name || j.target_label || j.target_conv,
+    every:  j => j.interval_seconds,
+    last:   j => j.last_run_at,
+    status: j => j.last_run_status,
+    body:   j => j.body,
+  };
+
+  const SUDO_COLS = [
+    { label: 'Conv', col: 'conv' },
+    { label: 'Slug', col: 'slug' },
+    { label: 'Granted at', col: 'granted' },
+    { label: 'Expires in', col: 'expires' },
+    { label: 'Reason', col: 'reason' },
+    { label: 'Granted by', col: 'by' },
+    { label: '' },
+  ];
+  const SUDO_ACCESSORS = {
+    conv:    r => r.conv_title || r.conv_id,
+    slug:    r => r.slug,
+    granted: r => r.granted_at,
+    expires: r => r.remaining_seconds,
+    reason:  r => r.reason,
+    by:      r => r.granted_by,
+  };
+
+  const LINK_COLS = [
+    { label: 'ID', col: 'id' },
+    { label: 'From', col: 'from' },
+    { label: '' },
+    { label: 'To', col: 'to' },
+    { label: 'Mode', col: 'mode' },
+    { label: 'Created', col: 'created' },
+    { label: '' },
+  ];
+  const LINK_ACCESSORS = {
+    id:      l => l.id,
+    from:    l => l.from,
+    to:      l => l.to,
+    mode:    l => l.mode,
+    created: l => l.created_at,
+  };
+
   function renderGroups(groups) {
     if (!groups || !groups.length) {
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
@@ -1194,14 +1388,13 @@ summary.dnd-drop-over.dnd-effect-clone {
           <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
           <span class="muted">— ${members.length} members, ${g.online || 0} online${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
-          <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-group-default-cwd="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) : 'No default spawn directory set'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
+          <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
           ${groupOfflineToggleHTML(g.name)}
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
-            <button data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Set the working directory pre-filled when spawning agents into this group">start dir</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
           </span>
         </summary>
@@ -1212,13 +1405,9 @@ summary.dnd-drop-over.dnd-effect-clone {
             ? `<div class="muted">(${hiddenOffline} offline member${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})</div>`
             : `
           <table>
-            <thead>
-              <tr>
-                <th></th><th>ID</th><th>Alias / Title</th><th>State</th><th>Last</th><th>CWD</th><th>Branch</th><th>Role</th><th>Description</th><th></th>
-              </tr>
-            </thead>
+            ${sortHead('members', MEMBER_COLS)}
             <tbody>
-              ${visible.map(m => {
+              ${applySort('members', visible, MEMBER_ACCESSORS).map(m => {
                 const state = m.state || {};
                 const subagents = state.subagent_count || 0;
                 return `
@@ -1311,13 +1500,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     }
     return `
       <table>
-        <thead>
-          <tr>
-            <th></th><th>ID</th><th>Name</th><th>State</th><th>Last activity</th><th>CWD</th><th>Branch</th><th>Groups</th><th>Effective permissions</th><th></th>
-          </tr>
-        </thead>
+        ${sortHead('agents', AGENT_COLS)}
         <tbody>
-          ${agents.map(a => {
+          ${applySort('agents', agents, AGENT_ACCESSORS).map(a => {
             const state = a.state || {};
             const lh = relTime(state.last_hook);
             const subagents = state.subagent_count || 0;
@@ -1533,14 +1718,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     }
     return `
       <table>
-        <thead>
-          <tr>
-            <th></th><th>ID</th><th>Name</th><th>Owner</th><th>Target</th>
-            <th>Every</th><th>Last run</th><th>Status</th><th>Body</th><th></th>
-          </tr>
-        </thead>
+        ${sortHead('cron', CRON_COLS)}
         <tbody>
-          ${jobs.map(j => {
+          ${applySort('cron', jobs, CRON_ACCESSORS).map(j => {
             const enabledDot = j.enabled
               ? '<span class="online" title="enabled">●</span>'
               : '<span class="offline" title="disabled">○</span>';
@@ -1626,14 +1806,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     }
     return `
       <table>
-        <thead>
-          <tr>
-            <th>Conv</th><th>Slug</th><th>Granted at</th><th>Expires in</th>
-            <th>Reason</th><th>Granted by</th><th></th>
-          </tr>
-        </thead>
+        ${sortHead('sudo', SUDO_COLS)}
         <tbody>
-          ${rows.map(r => `
+          ${applySort('sudo', rows, SUDO_ACCESSORS).map(r => `
             <tr>
               <td>
                 <span class="alias">${esc(r.conv_title || '(unknown)')}</span>
@@ -1673,11 +1848,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     }
     return `
       <table>
-        <thead>
-          <tr><th>ID</th><th>From</th><th></th><th>To</th><th>Mode</th><th>Created</th><th></th></tr>
-        </thead>
+        ${sortHead('links', LINK_COLS)}
         <tbody>
-          ${rows.map(l => `
+          ${applySort('links', rows, LINK_ACCESSORS).map(l => `
             <tr>
               <td class="id">${l.id}</td>
               <td><span class="alias">${esc(l.from || '(deleted)')}</span></td>
@@ -3207,6 +3380,26 @@ summary.dnd-drop-over.dnd-effect-clone {
     }, true);
   }
 
+  // bindSortHeaders delegates clicks on sortable <th> cells. Headers
+  // are re-rendered on every 5s refresh, so a single document-level
+  // listener is simpler than re-binding per render (same approach as
+  // bindCopy / bindDetailsPersistence). Clicking re-renders just the
+  // affected tab so the new ordering — and the header arrow — show
+  // immediately, without waiting for the next poll.
+  function bindSortHeaders() {
+    document.addEventListener('click', e => {
+      const th = e.target.closest('th[data-sort-table]');
+      if (!th) return;
+      const tableKey = th.dataset.sortTable;
+      cycleSort(tableKey, th.dataset.sortCol);
+      if (tableKey === 'members') renderGroupsTab();
+      else if (tableKey === 'agents') renderAgentsTab();
+      else if (tableKey === 'cron') renderCronTab();
+      else if (tableKey === 'sudo') renderSudoTab();
+      else if (tableKey === 'links') renderLinksTab();
+    });
+  }
+
   // --- inline mutations: action buttons + confirm modal + toast ---
 
   // confirmModal pops the confirmation overlay; resolves true on
@@ -3930,12 +4123,16 @@ summary.dnd-drop-over.dnd-effect-clone {
           }
           case 'set-group-dir': {
             // Inline edit of the group's default spawn directory.
-            // Mirrors rename-group: replace the .group-default-cwd
-            // chip with an <input>, Enter saves (PATCH /api/groups/
-            // {name}), Esc / blur cancels. Auto-refresh suspended via
-            // renameEditing so the 5s tick can't drop the input.
-            const summary = btn.closest('summary');
-            const cwdEl = summary && summary.querySelector('.group-default-cwd');
+            // The 📁 chip itself is the click target (data-act lives
+            // on the .group-default-cwd span), so btn IS the chip:
+            // replace it with an <input>, Enter saves (PATCH
+            // /api/groups/{name}), Esc / blur cancels. Auto-refresh
+            // suspended via renameEditing so the 5s tick can't drop
+            // the input. Fall back to a summary lookup in case the
+            // click landed on a descendant rather than the span.
+            const cwdEl = btn.classList.contains('group-default-cwd')
+              ? btn
+              : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-cwd'));
             if (!cwdEl) {
               toast('start dir: could not locate the dir element', true);
               return;
@@ -4372,6 +4569,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindTabs();
   bindCopy();
   bindDetailsPersistence();
+  bindSortHeaders();
   bindRowActions();
   bindDnd();
   bindFilter('groups');

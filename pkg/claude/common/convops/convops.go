@@ -395,11 +395,17 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 			firstTimestamp = msg.Timestamp
 		}
 
-		// Capture project path and git branch from first message that has them
+		// Capture project path from the first message that has it — the
+		// cwd is fixed for the life of a conversation, so first-wins.
 		if entry.ProjectPath == "" && msg.Cwd != "" {
 			entry.ProjectPath = msg.Cwd
 		}
-		if entry.GitBranch == "" && msg.GitBranch != "" {
+		// Git branch, by contrast, can change mid-conversation (a
+		// `git checkout`, a new worktree). Claude Code stamps the
+		// *current* branch onto every turn, so keep the LAST one seen:
+		// the index then reflects where the agent is now, not the
+		// branch the session happened to start on.
+		if msg.GitBranch != "" {
 			entry.GitBranch = msg.GitBranch
 		}
 
@@ -427,7 +433,15 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 			}
 		}
 
-		// Stop early only if we have ALL the fields we care about
+		// Stop early only if we have ALL the early-stable fields.
+		// GitBranch is deliberately NOT a gate here: it's last-wins
+		// (the branch can change mid-conversation) so it never reaches
+		// a "final" value before EOF. For a compacted conv whose other
+		// four fields are all populated, this break can cut the scan
+		// short and report the branch as of the early-exit point
+		// rather than the true last turn. Accepted: the common
+		// (non-compacted) conv has no summary turn, so this break is
+		// never reached and the branch read is exact.
 		if entry.CustomTitle != "" && entry.Summary != "" && entry.FirstPrompt != "" && entry.ProjectPath != "" {
 			break
 		}
