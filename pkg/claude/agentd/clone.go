@@ -250,11 +250,11 @@ func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 			"this endpoint clones the calling agent's own conversation; humans should use `tclaude conv copy` directly, or use POST /v1/agent/{conv}/clone to clone another agent")
 		return
 	}
-	followUp, noCopyConv, ok := decodeCloneBody(w, r)
+	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, caller, caller, PermSelfClone, followUp, noCopyConv)
+	runCloneOrchestration(w, caller, caller, PermSelfClone, followUp, noCopyConv, cwd)
 }
 
 // handleAgentClone handles POST /v1/agent/{conv}/clone (cross-agent).
@@ -268,24 +268,28 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 	if !ok {
 		return
 	}
-	followUp, noCopyConv, ok := decodeCloneBody(w, r)
+	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, targetConv, caller, PermAgentClone, followUp, noCopyConv)
+	runCloneOrchestration(w, targetConv, caller, PermAgentClone, followUp, noCopyConv, cwd)
 }
 
-// decodeCloneBody parses + validates the optional follow_up and
-// no_copy_conv body fields.
-func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, noCopyConv bool, ok bool) {
+// decodeCloneBody parses + validates the optional follow_up,
+// no_copy_conv and cwd body fields. cwd is an optional override for
+// where the clone's CC session is spawned — empty means "inherit the
+// source's cwd" (the historical behaviour); a worktree path lets the
+// human fork a clone onto a parallel branch.
+func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, noCopyConv bool, cwd string, ok bool) {
 	var body struct {
 		FollowUp   string `json:"follow_up"`
 		NoCopyConv bool   `json:"no_copy_conv"`
+		Cwd        string `json:"cwd"`
 	}
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return "", false, false
+			return "", false, "", false
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
@@ -294,9 +298,9 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 			"REJECTED. Follow-up must be 1-4096 printable characters; tabs, newlines, "+
 				"and other control characters are not allowed (each newline would be "+
 				"treated as a submit by tmux send-keys, splitting the prompt).")
-		return "", false, false
+		return "", false, "", false
 	}
-	return body.FollowUp, body.NoCopyConv, true
+	return body.FollowUp, body.NoCopyConv, strings.TrimSpace(body.Cwd), true
 }
 
 // runCloneOrchestration is the target-agnostic body shared by self
@@ -311,7 +315,12 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 //     (PermSelfClone / PermAgentClone / "" for human dashboard). Used
 //     to annotate `granted_by` with `:via-sudo:grant-id=<n>` when the
 //     call only passed because of a sudo grant.
-func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp string, noCopyConv bool) {
+//   - cwdOverride, when non-empty, is the directory the clone's CC
+//     session is spawned into instead of the source's cwd — typically
+//     a git worktree path so a clone can pick up work on a parallel
+//     branch. It's validated (exists, is a directory, "~" expanded)
+//     before use; a bad value fails the whole clone with a 400.
+func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp string, noCopyConv bool, cwdOverride string) {
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
 	oldSess := pickAliveSession(target)
@@ -321,6 +330,14 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		return
 	}
 	cwd := oldSess.Cwd
+	if cwdOverride != "" {
+		resolved, err := resolveSpawnCwd(cwdOverride)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+			return
+		}
+		cwd = resolved
+	}
 
 	// Rate limit: refuse a second clone of the same source within
 	// CloneCooldown. Clone is the only default-granted, agent-reachable

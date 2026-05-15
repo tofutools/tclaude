@@ -279,6 +279,21 @@ func (f *Flow) Spawn(group, alias string) SpawnResp {
 	return resp
 }
 
+// SpawnWith drives POST /v1/groups/{group}/spawn with an arbitrary
+// JSON body and returns the parsed outcome WITHOUT fatal-on-error — so
+// tests can exercise the failure paths (bad cwd, missing group, …).
+// On 2xx the ConvID / TmuxSession fields are populated; on error the
+// Code + Raw fields carry the daemon's response for assertion.
+func (f *Flow) SpawnWith(group string, body map[string]any) SpawnResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/groups/"+group+"/spawn", body)
+	var resp SpawnResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp
+}
+
 // ResumeResp parses POST /v1/agent/{conv}/resume.
 type ResumeResp struct {
 	ConvID string `json:"conv_id"`
@@ -374,6 +389,21 @@ func (f *Flow) CloneFresh(target, alias string) CloneResp {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		f.T.Fatalf("CloneFresh decode: %v body=%s", err, rec.Body.String())
 	}
+	return resp
+}
+
+// CloneWith drives POST /v1/agent/{target}/clone with an arbitrary
+// JSON body and returns the outcome WITHOUT fatal-on-error — so tests
+// can exercise the failure paths (bad cwd override, …) and inspect a
+// successful clone's fields. On error the Code + Raw fields carry the
+// daemon's response.
+func (f *Flow) CloneWith(target string, body map[string]any) CloneResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+target+"/clone", body)
+	var resp CloneResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	return resp
 }
 

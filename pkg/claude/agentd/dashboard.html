@@ -804,7 +804,19 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
-      <input id="agent-spawn-cwd" type="text" placeholder="optional — defaults to dashboard daemon's cwd" autocomplete="off" spellcheck="false" />
+      <input id="agent-spawn-cwd" type="text" placeholder="optional — defaults to dashboard daemon's cwd; ~ expands to home" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Worktree</span>
+      <select id="agent-spawn-worktree"><option value="">(enter a CWD to enable worktrees)</option></select>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-wt-new-row" style="display:none">
+      <span class="cron-create-label">New branch</span>
+      <input id="agent-spawn-wt-branch" type="text" placeholder="branch name for the new worktree" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" id="agent-spawn-wt-base-row" style="display:none">
+      <span class="cron-create-label">Base branch</span>
+      <select id="agent-spawn-wt-base"></select>
     </label>
     <div class="cron-create-error" id="agent-spawn-error"></div>
     <div class="modal-buttons">
@@ -824,6 +836,18 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-enabled" title="When checked, copies the source conv.jsonl onto the clone so it starts with the full history. Uncheck for a fresh CC instance that only inherits identity.">
       <input id="clone-agent-copy-conv" type="checkbox" checked /> Copy conversation history (jsonl)
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Worktree</span>
+      <select id="clone-agent-worktree"><option value="">(no worktree — same directory as source)</option></select>
+    </label>
+    <label class="cron-create-row" id="clone-agent-wt-new-row" style="display:none">
+      <span class="cron-create-label">New branch</span>
+      <input id="clone-agent-wt-branch" type="text" placeholder="branch name for the new worktree" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" id="clone-agent-wt-base-row" style="display:none">
+      <span class="cron-create-label">Base branch</span>
+      <select id="clone-agent-wt-base"></select>
     </label>
     <div class="cron-create-error" id="clone-agent-error"></div>
     <div class="modal-buttons">
@@ -956,7 +980,8 @@ summary.dnd-drop-over.dnd-effect-clone {
   // running.
   function cloneAgentButton(m) {
     const label = m.alias || m.title || m.conv_id;
-    return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
+    const cwd = (m.state && m.state.cwd) || m.cwd || '';
+    return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-cwd="${esc(cwd)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
   }
   // reincarnateAgentButton renders a "reincarnate" button for any row
   // that represents a single agent. Reincarnate spawns a fresh CC
@@ -1213,7 +1238,7 @@ summary.dnd-drop-over.dnd-effect-clone {
               <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -2410,6 +2435,113 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
+  // ---- Worktree picker (shared by spawn + clone modals) -------------------
+  //
+  // A worktree picker is a <select> plus two reveal-on-demand rows,
+  // identified by an element-id prefix (`agent-spawn` or `clone-agent`):
+  //
+  //   #<prefix>-worktree      <select> — none / existing worktrees / "+ create"
+  //   #<prefix>-wt-new-row    new-branch row, shown only for "+ create"
+  //   #<prefix>-wt-base-row   base-branch row, same visibility
+  //   #<prefix>-wt-branch     new branch name (text input)
+  //   #<prefix>-wt-base       base branch (<select>)
+  //
+  // wtRefresh repopulates the <select> from GET /api/worktrees; on
+  // submit, wtResolveCwd turns the picker state into the directory the
+  // spawn/clone should run in — POSTing /api/worktrees first when the
+  // human chose "+ create". The whole feature is opt-in: the default
+  // "" option leaves spawn/clone behaviour exactly as before.
+
+  const WT_NEW = '__new__';
+
+  // wtToggleNew shows/hides the new-branch + base-branch rows.
+  function wtToggleNew(prefix, show) {
+    $(`#${prefix}-wt-new-row`).style.display = show ? '' : 'none';
+    $(`#${prefix}-wt-base-row`).style.display = show ? '' : 'none';
+  }
+
+  // wtRefresh repopulates the worktree <select> for `repo`. A missing
+  // or non-repo `repo` disables the picker (spawn/clone then just uses
+  // the directory as-is). noneLabel is the text of the leading "no
+  // worktree" option — phrased per modal.
+  async function wtRefresh(prefix, repo, noneLabel) {
+    const select = $(`#${prefix}-worktree`);
+    wtToggleNew(prefix, false);
+    repo = (repo || '').trim();
+    select.dataset.repoRoot = '';
+    if (!repo) {
+      select.innerHTML = '<option value="">(enter a CWD to enable worktrees)</option>';
+      select.disabled = true;
+      return;
+    }
+    select.disabled = true;
+    select.innerHTML = '<option value="">loading…</option>';
+    let data = {};
+    try {
+      const r = await fetch(`/api/worktrees?repo=${encodeURIComponent(repo)}`, { credentials: 'same-origin' });
+      data = await r.json();
+    } catch (_) { data = {}; }
+    // Stale-guard: if the picker was reloaded for a different repo
+    // while this fetch was in flight, drop the result.
+    if ((select.dataset.pendingRepo || '') !== repo) return;
+    if (!data || !data.is_repo) {
+      select.innerHTML = '<option value="">(not a git repo — worktrees unavailable)</option>';
+      select.disabled = true;
+      return;
+    }
+    select.dataset.repoRoot = data.repo_root || '';
+    const opts = [`<option value="">${esc(noneLabel || '(no worktree)')}</option>`];
+    (data.worktrees || []).forEach(wt => {
+      const br = wt.branch || '(detached)';
+      const tag = wt.is_main ? ' [main]' : '';
+      opts.push(`<option value="wt:${esc(wt.path)}">${esc(br)}${tag} — ${esc(shortCwd(wt.path))}</option>`);
+    });
+    opts.push(`<option value="${WT_NEW}">+ create new worktree…</option>`);
+    select.innerHTML = opts.join('');
+    select.disabled = false;
+    const base = $(`#${prefix}-wt-base`);
+    base.innerHTML = (data.branches || []).map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+    if (data.default_branch) base.value = data.default_branch;
+  }
+
+  // wtLoad sets the pending-repo guard then refreshes. Call this rather
+  // than wtRefresh directly so overlapping loads resolve correctly.
+  function wtLoad(prefix, repo, noneLabel) {
+    $(`#${prefix}-worktree`).dataset.pendingRepo = (repo || '').trim();
+    return wtRefresh(prefix, repo, noneLabel);
+  }
+
+  // bindWtPicker wires the <select>'s change event once at startup.
+  function bindWtPicker(prefix) {
+    $(`#${prefix}-worktree`).addEventListener('change', (e) => {
+      wtToggleNew(prefix, e.target.value === WT_NEW);
+    });
+  }
+
+  // wtResolveCwd turns the current picker state into the cwd a
+  // spawn/clone should use. `repo` is the directory the picker loaded
+  // against; `fallback` is returned when no worktree is selected (the
+  // entered CWD for spawn, "" for clone = inherit the source's cwd).
+  // Throws on a worktree-creation failure so the caller surfaces it.
+  async function wtResolveCwd(prefix, repo, fallback) {
+    const val = $(`#${prefix}-worktree`).value || '';
+    if (!val) return fallback;
+    if (val.startsWith('wt:')) return val.slice(3);
+    if (val === WT_NEW) {
+      const branch = $(`#${prefix}-wt-branch`).value.trim();
+      if (!branch) throw new Error('enter a branch name for the new worktree');
+      const root = $(`#${prefix}-worktree`).dataset.repoRoot || repo;
+      const r = await fetch('/api/worktrees', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: root, branch, from_branch: $(`#${prefix}-wt-base`).value || '' }),
+      });
+      if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+      return (await r.json()).path;
+    }
+    return fallback;
+  }
+
   // ---- Agent spawn modal --------------------------------------------------
   //
   // Opens with `{groupName}` pre-filled when invoked from a group header,
@@ -2447,6 +2579,8 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-role').value = '';
     $('#agent-spawn-descr').value = '';
     $('#agent-spawn-cwd').value = '';
+    $('#agent-spawn-wt-branch').value = '';
+    wtLoad('agent-spawn', '', '(no worktree — use CWD above)');
     $('#agent-spawn-error').textContent = '';
     const meta = $('#agent-spawn-meta');
     if (groupName) {
@@ -2482,10 +2616,14 @@ summary.dnd-drop-over.dnd-effect-clone {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Spawning…';
     try {
+      // Resolve the worktree picker first — this may create a new
+      // worktree, whose path becomes the spawn cwd. With no worktree
+      // selected it just returns the entered CWD unchanged.
+      const effectiveCwd = await wtResolveCwd('agent-spawn', cwd, cwd);
       const r = await fetch(`/api/groups/${encodeURIComponent(group)}/spawn`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alias, role, descr, cwd }),
+        body: JSON.stringify({ alias, role, descr, cwd: effectiveCwd }),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -2511,6 +2649,16 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-open').addEventListener('click', () => openAgentSpawnModal({}));
     $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
     $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
+    bindWtPicker('agent-spawn');
+    // Re-list worktrees when the CWD field settles (debounced) — the
+    // picker operates on whatever repo the typed CWD lands in.
+    let spawnCwdTimer;
+    $('#agent-spawn-cwd').addEventListener('input', () => {
+      clearTimeout(spawnCwdTimer);
+      spawnCwdTimer = setTimeout(() => {
+        wtLoad('agent-spawn', $('#agent-spawn-cwd').value.trim(), '(no worktree — use CWD above)');
+      }, 350);
+    });
     $('#agent-spawn-modal').addEventListener('click', (e) => {
       if (e.target.id === 'agent-spawn-modal') closeAgentSpawnModal();
     });
@@ -2528,14 +2676,21 @@ summary.dnd-drop-over.dnd-effect-clone {
   // server rejects them (tmux send-keys would split them into multiple
   // submits).
 
-  function openCloneAgentModal(conv, label) {
+  function openCloneAgentModal(conv, label, cwd) {
+    cwd = cwd || '';
     const meta = $('#clone-agent-meta');
-    meta.textContent = label ? `source: ${label}` : `source: ${shortId(conv)}`;
+    const src = label || shortId(conv);
+    meta.textContent = cwd ? `source: ${src}  ·  ${cwd}` : `source: ${src}`;
     $('#clone-agent-followup').value = '';
     $('#clone-agent-copy-conv').checked = true;
+    $('#clone-agent-wt-branch').value = '';
     $('#clone-agent-error').textContent = '';
     $('#clone-agent-modal').dataset.conv = conv;
     $('#clone-agent-modal').dataset.label = label || '';
+    $('#clone-agent-modal').dataset.cwd = cwd;
+    // The picker lists worktrees of the source agent's repo; "+ create"
+    // forks a new one and the clone spawns there.
+    wtLoad('clone-agent', cwd, '(no worktree — same directory as source)');
     $('#clone-agent-modal').classList.add('show');
     setTimeout(() => $('#clone-agent-followup').focus(), 0);
   }
@@ -2563,10 +2718,13 @@ summary.dnd-drop-over.dnd-effect-clone {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Cloning…';
     try {
+      // Resolve the worktree picker → optional cwd override. An empty
+      // result means "inherit the source's cwd" (historical behaviour).
+      const cwd = await wtResolveCwd('clone-agent', modal.dataset.cwd || '', '');
       const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/clone`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ follow_up: followUp, no_copy_conv: !copyConv }),
+        body: JSON.stringify({ follow_up: followUp, no_copy_conv: !copyConv, cwd }),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -2588,6 +2746,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   function bindCloneAgentModal() {
     $('#clone-agent-cancel').addEventListener('click', closeCloneAgentModal);
     $('#clone-agent-submit').addEventListener('click', submitCloneAgent);
+    bindWtPicker('clone-agent');
     $('#clone-agent-modal').addEventListener('click', (e) => {
       if (e.target.id === 'clone-agent-modal') closeCloneAgentModal();
     });
@@ -3505,8 +3664,9 @@ summary.dnd-drop-over.dnd-effect-clone {
           }
           case 'clone': {
             // Open the clone modal pre-populated with this agent. The
-            // modal handles the POST + refresh.
-            openCloneAgentModal(conv, label);
+            // modal handles the POST + refresh. data-cwd seeds the
+            // worktree picker with the source agent's repo.
+            openCloneAgentModal(conv, label, btn.getAttribute('data-cwd') || '');
             return;
           }
           case 'reincarnate': {
