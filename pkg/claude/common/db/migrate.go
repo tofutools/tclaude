@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 27
+const currentVersion = 28
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -185,6 +185,32 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 28 {
+		if err := migrateV27toV28(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV27toV28 adds agent_groups.default_context — an optional
+// block of shared startup guidance the human attaches to a group.
+// When set, agents spawned into the group have it injected into
+// their pane on startup (right after the spawn welcome), unless the
+// spawn opts out. Empty string = no group context (the pre-feature
+// behaviour). Multi-line text is fine: the spawn injector pastes it
+// via bracketed paste so embedded newlines survive intact.
+func migrateV27toV28(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_groups
+			ADD COLUMN default_context TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 28;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v27→v28: %w", err)
+	}
 	return nil
 }
 

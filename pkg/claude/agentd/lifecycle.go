@@ -345,6 +345,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// dashboard's spawn modal defaults its checkbox on, CLI / agent
 		// callers pass it explicitly.
 		AutoFocus bool `json:"auto_focus,omitempty"`
+		// IncludeGroupContext controls whether the group's default_context
+		// (when set) is injected into the new agent on startup. It's a
+		// *bool so an omitted field means opt-in — every spawn path
+		// inherits the group context by default, the same way it inherits
+		// default_cwd. The dashboard sends false explicitly when the human
+		// unticks the "include group default context" checkbox.
+		IncludeGroupContext *bool `json:"include_group_context,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -463,10 +470,20 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	//      welcome describes its role/descr/group so it can orient
 	//      itself before the human starts typing.
 	//
+	// Group startup context: optional shared guidance the human
+	// attached to the group. It's injected after the welcome unless
+	// this spawn opted out (IncludeGroupContext == false). An omitted
+	// flag means opt-in. An empty g.DefaultContext leaves nothing to
+	// inject, so the post-init goroutine skips the step entirely.
+	groupContext := ""
+	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
+		groupContext = g.DefaultContext
+	}
+
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name)
+		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name, groupContext)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -480,15 +497,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 
 // runSpawnPostInit fires asynchronously after a successful spawn. It
 // waits for the new tmux pane to come online, then injects /rename
-// (when alias is a valid rename title) followed by a welcome system
-// message. Failures are logged, never bubbled — the spawn already
-// succeeded as far as the caller is concerned.
+// (when alias is a valid rename title), a welcome system message, and
+// — when the group carries one and the spawn opted in — the group's
+// shared startup context. Failures are logged, never bubbled — the
+// spawn already succeeded as far as the caller is concerned.
 //
 // Why /rename first: it's a slash command CC processes immediately,
 // landing a write on the .jsonl before any other turn happens. Even
 // if the welcome injection fails afterwards, the file exists and
 // `agent resume` can find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName string) {
+func runSpawnPostInit(convID, alias, role, descr, groupName, groupContext string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; rename + welcome abandoned",
 			"conv", convID)
@@ -505,34 +523,67 @@ func runSpawnPostInit(convID, alias, role, descr, groupName string) {
 	if alias != "" && isValidRenameTitle(alias) {
 		if !injectSlashCommand(convID, "/rename "+alias, welcome) {
 			slog.Warn("spawn: post-init injection failed", "conv", convID, "alias", alias)
+			return
 		}
-		return
+	} else {
+		// No valid alias to rename to — still inject the welcome so the
+		// .jsonl gets written and the agent has its context.
+		if alias != "" {
+			slog.Warn("spawn: alias not a valid rename title; skipping /rename, sending welcome only",
+				"conv", convID, "alias", alias)
+		}
+		target := aliveTmuxTarget(convID)
+		if target == "" {
+			slog.Warn("spawn: no alive tmux session for welcome", "conv", convID)
+			return
+		}
+		if err := injectTextAndSubmit(target, welcome); err != nil {
+			slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
+			return
+		}
 	}
-	// No valid alias to rename to — still inject the welcome so the
-	// .jsonl gets written and the agent has its context.
-	if alias != "" {
-		slog.Warn("spawn: alias not a valid rename title; skipping /rename, sending welcome only",
-			"conv", convID, "alias", alias)
+
+	// Group startup context, when the group has one and the spawn
+	// didn't opt out. Injected as its own turn right after the welcome,
+	// via bracketed paste so multi-line guidance lands intact (a raw
+	// send-keys would submit on every newline).
+	if groupContext != "" {
+		target := aliveTmuxTarget(convID)
+		if target == "" {
+			slog.Warn("spawn: no alive tmux session for group context", "conv", convID)
+			return
+		}
+		if err := injectMultilineAndSubmit(target, buildGroupContextMessage(groupName, groupContext)); err != nil {
+			slog.Warn("spawn: group context injection failed", "conv", convID, "error", err)
+		}
 	}
+}
+
+// aliveTmuxTarget returns the "<session>:0.0" pane address of the
+// first alive tmux session registered for convID, or "" when none is
+// up. Shared by the welcome / group-context injection steps above.
+func aliveTmuxTarget(convID string) string {
 	candidates, err := db.FindSessionsByConvID(convID)
-	if err != nil || len(candidates) == 0 {
-		slog.Warn("spawn: cannot resolve tmux session for welcome", "conv", convID)
-		return
+	if err != nil {
+		return ""
 	}
-	var tmuxTarget string
 	for _, c := range candidates {
 		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
-			tmuxTarget = c.TmuxSession + ":0.0"
-			break
+			return c.TmuxSession + ":0.0"
 		}
 	}
-	if tmuxTarget == "" {
-		slog.Warn("spawn: no alive tmux session for welcome", "conv", convID)
-		return
-	}
-	if err := injectTextAndSubmit(tmuxTarget, welcome); err != nil {
-		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
-	}
+	return ""
+}
+
+// buildGroupContextMessage wraps a group's startup context in a
+// [system: …] header so the new agent reads it as group-level
+// guidance rather than a human prompt — the same bracket convention
+// the spawn welcome and agent-message nudges use. The raw context
+// follows the header verbatim and may span multiple lines.
+func buildGroupContextMessage(groupName, context string) string {
+	return fmt.Sprintf(
+		"[system: group %q startup context — shared guidance for every agent spawned into this group:]\n\n%s",
+		groupName, context)
 }
 
 // buildSpawnWelcome composes the [system: ...] welcome text. Brackets
