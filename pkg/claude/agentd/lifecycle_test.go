@@ -20,6 +20,8 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 		descr             string
 		groupName         string
 		hasInitialMessage bool
+		worktreePath      string
+		worktreeBranch    string
 		mustContain       []string
 		mustOmit          []string
 	}{
@@ -43,12 +45,31 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 			alias:     "worker",
 			groupName: "alpha",
 			mustContain: []string{"worker", "alpha"},
-			mustOmit:   []string{"role:", "Descr:"},
+			mustOmit:   []string{"role:", "Descr:", "worktree"},
 		},
 		{
 			name:        "no alias, no group",
 			mustContain: []string{"spawned by the human"},
-			mustOmit:    []string{"as ", "in group "},
+			mustOmit:    []string{"as ", "in group ", "worktree"},
+		},
+		{
+			name:           "sub-repo worktree",
+			alias:          "worker",
+			groupName:      "alpha",
+			worktreePath:   "/home/dev/monorepo/cat/actual-repo-feature-x",
+			worktreeBranch: "feature-x",
+			mustContain: []string{
+				"/home/dev/monorepo/cat/actual-repo-feature-x",
+				"feature-x",
+				"worktree",
+			},
+		},
+		{
+			name:         "worktree path without branch",
+			alias:        "worker",
+			worktreePath: "/home/dev/monorepo/cat/actual-repo-wt",
+			mustContain:  []string{"/home/dev/monorepo/cat/actual-repo-wt", "worktree"},
+			mustOmit:     []string{"(branch "},
 		},
 		{
 			// Without an initial message the agent is told to sit idle.
@@ -71,7 +92,8 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildSpawnWelcome(tt.alias, tt.role, tt.descr, tt.groupName, tt.hasInitialMessage)
+			got := buildSpawnWelcome(tt.alias, tt.role, tt.descr, tt.groupName,
+				tt.hasInitialMessage, tt.worktreePath, tt.worktreeBranch)
 			for _, s := range tt.mustContain {
 				assert.Contains(t, got, s, "welcome should contain %q", s)
 			}
@@ -95,6 +117,8 @@ func TestBuildSpawnWelcome_SingleLineNoControlChars(t *testing.T) {
 			"reviews PRs and posts notes",
 			"reviewers",
 			hasInitialMessage,
+			"/home/dev/monorepo/services/api-feature-x",
+			"feature-x",
 		)
 		assert.False(t, strings.ContainsAny(got, "\n\t\r"), "welcome must be a single line, got %q", got)
 		assert.True(t, isValidFollowUp(got), "welcome should pass isValidFollowUp; got %q", got)

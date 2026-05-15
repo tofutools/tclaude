@@ -348,6 +348,18 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		InitialMessage string `json:"initial_message,omitempty"`
 		Cwd            string `json:"cwd,omitempty"`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+
+		// WorktreePath / WorktreeBranch describe a git worktree the
+		// agent should do its code work in, when Cwd is a parent
+		// "monorepo" directory rather than the repo itself. They are
+		// purely informational — the agent still launches in Cwd; the
+		// worktree path rides into the welcome message so the agent
+		// knows where to make edits. Set by the dashboard's spawn
+		// modal after it creates the worktree; empty for an ordinary
+		// spawn where Cwd already is the repo.
+		WorktreePath   string `json:"worktree_path,omitempty"`
+		WorktreeBranch string `json:"worktree_branch,omitempty"`
+
 		// AutoFocus, when set, opens a terminal window attached to the
 		// new agent once the spawn lands. Opt-in on the wire — the
 		// dashboard's spawn modal defaults its checkbox on, CLI / agent
@@ -403,6 +415,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_cwd", cwdErr.Error())
 		return
 	}
+
+	// Validate the optional worktree dir the same way — it must exist
+	// (the dashboard creates it just before spawning). Caught here so
+	// a stale path becomes an immediate 400 rather than a welcome
+	// message pointing the agent at a directory that isn't there.
+	var worktreePath string
+	if strings.TrimSpace(body.WorktreePath) != "" {
+		wt, wtErr := resolveSpawnCwd(body.WorktreePath)
+		if wtErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_worktree", wtErr.Error())
+			return
+		}
+		worktreePath = wt
+	}
+	worktreeBranch := strings.TrimSpace(body.WorktreeBranch)
 
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
@@ -489,7 +516,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name, body.InitialMessage)
+		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name,
+			body.InitialMessage, worktreePath, worktreeBranch)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -516,7 +544,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // landing a write on the .jsonl before any other turn happens. Even
 // if a later injection fails, the file exists and `agent resume` can
 // find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage string) {
+func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, worktreePath, worktreeBranch string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -545,8 +573,10 @@ func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage stri
 	}
 
 	// Welcome: a single-line [system: ...] turn orienting the agent
-	// (identity, role, descr, group).
-	welcome := buildSpawnWelcome(alias, role, descr, groupName, initialMessage != "")
+	// (identity, role, descr, group, and — for a sub-repo worktree —
+	// where to make code edits).
+	welcome := buildSpawnWelcome(alias, role, descr, groupName, initialMessage != "",
+		worktreePath, worktreeBranch)
 	if err := injectTextAndSubmit(target, welcome); err != nil {
 		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
 		return
@@ -573,7 +603,7 @@ func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage stri
 // hasInitialMessage flips the trailing instruction: with an initial
 // message queued the agent should act on it, not sit idle, so the
 // "wait for the first instruction" line is replaced.
-func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage bool) string {
+func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
 	parts := []string{"spawned by the human"}
 	if alias != "" {
 		parts = append(parts, fmt.Sprintf("as %q", alias))
@@ -588,6 +618,16 @@ func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage b
 	body := header + "."
 	if descr != "" {
 		body += " Descr: " + descr + "."
+	}
+	// When the spawn targeted a sub-repo of a monorepo launch dir, the
+	// agent's cwd is the parent dir but its code work belongs in the
+	// worktree. Spell that out so it doesn't edit the parent's repos.
+	if worktreePath != "" {
+		body += " Your git worktree for code changes is at " + worktreePath
+		if worktreeBranch != "" {
+			body += " (branch " + worktreeBranch + ")"
+		}
+		body += " — make code edits there, not elsewhere under your start directory."
 	}
 	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate."
 	if hasInitialMessage {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,6 +80,66 @@ func TestAddWorktreeInExplicitPath(t *testing.T) {
 	info, statErr := os.Stat(path)
 	require.NoError(t, statErr)
 	assert.True(t, info.IsDir())
+}
+
+func TestFindSubRepos(t *testing.T) {
+	// A "virtual monorepo": a plain dir holding docs plus nested git
+	// repos at varying depths — exactly the layout RepoRootForPath
+	// fails on and FindSubRepos is meant to rescue.
+	mono := t.TempDir()
+	mono, err := filepath.EvalSymlinks(mono)
+	require.NoError(t, err, "resolve symlinks")
+	require.NoError(t, os.WriteFile(filepath.Join(mono, "CLAUDE.md"), []byte("# docs\n"), 0o644))
+
+	mkRepo := func(rel string) {
+		p := filepath.Join(mono, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(p, 0o755), "mkdir %s", rel)
+		require.NoErrorf(t, exec.Command("git", "-C", p, "init").Run(), "git init %s", rel)
+	}
+	mkRepo("actual-repo")               // depth 1
+	mkRepo("some-category/nested-repo") // depth 2
+	mkRepo("a/b/c/deep-repo")           // depth 4
+	mkRepo("node_modules/skipme")       // inside a skipped dir
+
+	toSlash := func(subs []SubRepo) []string {
+		rels := make([]string, len(subs))
+		for i, s := range subs {
+			assert.Truef(t, filepath.IsAbs(s.Path), "Path should be absolute: %s", s.Path)
+			rels[i] = filepath.ToSlash(s.Rel)
+		}
+		return rels
+	}
+
+	subs := FindSubRepos(mono, 4)
+	rels := toSlash(subs)
+	assert.Contains(t, rels, "actual-repo")
+	assert.Contains(t, rels, "some-category/nested-repo")
+	assert.Contains(t, rels, "a/b/c/deep-repo")
+	assert.NotContains(t, rels, "node_modules/skipme", "node_modules must be skipped")
+
+	// Result is sorted by Rel (native separator).
+	native := make([]string, len(subs))
+	for i, s := range subs {
+		native[i] = s.Rel
+	}
+	assert.True(t, sort.StringsAreSorted(native), "result should be sorted by Rel: %v", native)
+
+	// maxDepth caps recursion — the depth-4 repo is invisible at 2.
+	shallow := toSlash(FindSubRepos(mono, 2))
+	assert.Contains(t, shallow, "actual-repo")
+	assert.Contains(t, shallow, "some-category/nested-repo")
+	assert.NotContains(t, shallow, "a/b/c/deep-repo", "maxDepth should cap recursion")
+
+	// A repo is a leaf: a repo nested inside another repo is never
+	// returned, because the walk stops descending at the outer repo.
+	mkRepo("actual-repo/inner")
+	for _, r := range toSlash(FindSubRepos(mono, 4)) {
+		assert.NotEqual(t, "actual-repo/inner", r, "must not descend into a repo")
+	}
+
+	// Degenerate inputs yield nothing rather than panicking.
+	assert.Nil(t, FindSubRepos("", 4))
+	assert.Nil(t, FindSubRepos(mono, 0))
 }
 
 func TestBranchesAndDefaultBranchIn(t *testing.T) {
