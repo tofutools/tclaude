@@ -1831,13 +1831,29 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "invalid_arg", "nothing to update (expected default_cwd)")
 		return
 	}
-	if _, err := db.SetAgentGroupDefaultCwd(g.Name, *body.DefaultCwd); err != nil {
+	// Normalise + validate: expand "~", require an absolute path (a
+	// relative default would resolve against the daemon's cwd at spawn
+	// time, which is meaningless). Empty stays empty — that clears it.
+	cwd, err := resolveGroupDefaultCwd(*body.DefaultCwd)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+		return
+	}
+	n, err := db.SetAgentGroupDefaultCwd(g.Name, cwd)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	// Zero rows: the group was renamed or deleted between the
+	// dispatcher's lookup and this update. Report not_found rather
+	// than a misleading 200.
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "no such group")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"group":       g.Name,
-		"default_cwd": *body.DefaultCwd,
+		"default_cwd": cwd,
 	})
 }
 

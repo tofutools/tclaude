@@ -69,14 +69,11 @@ func TestGroupDefaultCwd_ExplicitCwdOverrides(t *testing.T) {
 
 	// The explicit cwd is real — resolveSpawnCwd validates it exists.
 	explicitDir := t.TempDir()
-	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
-		http.MethodPost, "/v1/groups/alpha/spawn",
-		map[string]any{"alias": "worker", "cwd": explicitDir}))
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusOK, rec.Code, "spawn body=%s", rec.Body.String())
-
-	var spawn testharness.SpawnResp
-	testharness.DecodeJSON(t, rec, &spawn)
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"alias": "worker",
+		"cwd":   explicitDir,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	require.NotEmpty(t, spawn.Label, "spawn response missing label")
 
 	s, err := db.LoadSession(spawn.Label)
@@ -106,6 +103,36 @@ func TestGroupDefaultCwd_PatchClears(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g)
 	assert.Empty(t, g.DefaultCwd, "default_cwd should be cleared")
+
+	// End-to-end: a later blank-cwd spawn must NOT inherit the
+	// now-cleared default — the behavioural half of the contract.
+	spawn := f.AsHuman().Spawn("alpha", "worker")
+	s, err := db.LoadSession(spawn.Label)
+	require.NoError(t, err)
+	require.NotNil(t, s, "spawned session row missing")
+	assert.NotEqual(t, "/work/alpha-team", s.Cwd, "cleared default must not be used")
+}
+
+// Scenario: a relative default_cwd is rejected. A relative path would
+// resolve against the daemon's own cwd at spawn time — meaningless —
+// so handleGroupUpdate (via resolveGroupDefaultCwd) 400s it rather
+// than silently storing it.
+func TestGroupDefaultCwd_PatchRejectsRelative(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPatch, "/v1/groups/alpha",
+		map[string]any{"default_cwd": "relative/sub/dir"}))
+	rec := testharness.Serve(f.Mux, r)
+	assert.Equalf(t, http.StatusBadRequest, rec.Code,
+		"relative default_cwd should 400; body=%s", rec.Body.String())
+
+	// And nothing was persisted.
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Empty(t, g.DefaultCwd, "rejected value must not be stored")
 }
 
 // Scenario: PATCH /v1/groups/{name} with an empty body is a 400 —

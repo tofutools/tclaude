@@ -38,11 +38,18 @@ behaviour).
 `PATCH /v1/groups/{name}` → `handleGroupUpdate` (`handlers.go`).
 Partial-update contract matching `handleGroupMembersUpdate`:
 `default_cwd` is a `*string`, so `""` clears and omitting it is a
-400 ("nothing to update"). Gated on the **`groups.rename`** slug —
-setting a group's default cwd is the same class of human-curated
-group config as renaming it (blast radius is a UI prefill / spawn
-fallback, strictly lower), so it rides the existing slug rather than
-minting a new one. Default human-only.
+400 ("nothing to update"). A non-empty value is run through
+`resolveGroupDefaultCwd` (`cwd.go`): `~` is expanded and the path
+**must be absolute** — a relative default would resolve against the
+daemon's own cwd at spawn time, which is meaningless, so it's
+rejected with a 400 rather than silently made absolute. The handler
+also surfaces a 404 when the update touches zero rows (group renamed
+or deleted between the dispatcher's lookup and the write). Gated on
+the **`groups.rename`** slug — setting a group's default cwd is the
+same class of human-curated group config as renaming it (blast
+radius is a UI prefill / spawn fallback, strictly lower), so it
+rides the existing slug rather than minting a new one. Default
+human-only.
 
 `PATCH /api/groups/{name}` is the dashboard-cookie-auth twin — it
 delegates straight to `handleGroupUpdate` with `asDashboardHumanPeer`,
@@ -60,7 +67,7 @@ preserving the prior daemon-cwd-inheritance behaviour.
 
 ## CLI
 
-```
+```bash
 tclaude agent groups set-default-dir <group> [<dir>] [--ask-human <d>]
 ```
 
@@ -92,7 +99,10 @@ default. Tab-completion suggests existing group names.
   spawn lands the new session in the group default dir.
 - `TestGroupDefaultCwd_ExplicitCwdOverrides` — an explicit cwd in the
   spawn request wins over the group default.
-- `TestGroupDefaultCwd_PatchClears` — `default_cwd:""` clears the row.
+- `TestGroupDefaultCwd_PatchClears` — `default_cwd:""` clears the row,
+  and a later blank-cwd spawn no longer inherits the old value.
+- `TestGroupDefaultCwd_PatchRejectsRelative` — a relative `default_cwd`
+  400s and nothing is persisted.
 - `TestGroupDefaultCwd_PatchEmptyBodyRejected` — empty PATCH body 400s.
 
 ## Files
@@ -101,12 +111,13 @@ default. Tab-completion suggests existing group names.
 - `pkg/claude/common/db/agent.go` — `DefaultCwd`, `SetAgentGroupDefaultCwd`,
   `scanAgentGroup` + group SELECTs
 - `pkg/claude/agentd/handlers.go` — `PATCH` dispatch + `handleGroupUpdate`
+- `pkg/claude/agentd/cwd.go` — `resolveGroupDefaultCwd` (expand `~`, require absolute)
 - `pkg/claude/agentd/lifecycle.go` — `handleGroupSpawn` blank-cwd fallback
 - `pkg/claude/agentd/dashboard.go` — `dashboardGroup.DefaultCwd`
 - `pkg/claude/agentd/dashboard_edit.go` — `PATCH /api/groups/{name}` dispatch
 - `pkg/claude/agentd/dashboard.html` — header chip, inline edit, spawn prefill
 - `pkg/claude/agent/groups.go` — `groupsSetDefaultDirCmd`
-- `pkg/claude/agentd/group_default_cwd_flow_test.go` — 4 flow tests
+- `pkg/claude/agentd/group_default_cwd_flow_test.go` — 5 flow tests
 
 ## Out of scope (deferred)
 
