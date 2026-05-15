@@ -232,12 +232,13 @@ type snapshotPayload struct {
 	GeneratedAt string           `json:"generated_at"`
 	Groups      []dashboardGroup `json:"groups"`
 	Agents      []dashboardAgent `json:"agents"`
-	// Ungrouped: every conv-id that has a live tmux session but is NOT
-	// a member of any group. Surfaces fresh-spawned agents and other
-	// loose convs so the eventual "Ungrouped virtual group" + the
-	// `+ add member` overlay can show them as drag/add sources without
-	// a second round-trip. Same wire shape as Agents — empty when no
-	// loose convs exist.
+	// Ungrouped: every online conv-id that is NOT a member of any
+	// group. Surfaces fresh-spawned agents and other loose convs so
+	// the dashboard's virtual "Ungrouped" group + the `+ add member`
+	// overlay can show them as drag/add sources without a second
+	// round-trip. Online-only by construction (see the a.Online gate
+	// where this is appended). Same wire shape as Agents — empty when
+	// no loose convs exist.
 	Ungrouped   []dashboardAgent        `json:"ungrouped"`
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
@@ -644,12 +645,20 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			a.ActiveSudo = rows
 		}
 		out.Agents = append(out.Agents, *a)
-		// An agent with no group memberships is "ungrouped" — surfaces
-		// in the dedicated array so the dashboard can list them as
-		// drag/add sources without re-deriving the membership state.
-		// Effective perms still come from the broader Agents row, so
-		// the dashboard uses Ungrouped purely as a candidate-set hint.
-		if len(a.Groups) == 0 {
+		// An online agent with no group memberships is "ungrouped" —
+		// surfaces in the dedicated array so the dashboard can list
+		// them as drag/add sources (and render the virtual "Ungrouped"
+		// group) without re-deriving the membership state. Effective
+		// perms still come from the broader Agents row, so the
+		// dashboard uses Ungrouped purely as a candidate-set hint.
+		//
+		// The `a.Online` gate matters: the agentRows map also absorbs
+		// offline grant-holders (the per-conv permission loop above
+		// adds every grant-holder unconditionally). Without the gate a
+		// long-dead conv that still carries a permission grant would
+		// shore up in Ungrouped forever — the array is meant to be the
+		// live, currently-running loose convs, matching the field doc.
+		if len(a.Groups) == 0 && a.Online {
 			out.Ungrouped = append(out.Ungrouped, *a)
 		}
 	}
