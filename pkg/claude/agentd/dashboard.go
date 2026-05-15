@@ -376,18 +376,25 @@ type agentState struct {
 }
 
 // stateForConv looks up the most-recent live tmux session row for this
-// conv-id and returns its hook-tracked state. Falls back to the
-// most-recent row when no session is alive — that gives us a useful
-// "exited at last_hook" rendering for offline agents.
+// conv-id and returns its hook-tracked state. When no tmux session is
+// alive the agent has exited: the hook-recorded Status is frozen at
+// whatever it was when the process died (usually "idle" from the final
+// Stop hook, since no SessionEnd-style hook fires on exit), so we
+// report StatusExited rather than passing the stale value through —
+// otherwise a dead agent masquerades as "idle" on the dashboard.
+// LastHook is preserved either way so the UI can show when the agent
+// was last active.
 func stateForConv(convID string) agentState {
 	rows, err := db.FindSessionsByConvID(convID)
 	if err != nil || len(rows) == 0 {
 		return agentState{}
 	}
 	pick := rows[0] // already sorted most-recent first
+	alive := false
 	for _, r := range rows {
 		if r.TmuxSession != "" && session.IsTmuxSessionAlive(r.TmuxSession) {
 			pick = r
+			alive = true
 			break
 		}
 	}
@@ -399,6 +406,14 @@ func stateForConv(convID string) agentState {
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)
+	}
+	// No live tmux session — the agent's process is gone. Report it as
+	// exited rather than letting the frozen hook status (typically
+	// "idle") masquerade as a running state. StatusDetail is cleared so
+	// stale "idle: Bash"-style leftovers don't leak into the snapshot.
+	if !alive {
+		out.Status = session.StatusExited
+		out.StatusDetail = ""
 	}
 	return out
 }
