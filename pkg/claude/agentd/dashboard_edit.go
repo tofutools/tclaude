@@ -195,6 +195,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardRenameAgent(w, r, convSelector)
 			return
+		case "worktree":
+			if r.Method != http.MethodGet {
+				http.Error(w, "GET only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardAgentWorktree(w, convSelector)
+			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return
@@ -221,6 +228,20 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Optional ?delete_worktree=1 (the delete-agent modal's checkbox)
+	// also removes the git worktree this agent worked in. Resolve it
+	// BEFORE the purge — DeleteConvByID wipes the session rows the
+	// resolution reads from. The repo's main worktree and any worktree
+	// a surviving agent still uses are left alone (worktree_cleanup.go).
+	delWorktree := r.URL.Query().Get("delete_worktree") == "1" ||
+		r.URL.Query().Get("delete_worktree") == "true"
+	var wt agentWorktreeView
+	if delWorktree {
+		wt = inspectAgentWorktree(convID)
+		wt.Shared = wt.Path != "" &&
+			otherAgentWorktreeRoots(map[string]bool{convID: true})[wt.Path]
+	}
+
 	// Dashboard deletes always force-kill any alive tmux session for
 	// this conv — the "delete forever" button is unambiguous human
 	// intent. Without this, the conv resurrects in handlePeers via
@@ -234,7 +255,17 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete conv: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	// Without ?delete_worktree the original 204 contract holds (orphan
+	// cleanup, drag-move, the bare delete button). With it, return 200
+	// + JSON so the modal can surface what happened to the worktree.
+	if !delWorktree {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conv_id":  convID,
+		"worktree": applyWorktreeCleanup(wt, true),
+	})
 }
 
 // looksLikeConvID is a cheap sanity check for raw conv-id input on

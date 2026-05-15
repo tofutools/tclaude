@@ -191,10 +191,11 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 // the whole system. Body:
 //
 //	{
-//	  "agents":         ["<conv-id>", ...],  // the human-edited list
-//	  "delete":         false,               // false: unjoin all groups
-//	                                         // true:  permanently delete
-//	  "include_owners": false                // (delete=false) strip owner rows?
+//	  "agents":           ["<conv-id>", ...], // the human-edited list
+//	  "delete":           false,              // false: unjoin all groups
+//	                                          // true:  permanently delete
+//	  "include_owners":   false,              // (delete=false) strip owner rows?
+//	  "delete_worktrees": false               // (delete=true) also remove git worktrees?
 //	}
 //
 // delete=false is the Groups-tab "clean up all groups" default: the
@@ -202,15 +203,50 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 // conversation history is left on disk. delete=true is the Agents-tab
 // behaviour: a full purge via conv.DeleteConvByID (the same path the
 // per-agent delete button uses), which cascades group/owner/perm rows.
+//
+// delete_worktrees (delete=true only) also removes each purged agent's
+// git worktree — skipping the repo's main worktree and any worktree a
+// surviving agent still works in. See worktree_cleanup.go.
 func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Agents        []string `json:"agents"`
-		Delete        bool     `json:"delete"`
-		IncludeOwners bool     `json:"include_owners"`
+		Agents          []string `json:"agents"`
+		Delete          bool     `json:"delete"`
+		IncludeOwners   bool     `json:"include_owners"`
+		DeleteWorktrees bool     `json:"delete_worktrees"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Pre-pass: resolve every target and decide which will actually be
+	// deleted. The worktree "shared with a survivor" check needs the
+	// exact set going away — an online target that gets skipped still
+	// exists, so its worktree must still count as in-use.
+	type cleanupTarget struct {
+		convID string
+		ok     bool
+		online bool
+	}
+	targets := make([]cleanupTarget, 0, len(body.Agents))
+	willDelete := map[string]bool{}
+	for _, raw := range body.Agents {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		convID, ok := resolveCleanupConv(raw)
+		online := ok && isConvOnline(convID)
+		targets = append(targets, cleanupTarget{convID: convID, ok: ok, online: online})
+		if body.Delete && ok && !online {
+			willDelete[convID] = true
+		}
+	}
+	// Worktree roots still claimed by agents that survive this cleanup
+	// — resolved once, only when worktree removal was actually asked
+	// for, so the no-worktree path pays nothing.
+	var survivorRoots map[string]bool
+	if body.Delete && body.DeleteWorktrees {
+		survivorRoots = otherAgentWorktreeRoots(willDelete)
 	}
 
 	resp := cleanupResponse{Mode: "agents", Outcomes: []cleanupOutcome{}}
@@ -218,30 +254,30 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	// once at the end for the ownerless-group warning.
 	ownerless := map[int64]bool{}
 
-	for _, raw := range body.Agents {
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-		convID, ok := resolveCleanupConv(raw)
+	for _, tg := range targets {
 		// Resolve the title up-front: the delete path wipes the
 		// conv_index row, so a post-delete lookup would come back empty.
-		out := cleanupOutcome{ConvID: convID, Title: cleanupTitle(convID)}
+		out := cleanupOutcome{ConvID: tg.convID, Title: cleanupTitle(tg.convID)}
 		switch {
-		case !ok:
+		case !tg.ok:
 			out.Result, out.Detail = "skipped", "could not resolve conv-id"
 			resp.Skipped++
-		case isConvOnline(convID):
+		case tg.online:
 			out.Result, out.Detail = "skipped", "still online — tmux session is alive"
 			resp.Skipped++
 		case body.Delete:
+			// Resolve the worktree BEFORE the purge — DeleteConvByID
+			// wipes the session rows the resolution reads from.
+			wt := inspectAgentWorktree(tg.convID)
+			wt.Shared = wt.Path != "" && survivorRoots[wt.Path]
 			// Capture owned groups before the purge so the warning
 			// sweep can tell which ones lose their last owner.
-			ownedBefore, _ := db.ListGroupsOwnedBy(convID)
+			ownedBefore, _ := db.ListGroupsOwnedBy(tg.convID)
 			// Best-effort stop. The conv is confirmed offline, so this
 			// is normally a no-op; kept for parity with the per-agent
 			// delete button, which force-kills any lingering pane.
-			stopOneConv(convID, true)
-			counts, derr := conv.DeleteConvByID(convID)
+			stopOneConv(tg.convID, true)
+			counts, derr := conv.DeleteConvByID(tg.convID)
 			if derr != nil {
 				out.Result, out.Detail = "failed", "delete: "+derr.Error()
 				resp.Failed++
@@ -249,13 +285,16 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				out.Result = "deleted"
 				out.Detail = fmt.Sprintf("purged · dropped %d group + %d owner row(s)",
 					counts.GroupMembers, counts.GroupOwners)
+				if note := applyWorktreeCleanup(wt, body.DeleteWorktrees); note != "" {
+					out.Detail += " · " + note
+				}
 				resp.Deleted++
 				for _, gid := range ownedBefore {
 					ownerless[gid] = true
 				}
 			}
 		default:
-			removed, kept, ownerGroups, rerr := unjoinConvFromAllGroups(convID, body.IncludeOwners)
+			removed, kept, ownerGroups, rerr := unjoinConvFromAllGroups(tg.convID, body.IncludeOwners)
 			switch {
 			case rerr != nil:
 				out.Result, out.Detail = "failed", rerr.Error()

@@ -613,6 +613,15 @@ summary.dnd-drop-over.dnd-effect-clone {
 .cleanup-modal .modal-buttons button.primary:disabled {
   background: #6e7681; border-color: #6e7681; cursor: default; color: #c9d1d9;
 }
+/* delete-agent modal — the worktree opt-in row. */
+.delete-agent-wt {
+  display: flex; gap: 6px; align-items: baseline;
+  font-size: 12px; color: #c9d1d9; margin: 12px 0 0;
+}
+.delete-agent-wt.disabled { opacity: 0.55; }
+.delete-agent-wt input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
+.delete-agent-wt.disabled input[type=checkbox] { cursor: default; }
+.delete-agent-wt .wt-note { color: #7d8590; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -933,6 +942,21 @@ summary.dnd-drop-over.dnd-effect-clone {
     <div class="modal-buttons">
       <button id="cleanup-cancel" type="button">Cancel</button>
       <button id="cleanup-submit" class="primary" type="button">Clean up</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="delete-agent-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-agent-title">
+    <h3 id="delete-agent-title">Permanently delete this agent?</h3>
+    <p id="delete-agent-body"></p>
+    <div class="modal-meta" id="delete-agent-meta"></div>
+    <label class="delete-agent-wt" id="delete-agent-wt-row" style="display:none">
+      <input type="checkbox" id="delete-agent-wt" />
+      <span id="delete-agent-wt-label"></span>
+    </label>
+    <div class="modal-buttons">
+      <button id="delete-agent-cancel">Cancel</button>
+      <button id="delete-agent-ok" class="confirm-danger">Delete forever</button>
     </div>
   </div>
 </div>
@@ -4163,6 +4187,82 @@ summary.dnd-drop-over.dnd-effect-clone {
     toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
   }
 
+  // deleteAgentModal is the per-row "delete forever" confirm. Beyond
+  // confirm/cancel it offers an opt-in to also remove the agent's git
+  // worktree. The worktree's status is fetched async from
+  // /api/agents/{conv}/worktree: a removable worktree gets a checked,
+  // enabled checkbox; a main-repo or shared worktree gets a disabled,
+  // greyed one explaining why it's kept; an agent with no worktree
+  // shows no row at all. Resolves to null (cancelled) or
+  // {deleteWorktree: bool}.
+  function deleteAgentModal(conv, label) {
+    return new Promise(resolve => {
+      const overlay = $('#delete-agent-modal');
+      const wtRow = $('#delete-agent-wt-row');
+      const wtCb = $('#delete-agent-wt');
+      const wtLabel = $('#delete-agent-wt-label');
+      const okBtn = $('#delete-agent-ok');
+      const cancelBtn = $('#delete-agent-cancel');
+      $('#delete-agent-body').textContent =
+        'Wipes the conversation history (.jsonl) from disk and drops every group / '
+        + 'membership / ownership / permission row for this agent. This cannot be undone.';
+      $('#delete-agent-meta').textContent = label || conv;
+      // Worktree row hidden until the fetch tells us there is one.
+      wtRow.style.display = 'none';
+      wtRow.classList.remove('disabled');
+      wtCb.checked = false;
+      wtCb.disabled = false;
+
+      const cleanup = (result) => {
+        overlay.classList.remove('show');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onOk = () => cleanup({ deleteWorktree: wtCb.checked && !wtCb.disabled });
+      const onCancel = () => cleanup(null);
+      const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      okBtn.focus();
+
+      // Resolve the worktree in the background — the modal is already
+      // usable (delete works) before this lands. If the human clicks
+      // through before it resolves the worktree is simply kept, the
+      // safe default.
+      fetch(`/api/agents/${encodeURIComponent(conv)}/worktree`, { credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : null)
+        .then(wt => {
+          if (!wt || wt.kind === 'none' || !wt.path) return;
+          wtRow.style.display = '';
+          const pathTxt = wt.path + (wt.branch ? ' · ' + wt.branch : '');
+          if (wt.removable) {
+            wtCb.checked = true;
+            wtCb.disabled = false;
+            wtRow.classList.remove('disabled');
+            wtLabel.innerHTML = 'Also delete the git worktree '
+              + `<span class="wt-note">${esc(pathTxt)} — directory removed, branch kept</span>`;
+          } else {
+            wtCb.checked = false;
+            wtCb.disabled = true;
+            wtRow.classList.add('disabled');
+            const why = wt.kind === 'main' ? 'the repo’s main worktree, never removed'
+              : wt.shared ? 'shared with another agent'
+              : 'not removable';
+            wtLabel.innerHTML = 'Git worktree kept '
+              + `<span class="wt-note">${esc(pathTxt)} — ${esc(why)}</span>`;
+          }
+        })
+        .catch(() => {});
+    });
+  }
+
   // ---- 🧹 Cleanup modal ---------------------------------------------
   //
   // openCleanupModal drives the bulk-cleanup overlay. opts.mode:
@@ -4245,6 +4345,11 @@ summary.dnd-drop-over.dnd-effect-clone {
     }
 
     function renderOptions() {
+      const wtOpt =
+        '<label id="cleanup-opt-wt-row"><input type="checkbox" id="cleanup-opt-wt" checked /> ' +
+        'Delete associated git worktrees <span class="opt-note">— removes the worktree directory; ' +
+        'the branch and its commits are kept. The main repo and worktrees shared with another ' +
+        'agent are always skipped.</span></label>';
       if (mode === 'group') {
         optsEl.innerHTML =
           '<label><input type="checkbox" id="cleanup-opt-owners" /> ' +
@@ -4254,9 +4359,15 @@ summary.dnd-drop-over.dnd-effect-clone {
           '<label><input type="checkbox" id="cleanup-opt-delete" /> ' +
           'Permanently delete the agents <span class="opt-note">— wipes the conversation history from disk, not just group membership</span></label>' +
           '<label id="cleanup-opt-owners-row"><input type="checkbox" id="cleanup-opt-owners" /> ' +
-          'Include offline owners <span class="opt-note">— also strips their owner status</span></label>';
-      } else {
-        optsEl.innerHTML = '';
+          'Include offline owners <span class="opt-note">— also strips their owner status</span></label>' +
+          wtOpt;
+        // Worktree removal only bites on a full delete — locked until
+        // "permanently delete" is on.
+        const wtCb = $('#cleanup-opt-wt');
+        const wtRow = $('#cleanup-opt-wt-row');
+        if (wtCb && wtRow) { wtCb.disabled = true; wtRow.classList.add('disabled'); }
+      } else { // agents — always a delete
+        optsEl.innerHTML = wtOpt;
       }
     }
     function optInclOwners() {
@@ -4267,6 +4378,10 @@ summary.dnd-drop-over.dnd-effect-clone {
       if (mode === 'agents') return true;
       const cb = $('#cleanup-opt-delete');
       return !!(cb && cb.checked);
+    }
+    function optDeleteWorktrees() {
+      const cb = $('#cleanup-opt-wt');
+      return !!(cb && cb.checked && !cb.disabled);
     }
 
     // A row's checkbox is interactive only when it can be acted on:
@@ -4366,7 +4481,12 @@ summary.dnd-drop-over.dnd-effect-clone {
         payload = { group: groupName, members: picks, include_owners: optInclOwners() };
       } else {
         url = '/api/cleanup/agents';
-        payload = { agents: picks, delete: optDelete(), include_owners: optInclOwners() };
+        payload = {
+          agents: picks,
+          delete: optDelete(),
+          include_owners: optInclOwners(),
+          delete_worktrees: optDeleteWorktrees(),
+        };
       }
       try {
         const r = await fetch(url, {
@@ -4460,6 +4580,13 @@ summary.dnd-drop-over.dnd-effect-clone {
         if (delCb && ownCb && ownRow) {
           ownCb.disabled = delCb.checked;
           ownRow.classList.toggle('disabled', delCb.checked);
+        }
+        // Worktree deletion is meaningful only on a full delete.
+        const wtCb = $('#cleanup-opt-wt');
+        const wtRow = $('#cleanup-opt-wt-row');
+        if (delCb && wtCb && wtRow) {
+          wtCb.disabled = !delCb.checked;
+          wtRow.classList.toggle('disabled', !delCb.checked);
         }
       }
       renderList();
@@ -4623,19 +4750,27 @@ summary.dnd-drop-over.dnd-effect-clone {
             break;
           }
           case 'delete-agent': {
-            const confirmed = await confirmModal({
-              title: 'Permanently delete this agent?',
-              body: `Wipes the .jsonl conversation file from disk, drops the conv_index DB row, removes the entry from sessions-index.json, writes a sync tombstone if sync is enabled, AND drops every group membership / ownership / per-agent permission row referencing this conv-id (so the agent disappears from the listing instead of leaving a "(unknown)" ghost).`,
-              meta: label,
-              okLabel: 'Delete forever',
-            });
-            if (!confirmed) return;
-            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}`, {
+            const choice = await deleteAgentModal(conv, label);
+            if (!choice) return;
+            const q = choice.deleteWorktree ? '?delete_worktree=1' : '';
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}${q}`, {
               method: 'DELETE', credentials: 'same-origin',
             });
             ok = r.ok;
-            if (!ok) toast(`Delete failed: ${await r.text()}`, true);
-            break;
+            if (!ok) {
+              toast(`Delete failed: ${await r.text()}`, true);
+              break;
+            }
+            // Surface the worktree outcome when one was requested —
+            // the DELETE returns 200 + JSON in that case.
+            try {
+              const out = await r.json();
+              toast(out.worktree ? `deleted ${label} · ${out.worktree}` : `deleted ${label}`);
+            } catch (_) {
+              toast(`deleted ${label}`);
+            }
+            refresh();
+            return;
           }
           case 'edit-member': {
             const cur = {

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -200,4 +201,190 @@ func TestCleanup_Group_UnknownGroupReturns404(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	rec := testharness.Serve(mux, r)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+}
+
+// --- worktree cleanup ----------------------------------------------
+
+// fakeWorktrees stands in for the git-worktree seam: inspect reports a
+// canned WorktreeStatus per directory, remove records every removal so
+// a test can assert which worktrees were (and were not) touched.
+type fakeWorktrees struct {
+	byDir   map[string]worktree.WorktreeStatus
+	removed []string
+}
+
+func (f *fakeWorktrees) inspect(dir string) worktree.WorktreeStatus {
+	if st, ok := f.byDir[dir]; ok {
+		return st
+	}
+	return worktree.WorktreeStatus{Kind: "none"}
+}
+
+func (f *fakeWorktrees) remove(root string, _ bool) (bool, error) {
+	f.removed = append(f.removed, root)
+	return true, nil
+}
+
+func (f *fakeWorktrees) wasRemoved(root string) bool {
+	for _, r := range f.removed {
+		if r == root {
+			return true
+		}
+	}
+	return false
+}
+
+// installFakeWorktrees swaps the agentd worktree seam for the test so
+// worktree cleanup runs without real git repos. byDir maps an agent's
+// cwd → the worktree status the fake reports for it.
+func installFakeWorktrees(t *testing.T, byDir map[string]worktree.WorktreeStatus) *fakeWorktrees {
+	t.Helper()
+	fw := &fakeWorktrees{byDir: byDir}
+	t.Cleanup(agentd.SetWorktreeFnsForTest(fw.inspect, fw.remove))
+	return fw
+}
+
+// Scenario: deleting an offline agent with delete_worktrees set also
+// removes the linked git worktree it was working in.
+func TestCleanup_Agents_DeleteRemovesLinkedWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wtre-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-linked"
+	f.HaveConvWithTitle(conv, "worktree-worker")
+	f.HaveAliveSession(conv, "spwn-wtre", "tmux-wtre", cwd)
+	f.MarkOffline("tmux-wtre")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.True(t, fw.wasRemoved(cwd), "linked worktree should be removed")
+	require.Len(t, resp.Outcomes, 1)
+	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
+	f.AssertDeleted(conv)
+}
+
+// Scenario: a worktree a *surviving* agent still works in is never
+// removed, even when one of its sharers is being deleted.
+func TestCleanup_Agents_KeepsSharedWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const leaving = "wdel-1111-2222-3333-4444"
+	const staying = "wsur-1111-2222-3333-4444"
+	const shared = "/tmp/wt-shared"
+	f.HaveConvWithTitle(leaving, "leaving")
+	f.HaveConvWithTitle(staying, "staying")
+	f.HaveAliveSession(leaving, "spwn-wdel", "tmux-wdel", shared)
+	f.HaveAliveSession(staying, "spwn-wsur", "tmux-wsur", shared)
+	f.MarkOffline("tmux-wdel")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		shared: {Root: shared, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+leaving+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.False(t, fw.wasRemoved(shared),
+		"a worktree another agent still works in must be kept")
+	assert.Contains(t, resp.Outcomes[0].Detail, "shared")
+}
+
+// Scenario: the repo's main worktree is never removed by cleanup.
+func TestCleanup_Agents_KeepsMainWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wmai-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-main"
+	f.HaveConvWithTitle(conv, "main-repo-worker")
+	f.HaveAliveSession(conv, "spwn-wmai", "tmux-wmai", cwd)
+	f.MarkOffline("tmux-wmai")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "main", Kind: "main"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.False(t, fw.wasRemoved(cwd), "the main worktree must never be removed")
+	assert.Contains(t, resp.Outcomes[0].Detail, "main repo")
+}
+
+// Scenario: delete_worktrees defaults off — a delete without it leaves
+// the worktree alone.
+func TestCleanup_Agents_DeleteWorktreesOptIn(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wopt-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-opt"
+	f.HaveConvWithTitle(conv, "opt-worker")
+	f.HaveAliveSession(conv, "spwn-wopt", "tmux-wopt", cwd)
+	f.MarkOffline("tmux-wopt")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":false}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.False(t, fw.wasRemoved(cwd), "worktree untouched when delete_worktrees=false")
+	assert.NotContains(t, resp.Outcomes[0].Detail, "worktree")
+}
+
+// Scenario: the per-row delete button's path — GET .../worktree
+// classifies the agent's worktree (what the modal checkbox reads),
+// and DELETE ?delete_worktree=1 removes it alongside the agent.
+func TestDeleteAgent_WithWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wsng-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-single"
+	f.HaveConvWithTitle(conv, "solo")
+	f.HaveAliveSession(conv, "spwn-wsng", "tmux-wsng", cwd)
+	f.MarkOffline("tmux-wsng")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// GET worktree info — what the delete-agent modal reads to decide
+	// whether to show (and enable) its checkbox.
+	grec := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree", nil))
+	require.Equal(t, http.StatusOK, grec.Code, "body=%s", grec.Body.String())
+	var wtInfo struct {
+		Kind      string `json:"kind"`
+		Path      string `json:"path"`
+		Branch    string `json:"branch"`
+		Shared    bool   `json:"shared"`
+		Removable bool   `json:"removable"`
+	}
+	require.NoError(t, json.Unmarshal(grec.Body.Bytes(), &wtInfo))
+	assert.Equal(t, "linked", wtInfo.Kind)
+	assert.True(t, wtInfo.Removable, "a lone linked worktree is removable")
+	assert.False(t, wtInfo.Shared)
+
+	// DELETE with ?delete_worktree=1 — the modal's confirm path.
+	dr, err := http.NewRequest(http.MethodDelete,
+		"/api/agents/"+conv+"?delete_worktree=1", nil)
+	require.NoError(t, err)
+	drec := testharness.Serve(mux, dr)
+	require.Equal(t, http.StatusOK, drec.Code, "body=%s", drec.Body.String())
+	assert.True(t, fw.wasRemoved(cwd), "worktree removed on ?delete_worktree=1")
+	f.AssertDeleted(conv)
 }
