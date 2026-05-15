@@ -53,6 +53,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/term/", handleDashboardTermAPI)
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
+	mux.HandleFunc("/api/cleanup/", handleDashboardCleanup)
 	registerDashboardCronRoutes(mux)
 }
 

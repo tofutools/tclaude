@@ -327,6 +327,12 @@ summary.dnd-drop-over.dnd-effect-clone {
   cursor: pointer; font-family: inherit;
 }
 .filter-bar button.primary:hover { background: #388bfd; border-color: #388bfd; }
+.filter-bar button.tool {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.filter-bar button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
 .filter-bar label.filter-toggle {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; color: #7d8590; cursor: pointer; user-select: none;
@@ -502,6 +508,102 @@ summary.dnd-drop-over.dnd-effect-clone {
   background: transparent; border-color: #2a3340; color: #7d8590;
 }
 .cron-create-modal .modal-buttons .secondary:hover { color: #c9d1d9; }
+/* Cleanup modal — the 🧹 bulk-cleanup overlay. Reuses the
+   cron-create-modal outer shape and the add-member list look for the
+   editable candidate rows. */
+.cleanup-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 540px; max-width: 660px;
+  width: calc(100% - 32px);
+  display: flex; flex-direction: column; gap: 10px;
+  color: #c9d1d9; max-height: 86vh;
+}
+.cleanup-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.cleanup-hint { margin: 0; font-size: 11px; color: #7d8590; line-height: 1.4; }
+.cleanup-hint.danger { color: #f0883e; }
+.cleanup-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: #7d8590;
+}
+.cleanup-toolbar button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.cleanup-toolbar button:hover { background: #2d333b; }
+.cleanup-toolbar .spacer { flex: 1; }
+.cleanup-toolbar input[type=number] {
+  width: 3.6em; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 3px; color: #d4d4d4; padding: 1px 4px;
+  font: inherit; font-size: 11px;
+}
+.cleanup-count { color: #c9d1d9; }
+.cleanup-list {
+  flex: 1 1 auto; overflow-y: auto; min-height: 80px; max-height: 44vh;
+  border: 1px solid #2a3340; border-radius: 4px; background: #0d1117;
+}
+.cleanup-row {
+  padding: 6px 10px; border-bottom: 1px solid #161b22;
+  display: flex; gap: 8px; align-items: baseline; font-size: 12px;
+}
+.cleanup-row:last-child { border-bottom: none; }
+.cleanup-row label {
+  display: flex; gap: 8px; align-items: baseline; flex: 1;
+  cursor: pointer; min-width: 0;
+}
+.cleanup-row input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
+.cleanup-row.disabled label { cursor: default; opacity: 0.5; }
+.cleanup-row .title { color: #d4d4d4; font-weight: bold; flex: 0 0 auto; }
+.cleanup-row .id { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
+.cleanup-row .meta {
+  color: #7d8590; flex: 1 1 auto; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.cleanup-row .seen { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
+.cleanup-badge {
+  font-size: 10px; padding: 0 5px; border-radius: 8px;
+  border: 1px solid #2a3340; color: #7d8590; flex: 0 0 auto;
+}
+.cleanup-badge.owner { color: #d29922; border-color: #4d3c12; }
+.cleanup-badge.removed, .cleanup-badge.deleted {
+  color: #3fb950; border-color: #1d3a23;
+}
+.cleanup-badge.skipped { color: #d29922; border-color: #4d3c12; }
+.cleanup-badge.failed { color: #f85149; border-color: #4d1d1d; }
+.cleanup-empty {
+  padding: 16px; color: #7d8590; font-size: 12px; text-align: center;
+}
+.cleanup-options {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12px; color: #c9d1d9;
+}
+.cleanup-options label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+}
+.cleanup-options label.disabled { opacity: 0.5; cursor: default; }
+.cleanup-options .opt-note { font-size: 11px; color: #7d8590; }
+.cleanup-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
+.cleanup-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.cleanup-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.cleanup-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.cleanup-modal .modal-buttons button.primary.danger {
+  background: #4d1d1d; border-color: #f85149; color: #f85149;
+}
+.cleanup-modal .modal-buttons button.primary.danger:hover {
+  background: #f85149; color: #fff;
+}
+.cleanup-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default; color: #c9d1d9;
+}
 </style>
 </head>
 <body>
@@ -529,6 +631,7 @@ summary.dnd-drop-over.dnd-effect-clone {
         <input id="filter-groups-offline" type="checkbox" checked /> show offline
       </label>
       <span class="spacer"></span>
+      <button id="cleanup-all-open" class="tool" title="Clean up offline agents across every group (optionally delete them)">🧹 clean up</button>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
     </div>
     <div id="groups-list"></div>
@@ -542,6 +645,7 @@ summary.dnd-drop-over.dnd-effect-clone {
         <input id="filter-agents-offline" type="checkbox" checked /> show offline
       </label>
       <span class="spacer"></span>
+      <button id="cleanup-agents-open" class="tool" title="Permanently delete confirmed-offline agents">🧹 cleanup</button>
       <button id="agent-spawn-open" class="primary" title="Spawn a new tclaude session and add it to a group">+ new agent</button>
     </div>
     <div id="agents-list"></div>
@@ -797,6 +901,29 @@ summary.dnd-drop-over.dnd-effect-clone {
       <button id="group-create-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="group-create-submit" class="primary" type="button">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="cleanup-modal">
+  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="cleanup-title">
+    <h3 id="cleanup-title">Clean up</h3>
+    <p class="cleanup-hint" id="cleanup-hint"></p>
+    <div class="cleanup-toolbar" id="cleanup-toolbar">
+      <button type="button" id="cleanup-select-all">select all</button>
+      <button type="button" id="cleanup-select-none">select none</button>
+      <span title="Tick every offline agent whose last activity is at least this many hours ago. 0 selects all.">
+        inactive ≥ <input type="number" id="cleanup-age" min="0" step="1" value="0" /> h
+      </span>
+      <span class="spacer"></span>
+      <span class="cleanup-count" id="cleanup-count"></span>
+    </div>
+    <div class="cleanup-list" id="cleanup-list"></div>
+    <div class="cleanup-options" id="cleanup-options"></div>
+    <div class="cleanup-warn" id="cleanup-warn" style="display:none"></div>
+    <div class="cleanup-error" id="cleanup-error"></div>
+    <div class="modal-buttons">
+      <button id="cleanup-cancel" type="button">Cancel</button>
+      <button id="cleanup-submit" class="primary" type="button">Clean up</button>
     </div>
   </div>
 </div>
@@ -1412,6 +1539,7 @@ summary.dnd-drop-over.dnd-effect-clone {
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
+            <button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
           </span>
         </summary>
@@ -2570,6 +2698,10 @@ summary.dnd-drop-over.dnd-effect-clone {
 
   function bindGroupCreateModal() {
     $('#group-create-open').addEventListener('click', openGroupCreateModal);
+    // 🧹 cleanup buttons: Groups-tab "clean up" sweeps every group;
+    // Agents-tab "cleanup" deletes confirmed-offline agents.
+    $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'all-groups' }));
+    $('#cleanup-agents-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
     $('#group-create-cancel').addEventListener('click', closeGroupCreateModal);
     $('#group-create-submit').addEventListener('click', submitGroupCreate);
     $('#group-create-modal').addEventListener('click', (e) => {
@@ -3898,6 +4030,344 @@ summary.dnd-drop-over.dnd-effect-clone {
     toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
   }
 
+  // ---- 🧹 Cleanup modal ---------------------------------------------
+  //
+  // openCleanupModal drives the bulk-cleanup overlay. opts.mode:
+  //   'group'      — remove confirmed-offline members from opts.group.
+  //   'all-groups' — remove offline agents from every group they
+  //                  belong to (Groups-tab "clean up" button); the
+  //                  "delete permanently" option escalates to a purge.
+  //   'agents'     — permanently delete confirmed-offline agents
+  //                  (Agents-tab button).
+  //
+  // The overlay builds its candidate list from the current snapshot,
+  // lets the human edit the include/exclude selection (and bulk-pick
+  // by inactivity age), POSTs the explicit conv-id list to
+  // /api/cleanup/… and renders the per-item result back. The daemon
+  // re-checks tmux liveness for every conv-id, so an agent that came
+  // back online between snapshot and submit is reported skipped,
+  // never touched.
+  function openCleanupModal(opts) {
+    const overlay = $('#cleanup-modal');
+    const listEl = $('#cleanup-list');
+    const optsEl = $('#cleanup-options');
+    const hintEl = $('#cleanup-hint');
+    const warnEl = $('#cleanup-warn');
+    const errEl = $('#cleanup-error');
+    const countEl = $('#cleanup-count');
+    const toolbar = $('#cleanup-toolbar');
+    const ageInput = $('#cleanup-age');
+    const submitBtn = $('#cleanup-submit');
+    const cancelBtn = $('#cleanup-cancel');
+    const mode = opts.mode;
+    const groupName = opts.group || '';
+    let phase = 'select';
+
+    // Build the candidate list from the current snapshot. Each entry
+    // carries its own `checked` flag so re-renders (owner toggle, age
+    // filter) preserve the human's hand-tuned selection.
+    function buildCandidates() {
+      const out = [];
+      if (mode === 'group') {
+        const g = (lastSnapshot?.groups || []).find(gr => gr.name === groupName);
+        for (const m of (g?.members || [])) {
+          if (m.online) continue;
+          out.push({
+            conv_id: m.conv_id, title: m.title || '',
+            lastHook: (m.state || {}).last_hook || '',
+            owner: !!m.owner, groups: [],
+            checked: !m.owner, // owners excluded by default
+          });
+        }
+      } else {
+        for (const a of (lastSnapshot?.agents || [])) {
+          if (a.online) continue;
+          if (mode === 'all-groups' && !(a.groups || []).length) continue;
+          out.push({
+            conv_id: a.conv_id, title: a.title || '',
+            lastHook: (a.state || {}).last_hook || '',
+            owner: !!(a.owned_groups || []).length,
+            groups: a.groups || [],
+            checked: true,
+          });
+        }
+      }
+      // Longest-inactive first — what a human cleaning up wants at the
+      // top. Missing last_hook (orphan / never had a session) sorts
+      // oldest.
+      out.sort((x, y) => {
+        const tx = x.lastHook ? Date.parse(x.lastHook) : 0;
+        const ty = y.lastHook ? Date.parse(y.lastHook) : 0;
+        return tx - ty;
+      });
+      return out;
+    }
+    const candidates = buildCandidates();
+
+    function inactivityHours(c) {
+      if (!c.lastHook) return Infinity;
+      const t = Date.parse(c.lastHook);
+      if (isNaN(t)) return Infinity;
+      return (Date.now() - t) / 3600000;
+    }
+
+    function renderOptions() {
+      if (mode === 'group') {
+        optsEl.innerHTML =
+          '<label><input type="checkbox" id="cleanup-opt-owners" /> ' +
+          'Include offline owners <span class="opt-note">— also strips their owner status</span></label>';
+      } else if (mode === 'all-groups') {
+        optsEl.innerHTML =
+          '<label><input type="checkbox" id="cleanup-opt-delete" /> ' +
+          'Permanently delete the agents <span class="opt-note">— wipes the conversation history from disk, not just group membership</span></label>' +
+          '<label id="cleanup-opt-owners-row"><input type="checkbox" id="cleanup-opt-owners" /> ' +
+          'Include offline owners <span class="opt-note">— also strips their owner status</span></label>';
+      } else {
+        optsEl.innerHTML = '';
+      }
+    }
+    function optInclOwners() {
+      const cb = $('#cleanup-opt-owners');
+      return !!(cb && cb.checked && !cb.disabled);
+    }
+    function optDelete() {
+      if (mode === 'agents') return true;
+      const cb = $('#cleanup-opt-delete');
+      return !!(cb && cb.checked);
+    }
+
+    // A row's checkbox is interactive only when it can be acted on:
+    // group-mode owner rows stay locked until "include offline
+    // owners" is ticked.
+    function rowEnabled(c) {
+      if (mode === 'group' && c.owner) return optInclOwners();
+      return true;
+    }
+    function selected() {
+      return candidates.filter(c => rowEnabled(c) && c.checked);
+    }
+
+    function renderList() {
+      if (!candidates.length) {
+        listEl.innerHTML = '<div class="cleanup-empty">No confirmed-offline agents to clean up.</div>';
+        return;
+      }
+      listEl.innerHTML = candidates.map(c => {
+        const enabled = rowEnabled(c);
+        const checked = enabled && c.checked;
+        const seen = c.lastHook ? ('last seen ' + relTime(c.lastHook)) : 'no recent activity';
+        const ownerBadge = c.owner ? '<span class="cleanup-badge owner">owner</span>' : '';
+        const metaText = (mode !== 'group' && c.groups.length) ? 'in: ' + c.groups.join(', ') : '';
+        return `<div class="cleanup-row${enabled ? '' : ' disabled'}">
+          <label>
+            <input type="checkbox" data-conv="${esc(c.conv_id)}"${checked ? ' checked' : ''}${enabled ? '' : ' disabled'} />
+            <span class="title">${esc(c.title || shortId(c.conv_id))}</span>
+            <span class="id">${esc(shortId(c.conv_id))}</span>
+            ${ownerBadge}
+            <span class="meta">${esc(metaText)}</span>
+            <span class="seen">${esc(seen)}</span>
+          </label>
+        </div>`;
+      }).join('');
+    }
+
+    function recompute() {
+      const n = selected().length;
+      const del = optDelete();
+      countEl.textContent = n + ' selected';
+      let label;
+      if (mode === 'group') {
+        label = n ? `Remove ${n} from ${groupName}` : 'Remove from group';
+      } else if (del) {
+        label = n ? `Delete ${n} agent${n === 1 ? '' : 's'} permanently` : 'Delete agents';
+      } else {
+        label = n ? `Remove ${n} agent${n === 1 ? '' : 's'} from all groups` : 'Remove from groups';
+      }
+      submitBtn.textContent = label;
+      submitBtn.disabled = n === 0;
+      submitBtn.classList.toggle('danger', del);
+    }
+
+    // Bulk-select every enabled row whose inactivity meets the age
+    // threshold (0 h selects all). A convenience on top of the
+    // per-row checkboxes the human can still hand-tune.
+    function applyAge() {
+      const h = Math.max(0, parseFloat(ageInput.value) || 0);
+      for (const c of candidates) {
+        if (!rowEnabled(c)) continue;
+        c.checked = inactivityHours(c) >= h;
+      }
+      renderList();
+      recompute();
+    }
+
+    function applyChrome() {
+      const titleEl = $('#cleanup-title');
+      if (mode === 'group') {
+        titleEl.textContent = '🧹 Clean up group: ' + groupName;
+        hintEl.className = 'cleanup-hint';
+        hintEl.textContent = 'Removes the selected confirmed-offline members from this group. '
+          + 'Their conversations keep running and stay on disk — only the membership is dropped. '
+          + 'Owners are excluded unless you opt in below.';
+      } else if (mode === 'all-groups') {
+        titleEl.textContent = '🧹 Clean up all groups';
+        hintEl.className = 'cleanup-hint';
+        hintEl.textContent = 'Removes the selected confirmed-offline agents from every group they belong to. '
+          + 'Tick "permanently delete" to also wipe their conversation history from disk.';
+      } else {
+        titleEl.textContent = '🧹 Clean up agents';
+        hintEl.className = 'cleanup-hint danger';
+        hintEl.textContent = 'Permanently deletes the selected confirmed-offline agents — wipes the '
+          + 'conversation history from disk and drops every group / owner / permission row. Cannot be undone.';
+      }
+    }
+
+    async function submit() {
+      const picks = selected().map(c => c.conv_id);
+      if (!picks.length) return;
+      errEl.textContent = '';
+      submitBtn.disabled = true;
+      let url, payload;
+      if (mode === 'group') {
+        url = '/api/cleanup/group';
+        payload = { group: groupName, members: picks, include_owners: optInclOwners() };
+      } else {
+        url = '/api/cleanup/agents';
+        payload = { agents: picks, delete: optDelete(), include_owners: optInclOwners() };
+      }
+      try {
+        const r = await fetch(url, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
+          recompute();
+          return;
+        }
+        renderResult(await r.json());
+        refresh();
+      } catch (err) {
+        errEl.textContent = 'Request failed: ' + (err && err.message || err);
+        recompute();
+      }
+    }
+
+    // renderResult swaps the modal into its read-only result phase:
+    // the editable list becomes a per-conv outcome log, the action
+    // button becomes "Done".
+    function renderResult(resp) {
+      phase = 'result';
+      toolbar.style.display = 'none';
+      optsEl.style.display = 'none';
+      const outcomes = resp.outcomes || [];
+      listEl.innerHTML = outcomes.length
+        ? outcomes.map(o => `<div class="cleanup-row">
+            <span class="cleanup-badge ${esc(o.result)}">${esc(o.result)}</span>
+            <span class="title">${esc(o.title || shortId(o.conv_id))}</span>
+            <span class="id">${esc(shortId(o.conv_id))}</span>
+            <span class="meta">${esc(o.detail || '')}</span>
+          </div>`).join('')
+        : '<div class="cleanup-empty">Nothing to do.</div>';
+      const bits = [];
+      if (resp.removed) bits.push(resp.removed + ' removed');
+      if (resp.deleted) bits.push(resp.deleted + ' deleted');
+      if (resp.skipped) bits.push(resp.skipped + ' skipped');
+      if (resp.failed) bits.push(resp.failed + ' failed');
+      hintEl.className = 'cleanup-hint';
+      hintEl.textContent = 'Cleanup complete — ' + (bits.join(' · ') || 'nothing to do') + '.';
+      if ((resp.warnings || []).length) {
+        warnEl.style.display = 'block';
+        warnEl.textContent = '⚠ ' + resp.warnings.join('\n⚠ ');
+      }
+      errEl.textContent = '';
+      submitBtn.textContent = 'Done';
+      submitBtn.disabled = false;
+      submitBtn.classList.remove('danger');
+      cancelBtn.style.display = 'none';
+    }
+
+    function close() {
+      overlay.classList.remove('show');
+      cancelBtn.removeEventListener('click', onCancel);
+      submitBtn.removeEventListener('click', onSubmit);
+      overlay.removeEventListener('click', onOverlay);
+      document.removeEventListener('keydown', onKey);
+      $('#cleanup-select-all').removeEventListener('click', onSelectAll);
+      $('#cleanup-select-none').removeEventListener('click', onSelectNone);
+      ageInput.removeEventListener('input', applyAge);
+      optsEl.removeEventListener('change', onOptChange);
+      listEl.removeEventListener('change', onListChange);
+    }
+    function onCancel() { close(); }
+    function onSubmit() { if (phase === 'result') close(); else submit(); }
+    function onOverlay(e) { if (e.target === overlay) close(); }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    function onSelectAll() {
+      for (const c of candidates) { if (rowEnabled(c)) c.checked = true; }
+      renderList(); recompute();
+    }
+    function onSelectNone() {
+      for (const c of candidates) c.checked = false;
+      renderList(); recompute();
+    }
+    function onOptChange(e) {
+      // Group mode: toggling "include owners" unlocks owner rows and
+      // pre-selects them (the human can still hand-uncheck any).
+      if (e.target.id === 'cleanup-opt-owners' && mode === 'group') {
+        for (const c of candidates) { if (c.owner) c.checked = e.target.checked; }
+      }
+      // All-groups mode: a full delete drops every owner row anyway,
+      // so "include owners" goes moot — lock it while delete is on.
+      if (mode === 'all-groups') {
+        const delCb = $('#cleanup-opt-delete');
+        const ownCb = $('#cleanup-opt-owners');
+        const ownRow = $('#cleanup-opt-owners-row');
+        if (delCb && ownCb && ownRow) {
+          ownCb.disabled = delCb.checked;
+          ownRow.classList.toggle('disabled', delCb.checked);
+        }
+      }
+      renderList();
+      recompute();
+    }
+    function onListChange(e) {
+      const cb = e.target.closest('input[type=checkbox]');
+      if (!cb) return;
+      const c = candidates.find(x => x.conv_id === cb.getAttribute('data-conv'));
+      if (c) c.checked = cb.checked;
+      recompute();
+    }
+
+    // Reset chrome — a prior result-phase render may have hidden bits.
+    toolbar.style.display = '';
+    optsEl.style.display = '';
+    cancelBtn.style.display = '';
+    cancelBtn.textContent = 'Cancel';
+    warnEl.style.display = 'none';
+    warnEl.textContent = '';
+    errEl.textContent = '';
+    ageInput.value = '0';
+    submitBtn.classList.remove('danger');
+
+    applyChrome();
+    renderOptions();
+    renderList();
+    recompute();
+
+    cancelBtn.addEventListener('click', onCancel);
+    submitBtn.addEventListener('click', onSubmit);
+    overlay.addEventListener('click', onOverlay);
+    document.addEventListener('keydown', onKey);
+    $('#cleanup-select-all').addEventListener('click', onSelectAll);
+    $('#cleanup-select-none').addEventListener('click', onSelectNone);
+    ageInput.addEventListener('input', applyAge);
+    optsEl.addEventListener('change', onOptChange);
+    listEl.addEventListener('change', onListChange);
+    overlay.classList.add('show');
+  }
+
   // bindRowActions delegates clicks on row-action buttons to the
   // appropriate /api/groups/... call. After a successful mutation we
   // re-fetch the snapshot so the badge / button state updates.
@@ -4276,6 +4746,12 @@ summary.dnd-drop-over.dnd-effect-clone {
               if (renameEditing) restore();
             });
             return; // Skip the default refresh; commit() / restore() handle it.
+          }
+          case 'cleanup-group': {
+            // Open the bulk-cleanup overlay scoped to this group. The
+            // modal manages its own POST + refresh on success.
+            openCleanupModal({ mode: 'group', group });
+            return;
           }
           case 'delete-group': {
             const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);
