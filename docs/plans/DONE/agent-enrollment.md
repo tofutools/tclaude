@@ -70,7 +70,10 @@ Agents tab gained a **Conversations** sub-list (promote buttons) and a
 collapsible **Retired** section (reinstate buttons); a per-row retire
 button; a 3-tier cleanup modal (Unjoin / Retire / Delete). The
 add-member modal offers non-agent conversations, tagged "promotes to
-agent".
+agent". The Groups tab gained a virtual **Conversations** group
+(mirroring the virtual Ungrouped group, opt-in via a "show
+conversations" checkbox) — drag a row onto a real group to promote +
+add it.
 
 ## Tests
 
