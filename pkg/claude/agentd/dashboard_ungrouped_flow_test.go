@@ -26,19 +26,28 @@ type dashGroup struct {
 }
 
 type dashMember struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
-	Branch string `json:"branch,omitempty"`
-	Online bool   `json:"online"`
+	ConvID string    `json:"conv_id"`
+	Title  string    `json:"title"`
+	Alias  string    `json:"alias,omitempty"`
+	Branch string    `json:"branch,omitempty"`
+	Online bool      `json:"online"`
+	State  dashState `json:"state"`
 }
 
 type dashAgent struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title"`
-	Branch string   `json:"branch,omitempty"`
-	Online bool     `json:"online"`
-	Groups []string `json:"groups"`
+	ConvID string    `json:"conv_id"`
+	Title  string    `json:"title"`
+	Branch string    `json:"branch,omitempty"`
+	Online bool      `json:"online"`
+	Groups []string  `json:"groups"`
+	State  dashState `json:"state"`
+}
+
+// dashState mirrors the relevant fields of agentd.agentState.
+type dashState struct {
+	Status       string `json:"status,omitempty"`
+	StatusDetail string `json:"status_detail,omitempty"`
+	LastHook     string `json:"last_hook,omitempty"`
 }
 
 func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {

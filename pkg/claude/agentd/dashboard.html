@@ -939,16 +939,25 @@ summary.dnd-drop-over.dnd-effect-clone {
     return 'state-idle';
   }
 
-  // statePill renders a colored pill for an agent's state. Combines
-  // status + status_detail when present (e.g. "working: Bash"). For
-  // offline (no status row) we render a literal "offline" pill so
-  // every row has a consistent shape.
+  // statePill renders a colored pill for an agent's state. For an
+  // online agent it combines status + status_detail (e.g. "working:
+  // Bash"). For an offline agent we render a literal "offline" pill and
+  // ignore state.status entirely: the hook-recorded status is frozen at
+  // whatever it was when the process exited (usually "idle" from the
+  // final Stop hook, since no SessionEnd-style hook fires on exit), so
+  // echoing it would mislabel a dead agent as "idle". The last-active
+  // time, when known, goes in the tooltip.
   function statePill(state, online) {
+    if (!online) {
+      const lh = relTime(state && state.last_hook);
+      const tip = lh ? `offline — last active ${lh}` : 'offline';
+      return `<span class="state-pill state-offline" title="${esc(tip)}">offline</span>`;
+    }
     const s = (state && state.status) || '';
     const detail = (state && state.status_detail) || '';
-    let label = s || (online ? 'online' : 'offline');
+    let label = s || 'online';
     if (s && detail) label = `${s}: ${detail}`;
-    const cls = online ? statusPillClass(s) : 'state-offline';
+    const cls = statusPillClass(s);
     return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
   }
 
