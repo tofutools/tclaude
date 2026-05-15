@@ -321,6 +321,24 @@ func FreshTitle(convID string) string {
 	return UnknownTitle
 }
 
+// FreshBranch resolves convID to the git branch / worktree the agent
+// is working on, as recorded in its conv_index row (Claude Code stamps
+// gitBranch into every .jsonl turn). Like FreshTitle it refreshes the
+// row from source first via FreshConvRowResolved, so a freshly-spawned
+// or branch-switched agent reports its real branch. Returns "" when
+// the branch can't be determined — no index row, or the session isn't
+// inside a git repo.
+//
+// The branch sibling of FreshTitle: prefer it over a bare
+// db.GetConvIndex in any handler that renders an agent's branch, so
+// every surface picks up source changes uniformly.
+func FreshBranch(convID string) string {
+	if row := FreshConvRowResolved(convID); row != nil {
+		return row.GitBranch
+	}
+	return ""
+}
+
 // ShortID truncates a conv-id to the first 8 hex chars.
 func ShortID(convID string) string {
 	return short(convID)
@@ -581,7 +599,6 @@ func runLookupDirect(p *lookupParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
-
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
@@ -605,11 +622,16 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title"`
-	Alias  string   `json:"alias,omitempty"`
-	Role   string   `json:"role,omitempty"`
-	Descr  string   `json:"descr,omitempty"`
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Alias  string `json:"alias,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Descr  string `json:"descr,omitempty"`
+	// Branch is the git branch / worktree the agent is working on, as
+	// recorded in its conv_index row (Claude Code stamps gitBranch into
+	// every .jsonl turn). Empty when the conv isn't indexed yet or the
+	// session isn't inside a git repo.
+	Branch string   `json:"branch,omitempty"`
 	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
 }
@@ -664,6 +686,7 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "BRANCH", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
@@ -679,11 +702,10 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 			pe.Title,
 			pe.Role,
 			strings.Join(pe.Groups, ","),
+			pe.Branch,
 			pe.Descr,
 		}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }
-
-

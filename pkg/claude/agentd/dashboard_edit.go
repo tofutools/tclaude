@@ -48,6 +48,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/groups", handleDashboardGroupsCreate)
 	mux.HandleFunc("/api/groups/", handleDashboardGroupsAPI)
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
+	mux.HandleFunc("/api/worktrees", handleDashboardWorktreesAPI)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
 	mux.HandleFunc("/api/term/", handleDashboardTermAPI)
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
@@ -659,11 +660,11 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	followUp, noCopyConv, ok := decodeCloneBody(w, r)
+	followUp, noCopyConv, cwd, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, res.ConvID, dashboardGranter, "", followUp, noCopyConv)
+	runCloneOrchestration(w, res.ConvID, dashboardGranter, "", followUp, noCopyConv, cwd)
 }
 
 // dashboardReincarnateAgent is the cookie-auth twin of POST

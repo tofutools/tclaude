@@ -217,9 +217,30 @@ func (f *Flow) HaveConvWithTitle(convID, customTitle string) {
 // tests that require a live pane on the target.
 func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 	f.T.Helper()
+	f.HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, "")
+}
+
+// HaveAliveSessionOnBranch is HaveAliveSession plus a git branch: the
+// CCSim stamps `branch` into a user turn's gitBranch field (exactly as
+// real Claude Code stamps every turn), so a conv_index scan resolves
+// the agent's worktree/branch the way production does. An empty branch
+// behaves identically to HaveAliveSession (no extra turn written).
+// Used by surfaces that render an agent's branch — `agent ls`,
+// `agent groups members`, and the dashboard.
+func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch string) {
+	f.T.Helper()
 	cc := NewCCSimWithID(f.T, f.World.HomeDir, convID, cwd)
+	cc.GitBranch = branch
 	if err := cc.Start(); err != nil {
-		f.T.Fatalf("HaveAliveSession: cc.Start: %v", err)
+		f.T.Fatalf("HaveAliveSessionOnBranch: cc.Start: %v", err)
+	}
+	if branch != "" {
+		// The initial summary turn carries no gitBranch; write one
+		// branch-bearing user turn so a conv_index scan has something
+		// to read the branch off of.
+		if err := cc.WriteUserTurn("working on " + branch); err != nil {
+			f.T.Fatalf("HaveAliveSessionOnBranch: WriteUserTurn: %v", err)
+		}
 	}
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
@@ -228,7 +249,7 @@ func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 		Cwd:         cwd,
 		Status:      "running",
 	}); err != nil {
-		f.T.Fatalf("HaveAliveSession: %v", err)
+		f.T.Fatalf("HaveAliveSessionOnBranch: %v", err)
 	}
 	f.World.Tmux.Register(tmuxSession, cwd, cc)
 	f.World.CCs.Set(label, cc)
@@ -276,6 +297,21 @@ func (f *Flow) Spawn(group, alias string) SpawnResp {
 	if resp.ConvID == "" || resp.TmuxSession == "" {
 		f.T.Fatalf("Spawn missing conv_id/tmux_session: %s", rec.Body.String())
 	}
+	return resp
+}
+
+// SpawnWith drives POST /v1/groups/{group}/spawn with an arbitrary
+// JSON body and returns the parsed outcome WITHOUT fatal-on-error — so
+// tests can exercise the failure paths (bad cwd, missing group, …).
+// On 2xx the ConvID / TmuxSession fields are populated; on error the
+// Code + Raw fields carry the daemon's response for assertion.
+func (f *Flow) SpawnWith(group string, body map[string]any) SpawnResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/groups/"+group+"/spawn", body)
+	var resp SpawnResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	return resp
 }
 
@@ -377,6 +413,21 @@ func (f *Flow) CloneFresh(target, alias string) CloneResp {
 	return resp
 }
 
+// CloneWith drives POST /v1/agent/{target}/clone with an arbitrary
+// JSON body and returns the outcome WITHOUT fatal-on-error — so tests
+// can exercise the failure paths (bad cwd override, …) and inspect a
+// successful clone's fields. On error the Code + Raw fields carry the
+// daemon's response.
+func (f *Flow) CloneWith(target string, body map[string]any) CloneResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+target+"/clone", body)
+	var resp CloneResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp
+}
+
 // DeleteResp parses DELETE /v1/agent/{conv}.
 type DeleteResp struct {
 	ConvID    string         `json:"conv_id"`
@@ -473,6 +524,7 @@ type MemberView struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
+	Branch string `json:"branch,omitempty"`
 	Online bool   `json:"online"`
 	Owner  bool   `json:"owner,omitempty"`
 }

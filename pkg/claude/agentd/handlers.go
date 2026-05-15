@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -104,11 +104,15 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 // --- /v1/peers ---
 
 type peerEntry struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title"`
-	Alias  string   `json:"alias,omitempty"`
-	Role   string   `json:"role,omitempty"`
-	Descr  string   `json:"descr,omitempty"`
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Alias  string `json:"alias,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Descr  string `json:"descr,omitempty"`
+	// Branch is the git branch / worktree the agent is working on,
+	// sourced from its conv_index row (Claude Code stamps gitBranch
+	// into every .jsonl turn). Empty when the conv isn't indexed yet.
+	Branch string   `json:"branch,omitempty"`
 	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
 }
@@ -155,15 +159,17 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			}
 			pe, exists := byConv[m.ConvID]
 			if !exists {
-				// FreshTitle refreshes the conv_index row from the
-				// .jsonl first, so a renamed / freshly-spawned member
-				// shows its real name instead of a stale "(unknown)".
+				// FreshTitle / FreshBranch refresh the conv_index row
+				// from the .jsonl first, so a renamed / freshly-spawned
+				// member shows its real name and branch instead of stale
+				// values.
 				pe = &peerEntry{
 					ConvID: m.ConvID,
 					Title:  agent.FreshTitle(m.ConvID),
 					Alias:  m.Alias,
 					Role:   m.Role,
 					Descr:  m.Descr,
+					Branch: agent.FreshBranch(m.ConvID),
 					Online: isConvOnline(m.ConvID),
 				}
 				byConv[m.ConvID] = pe
@@ -188,6 +194,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			byConv[s.ConvID] = &peerEntry{
 				ConvID: s.ConvID,
 				Title:  agent.FreshTitle(s.ConvID),
+				Branch: agent.FreshBranch(s.ConvID),
 				Online: true,
 			}
 		}
@@ -1840,6 +1847,9 @@ type memberJSON struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
+	// Branch is the git branch / worktree the member is working on,
+	// from its conv_index row. Empty when not indexed / not in a repo.
+	Branch string `json:"branch,omitempty"`
 	Online bool   `json:"online"`
 	Owner  bool   `json:"owner,omitempty"`
 }
@@ -1869,6 +1879,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			Alias:  m.Alias,
 			Role:   m.Role,
 			Descr:  m.Descr,
+			Branch: agent.FreshBranch(m.ConvID),
 			Online: isConvOnline(m.ConvID),
 			Owner:  ownerSet[m.ConvID],
 		})
@@ -1884,6 +1895,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			ConvID: ownerConv,
 			Title:  agent.FreshTitle(ownerConv),
 			Role:   "owner",
+			Branch: agent.FreshBranch(ownerConv),
 			Online: isConvOnline(ownerConv),
 			Owner:  true,
 		})
@@ -2087,4 +2099,3 @@ func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.Agen
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-

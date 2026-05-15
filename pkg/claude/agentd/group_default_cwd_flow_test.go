@@ -24,7 +24,9 @@ func TestGroupDefaultCwd_PrefillsSpawn(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 
-	const defaultDir = "/work/alpha-team"
+	// A real directory — handleGroupSpawn runs the cwd through
+	// resolveSpawnCwd, which rejects a path that doesn't exist.
+	defaultDir := t.TempDir()
 
 	// Set the group's default start dir via PATCH /v1/groups/alpha.
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
@@ -58,11 +60,15 @@ func TestGroupDefaultCwd_ExplicitCwdOverrides(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 
+	// The group default is deliberately a path that does NOT exist:
+	// this spawn pins an explicit cwd, so the default is never read
+	// and never reaches resolveSpawnCwd's existence check.
 	if _, err := db.SetAgentGroupDefaultCwd("alpha", "/work/alpha-team"); err != nil {
 		t.Fatalf("SetAgentGroupDefaultCwd: %v", err)
 	}
 
-	const explicitDir = "/elsewhere/special"
+	// The explicit cwd is real — resolveSpawnCwd validates it exists.
+	explicitDir := t.TempDir()
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/groups/alpha/spawn",
 		map[string]any{"alias": "worker", "cwd": explicitDir}))
