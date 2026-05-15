@@ -163,6 +163,20 @@ details[open] > summary .group-actions { opacity: 1; }
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; min-width: 16em;
 }
+.group-default-context {
+  font-size: 11px; color: #7d8590;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent;
+}
+.group-default-context:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-context.unset { color: #484f58; font-style: italic; }
+.group-default-context.unset:hover { color: #d4d4d4; }
+.modal-context-textarea {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 3px;
+  color: #d4d4d4; padding: 6px; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 12px;
+}
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6);
   display: none; align-items: center; justify-content: center; z-index: 100;
@@ -914,6 +928,10 @@ summary.dnd-drop-over.dnd-effect-clone {
       <span class="cron-create-label">Descr</span>
       <input id="group-create-descr" type="text" placeholder="optional one-line description" autocomplete="off" spellcheck="false" />
     </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Startup context</span>
+      <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance auto-injected into every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
+    </label>
     <div class="cron-create-error" id="group-create-error"></div>
     <div class="modal-buttons">
       <button id="group-create-cancel" type="button">Cancel</button>
@@ -957,6 +975,23 @@ summary.dnd-drop-over.dnd-effect-clone {
     <div class="modal-buttons">
       <button id="delete-agent-cancel">Cancel</button>
       <button id="delete-agent-ok" class="confirm-danger">Delete forever</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="group-context-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-context-title">
+    <h3 id="group-context-title">Group startup context</h3>
+    <div class="modal-meta" id="group-context-meta" style="display:none"></div>
+    <p style="margin:4px 0; font-size:12px; color:#7d8590">Shared guidance auto-injected into every agent spawned into this group, right after the spawn welcome. Multi-line is fine. Leave empty to clear it.</p>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Context</span>
+      <textarea id="group-context-text" class="modal-context-textarea" rows="10" placeholder="multi-line guidance for agents spawned into this group" spellcheck="false"></textarea>
+    </label>
+    <div class="cron-create-error" id="group-context-error"></div>
+    <div class="modal-buttons">
+      <button id="group-context-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="group-context-submit" class="primary" type="button">Save</button>
     </div>
   </div>
 </div>
@@ -1040,6 +1075,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-enabled" id="agent-spawn-focus-row" title="After the agent spawns, open a terminal window attached to its tclaude session. A detached spawn has no window of its own — this lets you watch and talk to the new agent right away.">
       <input id="agent-spawn-focus" type="checkbox" checked /> Auto focus — open a terminal attached to the new agent
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-group-context-row" style="display:none" title="Inject this group's shared startup context into the new agent, right after the spawn welcome. Shown only when the group has a startup context set.">
+      <input id="agent-spawn-group-context" type="checkbox" checked /> Include group default context
     </label>
     <div class="cron-create-error" id="agent-spawn-error"></div>
     <div class="modal-buttons">
@@ -1605,6 +1643,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           <span class="muted">— ${members.length} members, ${g.online || 0} online${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
+          <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) injected into agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
           ${groupOfflineToggleHTML(g.name)}
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
@@ -2732,6 +2771,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   function openGroupCreateModal() {
     $('#group-create-name').value = '';
     $('#group-create-descr').value = '';
+    $('#group-create-context').value = '';
     $('#group-create-error').textContent = '';
     $('#group-create-modal').classList.add('show');
     setTimeout(() => $('#group-create-name').focus(), 0);
@@ -2744,6 +2784,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   async function submitGroupCreate() {
     const name = $('#group-create-name').value.trim();
     const descr = $('#group-create-descr').value.trim();
+    const context = $('#group-create-context').value.trim();
     const errEl = $('#group-create-error');
     errEl.textContent = '';
     if (!name) {
@@ -2756,7 +2797,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       const r = await fetch('/api/groups', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, descr }),
+        body: JSON.stringify({ name, descr, default_context: context }),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -2794,6 +2835,81 @@ summary.dnd-drop-over.dnd-effect-clone {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#group-create-modal').classList.contains('show')) {
         closeGroupCreateModal();
+      }
+    });
+  }
+
+  // ---- Group startup-context modal ---------------------------------------
+  //
+  // Edits a group's default_context — the shared block of guidance
+  // injected into every agent spawned into the group. The cwd chip
+  // edits inline; context is multi-line so it gets a modal textarea.
+  // Save PATCHes /api/groups/{name} with {default_context}.
+
+  // groupDefaultContext looks up a group's startup context from the
+  // latest snapshot. "" when the group is unknown or has none.
+  function groupDefaultContext(groupName) {
+    const groups = (lastSnapshot && lastSnapshot.groups) || [];
+    const g = groups.find(x => x.name === groupName);
+    return (g && g.default_context) || '';
+  }
+
+  // The group whose context the modal is currently editing.
+  let groupContextModalGroup = '';
+
+  function openGroupContextModal(groupName) {
+    groupContextModalGroup = groupName;
+    $('#group-context-text').value = groupDefaultContext(groupName);
+    $('#group-context-error').textContent = '';
+    const meta = $('#group-context-meta');
+    meta.textContent = `group: ${groupName}`;
+    meta.style.display = '';
+    $('#group-context-modal').classList.add('show');
+    setTimeout(() => $('#group-context-text').focus(), 0);
+  }
+
+  function closeGroupContextModal() {
+    $('#group-context-modal').classList.remove('show');
+    groupContextModalGroup = '';
+  }
+
+  async function submitGroupContext() {
+    const group = groupContextModalGroup;
+    if (!group) { closeGroupContextModal(); return; }
+    const context = $('#group-context-text').value.trim();
+    const errEl = $('#group-context-error');
+    errEl.textContent = '';
+    const submitBtn = $('#group-context-submit');
+    submitBtn.disabled = true;
+    try {
+      const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+        method: 'PATCH', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_context: context }),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+        return;
+      }
+      closeGroupContextModal();
+      toast(context ? `${group}: startup context updated` : `${group}: startup context cleared`);
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  function bindGroupContextModal() {
+    $('#group-context-cancel').addEventListener('click', closeGroupContextModal);
+    $('#group-context-submit').addEventListener('click', submitGroupContext);
+    $('#group-context-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'group-context-modal') closeGroupContextModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#group-context-modal').classList.contains('show')) {
+        closeGroupContextModal();
       }
     });
   }
@@ -3133,6 +3249,17 @@ summary.dnd-drop-over.dnd-effect-clone {
     lastSpawnCwdPrefill = dflt;
   }
 
+  // updateSpawnGroupContextRow shows the "include group default
+  // context" checkbox only when the selected group actually has a
+  // startup context — there's nothing to opt into otherwise. The
+  // checkbox is (re)set to checked whenever the row becomes visible
+  // so switching groups always lands on the opt-in default.
+  function updateSpawnGroupContextRow(groupName) {
+    const hasContext = groupDefaultContext(groupName).trim() !== '';
+    $('#agent-spawn-group-context-row').style.display = hasContext ? '' : 'none';
+    if (hasContext) $('#agent-spawn-group-context').checked = true;
+  }
+
   // Label for the leading "no worktree" option in the spawn modal's
   // worktree picker.
   const SPAWN_WT_NONE = '(no worktree — use CWD above)';
@@ -3213,6 +3340,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     // force=true: the modal just opened fresh, so there's no
     // user-typed value to protect.
     prefillSpawnCwd(select.value, true);
+    // Show the "include group default context" checkbox iff the
+    // selected group carries a startup context.
+    updateSpawnGroupContextRow(select.value);
     $('#agent-spawn-wt-branch').value = '';
     // The worktree picker targets a separate "Worktree repo" field.
     // It mirrors CWD until the human edits it; for a monorepo CWD the
@@ -3256,6 +3386,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     const cwd = $('#agent-spawn-cwd').value.trim();
     const wtRepo = $('#agent-spawn-wt-repo').value.trim();
     const autoFocus = $('#agent-spawn-focus').checked;
+    const includeGroupContext = $('#agent-spawn-group-context').checked;
     const errEl = $('#agent-spawn-error');
     errEl.textContent = '';
     if (!group) {
@@ -3276,7 +3407,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       //     still launches in CWD; the worktree path + branch ride
       //     along so the daemon's welcome points the agent at it.
       const sel = await wtResolve('agent-spawn', wtRepo);
-      const body = { alias, role, descr, initial_message: initMsg, auto_focus: autoFocus };
+      const body = { alias, role, descr, initial_message: initMsg, auto_focus: autoFocus, include_group_context: includeGroupContext };
       if (sel.path && wtRepo && wtRepo !== cwd) {
         body.cwd = cwd;
         body.worktree_path = sel.path;
@@ -3319,6 +3450,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     // and reloads the picker.
     $('#agent-spawn-group').addEventListener('change', (e) => {
       prefillSpawnCwd(e.target.value, false);
+      updateSpawnGroupContextRow(e.target.value);
       if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
       spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     });
@@ -5021,6 +5153,13 @@ summary.dnd-drop-over.dnd-effect-clone {
             openCleanupModal({ mode: 'group', group });
             return;
           }
+          case 'set-group-context': {
+            // Open the group startup-context editor. Unlike the cwd
+            // chip's inline <input>, the context is multi-line, so it
+            // gets its own modal with a <textarea>.
+            openGroupContextModal(group);
+            return; // Modal owns the save + refresh.
+          }
           case 'delete-group': {
             const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);
             const confirmed = await confirmModal({
@@ -5415,6 +5554,7 @@ summary.dnd-drop-over.dnd-effect-clone {
   bindSudoModal();
   bindCronModal();
   bindGroupCreateModal();
+  bindGroupContextModal();
   bindLinkModal();
   bindAgentSpawnModal();
   bindCloneAgentModal();

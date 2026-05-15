@@ -761,6 +761,40 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 	return nil
 }
 
+// injectMultilineAndSubmit pastes a possibly-multi-line block into a
+// CC pane and submits it as a single turn.
+//
+// Why not injectTextAndSubmit: that helper sends the text with a raw
+// `send-keys`, where every embedded newline is delivered as an Enter
+// keypress — so a multi-line payload would submit on its first line
+// and scatter the rest across follow-up turns. This helper instead
+// loads the text into a tmux paste buffer and pastes it with the
+// bracketed-paste flag (-p) and no LF→CR translation (-r). CC, seeing
+// bracketed paste, inserts the newlines literally into its input box
+// rather than submitting on each one; a separate Enter afterwards
+// submits the whole block.
+//
+// -d deletes the buffer after the paste so repeated spawns don't leak
+// tmux buffers. The trailing Enter is sent twice (belt-and-suspenders,
+// same as injectTextAndSubmit) — the second is a no-op if the first
+// already submitted. Caller must have verified the tmux pane is alive.
+func injectMultilineAndSubmit(tmuxTarget, text string) error {
+	const buf = "tclaude-spawn-ctx"
+	if err := clcommon.TmuxCommand("set-buffer", "-b", buf, text).Run(); err != nil {
+		return fmt.Errorf("set-buffer: %w", err)
+	}
+	if err := clcommon.TmuxCommand("paste-buffer", "-d", "-p", "-r", "-b", buf, "-t", tmuxTarget).Run(); err != nil {
+		return fmt.Errorf("paste-buffer: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run(); err != nil {
+		return fmt.Errorf("send-keys submit: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	_ = clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run()
+	return nil
+}
+
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC
 // pane. Permission-gated on `self.rename`.
 //
@@ -1612,8 +1646,9 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Name  string `json:"name"`
-			Descr string `json:"descr,omitempty"`
+			Name           string `json:"name"`
+			Descr          string `json:"descr,omitempty"`
+			DefaultContext string `json:"default_context,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1621,6 +1656,14 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.Name == "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "name is required")
+			return
+		}
+		// Validate the optional startup context up front, before any DB
+		// write, so a too-long context fails cleanly without leaving a
+		// half-configured group behind.
+		groupContext, err := normalizeGroupContext(body.DefaultContext)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
 		if existing, _ := db.GetAgentGroupByName(body.Name); existing != nil {
@@ -1631,6 +1674,17 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
+		}
+		// Apply the startup context as a post-create update — keeps
+		// CreateAgentGroup's signature untouched (it's shared with the
+		// clone path and flow-test helpers). A failure here is logged
+		// but doesn't unwind the create; the human can set it later via
+		// `groups set-context` or the dashboard.
+		if groupContext != "" {
+			if _, err := db.SetAgentGroupDefaultContext(body.Name, groupContext); err != nil {
+				slog.Warn("groups create: failed to set default context",
+					"group", body.Name, "error", err)
+			}
 		}
 		// Auto-grant ownership to the creator. Skipped for the human
 		// path (creator == "") since humans don't have a conv-id; the
@@ -1801,21 +1855,43 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleGroupUpdate patches mutable group-level settings. Today the
-// only field is default_cwd — the working directory pre-filled into
-// the spawn form (and substituted server-side by handleGroupSpawn
-// when a spawn request leaves cwd blank).
+// maxGroupContextBytes caps a group's startup context. The context is
+// loaded into a tmux paste buffer and bracketed-pasted into the new
+// agent's pane; 16 KiB is comfortably more than any reasonable block
+// of startup guidance while keeping the injection bounded.
+const maxGroupContextBytes = 16 * 1024
+
+// normalizeGroupContext prepares a group startup context for storage:
+// CRLF / lone-CR line endings are folded to LF so the pasted block
+// renders consistently regardless of where the human typed it, and
+// the result is rejected when it exceeds maxGroupContextBytes.
+func normalizeGroupContext(s string) (string, error) {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	if len(s) > maxGroupContextBytes {
+		return "", fmt.Errorf("group context too long: %d bytes (max %d)", len(s), maxGroupContextBytes)
+	}
+	return s, nil
+}
+
+// handleGroupUpdate patches mutable group-level settings:
+//
+//   - default_cwd — the working directory pre-filled into the spawn
+//     form (and substituted server-side by handleGroupSpawn when a
+//     spawn request leaves cwd blank).
+//   - default_context — a block of shared startup guidance injected
+//     into agents spawned into the group (see handleGroupSpawn).
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
-// fields present (non-nil) in the body are touched. default_cwd is a
-// *string so callers can clear it by sending "" — distinct from
-// omitting it.
+// fields present (non-nil) in the body are touched. Both are *string
+// so a caller can clear either by sending "" — distinct from omitting
+// it. An empty body (neither field) is a 400.
 //
-// Permission: groups.rename. Setting a group's default cwd is the
-// same class of human-curated group config as renaming it (the
-// blast radius is a UI prefill / spawn fallback, strictly lower than
-// a rename), so it rides the existing slug rather than minting a new
-// one. Default human-only.
+// Permission: groups.rename. Setting a group's default cwd / context
+// is the same class of human-curated group config as renaming it (the
+// blast radius is a UI prefill / spawn-time injection, strictly lower
+// than a rename), so it rides the existing slug rather than minting a
+// new one. Default human-only.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if _, ok := requirePermission(w, r, PermGroupsRename); !ok {
 		return
@@ -1824,40 +1900,65 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		return
 	}
 	var body struct {
-		DefaultCwd *string `json:"default_cwd,omitempty"`
+		DefaultCwd     *string `json:"default_cwd,omitempty"`
+		DefaultContext *string `json:"default_context,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.DefaultCwd == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "nothing to update (expected default_cwd)")
+	if body.DefaultCwd == nil && body.DefaultContext == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"nothing to update (expected default_cwd and/or default_context)")
 		return
 	}
-	// Normalise + validate: expand "~", require an absolute path (a
-	// relative default would resolve against the daemon's cwd at spawn
-	// time, which is meaningless). Empty stays empty — that clears it.
-	cwd, err := resolveGroupDefaultCwd(*body.DefaultCwd)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
-		return
+	resp := map[string]any{"group": g.Name}
+
+	if body.DefaultCwd != nil {
+		// Normalise + validate: expand "~", require an absolute path (a
+		// relative default would resolve against the daemon's cwd at
+		// spawn time, which is meaningless). Empty stays empty — clears it.
+		cwd, err := resolveGroupDefaultCwd(*body.DefaultCwd)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+			return
+		}
+		n, err := db.SetAgentGroupDefaultCwd(g.Name, cwd)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		// Zero rows: the group was renamed or deleted between the
+		// dispatcher's lookup and this update. Report not_found rather
+		// than a misleading 200.
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["default_cwd"] = cwd
 	}
-	n, err := db.SetAgentGroupDefaultCwd(g.Name, cwd)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
+
+	if body.DefaultContext != nil {
+		// Fold CRLF → LF and enforce the size cap. Empty stays empty —
+		// that clears the group context.
+		ctx, err := normalizeGroupContext(*body.DefaultContext)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		n, err := db.SetAgentGroupDefaultContext(g.Name, ctx)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["default_context"] = ctx
 	}
-	// Zero rows: the group was renamed or deleted between the
-	// dispatcher's lookup and this update. Report not_found rather
-	// than a misleading 200.
-	if n == 0 {
-		writeError(w, http.StatusNotFound, "not_found", "no such group")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"group":       g.Name,
-		"default_cwd": cwd,
-	})
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type memberJSON struct {

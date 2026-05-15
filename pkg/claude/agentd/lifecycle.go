@@ -365,6 +365,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// dashboard's spawn modal defaults its checkbox on, CLI / agent
 		// callers pass it explicitly.
 		AutoFocus bool `json:"auto_focus,omitempty"`
+		// IncludeGroupContext controls whether the group's default_context
+		// (when set) is injected into the new agent on startup. It's a
+		// *bool so an omitted field means opt-in — every spawn path
+		// inherits the group context by default, the same way it inherits
+		// default_cwd. The dashboard sends false explicitly when the human
+		// unticks the "include group default context" checkbox.
+		IncludeGroupContext *bool `json:"include_group_context,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -513,10 +520,20 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	//      welcome describes its role/descr/group so it can orient
 	//      itself before the human starts typing.
 	//
+	// Group startup context: optional shared guidance the human
+	// attached to the group. It's injected after the welcome unless
+	// this spawn opted out (IncludeGroupContext == false). An omitted
+	// flag means opt-in. An empty g.DefaultContext leaves nothing to
+	// inject, so the post-init goroutine skips the step entirely.
+	groupContext := ""
+	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
+		groupContext = g.DefaultContext
+	}
+
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name,
+		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name, groupContext,
 			body.InitialMessage, worktreePath, worktreeBranch)
 	})
 
@@ -534,7 +551,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 //
 //  1. /rename <alias> — when alias is a valid rename title.
 //  2. The welcome [system: ...] line orienting the agent.
-//  3. The initial message — when one was supplied — as the agent's
+//  3. The group startup context — when the group carries one and the
+//     spawn opted in — as a shared-guidance turn.
+//  4. The initial message — when one was supplied — as the agent's
 //     first real prompt.
 //
 // Each is its own turn. Failures are logged, never bubbled — the spawn
@@ -544,7 +563,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // landing a write on the .jsonl before any other turn happens. Even
 // if a later injection fails, the file exists and `agent resume` can
 // find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, worktreePath, worktreeBranch string) {
+func runSpawnPostInit(convID, alias, role, descr, groupName, groupContext, initialMessage, worktreePath, worktreeBranch string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -582,6 +601,18 @@ func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, wor
 		return
 	}
 
+	// Group startup context: optional shared guidance the human
+	// attached to the group, injected as its own turn right after the
+	// welcome — orientation before task. Bracketed paste so multi-line
+	// guidance lands intact (a raw send-keys would submit on every
+	// newline). Empty unless the group has a default_context and the
+	// spawn opted in.
+	if groupContext != "" {
+		if err := injectMultilineAndSubmit(target, buildGroupContextMessage(groupName, groupContext)); err != nil {
+			slog.Warn("spawn: group context injection failed", "conv", convID, "error", err)
+		}
+	}
+
 	// Initial message: the human's first real prompt for the agent.
 	// Kept separate from descr — descr is the short dashboard label,
 	// this is the (possibly long) task brief — and sent as its own
@@ -593,6 +624,17 @@ func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, wor
 				"conv", convID, "error", err)
 		}
 	}
+}
+
+// buildGroupContextMessage wraps a group's startup context in a
+// [system: …] header so the new agent reads it as group-level
+// guidance rather than a human prompt — the same bracket convention
+// the spawn welcome and agent-message nudges use. The raw context
+// follows the header verbatim and may span multiple lines.
+func buildGroupContextMessage(groupName, context string) string {
+	return fmt.Sprintf(
+		"[system: group %q startup context — shared guidance for every agent spawned into this group:]\n\n%s",
+		groupName, context)
 }
 
 // buildSpawnWelcome composes the [system: ...] welcome text. Brackets
