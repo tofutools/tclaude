@@ -8,15 +8,37 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
-// OpenWithCommand opens a new terminal window running the given command.
-func OpenWithCommand(command string) error {
+// resolveTerminalLauncher detects the terminal to use once (see
+// terminal.go's Resolve). Under WSL it locates Windows Terminal; on
+// native Linux it walks candidates looking for an installed emulator.
+// The display check is deliberately left to launch time — it is a
+// cheap env read, not a lookup, and the display can come up after the
+// daemon starts.
+func resolveTerminalLauncher(candidates []string) (string, launcher, error) {
 	if isWSL() {
-		return openWSL(command)
+		wt := findWindowsTerminal()
+		id := "cmd.exe"
+		if wt != "" {
+			id = "windows-terminal"
+		}
+		return id, func(command string) error {
+			argv := wslCmdArgv(command, wt)
+			return startDetached(exec.Command(argv[0], argv[1:]...))
+		}, nil
 	}
-	return openLinuxNative(command)
+
+	id, binPath, argvFn, err := resolveLinuxTerminal(candidates, exec.LookPath)
+	if err != nil {
+		return "", nil, err
+	}
+	return id, func(command string) error {
+		if derr := haveDisplay(); derr != nil {
+			return derr
+		}
+		return startDetached(exec.Command(binPath, argvFn(command)...))
+	}, nil
 }
 
 // isWSL detects if we're running in Windows Subsystem for Linux.
@@ -27,12 +49,6 @@ func isWSL() bool {
 	}
 	lower := strings.ToLower(string(data))
 	return strings.Contains(lower, "microsoft") || strings.Contains(lower, "wsl")
-}
-
-// openWSL opens a terminal in WSL environment via Windows Terminal or cmd.exe.
-func openWSL(command string) error {
-	argv := wslCmdArgv(command, findWindowsTerminal())
-	return startDetached(exec.Command(argv[0], argv[1:]...))
 }
 
 // wslCmdArgv builds the argv that launches a terminal under WSL. When
@@ -89,17 +105,8 @@ func findWindowsTerminal() string {
 // machine's real PATH.
 type lookPathFunc func(string) (string, error)
 
-// linuxTerminal is one terminal-emulator candidate: the binary name to
-// look for, and how to turn a shell command into the argv that follows
-// that binary.
-type linuxTerminal struct {
-	name string
-	argv func(command string) []string
-}
-
-// linuxTerminals lists the terminal emulators openLinuxNative tries, in
-// order of preference. x-terminal-emulator goes first so a Debian-style
-// system honours the user's chosen default terminal.
+// linuxTerminals maps a canonical terminal ID (terminal.go) to the argv
+// that follows the terminal binary. The binary name is the ID itself.
 //
 // Every entry hands the command to `sh -c` as three *separate* argv
 // elements — "sh", "-c", command — never as one re-quoted string. This
@@ -113,9 +120,9 @@ type linuxTerminal struct {
 //
 // The flags differ because the CLIs differ:
 //   - `--`  gnome-terminal: everything after is the program + its args.
-//   - `-e`  xterm / konsole / alacritty / x-terminal-emulator: the
-//     xterm convention — program + args follow as separate words. Must
-//     be the last option, so nothing trails "sh -c <command>".
+//   - `-e`  xterm / konsole / alacritty / ghostty / x-terminal-emulator:
+//     the xterm convention — program + args follow as separate words.
+//     Must be the last option, so nothing trails "sh -c <command>".
 //   - `-x`  xfce4-terminal: like `-e` but consumes the *remaining* args
 //     as the program + args. xfce4-terminal's own `-e` wants a single
 //     string and is the trap described above; `-x` avoids it.
@@ -125,35 +132,40 @@ type linuxTerminal struct {
 //     accepts a bare `--`.
 //   - wezterm runs through its `start` subcommand, `--` ending start's
 //     own options.
-var linuxTerminals = []linuxTerminal{
-	{"x-terminal-emulator", func(c string) []string { return []string{"-e", "sh", "-c", c} }},
-	{"gnome-terminal", func(c string) []string { return []string{"--", "sh", "-c", c} }},
-	{"konsole", func(c string) []string { return []string{"-e", "sh", "-c", c} }},
-	{"xfce4-terminal", func(c string) []string { return []string{"-x", "sh", "-c", c} }},
-	{"alacritty", func(c string) []string { return []string{"-e", "sh", "-c", c} }},
-	{"kitty", func(c string) []string { return []string{"sh", "-c", c} }},
-	{"foot", func(c string) []string { return []string{"sh", "-c", c} }},
-	{"wezterm", func(c string) []string { return []string{"start", "--", "sh", "-c", c} }},
-	{"xterm", func(c string) []string { return []string{"-e", "sh", "-c", c} }},
+var linuxTerminals = map[string]func(command string) []string{
+	IDGhostty:       func(c string) []string { return []string{"-e", "sh", "-c", c} },
+	IDKitty:         func(c string) []string { return []string{"sh", "-c", c} },
+	IDWezterm:       func(c string) []string { return []string{"start", "--", "sh", "-c", c} },
+	IDAlacritty:     func(c string) []string { return []string{"-e", "sh", "-c", c} },
+	IDFoot:          func(c string) []string { return []string{"sh", "-c", c} },
+	IDKonsole:       func(c string) []string { return []string{"-e", "sh", "-c", c} },
+	IDGnomeTerminal: func(c string) []string { return []string{"--", "sh", "-c", c} },
+	IDXfce4Terminal: func(c string) []string { return []string{"-x", "sh", "-c", c} },
+	IDXTermEmulator: func(c string) []string { return []string{"-e", "sh", "-c", c} },
+	IDXterm:         func(c string) []string { return []string{"-e", "sh", "-c", c} },
 }
 
-// buildLinuxTerminalArgv finds the first installed terminal emulator
-// (per lookPath) and returns the full exec argv — [absolutePath,
-// args...] — for running command in it. Returns an error naming every
-// terminal it tried when none is installed. Pure apart from lookPath,
-// so it carries the unit-test coverage for terminal selection and argv
-// construction.
-func buildLinuxTerminalArgv(command string, lookPath lookPathFunc) ([]string, error) {
-	for _, t := range linuxTerminals {
-		if path, err := lookPath(t.name); err == nil {
-			return append([]string{path}, t.argv(command)...), nil
+// resolveLinuxTerminal walks candidates (the priority-ordered IDs from
+// orderedCandidates) and returns the first one that is both launchable
+// on Linux and installed (per lookPath): its ID, its absolute binary
+// path, and the argv-builder for it. IDs with no Linux launcher — e.g.
+// iterm2, terminal-app — are skipped. Returns an error naming the
+// launchable candidates it tried when none is installed. Pure apart
+// from lookPath, so it carries the unit-test coverage for terminal
+// selection.
+func resolveLinuxTerminal(candidates []string, lookPath lookPathFunc) (id, binPath string, argvFn func(string) []string, err error) {
+	var tried []string
+	for _, cand := range candidates {
+		fn, ok := linuxTerminals[cand]
+		if !ok {
+			continue // not launchable on Linux (e.g. iterm2, terminal-app)
+		}
+		tried = append(tried, cand)
+		if path, lerr := lookPath(cand); lerr == nil {
+			return cand, path, fn, nil
 		}
 	}
-	tried := make([]string, len(linuxTerminals))
-	for i, t := range linuxTerminals {
-		tried[i] = t.name
-	}
-	return nil, fmt.Errorf("no terminal emulator found (tried: %s)", strings.Join(tried, ", "))
+	return "", "", nil, fmt.Errorf("no terminal emulator found (tried: %s)", strings.Join(tried, ", "))
 }
 
 // haveDisplay reports whether a graphical display is reachable. The
@@ -171,47 +183,4 @@ func haveDisplay() error {
 	}
 	return fmt.Errorf("no graphical display: neither DISPLAY nor WAYLAND_DISPLAY is set " +
 		"(agentd may have been started outside a desktop session)")
-}
-
-// openLinuxNative opens a terminal on native (non-WSL) Linux.
-func openLinuxNative(command string) error {
-	if err := haveDisplay(); err != nil {
-		return err
-	}
-	argv, err := buildLinuxTerminalArgv(command, exec.LookPath)
-	if err != nil {
-		return err
-	}
-	return startDetached(exec.Command(argv[0], argv[1:]...))
-}
-
-// startDetached starts cmd and reaps it in the background.
-//
-// Two problems it solves, both rooted in agentd being a long-lived
-// daemon:
-//
-//   - Zombies. A child agentd never wait()s for stays a zombie in the
-//     process table for agentd's entire lifetime. The OS only reparents
-//     (and so reaps) the children of a process that has *exited* —
-//     agentd hasn't. The terminal window outlives this call, so we
-//     can't block; instead a goroutine wait()s and reaps it whenever
-//     the window is finally closed.
-//   - Signal bleed. Without a new session the terminal shares agentd's
-//     process group; a Ctrl-C in whatever shell launched agentd would
-//     also kill the user's freshly-opened agent windows. Setsid puts
-//     the terminal in its own session, so it survives both that and an
-//     agentd restart.
-func startDetached(cmd *exec.Cmd) error {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	debug := os.Getenv("TCLAUDE_DEBUG") != ""
-	go func() {
-		err := cmd.Wait()
-		if debug && err != nil {
-			fmt.Printf("[debug] terminal: %q exited: %v\n", cmd.Path, err)
-		}
-	}()
-	return nil
 }

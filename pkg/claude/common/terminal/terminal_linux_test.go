@@ -13,7 +13,7 @@ import (
 // fakeLookPath returns a lookPathFunc that "installs" only the named
 // binaries, each resolving to /usr/bin/<name>. Anything else is
 // reported missing — letting a test pin exactly which terminal
-// buildLinuxTerminalArgv will pick.
+// resolveLinuxTerminal will pick.
 func fakeLookPath(installed ...string) lookPathFunc {
 	set := make(map[string]bool, len(installed))
 	for _, n := range installed {
@@ -27,86 +27,98 @@ func fakeLookPath(installed ...string) lookPathFunc {
 	}
 }
 
-// containsExact reports whether argv has want as one whole element.
-func containsExact(argv []string, want string) bool {
-	return slices.Contains(argv, want)
-}
-
-// TestBuildLinuxTerminalArgv_PerTerminal pins the exact argv produced
-// for every supported terminal. The command deliberately carries the
+// TestResolveLinuxTerminal_PerTerminal pins the exact argv produced for
+// every supported terminal. The command deliberately carries the
 // embedded single quotes that openShellCmd bakes in — the regression
 // that broke the old string-wrapping xfce4-terminal entry.
-func TestBuildLinuxTerminalArgv_PerTerminal(t *testing.T) {
+func TestResolveLinuxTerminal_PerTerminal(t *testing.T) {
 	const command = `cd '/home/me/my repo' && exec "${SHELL:-bash}"`
 
 	cases := []struct {
 		terminal string
-		want     []string
+		wantArgv []string
 	}{
-		{"x-terminal-emulator", []string{"/usr/bin/x-terminal-emulator", "-e", "sh", "-c", command}},
-		{"gnome-terminal", []string{"/usr/bin/gnome-terminal", "--", "sh", "-c", command}},
-		{"konsole", []string{"/usr/bin/konsole", "-e", "sh", "-c", command}},
-		{"xfce4-terminal", []string{"/usr/bin/xfce4-terminal", "-x", "sh", "-c", command}},
-		{"alacritty", []string{"/usr/bin/alacritty", "-e", "sh", "-c", command}},
-		{"kitty", []string{"/usr/bin/kitty", "sh", "-c", command}},
-		{"foot", []string{"/usr/bin/foot", "sh", "-c", command}},
-		{"wezterm", []string{"/usr/bin/wezterm", "start", "--", "sh", "-c", command}},
-		{"xterm", []string{"/usr/bin/xterm", "-e", "sh", "-c", command}},
+		{IDXTermEmulator, []string{"/usr/bin/x-terminal-emulator", "-e", "sh", "-c", command}},
+		{IDGnomeTerminal, []string{"/usr/bin/gnome-terminal", "--", "sh", "-c", command}},
+		{IDKonsole, []string{"/usr/bin/konsole", "-e", "sh", "-c", command}},
+		{IDXfce4Terminal, []string{"/usr/bin/xfce4-terminal", "-x", "sh", "-c", command}},
+		{IDAlacritty, []string{"/usr/bin/alacritty", "-e", "sh", "-c", command}},
+		{IDKitty, []string{"/usr/bin/kitty", "sh", "-c", command}},
+		{IDFoot, []string{"/usr/bin/foot", "sh", "-c", command}},
+		{IDGhostty, []string{"/usr/bin/ghostty", "-e", "sh", "-c", command}},
+		{IDWezterm, []string{"/usr/bin/wezterm", "start", "--", "sh", "-c", command}},
+		{IDXterm, []string{"/usr/bin/xterm", "-e", "sh", "-c", command}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.terminal, func(t *testing.T) {
-			argv, err := buildLinuxTerminalArgv(command, fakeLookPath(tc.terminal))
+			id, binPath, argvFn, err := resolveLinuxTerminal(terminalPriority, fakeLookPath(tc.terminal))
 			if err != nil {
-				t.Fatalf("buildLinuxTerminalArgv: unexpected error: %v", err)
+				t.Fatalf("resolveLinuxTerminal: unexpected error: %v", err)
 			}
-			if !reflect.DeepEqual(argv, tc.want) {
-				t.Fatalf("argv = %q, want %q", argv, tc.want)
+			if id != tc.terminal {
+				t.Fatalf("id = %q, want %q", id, tc.terminal)
+			}
+			argv := append([]string{binPath}, argvFn(command)...)
+			if !reflect.DeepEqual(argv, tc.wantArgv) {
+				t.Fatalf("argv = %q, want %q", argv, tc.wantArgv)
 			}
 			// The core invariant: the command must reach the argv as
 			// one verbatim element, never re-quoted into a larger
 			// string. The old xfce4 entry produced "sh -c '<command>'"
 			// — a single element that is NOT equal to command — so
 			// this check fails the moment that bug returns.
-			if !containsExact(argv, command) {
+			if !slices.Contains(argv, command) {
 				t.Fatalf("argv %q does not carry the command as a single verbatim element", argv)
 			}
 		})
 	}
 }
 
-// TestBuildLinuxTerminalArgv_Preference checks that the first terminal
-// in linuxTerminals order wins when several are installed.
-func TestBuildLinuxTerminalArgv_Preference(t *testing.T) {
-	// xterm is last in the list, gnome-terminal earlier — gnome wins.
-	argv, err := buildLinuxTerminalArgv("echo hi", fakeLookPath("xterm", "gnome-terminal"))
+// TestResolveLinuxTerminal_Preference checks that the first launchable
+// candidate in the given order wins when several are installed — the
+// mechanism behind --terminal / config / auto-detect priority.
+func TestResolveLinuxTerminal_Preference(t *testing.T) {
+	// xterm is last in terminalPriority, gnome-terminal earlier — gnome wins.
+	id, _, _, err := resolveLinuxTerminal(terminalPriority, fakeLookPath(IDXterm, IDGnomeTerminal))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if argv[0] != "/usr/bin/gnome-terminal" {
-		t.Fatalf("argv[0] = %q, want gnome-terminal (earlier in preference order)", argv[0])
+	if id != IDGnomeTerminal {
+		t.Fatalf("id = %q, want gnome-terminal (earlier in priority order)", id)
 	}
 
-	// Everything installed → x-terminal-emulator, the first entry.
-	argv, err = buildLinuxTerminalArgv("echo hi", fakeLookPath(
-		"x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal",
-		"alacritty", "kitty", "foot", "wezterm", "xterm"))
+	// A candidate slice with kitty spliced to the front (what
+	// orderedCandidates does for --terminal=kitty) picks kitty even
+	// though gnome-terminal is also installed.
+	kittyFirst := append([]string{IDKitty}, terminalPriority...)
+	id, _, _, err = resolveLinuxTerminal(kittyFirst, fakeLookPath(IDGnomeTerminal, IDKitty))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if argv[0] != "/usr/bin/x-terminal-emulator" {
-		t.Fatalf("argv[0] = %q, want x-terminal-emulator (first in preference order)", argv[0])
+	if id != IDKitty {
+		t.Fatalf("id = %q, want kitty (preferred, spliced to front)", id)
 	}
 }
 
-// TestBuildLinuxTerminalArgv_NoneInstalled checks the error path names
+// TestResolveLinuxTerminal_SkipsNonLinux confirms IDs with no Linux
+// launcher (iterm2, terminal-app) are skipped rather than matched.
+func TestResolveLinuxTerminal_SkipsNonLinux(t *testing.T) {
+	// Only iterm2 "installed" — it has no Linux launcher, so resolution
+	// must fail rather than pick it.
+	if _, _, _, err := resolveLinuxTerminal(terminalPriority, fakeLookPath(IDITerm2)); err == nil {
+		t.Fatal("expected an error: iterm2 has no Linux launcher and must not be selected")
+	}
+}
+
+// TestResolveLinuxTerminal_NoneInstalled checks the error path names
 // the terminals it looked for, so the failure is actionable.
-func TestBuildLinuxTerminalArgv_NoneInstalled(t *testing.T) {
-	_, err := buildLinuxTerminalArgv("echo hi", fakeLookPath())
+func TestResolveLinuxTerminal_NoneInstalled(t *testing.T) {
+	_, _, _, err := resolveLinuxTerminal(terminalPriority, fakeLookPath())
 	if err == nil {
 		t.Fatal("expected an error when no terminal is installed")
 	}
-	for _, name := range []string{"gnome-terminal", "konsole", "xterm"} {
+	for _, name := range []string{IDGnomeTerminal, IDKonsole, IDXterm} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error %q should name the %q candidate it tried", err, name)
 		}
@@ -156,7 +168,7 @@ func TestWSLCmdArgv(t *testing.T) {
 	}
 
 	for _, argv := range [][]string{withWT, fallback} {
-		if !containsExact(argv, command) {
+		if !slices.Contains(argv, command) {
 			t.Fatalf("argv %q does not carry the command as a single verbatim element", argv)
 		}
 	}
