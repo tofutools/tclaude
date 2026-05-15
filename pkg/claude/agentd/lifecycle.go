@@ -340,6 +340,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Descr          string `json:"descr,omitempty"`
 		Cwd            string `json:"cwd,omitempty"`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+		// AutoFocus, when set, opens a terminal window attached to the
+		// new agent once the spawn lands. Opt-in on the wire — the
+		// dashboard's spawn modal defaults its checkbox on, CLI / agent
+		// callers pass it explicitly.
+		AutoFocus bool `json:"auto_focus,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -422,6 +427,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusInternalServerError, "io",
 			"spawned conv "+convID+" but failed to add to group: "+err.Error())
 		return
+	}
+
+	// Auto-focus: when the caller asked for it, open a terminal window
+	// attached to the freshly-spawned agent. A detached spawn has no
+	// window of its own, so this is what lets the human watch and talk
+	// to the new agent right away — via `tclaude session attach`, never
+	// raw tmux, so the reattached session keeps its tclaude features.
+	//
+	// Best-effort: the agent spawned fine regardless, so a failure to
+	// pop a window is logged, never bubbled. No extra permission gate —
+	// opening a window is strictly less than the groups.spawn this
+	// handler already required.
+	if body.AutoFocus {
+		if err := openTerminal(openAttachCmd(label)); err != nil {
+			slog.Warn("spawn: auto-focus terminal failed to open",
+				"conv", convID, "label", label, "error", err)
+		}
 	}
 
 	// Post-spawn injection: rename the new pane to the agent's alias

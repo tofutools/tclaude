@@ -869,6 +869,9 @@ summary.dnd-drop-over.dnd-effect-clone {
       <span class="cron-create-label">Base branch</span>
       <select id="agent-spawn-wt-base"></select>
     </label>
+    <label class="cron-create-enabled" id="agent-spawn-focus-row" title="After the agent spawns, open a terminal window attached to its tclaude session. A detached spawn has no window of its own — this lets you watch and talk to the new agent right away.">
+      <input id="agent-spawn-focus" type="checkbox" checked /> Auto focus — open a terminal attached to the new agent
+    </label>
     <div class="cron-create-error" id="agent-spawn-error"></div>
     <div class="modal-buttons">
       <button id="agent-spawn-cancel" type="button">Cancel</button>
@@ -2856,6 +2859,16 @@ summary.dnd-drop-over.dnd-effect-clone {
     return (g && g.default_cwd) || '';
   }
 
+  // spawnAutoFocusPref reads the persisted "auto focus" checkbox state
+  // for the spawn modal. Defaults to true: a freshly-spawned agent runs
+  // detached with no window, so the common case is wanting one opened.
+  function spawnAutoFocusPref() {
+    try {
+      const v = localStorage.getItem('tclaude.dash.spawn.autofocus');
+      return v === null ? true : v === '1';
+    } catch (_) { return true; }
+  }
+
   // prefillSpawnCwd fills #agent-spawn-cwd with the group's default
   // dir. With force=false it leaves a user-typed value alone — it
   // only overwrites an empty field or a stale prior auto-prefill.
@@ -2941,6 +2954,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-role').value = '';
     $('#agent-spawn-descr').value = '';
     $('#agent-spawn-cwd').value = '';
+    // Restore the auto-focus checkbox from the human's last choice
+    // (defaults on — see spawnAutoFocusPref).
+    $('#agent-spawn-focus').checked = spawnAutoFocusPref();
     // Prefill the cwd from the selected group's default spawn dir.
     // force=true: the modal just opened fresh, so there's no
     // user-typed value to protect.
@@ -2977,12 +2993,15 @@ summary.dnd-drop-over.dnd-effect-clone {
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
     const cwd = $('#agent-spawn-cwd').value.trim();
+    const autoFocus = $('#agent-spawn-focus').checked;
     const errEl = $('#agent-spawn-error');
     errEl.textContent = '';
     if (!group) {
       errEl.textContent = 'group is required';
       return;
     }
+    // Persist the checkbox so the human's choice sticks across spawns.
+    try { localStorage.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
     const submitBtn = $('#agent-spawn-submit');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Spawning…';
@@ -2994,7 +3013,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       const r = await fetch(`/api/groups/${encodeURIComponent(group)}/spawn`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alias, role, descr, cwd: effectiveCwd }),
+        body: JSON.stringify({ alias, role, descr, cwd: effectiveCwd, auto_focus: autoFocus }),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -3004,7 +3023,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       try { payload = await r.json(); } catch (_) {}
       closeAgentSpawnModal();
       const label = alias || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
-      toast(`spawned ${label} → ${group}`);
+      toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
       // Keep the destination group expanded so the new member is visible.
       try { localStorage.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
       refresh();
