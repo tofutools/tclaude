@@ -136,7 +136,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 // the human from an agent here — keep this endpoint human-only.
 //
 // `tclaude agent dashboard` calls this; the tray's "Open dashboard"
-// mints in-process via mintDashboardInitToken instead.
+// mints in-process via mintInitToken(initScopeDashboard) instead.
 func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
@@ -186,7 +186,7 @@ func autoLaunchDashboard() {
 		slog.Warn("auto-launch-dashboard: no loopback URL bound; dashboard unavailable in this process")
 		return
 	}
-	url := popupBaseURL + "/?init_token=" + mintDashboardInitToken()
+	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
 	if err := dashboardBrowserOpener(url); err != nil {
 		slog.Warn("auto-launch-dashboard: failed to open browser", "error", err, "url", url)
 		return
