@@ -327,6 +327,21 @@ summary.dnd-drop-over.dnd-effect-clone {
   cursor: pointer; font-family: inherit;
 }
 .filter-bar button.primary:hover { background: #388bfd; border-color: #388bfd; }
+.filter-bar label.filter-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: #7d8590; cursor: pointer; user-select: none;
+  white-space: nowrap;
+}
+.filter-bar label.filter-toggle:hover { color: #d4d4d4; }
+.filter-bar label.filter-toggle input { cursor: pointer; margin: 0; }
+.group-offline-toggle {
+  font-size: 11px; color: #7d8590; margin-left: 8px;
+  border: 1px solid #2a3340; border-radius: 4px;
+  padding: 1px 7px; cursor: pointer; background: #161b22;
+  white-space: nowrap;
+}
+.group-offline-toggle:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-offline-toggle.inherit { color: #484f58; font-style: italic; }
 .sudo-badge {
   display: inline-block; margin-left: 4px; font-size: 11px; cursor: help;
   color: #ffa657;
@@ -508,6 +523,9 @@ summary.dnd-drop-over.dnd-effect-clone {
       <input id="filter-groups" type="text" placeholder="Filter (group name + member alias/title/role/descr/cwd/branch)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-groups-count"></span>
       <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
+      <label class="filter-toggle" title="Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.">
+        <input id="filter-groups-offline" type="checkbox" checked /> show offline
+      </label>
       <span class="spacer"></span>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
     </div>
@@ -518,6 +536,9 @@ summary.dnd-drop-over.dnd-effect-clone {
       <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + alias/role/descr/cwd/branch + group tags)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-agents-count"></span>
       <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
+      <label class="filter-toggle" title="Show agents whose tmux pane is offline">
+        <input id="filter-agents-offline" type="checkbox" checked /> show offline
+      </label>
       <span class="spacer"></span>
       <button id="agent-spawn-open" class="primary" title="Spawn a new tclaude session and add it to a group">+ new agent</button>
     </div>
@@ -1120,6 +1141,48 @@ summary.dnd-drop-over.dnd-effect-clone {
     return `<span class="branch" title="git branch: ${esc(branch)}">⎇ ${esc(branch)}</span>`;
   }
 
+  // offlineDefault returns the tab-wide "show offline" checkbox state
+  // for 'groups' or 'agents'. Defaults to true (show everything) when
+  // the checkbox isn't in the DOM yet / the user hasn't touched it.
+  function offlineDefault(tab) {
+    const el = $(`#filter-${tab}-offline`);
+    return el ? el.checked : true;
+  }
+
+  // groupOfflineOverride: per-group override — 'show', 'hide', or
+  // 'inherit' (no override; follows the tab-wide checkbox). Persisted
+  // in localStorage keyed by group name so it survives reloads.
+  function groupOfflineOverride(name) {
+    const v = localStorage.getItem('tclaude.dash.group.offline.' + name);
+    return (v === 'show' || v === 'hide') ? v : 'inherit';
+  }
+
+  // groupShowOffline: effective decision for one group — the override
+  // when set, else the tab-wide Groups default.
+  function groupShowOffline(name) {
+    const ov = groupOfflineOverride(name);
+    if (ov === 'show') return true;
+    if (ov === 'hide') return false;
+    return offlineDefault('groups');
+  }
+
+  // groupOfflineToggleHTML renders the per-group offline-visibility
+  // control shown in the group <summary>. Clicking cycles
+  // inherit → show → hide (handled by the cycle-group-offline
+  // data-act case). In inherit mode it spells out the effective
+  // value so the human can see what the tab default resolves to.
+  function groupOfflineToggleHTML(name) {
+    const override = groupOfflineOverride(name);
+    let label, cls = 'group-offline-toggle';
+    if (override === 'inherit') {
+      label = `offline: auto (${groupShowOffline(name) ? 'shown' : 'hidden'})`;
+      cls += ' inherit';
+    } else {
+      label = override === 'show' ? 'offline: shown' : 'offline: hidden';
+    }
+    return `<span class="${cls}" data-act="cycle-group-offline" data-group="${esc(name)}" data-label="${esc(name)}" title="Per-group offline visibility — click to cycle: inherit tab default → always show → always hide">${esc(label)}</span>`;
+  }
+
   // --- column sorting --------------------------------------------------
   // Every primary table (group members, agents, cron, sudo, links) has
   // clickable headers. The active sort — a {col, dir} pair keyed by a
@@ -1310,6 +1373,11 @@ summary.dnd-drop-over.dnd-effect-clone {
     }
     return groups.map(g => {
       const members = g.members || [];
+      // Offline visibility: per-group override falls back to the
+      // tab-wide checkbox. Hidden members still count toward the
+      // header total so "5 members, 2 online" stays truthful.
+      const visible = groupShowOffline(g.name) ? members : members.filter(m => m.online);
+      const hiddenOffline = members.length - visible.length;
       // Restore expanded state across the 5s polling re-renders by
       // keying on group name. Persisted in localStorage so it
       // survives a full page reload too.
@@ -1318,9 +1386,10 @@ summary.dnd-drop-over.dnd-effect-clone {
       <details data-group-key="${esc(g.name)}"${isOpen ? ' open' : ''}>
         <summary data-dnd-target-group="${esc(g.name)}">
           <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
-          <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
+          <span class="muted">— ${members.length} members, ${g.online || 0} online${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
+          ${groupOfflineToggleHTML(g.name)}
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
@@ -1330,11 +1399,15 @@ summary.dnd-drop-over.dnd-effect-clone {
           </span>
         </summary>
         <div class="subtable">
-          ${members.length === 0 ? '<div class="muted">(no members yet)</div>' : `
+          ${members.length === 0
+            ? '<div class="muted">(no members yet)</div>'
+            : visible.length === 0
+            ? `<div class="muted">(${hiddenOffline} offline member${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})</div>`
+            : `
           <table>
             ${sortHead('members', MEMBER_COLS)}
             <tbody>
-              ${applySort('members', members, MEMBER_ACCESSORS).map(m => {
+              ${applySort('members', visible, MEMBER_ACCESSORS).map(m => {
                 const state = m.state || {};
                 const subagents = state.subagent_count || 0;
                 return `
@@ -1595,10 +1668,14 @@ summary.dnd-drop-over.dnd-effect-clone {
   function renderAgentsTab() {
     if (!lastSnapshot) return;
     const q = $('#filter-agents').value;
-    const filtered = filterAgents(lastSnapshot.agents || [], q);
+    const showOffline = offlineDefault('agents');
+    let filtered = filterAgents(lastSnapshot.agents || [], q);
+    if (!showOffline) filtered = filtered.filter(a => a.online);
     $('#agents-list').innerHTML = renderAgents(filtered);
     const total = (lastSnapshot.agents || []).length;
-    $('#filter-agents-count').textContent = q
+    // The count shows the filtered/total ratio whenever EITHER the
+    // text filter or the offline toggle is narrowing the list.
+    $('#filter-agents-count').textContent = (q || !showOffline)
       ? `${filtered.length} / ${total}` : `${total} agent${total === 1 ? '' : 's'}`;
   }
 
@@ -3191,17 +3268,33 @@ summary.dnd-drop-over.dnd-effect-clone {
     const clear = $(`#filter-${tab}-clear`);
     const key = `tclaude.dash.filter.${tab}`;
     input.value = localStorage.getItem(key) || '';
-    const onChange = () => {
-      const v = input.value;
-      if (v) localStorage.setItem(key, v); else localStorage.removeItem(key);
+    const rerender = () => {
       if (tab === 'groups') renderGroupsTab();
       else if (tab === 'agents') renderAgentsTab();
       else if (tab === 'cron') renderCronTab();
       else if (tab === 'sudo') renderSudoTab();
       else if (tab === 'links') renderLinksTab();
     };
+    const onChange = () => {
+      const v = input.value;
+      if (v) localStorage.setItem(key, v); else localStorage.removeItem(key);
+      rerender();
+    };
     input.addEventListener('input', onChange);
     clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
+    // Optional per-tab "show offline" checkbox (groups + agents only).
+    // Restore its persisted state — defaults to checked (show all)
+    // when the user has never touched it.
+    const offline = $(`#filter-${tab}-offline`);
+    if (offline) {
+      const okey = `tclaude.dash.offline.${tab}`;
+      const saved = localStorage.getItem(okey);
+      offline.checked = saved === null ? true : saved === '1';
+      offline.addEventListener('change', () => {
+        localStorage.setItem(okey, offline.checked ? '1' : '0');
+        rerender();
+      });
+    }
   }
 
   async function refresh() {
@@ -3731,6 +3824,18 @@ summary.dnd-drop-over.dnd-effect-clone {
       try {
         let ok = false;
         switch (act) {
+          case 'cycle-group-offline': {
+            // Pure client-side view state — cycle the per-group
+            // offline override inherit → show → hide and re-render.
+            // No daemon round-trip.
+            const okey = 'tclaude.dash.group.offline.' + group;
+            const cur = groupOfflineOverride(group);
+            const next = cur === 'inherit' ? 'show' : cur === 'show' ? 'hide' : 'inherit';
+            if (next === 'inherit') localStorage.removeItem(okey);
+            else localStorage.setItem(okey, next);
+            renderGroupsTab();
+            return;
+          }
           case 'remove-member': {
             const confirmed = await confirmModal({
               title: 'Remove member from group?',
