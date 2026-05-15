@@ -930,7 +930,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Startup context</span>
-      <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance auto-injected into every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
+      <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance delivered to the inbox of every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
     </label>
     <div class="cron-create-error" id="group-create-error"></div>
     <div class="modal-buttons">
@@ -1047,7 +1047,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
-      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — sent to the new agent as its first prompt, right after the welcome (newlines collapse to spaces)" spellcheck="false"></textarea>
+      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤4096 chars)" spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
@@ -1076,7 +1076,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     <label class="cron-create-enabled" id="agent-spawn-focus-row" title="After the agent spawns, open a terminal window attached to its tclaude session. A detached spawn has no window of its own — this lets you watch and talk to the new agent right away.">
       <input id="agent-spawn-focus" type="checkbox" checked /> Auto focus — open a terminal attached to the new agent
     </label>
-    <label class="cron-create-enabled" id="agent-spawn-group-context-row" style="display:none" title="Inject this group's shared startup context into the new agent, right after the spawn welcome. Shown only when the group has a startup context set.">
+    <label class="cron-create-enabled" id="agent-spawn-group-context-row" style="display:none" title="Include this group's shared startup context in the new agent's inbox briefing, alongside the initial message. Shown only when the group has a startup context set.">
       <input id="agent-spawn-group-context" type="checkbox" checked /> Include group default context
     </label>
     <div class="cron-create-error" id="agent-spawn-error"></div>
@@ -1643,7 +1643,7 @@ summary.dnd-drop-over.dnd-effect-clone {
           <span class="muted">— ${members.length} members, ${g.online || 0} online${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
-          <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) injected into agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
+          <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) delivered to the inbox of agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
           ${groupOfflineToggleHTML(g.name)}
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
@@ -3379,10 +3379,10 @@ summary.dnd-drop-over.dnd-effect-clone {
     const alias = $('#agent-spawn-alias').value.trim();
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
-    // The initial message rides in via tmux send-keys, where a raw
-    // newline would land as a premature submit — collapse to a single
-    // line, same as the clone modal's follow-up.
-    const initMsg = normaliseFollowUp($('#agent-spawn-init-msg').value);
+    // The initial message is delivered to the new agent's inbox (an
+    // agent_messages row), not typed into its pane — so newlines are
+    // preserved. Send the textarea verbatim; the daemon trims it.
+    const initMsg = $('#agent-spawn-init-msg').value;
     const cwd = $('#agent-spawn-cwd').value.trim();
     const wtRepo = $('#agent-spawn-wt-repo').value.trim();
     const autoFocus = $('#agent-spawn-focus').checked;

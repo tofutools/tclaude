@@ -14,7 +14,7 @@ type AgentGroup struct {
 	Name           string
 	Descr          string
 	DefaultCwd     string    // pre-filled cwd for agents spawned into this group; "" = none
-	DefaultContext string    // shared startup context injected into agents spawned into this group; "" = none
+	DefaultContext string    // shared startup context delivered to the inbox of agents spawned into this group; "" = none
 	CreatedAt      time.Time
 	ArchivedAt     time.Time // zero = active; non-zero = archived (soft-deleted)
 }

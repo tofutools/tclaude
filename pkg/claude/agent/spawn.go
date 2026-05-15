@@ -31,7 +31,7 @@ type SpawnParams struct {
 	Alias          string `long:"alias" short:"a" optional:"true" help:"Alias for the new member in this group (e.g. 'reviewer')"`
 	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
-	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"First prompt sent to the new agent, as its own turn after the welcome. Newlines are collapsed to spaces"`
+	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
 	Cwd            string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
 	Timeout        string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
 
@@ -49,8 +49,8 @@ func spawnCmd() *cobra.Command {
 		Long: "Launches `tclaude session new -d --global` with a generated label, " +
 			"waits for the new conv-id to materialise, and adds the new conv to <group> " +
 			"with the given alias/role/descr. Prints the attach command for the new session. " +
-			"--descr is the short dashboard label; pass --initial-message to hand the new " +
-			"agent its first task as a separate prompt. " +
+			"--descr is the short dashboard label; pass --initial-message to deliver the new " +
+			"agent its first task brief to its inbox (newlines preserved). " +
 			"Requires the `groups.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
@@ -75,10 +75,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer) (*SpawnResponse, int) {
 		return nil, rcInvalidArg
 	}
 	initialMessage := strings.TrimSpace(p.InitialMessage)
-	if initialMessage != "" && !isValidFollowUp(initialMessage) {
-		fmt.Fprintln(stderr, "Error: REJECTED. --initial-message must be 1-4096 printable characters;")
-		fmt.Fprintln(stderr, "control characters (newlines, tabs, etc.) are not allowed because each")
-		fmt.Fprintln(stderr, "newline would be treated as a separate prompt-submit by tmux send-keys.")
+	if !isValidInitialMessage(initialMessage) {
+		fmt.Fprintln(stderr, "Error: REJECTED. --initial-message must be at most 4096 characters.")
+		fmt.Fprintln(stderr, "Newlines and tabs are allowed (the brief is delivered to the agent's")
+		fmt.Fprintln(stderr, "inbox, not typed into its pane), but other control characters are not.")
 		return nil, rcInvalidArg
 	}
 	timeoutSeconds := 30

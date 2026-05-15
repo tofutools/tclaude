@@ -19,6 +19,7 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 		role              string
 		descr             string
 		groupName         string
+		spawnContextMsgID int64
 		hasInitialMessage bool
 		worktreePath      string
 		worktreeBranch    string
@@ -72,28 +73,40 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 			mustOmit:     []string{"(branch "},
 		},
 		{
-			// Without an initial message the agent is told to sit idle.
-			name:        "no initial message tells the agent to wait",
+			// No startup-context message at all → agent sits idle.
+			name:        "no startup context tells the agent to wait",
 			alias:       "worker",
 			groupName:   "alpha",
 			mustContain: []string{"Wait for the first instruction"},
-			mustOmit:    []string{"follow in the next message"},
+			mustOmit:    []string{"inbox read"},
 		},
 		{
-			// With one queued the welcome must NOT tell it to wait —
-			// the initial message IS the first instruction.
-			name:              "initial message replaces the wait line",
+			// A briefing with a task brief → point at the inbox message
+			// and tell the agent to act on the brief.
+			name:              "task brief points at the inbox message and says act",
 			alias:             "worker",
 			groupName:         "alpha",
+			spawnContextMsgID: 42,
 			hasInitialMessage: true,
-			mustContain:       []string{"follow in the next message"},
+			mustContain:       []string{"message #42", "tclaude agent inbox read 42", "act on the brief"},
 			mustOmit:          []string{"Wait for the first instruction"},
+		},
+		{
+			// A briefing with only the group's shared context (no task
+			// brief) → point at the inbox message, then tell it to wait.
+			name:              "group context only points at the inbox message then waits",
+			alias:             "worker",
+			groupName:         "alpha",
+			spawnContextMsgID: 7,
+			hasInitialMessage: false,
+			mustContain:       []string{"message #7", "tclaude agent inbox read 7", "wait for the"},
+			mustOmit:          []string{"act on the brief"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := buildSpawnWelcome(tt.alias, tt.role, tt.descr, tt.groupName,
-				tt.hasInitialMessage, tt.worktreePath, tt.worktreeBranch)
+				tt.spawnContextMsgID, tt.hasInitialMessage, tt.worktreePath, tt.worktreeBranch)
 			for _, s := range tt.mustContain {
 				assert.Contains(t, got, s, "welcome should contain %q", s)
 			}
@@ -108,15 +121,26 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 // invariant that the welcome can be safely passed through tmux
 // send-keys. Newlines / tabs would each become a submit and split
 // the prompt into multiple turns — same gate isValidFollowUp
-// enforces for cross-agent slash follow-ups.
+// enforces for cross-agent slash follow-ups. (The startup briefing
+// itself rides in via the inbox, not the welcome, so it is free to
+// be multi-line — but the welcome that announces it is not.)
 func TestBuildSpawnWelcome_SingleLineNoControlChars(t *testing.T) {
-	for _, hasInitialMessage := range []bool{false, true} {
+	cases := []struct {
+		spawnContextMsgID int64
+		hasInitialMessage bool
+	}{
+		{0, false},  // no briefing
+		{42, true},  // briefing with a task brief
+		{7, false},  // briefing with group context only
+	}
+	for _, c := range cases {
 		got := buildSpawnWelcome(
 			"my-agent",
 			"reviewer",
 			"reviews PRs and posts notes",
 			"reviewers",
-			hasInitialMessage,
+			c.spawnContextMsgID,
+			c.hasInitialMessage,
 			"/home/dev/monorepo/services/api-feature-x",
 			"feature-x",
 		)

@@ -761,40 +761,6 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 	return nil
 }
 
-// injectMultilineAndSubmit pastes a possibly-multi-line block into a
-// CC pane and submits it as a single turn.
-//
-// Why not injectTextAndSubmit: that helper sends the text with a raw
-// `send-keys`, where every embedded newline is delivered as an Enter
-// keypress — so a multi-line payload would submit on its first line
-// and scatter the rest across follow-up turns. This helper instead
-// loads the text into a tmux paste buffer and pastes it with the
-// bracketed-paste flag (-p) and no LF→CR translation (-r). CC, seeing
-// bracketed paste, inserts the newlines literally into its input box
-// rather than submitting on each one; a separate Enter afterwards
-// submits the whole block.
-//
-// -d deletes the buffer after the paste so repeated spawns don't leak
-// tmux buffers. The trailing Enter is sent twice (belt-and-suspenders,
-// same as injectTextAndSubmit) — the second is a no-op if the first
-// already submitted. Caller must have verified the tmux pane is alive.
-func injectMultilineAndSubmit(tmuxTarget, text string) error {
-	const buf = "tclaude-spawn-ctx"
-	if err := clcommon.TmuxCommand("set-buffer", "-b", buf, text).Run(); err != nil {
-		return fmt.Errorf("set-buffer: %w", err)
-	}
-	if err := clcommon.TmuxCommand("paste-buffer", "-d", "-p", "-r", "-b", buf, "-t", tmuxTarget).Run(); err != nil {
-		return fmt.Errorf("paste-buffer: %w", err)
-	}
-	time.Sleep(500 * time.Millisecond)
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run(); err != nil {
-		return fmt.Errorf("send-keys submit: %w", err)
-	}
-	time.Sleep(500 * time.Millisecond)
-	_ = clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run()
-	return nil
-}
-
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC
 // pane. Permission-gated on `self.rename`.
 //
@@ -1021,6 +987,33 @@ func isValidFollowUp(s string) bool {
 	}
 	for _, r := range s {
 		if r == ' ' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidInitialMessage validates a spawn's initial-context brief.
+//
+// Unlike isValidFollowUp — which guards text typed into a tmux pane,
+// where a raw newline would land as a premature prompt-submit — the
+// initial message is delivered to the new agent's inbox as an
+// agent_messages row and rendered by `inbox read`. So newlines and
+// tabs are allowed (and wanted: a multi-line brief keeps its
+// paragraph structure). We still reject other control characters
+// (NUL, escape, carriage return, …) that would corrupt a terminal
+// render, and cap the length at 4096 bytes.
+//
+// An empty string is valid — it simply means "no initial message".
+func isValidInitialMessage(s string) bool {
+	if len(s) > 4096 {
+		return false
+	}
+	for _, r := range s {
+		if r == '\n' || r == '\t' {
 			continue
 		}
 		if r < 0x20 || r == 0x7f {
@@ -1856,13 +1849,13 @@ func handleGroupByName(w http.ResponseWriter, r *http.Request) {
 }
 
 // maxGroupContextBytes caps a group's startup context. The context is
-// loaded into a tmux paste buffer and bracketed-pasted into the new
-// agent's pane; 16 KiB is comfortably more than any reasonable block
-// of startup guidance while keeping the injection bounded.
+// folded into the startup briefing delivered to each spawned agent's
+// inbox; 16 KiB is comfortably more than any reasonable block of
+// startup guidance while keeping the briefing message bounded.
 const maxGroupContextBytes = 16 * 1024
 
 // normalizeGroupContext prepares a group startup context for storage:
-// CRLF / lone-CR line endings are folded to LF so the pasted block
+// CRLF / lone-CR line endings are folded to LF so the briefing
 // renders consistently regardless of where the human typed it, and
 // the result is rejected when it exceeds maxGroupContextBytes.
 func normalizeGroupContext(s string) (string, error) {
@@ -1879,8 +1872,9 @@ func normalizeGroupContext(s string) (string, error) {
 //   - default_cwd — the working directory pre-filled into the spawn
 //     form (and substituted server-side by handleGroupSpawn when a
 //     spawn request leaves cwd blank).
-//   - default_context — a block of shared startup guidance injected
-//     into agents spawned into the group (see handleGroupSpawn).
+//   - default_context — a block of shared startup guidance delivered
+//     to the inbox of agents spawned into the group (see
+//     handleGroupSpawn).
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
 // fields present (non-nil) in the body are touched. Both are *string
