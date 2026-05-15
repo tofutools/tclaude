@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
 // BuildHandlerForTest exposes the production /v1 mux to flow tests in
@@ -178,6 +179,24 @@ func SeedPendingApprovalForTest(id string) func() {
 // in the URL they launch.
 func MintApproveInitTokenForTest(id string) string {
 	return mintInitToken(initScopeApprove(id))
+}
+
+// SetWorktreeFnsForTest swaps the git-worktree seam — directory
+// classification + linked-worktree removal — so cleanup flow tests
+// can exercise worktree deletion without real git repos on disk.
+// Returns a restore func for t.Cleanup.
+func SetWorktreeFnsForTest(
+	inspect func(dir string) worktree.WorktreeStatus,
+	remove func(root string, force bool) (bool, error),
+) func() {
+	prevInspect := inspectWorktreeFn
+	prevRemove := removeWorktreeFn
+	inspectWorktreeFn = inspect
+	removeWorktreeFn = remove
+	return func() {
+		inspectWorktreeFn = prevInspect
+		removeWorktreeFn = prevRemove
+	}
 }
 
 type dashTestHandler struct{ inner http.Handler }

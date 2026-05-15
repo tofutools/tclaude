@@ -1,0 +1,390 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+// cleanupResp mirrors the unexported agentd.cleanupResponse so flow
+// tests can decode the /api/cleanup/* result without importing the
+// internal type.
+type cleanupResp struct {
+	Mode     string `json:"mode"`
+	Outcomes []struct {
+		ConvID string   `json:"conv_id"`
+		Title  string   `json:"title"`
+		Result string   `json:"result"`
+		Detail string   `json:"detail"`
+		Groups []string `json:"groups"`
+	} `json:"outcomes"`
+	Removed  int      `json:"removed"`
+	Deleted  int      `json:"deleted"`
+	Skipped  int      `json:"skipped"`
+	Failed   int      `json:"failed"`
+	Warnings []string `json:"warnings"`
+}
+
+// postCleanup fires a cleanup request at the dashboard mux and decodes
+// the 200 response. Fatals on any non-200 — error-surface scenarios
+// use a raw testharness.Serve instead.
+func postCleanup(t *testing.T, mux http.Handler, path, body string) cleanupResp {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	require.NoError(t, err, "build request")
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "POST %s body=%s", path, rec.Body.String())
+	var resp cleanupResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode cleanup response")
+	return resp
+}
+
+// flowGroupHasMember walks the v1 members surface — the same list
+// `tclaude agent groups members` renders — and reports whether convID
+// is still in it.
+func flowGroupHasMember(f *testharness.Flow, group, convID string) bool {
+	for _, m := range f.ListGroupMembers(group) {
+		if m.ConvID == convID {
+			return true
+		}
+	}
+	return false
+}
+
+// Scenario: the per-group 🧹 cleanup button. The browser POSTs the
+// human-edited member list — and a careless human could leave an
+// online member ticked. The daemon's own tmux re-check, not the
+// client's selection, is what protects the live agent: it stays in
+// the group, the offline one is removed.
+func TestCleanup_Group_RemovesOfflineKeepsOnline(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const offlineConv = "offl-1111-2222-3333-4444"
+	const onlineConv = "onln-1111-2222-3333-4444"
+	f.HaveConvWithTitle(offlineConv, "stale-worker")
+	f.HaveConvWithTitle(onlineConv, "live-worker")
+	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
+	f.HaveGroup("squad")
+	f.HaveMember("squad", offlineConv, "stale")
+	f.HaveMember("squad", onlineConv, "live")
+	f.MarkOffline("tmux-offl")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/group",
+		`{"group":"squad","members":["`+offlineConv+`","`+onlineConv+`"]}`)
+
+	assert.Equal(t, 1, resp.Removed, "exactly the offline member removed")
+	assert.Equal(t, 1, resp.Skipped, "the online member skipped by the tmux re-check")
+	f.AssertNotGroupMember("squad", offlineConv)
+	assert.True(t, flowGroupHasMember(f, "squad", onlineConv),
+		"online member must survive cleanup")
+}
+
+// Scenario: an offline group OWNER is excluded by default — a cleanup
+// run without the opt-in leaves it untouched. Ticking "include
+// offline owners" both removes the membership AND strips the owner
+// row, and the response warns that the group is now ownerless.
+func TestCleanup_Group_OwnerExcludedUnlessOptedIn(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const ownerConv = "ownr-1111-2222-3333-4444"
+	f.HaveConvWithTitle(ownerConv, "boss")
+	f.HaveAliveSession(ownerConv, "spwn-ownr", "tmux-ownr", "/tmp/ownr")
+	g := f.HaveGroup("squad")
+	f.HaveMember("squad", ownerConv, "boss")
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, ownerConv, "test"), "seed owner")
+	f.MarkOffline("tmux-ownr")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Default pass: owner stays put.
+	def := postCleanup(t, mux, "/api/cleanup/group",
+		`{"group":"squad","members":["`+ownerConv+`"]}`)
+	assert.Equal(t, 0, def.Removed, "owner not removed by default")
+	assert.Equal(t, 1, def.Skipped, "owner reported skipped")
+	assert.True(t, flowGroupHasMember(f, "squad", ownerConv), "owner still a member")
+
+	// Opt-in pass: owner removed, owner row gone, ownerless warning.
+	inc := postCleanup(t, mux, "/api/cleanup/group",
+		`{"group":"squad","members":["`+ownerConv+`"],"include_owners":true}`)
+	assert.Equal(t, 1, inc.Removed, "owner removed with include_owners")
+	f.AssertNotGroupMember("squad", ownerConv)
+	isOwner, err := db.IsAgentGroupOwner(g.ID, ownerConv)
+	require.NoError(t, err)
+	assert.False(t, isOwner, "owner row must be stripped too")
+	assert.NotEmpty(t, inc.Warnings, "expected an ownerless-group warning")
+}
+
+// Scenario: the Agents-tab 🧹 cleanup button — delete=true. Offline
+// agents are purged (conv + every group/owner/perm row); an online
+// agent in the same request is skipped by the tmux re-check.
+func TestCleanup_Agents_DeleteOfflineSkipsOnline(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const offlineConv = "offl-1111-2222-3333-4444"
+	const onlineConv = "onln-1111-2222-3333-4444"
+	f.HaveConvWithTitle(offlineConv, "stale-worker")
+	f.HaveConvWithTitle(onlineConv, "live-worker")
+	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
+	f.HaveGroup("squad")
+	f.HaveMember("squad", offlineConv, "stale")
+	f.HaveMember("squad", onlineConv, "live")
+	f.MarkOffline("tmux-offl")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+offlineConv+`","`+onlineConv+`"],"delete":true}`)
+
+	assert.Equal(t, 1, resp.Deleted, "offline agent purged")
+	assert.Equal(t, 1, resp.Skipped, "online agent skipped")
+	f.AssertDeleted(offlineConv)
+	f.AssertNotGroupMember("squad", offlineConv)
+	assert.True(t, flowGroupHasMember(f, "squad", onlineConv),
+		"online agent untouched")
+}
+
+// Scenario: the Groups-tab "clean up all groups" button with delete
+// left OFF — an offline agent is unjoined from every group it
+// belongs to but its conversation history is left intact on disk.
+func TestCleanup_Agents_RemoveFromAllGroupsKeepsConv(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "many-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "rover")
+	f.HaveAliveSession(conv, "spwn-many", "tmux-many", "/tmp/many")
+	f.HaveGroup("alpha")
+	f.HaveGroup("beta")
+	f.HaveMember("alpha", conv, "rover")
+	f.HaveMember("beta", conv, "rover")
+	f.MarkOffline("tmux-many")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":false}`)
+
+	assert.Equal(t, 1, resp.Removed, "agent removed from its groups")
+	assert.Equal(t, 0, resp.Deleted, "delete=false must not purge")
+	f.AssertNotGroupMember("alpha", conv)
+	f.AssertNotGroupMember("beta", conv)
+	// The conv itself survives — only memberships were dropped.
+	row, err := db.GetConvIndex(conv)
+	require.NoError(t, err)
+	assert.NotNil(t, row, "conv_index row must survive a remove-from-groups cleanup")
+}
+
+// Scenario: a cleanup pointed at a group that doesn't exist returns
+// 404 — keeps the modal's error toast readable instead of silently
+// reporting "0 removed".
+func TestCleanup_Group_UnknownGroupReturns404(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	r, err := http.NewRequest(http.MethodPost, "/api/cleanup/group",
+		strings.NewReader(`{"group":"no-such-group","members":["x"]}`))
+	require.NoError(t, err)
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(mux, r)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+}
+
+// --- worktree cleanup ----------------------------------------------
+
+// fakeWorktrees stands in for the git-worktree seam: inspect reports a
+// canned WorktreeStatus per directory, remove records every removal so
+// a test can assert which worktrees were (and were not) touched.
+type fakeWorktrees struct {
+	byDir   map[string]worktree.WorktreeStatus
+	removed []string
+}
+
+func (f *fakeWorktrees) inspect(dir string) worktree.WorktreeStatus {
+	if st, ok := f.byDir[dir]; ok {
+		return st
+	}
+	return worktree.WorktreeStatus{Kind: "none"}
+}
+
+func (f *fakeWorktrees) remove(root string, _ bool) (bool, error) {
+	f.removed = append(f.removed, root)
+	return true, nil
+}
+
+func (f *fakeWorktrees) wasRemoved(root string) bool {
+	for _, r := range f.removed {
+		if r == root {
+			return true
+		}
+	}
+	return false
+}
+
+// installFakeWorktrees swaps the agentd worktree seam for the test so
+// worktree cleanup runs without real git repos. byDir maps an agent's
+// cwd → the worktree status the fake reports for it.
+func installFakeWorktrees(t *testing.T, byDir map[string]worktree.WorktreeStatus) *fakeWorktrees {
+	t.Helper()
+	fw := &fakeWorktrees{byDir: byDir}
+	t.Cleanup(agentd.SetWorktreeFnsForTest(fw.inspect, fw.remove))
+	return fw
+}
+
+// Scenario: deleting an offline agent with delete_worktrees set also
+// removes the linked git worktree it was working in.
+func TestCleanup_Agents_DeleteRemovesLinkedWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wtre-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-linked"
+	f.HaveConvWithTitle(conv, "worktree-worker")
+	f.HaveAliveSession(conv, "spwn-wtre", "tmux-wtre", cwd)
+	f.MarkOffline("tmux-wtre")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.True(t, fw.wasRemoved(cwd), "linked worktree should be removed")
+	require.Len(t, resp.Outcomes, 1)
+	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
+	f.AssertDeleted(conv)
+}
+
+// Scenario: a worktree a *surviving* agent still works in is never
+// removed, even when one of its sharers is being deleted.
+func TestCleanup_Agents_KeepsSharedWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const leaving = "wdel-1111-2222-3333-4444"
+	const staying = "wsur-1111-2222-3333-4444"
+	const shared = "/tmp/wt-shared"
+	f.HaveConvWithTitle(leaving, "leaving")
+	f.HaveConvWithTitle(staying, "staying")
+	f.HaveAliveSession(leaving, "spwn-wdel", "tmux-wdel", shared)
+	f.HaveAliveSession(staying, "spwn-wsur", "tmux-wsur", shared)
+	f.MarkOffline("tmux-wdel")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		shared: {Root: shared, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+leaving+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.False(t, fw.wasRemoved(shared),
+		"a worktree another agent still works in must be kept")
+	assert.Contains(t, resp.Outcomes[0].Detail, "shared")
+}
+
+// Scenario: the repo's main worktree is never removed by cleanup.
+func TestCleanup_Agents_KeepsMainWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wmai-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-main"
+	f.HaveConvWithTitle(conv, "main-repo-worker")
+	f.HaveAliveSession(conv, "spwn-wmai", "tmux-wmai", cwd)
+	f.MarkOffline("tmux-wmai")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "main", Kind: "main"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.False(t, fw.wasRemoved(cwd), "the main worktree must never be removed")
+	assert.Contains(t, resp.Outcomes[0].Detail, "main repo")
+}
+
+// Scenario: delete_worktrees defaults off — a delete without it leaves
+// the worktree alone.
+func TestCleanup_Agents_DeleteWorktreesOptIn(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wopt-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-opt"
+	f.HaveConvWithTitle(conv, "opt-worker")
+	f.HaveAliveSession(conv, "spwn-wopt", "tmux-wopt", cwd)
+	f.MarkOffline("tmux-wopt")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":false}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.False(t, fw.wasRemoved(cwd), "worktree untouched when delete_worktrees=false")
+	assert.NotContains(t, resp.Outcomes[0].Detail, "worktree")
+}
+
+// Scenario: the per-row delete button's path — GET .../worktree
+// classifies the agent's worktree (what the modal checkbox reads),
+// and DELETE ?delete_worktree=1 removes it alongside the agent.
+func TestDeleteAgent_WithWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wsng-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-single"
+	f.HaveConvWithTitle(conv, "solo")
+	f.HaveAliveSession(conv, "spwn-wsng", "tmux-wsng", cwd)
+	f.MarkOffline("tmux-wsng")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// GET worktree info — what the delete-agent modal reads to decide
+	// whether to show (and enable) its checkbox.
+	grec := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree", nil))
+	require.Equal(t, http.StatusOK, grec.Code, "body=%s", grec.Body.String())
+	var wtInfo struct {
+		Kind      string `json:"kind"`
+		Path      string `json:"path"`
+		Branch    string `json:"branch"`
+		Shared    bool   `json:"shared"`
+		Removable bool   `json:"removable"`
+	}
+	require.NoError(t, json.Unmarshal(grec.Body.Bytes(), &wtInfo))
+	assert.Equal(t, "linked", wtInfo.Kind)
+	assert.True(t, wtInfo.Removable, "a lone linked worktree is removable")
+	assert.False(t, wtInfo.Shared)
+
+	// DELETE with ?delete_worktree=1 — the modal's confirm path.
+	dr, err := http.NewRequest(http.MethodDelete,
+		"/api/agents/"+conv+"?delete_worktree=1", nil)
+	require.NoError(t, err)
+	drec := testharness.Serve(mux, dr)
+	require.Equal(t, http.StatusOK, drec.Code, "body=%s", drec.Body.String())
+	assert.True(t, fw.wasRemoved(cwd), "worktree removed on ?delete_worktree=1")
+	f.AssertDeleted(conv)
+}

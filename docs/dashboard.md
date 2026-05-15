@@ -92,9 +92,12 @@ worktree, effective permissions, and an **owner** badge where applicable.
 Per-member actions: edit alias/role/descr, **wake** / **shut down** / **focus**
 the session, schedule a **cron** job, toggle ownership, and remove from the
 group. Per-group actions live in the group header: rename, **+ add member**
-(a searchable keyboard-navigable overlay), **+ spawn agent**, delete the group,
-**⏰ multicast** cron, and a click-to-edit **start-dir** chip (the default
-working directory for agents spawned into that group).
+(a searchable keyboard-navigable overlay), **+ spawn agent**, **🧹 cleanup**
+(bulk-remove confirmed-offline members — see [Cleanup](#cleanup)), delete the
+group, **⏰ multicast** cron, and a click-to-edit **start-dir** chip (the
+default working directory for agents spawned into that group). The tab's
+filter bar also carries a **🧹 clean up** button that sweeps every group at
+once.
 
 **Drag-and-drop.** Drag a member row onto another group's header to **move**
 it; hold **Ctrl** (**Cmd** on macOS) while dragging to **clone** it into the
@@ -111,7 +114,9 @@ group memberships and effective permissions.
 
 Per-row actions: wake / shut down / focus, open a terminal in the agent's
 working directory, **clone**, **reincarnate**, rename, schedule a cron job, and
-delete. **+ new agent** spawns a fresh standalone session.
+delete. The delete confirm also offers to remove the agent's git worktree
+(see [Cleanup](#cleanup)). **+ new agent** spawns a fresh standalone session;
+the filter bar's **🧹 cleanup** button bulk-deletes confirmed-offline agents.
 
 ### Cron
 
@@ -157,6 +162,46 @@ opens a terminal window attached to the freshly-spawned session — via
 `tclaude session attach`, so the reattached session keeps its status bar and
 focus/notify wiring — so you can watch and talk to the new agent immediately. A
 detached spawn otherwise has no window of its own.
+
+## Cleanup
+
+Long-running coordination sessions accumulate dead agents — exited workers,
+abandoned experiments. The **🧹 cleanup** affordances bulk-prune them.
+
+Three entry points, all opening the same editable modal:
+
+- **Per group** (group header → 🧹 cleanup) — removes confirmed-offline
+  *members* from that one group. The conversations keep running and stay on
+  disk; only the membership is dropped.
+- **All groups** (Groups tab → 🧹 clean up) — removes confirmed-offline agents
+  from *every* group they belong to. An optional **permanently delete**
+  checkbox escalates to a full purge.
+- **Agents** (Agents tab → 🧹 cleanup) — **permanently deletes**
+  confirmed-offline agents: wipes the conversation history from disk and drops
+  every group / owner / permission row.
+
+The modal lists the affected agents as an editable include/exclude checklist,
+with an "inactive ≥ N h" quick-filter for picking by staleness. Nothing is
+trusted blindly: **the daemon re-checks tmux liveness for every agent at
+execute time**, so one that came back online between the snapshot and your
+click is reported *skipped*, never touched. After running, the modal shows a
+per-agent outcome log.
+
+**Owners.** Offline group owners are excluded by default. Tick **include
+offline owners** to remove them too — that also strips their owner status. A
+group left with no owners is flagged with a warning.
+
+**Worktrees.** When cleanup *deletes* an agent (and likewise the per-row
+**delete** button), it offers to also remove the git worktree that agent was
+working in. The worktree *directory* is removed; its **branch and commits are
+kept**. Two worktrees are always spared: the repo's **main** worktree, and any
+worktree another, surviving agent is still working in (a "shared" worktree).
+For a single delete the checkbox is greyed out and labelled when the worktree
+can't be removed; an already-deleted worktree is a silent no-op.
+
+Cleanup is **human-only** — these endpoints live on the loopback dashboard
+server behind the same cookie + Origin pinning as every other mutation; agents
+on the `/v1` socket have no path to them.
 
 ## See also
 
