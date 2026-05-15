@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 25
+const currentVersion = 26
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -173,6 +173,40 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 26 {
+		if err := migrateV25toV26(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV25toV26 adds agent_workdir — the most-recent directory an
+// agent has been editing files in, distinct from sessions.cwd (where
+// Claude Code was launched). The PostToolUse hook callback upserts the
+// dir of every file the agent edits; the daemon's /v1/.../dir endpoints
+// read it back so `tclaude agent dir` can report where an agent is
+// actually building, not just where it started.
+//
+// One row per conv_id (PRIMARY KEY); the upsert overwrites in place, so
+// the table stays bounded by the number of conversations rather than
+// the number of edits. Kept as its own table — not a sessions column —
+// because SaveSession's INSERT OR REPLACE would otherwise clobber an
+// out-of-band column on every hook tick.
+func migrateV25toV26(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_workdir (
+			conv_id    TEXT PRIMARY KEY,
+			dir        TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+
+		UPDATE schema_version SET version = 26;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v25→v26: %w", err)
+	}
 	return nil
 }
 

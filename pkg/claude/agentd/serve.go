@@ -199,6 +199,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/reincarnate", handleWhoamiReincarnate)
 	mux.HandleFunc("/v1/whoami/clone", handleWhoamiClone)
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
+	mux.HandleFunc("/v1/whoami/dir", handleWhoamiDir)
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	mux.HandleFunc("/v1/messages", handleMessages)

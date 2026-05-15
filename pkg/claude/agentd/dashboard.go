@@ -314,19 +314,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := agentRows[convID]; ok {
 			return existing
 		}
-		row := agent.FreshConvRowResolved(convID)
-		title := "(unknown)"
-		branch := ""
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-			branch = row.GitBranch
-		}
 		a := &dashboardAgent{
 			ConvID: convID,
-			Title:  title,
-			Branch: branch,
+			Title:  agent.FreshTitle(convID),
+			Branch: agent.FreshBranch(convID),
 			Online: isConvOnline(convID),
 			State:  stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
@@ -369,23 +360,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		memberSet := map[string]bool{}
 		for _, m := range members {
 			memberSet[m.ConvID] = true
-			row := agent.FreshConvRowResolved(m.ConvID)
-			title := "(unknown)"
-			branch := ""
-			if row != nil {
-				if t := agent.DisplayTitle(row); t != "" {
-					title = t
-				}
-				branch = row.GitBranch
-			}
 			online := isConvOnline(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID: m.ConvID,
-				Title:  title,
+				Title:  agent.FreshTitle(m.ConvID),
 				Alias:  m.Alias,
 				Role:   m.Role,
 				Descr:  m.Descr,
-				Branch: branch,
+				Branch: agent.FreshBranch(m.ConvID),
 				Online: online,
 				Owner:  ownerSet[m.ConvID],
 				State:  stateForConv(m.ConvID),
@@ -406,21 +388,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			if memberSet[ownerConv] {
 				continue
 			}
-			row := agent.FreshConvRowResolved(ownerConv)
-			title := "(unknown)"
-			branch := ""
-			if row != nil {
-				if t := agent.DisplayTitle(row); t != "" {
-					title = t
-				}
-				branch = row.GitBranch
-			}
 			online := isConvOnline(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID: ownerConv,
-				Title:  title,
+				Title:  agent.FreshTitle(ownerConv),
 				Role:   "owner",
-				Branch: branch,
+				Branch: agent.FreshBranch(ownerConv),
 				Online: online,
 				Owner:  true,
 				State:  stateForConv(ownerConv),

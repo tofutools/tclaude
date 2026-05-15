@@ -559,6 +559,22 @@ summary.dnd-drop-over.dnd-effect-clone {
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="term-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="term-title">
+    <h3 id="term-title">Open a terminal</h3>
+    <p>Spawn a terminal window for this agent. <strong>Current</strong> is where it
+    has most recently been editing files; <strong>Worktree</strong> is the git
+    worktree/repo root around that; <strong>Launch</strong> is where Claude Code
+    was started.</p>
+    <div class="modal-meta" id="term-meta"></div>
+    <div class="modal-buttons">
+      <button id="term-cancel">Cancel</button>
+      <button id="term-start">Launch dir</button>
+      <button id="term-worktree">Worktree dir</button>
+      <button id="term-current">Current dir</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="edit-member-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-member-title">
     <h3 id="edit-member-title">Edit member</h3>
@@ -981,20 +997,31 @@ summary.dnd-drop-over.dnd-effect-clone {
     return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="Schedule a recurring nudge for ${esc(label)}">⏰</button>`;
   }
 
-  // lifecycleAndFocusButtons renders the focus/wake/shutdown trio.
-  // Mutually exclusive based on online state so the row stays visually
-  // stable as the agent toggles. Online → focus + shutdown; offline →
-  // wake. Used by both the Groups tab member rows and the Agents tab
-  // top-level rows so the surface is identical in both places.
+  // termButton renders the "open a terminal in this agent's working
+  // directory" affordance. Shown whether the agent is online or not —
+  // the directory is known from the DB regardless of whether the
+  // agent's tmux pane is currently alive.
+  function termButton(m) {
+    const label = m.alias || m.title || m.conv_id;
+    return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
+  }
+
+  // lifecycleAndFocusButtons renders the focus/term/wake/shutdown
+  // cluster. focus + shutdown vs wake are mutually exclusive on online
+  // state so the row stays visually stable as the agent toggles; term
+  // is always present. Used by both the Groups tab member rows and the
+  // Agents tab top-level rows so the surface is identical in both.
   function lifecycleAndFocusButtons(m) {
     const label = m.alias || m.title || m.conv_id;
     if (m.online) {
       return [
         `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`,
+        termButton(m),
         `<button data-act="shutdown-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Soft-exit this agent (force kill available in confirm)">shut down</button>`,
       ].join('');
     }
-    return `<button data-act="wake-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Wake this agent — spawns a tmux session resumed onto its conv">wake</button>`;
+    return termButton(m) +
+      `<button data-act="wake-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Wake this agent — spawns a tmux session resumed onto its conv">wake</button>`;
   }
 
   function editMemberButton(g, m) {
@@ -2948,6 +2975,47 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
+  // termDirModal pops a 4-button picker: Current dir (default),
+  // Worktree dir, Launch dir, Cancel. Resolves to
+  // "current" / "worktree" / "start" / null. The caller POSTs the
+  // choice to /api/term/{conv}; the daemon opens the terminal window
+  // out-of-sandbox via terminal.OpenWithCommand.
+  function termDirModal({label}) {
+    return new Promise(resolve => {
+      const overlay = $('#term-modal');
+      $('#term-meta').textContent = label || '';
+      $('#term-meta').style.display = label ? 'block' : 'none';
+      const currentBtn = $('#term-current');
+      const worktreeBtn = $('#term-worktree');
+      const startBtn = $('#term-start');
+      const cancelBtn = $('#term-cancel');
+      const cleanup = (result) => {
+        overlay.classList.remove('show');
+        currentBtn.removeEventListener('click', onCurrent);
+        worktreeBtn.removeEventListener('click', onWorktree);
+        startBtn.removeEventListener('click', onStart);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onCurrent = () => cleanup('current');
+      const onWorktree = () => cleanup('worktree');
+      const onStart = () => cleanup('start');
+      const onCancel = () => cleanup(null);
+      const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
+      currentBtn.addEventListener('click', onCurrent);
+      worktreeBtn.addEventListener('click', onWorktree);
+      startBtn.addEventListener('click', onStart);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      currentBtn.focus();
+    });
+  }
+
   // editMemberModal pops the alias/role/descr editor pre-filled with
   // current values. Resolves to the new {alias, role, descr} object on
   // Save (only fields that actually changed are kept; unchanged fields
@@ -3297,6 +3365,22 @@ summary.dnd-drop-over.dnd-effect-clone {
             // Skip the default refresh — focusing doesn't change any
             // dashboard state and the user just left the window.
             if (ok) toast(`focused: ${label}`);
+            return;
+          }
+          case 'term': {
+            // Pick which directory, then ask the daemon to spawn a
+            // terminal window there. Non-destructive and changes no
+            // dashboard state, so skip the refresh.
+            const which = await termDirModal({ label });
+            if (!which) return;
+            const r = await fetch(`/api/term/${encodeURIComponent(conv)}`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ which }),
+            });
+            if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
+            const info = await r.json().catch(() => ({}));
+            toast(`terminal opened: ${info.dir || label}`);
             return;
           }
           case 'sudo-grant': {

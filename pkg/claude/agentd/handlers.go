@@ -159,22 +159,17 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			}
 			pe, exists := byConv[m.ConvID]
 			if !exists {
-				row, _ := db.GetConvIndex(m.ConvID)
-				title := "(unknown)"
-				branch := ""
-				if row != nil {
-					if t := agent.DisplayTitle(row); t != "" {
-						title = t
-					}
-					branch = row.GitBranch
-				}
+				// FreshTitle / FreshBranch refresh the conv_index row
+				// from the .jsonl first, so a renamed / freshly-spawned
+				// member shows its real name and branch instead of stale
+				// values.
 				pe = &peerEntry{
 					ConvID: m.ConvID,
-					Title:  title,
+					Title:  agent.FreshTitle(m.ConvID),
 					Alias:  m.Alias,
 					Role:   m.Role,
 					Descr:  m.Descr,
-					Branch: branch,
+					Branch: agent.FreshBranch(m.ConvID),
 					Online: isConvOnline(m.ConvID),
 				}
 				byConv[m.ConvID] = pe
@@ -196,19 +191,10 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
 				continue
 			}
-			row, _ := db.GetConvIndex(s.ConvID)
-			title := "(unknown)"
-			branch := ""
-			if row != nil {
-				if t := agent.DisplayTitle(row); t != "" {
-					title = t
-				}
-				branch = row.GitBranch
-			}
 			byConv[s.ConvID] = &peerEntry{
 				ConvID: s.ConvID,
-				Title:  title,
-				Branch: branch,
+				Title:  agent.FreshTitle(s.ConvID),
+				Branch: agent.FreshBranch(s.ConvID),
 				Online: true,
 			}
 		}
@@ -1842,22 +1828,13 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 	out := make([]memberJSON, 0, len(members))
 	for _, m := range members {
 		memberSet[m.ConvID] = true
-		row, _ := db.GetConvIndex(m.ConvID)
-		title := "(unknown)"
-		branch := ""
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-			branch = row.GitBranch
-		}
 		out = append(out, memberJSON{
 			ConvID: m.ConvID,
-			Title:  title,
+			Title:  agent.FreshTitle(m.ConvID),
 			Alias:  m.Alias,
 			Role:   m.Role,
 			Descr:  m.Descr,
-			Branch: branch,
+			Branch: agent.FreshBranch(m.ConvID),
 			Online: isConvOnline(m.ConvID),
 			Owner:  ownerSet[m.ConvID],
 		})
@@ -1869,20 +1846,11 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		if memberSet[ownerConv] {
 			continue
 		}
-		row, _ := db.GetConvIndex(ownerConv)
-		title := "(unknown)"
-		branch := ""
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-			branch = row.GitBranch
-		}
 		out = append(out, memberJSON{
 			ConvID: ownerConv,
-			Title:  title,
+			Title:  agent.FreshTitle(ownerConv),
 			Role:   "owner",
-			Branch: branch,
+			Branch: agent.FreshBranch(ownerConv),
 			Online: isConvOnline(ownerConv),
 			Owner:  true,
 		})
@@ -1909,16 +1877,9 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 	}
 	out := make([]ownerJSON, 0, len(owners))
 	for _, o := range owners {
-		row, _ := db.GetConvIndex(o.ConvID)
-		title := "(unknown)"
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-		}
 		entry := ownerJSON{
 			ConvID: o.ConvID,
-			Title:  title,
+			Title:  agent.FreshTitle(o.ConvID),
 			Online: isConvOnline(o.ConvID),
 		}
 		if !o.GrantedAt.IsZero() {

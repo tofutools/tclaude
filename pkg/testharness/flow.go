@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -485,10 +484,10 @@ func (f *Flow) AssertCloneAliasInGroup(c CloneResp, groupName, wantAlias string)
 
 // MemberView is the parsed shape of one row in
 // GET /v1/groups/{name}/members — what `tclaude agent groups members`
-// would render. Title is sourced from db.GetConvIndex (NOT the
-// disk-fallback FreshConvRow path), mirroring production's surface
-// behavior: stale conv_index ⇒ stale title here, exactly as humans
-// see it before the watch model refreshes.
+// would render. The handler refreshes each member's Title from the
+// underlying .jsonl (agent.FreshTitle) before responding, so a renamed
+// or freshly-spawned member surfaces its real name here without a
+// prior `conv ls` indexing pass.
 type MemberView struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
@@ -498,6 +497,20 @@ type MemberView struct {
 	Branch string `json:"branch,omitempty"`
 	Online bool   `json:"online"`
 	Owner  bool   `json:"owner,omitempty"`
+}
+
+// PeerView is the parsed shape of one row in GET /v1/peers — what
+// `tclaude agent ls` renders. Like MemberView, Title is refreshed from
+// the .jsonl by the handler (agent.FreshTitle); Alias is the per-group
+// handle and is empty for ungrouped online agents.
+type PeerView struct {
+	ConvID string   `json:"conv_id"`
+	Title  string   `json:"title"`
+	Alias  string   `json:"alias,omitempty"`
+	Role   string   `json:"role,omitempty"`
+	Descr  string   `json:"descr,omitempty"`
+	Online bool     `json:"online"`
+	Groups []string `json:"groups"`
 }
 
 // ListGroupMembers calls GET /v1/groups/{name}/members and returns
@@ -517,19 +530,44 @@ func (f *Flow) ListGroupMembers(group string) []MemberView {
 	return out
 }
 
+// ListPeers calls GET /v1/peers and returns the parsed list — the same
+// shape `tclaude agent ls` renders. Use AsHuman/AsAgent to scope the
+// caller. Fatals on non-200.
+func (f *Flow) ListPeers() []PeerView {
+	f.T.Helper()
+	rec := f.do(http.MethodGet, "/v1/peers", nil)
+	if rec.Code != http.StatusOK {
+		f.T.Fatalf("ListPeers: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out []PeerView
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		f.T.Fatalf("ListPeers decode: %v body=%s", err, rec.Body.String())
+	}
+	return out
+}
+
+// FindPeer returns the PeerView for convID from ListPeers, or nil if
+// the caller can't see it. Convenience for `agent ls` assertions.
+func (f *Flow) FindPeer(convID string) *PeerView {
+	f.T.Helper()
+	for _, p := range f.ListPeers() {
+		if p.ConvID == convID {
+			return &p
+		}
+	}
+	return nil
+}
+
 // AssertGroupMember asserts that `tclaude agent groups members <group>`
 // shows convID with the expected alias and title. Polls because the
-// .jsonl write that follows /rename is async; the conv_index has to
-// pick it up before the title surfaces here.
-//
-// We trigger conv_index refresh inline via FreshConvRowResolved (the
-// same call dashboard makes). In production the watch model handles
-// this; tests don't run the watch model, so we stand in for it.
+// .jsonl write that follows /rename is async; each poll re-hits the
+// members handler, which refreshes the title from the .jsonl
+// (agent.FreshTitle) before responding — so the loop converges on its
+// own once the rename lands, with no test-side index priming.
 func (f *Flow) AssertGroupMember(group, convID, wantAlias, wantTitle string, timeout time.Duration) {
 	f.T.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		_ = agent.FreshConvRowResolved(convID)
 		members := f.ListGroupMembers(group)
 		for _, m := range members {
 			if m.ConvID != convID {
