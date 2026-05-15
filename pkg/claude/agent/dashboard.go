@@ -14,18 +14,20 @@ import (
 )
 
 // dashboardCmd is `tclaude agent dashboard` — opens the daemon's
-// loopback HTTP dashboard in the default browser. The URL is the
-// same loopback base the human-approval popup uses, so this is also
-// where pending approvals will show up inline once that view ships.
+// loopback HTTP dashboard in the default browser.
 //
-// The CLI fetches the URL from /v1/info rather than guessing the
-// port; the daemon binds :0 and reports the chosen port on startup.
+// The CLI calls /v1/dashboard/open on the daemon's Unix socket, which
+// is human-only (peer-credential auth refuses agents). The daemon
+// mints a short-lived, single-use init token and returns a URL with
+// it embedded; the browser exchanges that token for the dashboard
+// session cookie. This is what keeps the dashboard's admin /api/*
+// surface unreachable by agents — see agentd/dashboard.go.
 func dashboardCmd() *cobra.Command {
 	return boa.CmdT[dashboardParams]{
 		Use:         "dashboard",
 		Aliases:     []string{"ui"},
 		Short:       "Open the agentd browser dashboard",
-		Long:        "Looks up the daemon's loopback URL via /v1/info and opens it in the default browser. Pass --print to just print the URL (useful for scripts / piping into another opener).",
+		Long:        "Asks the daemon (via the human-only /v1/dashboard/open endpoint) for a one-shot dashboard URL and opens it in the default browser. Pass --print to print the URL instead — note it carries a single-use token that expires in ~60s, so use it immediately.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *dashboardParams, _ *cobra.Command, _ []string) {
 			os.Exit(runDashboard(p, os.Stdout, os.Stderr))
@@ -34,35 +36,34 @@ func dashboardCmd() *cobra.Command {
 }
 
 type dashboardParams struct {
-	Print bool `long:"print" help:"Print the URL instead of opening a browser"`
+	Print bool `long:"print" help:"Print the one-shot URL instead of opening a browser (expires in ~60s)"`
 }
 
 func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	var info struct {
-		PopupBaseURL string `json:"popup_base_url"`
+	var resp struct {
+		URL string `json:"url"`
 	}
-	if err := DaemonGet("/v1/info", &info); err != nil {
+	if err := DaemonGet("/v1/dashboard/open", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	if info.PopupBaseURL == "" {
+	if resp.URL == "" {
 		fmt.Fprintln(stderr, "Error: daemon has no loopback URL bound; the dashboard is unavailable in this process.")
 		fmt.Fprintln(stderr, "       Restart the daemon with `tclaude agentd serve` and check the startup banner for the popup port.")
 		return rcIOFailure
 	}
-	url := info.PopupBaseURL + "/"
 	if p.Print {
-		fmt.Fprintln(stdout, url)
+		fmt.Fprintln(stdout, resp.URL)
 		return rcOK
 	}
-	if err := openBrowserURL(url); err != nil {
-		fmt.Fprintf(stderr, "Failed to open browser: %v\nURL: %s\n", err, url)
+	if err := openBrowserURL(resp.URL); err != nil {
+		fmt.Fprintf(stderr, "Failed to open browser: %v\nURL: %s\n", err, resp.URL)
 		return rcIOFailure
 	}
-	fmt.Fprintf(stdout, "Opening dashboard at %s\n", url)
+	fmt.Fprintln(stdout, "Opening dashboard in your browser…")
 	return rcOK
 }
 

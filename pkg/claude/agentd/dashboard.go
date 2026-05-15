@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -58,9 +59,73 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardEditRoutes(mux)
 }
 
-// handleDashboardRoot serves the HTML page. Sets the dashboard
-// session cookie if it isn't present, so subsequent /api/* fetches
-// authenticate.
+// dashboardInitTokens holds short-lived, single-use tokens that the
+// `/` exchange swaps for the long-lived dashboard session cookie.
+// Tokens are minted only by the human-only `/v1/dashboard/open`
+// endpoint and the in-process tray handler — never handed out on an
+// unauthenticated GET — so a same-user agent process cannot obtain
+// one. In-memory only: a daemon restart drops every pending token,
+// and the human just reopens the dashboard.
+var dashboardInitTokens = struct {
+	mu sync.Mutex
+	m  map[string]time.Time // token -> expiry
+}{m: map[string]time.Time{}}
+
+// dashboardInitTokenTTL bounds how long a minted init token stays
+// valid. The window only needs to cover "CLI mints → browser cold-
+// starts → browser GETs /" — 60s is comfortable even for a WSL→Windows
+// browser hand-off, and short enough that a leaked token is near-
+// useless.
+const dashboardInitTokenTTL = 60 * time.Second
+
+// mintDashboardInitToken creates a fresh single-use init token, stores
+// it with a TTL, and opportunistically GCs expired entries. Safe to
+// call from any goroutine — the `/v1/dashboard/open` handler and the
+// tray click handler both do.
+func mintDashboardInitToken() string {
+	tok := newApprovalID() // 16 random bytes → 32 hex chars; reuses the approval-ID generator
+	now := time.Now()
+	dashboardInitTokens.mu.Lock()
+	for k, exp := range dashboardInitTokens.m {
+		if now.After(exp) {
+			delete(dashboardInitTokens.m, k)
+		}
+	}
+	dashboardInitTokens.m[tok] = now.Add(dashboardInitTokenTTL)
+	dashboardInitTokens.mu.Unlock()
+	return tok
+}
+
+// consumeDashboardInitToken validates tok and removes it (single-use).
+// Returns true only when tok was present and unexpired.
+func consumeDashboardInitToken(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	dashboardInitTokens.mu.Lock()
+	defer dashboardInitTokens.mu.Unlock()
+	exp, ok := dashboardInitTokens.m[tok]
+	if !ok {
+		return false
+	}
+	delete(dashboardInitTokens.m, tok) // single-use: a token never works twice
+	return time.Now().Before(exp)
+}
+
+// handleDashboardRoot serves the dashboard HTML behind a token-
+// exchange (OAuth authorization-code style) flow:
+//
+//   - GET /?init_token=X — X is validated + consumed; on success the
+//     long-lived session cookie is set and the browser is redirected
+//     to the bare path, so the one-shot token never lingers in the
+//     address bar, browser history, or an access log.
+//   - GET / with a valid session cookie — serves the page (refresh or
+//     a second tab in the already-authenticated browser).
+//   - GET / with neither — refused. The cookie is NEVER handed out on
+//     a bare GET; that is what stops a same-user agent process from
+//     scraping it. An init token can only be minted via the human-only
+//     `/v1/dashboard/open` endpoint on the daemon's Unix socket (or
+//     the in-process tray handler).
 func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	// `/` is a catch-all in net/http; reject anything we don't know
 	// so /favicon.ico etc. don't silently render the dashboard HTML.
@@ -76,7 +141,15 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard token not initialised", http.StatusServiceUnavailable)
 		return
 	}
-	if c, err := r.Cookie(dashboardCookieName); err != nil || c.Value != dashboardSessionToken {
+
+	// Exchange path: a valid init token is swapped for the session
+	// cookie, then we 303 to the bare path so the one-shot token
+	// drops out of the URL.
+	if tok := r.URL.Query().Get("init_token"); tok != "" {
+		if !consumeDashboardInitToken(tok) {
+			http.Error(w, "invalid or expired init token — reopen the dashboard with `tclaude agent dashboard`", http.StatusForbidden)
+			return
+		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     dashboardCookieName,
 			Value:    dashboardSessionToken,
@@ -84,10 +157,54 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
 		})
+		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
+		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(dashboardHTML))
+
+	// Already authenticated: an existing valid cookie (refresh / new
+	// tab in the same browser) just gets the page.
+	if c, err := r.Cookie(dashboardCookieName); err == nil && c.Value == dashboardSessionToken {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(dashboardHTML))
+		return
+	}
+
+	// No token, no cookie — refuse. The dashboard is reachable only
+	// through `tclaude agent dashboard` or the agentd tray icon, both
+	// of which mint an init token over a human-authenticated channel.
+	http.Error(w, "dashboard requires an auth token — open it with `tclaude agent dashboard` or the agentd tray icon", http.StatusForbidden)
+}
+
+// handleDashboardOpen mints a fresh dashboard init token and returns
+// the ready-to-open browser URL with the token embedded. Mounted on
+// the daemon's Unix-socket `/v1` mux and gated by requireHuman: an
+// agent (any caller with a Claude Code ancestor) is refused.
+//
+// This is the load-bearing gate of the whole dashboard-auth scheme.
+// The dashboard's /api/* surface bypasses the per-agent permission
+// system (asDashboardHumanPeer), so it must never be reachable by an
+// agent. Peer-credential auth on the Unix socket is what distinguishes
+// the human from an agent here — keep this endpoint human-only.
+//
+// `tclaude agent dashboard` calls this; the tray's "Open dashboard"
+// mints in-process via mintDashboardInitToken instead.
+func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
+		return
+	}
+	if !requireHuman(w, r, "open the dashboard") {
+		return
+	}
+	if popupBaseURL == "" {
+		writeError(w, http.StatusServiceUnavailable, "dashboard",
+			"daemon has no loopback URL bound; the dashboard is unavailable in this process")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"url": popupBaseURL + "/?init_token=" + mintDashboardInitToken(),
+	})
 }
 
 // checkDashboardAuth mirrors checkPopupAuth: cookie value match +

@@ -163,16 +163,23 @@ func headAliasRowToJSON(h *db.HeadAlias) headAliasJSON {
 	return out
 }
 
-// requireHuman gates a mutation on the caller having no Claude Code
-// ancestor in its process tree. Mirrors the implicit "human bypass"
-// already in requirePermission; broken out here so head-alias
-// mutations can fail closed for agents in a single line. Writes the
-// 403 response on rejection; returns true when the caller may proceed.
+// requireHuman gates a mutation on the caller being the human: a
+// resolvable peer PID and no Claude Code ancestor in its process
+// tree. Fails closed — an unidentifiable peer (PID 0) is refused, not
+// assumed human — mirroring the PID-0 guard + human-bypass in
+// requirePermission. Broken out here so human-only endpoints can fail
+// closed for agents in a single line. Writes the response on
+// rejection; returns true when the caller may proceed.
 func requireHuman(w http.ResponseWriter, r *http.Request, action string) bool {
 	p := peerFromContext(r.Context())
+	if p.PID == 0 {
+		writeError(w, http.StatusUnauthorized, "auth",
+			"could not determine peer PID; refusing to "+action)
+		return false
+	}
 	if p.HasClaudeAncestor {
 		writeError(w, http.StatusForbidden, "auth",
-			"only humans may "+action+" (no agent path; ladder up via a slug if you need this)")
+			"only the human may "+action+"; this endpoint has no agent path")
 		return false
 	}
 	return true

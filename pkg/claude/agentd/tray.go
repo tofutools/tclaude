@@ -98,12 +98,10 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 		mTitle.Disable()
 		systray.AddSeparator()
 
-		dashURL := ""
-		if cfg.PopupBaseURL != "" {
-			dashURL = cfg.PopupBaseURL + "/"
-		}
-		mDash := systray.AddMenuItem("Open dashboard", dashURL)
-		if dashURL == "" {
+		dashAvailable := cfg.PopupBaseURL != ""
+		mDash := systray.AddMenuItem("Open dashboard",
+			"Open the agentd dashboard in your browser")
+		if !dashAvailable {
 			mDash.Disable()
 		}
 		mReinstall := systray.AddMenuItem("Reinstall agent skills",
@@ -207,8 +205,14 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 			for {
 				select {
 				case <-mDash.ClickedCh:
-					if dashURL != "" {
-						if err := openBrowser(dashURL); err != nil {
+					if dashAvailable {
+						// Mint a one-shot init token in-process — the tray
+						// runs inside agentd, so it IS the human-side
+						// daemon and needs no socket round-trip. The
+						// dashboard `/` route exchanges the token for the
+						// session cookie. See handleDashboardRoot.
+						url := cfg.PopupBaseURL + "/?init_token=" + mintDashboardInitToken()
+						if err := openBrowser(url); err != nil {
 							slog.Warn("tray: open dashboard failed", "error", err)
 						}
 					}

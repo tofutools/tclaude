@@ -42,6 +42,22 @@ doesn't close the existing one.
   browsers still need *some* URL, and any URL has to land in argv
   somewhere. Marginal win.
 
+## Related: dashboard half is done
+
+The dashboard `/api/*` surface shared this exact weakness and was the
+worse offender — `GET /` dispensed the session cookie to *any* caller,
+so an agent didn't even need `/proc` access. That is now closed via an
+authorization-code-style init-token exchange: the cookie is only
+obtainable by exchanging a single-use token minted over the
+peer-cred-authenticated Unix socket. See
+`docs/plans/DONE/dashboard-init-token-auth.md`.
+
+The popup is less exposed (its approval ID is never handed out by an
+unauthenticated GET), so the same technique doesn't transfer 1:1 — the
+popup is opened *by the daemon* in response to an agent request, not
+*by the human* on demand. The `/proc`-scrape residual above still
+stands for the popup specifically.
+
 ## Files
 - `pkg/claude/agentd/popup.go` — popup HTTP handlers + cookie auth
 - `pkg/claude/agentd/tray.go` — tray icon (would gain mediation logic)

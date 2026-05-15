@@ -125,7 +125,7 @@ func runServe(p *serveParams) error {
 		fmt.Printf("tclaude agentd listening on %s\n", sockPath)
 		if popupBaseURL != "" {
 			fmt.Printf("  human-approval popup on %s/approve/<id>\n", popupBaseURL)
-			fmt.Printf("  agent dashboard on        %s/\n", popupBaseURL)
+			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (loopback %s)\n", popupBaseURL)
 		}
 		serveErrCh <- srv.Serve(ln)
 	}()
@@ -193,6 +193,7 @@ func (q *quitter) signal() {
 func buildMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/info", handleInfo)
+	mux.HandleFunc("/v1/dashboard/open", handleDashboardOpen)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)
 	mux.HandleFunc("/v1/whoami/compact", handleWhoamiCompact)
