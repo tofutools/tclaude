@@ -238,7 +238,18 @@ type snapshotPayload struct {
 	// `+ add member` overlay can show them as drag/add sources without
 	// a second round-trip. Same wire shape as Agents — empty when no
 	// loose convs exist.
-	Ungrouped   []dashboardAgent        `json:"ungrouped"`
+	Ungrouped []dashboardAgent `json:"ungrouped"`
+	// Conversations: recent non-enrolled conversations — i.e. convs
+	// that are NOT agents. The Agents tab renders them in a second list
+	// with a "promote" button so a plain conversation can be upgraded
+	// into an agent. Recency-capped (newest first) so the snapshot
+	// never carries the whole conv history.
+	Conversations []dashboardConversation `json:"conversations"`
+	// Retired: agents that were explicitly demoted (retire). Their
+	// conversation data is intact; the dashboard offers a "reinstate"
+	// button. Kept separate from Agents so a retired agent never shows
+	// on the live roster.
+	Retired     []dashboardRetiredAgent `json:"retired"`
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
 	Cron        []dashboardCronJob      `json:"cron"`
@@ -337,6 +348,33 @@ type dashboardAgent struct {
 	OwnedGroups []string             `json:"owned_groups"`          // subset of Groups the agent owns; UI tags these distinctly
 	Effective   []string             `json:"effective"`             // perms = union(defaults, per-conv grants)
 	ActiveSudo  []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
+}
+
+// dashboardConversation is the snapshot view of one non-enrolled
+// conversation — a promotion candidate in the Agents tab's second
+// list. Deliberately leaner than dashboardAgent: a plain conversation
+// has no groups, permissions or sudo state to render.
+type dashboardConversation struct {
+	ConvID string     `json:"conv_id"`
+	Title  string     `json:"title"`
+	Online bool       `json:"online"`
+	State  agentState `json:"state"`
+	// Modified is the conv's last-activity RFC3339 stamp, so the
+	// dashboard can show "how recent" without a second lookup.
+	Modified string `json:"modified,omitempty"`
+}
+
+// dashboardRetiredAgent is the snapshot view of one retired agent —
+// rendered in the Agents tab's "Retired" section with a reinstate
+// button. Carries the retire audit fields so the human can see who
+// demoted it and why.
+type dashboardRetiredAgent struct {
+	ConvID       string `json:"conv_id"`
+	Title        string `json:"title"`
+	Online       bool   `json:"online"`
+	RetiredAt    string `json:"retired_at,omitempty"`
+	RetiredBy    string `json:"retired_by,omitempty"`
+	RetireReason string `json:"retire_reason,omitempty"`
 }
 
 // dashboardSudoEntry is the wire shape for one active sudo grant in
@@ -539,30 +577,26 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Permissions.Grants[convID] = copySlice
 	}
 
-	// Online conv-sessions that aren't already known via group
-	// membership or explicit grants. These become candidates for the
-	// dashboard's ungrouped virtual group and the `+ add member`
-	// overlay. Filtered to live tmux sessions so we don't surface
-	// stale rows from past runs (a non-empty Cwd + alive tmux is the
-	// signal that the conv is currently "running").
-	if sessions, err := db.ListSessions(); err == nil {
-		seenLoose := map[string]bool{}
-		for _, s := range sessions {
-			if s.ConvID == "" {
-				continue
-			}
-			if seenLoose[s.ConvID] {
-				continue
-			}
-			if _, alreadyKnown := agentRows[s.ConvID]; alreadyKnown {
-				continue
-			}
-			if !isConvOnline(s.ConvID) {
-				continue
-			}
-			addAgent(s.ConvID)
-			seenLoose[s.ConvID] = true
-		}
+	// Every active enrolled agent — the canonical roster. Unlike the
+	// old "online ungrouped session" probe, this includes OFFLINE
+	// agents: a conv that was an agent yesterday keeps showing after
+	// its tmux pane closed, instead of silently vanishing. Plain
+	// conversations that were never promoted are not here — they
+	// surface in out.Conversations as promotion candidates.
+	activeAgents, _ := db.ListActiveAgents()
+	for _, e := range activeAgents {
+		addAgent(e.ConvID)
+	}
+
+	// Retired agents are demoted — they must never reach out.Agents.
+	// Retire revokes group membership and grants, so a retired conv
+	// normally can't arrive via the group/grant passes above anyway;
+	// retiredSet is the belt-and-braces guard for a partially-applied
+	// retire, and feeds the dedicated out.Retired list below.
+	retiredAgents, _ := db.ListRetiredAgents()
+	retiredSet := make(map[string]bool, len(retiredAgents))
+	for _, e := range retiredAgents {
+		retiredSet[e.ConvID] = true
 	}
 
 	// Active sudo grants across every agent. One DB scan, then we
@@ -606,6 +640,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
+		// Defensive: a retired conv must never appear on the roster,
+		// even if a partially-applied retire left a stale group/grant
+		// row that the passes above picked up.
+		if retiredSet[a.ConvID] {
+			continue
+		}
 		// Effective = defaults ∪ grants. Defaults come from config;
 		// grants from agent_permissions for that conv.
 		seen := map[string]bool{}
@@ -632,12 +672,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			a.ActiveSudo = rows
 		}
 		out.Agents = append(out.Agents, *a)
-		// An agent with no group memberships is "ungrouped" — surfaces
-		// in the dedicated array so the dashboard can list them as
-		// drag/add sources without re-deriving the membership state.
-		// Effective perms still come from the broader Agents row, so
-		// the dashboard uses Ungrouped purely as a candidate-set hint.
-		if len(a.Groups) == 0 {
+		// An ONLINE agent with no group memberships is "ungrouped" —
+		// surfaces in the dedicated array so the `+ add member` overlay
+		// can list it as a drag/add source. Kept online-only on
+		// purpose: the overlay is a live-roster picker, so an offline
+		// agent (still in out.Agents) is not offered there.
+		if len(a.Groups) == 0 && a.Online {
 			out.Ungrouped = append(out.Ungrouped, *a)
 		}
 	}
@@ -648,10 +688,85 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return out.Ungrouped[i].Title < out.Ungrouped[j].Title
 	})
 
+	out.Conversations = collectConversationsSnapshot(activeAgents, retiredAgents)
+	out.Retired = collectRetiredSnapshot(retiredAgents)
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// Conversation-list sizing. conversationsScanLimit caps how many
+// recent conv_index rows the snapshot scans; conversationsListMax caps
+// how many non-agent conversations it actually emits. The gap absorbs
+// the agents mixed into the recent set — without it, a burst of agent
+// activity could starve the promotion list. The dashboard's filter box
+// searches within the emitted set.
+const (
+	conversationsScanLimit = 200
+	conversationsListMax   = 75
+)
+
+// collectConversationsSnapshot builds the Agents tab's second list:
+// recent conversations that are NOT agents, offered with a promote
+// button. enrolled (active ∪ retired) conv-ids are excluded — they are
+// already agents (or deliberately demoted ones) and have their own
+// lists. Returns an empty slice (not nil) so the JS .map() is safe.
+func collectConversationsSnapshot(active, retired []*db.AgentEnrollment) []dashboardConversation {
+	out := []dashboardConversation{}
+	enrolled := make(map[string]bool, len(active)+len(retired))
+	for _, e := range active {
+		enrolled[e.ConvID] = true
+	}
+	for _, e := range retired {
+		enrolled[e.ConvID] = true
+	}
+	rows, err := db.ListRecentConvIndex(conversationsScanLimit)
+	if err != nil {
+		return out
+	}
+	for _, row := range rows {
+		if len(out) >= conversationsListMax {
+			break
+		}
+		if row.ConvID == "" || enrolled[row.ConvID] {
+			continue
+		}
+		out = append(out, dashboardConversation{
+			ConvID:   row.ConvID,
+			Title:    agent.FreshTitle(row.ConvID),
+			Online:   isConvOnline(row.ConvID),
+			State:    stateForConv(row.ConvID),
+			Modified: row.Modified,
+		})
+	}
+	return out
+}
+
+// collectRetiredSnapshot turns the retired-enrollment rows into the
+// Agents tab's "Retired" section — agents demoted to plain
+// conversations, each reinstatable. Newest retirement first. Returns
+// an empty slice (not nil) so the JS .map() is safe.
+func collectRetiredSnapshot(retired []*db.AgentEnrollment) []dashboardRetiredAgent {
+	out := make([]dashboardRetiredAgent, 0, len(retired))
+	for _, e := range retired {
+		retiredAt := ""
+		if !e.RetiredAt.IsZero() {
+			retiredAt = e.RetiredAt.Format(time.RFC3339)
+		}
+		out = append(out, dashboardRetiredAgent{
+			ConvID:       e.ConvID,
+			Title:        agent.FreshTitle(e.ConvID),
+			Online:       isConvOnline(e.ConvID),
+			RetiredAt:    retiredAt,
+			RetiredBy:    e.RetiredBy,
+			RetireReason: e.RetireReason,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].RetiredAt > out[j].RetiredAt // newest first
+	})
+	return out
 }
 
 // collectLinksSnapshot enumerates every inter-group link, resolved to

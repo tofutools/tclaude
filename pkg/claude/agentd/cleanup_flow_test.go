@@ -27,6 +27,7 @@ type cleanupResp struct {
 		Groups []string `json:"groups"`
 	} `json:"outcomes"`
 	Removed  int      `json:"removed"`
+	Retired  int      `json:"retired"`
 	Deleted  int      `json:"deleted"`
 	Skipped  int      `json:"skipped"`
 	Failed   int      `json:"failed"`

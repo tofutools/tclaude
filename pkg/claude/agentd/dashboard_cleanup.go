@@ -44,7 +44,7 @@ import (
 type cleanupOutcome struct {
 	ConvID string   `json:"conv_id"`
 	Title  string   `json:"title,omitempty"`
-	Result string   `json:"result"`           // removed | deleted | skipped | failed
+	Result string   `json:"result"`           // removed | retired | deleted | skipped | failed
 	Detail string   `json:"detail,omitempty"` // human-readable reason
 	Groups []string `json:"groups,omitempty"` // groups touched (agents mode)
 }
@@ -56,6 +56,7 @@ type cleanupResponse struct {
 	Mode     string           `json:"mode"`
 	Outcomes []cleanupOutcome `json:"outcomes"`
 	Removed  int              `json:"removed"`
+	Retired  int              `json:"retired"`
 	Deleted  int              `json:"deleted"`
 	Skipped  int              `json:"skipped"`
 	Failed   int              `json:"failed"`
@@ -192,30 +193,56 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 //
 //	{
 //	  "agents":           ["<conv-id>", ...], // the human-edited list
-//	  "delete":           false,              // false: unjoin all groups
-//	                                          // true:  permanently delete
-//	  "include_owners":   false,              // (delete=false) strip owner rows?
-//	  "delete_worktrees": false               // (delete=true) also remove git worktrees?
+//	  "mode":             "unjoin",           // unjoin | retire | delete
+//	  "include_owners":   false,              // (unjoin) strip owner rows?
+//	  "delete_worktrees": false               // (delete) also remove git worktrees?
 //	}
 //
-// delete=false is the Groups-tab "clean up all groups" default: the
-// agent is removed from every group it belongs to but its
-// conversation history is left on disk. delete=true is the Agents-tab
-// behaviour: a full purge via conv.DeleteConvByID (the same path the
-// per-agent delete button uses), which cascades group/owner/perm rows.
+// Three tiers, least to most destructive:
 //
-// delete_worktrees (delete=true only) also removes each purged agent's
-// git worktree — skipping the repo's main worktree and any worktree a
-// surviving agent still works in. See worktree_cleanup.go.
+//   - unjoin — the agent is removed from every group it belongs to;
+//     it stays an agent (its enrollment is untouched) and its
+//     conversation history stays on disk.
+//   - retire — the agent is demoted to a plain conversation:
+//     retireAgentConv unjoins all groups, revokes every permission and
+//     sudo grant, and flips the enrollment bit. The .jsonl is left
+//     intact and the agent can be reinstated. This is the
+//     non-destructive soft-delete.
+//   - delete — a full purge via conv.DeleteConvByID (the per-agent
+//     delete button's path), which unlinks the .jsonl and cascades
+//     every group/owner/perm/enrollment row. Irreversible.
+//
+// The legacy boolean `delete` is still honoured when `mode` is absent
+// (delete=true → "delete", else → "unjoin") so an older dashboard
+// build keeps working. delete_worktrees (delete mode only) also
+// removes each purged agent's git worktree — skipping the repo's main
+// worktree and any worktree a surviving agent still works in.
 func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Agents          []string `json:"agents"`
-		Delete          bool     `json:"delete"`
+		Mode            string   `json:"mode"`
+		Delete          bool     `json:"delete"` // legacy — superseded by Mode
 		IncludeOwners   bool     `json:"include_owners"`
 		DeleteWorktrees bool     `json:"delete_worktrees"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Resolve the tier: explicit mode wins; fall back to the legacy
+	// boolean for older dashboard builds.
+	mode := strings.TrimSpace(body.Mode)
+	if mode == "" {
+		if body.Delete {
+			mode = "delete"
+		} else {
+			mode = "unjoin"
+		}
+	}
+	switch mode {
+	case "unjoin", "retire", "delete":
+	default:
+		http.Error(w, "invalid mode "+mode+" (expected unjoin, retire or delete)", http.StatusBadRequest)
 		return
 	}
 
@@ -237,7 +264,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		convID, ok := resolveCleanupConv(raw)
 		online := ok && isConvOnline(convID)
 		targets = append(targets, cleanupTarget{convID: convID, ok: ok, online: online})
-		if body.Delete && ok && !online {
+		if mode == "delete" && ok && !online {
 			willDelete[convID] = true
 		}
 	}
@@ -245,7 +272,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	// — resolved once, only when worktree removal was actually asked
 	// for, so the no-worktree path pays nothing.
 	var survivorRoots map[string]bool
-	if body.Delete && body.DeleteWorktrees {
+	if mode == "delete" && body.DeleteWorktrees {
 		survivorRoots = otherAgentWorktreeRoots(willDelete)
 	}
 
@@ -265,7 +292,29 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		case tg.online:
 			out.Result, out.Detail = "skipped", "still online — tmux session is alive"
 			resp.Skipped++
-		case body.Delete:
+		case mode == "retire":
+			// Soft-delete: demote to a plain conversation. The .jsonl
+			// and conv_index row are left intact and the agent can be
+			// reinstated later.
+			outcome, ownerGroups, rerr := retireAgentConv(tg.convID, "human", "")
+			switch {
+			case rerr != nil:
+				out.Result, out.Detail = "failed", "retire: "+rerr.Error()
+				resp.Failed++
+			case !outcome.Retired:
+				out.Result, out.Detail = "skipped", "not an active agent — nothing to retire"
+				resp.Skipped++
+			default:
+				out.Result = "retired"
+				out.Groups = outcome.GroupsLeft
+				out.Detail = fmt.Sprintf("demoted to a plain conversation · left %d group(s), revoked %d perm + %d sudo grant(s)",
+					len(outcome.GroupsLeft), outcome.PermsRevoked, outcome.SudoRevoked)
+				resp.Retired++
+				for _, gid := range ownerGroups {
+					ownerless[gid] = true
+				}
+			}
+		case mode == "delete":
 			// Resolve the worktree BEFORE the purge — DeleteConvByID
 			// wipes the session rows the resolution reads from.
 			wt := inspectAgentWorktree(tg.convID)

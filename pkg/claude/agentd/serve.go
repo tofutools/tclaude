@@ -135,6 +135,14 @@ func runServe(p *serveParams) error {
 	// channel.
 	startSessionReaper(cronStop)
 
+	// One-shot: enroll any conv that is online right now but not yet
+	// in agent_enrollment. The v29→v30 migration backfills agents from
+	// the durable agentic tables, but a still-running agent that was
+	// otherwise unrecorded can't be tmux-probed from a SQL migration —
+	// this sweep closes that gap so no live agent drops off the roster
+	// across the upgrade.
+	go reconcileOnlineEnrollment()
+
 	// Both the Unix-socket server and the popup server run in
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).

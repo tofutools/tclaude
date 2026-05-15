@@ -15,9 +15,26 @@ import (
 // without importing the unexported type. Adding fields here is cheap
 // when more assertions need them.
 type dashSnapshot struct {
-	Groups    []dashGroup `json:"groups"`
-	Agents    []dashAgent `json:"agents"`
-	Ungrouped []dashAgent `json:"ungrouped"`
+	Groups        []dashGroup        `json:"groups"`
+	Agents        []dashAgent        `json:"agents"`
+	Ungrouped     []dashAgent        `json:"ungrouped"`
+	Conversations []dashConversation `json:"conversations"`
+	Retired       []dashRetired      `json:"retired"`
+}
+
+// dashConversation mirrors agentd.dashboardConversation.
+type dashConversation struct {
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Online bool   `json:"online"`
+}
+
+// dashRetired mirrors agentd.dashboardRetiredAgent.
+type dashRetired struct {
+	ConvID       string `json:"conv_id"`
+	Title        string `json:"title"`
+	RetiredBy    string `json:"retired_by,omitempty"`
+	RetireReason string `json:"retire_reason,omitempty"`
 }
 
 type dashGroup struct {
@@ -66,15 +83,13 @@ func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {
 	return snap
 }
 
-// Scenario: a conv has a live tmux session but is NOT a member of any
-// group. The dashboard's `/api/snapshot` must surface it under the
-// `ungrouped[]` array so the (eventual) ungrouped virtual group / `+
-// add member` overlay can pull it as a candidate without a second
-// fetch.
+// Scenario: an ENROLLED agent has a live tmux session but is NOT a
+// member of any group. The dashboard's `/api/snapshot` must surface it
+// under the `ungrouped[]` array so the `+ add member` overlay can pull
+// it as a candidate without a second fetch.
 //
-// Pins the bug class where a fresh-spawned agent that hasn't joined
-// any group yet is invisible to the dashboard until the human
-// manually adds it.
+// Pins the bug class where an ungrouped agent is invisible to the
+// dashboard until the human manually adds it to a group.
 func TestDashboardSnapshot_UngroupedSurfacesLooseConvs(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
@@ -82,14 +97,16 @@ func TestDashboardSnapshot_UngroupedSurfacesLooseConvs(t *testing.T) {
 	f := newFlow(t)
 
 	// Scenario set-up:
-	//   - "loose" — alive, not in any group → expect in Ungrouped.
-	//   - "joined" — alive, member of group "alpha" → NOT in Ungrouped.
+	//   - "loose" — alive, enrolled, not in any group → expect in Ungrouped.
+	//   - "joined" — alive, member of group "alpha" (HaveMember enrolls
+	//     it) → NOT in Ungrouped.
 	const looseConv = "loos-1111-2222-3333-4444"
 	const joinedConv = "join-1111-2222-3333-4444"
 	f.HaveConvWithTitle(looseConv, "loose-worker")
 	f.HaveConvWithTitle(joinedConv, "joined-worker")
 	f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", "/tmp/loose")
 	f.HaveAliveSession(joinedConv, "spwn-join", "tmux-join", "/tmp/join")
+	f.HaveEnrolledAgent(looseConv)
 	g := f.HaveGroup("alpha")
 	_ = g
 	f.HaveMember("alpha", joinedConv, "joined")
@@ -127,10 +144,10 @@ func TestDashboardSnapshot_UngroupedSurfacesLooseConvs(t *testing.T) {
 	assert.True(t, inAgents(joinedConv), "joined conv %s should be in Agents (member of alpha)", joinedConv)
 }
 
-// Scenario: an offline session row (no live tmux) does NOT pollute
-// the ungrouped list. Pins the "stale rows from past runs" filter —
-// without this gate, every previously-spawned conv would shore up
-// indefinitely as the daemon's history grows.
+// Scenario: the ungrouped[] candidate set is online-only, even though
+// the agents tab itself now lists offline agents. Ungrouped[] feeds
+// the `+ add member` overlay — a live-roster picker — so an offline
+// enrolled agent belongs in agents[] but NOT in ungrouped[].
 func TestDashboardSnapshot_UngroupedFiltersOfflineSessions(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
@@ -143,6 +160,9 @@ func TestDashboardSnapshot_UngroupedFiltersOfflineSessions(t *testing.T) {
 	f.HaveConvWithTitle(offlineConv, "offline")
 	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
 	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
+	// Both are enrolled agents; one's tmux has since died.
+	f.HaveEnrolledAgent(onlineConv)
+	f.HaveEnrolledAgent(offlineConv)
 	f.MarkOffline("tmux-offl")
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
@@ -157,6 +177,16 @@ func TestDashboardSnapshot_UngroupedFiltersOfflineSessions(t *testing.T) {
 			offline = true
 		}
 	}
-	assert.True(t, online, "online ungrouped conv should appear; got %d rows", len(snap.Ungrouped))
-	assert.False(t, offline, "offline conv %s should NOT appear in Ungrouped", offlineConv)
+	assert.True(t, online, "online ungrouped agent should appear in ungrouped[]; got %d rows", len(snap.Ungrouped))
+	assert.False(t, offline, "offline agent %s should NOT appear in ungrouped[] (online-only candidate set)", offlineConv)
+
+	// The offline enrolled agent must still appear in the broader
+	// agents[] list — it didn't vanish, it just went offline.
+	offlineInAgents := false
+	for _, a := range snap.Agents {
+		if a.ConvID == offlineConv {
+			offlineInAgents = true
+		}
+	}
+	assert.True(t, offlineInAgents, "offline enrolled agent %s should still be in agents[]", offlineConv)
 }
