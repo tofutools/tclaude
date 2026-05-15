@@ -174,6 +174,40 @@ func TestIsValidFollowUp(t *testing.T) {
 	}
 }
 
+// TestIsValidInitialMessage locks down the spawn initial-context
+// brief rules. Unlike a follow-up, the brief is delivered to the new
+// agent's inbox (not typed into a pane), so newlines and tabs are
+// allowed — but NUL / escape / carriage-return still aren't, and an
+// empty string is valid (it just means "no brief").
+func TestIsValidInitialMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		// --- accepted ---
+		{"empty means no brief", "", true},
+		{"plain text", "review the auth module", true},
+		{"newline", "first line\nsecond line", true},
+		{"blank line between paragraphs", "para one\n\npara two", true},
+		{"tab", "before\tafter", true},
+		{"unicode", "résumé 🎉", true},
+		{"max length", strings.Repeat("a", 4096), true},
+
+		// --- rejected ---
+		{"oversize 4097", strings.Repeat("a", 4097), false},
+		{"carriage return", "before\rafter", false},
+		{"NUL", "before\x00after", false},
+		{"DEL", "before\x7fafter", false},
+		{"escape", "before\x1bafter", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isValidInitialMessage(tt.in), "isValidInitialMessage(%q)", tt.in)
+		})
+	}
+}
+
 // TestIsValidRenameTitle locks down the rename-title charset rules. The
 // daemon side is the actual security boundary, so this test is the
 // authoritative spec — the CLI mirror in pkg/claude/agent/rename.go

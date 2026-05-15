@@ -14,16 +14,16 @@ import (
 // guard against a future refactor accidentally dropping a field.
 func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 	tests := []struct {
-		name              string
-		alias             string
-		role              string
-		descr             string
-		groupName         string
-		hasInitialMessage bool
-		worktreePath      string
-		worktreeBranch    string
-		mustContain       []string
-		mustOmit          []string
+		name           string
+		alias          string
+		role           string
+		descr          string
+		groupName      string
+		initialMsgID   int64
+		worktreePath   string
+		worktreeBranch string
+		mustContain    []string
+		mustOmit       []string
 	}{
 		{
 			name:      "all fields",
@@ -77,23 +77,23 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 			alias:       "worker",
 			groupName:   "alpha",
 			mustContain: []string{"Wait for the first instruction"},
-			mustOmit:    []string{"follow in the next message"},
+			mustOmit:    []string{"inbox read"},
 		},
 		{
 			// With one queued the welcome must NOT tell it to wait —
-			// the initial message IS the first instruction.
-			name:              "initial message replaces the wait line",
-			alias:             "worker",
-			groupName:         "alpha",
-			hasInitialMessage: true,
-			mustContain:       []string{"follow in the next message"},
-			mustOmit:          []string{"Wait for the first instruction"},
+			// it must point the agent at the inbox message by ID.
+			name:         "initial message points at the inbox message",
+			alias:        "worker",
+			groupName:    "alpha",
+			initialMsgID: 42,
+			mustContain:  []string{"inbox", "message #42", "tclaude agent inbox read 42"},
+			mustOmit:     []string{"Wait for the first instruction"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := buildSpawnWelcome(tt.alias, tt.role, tt.descr, tt.groupName,
-				tt.hasInitialMessage, tt.worktreePath, tt.worktreeBranch)
+				tt.initialMsgID, tt.worktreePath, tt.worktreeBranch)
 			for _, s := range tt.mustContain {
 				assert.Contains(t, got, s, "welcome should contain %q", s)
 			}
@@ -108,15 +108,17 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 // invariant that the welcome can be safely passed through tmux
 // send-keys. Newlines / tabs would each become a submit and split
 // the prompt into multiple turns — same gate isValidFollowUp
-// enforces for cross-agent slash follow-ups.
+// enforces for cross-agent slash follow-ups. (The initial-context
+// brief itself rides in via the inbox, not the welcome, so it is
+// free to be multi-line — but the welcome that announces it is not.)
 func TestBuildSpawnWelcome_SingleLineNoControlChars(t *testing.T) {
-	for _, hasInitialMessage := range []bool{false, true} {
+	for _, initialMsgID := range []int64{0, 42} {
 		got := buildSpawnWelcome(
 			"my-agent",
 			"reviewer",
 			"reviews PRs and posts notes",
 			"reviewers",
-			hasInitialMessage,
+			initialMsgID,
 			"/home/dev/monorepo/services/api-feature-x",
 			"feature-x",
 		)

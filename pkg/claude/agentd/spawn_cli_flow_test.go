@@ -88,6 +88,33 @@ func resolveSym(t *testing.T, p string) string {
 	return rp
 }
 
+// Scenario: a human runs `tclaude agent spawn alpha worker -m "<brief>"`
+// where the brief spans multiple lines. The CLI must NOT reject or
+// collapse the newlines — the brief is delivered to the new agent's
+// inbox, not typed into a pane — and the stored message body must
+// preserve every newline end-to-end (CLI → wire → daemon → DB).
+func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	const brief = "Task: refactor auth.\n\nSteps:\n- audit comparisons\n- write a report"
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Alias: "worker", InitialMessage: brief},
+		new(bytes.Buffer), stderr,
+	)
+	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+	require.NotNil(t, resp, "RunSpawn resp")
+
+	rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, rows, 1, "spawned agent should have one inbox message")
+	assert.Equal(t, brief, rows[0].Body, "multi-line brief must survive verbatim")
+}
+
 // Scenario: a human runs `tclaude agent spawn alpha worker` from a
 // project tree, no -C / --cwd given. The CLI must capture os.Getwd()
 // and pass it through the daemon, so the new CC instance starts where

@@ -996,6 +996,33 @@ func isValidFollowUp(s string) bool {
 	return true
 }
 
+// isValidInitialMessage validates a spawn's initial-context brief.
+//
+// Unlike isValidFollowUp — which guards text typed into a tmux pane,
+// where a raw newline would land as a premature prompt-submit — the
+// initial message is delivered to the new agent's inbox as an
+// agent_messages row and rendered by `inbox read`. So newlines and
+// tabs are allowed (and wanted: a multi-line brief keeps its
+// paragraph structure). We still reject other control characters
+// (NUL, escape, carriage return, …) that would corrupt a terminal
+// render, and cap the length at 4096 bytes.
+//
+// An empty string is valid — it simply means "no initial message".
+func isValidInitialMessage(s string) bool {
+	if len(s) > 4096 {
+		return false
+	}
+	for _, r := range s {
+		if r == '\n' || r == '\t' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // handleWhoamiContext returns the caller's own context-window state.
 // Read-only and self-targeted, so no permission gate — any agent can
 // introspect its own session. Returns 0/0 if the row hasn't been

@@ -373,17 +373,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
-	// The initial message is injected via tmux send-keys, so it must
-	// survive the same way a slash follow-up does: no control characters
-	// (each newline would land as a premature submit, fragmenting the
-	// prompt). The dashboard collapses newlines client-side; this is the
-	// backstop for CLI / API callers.
+	// The initial message is delivered to the new agent's inbox as an
+	// agent_messages row — not typed into its tmux pane — so newlines
+	// survive verbatim and a multi-line task brief arrives intact. We
+	// only cap the length and reject NUL / escape / other non-text
+	// control characters that would corrupt an `inbox read` render.
 	body.InitialMessage = strings.TrimSpace(body.InitialMessage)
-	if body.InitialMessage != "" && !isValidFollowUp(body.InitialMessage) {
+	if !isValidInitialMessage(body.InitialMessage) {
 		writeError(w, http.StatusBadRequest, "invalid_initial_message",
-			"initial_message must be 1-4096 printable characters; tabs, newlines, "+
-				"and other control characters are not allowed (each newline would be "+
-				"treated as a submit by tmux send-keys, splitting the prompt)")
+			"initial_message must be at most 4096 characters; newlines and tabs "+
+				"are allowed (it is delivered to the agent's inbox, not typed into "+
+				"its pane), but other control characters are not")
 		return
 	}
 
@@ -479,6 +479,34 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Initial context: deliver the human's task brief to the new
+	// agent's inbox as an agent_messages row rather than typing it into
+	// the pane. The inbox path preserves newlines, so a multi-line brief
+	// arrives intact; the welcome line (injected by runSpawnPostInit)
+	// points the agent at this message by ID. The sender is left blank —
+	// it is from the human, who has no agent conv-id.
+	//
+	// Best-effort: the agent has already spawned and joined the group,
+	// so a failed insert is logged, not bubbled. initialMsgID stays 0
+	// in that case and the welcome falls back to "wait for the first
+	// instruction".
+	var initialMsgID int64
+	if body.InitialMessage != "" {
+		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:      g.ID,
+			ToConv:       convID,
+			Subject:      "Initial context",
+			Body:         body.InitialMessage,
+			ToRecipients: []string{convID},
+		})
+		if msgErr != nil {
+			slog.Warn("spawn: failed to deliver initial message to inbox",
+				"conv", convID, "error", msgErr)
+		} else {
+			initialMsgID = mid
+		}
+	}
+
 	// Auto-focus: when the caller asked for it, open a terminal window
 	// attached to the freshly-spawned agent. A detached spawn has no
 	// window of its own, so this is what lets the human watch and talk
@@ -517,7 +545,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
 		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name,
-			body.InitialMessage, worktreePath, worktreeBranch)
+			initialMsgID, worktreePath, worktreeBranch)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -534,17 +562,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 //
 //  1. /rename <alias> — when alias is a valid rename title.
 //  2. The welcome [system: ...] line orienting the agent.
-//  3. The initial message — when one was supplied — as the agent's
-//     first real prompt.
 //
 // Each is its own turn. Failures are logged, never bubbled — the spawn
 // already succeeded as far as the caller is concerned.
+//
+// The initial context is NOT typed into the pane: the handler already
+// dropped it in the agent's inbox as an agent_messages row (id ==
+// initialMsgID), which preserves newlines. The welcome line points
+// the agent at that message; once the welcome lands we mark the
+// message delivered, since the welcome doubles as its inbox nudge.
 //
 // Why /rename first: it's a slash command CC processes immediately,
 // landing a write on the .jsonl before any other turn happens. Even
 // if a later injection fails, the file exists and `agent resume` can
 // find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, worktreePath, worktreeBranch string) {
+func runSpawnPostInit(convID, alias, role, descr, groupName string, initialMsgID int64, worktreePath, worktreeBranch string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -573,24 +605,24 @@ func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, wor
 	}
 
 	// Welcome: a single-line [system: ...] turn orienting the agent
-	// (identity, role, descr, group, and — for a sub-repo worktree —
-	// where to make code edits).
-	welcome := buildSpawnWelcome(alias, role, descr, groupName, initialMessage != "",
+	// (identity, role, descr, group, where its initial-context message
+	// waits, and — for a sub-repo worktree — where to make code edits).
+	welcome := buildSpawnWelcome(alias, role, descr, groupName, initialMsgID,
 		worktreePath, worktreeBranch)
 	if err := injectTextAndSubmit(target, welcome); err != nil {
 		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
 		return
 	}
 
-	// Initial message: the human's first real prompt for the agent.
-	// Kept separate from descr — descr is the short dashboard label,
-	// this is the (possibly long) task brief — and sent as its own
-	// turn after the welcome so the agent reads orientation first,
-	// task second.
-	if initialMessage != "" {
-		if err := injectTextAndSubmit(target, initialMessage); err != nil {
-			slog.Warn("spawn: initial-message injection failed",
-				"conv", convID, "error", err)
+	// The human's task brief already sits in the agent's inbox (the
+	// handler inserted the agent_messages row before this goroutine
+	// fired). The welcome line above named its message ID, so the
+	// welcome itself is the inbox nudge — mark the message delivered
+	// now that it has landed in the pane.
+	if initialMsgID > 0 {
+		if err := db.MarkAgentMessageDelivered(initialMsgID); err != nil {
+			slog.Warn("spawn: failed to mark initial message delivered",
+				"conv", convID, "msg_id", initialMsgID, "error", err)
 		}
 	}
 }
@@ -600,10 +632,13 @@ func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, wor
 // convention agent-message nudges use. Kept to a single line so it
 // renders cleanly in CC's prompt history.
 //
-// hasInitialMessage flips the trailing instruction: with an initial
-// message queued the agent should act on it, not sit idle, so the
-// "wait for the first instruction" line is replaced.
-func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
+// initialMsgID flips the trailing instruction. When non-zero, the
+// human supplied an initial-context brief that the spawn handler
+// delivered to this agent's inbox as agent_messages row #initialMsgID;
+// the welcome points the agent at it (newlines and all) instead of
+// telling it to sit idle. Zero means no brief — "wait for the first
+// instruction".
+func buildSpawnWelcome(alias, role, descr, groupName string, initialMsgID int64, worktreePath, worktreeBranch string) string {
 	parts := []string{"spawned by the human"}
 	if alias != "" {
 		parts = append(parts, fmt.Sprintf("as %q", alias))
@@ -630,8 +665,10 @@ func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage b
 		body += " — make code edits there, not elsewhere under your start directory."
 	}
 	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate."
-	if hasInitialMessage {
-		body += " Your first instructions follow in the next message."
+	if initialMsgID > 0 {
+		body += fmt.Sprintf(" Your initial context / task brief is waiting in your inbox"+
+			" as message #%d — read it with `tclaude agent inbox read %d`, then act on it.",
+			initialMsgID, initialMsgID)
 	} else {
 		body += " Wait for the first instruction."
 	}

@@ -861,7 +861,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
-      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — sent to the new agent as its first prompt, right after the welcome (newlines collapse to spaces)" spellcheck="false"></textarea>
+      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤4096 chars)" spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
@@ -3093,10 +3093,10 @@ summary.dnd-drop-over.dnd-effect-clone {
     const alias = $('#agent-spawn-alias').value.trim();
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
-    // The initial message rides in via tmux send-keys, where a raw
-    // newline would land as a premature submit — collapse to a single
-    // line, same as the clone modal's follow-up.
-    const initMsg = normaliseFollowUp($('#agent-spawn-init-msg').value);
+    // The initial message is delivered to the new agent's inbox (an
+    // agent_messages row), not typed into its pane — so newlines are
+    // preserved. Send the textarea verbatim; the daemon trims it.
+    const initMsg = $('#agent-spawn-init-msg').value;
     const cwd = $('#agent-spawn-cwd').value.trim();
     const wtRepo = $('#agent-spawn-wt-repo').value.trim();
     const autoFocus = $('#agent-spawn-focus').checked;
