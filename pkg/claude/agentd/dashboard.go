@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -59,59 +58,6 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardEditRoutes(mux)
 }
 
-// dashboardInitTokens holds short-lived, single-use tokens that the
-// `/` exchange swaps for the long-lived dashboard session cookie.
-// Tokens are minted only by the human-only `/v1/dashboard/open`
-// endpoint and the in-process tray handler — never handed out on an
-// unauthenticated GET — so a same-user agent process cannot obtain
-// one. In-memory only: a daemon restart drops every pending token,
-// and the human just reopens the dashboard.
-var dashboardInitTokens = struct {
-	mu sync.Mutex
-	m  map[string]time.Time // token -> expiry
-}{m: map[string]time.Time{}}
-
-// dashboardInitTokenTTL bounds how long a minted init token stays
-// valid. The window only needs to cover "CLI mints → browser cold-
-// starts → browser GETs /" — 60s is comfortable even for a WSL→Windows
-// browser hand-off, and short enough that a leaked token is near-
-// useless.
-const dashboardInitTokenTTL = 60 * time.Second
-
-// mintDashboardInitToken creates a fresh single-use init token, stores
-// it with a TTL, and opportunistically GCs expired entries. Safe to
-// call from any goroutine — the `/v1/dashboard/open` handler and the
-// tray click handler both do.
-func mintDashboardInitToken() string {
-	tok := newApprovalID() // 16 random bytes → 32 hex chars; reuses the approval-ID generator
-	now := time.Now()
-	dashboardInitTokens.mu.Lock()
-	for k, exp := range dashboardInitTokens.m {
-		if now.After(exp) {
-			delete(dashboardInitTokens.m, k)
-		}
-	}
-	dashboardInitTokens.m[tok] = now.Add(dashboardInitTokenTTL)
-	dashboardInitTokens.mu.Unlock()
-	return tok
-}
-
-// consumeDashboardInitToken validates tok and removes it (single-use).
-// Returns true only when tok was present and unexpired.
-func consumeDashboardInitToken(tok string) bool {
-	if tok == "" {
-		return false
-	}
-	dashboardInitTokens.mu.Lock()
-	defer dashboardInitTokens.mu.Unlock()
-	exp, ok := dashboardInitTokens.m[tok]
-	if !ok {
-		return false
-	}
-	delete(dashboardInitTokens.m, tok) // single-use: a token never works twice
-	return time.Now().Before(exp)
-}
-
 // handleDashboardRoot serves the dashboard HTML behind a token-
 // exchange (OAuth authorization-code style) flow:
 //
@@ -146,7 +92,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	// cookie, then we 303 to the bare path so the one-shot token
 	// drops out of the URL.
 	if tok := r.URL.Query().Get("init_token"); tok != "" {
-		if !consumeDashboardInitToken(tok) {
+		if !consumeInitToken(tok, initScopeDashboard) {
 			http.Error(w, "invalid or expired init token — reopen the dashboard with `tclaude agent dashboard`", http.StatusForbidden)
 			return
 		}
@@ -203,7 +149,7 @@ func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"url": popupBaseURL + "/?init_token=" + mintDashboardInitToken(),
+		"url": popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard),
 	})
 }
 

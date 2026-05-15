@@ -129,7 +129,11 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 					if id == "" || cfg.PopupBaseURL == "" {
 						continue
 					}
-					url := cfg.PopupBaseURL + "/approve/" + id
+					// Mint a one-shot init token bound to this approval
+					// so the popup's `/approve/{id}` exchange hands out a
+					// session cookie. In-process — the tray IS the daemon.
+					url := cfg.PopupBaseURL + "/approve/" + id +
+						"?init_token=" + mintInitToken(initScopeApprove(id))
 					if err := openBrowser(url); err != nil {
 						slog.Warn("tray: open approval failed",
 							"id", id, "error", err)
@@ -211,7 +215,7 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 						// daemon and needs no socket round-trip. The
 						// dashboard `/` route exchanges the token for the
 						// session cookie. See handleDashboardRoot.
-						url := cfg.PopupBaseURL + "/?init_token=" + mintDashboardInitToken()
+						url := cfg.PopupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
 						if err := openBrowser(url); err != nil {
 							slog.Warn("tray: open dashboard failed", "error", err)
 						}
