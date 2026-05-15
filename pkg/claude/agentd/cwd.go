@@ -64,3 +64,27 @@ func resolveSpawnCwd(raw string) (string, error) {
 	}
 	return abs, nil
 }
+
+// resolveGroupDefaultCwd validates a working directory being stored as
+// a group's default spawn dir. Unlike resolveSpawnCwd it does NOT
+// require the directory to exist — a default may legitimately be set
+// before the directory is created, and the spawn-time resolveSpawnCwd
+// performs the existence check at the point it actually matters. It:
+//
+//   - returns ("", nil) for empty input — that clears the default;
+//   - expands a leading "~" / "~/" to the human's home directory;
+//   - REQUIRES the result to be absolute. A relative default would
+//     resolve against whatever cwd the daemon happens to run in,
+//     which is meaningless, so it's rejected rather than silently
+//     made absolute against the daemon's cwd.
+func resolveGroupDefaultCwd(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	expanded := expandTilde(raw)
+	if !filepath.IsAbs(expanded) {
+		return "", fmt.Errorf("default working directory must be an absolute path: %q", raw)
+	}
+	return filepath.Clean(expanded), nil
+}
