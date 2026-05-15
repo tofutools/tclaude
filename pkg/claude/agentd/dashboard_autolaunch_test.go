@@ -62,10 +62,10 @@ func TestAutoLaunchDashboard_OpensSingleUseTokenURL(t *testing.T) {
 	if tok == "" {
 		t.Fatalf("opened URL carries an empty init token: %q", opened)
 	}
-	if !consumeDashboardInitToken(tok) {
+	if !consumeInitToken(tok, initScopeDashboard) {
 		t.Fatalf("minted init token %q was not valid", tok)
 	}
-	if consumeDashboardInitToken(tok) {
+	if consumeInitToken(tok, initScopeDashboard) {
 		t.Fatalf("init token %q accepted twice — must be single-use", tok)
 	}
 }
