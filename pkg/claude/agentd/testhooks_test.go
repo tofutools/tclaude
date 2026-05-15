@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // BuildHandlerForTest exposes the production /v1 mux to flow tests in
@@ -128,6 +130,27 @@ func SetGitToplevelForTest(fn func(string) (string, bool)) func() {
 	gitToplevelOf = fn
 	return func() { gitToplevelOf = prev }
 }
+
+// SessionReaperHandle wraps a sessionReaper so flow tests can drive
+// ticks deterministically without starting its goroutine.
+type SessionReaperHandle struct{ r *sessionReaper }
+
+// NewSessionReaperForTest builds a reaper with the grace window set to
+// `grace` (pass 0 to disable the fresh-row exemption) and the offline
+// notification routed to `onNotify` instead of the OS notifier — so a
+// flow test can assert exactly which sessions produced an alive→dead
+// transition. onNotify receives the conv-id and the pre-exit status.
+func NewSessionReaperForTest(grace time.Duration, onNotify func(convID, prevStatus string)) *SessionReaperHandle {
+	r := newSessionReaper()
+	r.grace = grace
+	r.notify = func(st *session.SessionState, prevStatus string) {
+		onNotify(st.ConvID, prevStatus)
+	}
+	return &SessionReaperHandle{r: r}
+}
+
+// Tick runs one reaper sweep and returns the number of sessions reaped.
+func (h *SessionReaperHandle) Tick() int { return h.r.tick(time.Now()) }
 
 type dashTestHandler struct{ inner http.Handler }
 
