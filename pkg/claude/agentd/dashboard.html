@@ -1027,6 +1027,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <input id="group-create-descr" type="text" placeholder="optional one-line description" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row">
+      <span class="cron-create-label">Default cwd</span>
+      <input id="group-create-cwd" type="text" placeholder="optional — absolute path (~ OK) pre-filled when spawning agents into this group" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
       <span class="cron-create-label">Startup context</span>
       <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance delivered to the inbox of every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
     </label>
@@ -3168,6 +3172,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   function openGroupCreateModal() {
     $('#group-create-name').value = '';
     $('#group-create-descr').value = '';
+    $('#group-create-cwd').value = '';
     $('#group-create-context').value = '';
     $('#group-create-error').textContent = '';
     $('#group-create-modal').classList.add('show');
@@ -3181,6 +3186,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   async function submitGroupCreate() {
     const name = $('#group-create-name').value.trim();
     const descr = $('#group-create-descr').value.trim();
+    const cwd = $('#group-create-cwd').value.trim();
     const context = $('#group-create-context').value.trim();
     const errEl = $('#group-create-error');
     errEl.textContent = '';
@@ -3194,7 +3200,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const r = await fetch('/api/groups', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, descr, default_context: context }),
+        body: JSON.stringify({ name, descr, default_cwd: cwd, default_context: context }),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -3245,7 +3251,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (e.target.id === 'group-create-modal') closeGroupCreateModal();
     });
     $('#group-create-modal').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.target.id === 'group-create-name' || e.target.id === 'group-create-descr')) {
+      if (e.key === 'Enter' && (e.target.id === 'group-create-name' || e.target.id === 'group-create-descr' || e.target.id === 'group-create-cwd')) {
         e.preventDefault();
         submitGroupCreate();
       }
