@@ -110,6 +110,25 @@ func RegisterDashboardRoutesForTest(mux *http.ServeMux) {
 	registerDashboardRoutes(mux)
 }
 
+// SetOpenTerminalForTest swaps the terminal-spawning seam so flow
+// tests can assert the `dir` endpoints' open path without popping a
+// real window (and without failing on CI hosts that have no terminal
+// emulator). Returns a restore function for t.Cleanup.
+func SetOpenTerminalForTest(fn func(string) error) func() {
+	prev := openTerminal
+	openTerminal = fn
+	return func() { openTerminal = prev }
+}
+
+// SetGitToplevelForTest swaps the git-worktree-root resolver so flow
+// tests can exercise the `dir` endpoints' worktree path without a real
+// repo on disk. Returns a restore function for t.Cleanup.
+func SetGitToplevelForTest(fn func(string) (string, bool)) func() {
+	prev := gitToplevelOf
+	gitToplevelOf = fn
+	return func() { gitToplevelOf = prev }
+}
+
 type dashTestHandler struct{ inner http.Handler }
 
 func (h *dashTestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

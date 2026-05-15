@@ -28,6 +28,7 @@ func Cmd() *cobra.Command {
 			resumeCmd(),
 			deleteCmd(),
 			contextInfoCmd(),
+			dirCmd(),
 			lookupCmd(),
 			lsCmd(),
 			messageCmd(),
