@@ -150,11 +150,13 @@ func TestDashboardSnapshot_UngroupedSurfacesLooseConvs(t *testing.T) {
 	assert.True(t, inAgents(joinedConv), "joined conv %s should be in Agents (member of alpha)", joinedConv)
 }
 
-// Scenario: the ungrouped[] candidate set is online-only, even though
-// the agents tab itself now lists offline agents. Ungrouped[] feeds
-// the `+ add member` overlay — a live-roster picker — so an offline
-// enrolled agent belongs in agents[] but NOT in ungrouped[].
-func TestDashboardSnapshot_UngroupedFiltersOfflineSessions(t *testing.T) {
+// Scenario: ungrouped[] carries offline agents too. The dashboard's
+// virtual "Ungrouped" group is a membership-management surface — an
+// agent that is enrolled, in no group, and offline must still be
+// visible there so the human can drag it into a group. (The `+ add
+// member` overlay applies its own online filter, so this does not
+// leak offline rows into that live-roster picker.)
+func TestDashboardSnapshot_UngroupedIncludesOfflineAgents(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
 
@@ -184,10 +186,9 @@ func TestDashboardSnapshot_UngroupedFiltersOfflineSessions(t *testing.T) {
 		}
 	}
 	assert.True(t, online, "online ungrouped agent should appear in ungrouped[]; got %d rows", len(snap.Ungrouped))
-	assert.False(t, offline, "offline agent %s should NOT appear in ungrouped[] (online-only candidate set)", offlineConv)
+	assert.True(t, offline, "offline ungrouped agent %s should also appear in ungrouped[]", offlineConv)
 
-	// The offline enrolled agent must still appear in the broader
-	// agents[] list — it didn't vanish, it just went offline.
+	// Both still appear in the broader agents[] list.
 	offlineInAgents := false
 	for _, a := range snap.Agents {
 		if a.ConvID == offlineConv {

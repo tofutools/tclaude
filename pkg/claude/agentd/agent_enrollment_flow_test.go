@@ -267,6 +267,66 @@ func TestEnrollment_ClonePreservesAgentStatus(t *testing.T) {
 		"the original %s stays an active agent after cloning", conv)
 }
 
+// Scenario (issue 1): promoting an OFFLINE conversation must land it
+// in the virtual "Ungrouped" group, not just the agents roster. The
+// snapshot's ungrouped[] array is no longer online-gated — a freshly
+// promoted offline conv has no live tmux session, but it is a real
+// agent in no group, so the Groups tab must surface it as a drag
+// source.
+func TestEnrollment_PromoteOfflineConvSurfacesInUngrouped(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// No HaveAliveSession → the conversation is offline.
+	const conv = "poff-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "promote-me-offline")
+
+	pre := fetchDashSnapshot(t, mux)
+	require.True(t, convInSnap(pre.Conversations, conv), "pre: conv is a promotion candidate")
+	require.False(t, ungroupedHas(pre, conv), "pre: not an agent, not ungrouped yet")
+
+	res := postAgentVerb(t, mux, conv, "promote")
+	require.Equal(t, http.StatusOK, res.Code, "promote: %s", res.Body)
+
+	post := fetchDashSnapshot(t, mux)
+	assert.True(t, agentInSnap(post.Agents, conv), "post: promoted conv on the roster")
+	assert.True(t, ungroupedHas(post, conv),
+		"post: a promoted offline conv in no group must surface in ungrouped[] "+
+			"(the virtual Ungrouped group); got %d ungrouped rows", len(post.Ungrouped))
+}
+
+// Scenario (issue 3): a reincarnation predecessor must never show up
+// as its own agent. The v29→v30 enrollment backfill used to enrol
+// every old_conv_id in agent_conv_succession, leaving ghost agents on
+// the roster that could not be retired — the enrollment verbs redirect
+// forward through the succession chain to the (already retired) head,
+// so every retire returned a 409. handleDashboardSnapshot now skips
+// superseded predecessors; only the live chain head is the agent.
+func TestEnrollment_SupersededPredecessorIsNotAnAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const pred = "pred-1111-2222-3333-4444"
+	const head = "head-1111-2222-3333-4444"
+	f.HaveConvWithTitle(pred, "old-incarnation")
+	f.HaveConvWithTitle(head, "live-incarnation")
+	// pred reincarnated into head. RecordConvSuccession enrols head.
+	require.NoError(t, db.RecordConvSuccession(pred, head, "reincarnate"))
+	// Simulate the buggy backfill: pred got an enrollment row too, even
+	// though its identity has moved to head.
+	require.NoError(t, db.EnrollAgent(pred, "migration"))
+
+	snap := fetchDashSnapshot(t, mux)
+	assert.False(t, agentInSnap(snap.Agents, pred),
+		"a superseded reincarnation predecessor must NOT be on the agent roster")
+	assert.False(t, ungroupedHas(snap, pred),
+		"a superseded predecessor must NOT show in the virtual Ungrouped group")
+	assert.True(t, agentInSnap(snap.Agents, head),
+		"the live chain head IS this agent and must be on the roster")
+}
+
 // Scenario: adding a non-agent conversation to a group promotes it —
 // the daemon enrolls it on the membership write, so it shows up as an
 // agent without a separate promote step.

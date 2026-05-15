@@ -158,17 +158,15 @@ func TestDashboardUngrouped_DeletedGroupMembersSurfaceInUngrouped(t *testing.T) 
 		"post-delete: orphaned conv %s should surface in ungrouped[]", conv)
 }
 
-// Scenario: the snapshot's ungrouped[] array — the data the virtual
-// "Ungrouped" group renders from — must contain ONLY live, currently-
-// running loose convs. The daemon's agentRows map also absorbs every
-// permission grant-holder (the per-conv perms loop adds them
-// unconditionally, online or not). Without the online gate, a long-
-// dead conv that still carries a grant would shore up in the virtual
-// group forever.
+// Scenario: a permission grant-holder in no group is an ungrouped
+// agent — holding a grant enrolls the conv, so it belongs in
+// ungrouped[] whether or not its tmux pane is currently alive. The
+// virtual "Ungrouped" group is where the human re-homes such a conv,
+// so it must be visible there regardless of online state.
 //
-// Pins the `a.Online` gate in handleDashboardSnapshot: an offline
-// grant-holder in no group is excluded; an online one is included.
-func TestDashboardSnapshot_UngroupedExcludesOfflineGrantHolders(t *testing.T) {
+// Pins that handleDashboardSnapshot does NOT online-gate ungrouped[]:
+// both an offline and an online grant-holder show up.
+func TestDashboardSnapshot_UngroupedIncludesGrantHolders(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
 
@@ -189,8 +187,8 @@ func TestDashboardSnapshot_UngroupedExcludesOfflineGrantHolders(t *testing.T) {
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	assert.False(t, ungroupedHas(snap, offlineConv),
-		"offline grant-holder %s must NOT appear in ungrouped[]", offlineConv)
+	assert.True(t, ungroupedHas(snap, offlineConv),
+		"offline grant-holder %s should appear in ungrouped[]", offlineConv)
 	assert.True(t, ungroupedHas(snap, onlineConv),
 		"online grant-holder %s should appear in ungrouped[]; got %d rows",
 		onlineConv, len(snap.Ungrouped))

@@ -27,6 +27,12 @@ active. `backfillAgentEnrollment` enrolls every conv-id found in
 `agent_cron_jobs`, `agent_workdir` and `agent_messages`, so no agent
 disappears on upgrade. `DeleteAgentByConvID` cascades the enrollment row.
 
+> **Correction (`dashboard-enrollment-surface-fixes.md`, migration
+> v30→v31):** the original backfill also drew `old_conv_id` from
+> `agent_conv_succession`, so it mis-enrolled every reincarnation
+> predecessor as a ghost agent. The backfill now excludes superseded
+> conv-ids, and `migrateV30toV31` deletes the ghosts already created.
+
 ## Enrollment triggers (db.EnrollAgent — INSERT OR IGNORE)
 
 - `AddAgentGroupMember` / `AddAgentGroupOwner` / `GrantAgentPermission`

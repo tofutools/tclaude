@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 30
+const currentVersion = 31
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -203,6 +203,43 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 31 {
+		if err := migrateV30toV31(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV30toV31 cleans up ghost agent enrollments for superseded
+// conversations. The v29→v30 backfill drew conv-ids from
+// agent_conv_succession's old_conv_id column, so every reincarnation
+// predecessor got enrolled as an active agent — even though its
+// identity has long since moved to the chain head. Those ghosts
+// cluttered the agent roster, and worse: every promote/retire verb
+// aimed at a predecessor redirects forward through the succession
+// chain (ResolveSelector → ResolveLatestConv), so retiring a ghost
+// actually hit the chain head and failed once the head was retired.
+//
+// The live reincarnate path already deletes the predecessor's
+// enrollment (reincarnate.go). This migration retroactively applies
+// the same rule to the chains the backfill mis-enrolled. The fixed
+// backfillAgentEnrollment no longer creates these rows, so on a fresh
+// v29→v30→v31 run this delete is a harmless no-op.
+func migrateV30toV31(db *sql.DB) error {
+	if _, err := db.Exec(`
+		DELETE FROM agent_enrollment
+		WHERE conv_id IN (
+			SELECT old_conv_id FROM agent_conv_succession
+			WHERE old_conv_id IS NOT NULL AND old_conv_id != ''
+		);
+	`); err != nil {
+		return fmt.Errorf("migrate v30→v31 (delete superseded enrollments): %w", err)
+	}
+	if _, err := db.Exec(`UPDATE schema_version SET version = 31;`); err != nil {
+		return fmt.Errorf("migrate v30→v31 (version): %w", err)
+	}
 	return nil
 }
 
@@ -255,6 +292,18 @@ func migrateV29toV30(db *sql.DB) error {
 // workdir tracker and the message log. This is what keeps an agent
 // from disappearing when tclaude upgrades to the enrollment model.
 //
+// Superseded conversations are deliberately excluded: a conv that
+// appears as old_conv_id in agent_conv_succession has been reincarnated
+// — its identity moved to the chain head, and the live reincarnate
+// path deletes its enrollment row. Enrolling it here would resurrect a
+// ghost agent that clutters the roster and can't be retired (every
+// enrollment verb redirects forward through the succession chain to
+// the head). The exclusion is a WHERE clause, not just an omitted
+// UNION arm, so a predecessor still loses its enrollment even when it
+// is also referenced by some other agentic table (it almost always is
+// — agent_messages, agent_workdir, …). The chain head itself only
+// appears as new_conv_id, never old_conv_id, so it is kept.
+//
 // INSERT OR IGNORE so a conv referenced by several tables enrolls
 // exactly once; the whole thing is idempotent and safe to re-run. The
 // UNION's result column is named by its first SELECT (`conv_id`),
@@ -270,7 +319,6 @@ func backfillAgentEnrollment(db *sql.DB) error {
 			UNION SELECT conv_id        FROM agent_permissions
 			UNION SELECT conv_id        FROM agent_sudo_grants
 			UNION SELECT anchor_conv_id FROM agent_head_aliases
-			UNION SELECT old_conv_id    FROM agent_conv_succession
 			UNION SELECT new_conv_id    FROM agent_conv_succession
 			UNION SELECT source_conv_id FROM agent_clone_history
 			UNION SELECT owner_conv     FROM agent_cron_jobs
@@ -279,7 +327,11 @@ func backfillAgentEnrollment(db *sql.DB) error {
 			UNION SELECT from_conv      FROM agent_messages
 			UNION SELECT to_conv        FROM agent_messages
 		)
-		WHERE conv_id IS NOT NULL AND conv_id != '';
+		WHERE conv_id IS NOT NULL AND conv_id != ''
+		  AND conv_id NOT IN (
+			SELECT old_conv_id FROM agent_conv_succession
+			WHERE old_conv_id IS NOT NULL AND old_conv_id != ''
+		  );
 	`, now)
 	return err
 }
