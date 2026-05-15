@@ -14,7 +14,7 @@ docs/plans/
 │   └── future/      ← deferred / "if shows up in practice" /
 │                      cross-machine and similar far-out items
 └── DONE/
-    └── index.md     ← shipped log, terse one-liners with commit refs
+    └── *.md         ← one shipped feature per file (no index)
 ```
 
 One file per coherent feature (kebab-case slug). Each TODO file is
@@ -29,13 +29,15 @@ shipped for context, lists relevant files, and any open questions.
    nothing fits.
 2. Open the relevant file. Sanity-check against current code before
    assuming the TODO is still accurate — plan docs decay.
-3. After shipping, update:
-   - Fully done → delete the TODO file, append an entry to
-     `DONE/index.md`.
-   - Sub-item shipped → mark inline in the TODO file ("shipped
-     2026-MM-DD") and add a `DONE/index.md` entry. Move the file to
-     a lower priority tier (or delete) once everything substantive
-     is done.
+3. After shipping, move the TODO file into `DONE/` — keep its
+   filename, rewrite the body to describe what shipped (CLI surface,
+   schema migrations, slugs, file paths, test scenarios, commit refs
+   if known). One file per feature; there is **no index** —
+   `ls -lt docs/plans/DONE/` orders by ship date and `grep -rli`
+   finds features by keyword.
+   - Sub-item shipped → mark it inline in the TODO file ("shipped
+     2026-MM-DD"); move the whole file into `DONE/` once everything
+     substantive is done.
 
 **New TODOs**
 

@@ -3,17 +3,18 @@
 > **BETA / EXPERIMENTAL**
 >
 > The agent feature is under active development. Commands, flags,
-> permission slugs, the daemon wire format, and the SQLite schema may
-> all change without notice. Per-agent permission grants are stored in
-> a v9 schema table (`agent_permissions`) which has not been
-> field-tested across upgrades. **Don't build automation against this
-> yet that you can't readily migrate.** See
+> permission slugs, the daemon wire format, the dashboard, and the
+> SQLite schema may all change without notice. Per-agent permission
+> grants and time-bounded elevations are stored in tables that have
+> not been field-tested across many upgrades. **Don't build automation
+> against this yet that you can't readily migrate.** See
 > [`docs/plans/agents_todo.md`](plans/agents_todo.md) for what's still
 > in flight.
 
-Cross-session messaging and self-service capabilities between Claude
-Code conversations on the same machine, gated by a permission model the
-human curates.
+Cross-session coordination between Claude Code conversations on the
+same machine: messaging, group membership, agent lifecycle (spawn,
+clone, reincarnate), scheduled nudges, and a browser dashboard — all
+gated by a permission model the human curates.
 
 `tclaude agent` (the CLI) talks to `tclaude agentd` (a long-running
 daemon) over a Unix socket. The daemon owns the database, tmux nudges,
@@ -29,18 +30,31 @@ current conv-id on every request.
   nudge if they're online; otherwise the message queues in their
   inbox.
 - **Group sessions.** Allow-list who can talk to whom. Out-of-group
-  messages are refused server-side.
+  messages are refused server-side. Inter-group links open up
+  directed cross-group messaging without co-membership.
+- **Spawn and manage agents.** Spawn fresh CC sessions straight into
+  a group, clone an agent into a sibling, reincarnate it onto a fresh
+  context window, wake/stop sessions, and open terminals — your own
+  or, with the right permission, another agent's.
+- **Schedule recurring nudges.** Cron jobs deliver a message to an
+  agent (or a whole group) on an interval.
 - **Delegate capabilities.** Per-agent permissions live in SQLite;
   you (the human) decide which agents can rename themselves, manage
-  group membership, etc. Agents can also ask for one-off escalation
-  via a browser approval popup.
+  group membership, etc. Agents can request one-off escalation via a
+  browser approval popup, or a bounded `sudo` elevation.
+- **Operate it from a browser.** The [agent dashboard](dashboard.md)
+  is a full operations console for everything above.
 
 ## Prerequisites
 
 - **`tclaude setup`** — registers hooks and the agentd socket path.
 - **`tclaude setup --install-agent-skills`** — materialises the
-  bundled agent skills under `~/.claude/skills/`. Without these
+  bundled `agent-*` skills under `~/.claude/skills/`. Without these
   skills installed, agents won't know to use these commands.
+- **`tclaude setup --install-default-agent-permissions`** — grants the
+  self-targeted slugs the bundled skills exercise (`self.rename`,
+  `self.compact`, `self.reincarnate`, `self.clone`) as agent defaults.
+  Idempotent; only adds missing slugs.
 - **`tclaude agentd serve`** — running in a non-sandboxed shell. The
   CLI refuses to fall back to direct DB access when the daemon is
   down — that's deliberate, so the auth model can't be bypassed by
@@ -50,13 +64,15 @@ The daemon binds two sockets:
 
 - `~/.tclaude/agentd.sock` — Unix socket for `tclaude agent` traffic.
 - `127.0.0.1:<random>` — loopback HTTP for the human-approval popup
-  (only used when an agent passes `--ask-human`).
+  and the [dashboard](dashboard.md).
 
 By default `agentd serve` also adds a system tray icon (Open
-dashboard, Reinstall agent skills, Open config, Quit). On hosts
-without a tray host (WSL, headless servers, pure Wayland) the icon
-silently doesn't appear — the daemon still works. Pass `--no-tray`
-to skip the tray entirely.
+dashboard, Reinstall agent skills, Open config, pending-approvals
+submenu, Quit). On hosts without a tray host (WSL, headless servers,
+pure Wayland) the icon silently doesn't appear — the daemon still
+works. Pass `--no-tray` to skip the tray entirely. Pass
+`--auto-launch-dashboard` (or set `agent.auto_launch_dashboard` in
+config) to open the dashboard on startup.
 
 ## Quick start
 
@@ -75,6 +91,9 @@ tclaude agent groups add reviewer-team <conv2> --alias tester --role test-runner
 # 4. From inside a CC session, an agent can now reach peers.
 tclaude agent ls
 tclaude agent message lead "Can you review PR #42?"
+
+# Or open the dashboard and drive it from a browser.
+tclaude agent dashboard
 ```
 
 ## Identity
@@ -90,7 +109,15 @@ Every command is associated with a *caller identity*:
 
 `tclaude agent whoami` prints whichever the daemon resolved.
 
+Most commands accept a *selector* wherever they take an agent: a full
+conv-id, an 8+-char conv-id prefix, a group alias, a global head
+alias, or a current display title.
+
 ## Commands
+
+The CLI surface is large; `tclaude agent <cmd> --help` is always the
+authoritative reference. The sections below group the commands by what
+they're for.
 
 ### whoami / lookup / ls
 
@@ -101,11 +128,10 @@ tclaude agent ls               # peers in any group I'm in (online indicator + g
 tclaude agent ls --json
 ```
 
-`lookup` accepts a UUID, an 8-char prefix, or a current display title.
 `ls` is restricted to peers reachable through a shared group — the
 group acts as an allow-list.
 
-### message / reply
+### message / reply / inbox
 
 ```bash
 # direct
@@ -121,25 +147,19 @@ tclaude agent message group:reviewer-team "PR #42 ready for eyes"
 # reply (looks up the sender from the original message id; no need to
 # copy conv-ids out of the headers)
 tclaude agent reply <id> "got it"
-tclaude agent reply <id> --subject "Re: not the default" "..."
 ```
 
-For direct messages the sender and target must share a group,
-otherwise the daemon refuses with `not in a shared group`. For
-multicast (`group:<name>` target), the sender must be a member of
-that group. If the target's tmux session is alive they get a
-system-style nudge; otherwise the message queues in their inbox
-until they `inbox ls`. Replies to a multicast come back as normal
-direct messages — there is no automatic "reply-all".
-
-### inbox
+For direct messages the sender and target must share a group (or be
+bridged by an inter-group [link](#groups)), otherwise the daemon
+refuses with `not in a shared group`. For multicast (`group:<name>`
+target) the sender must be a member of that group. If the target's
+tmux session is alive they get a system-style nudge; otherwise the
+message queues in their inbox until they `inbox ls`.
 
 ```bash
 tclaude agent inbox ls                # last 20, all
 tclaude agent inbox ls --unread       # only unread
-tclaude agent inbox ls --limit 100
 tclaude agent inbox read <id>         # marks read; --keep-unread to defer
-tclaude agent inbox read <id> --json
 ```
 
 `inbox` has aliases `mailbox` / `mail`. Reading a message returns
@@ -151,62 +171,180 @@ RFC-822-shaped headers — `From`, `To`, `Group`, `Subject`, `Date`,
 ```bash
 tclaude agent groups ls                                   # all groups + member/online counts
 tclaude agent groups members <group>                      # members + ● online indicator
-tclaude agent groups create <group> [--descr "..."]
-tclaude agent groups rm <group>                           # fails if any messages reference it
+tclaude agent groups owners <group>                       # owners (can message members without being one)
+tclaude agent groups create <group> [--descr "..."] [--member alias=lead,role=...]
+tclaude agent groups rm <group>                           # destroys the group + history; fails if messages reference it
 tclaude agent groups add <group> <conv> [--alias N --role R --descr T]
 tclaude agent groups remove <group> <conv>
 tclaude agent groups update-member <group> <conv> [--alias N --role R --descr T]
-tclaude agent groups stop <group> [--force]                # soft /exit (or hard kill-session)
-tclaude agent groups resume <group>                        # spawn `tclaude session new -r` for offline members
+tclaude agent groups rename <group> <new-name>
+tclaude agent groups grant-owner <group> <conv>
+tclaude agent groups revoke-owner <group> <conv>
+tclaude agent groups set-default-dir <group> [dir]        # default cwd for agents spawned into the group
+tclaude agent groups archive <group>                      # soft-delete: freeze, hide, keep history
+tclaude agent groups unarchive <group>                    # reverse an archive
+tclaude agent groups clone <source> [new-name]            # fork every member into a brand-new group
+tclaude agent groups stop <group> [--force]                # soft /exit (or hard kill-session) every member
+tclaude agent groups resume <group>                        # spawn a session for every offline member
+tclaude agent groups why-can-i-message <target>            # explain which group/link authorises a send
 ```
 
 `update-member` only touches the flags you pass; pass `--alias=` (an
-explicit empty string) to clear a field. All mutating subcommands
-take `--ask-human <duration>` (see below).
+explicit empty string) to clear a field. `--member` on `create`
+bootstraps a whole team in one call (each value is a comma-separated
+`key=value` list — `alias=lead,role=tech-lead,cwd=.`).
 
-### permissions
+**Inter-group links** are directed edges that let one group's members
+message another group's members without co-membership:
+
+```bash
+tclaude agent groups link add <from-group> <to-group> [--mode ...]
+tclaude agent groups link ls <group>
+tclaude agent groups link set-mode <from> <to> <mode>
+tclaude agent groups link rm <from-group> <to-group>
+tclaude agent groups links                                 # every link, all groups
+```
+
+All mutating subcommands take `--ask-human <duration>` (see
+[below](#ad-hoc-human-approval---ask-human)).
+
+### spawn
+
+```bash
+tclaude agent spawn <group> [--alias N --role R --descr T --cwd DIR]
+```
+
+Launches a fresh detached CC session, waits for its conv-id to
+materialise, and adds it to `<group>`. The new session lands in
+`--cwd` (defaults to the caller's cwd, or the group's
+[default dir](#groups)). Requires the `groups.spawn` permission
+(human-only by default).
+
+### clone / reincarnate / compact / context-info
+
+Lifecycle commands. By default they target the calling agent itself;
+`--target <selector>` retargets another agent (the **manager
+pattern**, gated on the `agent.*` slug or group ownership).
+
+```bash
+tclaude agent clone [follow-up]              # fork a sibling; the original keeps running
+tclaude agent clone --no-copy-conv           # clone with a blank context instead of the copied jsonl
+tclaude agent reincarnate "<follow-up>"      # replace self with a fresh successor (follow-up REQUIRED)
+tclaude agent compact [follow-up]            # inject /compact into the pane
+tclaude agent context-info                   # show this conversation's context-window state (read-only)
+```
+
+A **clone** inherits identity (group memberships with a `-clone`
+alias suffix, per-conv grants, ownerships) and, by default, a copy of
+the conversation jsonl — the original stays alive. A **reincarnate**
+migrates identity onto a fresh conv-id and soft-stops the old one; the
+follow-up prompt is mandatory so the successor isn't left idle.
+
+### stop / resume / dir
+
+```bash
+tclaude agent stop <selector> [--force]      # soft /exit, or kill-session with --force
+tclaude agent resume <selector>              # bring an offline agent back into a tmux pane
+tclaude agent dir [selector]                 # print an agent's working directory
+tclaude agent dir --worktree                 # git worktree/repo root instead
+tclaude agent dir --start                     # the launch directory instead
+tclaude agent dir --open                      # open a terminal there (via the daemon)
+```
+
+`stop` / `resume` are idempotent — already-offline / already-online
+agents come back as `skipped:...`. They are the single-conv variants
+of `groups stop` / `groups resume`, and require `agent.stop` /
+`agent.resume` (or group ownership) when targeting another agent.
+
+### cron
+
+Recurring scheduled nudges. The daemon's scheduler ticks every 30s and
+fires due jobs by delivering a message (or a direct keystroke for solo
+targets).
+
+```bash
+tclaude agent cron add --interval 10m --body "status check?" [--target SEL --name N]
+tclaude agent cron ls
+tclaude agent cron disable <id>      # pause without deleting
+tclaude agent cron enable <id>
+tclaude agent cron run-now <id>      # fire immediately
+tclaude agent cron logs <id>         # recent execution history
+tclaude agent cron rm <id>
+```
+
+Cron jobs default to self-targeted; `--target group:<name>`
+multicasts. Managing your own jobs needs `self.schedule`; managing
+another agent's needs `agent.schedule` (or group ownership).
+
+### permissions / sudo
 
 ```bash
 tclaude agent permissions slugs                          # registry of known slugs + descriptions
-tclaude agent permissions ls                             # defaults + per-agent grants
-tclaude agent permissions ls <conv|alias>                # effective set for one agent
-tclaude agent permissions ls default                     # defaults only
-tclaude agent permissions grant default <slug>           # add to global defaults
-tclaude agent permissions grant <conv|alias> <slug>      # add per-agent grant
-tclaude agent permissions revoke default <slug>
-tclaude agent permissions revoke <conv|alias> <slug>
+tclaude agent permissions ls [<conv|alias|default>]      # defaults + grants, or effective set for one agent
+tclaude agent permissions grant <conv|alias|default> <slug>
+tclaude agent permissions revoke <conv|alias|default> <slug>
 ```
 
-See **Permission model** below for the full picture.
+`sudo` requests a **bundle of slugs for a bounded duration** (capped
+at 1h). The request triggers a human-approval popup; on approve, the
+slugs join the agent's effective set until the window expires or a
+human revokes early.
+
+```bash
+tclaude agent sudo request <slug>... [--duration 5m --reason "..."]
+tclaude agent sudo ls [--all]
+tclaude agent sudo revoke <id>
+```
+
+The human can also `sudo request --target <conv>` to grant an
+elevation proactively (no popup — the shell *is* the consent).
+`permissions.grant` / `permissions.revoke` are blocklisted from sudo
+by design; a permanent grant is the only way to hand out those.
+
+See [Permission model](#permission-model) for the full picture.
+
+### rename / alias
+
+```bash
+tclaude agent rename "<title>"           # rename a conversation (self, or --target another)
+tclaude agent alias set <handle> <conv>  # anchor a global head alias to a conv
+tclaude agent alias ls / get / rm
+```
+
+`rename` injects `/rename <title>` into the target's CC pane via
+`tmux send-keys`; gated on `self.rename` (self) or `agent.rename`
+(another). The title charset is strict
+(`[A-Za-z0-9_\-\[\]{}() ]`, single ASCII spaces, max 64 chars) — a
+hard security gate, because the title becomes literal keystroke
+input.
+
+A **head alias** is a stable, daemon-wide handle (`po`, `ceo`, …) that
+always resolves to the live head of a conv chain — it survives
+arbitrary reincarnation depth without re-pointing. It complements the
+per-group `--alias`, which is group-scoped.
+
+### delete
+
+```bash
+tclaude agent delete <selector> [--force] [--yes]
+```
+
+Permanently wipes every row referencing the conv-id (agent / conv /
+cron / succession / session tables), the `.jsonl` file, and the
+session-env token. Refuses while the target's tmux session is alive
+unless `--force`. Requires `agent.delete` (not default-granted) or
+group ownership; self-delete is refused — use `tclaude conv rm`.
 
 ### dashboard
 
 ```bash
 tclaude agent dashboard               # open the browser dashboard
-tclaude agent dashboard --print       # print the URL only
+tclaude agent dashboard --print       # print the one-shot URL only
 ```
 
-A read-only single-page UI served on the daemon's loopback port —
-the same one the human-approval popup binds. Four tabs: Groups,
-Agents, Permissions, Slug registry. Polls a single `/api/snapshot`
-endpoint every 5 seconds. All edits go through the CLI (each row
-includes a "copy CLI command" button). Auth: per-process
-HttpOnly + SameSite=Strict cookie set on first GET, required for
-`/api/*` calls; same threat model as the popup.
-
-### rename
-
-```bash
-tclaude agent rename "<title>"        # caller renames its own conversation
-```
-
-Mechanic: the daemon injects `/rename <title>` into the caller's CC
-pane via `tmux send-keys`. Gated on the `self.rename` permission.
-
-Title charset is strict (`[A-Za-z0-9_\-\[\]{}() ]`, single ASCII
-spaces, max 64 chars). This is a hard security gate — the title
-becomes literal keystroke input, so anything weird in it could
-inject other slash commands.
+A browser operations console for everything above. See the
+[Agent Dashboard](dashboard.md) page for the full tour — tabs, auth,
+spawning, and drag-and-drop group editing.
 
 ## Permission model
 
@@ -214,8 +352,10 @@ Every mutating action is gated by a *permission slug*. The daemon
 checks the caller's identity:
 
 1. **Human?** Pass.
-2. **Agent?** Allowed iff the slug is in either `default_permissions`
-   (global) or the agent's per-conv grants (SQLite).
+2. **Agent?** Allowed iff the slug is in `default_permissions`
+   (global), the agent's per-conv grants (SQLite), or an active
+   `sudo` elevation. Owning a group also passes the `agent.*`
+   manager-pattern checks against members of that group.
 
 ### Storage split
 
@@ -223,33 +363,31 @@ checks the caller's identity:
 |-------------------------------------------|-------------------------------|----------------------------|
 | `~/.tclaude/config.json` → `agent.default_permissions` | Slugs granted to **every** agent | hand-edit, or `permissions grant default <slug>` |
 | SQLite `agent_permissions` table          | Per-conv grants (additive on top of defaults) | `permissions grant <conv> <slug>` (writes the DB row) |
+| SQLite sudo-elevation table               | Time-bounded grants from `sudo` | `sudo request` / `sudo revoke` |
 
-An agent's effective permission set is `union(defaults, grants)`.
+An agent's effective permission set is
+`union(defaults, grants, active sudo elevations)`.
 
 ### Slugs
 
-| Slug                    | Allows                                                    |
-|-------------------------|-----------------------------------------------------------|
-| `self.rename`           | `tclaude agent rename` (calls `/rename` in own pane)      |
-| `groups.create`         | `tclaude agent groups create`                             |
-| `groups.rm`             | `tclaude agent groups rm`                                 |
-| `member.add`            | `tclaude agent groups add`                                |
-| `member.remove`         | `tclaude agent groups remove`                             |
-| `member.redesignate`    | `tclaude agent groups update-member`                      |
-| `groups.stop`           | `tclaude agent groups stop`                               |
-| `groups.resume`         | `tclaude agent groups resume`                             |
-| `permissions.grant`     | `tclaude agent permissions grant`                         |
-| `permissions.revoke`    | `tclaude agent permissions revoke`                        |
+Slugs are grouped by family. `self.*` acts on the calling agent;
+`agent.*` is the manager pattern (act on another agent); the rest
+gate group and permission administration.
 
-Slugs not in this list are accepted by the daemon at evaluation time
-(forward-compat for slugs a future build will wire up), but
-`permissions grant` refuses them at the CLI to catch typos.
+| Family        | Slugs |
+|---------------|-------|
+| `self.*`      | `self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule` |
+| `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm` |
+| `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
+| `permissions.*` | `permissions.grant`, `permissions.revoke` |
 
-Run `tclaude agent permissions slugs` for the live registry.
+Run `tclaude agent permissions slugs` for the live registry with
+descriptions — it is the source of truth; this table can drift.
 
 ### Ad-hoc human approval (`--ask-human`)
 
-Every mutating command takes `--ask-human <duration>` (e.g. `30s`,
+Most mutating commands take `--ask-human <duration>` (e.g. `30s`,
 `2m`, or a bare integer for seconds; capped at 300s). On permission
 denial, the daemon opens a browser popup with **Approve / Deny /
 +5min** buttons:
@@ -263,32 +401,36 @@ tclaude agent groups create foo --ask-human 30s
 ```
 
 **Timeout = Deny** so an unattended popup never silently grants. The
-popup is loopback-only and authenticated by an HttpOnly session
-cookie + Origin/Referer matching, but a same-user process can still
-read the URL out of `/proc` — this matches the existing same-user
-trust boundary at `agentd.sock`. (Future work in
-`docs/plans/agents_todo.md`.)
+popup is loopback-only and authenticated by the same init-token
+exchange the [dashboard](dashboard.md#auth) uses.
+
+For a *bundle* of slugs over a *window* of time rather than one
+command, use [`sudo`](#permissions--sudo) instead.
 
 ### Recursion
 
-`permissions.grant` and `permissions.revoke` are themselves slugs.
-That means `permissions grant` / `revoke` are gated like every other
-mutator: the human can run them by default; an agent can only run
-them if it explicitly holds the slug, or if the human approves via
-`--ask-human`. Granting `permissions.grant` to an agent makes that
-agent a co-administrator — handle with care.
+`permissions.grant` and `permissions.revoke` are themselves slugs, so
+`permissions grant` / `revoke` are gated like every other mutator: the
+human can run them by default; an agent can only run them if it holds
+the slug, or the human approves via `--ask-human`. Granting
+`permissions.grant` to an agent makes it a co-administrator — handle
+with care.
 
 ## Bundled skills
 
-Two skills ship with the binary and install to `~/.claude/skills/`
+Five skills ship with the binary and install to `~/.claude/skills/`
 via `tclaude setup --install-agent-skills`:
 
 - **`agent-coord`** — the day-to-day "talk to other agents" skill.
   Triggered by `[system: new agent message #...]` nudges and by user
   prompts asking the agent to coordinate.
 - **`agent-rename`** — split out as its own skill so renames are
-  obvious in the skill list. Loaded only when the agent decides (or
-  is asked) to rename itself.
+  obvious in the skill list.
+- **`agent-lifecycle`** — context-window self-management: `compact`,
+  `reincarnate`, `clone`, `context-info`.
+- **`agent-dir`** — report or open a terminal in an agent's working
+  directory.
+- **`agent-schedule`** — set up and manage recurring `cron` nudges.
 
 Re-run `tclaude setup --install-agent-skills` after `go install
 …@latest` to refresh the on-disk copies with whatever the new binary
@@ -303,26 +445,26 @@ embeds.
   key to leak.
 - `agent_messages` rows accumulate forever for now (no auto-prune);
   bodies are short, so this is fine for a long while.
-- The popup is bound to the same daemon process; closing the daemon
-  closes the popup listener. The dashboard view planned in
-  `docs/plans/agents_todo.md` will reuse the same loopback port.
+- The popup and the dashboard share the daemon's loopback port;
+  closing the daemon closes both listeners.
 
 ## Troubleshooting
 
 | Symptom                                                                 | Fix                                                             |
 |--------------------------------------------------------------------------|-----------------------------------------------------------------|
 | `Error: tclaude agentd is not running.`                                  | Start it: `tclaude agentd serve` (in a non-sandboxed shell).    |
-| `Error: not in a shared group with target`                               | Add both convs to the same group with `groups add`.             |
+| `Error: not in a shared group with target`                               | Add both convs to the same group, or add an inter-group link.   |
 | `Error: selector matches multiple conversations`                         | Use the 8-char conv-id prefix instead of the alias/title.       |
-| `Error: caller is not granted permission "<slug>"`                       | Either grant via `permissions grant`, or retry with `--ask-human`. |
+| `Error: caller is not granted permission "<slug>"`                       | Grant via `permissions grant`, retry with `--ask-human`, or `sudo request`. |
+| Dashboard shows `403` on `GET /`                                         | Open it via `tclaude agent dashboard` — the cookie is only issued by the init-token exchange. |
 | Popup didn't open / opened wrong browser                                 | On WSL, the daemon shells out to `/mnt/c/Windows/System32/cmd.exe /c start`. Check `tclaude agentd serve` logs. |
 | `no_tmux` 503 on `agent rename`                                          | Caller has no live tmux session for the daemon to inject into.  |
 
 ## See also
 
+- [Agent Dashboard](dashboard.md) — the browser operations console.
 - `docs/plans/agent-coord.md` — design doc for `tclaude agent`.
 - `docs/plans/agentd.md` — design doc for the daemon (peer-cred
   identity, socket layout).
-- `docs/plans/agents_todo.md` — running TODO/DONE list. Read this
-  for what's coming next (browser dashboard, system tray icon,
-  multicast, group spawn/stop/resume, …).
+- `docs/plans/agents_todo.md` — running TODO backlog of what's coming
+  next.
