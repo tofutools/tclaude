@@ -5,12 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 )
 
@@ -34,12 +32,14 @@ import (
 
 // dirResp is the wire shape for GET .../dir.
 type dirResp struct {
-	ConvID      string `json:"conv_id"`
-	StartDir    string `json:"start_dir"`             // Claude Code launch dir
-	CurrentDir  string `json:"current_dir"`           // most-recent dir the agent edited in
-	WorktreeDir string `json:"worktree_dir"`          // git working-tree root of current_dir
-	Source      string `json:"source"`                // "hook" (tracked) | "fallback" (== start_dir)
-	CallerConv  string `json:"caller_conv,omitempty"` // set when a different agent asked
+	ConvID        string `json:"conv_id"`
+	StartDir      string `json:"start_dir"`               // Claude Code launch dir
+	StartBranch   string `json:"start_branch,omitempty"`  // git branch of start_dir
+	CurrentDir    string `json:"current_dir"`             // most-recent dir the agent edited in
+	WorktreeDir   string `json:"worktree_dir"`            // git working-tree root of current_dir
+	CurrentBranch string `json:"current_branch,omitempty"` // git branch of worktree_dir
+	Source        string `json:"source"`                  // "hook" (tracked) | "fallback" (== start_dir)
+	CallerConv    string `json:"caller_conv,omitempty"`   // set when a different agent asked
 }
 
 // dirOpenResp is the wire shape for POST .../dir.
@@ -51,55 +51,24 @@ type dirOpenResp struct {
 	CallerConv string `json:"caller_conv,omitempty"`
 }
 
-// gitToplevelOf is the seam for resolving a directory's git
-// working-tree root. Production shells out to git; flow tests swap in
-// a stub so they don't need a real repo on disk.
-var gitToplevelOf = realGitToplevel
-
-// realGitToplevel returns the git working-tree root containing dir —
-// the linked-worktree root when dir is inside a linked worktree, the
-// main repo root otherwise. Returns ("", false) when dir isn't in a
-// git repo, or git isn't on PATH.
-func realGitToplevel(dir string) (string, bool) {
-	if dir == "" {
-		return "", false
-	}
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", false
-	}
-	top := strings.TrimSpace(string(out))
-	if top == "" {
-		return "", false
-	}
-	return top, true
-}
-
-// resolveDirs returns the three directories tclaude tracks for a conv.
+// resolveDirs adapts agent.ResolveLocation to this endpoint's wire
+// vocabulary, returning the three directories tclaude tracks:
 //
 //   - current_dir falls back to start_dir when the PostToolUse hook
 //     hasn't recorded an edit yet (fresh agent, or one that's only
 //     read files / run commands). source distinguishes the two cases.
 //   - worktree_dir is the git working-tree root containing current_dir,
 //     falling back to start_dir when current_dir isn't in a git repo.
+//
+// The git resolution itself happens once, in the hook, at edit time —
+// resolveDirs is a pure read of stored state (see agent.ResolveLocation).
 func resolveDirs(convID string) (startDir, currentDir, worktreeDir, source string) {
-	if sess, err := db.FindSessionByConvID(convID); err == nil && sess != nil {
-		startDir = sess.Cwd
+	loc := agent.ResolveLocation(convID)
+	source = "fallback"
+	if loc.Tracked {
+		source = "hook"
 	}
-	if startDir == "" {
-		if row := agent.FreshConvRowResolved(convID); row != nil {
-			startDir = row.ProjectPath
-		}
-	}
-	currentDir, source = startDir, "fallback"
-	if w, err := db.GetAgentWorkdir(convID); err == nil && w.Dir != "" {
-		currentDir, source = w.Dir, "hook"
-	}
-	worktreeDir = startDir
-	if top, ok := gitToplevelOf(currentDir); ok {
-		worktreeDir = top
-	}
-	return startDir, currentDir, worktreeDir, source
+	return loc.StartupDir, loc.EditDir, loc.CurrentDir, source
 }
 
 // pickDir selects one of the three resolved dirs by name. which is
@@ -170,16 +139,25 @@ func handleAgentDir(w http.ResponseWriter, r *http.Request, convID string) {
 }
 
 func writeDirInfo(w http.ResponseWriter, convID, caller string) {
-	start, current, worktree, source := resolveDirs(convID)
-	if start == "" && current == "" {
+	loc := agent.ResolveLocation(convID)
+	if loc.StartupDir == "" && loc.EditDir == "" {
 		writeError(w, http.StatusNotFound, "not_found",
 			"no known directory for "+short8(convID)+
 				" — no session row yet (is the agent running under tclaude?)")
 		return
 	}
+	source := "fallback"
+	if loc.Tracked {
+		source = "hook"
+	}
 	resp := dirResp{
-		ConvID: convID, StartDir: start, CurrentDir: current,
-		WorktreeDir: worktree, Source: source,
+		ConvID:        convID,
+		StartDir:      loc.StartupDir,
+		StartBranch:   loc.StartupBranch,
+		CurrentDir:    loc.EditDir,
+		WorktreeDir:   loc.CurrentDir,
+		CurrentBranch: loc.CurrentBranch,
+		Source:        source,
 	}
 	if caller != "" && caller != convID {
 		resp.CallerConv = caller

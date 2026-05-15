@@ -335,11 +335,31 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var body struct {
-		Alias          string `json:"alias,omitempty"`
-		Role           string `json:"role,omitempty"`
-		Descr          string `json:"descr,omitempty"`
+		Alias string `json:"alias,omitempty"`
+		Role  string `json:"role,omitempty"`
+		// Descr is the short, one-line description shown on the dashboard
+		// (the group-member "Description" column). Keep it terse — the
+		// agent's actual task brief goes in InitialMessage instead.
+		Descr string `json:"descr,omitempty"`
+		// InitialMessage, when set, is delivered to the new agent as its
+		// first real prompt — a separate turn after the welcome. It is
+		// deliberately split from Descr so a long task brief doesn't bloat
+		// the dashboard's description column.
+		InitialMessage string `json:"initial_message,omitempty"`
 		Cwd            string `json:"cwd,omitempty"`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+
+		// WorktreePath / WorktreeBranch describe a git worktree the
+		// agent should do its code work in, when Cwd is a parent
+		// "monorepo" directory rather than the repo itself. They are
+		// purely informational — the agent still launches in Cwd; the
+		// worktree path rides into the welcome message so the agent
+		// knows where to make edits. Set by the dashboard's spawn
+		// modal after it creates the worktree; empty for an ordinary
+		// spawn where Cwd already is the repo.
+		WorktreePath   string `json:"worktree_path,omitempty"`
+		WorktreeBranch string `json:"worktree_branch,omitempty"`
+
 		// AutoFocus, when set, opens a terminal window attached to the
 		// new agent once the spawn lands. Opt-in on the wire — the
 		// dashboard's spawn modal defaults its checkbox on, CLI / agent
@@ -352,6 +372,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
+
+	// The initial message is injected via tmux send-keys, so it must
+	// survive the same way a slash follow-up does: no control characters
+	// (each newline would land as a premature submit, fragmenting the
+	// prompt). The dashboard collapses newlines client-side; this is the
+	// backstop for CLI / API callers.
+	body.InitialMessage = strings.TrimSpace(body.InitialMessage)
+	if body.InitialMessage != "" && !isValidFollowUp(body.InitialMessage) {
+		writeError(w, http.StatusBadRequest, "invalid_initial_message",
+			"initial_message must be 1-4096 printable characters; tabs, newlines, "+
+				"and other control characters are not allowed (each newline would be "+
+				"treated as a submit by tmux send-keys, splitting the prompt)")
+		return
+	}
+
 	timeout := 30 * time.Second
 	if body.TimeoutSeconds > 0 {
 		timeout = time.Duration(body.TimeoutSeconds) * time.Second
@@ -380,6 +415,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_cwd", cwdErr.Error())
 		return
 	}
+
+	// Validate the optional worktree dir the same way — it must exist
+	// (the dashboard creates it just before spawning). Caught here so
+	// a stale path becomes an immediate 400 rather than a welcome
+	// message pointing the agent at a directory that isn't there.
+	var worktreePath string
+	if strings.TrimSpace(body.WorktreePath) != "" {
+		wt, wtErr := resolveSpawnCwd(body.WorktreePath)
+		if wtErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_worktree", wtErr.Error())
+			return
+		}
+		worktreePath = wt
+	}
+	worktreeBranch := strings.TrimSpace(body.WorktreeBranch)
 
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
@@ -466,7 +516,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name)
+		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name,
+			body.InitialMessage, worktreePath, worktreeBranch)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -479,59 +530,68 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 }
 
 // runSpawnPostInit fires asynchronously after a successful spawn. It
-// waits for the new tmux pane to come online, then injects /rename
-// (when alias is a valid rename title) followed by a welcome system
-// message. Failures are logged, never bubbled — the spawn already
-// succeeded as far as the caller is concerned.
+// waits for the new tmux pane to come online, then injects, in order:
+//
+//  1. /rename <alias> — when alias is a valid rename title.
+//  2. The welcome [system: ...] line orienting the agent.
+//  3. The initial message — when one was supplied — as the agent's
+//     first real prompt.
+//
+// Each is its own turn. Failures are logged, never bubbled — the spawn
+// already succeeded as far as the caller is concerned.
 //
 // Why /rename first: it's a slash command CC processes immediately,
 // landing a write on the .jsonl before any other turn happens. Even
-// if the welcome injection fails afterwards, the file exists and
-// `agent resume` can find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName string) {
+// if a later injection fails, the file exists and `agent resume` can
+// find it.
+func runSpawnPostInit(convID, alias, role, descr, groupName, initialMessage, worktreePath, worktreeBranch string) {
 	if !waitForConvAlive(convID) {
-		slog.Warn("spawn: new conv never came online; rename + welcome abandoned",
+		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
 		return
 	}
 
-	welcome := buildSpawnWelcome(alias, role, descr, groupName)
-
-	// Prefer the slash + follow-up combo when we can rename. /rename
-	// alone covers the .jsonl-materialisation half; the follow-up
-	// covers the context-handoff half. Skips rename when alias is
-	// empty / invalid (so spawn doesn't break for callers that pass
-	// human-friendly aliases that don't fit the rename charset).
-	if alias != "" && isValidRenameTitle(alias) {
-		if !injectSlashCommand(convID, "/rename "+alias, welcome) {
-			slog.Warn("spawn: post-init injection failed", "conv", convID, "alias", alias)
-		}
+	sess := pickAliveSession(convID)
+	if sess == nil {
+		slog.Warn("spawn: no alive tmux session for post-init injection", "conv", convID)
 		return
 	}
-	// No valid alias to rename to — still inject the welcome so the
-	// .jsonl gets written and the agent has its context.
-	if alias != "" {
-		slog.Warn("spawn: alias not a valid rename title; skipping /rename, sending welcome only",
+	target := sess.TmuxSession + ":0.0"
+
+	// /rename first — see the doc comment. Skipped when alias is empty
+	// or not a valid rename title (some callers pass human-friendly
+	// aliases that don't fit the rename charset); the welcome below
+	// still materialises the .jsonl in that case.
+	if alias != "" && isValidRenameTitle(alias) {
+		if err := injectTextAndSubmit(target, "/rename "+alias); err != nil {
+			slog.Warn("spawn: /rename injection failed",
+				"conv", convID, "alias", alias, "error", err)
+		}
+	} else if alias != "" {
+		slog.Warn("spawn: alias not a valid rename title; skipping /rename",
 			"conv", convID, "alias", alias)
 	}
-	candidates, err := db.FindSessionsByConvID(convID)
-	if err != nil || len(candidates) == 0 {
-		slog.Warn("spawn: cannot resolve tmux session for welcome", "conv", convID)
-		return
-	}
-	var tmuxTarget string
-	for _, c := range candidates {
-		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
-			tmuxTarget = c.TmuxSession + ":0.0"
-			break
-		}
-	}
-	if tmuxTarget == "" {
-		slog.Warn("spawn: no alive tmux session for welcome", "conv", convID)
-		return
-	}
-	if err := injectTextAndSubmit(tmuxTarget, welcome); err != nil {
+
+	// Welcome: a single-line [system: ...] turn orienting the agent
+	// (identity, role, descr, group, and — for a sub-repo worktree —
+	// where to make code edits).
+	welcome := buildSpawnWelcome(alias, role, descr, groupName, initialMessage != "",
+		worktreePath, worktreeBranch)
+	if err := injectTextAndSubmit(target, welcome); err != nil {
 		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
+		return
+	}
+
+	// Initial message: the human's first real prompt for the agent.
+	// Kept separate from descr — descr is the short dashboard label,
+	// this is the (possibly long) task brief — and sent as its own
+	// turn after the welcome so the agent reads orientation first,
+	// task second.
+	if initialMessage != "" {
+		if err := injectTextAndSubmit(target, initialMessage); err != nil {
+			slog.Warn("spawn: initial-message injection failed",
+				"conv", convID, "error", err)
+		}
 	}
 }
 
@@ -539,7 +599,11 @@ func runSpawnPostInit(convID, alias, role, descr, groupName string) {
 // signal "this is metadata from tclaude, not a human prompt" — same
 // convention agent-message nudges use. Kept to a single line so it
 // renders cleanly in CC's prompt history.
-func buildSpawnWelcome(alias, role, descr, groupName string) string {
+//
+// hasInitialMessage flips the trailing instruction: with an initial
+// message queued the agent should act on it, not sit idle, so the
+// "wait for the first instruction" line is replaced.
+func buildSpawnWelcome(alias, role, descr, groupName string, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
 	parts := []string{"spawned by the human"}
 	if alias != "" {
 		parts = append(parts, fmt.Sprintf("as %q", alias))
@@ -555,7 +619,22 @@ func buildSpawnWelcome(alias, role, descr, groupName string) string {
 	if descr != "" {
 		body += " Descr: " + descr + "."
 	}
-	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate. Wait for the first instruction."
+	// When the spawn targeted a sub-repo of a monorepo launch dir, the
+	// agent's cwd is the parent dir but its code work belongs in the
+	// worktree. Spell that out so it doesn't edit the parent's repos.
+	if worktreePath != "" {
+		body += " Your git worktree for code changes is at " + worktreePath
+		if worktreeBranch != "" {
+			body += " (branch " + worktreeBranch + ")"
+		}
+		body += " — make code edits there, not elsewhere under your start directory."
+	}
+	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate."
+	if hasInitialMessage {
+		body += " Your first instructions follow in the next message."
+	} else {
+		body += " Wait for the first instruction."
+	}
 	return "[system: " + body + "]"
 }
 

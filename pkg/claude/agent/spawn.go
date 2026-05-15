@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -26,12 +27,13 @@ type SpawnResponse struct {
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does
 // the actual spawn + group-join; this struct just shapes the request.
 type SpawnParams struct {
-	Group   string `pos:"true" help:"Existing group to join the new agent into"`
-	Alias   string `long:"alias" short:"a" optional:"true" help:"Alias for the new member in this group (e.g. 'reviewer')"`
-	Role    string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
-	Descr   string `long:"descr" short:"d" optional:"true" help:"Description of the new member's purpose in this group"`
-	Cwd     string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
-	Timeout string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
+	Group          string `pos:"true" help:"Existing group to join the new agent into"`
+	Alias          string `long:"alias" short:"a" optional:"true" help:"Alias for the new member in this group (e.g. 'reviewer')"`
+	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
+	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
+	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"First prompt sent to the new agent, as its own turn after the welcome. Newlines are collapsed to spaces"`
+	Cwd            string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
+	Timeout        string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
 
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 }
@@ -47,6 +49,8 @@ func spawnCmd() *cobra.Command {
 		Long: "Launches `tclaude session new -d --global` with a generated label, " +
 			"waits for the new conv-id to materialise, and adds the new conv to <group> " +
 			"with the given alias/role/descr. Prints the attach command for the new session. " +
+			"--descr is the short dashboard label; pass --initial-message to hand the new " +
+			"agent its first task as a separate prompt. " +
 			"Requires the `groups.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
@@ -68,6 +72,13 @@ func spawnCmd() *cobra.Command {
 func RunSpawn(p *SpawnParams, stdout, stderr io.Writer) (*SpawnResponse, int) {
 	if p.Group == "" {
 		fmt.Fprintln(stderr, "Error: group is required")
+		return nil, rcInvalidArg
+	}
+	initialMessage := strings.TrimSpace(p.InitialMessage)
+	if initialMessage != "" && !isValidFollowUp(initialMessage) {
+		fmt.Fprintln(stderr, "Error: REJECTED. --initial-message must be 1-4096 printable characters;")
+		fmt.Fprintln(stderr, "control characters (newlines, tabs, etc.) are not allowed because each")
+		fmt.Fprintln(stderr, "newline would be treated as a separate prompt-submit by tmux send-keys.")
 		return nil, rcInvalidArg
 	}
 	timeoutSeconds := 30
@@ -102,6 +113,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer) (*SpawnResponse, int) {
 		"alias":           p.Alias,
 		"role":            p.Role,
 		"descr":           p.Descr,
+		"initial_message": initialMessage,
 		"cwd":             cwd,
 		"timeout_seconds": timeoutSeconds,
 	}

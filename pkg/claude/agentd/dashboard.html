@@ -69,6 +69,15 @@ table tr:hover { background: #161b22; }
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
   font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e;
 }
+/* loc-pair stacks an init/now value pair in one CWD or Branch cell,
+   shown only when the agent's launch location differs from where it
+   is working now — keeps the column narrow instead of adding a 2nd. */
+.loc-pair { display: flex; flex-direction: column; gap: 1px; }
+.loc-row { display: flex; align-items: baseline; gap: 5px; }
+.loc-tag {
+  flex: 0 0 auto; width: 26px; font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; color: #6e7681;
+}
 .last-hook { color: #7d8590; font-size: 11px; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
 .alias { font-weight: 600; }
@@ -975,11 +984,20 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Descr</span>
-      <textarea id="agent-spawn-descr" rows="3" placeholder="optional — longer-form description shown in the welcome message" spellcheck="false"></textarea>
+      <textarea id="agent-spawn-descr" rows="2" placeholder="optional — short one-line description shown on the dashboard" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Initial msg</span>
+      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — sent to the new agent as its first prompt, right after the welcome (newlines collapse to spaces)" spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
       <input id="agent-spawn-cwd" type="text" placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Worktree repo</span>
+      <input id="agent-spawn-wt-repo" type="text" list="agent-spawn-subrepo-list" placeholder="git repo to worktree — defaults to CWD; for a monorepo, pick a sub-repo" autocomplete="off" spellcheck="false" />
+      <datalist id="agent-spawn-subrepo-list"></datalist>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
@@ -1277,12 +1295,42 @@ summary.dnd-drop-over.dnd-effect-clone {
     return out;
   }
 
-  // branchCell renders the agent's git branch / worktree (from
-  // conv_index — Claude Code stamps gitBranch into every .jsonl turn).
-  // Empty / unknown renders as an em dash so the column stays aligned.
-  function branchCell(branch) {
-    if (!branch) return '<span class="muted">—</span>';
-    return `<span class="branch" title="git branch: ${esc(branch)}">⎇ ${esc(branch)}</span>`;
+  // stackedLoc renders a startup-vs-current pair of pre-formatted HTML
+  // cells. When they agree it shows a single line; when they diverge
+  // it stacks an "init" / "now" pair so the CWD and Branch columns
+  // stay narrow — the agent's launch location and where it's actually
+  // working sit on two short rows rather than two extra columns.
+  function stackedLoc(startHTML, curHTML, differ) {
+    if (!differ) return curHTML || startHTML;
+    return '<div class="loc-pair">'
+      + `<span class="loc-row"><span class="loc-tag">init</span>${startHTML}</span>`
+      + `<span class="loc-row"><span class="loc-tag">now</span>${curHTML}</span>`
+      + '</div>';
+  }
+
+  // cwdCell renders the CWD column: the launch dir, or — when the
+  // agent has moved into a sub-repo / worktree — a stacked init/now
+  // pair. startup_dir falls back to the live session's cwd.
+  function cwdCell(m) {
+    const startup = m.startup_dir || (m.state || {}).cwd || '';
+    const current = m.current_dir || '';
+    const fmt = d => `<span class="cwd" title="${esc(d || '')}">${esc(shortCwd(d))}</span>`;
+    const differ = !!current && !!startup && current !== startup;
+    return stackedLoc(fmt(startup), fmt(current), differ);
+  }
+
+  // branchCell renders the Branch column. `m.branch` is the agent's
+  // *current* branch (the worktree it last edited in); startup_branch
+  // is the launch dir's branch — empty for a virtual-monorepo launch
+  // dir. They stack as init/now whenever they differ. Empty / unknown
+  // renders as an em dash so the column stays aligned.
+  function branchCell(m) {
+    const startup = m.startup_branch || '';
+    const current = m.branch || '';
+    const fmt = b => b
+      ? `<span class="branch" title="git branch: ${esc(b)}">⎇ ${esc(b)}</span>`
+      : '<span class="muted">—</span>';
+    return stackedLoc(fmt(startup), fmt(current), startup !== current);
   }
 
   // offlineDefault returns the tab-wide "show offline" checkbox state
@@ -1424,7 +1472,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     alias:  m => m.alias || m.title,
     state:  m => (m.state || {}).status,
     last:   m => (m.state || {}).last_hook,
-    cwd:    m => (m.state || {}).cwd,
+    cwd:    m => m.current_dir || (m.state || {}).cwd,
     branch: m => m.branch,
     role:   m => m.role,
     descr:  m => m.descr,
@@ -1447,7 +1495,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     name:   a => a.title,
     state:  a => (a.state || {}).status,
     last:   a => (a.state || {}).last_hook,
-    cwd:    a => (a.state || {}).cwd,
+    cwd:    a => a.current_dir || (a.state || {}).cwd,
     branch: a => a.branch,
     groups: a => (a.groups || []).join(', '),
     perms:  a => (a.effective || []).length,
@@ -1572,8 +1620,8 @@ summary.dnd-drop-over.dnd-effect-clone {
                     ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
                   </td>
                   <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
-                  <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
-                  <td>${branchCell(m.branch)}</td>
+                  <td>${cwdCell(m)}</td>
+                  <td>${branchCell(m)}</td>
                   <td>${roleCell(m)}</td>
                   <td class="muted">${esc(m.descr || '')}</td>
                   <td>${memberActions(g, m)}</td>
@@ -1664,8 +1712,8 @@ summary.dnd-drop-over.dnd-effect-clone {
                 ${subagents > 0 ? `<span class="state-detail">+${subagents} subagent${subagents > 1 ? 's' : ''}</span>` : ''}
               </td>
               <td><span class="last-hook">${esc(lh)}</span></td>
-              <td><span class="cwd" title="${esc(state.cwd || '')}">${esc(shortCwd(state.cwd))}</span></td>
-              <td>${branchCell(a.branch)}</td>
+              <td>${cwdCell(a)}</td>
+              <td>${branchCell(a)}</td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
               <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
@@ -1751,7 +1799,10 @@ summary.dnd-drop-over.dnd-effect-clone {
                ((m.role || '').toLowerCase().includes(needle)) ||
                ((m.descr || '').toLowerCase().includes(needle)) ||
                ((m.branch || '').toLowerCase().includes(needle)) ||
-               ((state.cwd || '').toLowerCase().includes(needle));
+               ((m.startup_branch || '').toLowerCase().includes(needle)) ||
+               ((state.cwd || '').toLowerCase().includes(needle)) ||
+               ((m.startup_dir || '').toLowerCase().includes(needle)) ||
+               ((m.current_dir || '').toLowerCase().includes(needle));
       });
       if (nameHit || descrHit) {
         // Group name / descr matched: keep all members so the user can
@@ -1792,10 +1843,13 @@ summary.dnd-drop-over.dnd-effect-clone {
       return ((a.title || '').toLowerCase().includes(needle)) ||
              ((a.conv_id || '').toLowerCase().includes(needle)) ||
              ((a.branch || '').toLowerCase().includes(needle)) ||
+             ((a.startup_branch || '').toLowerCase().includes(needle)) ||
              ((meta.alias || '').toLowerCase().includes(needle)) ||
              ((meta.role  || '').toLowerCase().includes(needle)) ||
              ((meta.descr || '').toLowerCase().includes(needle)) ||
              ((state.cwd || '').toLowerCase().includes(needle)) ||
+             ((a.startup_dir || '').toLowerCase().includes(needle)) ||
+             ((a.current_dir || '').toLowerCase().includes(needle)) ||
              (a.groups || []).some(g => g.toLowerCase().includes(needle));
     });
   }
@@ -2913,8 +2967,15 @@ summary.dnd-drop-over.dnd-effect-clone {
     // while this fetch was in flight, drop the result.
     if ((select.dataset.pendingRepo || '') !== repo) return;
     if (!data || !data.is_repo) {
-      select.innerHTML = '<option value="">(not a git repo — worktrees unavailable)</option>';
+      // Not a git repo. If the daemon found nested repos under it
+      // (a "virtual monorepo" launch dir), point the human at the
+      // Worktree-repo field — wtFillSubRepos populates its datalist.
+      const hasSubs = data && Array.isArray(data.sub_repos) && data.sub_repos.length;
+      select.innerHTML = hasSubs
+        ? '<option value="">(not a git repo — pick a sub-repo in "Worktree repo" above)</option>'
+        : '<option value="">(not a git repo — worktrees unavailable)</option>';
       select.disabled = true;
+      wtFillSubRepos(prefix, data && data.sub_repos);
       return;
     }
     select.dataset.repoRoot = data.repo_root || '';
@@ -2922,7 +2983,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     (data.worktrees || []).forEach(wt => {
       const br = wt.branch || '(detached)';
       const tag = wt.is_main ? ' [main]' : '';
-      opts.push(`<option value="wt:${esc(wt.path)}">${esc(br)}${tag} — ${esc(shortCwd(wt.path))}</option>`);
+      opts.push(`<option value="wt:${esc(wt.path)}" data-branch="${esc(wt.branch || '')}">${esc(br)}${tag} — ${esc(shortCwd(wt.path))}</option>`);
     });
     opts.push(`<option value="${WT_NEW}">+ create new worktree…</option>`);
     select.innerHTML = opts.join('');
@@ -2946,28 +3007,57 @@ summary.dnd-drop-over.dnd-effect-clone {
     });
   }
 
-  // wtResolveCwd turns the current picker state into the cwd a
-  // spawn/clone should use. `repo` is the directory the picker loaded
-  // against; `fallback` is returned when no worktree is selected (the
-  // entered CWD for spawn, "" for clone = inherit the source's cwd).
-  // Throws on a worktree-creation failure so the caller surfaces it.
-  async function wtResolveCwd(prefix, repo, fallback) {
-    const val = $(`#${prefix}-worktree`).value || '';
-    if (!val) return fallback;
-    if (val.startsWith('wt:')) return val.slice(3);
+  // wtFillSubRepos populates a modal's sub-repo <datalist> from a
+  // /api/worktrees response's `sub_repos`. Only the spawn modal has
+  // the datalist (`<prefix>-subrepo-list`); for the clone picker this
+  // is a no-op. A null/empty list is left alone rather than cleared —
+  // once the human drills from the monorepo into one sub-repo the
+  // suggestions stay available so they can switch to a sibling.
+  function wtFillSubRepos(prefix, subRepos) {
+    const list = document.getElementById(`${prefix}-subrepo-list`);
+    if (!list) return;
+    if (Array.isArray(subRepos) && subRepos.length) {
+      list.innerHTML = subRepos
+        .map(s => `<option value="${esc(s.path)}">${esc(s.rel)}</option>`)
+        .join('');
+    }
+  }
+
+  // wtResolve turns the current worktree-picker state into a
+  // {path, branch} selection. An empty path means "no worktree
+  // chosen" — the caller applies its own fallback. `repo` is the
+  // directory the picker loaded against. Throws on a creation
+  // failure so the caller can surface it.
+  async function wtResolve(prefix, repo) {
+    const select = $(`#${prefix}-worktree`);
+    const val = select.value || '';
+    if (!val) return { path: '', branch: '' };
+    if (val.startsWith('wt:')) {
+      const opt = select.selectedOptions[0];
+      return { path: val.slice(3), branch: (opt && opt.dataset.branch) || '' };
+    }
     if (val === WT_NEW) {
       const branch = $(`#${prefix}-wt-branch`).value.trim();
       if (!branch) throw new Error('enter a branch name for the new worktree');
-      const root = $(`#${prefix}-worktree`).dataset.repoRoot || repo;
+      const root = select.dataset.repoRoot || repo;
       const r = await fetch('/api/worktrees', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repo: root, branch, from_branch: $(`#${prefix}-wt-base`).value || '' }),
       });
       if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
-      return (await r.json()).path;
+      const j = await r.json();
+      return { path: j.path || '', branch: j.branch || branch };
     }
-    return fallback;
+    return { path: '', branch: '' };
+  }
+
+  // wtResolveCwd is the cwd-only view of wtResolve, kept for the clone
+  // modal: it returns the worktree path or `fallback` when none is
+  // selected. Throws on a worktree-creation failure.
+  async function wtResolveCwd(prefix, repo, fallback) {
+    const sel = await wtResolve(prefix, repo);
+    return sel.path || fallback;
   }
 
   // ---- Agent spawn modal --------------------------------------------------
@@ -2982,6 +3072,11 @@ summary.dnd-drop-over.dnd-effect-clone {
   // default, so switching the group <select> can refresh the prefill
   // without clobbering a path the user typed by hand.
   let lastSpawnCwdPrefill = '';
+
+  // True once the human has typed in the "Worktree repo" field. Until
+  // then that field mirrors CWD; after, CWD changes leave it alone so
+  // a deliberately-pointed sub-repo path isn't clobbered.
+  let spawnWtRepoEdited = false;
 
   // groupDefaultCwd looks up a group's default spawn dir from the
   // latest snapshot. "" when the group is unknown or has no default.
@@ -3085,6 +3180,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-alias').value = '';
     $('#agent-spawn-role').value = '';
     $('#agent-spawn-descr').value = '';
+    $('#agent-spawn-init-msg').value = '';
     $('#agent-spawn-cwd').value = '';
     // Restore the auto-focus checkbox from the human's last choice
     // (defaults on — see spawnAutoFocusPref).
@@ -3094,12 +3190,17 @@ summary.dnd-drop-over.dnd-effect-clone {
     // user-typed value to protect.
     prefillSpawnCwd(select.value, true);
     $('#agent-spawn-wt-branch').value = '';
+    // The worktree picker targets a separate "Worktree repo" field.
+    // It mirrors CWD until the human edits it; for a monorepo CWD the
+    // field's datalist offers the nested repos to drill into.
+    spawnWtRepoEdited = false;
+    $('#agent-spawn-subrepo-list').innerHTML = '';
+    $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
     // Restore the alias→branch sync to its default-on state.
     $('#agent-spawn-wt-sync').checked = true;
-    // Load the worktree picker against whatever cwd the prefill
-    // landed (empty when the group has no default), then apply the
-    // alias-sync checkbox once it settles.
-    spawnWtLoad($('#agent-spawn-cwd').value.trim());
+    // Load the worktree picker against the Worktree-repo field, then
+    // apply the alias-sync checkbox once it settles.
+    spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     $('#agent-spawn-error').textContent = '';
     const meta = $('#agent-spawn-meta');
     if (groupName) {
@@ -3124,7 +3225,12 @@ summary.dnd-drop-over.dnd-effect-clone {
     const alias = $('#agent-spawn-alias').value.trim();
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
+    // The initial message rides in via tmux send-keys, where a raw
+    // newline would land as a premature submit — collapse to a single
+    // line, same as the clone modal's follow-up.
+    const initMsg = normaliseFollowUp($('#agent-spawn-init-msg').value);
     const cwd = $('#agent-spawn-cwd').value.trim();
+    const wtRepo = $('#agent-spawn-wt-repo').value.trim();
     const autoFocus = $('#agent-spawn-focus').checked;
     const errEl = $('#agent-spawn-error');
     errEl.textContent = '';
@@ -3138,14 +3244,28 @@ summary.dnd-drop-over.dnd-effect-clone {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Spawning…';
     try {
-      // Resolve the worktree picker first — this may create a new
-      // worktree, whose path becomes the spawn cwd. With no worktree
-      // selected it just returns the entered CWD unchanged.
-      const effectiveCwd = await wtResolveCwd('agent-spawn', cwd, cwd);
+      // Resolve the worktree picker (it targets the "Worktree repo"
+      // field, which may differ from CWD). Two outcomes:
+      //   • Worktree repo == CWD → the worktree becomes the spawn cwd
+      //     (the long-standing single-directory behaviour).
+      //   • Worktree repo is a sub-repo of a monorepo CWD → the agent
+      //     still launches in CWD; the worktree path + branch ride
+      //     along so the daemon's welcome points the agent at it.
+      const sel = await wtResolve('agent-spawn', wtRepo);
+      const body = { alias, role, descr, initial_message: initMsg, auto_focus: autoFocus };
+      if (sel.path && wtRepo && wtRepo !== cwd) {
+        body.cwd = cwd;
+        body.worktree_path = sel.path;
+        body.worktree_branch = sel.branch;
+      } else if (sel.path) {
+        body.cwd = sel.path;
+      } else {
+        body.cwd = cwd;
+      }
       const r = await fetch(`/api/groups/${encodeURIComponent(group)}/spawn`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alias, role, descr, cwd: effectiveCwd, auto_focus: autoFocus }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -3170,11 +3290,13 @@ summary.dnd-drop-over.dnd-effect-clone {
   function bindAgentSpawnModal() {
     $('#agent-spawn-open').addEventListener('click', () => openAgentSpawnModal({}));
     // Agents-tab spawn: the group <select> is visible. Switching it
-    // re-prefills the cwd from the newly-chosen group's default and
-    // reloads the worktree picker so it tracks the new cwd.
+    // re-prefills the cwd from the newly-chosen group's default,
+    // mirrors it into Worktree-repo (unless the human pinned that),
+    // and reloads the picker.
     $('#agent-spawn-group').addEventListener('change', (e) => {
       prefillSpawnCwd(e.target.value, false);
-      spawnWtLoad($('#agent-spawn-cwd').value.trim());
+      if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
+      spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     });
     $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
     $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
@@ -3191,13 +3313,24 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-worktree').addEventListener('change', (e) => {
       if (e.target.value !== WT_NEW) $('#agent-spawn-wt-sync').checked = false;
     });
-    // Re-list worktrees when the CWD field settles (debounced) — the
-    // picker operates on whatever repo the typed CWD lands in.
+    // Re-list worktrees when the CWD field settles (debounced). CWD
+    // mirrors into Worktree-repo until the human edits the latter.
     let spawnCwdTimer;
     $('#agent-spawn-cwd').addEventListener('input', () => {
       clearTimeout(spawnCwdTimer);
       spawnCwdTimer = setTimeout(() => {
-        spawnWtLoad($('#agent-spawn-cwd').value.trim());
+        if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
+        spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
+      }, 350);
+    });
+    // Editing "Worktree repo" detaches it from CWD and reloads the
+    // picker against the typed/picked repo (e.g. a monorepo sub-repo).
+    let spawnWtRepoTimer;
+    $('#agent-spawn-wt-repo').addEventListener('input', () => {
+      spawnWtRepoEdited = true;
+      clearTimeout(spawnWtRepoTimer);
+      spawnWtRepoTimer = setTimeout(() => {
+        spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
       }, 350);
     });
     $('#agent-spawn-modal').addEventListener('click', (e) => {

@@ -122,15 +122,6 @@ func SetOpenTerminalForTest(fn func(string) error) func() {
 	return func() { openTerminal = prev }
 }
 
-// SetGitToplevelForTest swaps the git-worktree-root resolver so flow
-// tests can exercise the `dir` endpoints' worktree path without a real
-// repo on disk. Returns a restore function for t.Cleanup.
-func SetGitToplevelForTest(fn func(string) (string, bool)) func() {
-	prev := gitToplevelOf
-	gitToplevelOf = fn
-	return func() { gitToplevelOf = prev }
-}
-
 // SessionReaperHandle wraps a sessionReaper so flow tests can drive
 // ticks deterministically without starting its goroutine.
 type SessionReaperHandle struct{ r *sessionReaper }

@@ -40,12 +40,25 @@ func handleDashboardWorktreesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// subRepoScanDepth caps how deep dashboardListWorktrees walks a
+// non-repo directory looking for nested git repos. Two levels covers
+// the common `monorepo/category/repo` layout; four absorbs a couple
+// of extra grouping dirs without turning the scan into a full tree
+// crawl.
+const subRepoScanDepth = 4
+
 // dashboardListWorktrees answers GET /api/worktrees?repo=<path>.
 //
 // A missing or non-repo `repo` is NOT an error — the picker simply
 // shows "not a git repo" and the spawn proceeds with the raw cwd. So
 // this always 200s on a reachable daemon; the `is_repo` flag tells the
 // client which branch of the UI to render.
+//
+// When `repo` isn't itself a git repo, the response also carries a
+// `sub_repos` list of nested git repos found beneath it. That's the
+// "virtual monorepo" case: the launch dir holds shared docs plus
+// several independent repos, and the picker lets the human drill into
+// one of them to worktree.
 func dashboardListWorktrees(w http.ResponseWriter, r *http.Request) {
 	repo := expandTilde(strings.TrimSpace(r.URL.Query().Get("repo")))
 	if repo == "" {
@@ -54,7 +67,11 @@ func dashboardListWorktrees(w http.ResponseWriter, r *http.Request) {
 	}
 	root, err := worktree.RepoRootForPath(repo)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"is_repo": false, "reason": err.Error()})
+		resp := map[string]any{"is_repo": false, "reason": err.Error()}
+		if subs := worktree.FindSubRepos(repo, subRepoScanDepth); len(subs) > 0 {
+			resp["sub_repos"] = subs
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	wts, err := worktree.ListWorktreesIn(root)
