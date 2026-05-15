@@ -1688,16 +1688,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
   const UNGROUPED_VKEY = ' ungrouped-virtual';
 
   // virtualUngroupedGroup builds the synthetic group object from the
-  // snapshot's online-and-groupless agents. Returns null when there
-  // are none — an empty virtual group is just noise. The `virtual`
-  // flag is the discriminator every group-affecting code path keys
-  // off to suppress rename / delete / multicast / cron / add-member.
+  // snapshot's online-and-groupless agents. Always returns the object
+  // (with an empty members[] when there are none) — once the human
+  // has ticked "show ungrouped" the group stays visible even while
+  // empty, so it reads as a stable, discoverable drop target rather
+  // than something that blinks in and out as agents come and go. The
+  // `virtual` flag is the discriminator every group-affecting code
+  // path keys off to suppress rename / delete / multicast / cron /
+  // add-member.
   function virtualUngroupedGroup(agents) {
     // The snapshot's ungrouped[] is online-only by daemon construction;
     // re-filter defensively so a future backend change can't leak an
     // offline row into the virtual group.
     const online = (agents || []).filter(a => a.online);
-    if (!online.length) return null;
     return {
       name: UNGROUPED_LABEL,
       key: UNGROUPED_VKEY,
@@ -2068,11 +2071,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
     // Append the virtual "Ungrouped" group LAST so it always sorts to
     // the bottom of the listing. filterGroups preserves order, so the
     // text filter narrows it like any other group without moving it.
-    // Gated on the "show ungrouped" checkbox; omitted when empty.
+    // Gated solely on the "show ungrouped" checkbox — once ticked, the
+    // group stays visible even when empty (a no-text filter never
+    // hides it; a text filter narrows it like any group).
     const list = realGroups.slice();
     if (ungroupedVisible()) {
-      const vg = virtualUngroupedGroup(lastSnapshot.ungrouped || []);
-      if (vg) list.push(vg);
+      list.push(virtualUngroupedGroup(lastSnapshot.ungrouped || []));
     }
     const filtered = filterGroups(list, q);
     $('#groups-list').innerHTML = renderGroups(filtered);

@@ -13,11 +13,15 @@ backend correctness fix.
 ## What it does
 
 - **Renders** a synthetic group from `snapshot.ungrouped[]`, appended
-  after the real groups so it always sorts to the bottom. Shown only
-  when non-empty (an empty derived bucket is just noise).
+  after the real groups so it always sorts to the bottom. Visible
+  whenever "show ungrouped" is ticked — including while empty, so it
+  stays a stable, discoverable drop target rather than blinking in
+  and out as agents come and go. (A text filter narrows it like any
+  group.)
 - **Hideable** via a new "show ungrouped" checkbox in the Groups
-  filter bar — persisted to `localStorage` like "show offline".
-  Cannot be deleted (it has no DB row to delete).
+  filter bar — persisted to `localStorage` like "show offline". That
+  checkbox is the only thing that hides it; it cannot be deleted (it
+  has no DB row to delete).
 - **Inert as a group**: no rename / delete / multicast / cron /
   add-member / spawn buttons, no default-cwd / default-context, no
   per-group offline toggle. Styled distinctly (dashed left rule,
