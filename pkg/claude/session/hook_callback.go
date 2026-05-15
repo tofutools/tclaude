@@ -33,6 +33,7 @@ type HookCallbackInput struct {
 	PermissionMode       string          `json:"permission_mode,omitempty"`
 	HookEventName        string          `json:"hook_event_name"`
 	NotificationType     string          `json:"notification_type,omitempty"`
+	Reason               string          `json:"reason,omitempty"` // SessionEnd: clear | logout | prompt_input_exit | other
 	Message              string          `json:"message,omitempty"`
 	Prompt               string          `json:"prompt,omitempty"`
 	StopHookActive       bool            `json:"stop_hook_active,omitempty"`
@@ -57,6 +58,17 @@ func HookCallbackCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// sessionEndIsExit reports whether a SessionEnd hook's `reason` means
+// the Claude Code process is actually going away. A /clear ends the
+// conversation but keeps the process alive (a fresh SessionStart
+// follows immediately), so it is NOT an exit. Every other reason
+// (logout, prompt_input_exit, other) is. An empty reason is treated as
+// an exit — better to over-report "exited" (the reaper / next hook
+// will correct a live session) than to leave a dead one as "idle".
+func sessionEndIsExit(reason string) bool {
+	return reason != "clear"
 }
 
 func runHookCallback() error {
@@ -197,6 +209,22 @@ func runHookCallback() error {
 	case "SessionStart":
 		// Session started or resumed - update ConvID and set to idle
 		state.Status = StatusIdle
+		state.StatusDetail = ""
+
+	case "SessionEnd":
+		// Claude Code is shutting down this conversation. The `reason`
+		// field tells a real process exit apart from a /clear, which
+		// ends the conversation but keeps the process alive and fires a
+		// fresh SessionStart immediately after — so /clear must NOT mark
+		// the session exited. logout / prompt_input_exit / other all
+		// mean the process is going away.
+		if !sessionEndIsExit(input.Reason) {
+			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
+				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
+			}
+			return nil
+		}
+		state.Status = StatusExited
 		state.StatusDetail = ""
 
 	case "PermissionRequest":

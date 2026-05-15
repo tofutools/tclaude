@@ -204,6 +204,36 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 	return err
 }
 
+// MarkSessionExitedIfUnchanged sets a session's status to "exited" —
+// but only if the row still carries the status and updated_at the
+// caller observed. It is a compare-and-swap: when the row changed
+// underneath the caller (most often a resume's SessionStart hook
+// flipping status back and bumping updated_at) the WHERE clause fails,
+// nothing is written, and `false` is returned.
+//
+// The session reaper uses this so a session that resumed in the gap
+// between "observed dead" and "write exited" is never clobbered. A
+// false return is benign — the reaper re-evaluates the row next sweep.
+func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt time.Time) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE sessions
+		SET status = 'exited', status_detail = '', updated_at = ?
+		WHERE id = ? AND status = ? AND updated_at = ?`,
+		time.Now().Format(time.RFC3339Nano),
+		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // UpdateContextPct stores the latest context window usage percentage for a session.
 func UpdateContextPct(sessionID string, pct float64) error {
 	db, err := Open()

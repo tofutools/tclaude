@@ -4,10 +4,11 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -59,59 +60,6 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	registerDashboardEditRoutes(mux)
 }
 
-// dashboardInitTokens holds short-lived, single-use tokens that the
-// `/` exchange swaps for the long-lived dashboard session cookie.
-// Tokens are minted only by the human-only `/v1/dashboard/open`
-// endpoint and the in-process tray handler — never handed out on an
-// unauthenticated GET — so a same-user agent process cannot obtain
-// one. In-memory only: a daemon restart drops every pending token,
-// and the human just reopens the dashboard.
-var dashboardInitTokens = struct {
-	mu sync.Mutex
-	m  map[string]time.Time // token -> expiry
-}{m: map[string]time.Time{}}
-
-// dashboardInitTokenTTL bounds how long a minted init token stays
-// valid. The window only needs to cover "CLI mints → browser cold-
-// starts → browser GETs /" — 60s is comfortable even for a WSL→Windows
-// browser hand-off, and short enough that a leaked token is near-
-// useless.
-const dashboardInitTokenTTL = 60 * time.Second
-
-// mintDashboardInitToken creates a fresh single-use init token, stores
-// it with a TTL, and opportunistically GCs expired entries. Safe to
-// call from any goroutine — the `/v1/dashboard/open` handler and the
-// tray click handler both do.
-func mintDashboardInitToken() string {
-	tok := newApprovalID() // 16 random bytes → 32 hex chars; reuses the approval-ID generator
-	now := time.Now()
-	dashboardInitTokens.mu.Lock()
-	for k, exp := range dashboardInitTokens.m {
-		if now.After(exp) {
-			delete(dashboardInitTokens.m, k)
-		}
-	}
-	dashboardInitTokens.m[tok] = now.Add(dashboardInitTokenTTL)
-	dashboardInitTokens.mu.Unlock()
-	return tok
-}
-
-// consumeDashboardInitToken validates tok and removes it (single-use).
-// Returns true only when tok was present and unexpired.
-func consumeDashboardInitToken(tok string) bool {
-	if tok == "" {
-		return false
-	}
-	dashboardInitTokens.mu.Lock()
-	defer dashboardInitTokens.mu.Unlock()
-	exp, ok := dashboardInitTokens.m[tok]
-	if !ok {
-		return false
-	}
-	delete(dashboardInitTokens.m, tok) // single-use: a token never works twice
-	return time.Now().Before(exp)
-}
-
 // handleDashboardRoot serves the dashboard HTML behind a token-
 // exchange (OAuth authorization-code style) flow:
 //
@@ -146,7 +94,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	// cookie, then we 303 to the bare path so the one-shot token
 	// drops out of the URL.
 	if tok := r.URL.Query().Get("init_token"); tok != "" {
-		if !consumeDashboardInitToken(tok) {
+		if !consumeInitToken(tok, initScopeDashboard) {
 			http.Error(w, "invalid or expired init token — reopen the dashboard with `tclaude agent dashboard`", http.StatusForbidden)
 			return
 		}
@@ -188,7 +136,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 // the human from an agent here — keep this endpoint human-only.
 //
 // `tclaude agent dashboard` calls this; the tray's "Open dashboard"
-// mints in-process via mintDashboardInitToken instead.
+// mints in-process via mintInitToken(initScopeDashboard) instead.
 func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
@@ -203,8 +151,47 @@ func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"url": popupBaseURL + "/?init_token=" + mintDashboardInitToken(),
+		"url": popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard),
 	})
+}
+
+// dashboardBrowserOpener is the browser-launch hook used by
+// autoLaunchDashboard. Production points it at openBrowser; tests swap
+// it for a capture func so the launch path runs without spawning a
+// real browser.
+var dashboardBrowserOpener = openBrowser
+
+// shouldAutoLaunchDashboard reports whether `tclaude agentd serve`
+// should open the dashboard at startup. The --auto-launch-dashboard
+// flag (flagSet) and the persistent agent.auto_launch_dashboard config
+// field OR together — either one opts in — so a service/autostart
+// launch can enable it without carrying the flag.
+func shouldAutoLaunchDashboard(flagSet bool, cfg *config.Config) bool {
+	if flagSet {
+		return true
+	}
+	return cfg != nil && cfg.Agent != nil && cfg.Agent.AutoLaunchDashboard
+}
+
+// autoLaunchDashboard mints a single-use init token in-process and
+// opens the dashboard in the default browser. Mirrors the tray's "Open
+// dashboard" click: the daemon IS the human side, so no socket round-
+// trip through the human-only /v1/dashboard/open is needed.
+//
+// Best-effort — a missing loopback listener or a failed browser launch
+// is logged and otherwise ignored; the daemon keeps running and the
+// human can still run `tclaude agent dashboard`.
+func autoLaunchDashboard() {
+	if popupBaseURL == "" {
+		slog.Warn("auto-launch-dashboard: no loopback URL bound; dashboard unavailable in this process")
+		return
+	}
+	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
+	if err := dashboardBrowserOpener(url); err != nil {
+		slog.Warn("auto-launch-dashboard: failed to open browser", "error", err, "url", url)
+		return
+	}
+	fmt.Println("  opening dashboard in your browser…")
 }
 
 // checkDashboardAuth mirrors checkPopupAuth: cookie value match +
@@ -380,18 +367,25 @@ type agentState struct {
 }
 
 // stateForConv looks up the most-recent live tmux session row for this
-// conv-id and returns its hook-tracked state. Falls back to the
-// most-recent row when no session is alive — that gives us a useful
-// "exited at last_hook" rendering for offline agents.
+// conv-id and returns its hook-tracked state. When no tmux session is
+// alive the agent has exited: the hook-recorded Status is frozen at
+// whatever it was when the process died (usually "idle" from the final
+// Stop hook, since no SessionEnd-style hook fires on exit), so we
+// report StatusExited rather than passing the stale value through —
+// otherwise a dead agent masquerades as "idle" on the dashboard.
+// LastHook is preserved either way so the UI can show when the agent
+// was last active.
 func stateForConv(convID string) agentState {
 	rows, err := db.FindSessionsByConvID(convID)
 	if err != nil || len(rows) == 0 {
 		return agentState{}
 	}
 	pick := rows[0] // already sorted most-recent first
+	alive := false
 	for _, r := range rows {
 		if r.TmuxSession != "" && session.IsTmuxSessionAlive(r.TmuxSession) {
 			pick = r
+			alive = true
 			break
 		}
 	}
@@ -403,6 +397,14 @@ func stateForConv(convID string) agentState {
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)
+	}
+	// No live tmux session — the agent's process is gone. Report it as
+	// exited rather than letting the frozen hook status (typically
+	// "idle") masquerade as a running state. StatusDetail is cleared so
+	// stale "idle: Bash"-style leftovers don't leak into the snapshot.
+	if !alive {
+		out.Status = session.StatusExited
+		out.StatusDetail = ""
 	}
 	return out
 }

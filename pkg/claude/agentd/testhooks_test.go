@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // BuildHandlerForTest exposes the production /v1 mux to flow tests in
@@ -118,6 +120,64 @@ func SetOpenTerminalForTest(fn func(string) error) func() {
 	prev := openTerminal
 	openTerminal = fn
 	return func() { openTerminal = prev }
+}
+
+// SessionReaperHandle wraps a sessionReaper so flow tests can drive
+// ticks deterministically without starting its goroutine.
+type SessionReaperHandle struct{ r *sessionReaper }
+
+// NewSessionReaperForTest builds a reaper with the grace window set to
+// `grace` (pass 0 to disable the fresh-row exemption) and the offline
+// notification routed to `onNotify` instead of the OS notifier — so a
+// flow test can assert exactly which sessions produced an alive→dead
+// transition. onNotify receives the conv-id and the pre-exit status.
+func NewSessionReaperForTest(grace time.Duration, onNotify func(convID, prevStatus string)) *SessionReaperHandle {
+	r := newSessionReaper()
+	r.grace = grace
+	r.notify = func(st *session.SessionState, prevStatus string) {
+		onNotify(st.ConvID, prevStatus)
+	}
+	return &SessionReaperHandle{r: r}
+}
+
+// Tick runs one reaper sweep and returns the number of sessions reaped.
+func (h *SessionReaperHandle) Tick() int { return h.r.tick(time.Now()) }
+
+// RegisterPopupRoutesForTest mounts the approval-popup route
+// (`/approve/...`) on mux so flow tests can exercise handlePopupApprove
+// without binding a real loopback listener.
+func RegisterPopupRoutesForTest(mux *http.ServeMux) {
+	mux.HandleFunc("/approve/", handlePopupApprove)
+}
+
+// SeedPendingApprovalForTest registers a minimal pending approval under
+// id so flow tests can drive handlePopupApprove against it. The
+// decision channel is buffered, so a POST approve/deny records without
+// a blocked reader. Returns a cleanup that removes the entry.
+func SeedPendingApprovalForTest(id string) func() {
+	req := &approvalRequest{
+		id:        id,
+		perm:      "self.rename",
+		decision:  make(chan bool, 1),
+		extend:    make(chan time.Duration, 1),
+		createdAt: time.Now(),
+		timeout:   60 * time.Second,
+	}
+	approvals.mu.Lock()
+	approvals.pending[id] = req
+	approvals.mu.Unlock()
+	return func() {
+		approvals.mu.Lock()
+		delete(approvals.pending, id)
+		approvals.mu.Unlock()
+	}
+}
+
+// MintApproveInitTokenForTest mints a single-use init token scoped to
+// the approval popup for id — what tclaude agentd and the tray embed
+// in the URL they launch.
+func MintApproveInitTokenForTest(id string) string {
+	return mintInitToken(initScopeApprove(id))
 }
 
 type dashTestHandler struct{ inner http.Handler }

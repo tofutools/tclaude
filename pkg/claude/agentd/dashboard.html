@@ -489,6 +489,8 @@ summary.dnd-drop-over.dnd-effect-clone {
   color: #c9d1d9;
 }
 .cron-create-enabled input { margin: 0; }
+.cron-create-enabled.disabled { color: #6e7681; }
+.cron-create-enabled.disabled input { cursor: not-allowed; }
 .cron-create-error { color: #f85149; font-size: 12px; min-height: 14px; }
 .cron-create-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
@@ -855,7 +857,11 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Descr</span>
-      <textarea id="agent-spawn-descr" rows="3" placeholder="optional — longer-form description shown in the welcome message" spellcheck="false"></textarea>
+      <textarea id="agent-spawn-descr" rows="2" placeholder="optional — short one-line description shown on the dashboard" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Initial msg</span>
+      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — sent to the new agent as its first prompt, right after the welcome (newlines collapse to spaces)" spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
@@ -870,6 +876,9 @@ summary.dnd-drop-over.dnd-effect-clone {
       <span class="cron-create-label">Worktree</span>
       <select id="agent-spawn-worktree"><option value="">(enter a CWD to enable worktrees)</option></select>
     </label>
+    <label class="cron-create-enabled" id="agent-spawn-wt-sync-row" title="Spawn the agent in a fresh git worktree whose branch is named after the alias above. Needs a CWD inside a git repo.">
+      <input id="agent-spawn-wt-sync" type="checkbox" checked /> Sync worktree branch with alias
+    </label>
     <label class="cron-create-row" id="agent-spawn-wt-new-row" style="display:none">
       <span class="cron-create-label">New branch</span>
       <input id="agent-spawn-wt-branch" type="text" placeholder="branch name for the new worktree" autocomplete="off" spellcheck="false" />
@@ -877,6 +886,9 @@ summary.dnd-drop-over.dnd-effect-clone {
     <label class="cron-create-row" id="agent-spawn-wt-base-row" style="display:none">
       <span class="cron-create-label">Base branch</span>
       <select id="agent-spawn-wt-base"></select>
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-focus-row" title="After the agent spawns, open a terminal window attached to its tclaude session. A detached spawn has no window of its own — this lets you watch and talk to the new agent right away.">
+      <input id="agent-spawn-focus" type="checkbox" checked /> Auto focus — open a terminal attached to the new agent
     </label>
     <div class="cron-create-error" id="agent-spawn-error"></div>
     <div class="modal-buttons">
@@ -984,16 +996,25 @@ summary.dnd-drop-over.dnd-effect-clone {
     return 'state-idle';
   }
 
-  // statePill renders a colored pill for an agent's state. Combines
-  // status + status_detail when present (e.g. "working: Bash"). For
-  // offline (no status row) we render a literal "offline" pill so
-  // every row has a consistent shape.
+  // statePill renders a colored pill for an agent's state. For an
+  // online agent it combines status + status_detail (e.g. "working:
+  // Bash"). For an offline agent we render a literal "offline" pill and
+  // ignore state.status entirely: the hook-recorded status is frozen at
+  // whatever it was when the process exited (usually "idle" from the
+  // final Stop hook, since no SessionEnd-style hook fires on exit), so
+  // echoing it would mislabel a dead agent as "idle". The last-active
+  // time, when known, goes in the tooltip.
   function statePill(state, online) {
+    if (!online) {
+      const lh = relTime(state && state.last_hook);
+      const tip = lh ? `offline — last active ${lh}` : 'offline';
+      return `<span class="state-pill state-offline" title="${esc(tip)}">offline</span>`;
+    }
     const s = (state && state.status) || '';
     const detail = (state && state.status_detail) || '';
-    let label = s || (online ? 'online' : 'offline');
+    let label = s || 'online';
     if (s && detail) label = `${s}: ${detail}`;
-    const cls = online ? statusPillClass(s) : 'state-offline';
+    const cls = statusPillClass(s);
     return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
   }
 
@@ -2933,6 +2954,16 @@ summary.dnd-drop-over.dnd-effect-clone {
     return (g && g.default_cwd) || '';
   }
 
+  // spawnAutoFocusPref reads the persisted "auto focus" checkbox state
+  // for the spawn modal. Defaults to true: a freshly-spawned agent runs
+  // detached with no window, so the common case is wanting one opened.
+  function spawnAutoFocusPref() {
+    try {
+      const v = localStorage.getItem('tclaude.dash.spawn.autofocus');
+      return v === null ? true : v === '1';
+    } catch (_) { return true; }
+  }
+
   // prefillSpawnCwd fills #agent-spawn-cwd with the group's default
   // dir. With force=false it leaves a user-typed value alone — it
   // only overwrites an empty field or a stale prior auto-prefill.
@@ -2944,6 +2975,49 @@ summary.dnd-drop-over.dnd-effect-clone {
     const dflt = groupDefaultCwd(groupName);
     cwdEl.value = dflt;
     lastSpawnCwdPrefill = dflt;
+  }
+
+  // Label for the leading "no worktree" option in the spawn modal's
+  // worktree picker.
+  const SPAWN_WT_NONE = '(no worktree — use CWD above)';
+
+  // applyWtSync reflects the "Sync worktree branch with alias"
+  // checkbox into the spawn modal's worktree picker. Call it after
+  // the picker (re)loads, after the alias changes, and whenever the
+  // checkbox itself is toggled.
+  //
+  // The sync only works when the picker landed on a usable git repo —
+  // wtRefresh leaves the <select> disabled in every other state ((no
+  // CWD), (not a repo), still loading) — so the checkbox is disabled
+  // to match. When checked with a non-empty alias it forces the
+  // picker into "+ create new worktree" and mirrors the alias into
+  // the new-branch field; clearing the alias drops it back to "no
+  // worktree".
+  function applyWtSync() {
+    const syncEl = $('#agent-spawn-wt-sync');
+    const select = $('#agent-spawn-worktree');
+    const usable = !select.disabled;
+    syncEl.disabled = !usable;
+    $('#agent-spawn-wt-sync-row').classList.toggle('disabled', !usable);
+    if (!usable || !syncEl.checked) return;
+    const alias = $('#agent-spawn-alias').value.trim();
+    if (alias) {
+      if (select.value !== WT_NEW) select.value = WT_NEW;
+      wtToggleNew('agent-spawn', true);
+      $('#agent-spawn-wt-branch').value = alias;
+    } else if (select.value === WT_NEW) {
+      // Alias cleared while syncing — fall back to "no worktree".
+      select.value = '';
+      wtToggleNew('agent-spawn', false);
+      $('#agent-spawn-wt-branch').value = '';
+    }
+  }
+
+  // spawnWtLoad reloads the spawn worktree picker for `cwd`, then
+  // re-applies the alias-sync checkbox once the list settles (the
+  // checkbox's usable state depends on whether `cwd` is a git repo).
+  function spawnWtLoad(cwd) {
+    return wtLoad('agent-spawn', cwd, SPAWN_WT_NONE).then(applyWtSync);
   }
 
   function openAgentSpawnModal(opts) {
@@ -2974,7 +3048,11 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-alias').value = '';
     $('#agent-spawn-role').value = '';
     $('#agent-spawn-descr').value = '';
+    $('#agent-spawn-init-msg').value = '';
     $('#agent-spawn-cwd').value = '';
+    // Restore the auto-focus checkbox from the human's last choice
+    // (defaults on — see spawnAutoFocusPref).
+    $('#agent-spawn-focus').checked = spawnAutoFocusPref();
     // Prefill the cwd from the selected group's default spawn dir.
     // force=true: the modal just opened fresh, so there's no
     // user-typed value to protect.
@@ -2986,7 +3064,11 @@ summary.dnd-drop-over.dnd-effect-clone {
     spawnWtRepoEdited = false;
     $('#agent-spawn-subrepo-list').innerHTML = '';
     $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
-    wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
+    // Restore the alias→branch sync to its default-on state.
+    $('#agent-spawn-wt-sync').checked = true;
+    // Load the worktree picker against the Worktree-repo field, then
+    // apply the alias-sync checkbox once it settles.
+    spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     $('#agent-spawn-error').textContent = '';
     const meta = $('#agent-spawn-meta');
     if (groupName) {
@@ -3011,14 +3093,21 @@ summary.dnd-drop-over.dnd-effect-clone {
     const alias = $('#agent-spawn-alias').value.trim();
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
+    // The initial message rides in via tmux send-keys, where a raw
+    // newline would land as a premature submit — collapse to a single
+    // line, same as the clone modal's follow-up.
+    const initMsg = normaliseFollowUp($('#agent-spawn-init-msg').value);
     const cwd = $('#agent-spawn-cwd').value.trim();
     const wtRepo = $('#agent-spawn-wt-repo').value.trim();
+    const autoFocus = $('#agent-spawn-focus').checked;
     const errEl = $('#agent-spawn-error');
     errEl.textContent = '';
     if (!group) {
       errEl.textContent = 'group is required';
       return;
     }
+    // Persist the checkbox so the human's choice sticks across spawns.
+    try { localStorage.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
     const submitBtn = $('#agent-spawn-submit');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Spawning…';
@@ -3031,7 +3120,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       //     still launches in CWD; the worktree path + branch ride
       //     along so the daemon's welcome points the agent at it.
       const sel = await wtResolve('agent-spawn', wtRepo);
-      const body = { alias, role, descr };
+      const body = { alias, role, descr, initial_message: initMsg, auto_focus: autoFocus };
       if (sel.path && wtRepo && wtRepo !== cwd) {
         body.cwd = cwd;
         body.worktree_path = sel.path;
@@ -3054,7 +3143,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       try { payload = await r.json(); } catch (_) {}
       closeAgentSpawnModal();
       const label = alias || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
-      toast(`spawned ${label} → ${group}`);
+      toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
       // Keep the destination group expanded so the new member is visible.
       try { localStorage.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
       refresh();
@@ -3075,11 +3164,23 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-group').addEventListener('change', (e) => {
       prefillSpawnCwd(e.target.value, false);
       if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
-      wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
+      spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     });
     $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
     $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
     bindWtPicker('agent-spawn');
+    // Alias-sync wiring: typing in the alias mirrors into the
+    // worktree branch; toggling the checkbox re-applies the sync;
+    // hand-editing the branch or picking a worktree by hand turns the
+    // sync off so it stops fighting the human.
+    $('#agent-spawn-alias').addEventListener('input', applyWtSync);
+    $('#agent-spawn-wt-sync').addEventListener('change', applyWtSync);
+    $('#agent-spawn-wt-branch').addEventListener('input', () => {
+      $('#agent-spawn-wt-sync').checked = false;
+    });
+    $('#agent-spawn-worktree').addEventListener('change', (e) => {
+      if (e.target.value !== WT_NEW) $('#agent-spawn-wt-sync').checked = false;
+    });
     // Re-list worktrees when the CWD field settles (debounced). CWD
     // mirrors into Worktree-repo until the human edits the latter.
     let spawnCwdTimer;
@@ -3087,7 +3188,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       clearTimeout(spawnCwdTimer);
       spawnCwdTimer = setTimeout(() => {
         if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
-        wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
+        spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
       }, 350);
     });
     // Editing "Worktree repo" detaches it from CWD and reloads the
@@ -3097,7 +3198,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       spawnWtRepoEdited = true;
       clearTimeout(spawnWtRepoTimer);
       spawnWtRepoTimer = setTimeout(() => {
-        wtLoad('agent-spawn', $('#agent-spawn-wt-repo').value.trim(), '(no worktree — use CWD above)');
+        spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
       }, 350);
     });
     $('#agent-spawn-modal').addEventListener('click', (e) => {

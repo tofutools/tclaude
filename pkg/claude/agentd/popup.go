@@ -74,12 +74,11 @@ type approvalRequest struct {
 	decision        chan bool          // approve=true, deny=false
 	extend          chan time.Duration // +N seconds — bounded extension so an unattended popup still eventually times out
 
-	// sessionToken is set on the first GET render and required on all
-	// POSTs (approve/deny/extend) for this approval. Stored as an
-	// HttpOnly, SameSite=Strict cookie. See handlePopupApprove for the
-	// threat model (defense-in-depth against drive-by CSRF and
-	// scraped-URL replay; does NOT close the same-user /proc-leakage
-	// path — that's a known limitation, see the cookie comment below).
+	// sessionToken is minted when a valid init token is exchanged at
+	// the GET handler, and is required on all POSTs (approve/deny/
+	// extend) for this approval. Stored as an HttpOnly, SameSite=Strict
+	// cookie. See handlePopupApprove and checkPopupAuth for the threat
+	// model.
 	mu           sync.Mutex
 	sessionToken string
 }
@@ -165,7 +164,11 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		approvals.mu.Unlock()
 	}()
 
-	url := popupBaseURL + "/approve/" + req.id
+	// Embed a one-shot init token bound to this approval; the popup's
+	// GET exchanges it for the session cookie. The human's browser,
+	// launched right below, consumes it — see inittoken.go for the
+	// residual /proc-scrape note.
+	url := popupBaseURL + "/approve/" + req.id + "?init_token=" + mintInitToken(initScopeApprove(req.id))
 	go func() {
 		if err := openBrowser(url); err != nil {
 			slog.Warn("popup: failed to open browser", "err", err, "url", url)
@@ -244,22 +247,48 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		// On first render, mint a session token and set it as an
-		// HttpOnly SameSite=Strict cookie. Subsequent POSTs must
-		// echo it. Reused on refresh.
-		req.mu.Lock()
-		if req.sessionToken == "" {
-			req.sessionToken = newApprovalID() // reuse the random gen; same entropy
+		// The session cookie is handed out only in exchange for a
+		// valid single-use init token — the same token-exchange the
+		// dashboard uses. tclaude agentd embeds the token in the URL
+		// it launches; the tray re-mints one on demand. A bare GET
+		// with no token and no cookie is refused, so a process that
+		// merely scrapes the approval id cannot mint itself a cookie.
+		if tok := r.URL.Query().Get("init_token"); tok != "" {
+			if !consumeInitToken(tok, initScopeApprove(req.id)) {
+				http.Error(w, "invalid or expired init token; reopen this approval from the agentd tray icon", http.StatusForbidden)
+				return
+			}
+			req.mu.Lock()
+			if req.sessionToken == "" {
+				req.sessionToken = newApprovalID() // reuse the random gen; same entropy
+			}
+			token := req.sessionToken
+			req.mu.Unlock()
+			http.SetCookie(w, &http.Cookie{
+				Name:     "tclaude_popup_" + req.id,
+				Value:    token,
+				Path:     "/approve/" + req.id,
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+			})
+			// Redirect to the bare path so the one-shot token drops
+			// out of the address bar and browser history.
+			http.Redirect(w, r, "/approve/"+req.id, http.StatusSeeOther)
+			return
 		}
-		token := req.sessionToken
+		// No init token: render only for an already-exchanged cookie
+		// (a refresh of the page the human already opened).
+		req.mu.Lock()
+		expected := req.sessionToken
 		req.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{
-			Name:     "tclaude_popup_" + req.id,
-			Value:    token,
-			Path:     "/approve/" + req.id,
-			HttpOnly: true,
-			SameSite: http.SameSiteStrictMode,
-		})
+		if expected == "" {
+			http.Error(w, "open this approval via the link tclaude agentd launched, or from the agentd tray icon", http.StatusForbidden)
+			return
+		}
+		if c, err := r.Cookie("tclaude_popup_" + req.id); err != nil || c.Value != expected {
+			http.Error(w, "missing or invalid popup session cookie", http.StatusForbidden)
+			return
+		}
 		renderApprovalPage(w, req)
 	case http.MethodPost:
 		if !checkPopupAuth(w, r, req) {
@@ -456,22 +485,21 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 // checkPopupAuth gates POSTs to the approval endpoints with two
 // cheap defense-in-depth checks:
 //
-//  1. The HttpOnly session cookie set on first GET must be present
-//     and match the stored token. Stops naive replay from a curl
-//     attacker who scraped the URL but never opened the page.
+//  1. The HttpOnly session cookie must be present and match the
+//     stored token. The cookie is handed out only in exchange for a
+//     single-use init token (see handlePopupApprove's GET), so a
+//     process that scraped the approval URL but lost the race to the
+//     human's browser cannot have it.
 //
 //  2. The Origin (or Referer if Origin is missing) must point at
 //     our own popup base URL. Stops drive-by CSRF from another tab.
 //
-// Caveats — this is NOT a complete fix. Specifically, a same-user
-// process that reads /proc/<browser launcher pid>/cmdline can
-// discover the URL, then issue a GET (which returns Set-Cookie),
-// then re-use the cookie on POST. That attacker has the same
-// privileges as the user already (they can also dial agentd.sock
-// directly), so the popup boundary doesn't close any new gap. We
-// treat same-user processes as in-scope-of-trust, document the
-// residual risk, and queue a more robust scheme (native dialogs or
-// a dashboard requiring a tray-icon click) as future work.
+// Residual: a same-user process that reads the browser launcher's
+// argv off /proc can still race the human's browser for the
+// single-use init token. Winning that race means beating a browser
+// the daemon launches immediately, and losing burns the token.
+// Closing it entirely means stopping a process from reading another
+// process's argv — a sandbox responsibility, not tclaude's.
 func checkPopupAuth(w http.ResponseWriter, r *http.Request, req *approvalRequest) bool {
 	// Cookie check.
 	c, err := r.Cookie("tclaude_popup_" + req.id)
