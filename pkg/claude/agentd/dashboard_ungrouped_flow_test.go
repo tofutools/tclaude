@@ -15,13 +15,28 @@ import (
 // without importing the unexported type. Adding fields here is cheap
 // when more assertions need them.
 type dashSnapshot struct {
+	Groups    []dashGroup `json:"groups"`
 	Agents    []dashAgent `json:"agents"`
 	Ungrouped []dashAgent `json:"ungrouped"`
+}
+
+type dashGroup struct {
+	Name    string       `json:"name"`
+	Members []dashMember `json:"members"`
+}
+
+type dashMember struct {
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Alias  string `json:"alias,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Online bool   `json:"online"`
 }
 
 type dashAgent struct {
 	ConvID string   `json:"conv_id"`
 	Title  string   `json:"title"`
+	Branch string   `json:"branch,omitempty"`
 	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
 }

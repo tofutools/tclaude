@@ -125,9 +125,9 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 // gives the page everything it needs to render every tab; the page
 // re-fetches on a 5s timer.
 type snapshotPayload struct {
-	GeneratedAt string                  `json:"generated_at"`
-	Groups      []dashboardGroup        `json:"groups"`
-	Agents      []dashboardAgent        `json:"agents"`
+	GeneratedAt string           `json:"generated_at"`
+	Groups      []dashboardGroup `json:"groups"`
+	Agents      []dashboardAgent `json:"agents"`
 	// Ungrouped: every conv-id that has a live tmux session but is NOT
 	// a member of any group. Surfaces fresh-spawned agents and other
 	// loose convs so the eventual "Ungrouped virtual group" + the
@@ -143,13 +143,13 @@ type snapshotPayload struct {
 	// active state also surfaces on Agents[*].ActiveSudo so the Groups
 	// + Agents tabs can render the 🔓 indicator without a second
 	// round-trip.
-	Sudo      []dashboardSudoEntry `json:"sudo"`
+	Sudo []dashboardSudoEntry `json:"sudo"`
 	// Links surfaces every inter-group link in the system. The dashboard
 	// renders these in a dedicated panel (read-only in v1) and uses them
 	// to annotate group rows with outbound/inbound counts. Empty slice
 	// (not nil) so JS .length / .map() are safe.
-	Links     []dashboardLink      `json:"links"`
-	PopupBase string               `json:"popup_base"` // for tray-shareable display
+	Links     []dashboardLink `json:"links"`
+	PopupBase string          `json:"popup_base"` // for tray-shareable display
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -211,20 +211,22 @@ type dashboardMember struct {
 	Alias  string     `json:"alias,omitempty"`
 	Role   string     `json:"role,omitempty"`
 	Descr  string     `json:"descr,omitempty"`
+	Branch string     `json:"branch,omitempty"` // git branch / worktree, from conv_index
 	Online bool       `json:"online"`
 	Owner  bool       `json:"owner,omitempty"`
 	State  agentState `json:"state"`
 }
 
 type dashboardAgent struct {
-	ConvID      string                `json:"conv_id"`
-	Title       string                `json:"title"`
-	Online      bool                  `json:"online"`
-	State       agentState            `json:"state"`
-	Groups      []string              `json:"groups"`
-	OwnedGroups []string              `json:"owned_groups"` // subset of Groups the agent owns; UI tags these distinctly
-	Effective   []string              `json:"effective"`    // perms = union(defaults, per-conv grants)
-	ActiveSudo  []dashboardSudoEntry  `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
+	ConvID      string               `json:"conv_id"`
+	Title       string               `json:"title"`
+	Branch      string               `json:"branch,omitempty"` // git branch / worktree, from conv_index
+	Online      bool                 `json:"online"`
+	State       agentState           `json:"state"`
+	Groups      []string             `json:"groups"`
+	OwnedGroups []string             `json:"owned_groups"`          // subset of Groups the agent owns; UI tags these distinctly
+	Effective   []string             `json:"effective"`             // perms = union(defaults, per-conv grants)
+	ActiveSudo  []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
 }
 
 // dashboardSudoEntry is the wire shape for one active sudo grant in
@@ -314,14 +316,17 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		row := agent.FreshConvRowResolved(convID)
 		title := "(unknown)"
+		branch := ""
 		if row != nil {
 			if t := agent.DisplayTitle(row); t != "" {
 				title = t
 			}
+			branch = row.GitBranch
 		}
 		a := &dashboardAgent{
 			ConvID: convID,
 			Title:  title,
+			Branch: branch,
 			Online: isConvOnline(convID),
 			State:  stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
@@ -366,10 +371,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			memberSet[m.ConvID] = true
 			row := agent.FreshConvRowResolved(m.ConvID)
 			title := "(unknown)"
+			branch := ""
 			if row != nil {
 				if t := agent.DisplayTitle(row); t != "" {
 					title = t
 				}
+				branch = row.GitBranch
 			}
 			online := isConvOnline(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
@@ -378,6 +385,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				Alias:  m.Alias,
 				Role:   m.Role,
 				Descr:  m.Descr,
+				Branch: branch,
 				Online: online,
 				Owner:  ownerSet[m.ConvID],
 				State:  stateForConv(m.ConvID),
@@ -400,16 +408,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			row := agent.FreshConvRowResolved(ownerConv)
 			title := "(unknown)"
+			branch := ""
 			if row != nil {
 				if t := agent.DisplayTitle(row); t != "" {
 					title = t
 				}
+				branch = row.GitBranch
 			}
 			online := isConvOnline(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID: ownerConv,
 				Title:  title,
 				Role:   "owner",
+				Branch: branch,
 				Online: online,
 				Owner:  true,
 				State:  stateForConv(ownerConv),
@@ -642,4 +653,3 @@ func labelForConv(convID string) string {
 	}
 	return convID
 }
-

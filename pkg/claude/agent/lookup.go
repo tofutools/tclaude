@@ -557,7 +557,6 @@ func runLookupDirect(p *lookupParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
-
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
@@ -581,11 +580,16 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title"`
-	Alias  string   `json:"alias,omitempty"`
-	Role   string   `json:"role,omitempty"`
-	Descr  string   `json:"descr,omitempty"`
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Alias  string `json:"alias,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Descr  string `json:"descr,omitempty"`
+	// Branch is the git branch / worktree the agent is working on, as
+	// recorded in its conv_index row (Claude Code stamps gitBranch into
+	// every .jsonl turn). Empty when the conv isn't indexed yet or the
+	// session isn't inside a git repo.
+	Branch string   `json:"branch,omitempty"`
 	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
 }
@@ -639,6 +643,7 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "BRANCH", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
@@ -653,11 +658,10 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 			alias,
 			pe.Role,
 			strings.Join(pe.Groups, ","),
+			pe.Branch,
 			pe.Descr,
 		}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }
-
-

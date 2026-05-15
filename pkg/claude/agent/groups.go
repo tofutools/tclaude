@@ -165,8 +165,8 @@ type GroupsCreateParams struct {
 
 func groupsCreateCmd() *cobra.Command {
 	return boa.CmdT[GroupsCreateParams]{
-		Use:         "create",
-		Short:       "Create a new group, optionally bootstrapping members in one call",
+		Use:   "create",
+		Short: "Create a new group, optionally bootstrapping members in one call",
 		Long: "Create a new group. With one or more `--member` flags, immediately " +
 			"spawn fresh CC sessions for each member and add them to the group. Each " +
 			"`--member` value is a comma-separated list of key=value pairs: " +
@@ -397,6 +397,9 @@ type memberEntry struct {
 	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
+	// Branch is the git branch / worktree the member is working on,
+	// from its conv_index row. Empty when not indexed / not in a repo.
+	Branch string `json:"branch,omitempty"`
 	Online bool   `json:"online"`
 	Owner  bool   `json:"owner,omitempty"`
 }
@@ -427,6 +430,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		table.Column{Header: "ID", Width: 8},
 		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
+		table.Column{Header: "BRANCH", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
@@ -450,6 +454,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 			short(m.ConvID),
 			alias,
 			role,
+			m.Branch,
 			m.Descr,
 		}})
 	}

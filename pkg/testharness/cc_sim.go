@@ -43,6 +43,14 @@ type CCSim struct {
 	Cwd       string
 	JsonlPath string
 
+	// GitBranch, when non-empty, is stamped into the gitBranch field of
+	// every user turn — mirroring how real Claude Code records the
+	// working branch on each .jsonl entry. Set it before Start; a
+	// conv_index scan then resolves the agent's branch the same way it
+	// does in production. Empty (the default) writes turns with no
+	// gitBranch, exactly as a non-git-repo session does.
+	GitBranch string
+
 	mu       sync.Mutex
 	title    string
 	alive    bool
@@ -232,12 +240,18 @@ func (c *CCSim) WriteCustomTitle(title string) error {
 // Used by the catch-all default handler and by tests that script
 // scenarios where the agent receives a prompt.
 func (c *CCSim) WriteUserTurn(content string) error {
-	return c.AppendTurn(map[string]any{
+	turn := map[string]any{
 		"type":      "user",
 		"cwd":       c.Cwd,
 		"message":   map[string]any{"role": "user", "content": content},
 		"timestamp": now(),
-	})
+	}
+	// Real CC stamps gitBranch onto every turn; mirror that when the
+	// sim was configured with a branch so conv_index scans pick it up.
+	if c.GitBranch != "" {
+		turn["gitBranch"] = c.GitBranch
+	}
+	return c.AppendTurn(turn)
 }
 
 // WriteSummary appends a summary turn. Used by /compact-style
