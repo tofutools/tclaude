@@ -43,6 +43,7 @@ func TestDashboardUngrouped_DragIntoGroupAddsAndLeavesUngrouped(t *testing.T) {
 	const conv = "ungr-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(conv, "loose-worker")
 	f.HaveAliveSession(conv, "spwn-ungr", "tmux-ungr", "/tmp/ungr")
+	f.HaveEnrolledAgent(conv) // an enrolled, ungrouped, online agent
 	f.HaveGroup("alpha")
 
 	mux := agentd.BuildDashboardHandlerForTest()
