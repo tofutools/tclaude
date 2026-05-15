@@ -123,6 +123,32 @@ func SetOpenTerminalForTest(fn func(string) error) func() {
 	return func() { openTerminal = prev }
 }
 
+// SetGitInfoResolverForTest swaps the git/gh resolver behind the
+// dashboard's branch-link enrichment with a deterministic fake. The
+// fake is handed a (repoDir, branch) pair and returns the repo's
+// GitHub base URL, default branch, and PR info — or ok=false to model
+// a non-GitHub repo. Mirrors the clcommon.Default / agentd.Spawn /
+// openTerminal seams: the subprocess boundary is mocked, the cache +
+// snapshot read path under test runs unchanged. Returns a restore
+// closure for t.Cleanup.
+func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, defaultBranch string, prNumber int, prURL string, ok bool)) func() {
+	prev := gitInfoResolver
+	gitInfoResolver = func(repoDir, branch string) (repoBranchInfo, bool) {
+		repoURL, defaultBranch, prNumber, prURL, ok := fn(repoDir, branch)
+		if !ok {
+			return repoBranchInfo{}, false
+		}
+		return repoBranchInfo{
+			RepoURL:       repoURL,
+			DefaultBranch: defaultBranch,
+			Branch:        branch,
+			PRNumber:      prNumber,
+			PRURL:         prURL,
+		}, true
+	}
+	return func() { gitInfoResolver = prev }
+}
+
 // SessionReaperHandle wraps a sessionReaper so flow tests can drive
 // ticks deterministically without starting its goroutine.
 type SessionReaperHandle struct{ r *sessionReaper }

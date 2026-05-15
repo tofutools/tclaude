@@ -69,6 +69,17 @@ table tr:hover { background: #161b22; }
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
   font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e;
 }
+/* Clickable cell variants: a CWD path opens a terminal there; a branch
+   name links to its GitHub compare view, with an optional PR link. */
+.cwd-link { cursor: pointer; }
+.cwd-link:hover { color: #d4d4d4; text-decoration: underline; }
+a.branch-link { color: #8b949e; text-decoration: none; }
+a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
+.pr-link {
+  font-family: ui-monospace, monospace; font-size: 11px;
+  color: #3fb950; text-decoration: none; margin-left: 5px;
+}
+.pr-link:hover { text-decoration: underline; }
 /* loc-pair stacks an init/now value pair in one CWD or Branch cell,
    shown only when the agent's launch location differs from where it
    is working now — keeps the column narrow instead of adding a 2nd. */
@@ -1372,27 +1383,44 @@ summary.dnd-drop-over.dnd-effect-clone {
 
   // cwdCell renders the CWD column: the launch dir, or — when the
   // agent has moved into a sub-repo / worktree — a stacked init/now
-  // pair. startup_dir falls back to the live session's cwd.
+  // pair. startup_dir falls back to the live session's cwd. Each path
+  // is a click-to-open-a-terminal target: the launch dir maps to the
+  // `start` /api/term selector, the live worktree to `worktree` —
+  // the two selectors that resolve to those exact directories.
   function cwdCell(m) {
     const startup = m.startup_dir || (m.state || {}).cwd || '';
     const current = m.current_dir || '';
-    const fmt = d => `<span class="cwd" title="${esc(d || '')}">${esc(shortCwd(d))}</span>`;
+    const conv = m.conv_id || '';
+    const fmt = (d, which) => {
+      if (!d) return '<span class="cwd">—</span>';
+      return `<span class="cwd cwd-link" data-act="term-dir" data-conv="${esc(conv)}" data-which="${which}" title="Open a terminal here — ${esc(d)}">${esc(shortCwd(d))}</span>`;
+    };
     const differ = !!current && !!startup && current !== startup;
-    return stackedLoc(fmt(startup), fmt(current), differ);
+    return stackedLoc(fmt(startup, 'start'), fmt(current, 'worktree'), differ);
   }
 
   // branchCell renders the Branch column. `m.branch` is the agent's
   // *current* branch (the worktree it last edited in); startup_branch
   // is the launch dir's branch — empty for a virtual-monorepo launch
-  // dir. They stack as init/now whenever they differ. Empty / unknown
-  // renders as an em dash so the column stays aligned.
+  // dir. They stack as init/now whenever they differ. When the
+  // snapshot resolved a GitHub repo, the branch name becomes a link to
+  // its compare view and an open PR is appended as a `#<num>` link.
+  // Empty / unknown renders as an em dash so the column stays aligned.
   function branchCell(m) {
-    const startup = m.startup_branch || '';
-    const current = m.branch || '';
-    const fmt = b => b
-      ? `<span class="branch" title="git branch: ${esc(b)}">⎇ ${esc(b)}</span>`
-      : '<span class="muted">—</span>';
-    return stackedLoc(fmt(startup), fmt(current), startup !== current);
+    const fmt = (branch, url, prNum, prURL) => {
+      if (!branch) return '<span class="muted">—</span>';
+      const inner = `⎇ ${esc(branch)}`;
+      const branchEl = url
+        ? `<a class="branch branch-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open branch on GitHub — ${esc(branch)}">${inner}</a>`
+        : `<span class="branch" title="git branch: ${esc(branch)}">${inner}</span>`;
+      const prEl = (prNum && prURL)
+        ? ` <a class="pr-link" href="${esc(prURL)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open pull request #${prNum}">#${prNum}</a>`
+        : '';
+      return branchEl + prEl;
+    };
+    const startupEl = fmt(m.startup_branch || '', m.startup_branch_url || '', m.startup_pr_number || 0, m.startup_pr_url || '');
+    const currentEl = fmt(m.branch || '', m.branch_url || '', m.branch_pr_number || 0, m.branch_pr_url || '');
+    return stackedLoc(startupEl, currentEl, (m.startup_branch || '') !== (m.branch || ''));
   }
 
   // offlineDefault returns the tab-wide "show offline" checkbox state
@@ -4842,6 +4870,21 @@ summary.dnd-drop-over.dnd-effect-clone {
             if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
             const info = await r.json().catch(() => ({}));
             toast(`terminal opened: ${info.dir || label}`);
+            return;
+          }
+          case 'term-dir': {
+            // Click on a CWD path cell — the cell already names one
+            // specific directory, so open a terminal there straight
+            // away, skipping the term button's 3-way picker modal.
+            const which = btn.getAttribute('data-which') || 'current';
+            const r = await fetch(`/api/term/${encodeURIComponent(conv)}`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ which }),
+            });
+            if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
+            const info = await r.json().catch(() => ({}));
+            toast(`terminal opened: ${info.dir || which}`);
             return;
           }
           case 'sudo-grant': {
