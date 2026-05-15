@@ -17,6 +17,15 @@ type Config struct {
 	RecordHooks        bool                `json:"record_hooks,omitempty"`
 	RateLimit          *RateLimitConfig    `json:"ratelimit,omitempty"`
 	Agent              *AgentConfig        `json:"agent,omitempty"`
+
+	// Terminal names the terminal emulator the agentd dashboard's
+	// spawn auto-focus / shell-attach feature should open — "ghostty",
+	// "kitty", "wezterm", "alacritty", "iterm2", "gnome-terminal", … .
+	// Empty means auto-detect, which prefers a hand-installed modern
+	// terminal over the OS default. This is the middle tier of the
+	// terminal-selection priority: the `tclaude agentd serve
+	// --terminal` flag overrides it; auto-detect is the fallback.
+	Terminal string `json:"terminal,omitempty"`
 }
 
 // AgentConfig holds agent-coordination knobs (see agents_todo.md).

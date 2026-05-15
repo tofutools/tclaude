@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -24,6 +26,7 @@ type serveParams struct {
 	Socket              string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
 	NoTray              bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts."`
 	AutoLaunchDashboard bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
+	Terminal            string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, iterm2, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
 }
 
 func serveCmd() *cobra.Command {
@@ -115,6 +118,13 @@ func runServe(p *serveParams) error {
 	if shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
 		autoLaunchDashboard()
 	}
+
+	// Terminal preference. claude.go's PersistentPreRun already applied
+	// the config file's `terminal` field (tier 2); the --terminal flag
+	// (tier 1) overrides it here. Resolve then runs the one-time
+	// terminal detection now, at startup, so every later agent spawn
+	// opens a window with no fresh PATH / bundle / osascript lookups.
+	resolveTerminalPreference(p.Terminal)
 
 	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
 	// and stops when the daemon-wide quit channel closes.
@@ -215,6 +225,32 @@ func newQuitter() *quitter {
 
 func (q *quitter) signal() {
 	q.once.Do(func() { close(q.ch) })
+}
+
+// resolveTerminalPreference applies the --terminal flag (the highest
+// priority tier) over whatever the config file already set, then runs
+// the one-time terminal detection and prints the picked terminal as
+//
+//	selected terminal: <os>/<terminal>
+//
+// An unknown --terminal value is warned about, not fatal — auto-detect
+// still applies. A detection failure is logged but never aborts
+// startup; the daemon runs fine, agent shell windows just won't open.
+func resolveTerminalPreference(flagValue string) {
+	if flagValue != "" {
+		if id := terminal.CanonicalTerminalID(flagValue); id != "" {
+			terminal.SetPreferred(id)
+		} else {
+			slog.Warn("unknown --terminal value; falling back to auto-detect",
+				"value", flagValue, "known", terminal.KnownTerminalIDs())
+		}
+	}
+	if err := terminal.Resolve(); err != nil {
+		slog.Warn("terminal detection failed; agent shell windows will be unavailable",
+			"error", err)
+		return
+	}
+	fmt.Printf("selected terminal: %s/%s\n", runtime.GOOS, terminal.ResolvedTerminal())
 }
 
 func buildMux() http.Handler {

@@ -9,6 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/selftest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -52,13 +53,20 @@ func Cmd() *cobra.Command {
 		},
 	}.ToCobra()
 	cmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		cfg, cfgErr := config.Load()
 		finalLogLevel := logLevel
-		if !cmd.Flags().Changed("log-level") {
-			if cfg, err := config.Load(); err == nil && cfg.LogLevel != "" {
-				finalLogLevel = cfg.LogLevel
-			}
+		if !cmd.Flags().Changed("log-level") && cfgErr == nil && cfg.LogLevel != "" {
+			finalLogLevel = cfg.LogLevel
 		}
 		common.SetupLogging(common.ParseLogLevel(finalLogLevel))
+		// Terminal preference, tier 2: the config file's `terminal`
+		// field. The agentd serve --terminal flag (tier 1) overrides
+		// this later, in runServe. Applies process-wide so every
+		// command that opens a terminal — agentd, `session new` —
+		// honours it.
+		if cfgErr == nil && cfg.Terminal != "" {
+			terminal.SetPreferred(cfg.Terminal)
+		}
 	}
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
