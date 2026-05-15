@@ -105,6 +105,35 @@ func ListAllConvIndex() ([]*ConvIndexRow, error) {
 	return scanConvIndexRows(rows)
 }
 
+// ListRecentConvIndex returns the most-recently-modified conv_index
+// rows, newest first, capped at limit (default 50 when limit <= 0).
+// Sidechain and archived convs are excluded — they are never agent
+// promotion candidates. The dashboard uses this to populate the
+// "Conversations" list without dragging the entire conv history into
+// the snapshot.
+func ListRecentConvIndex(limit int) ([]*ConvIndexRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
+		first_prompt, summary, custom_title, message_count,
+		created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		archived_at
+		FROM conv_index
+		WHERE is_sidechain = 0 AND archived_at = ''
+		ORDER BY file_mtime DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanConvIndexRows(rows)
+}
+
 // GetConvIndex returns a single conversation index entry by ID.
 func GetConvIndex(convID string) (*ConvIndexRow, error) {
 	db, err := Open()

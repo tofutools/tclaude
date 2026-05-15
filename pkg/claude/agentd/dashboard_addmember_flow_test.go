@@ -35,6 +35,7 @@ func TestDashboardAddMember_FromUngrouped(t *testing.T) {
 	const looseConv = "loos-aaaa-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(looseConv, "loose-worker")
 	f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", "/tmp/loose")
+	f.HaveEnrolledAgent(looseConv)
 	f.HaveGroup("alpha")
 
 	mux := agentd.BuildDashboardHandlerForTest()

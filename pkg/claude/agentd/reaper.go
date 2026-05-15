@@ -87,6 +87,39 @@ func startSessionReaper(stop <-chan struct{}) {
 	}()
 }
 
+// reconcileOnlineEnrollment enrolls every conv with a live tmux
+// session at daemon startup. The v29→v30 migration backfills agents
+// from the durable agentic tables (groups, grants, succession, …), but
+// a conv that was merely online and otherwise unrecorded — an
+// ungrouped agent predating the enrollment feature — can't be
+// tmux-probed from inside a SQL migration. This one-shot sweep closes
+// that gap. Idempotent: EnrollAgent is INSERT OR IGNORE, so a conv the
+// migration already enrolled (or one already retired) is left alone.
+func reconcileOnlineEnrollment() {
+	sessions, err := db.ListSessions()
+	if err != nil {
+		slog.Warn("enrollment reconcile: list sessions failed", "error", err)
+		return
+	}
+	enrolled := 0
+	for _, s := range sessions {
+		if s.ConvID == "" || s.TmuxSession == "" {
+			continue
+		}
+		if !session.IsTmuxSessionAlive(s.TmuxSession) {
+			continue
+		}
+		if err := db.EnrollAgent(s.ConvID, "online-reconcile"); err != nil {
+			slog.Warn("enrollment reconcile: enroll failed", "conv", s.ConvID, "error", err)
+			continue
+		}
+		enrolled++
+	}
+	if enrolled > 0 {
+		slog.Info("enrollment reconcile: enrolled online agents", "count", enrolled)
+	}
+}
+
 // tick is one reaper sweep. For every non-exited session it refreshes
 // liveness via session.RefreshSessionStatus — the exact tmux→PID check
 // `session ls` derives on read, so the persisted status column cannot

@@ -43,7 +43,14 @@ func RecordConvSuccession(oldConv, newConv, reason string) error {
 			reason = excluded.reason,
 			succeeded_at = excluded.succeeded_at`,
 		oldConv, newConv, reason, now)
-	return err
+	if err != nil {
+		return err
+	}
+	// The successor in a succession edge (a reincarnated instance) is
+	// an agent — enroll it so it shows on the roster without waiting
+	// for its first /v1 call. The predecessor keeps whatever
+	// enrollment it already had; v1 does not auto-retire it.
+	return EnrollAgent(newConv, "reincarnate")
 }
 
 // GetConvSuccessor returns the direct successor of convID, or "" if

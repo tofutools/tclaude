@@ -322,6 +322,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   color: #7d8590; flex: 1 1 auto; overflow: hidden;
   white-space: nowrap; text-overflow: ellipsis;
 }
+.add-member-row .promote-tag { color: #3fb950; border-color: #1f3d27; }
 .add-member-row .groups-tag {
   color: #7d8590; font-size: 11px; flex: 0 0 auto;
 }
@@ -614,7 +615,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   border: 1px solid #2a3340; color: #7d8590; flex: 0 0 auto;
 }
 .cleanup-badge.owner { color: #d29922; border-color: #4d3c12; }
-.cleanup-badge.removed, .cleanup-badge.deleted {
+.cleanup-badge.removed, .cleanup-badge.deleted, .cleanup-badge.retired {
   color: #3fb950; border-color: #1d3a23;
 }
 .cleanup-badge.skipped { color: #d29922; border-color: #4d3c12; }
@@ -631,6 +632,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .cleanup-options label.disabled { opacity: 0.5; cursor: default; }
 .cleanup-options .opt-note { font-size: 11px; color: #7d8590; }
+.cleanup-tier {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; margin-bottom: 2px;
+  border: 1px solid #30363d; border-radius: 6px; background: #161b22;
+}
+/* Agents-tab secondary lists — Conversations (promotion candidates)
+   and Retired (reinstatable demoted agents). */
+.sub-list-head {
+  margin: 20px 0 8px; font-size: 13px; color: #d4d4d4;
+  border-top: 1px solid #21262d; padding-top: 14px;
+}
+.sub-list-head .muted { font-weight: normal; font-size: 11px; }
+.sub-list-head.collapsible { cursor: pointer; user-select: none; }
+#retired-caret { display: inline-block; width: 12px; color: #7d8590; }
 .cleanup-error { color: #f85149; font-size: 12px; min-height: 14px; }
 .cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
 .cleanup-modal .modal-buttons {
@@ -691,6 +706,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.">
         <input id="filter-groups-ungrouped" type="checkbox" checked /> show ungrouped
       </label>
+      <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.">
+        <input id="filter-groups-conversations" type="checkbox" /> show conversations
+      </label>
       <span class="spacer"></span>
       <button id="cleanup-all-open" class="tool" title="Clean up offline agents across every group (optionally delete them)">🧹 clean up</button>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
@@ -706,10 +724,24 @@ details.group-virtual .group-name { color: #8aa0b8; }
         <input id="filter-agents-offline" type="checkbox" checked /> show offline
       </label>
       <span class="spacer"></span>
-      <button id="cleanup-agents-open" class="tool" title="Permanently delete confirmed-offline agents">🧹 cleanup</button>
+      <button id="cleanup-agents-open" class="tool" title="Retire or delete confirmed-offline agents">🧹 cleanup</button>
       <button id="agent-spawn-open" class="primary" title="Spawn a new tclaude session and add it to a group">+ new agent</button>
     </div>
     <div id="agents-list"></div>
+    <div id="conversations-section">
+      <h3 class="sub-list-head">
+        Conversations
+        <span class="muted">— recent conversations that aren't agents; promote one to add it to the roster</span>
+      </h3>
+      <div id="conversations-list"></div>
+    </div>
+    <div id="retired-section">
+      <h3 class="sub-list-head collapsible" id="retired-toggle" title="Show / hide retired agents">
+        <span id="retired-caret">▸</span> Retired agents
+        <span class="muted" id="retired-count"></span>
+      </h3>
+      <div id="retired-list" style="display:none"></div>
+    </div>
   </section>
   <section id="tab-cron">
     <div class="filter-bar">
@@ -1718,6 +1750,37 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return el ? el.checked : true;
   }
 
+  // The virtual "Conversations" group — non-agent conversations,
+  // surfaced in the Groups tab so a raw conversation can be dragged
+  // into a group (which promotes it) without leaving the tab.
+  const CONVERSATIONS_LABEL = 'Conversations';
+  const CONVERSATIONS_VKEY = ' conversations-virtual';
+
+  // virtualConversationsGroup builds the synthetic group from the
+  // snapshot's conversations[] (recent non-enrolled convs). The
+  // `conversations` flag is the discriminator renderGroups keys off to
+  // pick the lighter conversation-row renderer.
+  function virtualConversationsGroup(convs) {
+    const rows = (convs || []).slice();
+    return {
+      name: CONVERSATIONS_LABEL,
+      key: CONVERSATIONS_VKEY,
+      virtual: true,
+      conversations: true,
+      descr: 'recent conversations that are not agents',
+      members: rows,
+      online: rows.filter(c => c.online).length,
+    };
+  }
+
+  // conversationsVisible reports the "show conversations" checkbox
+  // state. Defaults to false — there can be a lot of conversations, so
+  // the virtual group is opt-in (unlike "show ungrouped").
+  function conversationsVisible() {
+    const el = $('#filter-groups-conversations');
+    return el ? el.checked : false;
+  }
+
   // memberRowHTML renders one draggable member <tr>. `ctx` selects the
   // drag wiring + action set:
   //   - {group: <groupObj>}  — a real group member: the source group
@@ -1793,12 +1856,55 @@ details.group-virtual .group-name { color: #8aa0b8; }
     `;
   }
 
+  // renderVirtualConversationsGroup renders the synthetic
+  // "Conversations" group — non-agent conversations. Like the virtual
+  // Ungrouped group it is inert AS A GROUP; its rows are drag sources
+  // (drop onto a real group → promote + join) and carry a promote
+  // button. It is NOT a drop target — retiring an agent is a deliberate
+  // act with its own button, not a drag gesture.
+  function renderVirtualConversationsGroup(g) {
+    const members = g.members || [];
+    const key = g.key || g.name;
+    const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+    const body = members.length === 0
+      ? '<div class="muted">(no non-agent conversations)</div>'
+      : `
+          <table>
+            <thead><tr><th></th><th>conv</th><th>title</th><th>last activity</th><th></th></tr></thead>
+            <tbody>
+              ${members.map(c => `
+                <tr class="dnd-draggable" draggable="true" data-dnd-source-ungrouped="1"
+                    data-dnd-conv="${esc(c.conv_id)}"
+                    data-dnd-label="${esc(c.title || c.conv_id)}">
+                  <td>${onlineDot(c.online)}</td>
+                  <td class="id">${esc(shortId(c.conv_id))}</td>
+                  <td><span class="alias">${esc(c.title || '(untitled)')}</span></td>
+                  <td><span class="last-hook">${esc(c.modified ? relTime(c.modified) : '')}</span></td>
+                  <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="Promote this conversation into an agent">promote</button></div></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>`;
+    return `
+      <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
+        <summary>
+          <strong class="group-name">${esc(g.name)}</strong>
+          <span class="group-virtual-badge" title="A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.">virtual</span>
+          <span class="muted">— ${members.length} conversation${members.length === 1 ? '' : 's'} that aren't agents</span>
+          <span class="muted group-virtual-hint">drag a row onto a group to promote + add it</span>
+        </summary>
+        <div class="subtable">
+          ${body}
+        </div>
+      </details>
+    `;
+  }
+
   function renderGroups(groups) {
     if (!groups || !groups.length) {
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
     }
     return groups.map(g => {
-      if (g.virtual) return renderVirtualGroup(g);
+      if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g) : renderVirtualGroup(g);
       const members = g.members || [];
       // Offline visibility: per-group override falls back to the
       // tab-wide checkbox. Hidden members still count toward the
@@ -1926,12 +2032,59 @@ details.group-virtual .group-name { color: #8aa0b8; }
               <td>${branchCell(a)}</td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>
     `;
+  }
+
+  // renderConversations builds the Agents-tab "Conversations" list —
+  // recent conversations that are NOT agents, each with a promote
+  // button. The promote button enrolls the conv as an agent.
+  function renderConversations(convs) {
+    if (!convs || !convs.length) {
+      return '<div class="empty">No recent non-agent conversations.</div>';
+    }
+    return `
+      <table>
+        <thead><tr><th></th><th>conv</th><th>title</th><th>last activity</th><th></th></tr></thead>
+        <tbody>
+          ${convs.map(c => `
+            <tr>
+              <td>${onlineDot(c.online)}</td>
+              <td class="id">${esc(shortId(c.conv_id))}</td>
+              <td><span class="alias">${esc(c.title || '(untitled)')}</span></td>
+              <td><span class="last-hook">${esc(c.modified ? relTime(c.modified) : '')}</span></td>
+              <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="Promote this conversation into an agent — adds it to the roster">promote</button></div></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // renderRetired builds the Agents-tab "Retired" list — agents that
+  // were demoted to plain conversations, each reinstatable.
+  function renderRetired(retired) {
+    if (!retired || !retired.length) {
+      return '<div class="empty">No retired agents.</div>';
+    }
+    return `
+      <table>
+        <thead><tr><th></th><th>conv</th><th>title</th><th>retired</th><th>by</th><th>reason</th><th></th></tr></thead>
+        <tbody>
+          ${retired.map(a => `
+            <tr>
+              <td>${onlineDot(a.online)}</td>
+              <td class="id">${esc(shortId(a.conv_id))}</td>
+              <td><span class="alias">${esc(a.title || '(untitled)')}</span></td>
+              <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
+              <td>${esc(a.retired_by || '')}</td>
+              <td>${esc(a.retire_reason || '')}</td>
+              <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
   }
 
   function renderPermissions(perm, agents) {
@@ -2078,6 +2231,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
     if (ungroupedVisible()) {
       list.push(virtualUngroupedGroup(lastSnapshot.ungrouped || []));
     }
+    // The virtual "Conversations" group sorts below even Ungrouped —
+    // it's the rawest bucket (not even agents yet). Opt-in via its
+    // checkbox.
+    if (conversationsVisible()) {
+      list.push(virtualConversationsGroup(lastSnapshot.conversations || []));
+    }
     const filtered = filterGroups(list, q);
     $('#groups-list').innerHTML = renderGroups(filtered);
     // The count reflects real groups only — the virtual group is a
@@ -2086,6 +2245,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const shownReal = filtered.filter(g => !g.virtual).length;
     $('#filter-groups-count').textContent = q
       ? `${shownReal} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
+  }
+
+  // filterConvLike is a lightweight title / conv-id substring filter
+  // for the Agents-tab secondary lists (Conversations, Retired), which
+  // carry no group / alias metadata to match against.
+  function filterConvLike(rows, q) {
+    if (!q) return rows;
+    const needle = q.toLowerCase();
+    return rows.filter(r =>
+      ((r.title || '').toLowerCase().includes(needle)) ||
+      ((r.conv_id || '').toLowerCase().includes(needle)));
   }
 
   function renderAgentsTab() {
@@ -2100,6 +2270,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
     // text filter or the offline toggle is narrowing the list.
     $('#filter-agents-count').textContent = (q || !showOffline)
       ? `${filtered.length} / ${total}` : `${total} agent${total === 1 ? '' : 's'}`;
+
+    // Secondary lists: promotion candidates + retired agents. Both
+    // honour the same text filter as the agents table.
+    const convs = filterConvLike(lastSnapshot.conversations || [], q);
+    $('#conversations-list').innerHTML = renderConversations(convs);
+    const retired = filterConvLike(lastSnapshot.retired || [], q);
+    $('#retired-list').innerHTML = renderRetired(retired);
+    const retiredTotal = (lastSnapshot.retired || []).length;
+    $('#retired-count').textContent = retiredTotal ? `(${retiredTotal})` : '(none)';
   }
 
   // formatInterval renders an integer second count as a coarse human
@@ -2982,6 +3161,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
     // Agents-tab "cleanup" deletes confirmed-offline agents.
     $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'all-groups' }));
     $('#cleanup-agents-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
+    // Retired-agents section is collapsed by default — clicking the
+    // header toggles it. Pure client-side view state.
+    $('#retired-toggle').addEventListener('click', () => {
+      const list = $('#retired-list');
+      const caret = $('#retired-caret');
+      const open = list.style.display === 'none';
+      list.style.display = open ? '' : 'none';
+      caret.textContent = open ? '▾' : '▸';
+    });
     $('#group-create-cancel').addEventListener('click', closeGroupCreateModal);
     $('#group-create-submit').addEventListener('click', submitGroupCreate);
     $('#group-create-modal').addEventListener('click', (e) => {
@@ -3981,6 +4169,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
         rerender();
       });
     }
+    // Optional "show conversations" checkbox (groups tab only) —
+    // toggles the virtual Conversations group. Defaults OFF (there can
+    // be many conversations) when the user has never touched it.
+    const conversations = $(`#filter-${tab}-conversations`);
+    if (conversations) {
+      const ckey = `tclaude.dash.conversations.${tab}`;
+      const saved = localStorage.getItem(ckey);
+      conversations.checked = saved === '1';
+      conversations.addEventListener('change', () => {
+        localStorage.setItem(ckey, conversations.checked ? '1' : '0');
+        rerender();
+      });
+    }
   }
 
   async function refresh() {
@@ -4320,6 +4521,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
         };
         for (const a of lastSnapshot?.ungrouped || []) push(a);
         for (const a of lastSnapshot?.agents   || []) push(a);
+        // Non-agent conversations too: adding one to a group promotes
+        // it to an agent (the daemon enrolls it on the membership
+        // write). Tagged with _promote so the row flags the
+        // side-effect. Same online-gating as everything else.
+        for (const a of lastSnapshot?.conversations || []) push({ ...a, _promote: true });
         // Sort: online first, then by title.
         out.sort((a, b) => {
           if (!!b.online !== !!a.online) return (b.online ? 1 : 0) - (a.online ? 1 : 0);
@@ -4381,10 +4587,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
           const groups = (a.groups || []).length
             ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
             : '';
+          const promote = a._promote
+            ? '<span class="groups-tag promote-tag" title="Not an agent yet — adding it here promotes it">promotes to agent</span>'
+            : '';
           return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
                  `${dot}<span class="alias">${esc(display)}</span>` +
                  `<span class="id">${esc(shortId(a.conv_id))}</span>` +
-                 `${role}${descr}${groups}` +
+                 `${role}${descr}${groups}${promote}` +
                  `</div>`;
         }).join('');
         // Scroll the highlighted row into view.
@@ -4601,6 +4810,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const mode = opts.mode;
     const groupName = opts.group || '';
     let phase = 'select';
+    // The cleanup tier for the agents / all-groups modes: unjoin |
+    // retire | delete. The Agents tab defaults to retire (the safe
+    // soft-delete declutter); the Groups tab defaults to unjoin.
+    // group mode always unjoins (single-group endpoint).
+    let tier = mode === 'agents' ? 'retire' : 'unjoin';
 
     // Build the candidate list from the current snapshot. Each entry
     // carries its own `checked` flag so re-renders (owner toggle, age
@@ -4650,6 +4864,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
       return (Date.now() - t) / 3600000;
     }
 
+    // cleanupTier is the effective tier for the current mode: group
+    // mode is hardwired to unjoin (it hits the single-group endpoint);
+    // agents / all-groups read the radio-backed `tier` variable.
+    function cleanupTier() {
+      return mode === 'group' ? 'unjoin' : tier;
+    }
+    function tierRadio(val, label, note) {
+      return '<label><input type="radio" name="cleanup-tier" value="' + val + '"' +
+        (val === tier ? ' checked' : '') + ' /> ' + label +
+        ' <span class="opt-note">— ' + note + '</span></label>';
+    }
     function renderOptions() {
       const wtOpt =
         '<label id="cleanup-opt-wt-row"><input type="checkbox" id="cleanup-opt-wt" checked /> ' +
@@ -4660,30 +4885,46 @@ details.group-virtual .group-name { color: #8aa0b8; }
         optsEl.innerHTML =
           '<label><input type="checkbox" id="cleanup-opt-owners" /> ' +
           'Include offline owners <span class="opt-note">— also strips their owner status</span></label>';
-      } else if (mode === 'all-groups') {
-        optsEl.innerHTML =
-          '<label><input type="checkbox" id="cleanup-opt-delete" /> ' +
-          'Permanently delete the agents <span class="opt-note">— wipes the conversation history from disk, not just group membership</span></label>' +
-          '<label id="cleanup-opt-owners-row"><input type="checkbox" id="cleanup-opt-owners" /> ' +
-          'Include offline owners <span class="opt-note">— also strips their owner status</span></label>' +
-          wtOpt;
-        // Worktree removal only bites on a full delete — locked until
-        // "permanently delete" is on.
-        const wtCb = $('#cleanup-opt-wt');
-        const wtRow = $('#cleanup-opt-wt-row');
-        if (wtCb && wtRow) { wtCb.disabled = true; wtRow.classList.add('disabled'); }
-      } else { // agents — always a delete
-        optsEl.innerHTML = wtOpt;
+        return;
+      }
+      // agents / all-groups: a three-tier selector, least → most
+      // destructive. Retire is the soft-delete — demote without losing
+      // the conversation.
+      optsEl.innerHTML =
+        '<div class="cleanup-tier">' +
+          tierRadio('unjoin', 'Unjoin from groups',
+            'stays an agent — only its group memberships are dropped') +
+          tierRadio('retire', 'Retire (soft-delete)',
+            'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable') +
+          tierRadio('delete', 'Delete permanently',
+            'wipes the conversation from disk and every agent row — cannot be undone') +
+        '</div>' +
+        '<label id="cleanup-opt-owners-row"><input type="checkbox" id="cleanup-opt-owners" /> ' +
+        'Include offline owners <span class="opt-note">— unjoin tier only; retire and delete drop owner rows anyway</span></label>' +
+        wtOpt;
+      syncTierLocks();
+    }
+    // syncTierLocks enables the owners checkbox only for the unjoin
+    // tier and the worktree checkbox only for the delete tier.
+    function syncTierLocks() {
+      if (mode === 'group') return;
+      const tr = cleanupTier();
+      const ownCb = $('#cleanup-opt-owners');
+      const ownRow = $('#cleanup-opt-owners-row');
+      if (ownCb && ownRow) {
+        ownCb.disabled = tr !== 'unjoin';
+        ownRow.classList.toggle('disabled', tr !== 'unjoin');
+      }
+      const wtCb = $('#cleanup-opt-wt');
+      const wtRow = $('#cleanup-opt-wt-row');
+      if (wtCb && wtRow) {
+        wtCb.disabled = tr !== 'delete';
+        wtRow.classList.toggle('disabled', tr !== 'delete');
       }
     }
     function optInclOwners() {
       const cb = $('#cleanup-opt-owners');
       return !!(cb && cb.checked && !cb.disabled);
-    }
-    function optDelete() {
-      if (mode === 'agents') return true;
-      const cb = $('#cleanup-opt-delete');
-      return !!(cb && cb.checked);
     }
     function optDeleteWorktrees() {
       const cb = $('#cleanup-opt-wt');
@@ -4727,19 +4968,22 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
     function recompute() {
       const n = selected().length;
-      const del = optDelete();
+      const tr = cleanupTier();
       countEl.textContent = n + ' selected';
       let label;
       if (mode === 'group') {
         label = n ? `Remove ${n} from ${groupName}` : 'Remove from group';
-      } else if (del) {
+      } else if (tr === 'delete') {
         label = n ? `Delete ${n} agent${n === 1 ? '' : 's'} permanently` : 'Delete agents';
+      } else if (tr === 'retire') {
+        label = n ? `Retire ${n} agent${n === 1 ? '' : 's'}` : 'Retire agents';
       } else {
         label = n ? `Remove ${n} agent${n === 1 ? '' : 's'} from all groups` : 'Remove from groups';
       }
       submitBtn.textContent = label;
       submitBtn.disabled = n === 0;
-      submitBtn.classList.toggle('danger', del);
+      submitBtn.classList.toggle('danger', tr === 'delete');
+      applyHint();
     }
 
     // Bulk-select every enabled row whose inactivity meets the age
@@ -4759,20 +5003,39 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const titleEl = $('#cleanup-title');
       if (mode === 'group') {
         titleEl.textContent = '🧹 Clean up group: ' + groupName;
+      } else if (mode === 'all-groups') {
+        titleEl.textContent = '🧹 Clean up all groups';
+      } else {
+        titleEl.textContent = '🧹 Clean up agents';
+      }
+      applyHint();
+    }
+    // applyHint sets the modal's explanatory line. For group mode it is
+    // static; for agents / all-groups it tracks the selected tier so
+    // the human always sees exactly what the action will do.
+    function applyHint() {
+      if (phase === 'result') return;
+      if (mode === 'group') {
         hintEl.className = 'cleanup-hint';
         hintEl.textContent = 'Removes the selected confirmed-offline members from this group. '
           + 'Their conversations keep running and stay on disk — only the membership is dropped. '
           + 'Owners are excluded unless you opt in below.';
-      } else if (mode === 'all-groups') {
-        titleEl.textContent = '🧹 Clean up all groups';
-        hintEl.className = 'cleanup-hint';
-        hintEl.textContent = 'Removes the selected confirmed-offline agents from every group they belong to. '
-          + 'Tick "permanently delete" to also wipe their conversation history from disk.';
-      } else {
-        titleEl.textContent = '🧹 Clean up agents';
+        return;
+      }
+      const tr = cleanupTier();
+      if (tr === 'delete') {
         hintEl.className = 'cleanup-hint danger';
         hintEl.textContent = 'Permanently deletes the selected confirmed-offline agents — wipes the '
           + 'conversation history from disk and drops every group / owner / permission row. Cannot be undone.';
+      } else if (tr === 'retire') {
+        hintEl.className = 'cleanup-hint';
+        hintEl.textContent = 'Retires the selected confirmed-offline agents: revokes their group memberships '
+          + 'and permission grants so they stop being agents — but the conversations stay on disk and can '
+          + 'be reinstated later. The non-destructive soft-delete.';
+      } else {
+        hintEl.className = 'cleanup-hint';
+        hintEl.textContent = 'Removes the selected confirmed-offline agents from every group they belong to. '
+          + 'They stay agents (and stay on disk) — only the group memberships are dropped.';
       }
     }
 
@@ -4789,7 +5052,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
         url = '/api/cleanup/agents';
         payload = {
           agents: picks,
-          delete: optDelete(),
+          mode: cleanupTier(),
           include_owners: optInclOwners(),
           delete_worktrees: optDeleteWorktrees(),
         };
@@ -4831,6 +5094,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
         : '<div class="cleanup-empty">Nothing to do.</div>';
       const bits = [];
       if (resp.removed) bits.push(resp.removed + ' removed');
+      if (resp.retired) bits.push(resp.retired + ' retired');
       if (resp.deleted) bits.push(resp.deleted + ' deleted');
       if (resp.skipped) bits.push(resp.skipped + ' skipped');
       if (resp.failed) bits.push(resp.failed + ' failed');
@@ -4877,23 +5141,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (e.target.id === 'cleanup-opt-owners' && mode === 'group') {
         for (const c of candidates) { if (c.owner) c.checked = e.target.checked; }
       }
-      // All-groups mode: a full delete drops every owner row anyway,
-      // so "include owners" goes moot — lock it while delete is on.
-      if (mode === 'all-groups') {
-        const delCb = $('#cleanup-opt-delete');
-        const ownCb = $('#cleanup-opt-owners');
-        const ownRow = $('#cleanup-opt-owners-row');
-        if (delCb && ownCb && ownRow) {
-          ownCb.disabled = delCb.checked;
-          ownRow.classList.toggle('disabled', delCb.checked);
-        }
-        // Worktree deletion is meaningful only on a full delete.
-        const wtCb = $('#cleanup-opt-wt');
-        const wtRow = $('#cleanup-opt-wt-row');
-        if (delCb && wtCb && wtRow) {
-          wtCb.disabled = !delCb.checked;
-          wtRow.classList.toggle('disabled', !delCb.checked);
-        }
+      // agents / all-groups: a tier radio changed — update the tier and
+      // re-lock the dependent sub-options.
+      if (e.target.name === 'cleanup-tier') {
+        tier = e.target.value;
+        syncTierLocks();
       }
       renderList();
       recompute();
@@ -5068,6 +5320,45 @@ details.group-virtual .group-name { color: #8aa0b8; }
             });
             ok = r.ok;
             if (!ok) toast(`Revoke failed: ${await r.text()}`, true);
+            break;
+          }
+          case 'promote-agent': {
+            // Conversations list → roster. Backend PromoteAgent also
+            // reinstates a retired conv, so this one button covers
+            // both "never an agent" and "was retired".
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/promote`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) { toast(`Promote failed: ${await r.text()}`, true); break; }
+            toast(`promoted to agent: ${label}`);
+            break;
+          }
+          case 'retire-agent': {
+            const confirmed = await confirmModal({
+              title: 'Retire this agent?',
+              body: 'Demotes the agent to a plain conversation: revokes its group memberships and '
+                + 'permission grants so it stops being an agent. The conversation itself stays on '
+                + 'disk and can be reinstated later — this is the non-destructive soft-delete.',
+              meta: label,
+              okLabel: 'Retire',
+            });
+            if (!confirmed) return;
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) { toast(`Retire failed: ${await r.text()}`, true); break; }
+            toast(`retired: ${label}`);
+            break;
+          }
+          case 'reinstate-agent': {
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reinstate`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            ok = r.ok;
+            if (!ok) { toast(`Reinstate failed: ${await r.text()}`, true); break; }
+            toast(`reinstated: ${label}`);
             break;
           }
           case 'delete-agent': {

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 29
+const currentVersion = 30
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -197,7 +197,91 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 30 {
+		if err := migrateV29toV30(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// migrateV29toV30 adds agent_enrollment — the explicit "is this conv an
+// agent" record. Before this, agent-ness was a read-time heuristic
+// (group member ∨ grant holder ∨ live tmux); an ungrouped conv whose
+// tmux had died was invisible on every agent surface, and there was no
+// way to demote an agent without deleting its conversation. The table
+// makes the bit explicit and reversible:
+//
+//   - a row exists   ⇒ the conv has been an agent.
+//   - retired_at=''  ⇒ active agent (shows on the roster).
+//   - retired_at set ⇒ retired — demoted to a plain conversation; the
+//     .jsonl is untouched, and it can be reinstated.
+//
+// The backfill is load-bearing: every conv-id that appears in any
+// agentic table is enrolled here, so no agent disappears when tclaude
+// upgrades. Online-but-otherwise-unrecorded sessions can't be
+// tmux-probed from a SQL migration — the daemon enrolls those on
+// startup instead (see agentd reconcileOnlineEnrollment).
+func migrateV29toV30(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_enrollment (
+			conv_id       TEXT PRIMARY KEY,
+			enrolled_at   TEXT NOT NULL,
+			enrolled_via  TEXT NOT NULL DEFAULT '',
+			retired_at    TEXT NOT NULL DEFAULT '',
+			retired_by    TEXT NOT NULL DEFAULT '',
+			retire_reason TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_enrollment_active
+			ON agent_enrollment(conv_id) WHERE retired_at = '';
+	`); err != nil {
+		return fmt.Errorf("migrate v29→v30 (create): %w", err)
+	}
+
+	if err := backfillAgentEnrollment(db); err != nil {
+		return fmt.Errorf("migrate v29→v30 (backfill): %w", err)
+	}
+
+	if _, err := db.Exec(`UPDATE schema_version SET version = 30;`); err != nil {
+		return fmt.Errorf("migrate v29→v30 (version): %w", err)
+	}
+	return nil
+}
+
+// backfillAgentEnrollment enrolls every conv-id that appears in any
+// agentic table — group memberships, ownerships, permission and sudo
+// grants, head aliases, succession + clone history, cron jobs, the
+// workdir tracker and the message log. This is what keeps an agent
+// from disappearing when tclaude upgrades to the enrollment model.
+//
+// INSERT OR IGNORE so a conv referenced by several tables enrolls
+// exactly once; the whole thing is idempotent and safe to re-run. The
+// UNION's result column is named by its first SELECT (`conv_id`),
+// which the outer SELECT and WHERE then filter on. Split out from the
+// migration so it is independently testable.
+func backfillAgentEnrollment(db *sql.DB) error {
+	now := time.Now().Format(time.RFC3339Nano)
+	_, err := db.Exec(`
+		INSERT OR IGNORE INTO agent_enrollment (conv_id, enrolled_at, enrolled_via)
+		SELECT conv_id, ?, 'migration' FROM (
+			      SELECT conv_id        FROM agent_group_members
+			UNION SELECT conv_id        FROM agent_group_owners
+			UNION SELECT conv_id        FROM agent_permissions
+			UNION SELECT conv_id        FROM agent_sudo_grants
+			UNION SELECT anchor_conv_id FROM agent_head_aliases
+			UNION SELECT old_conv_id    FROM agent_conv_succession
+			UNION SELECT new_conv_id    FROM agent_conv_succession
+			UNION SELECT source_conv_id FROM agent_clone_history
+			UNION SELECT owner_conv     FROM agent_cron_jobs
+			UNION SELECT target_conv    FROM agent_cron_jobs
+			UNION SELECT conv_id        FROM agent_workdir
+			UNION SELECT from_conv      FROM agent_messages
+			UNION SELECT to_conv        FROM agent_messages
+		)
+		WHERE conv_id IS NOT NULL AND conv_id != '';
+	`, now)
+	return err
 }
 
 // migrateV28toV29 adds agent_groups.default_context — an optional

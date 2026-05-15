@@ -126,7 +126,11 @@ func GrantAgentPermission(convID, slug, grantedBy string) error {
 		(conv_id, slug, granted_at, granted_by)
 		VALUES (?, ?, ?, ?)`,
 		convID, slug, time.Now().Format(time.RFC3339Nano), grantedBy)
-	return err
+	if err != nil {
+		return err
+	}
+	// Holding a permission grant makes the conv an agent.
+	return EnrollAgent(convID, "grant")
 }
 
 // RevokeAgentPermission removes a single (convID, slug). Idempotent.
@@ -496,7 +500,13 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		m.GroupID, m.ConvID, m.Alias, m.Role, m.Descr,
 		m.JoinedAt.Format(time.RFC3339Nano))
-	return err
+	if err != nil {
+		return err
+	}
+	// Joining a group makes the conv an agent. Insert-only — a stray
+	// add never un-retires; the dashboard add-member flow reinstates
+	// retired targets explicitly.
+	return EnrollAgent(m.ConvID, "group")
 }
 
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
@@ -565,6 +575,7 @@ type AgentDeletionCounts struct {
 	Embeddings     int64 `json:"embeddings"`
 	ConvIndex      int64 `json:"conv_index"`
 	Sessions       int64 `json:"sessions"`
+	Enrollment     int64 `json:"enrollment"`
 }
 
 // DeleteAgentByConvID purges every row that references convID across
@@ -584,6 +595,7 @@ type AgentDeletionCounts struct {
 //   - conv_embeddings
 //   - conv_index
 //   - sessions
+//   - agent_enrollment
 //
 // Filesystem state (the .jsonl in ~/.claude/projects/... and the
 // ~/.claude/session-env/<convID> file) is the caller's
@@ -624,6 +636,7 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		{`DELETE FROM conv_embeddings WHERE conv_id = ?`, &c.Embeddings},
 		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
 		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
+		{`DELETE FROM agent_enrollment WHERE conv_id = ?`, &c.Enrollment},
 	}
 	for _, s := range steps {
 		res, err := tx.Exec(s.stmt, convID)
@@ -863,7 +876,11 @@ func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
 		`INSERT OR IGNORE INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
 		 VALUES (?, ?, ?, ?)`,
 		groupID, convID, time.Now().Format(time.RFC3339Nano), grantedBy)
-	return err
+	if err != nil {
+		return err
+	}
+	// Owning a group makes the conv an agent.
+	return EnrollAgent(convID, "group")
 }
 
 // RemoveAgentGroupOwner clears an ownership row. Returns the number

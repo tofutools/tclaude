@@ -197,6 +197,29 @@ func (f *Flow) HaveMember(group, convID, alias string) {
 	}
 }
 
+// HaveEnrolledAgent marks convID as an active agent in
+// agent_enrollment — the explicit "this conv is an agent" record. Use
+// it for an UNGROUPED agent in a test; a grouped conv auto-enrolls via
+// HaveMember (AddAgentGroupMember fires EnrollAgent).
+func (f *Flow) HaveEnrolledAgent(convID string) {
+	f.T.Helper()
+	if err := db.EnrollAgent(convID, "test"); err != nil {
+		f.T.Fatalf("HaveEnrolledAgent(%q): %v", convID, err)
+	}
+}
+
+// HaveRetiredAgent enrolls convID and then retires it, leaving a
+// retired enrollment row — the demoted-agent state.
+func (f *Flow) HaveRetiredAgent(convID string) {
+	f.T.Helper()
+	if err := db.EnrollAgent(convID, "test"); err != nil {
+		f.T.Fatalf("HaveRetiredAgent enroll(%q): %v", convID, err)
+	}
+	if _, err := db.RetireAgent(convID, "test", "test retire"); err != nil {
+		f.T.Fatalf("HaveRetiredAgent retire(%q): %v", convID, err)
+	}
+}
+
 // HaveConvWithTitle drops a conv_index row carrying customTitle so
 // downstream lookups (uniqueReincarnateTitle, FreshConvRow) resolve.
 func (f *Flow) HaveConvWithTitle(convID, customTitle string) {

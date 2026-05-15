@@ -495,6 +495,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		slog.Warn("reincarnate: stamp archived_at failed",
 			"old", target, "error", err)
 	}
+	// The old conv is superseded: its identity has migrated onto the
+	// successor (enrolled by RecordConvSuccession above). Drop its
+	// enrollment row so it doesn't linger on the agent roster as an
+	// offline ghost — the successor IS this agent now. The succession
+	// chain still resolves stale references forward.
+	if _, err := db.DeleteEnrollment(target); err != nil {
+		slog.Warn("reincarnate: delete old enrollment failed",
+			"old", target, "error", err)
+	}
 	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
 		_ = injectSlashCommand(target, "/rename "+prevTitle+"-x", "")
 	}

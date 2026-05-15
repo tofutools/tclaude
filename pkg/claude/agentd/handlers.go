@@ -124,11 +124,12 @@ type peerEntry struct {
 //     caller is in. Human caller → members of every known group
 //     (humans aren't scoped by group membership — they see the full
 //     picture and can reach anyone).
-//  2. **Online ungrouped agents.** Conv-sessions whose tmux is alive
-//     and which weren't already surfaced by pass 1. Caller (when
-//     known) is excluded. This makes `tclaude agent ls` reflect
-//     "what's running right now" rather than "what's been added to
-//     a group", which was the user's frequent paper-cut.
+//  2. **Ungrouped agents.** Every active enrolled agent not already
+//     surfaced by pass 1, online or offline. Caller (when known) is
+//     excluded. Being an agent is an explicit, durable fact now, so
+//     `tclaude agent ls` keeps showing an agent after its tmux pane
+//     closes instead of dropping it the moment it goes offline.
+//     Retired agents are excluded — they are no longer agents.
 func handlePeers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
@@ -176,25 +177,33 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			pe.Groups = append(pe.Groups, g.Name)
 		}
 	}
-	// Pass 2: online conv-sessions that aren't already represented.
-	// We iterate the sessions table directly (cheaper than fanning
-	// out isConvOnline per row) and check tmux liveness inline.
-	if sessions, err := db.ListSessions(); err == nil {
-		for _, s := range sessions {
-			if s.ConvID == "" || s.ConvID == myID {
+	// Pass 2: active enrolled agents that belong to NO group, online or
+	// offline. Switched from "online sessions" to the enrollment roster
+	// so an agent that is offline (tmux closed) still shows up —
+	// agent-ness is an explicit, durable fact now, not a function of
+	// whether a pane happens to be alive.
+	//
+	// Only UNGROUPED agents are surfaced here: a grouped agent is
+	// either already in byConv (a group the caller shares, via pass 1)
+	// or in a group the caller cannot see — and in the latter case it
+	// must stay hidden, preserving the group-scoping an agent caller
+	// relies on. ListActiveAgents excludes retired agents.
+	if active, err := db.ListActiveAgents(); err == nil {
+		for _, e := range active {
+			if e.ConvID == "" || e.ConvID == myID {
 				continue
 			}
-			if _, exists := byConv[s.ConvID]; exists {
+			if _, exists := byConv[e.ConvID]; exists {
 				continue
 			}
-			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
+			if groups, gerr := db.ListGroupsForConv(e.ConvID); gerr != nil || len(groups) > 0 {
 				continue
 			}
-			byConv[s.ConvID] = &peerEntry{
-				ConvID:            s.ConvID,
-				Title:             agent.FreshTitle(s.ConvID),
-				agentLocationView: locationView(s.ConvID),
-				Online:            true,
+			byConv[e.ConvID] = &peerEntry{
+				ConvID:            e.ConvID,
+				Title:             agent.FreshTitle(e.ConvID),
+				agentLocationView: locationView(e.ConvID),
+				Online:            isConvOnline(e.ConvID),
 			}
 		}
 	}

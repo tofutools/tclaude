@@ -138,6 +138,14 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermGroupsLinkRm,
 		Description: "Remove an inter-group link (tclaude agent groups link rm). Group owners can remove outbound links FROM groups they own without this slug.",
 	},
+	{
+		Slug:        PermAgentPromote,
+		Description: "Promote a plain conversation into an agent, or reinstate a retired one (tclaude agent promote / reinstate). Group owners can act on members of groups they own without this slug.",
+	},
+	{
+		Slug:        PermAgentRetire,
+		Description: "Retire (soft-delete) an agent: revokes its group memberships and permission grants so it stops being an agent, while leaving its conversation intact and reinstatable (tclaude agent retire). Group owners can retire members of groups they own without this slug.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

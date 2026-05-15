@@ -69,6 +69,10 @@ func InsertSudoGrant(g *SudoGrant) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	// A sudo elevation is granted to an agent — enroll it if new.
+	if eerr := EnrollAgent(g.ConvID, "grant"); eerr != nil {
+		return 0, eerr
+	}
 	return res.LastInsertId()
 }
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -86,10 +87,36 @@ func withIdentity(h http.Handler) http.Handler {
 		}
 		if p.ConvID != "" {
 			maybeFlushUndelivered(p.ConvID)
+			enrollCallerOnce(p.ConvID)
 		}
 		ctx := context.WithValue(r.Context(), peerKey{}, p)
 		h.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// enrolledCallers remembers conv-ids already run through EnrollAgent
+// this daemon lifetime, so the per-request identity middleware does at
+// most one enrollment write per conv. EnrollAgent itself is idempotent
+// (INSERT OR IGNORE); the cache just spares a chatty agent a DB
+// round-trip on every subsequent /v1 call.
+var enrolledCallers sync.Map
+
+// enrollCallerOnce enrolls a conv that is talking to the daemon as an
+// agent. Running any `tclaude agent` command is, by that act, agentic
+// behaviour — this is the catch-all enrollment trigger for agents that
+// were never spawned into a group or granted a permission. Insert-only:
+// it never un-retires a conv the human deliberately retired.
+func enrollCallerOnce(convID string) {
+	if convID == "" {
+		return
+	}
+	if _, seen := enrolledCallers.LoadOrStore(convID, true); seen {
+		return
+	}
+	if err := db.EnrollAgent(convID, "cli"); err != nil {
+		slog.Warn("identity: enroll caller failed", "conv", convID, "error", err)
+		enrolledCallers.Delete(convID) // let a later request retry
+	}
 }
 
 // requireAgent enforces that the caller is an agent (i.e. has a resolved
@@ -136,6 +163,8 @@ const (
 	PermGroupsClone       = "groups.clone"
 	PermGroupsLinkAdd     = "groups.link.add"
 	PermGroupsLinkRm      = "groups.link.rm"
+	PermAgentPromote      = "agent.promote"
+	PermAgentRetire       = "agent.retire"
 )
 
 // requirePermission gates an endpoint behind a named agent permission.

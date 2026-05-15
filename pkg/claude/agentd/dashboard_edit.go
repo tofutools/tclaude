@@ -202,6 +202,9 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardAgentWorktree(w, convSelector)
 			return
+		case "promote", "retire", "reinstate":
+			dashboardEnrollmentVerb(w, r, convSelector, parts[1])
+			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return
