@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 31
+const currentVersion = 32
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -209,6 +209,33 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 32 {
+		if err := migrateV31toV32(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV31toV32 adds conv_index.git_branch_startup — the git branch
+// the conversation's FIRST turn was stamped with, i.e. the branch
+// Claude Code was launched on. The existing git_branch column is
+// last-wins (it tracks the current branch as the session moves);
+// git_branch_startup is first-wins and immutable, so a dashboard can
+// honestly show an "init → now" branch pair. Existing rows backfill
+// to ” and self-heal on the next .jsonl rescan (the scanner fills
+// the column, and UpsertConvIndex carries it through ON CONFLICT).
+func migrateV31toV32(db *sql.DB) error {
+	if _, err := db.Exec(`
+		ALTER TABLE conv_index
+			ADD COLUMN git_branch_startup TEXT NOT NULL DEFAULT '';
+	`); err != nil {
+		return fmt.Errorf("migrate v31→v32 (add git_branch_startup): %w", err)
+	}
+	if _, err := db.Exec(`UPDATE schema_version SET version = 32;`); err != nil {
+		return fmt.Errorf("migrate v31→v32 (version): %w", err)
+	}
 	return nil
 }
 
@@ -251,7 +278,7 @@ func migrateV30toV31(db *sql.DB) error {
 // makes the bit explicit and reversible:
 //
 //   - a row exists   ⇒ the conv has been an agent.
-//   - retired_at=''  ⇒ active agent (shows on the roster).
+//   - retired_at=”  ⇒ active agent (shows on the roster).
 //   - retired_at set ⇒ retired — demoted to a plain conversation; the
 //     .jsonl is untouched, and it can be reinstated.
 //
@@ -366,7 +393,7 @@ func migrateV28toV29(db *sql.DB) error {
 // between sub-repos of a monorepo launch dir, where Claude Code's own
 // per-turn gitBranch stamp (the launch dir's branch) goes stale.
 //
-// Both columns default to '' so rows written by a pre-v28 hook keep
+// Both columns default to ” so rows written by a pre-v28 hook keep
 // working — readers fall back to an on-demand git resolution then.
 func migrateV27toV28(db *sql.DB) error {
 	_, err := db.Exec(`
@@ -577,7 +604,7 @@ func migrateV21toV22(db *sql.DB) error {
 // live successor, the recipient still wants to see who the message
 // was originally for. Empty for sends that didn't get redirected.
 //
-// Shape: TEXT NOT NULL DEFAULT '' (empty == "this row was sent
+// Shape: TEXT NOT NULL DEFAULT ” (empty == "this row was sent
 // directly, no redirection happened"). Cheap to filter on, no index
 // needed — reads are by primary key.
 func migrateV20toV21(db *sql.DB) error {
@@ -704,7 +731,7 @@ func migrateV17toV18(db *sql.DB) error {
 // renaming the title.
 //
 // Empty string = active. Non-empty (RFC3339 timestamp) = archived.
-// Indexed so the eventual `WHERE archived_at = ''` filter on
+// Indexed so the eventual `WHERE archived_at = ”` filter on
 // listing endpoints stays cheap as the table grows.
 //
 // Crucially: UpsertConvIndex does NOT include archived_at in its ON
@@ -737,7 +764,7 @@ func migrateV16toV17(db *sql.DB) error {
 // Plain TEXT column rather than separate epoch + flag because a
 // human reading the row directly should see when, not just whether.
 //
-// Indexed so the eventual `WHERE archived_at = ''` filter on
+// Indexed so the eventual `WHERE archived_at = ”` filter on
 // listing endpoints stays cheap as the table grows.
 func migrateV15toV16(db *sql.DB) error {
 	_, err := db.Exec(`

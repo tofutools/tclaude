@@ -102,15 +102,13 @@ func TestAgentBranch_SurfacedAcrossListings(t *testing.T) {
 // Scenario: an agent starts a session on `main`, then runs
 // `git checkout -b feature-x` partway through. Claude Code stamps the
 // *current* branch onto every .jsonl turn, so the conv_index scan
-// must report the LATEST branch — where the agent is now — not the
-// branch the session opened on.
+// reports two branches: the last-wins `git_branch` (where the agent
+// is now) and the first-wins `git_branch_startup` (the immutable
+// launch branch). The dashboard renders them as a "now / init" pair.
 //
-// Before the parseJSONLSession fix, GitBranch was captured first-wins
-// and never updated: an agent that branched mid-conversation kept
-// showing `main` on every listing forever. This stands an agent up on
-// `main`, writes a later turn on `feature-x` (as a real branch switch
-// would), rescans, and asserts the switch surfaces on the listings
-// the human and dashboard read from.
+// This stands an agent up on `main`, writes a later turn on
+// `feature-x` (as a real branch switch would), rescans, and asserts
+// that `branch` follows the switch while `startup_branch` does not.
 func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
@@ -123,10 +121,12 @@ func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 	f.HaveAliveSessionOnBranch(conv, "spwn-x", "tmux-x", "/tmp/wt/x", "main")
 	f.HaveMember("squad", conv, "switcher")
 
-	// First scan: the agent is still on the branch it started on.
+	// First scan: the agent is still on the branch it started on, so
+	// the current and startup branches agree.
 	row := agent.FreshConvRowResolved(conv)
 	require.NotNil(t, row, "initial conv_index scan")
 	require.Equal(t, "main", row.GitBranch, "agent should start on main")
+	require.Equal(t, "main", row.GitBranchStartup, "startup branch should be main")
 
 	// The agent runs `git checkout -b feature-x` mid-conversation; CC
 	// stamps the new branch onto the next turn it writes to the .jsonl.
@@ -139,6 +139,13 @@ func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 	// so the mtime/size freshness check forces a rescan.
 	assert.Equal(t, "feature-x", agent.FreshBranch(conv), "FreshBranch after switch")
 
+	// The rescan moved git_branch forward but git_branch_startup — the
+	// branch the first turn was stamped with — must stay put.
+	row = agent.FreshConvRowResolved(conv)
+	require.NotNil(t, row, "conv_index rescan after switch")
+	assert.Equal(t, "feature-x", row.GitBranch, "git_branch follows the switch")
+	assert.Equal(t, "main", row.GitBranchStartup, "git_branch_startup is the immutable launch branch")
+
 	// Surface 1: GET /v1/groups/squad/members.
 	membersSeen := map[string]string{}
 	for _, m := range f.ListGroupMembers("squad") {
@@ -146,7 +153,9 @@ func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 	}
 	assert.Equal(t, "feature-x", membersSeen[conv], "groups members branch after switch")
 
-	// Surface 2: GET /api/snapshot — dashboard groups tab.
+	// Surface 2: GET /api/snapshot — dashboard groups tab. The member
+	// row carries both branches: `branch` (now) follows the switch,
+	// `startup_branch` (init) stays the launch branch.
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	var squad *dashGroup
 	for i := range snap.Groups {
@@ -155,9 +164,15 @@ func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 		}
 	}
 	require.NotNil(t, squad, "dashboard snapshot missing group squad")
-	groupMembersSeen := map[string]string{}
-	for _, m := range squad.Members {
-		groupMembersSeen[m.ConvID] = m.Branch
+	var member *dashMember
+	for i := range squad.Members {
+		if squad.Members[i].ConvID == conv {
+			member = &squad.Members[i]
+		}
 	}
-	assert.Equal(t, "feature-x", groupMembersSeen[conv], "dashboard groups-tab branch after switch")
+	require.NotNil(t, member, "conv missing from squad members")
+	assert.Equal(t, "feature-x", member.Branch,
+		"dashboard groups-tab `branch` tracks the current branch after the switch")
+	assert.Equal(t, "main", member.StartupBranch,
+		"dashboard groups-tab `startup_branch` stays the launch branch after a mid-session checkout")
 }

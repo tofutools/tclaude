@@ -18,11 +18,16 @@ type ConvIndexRow struct {
 	MessageCount int
 	Created      string // RFC3339
 	Modified     string // RFC3339
-	GitBranch    string
-	ProjectPath  string // Working directory path
-	IsSidechain  bool
-	IndexedAt    time.Time
-	ArchivedAt   time.Time // zero = active; non-zero = archived (soft-deleted)
+	GitBranch    string // last-wins: the branch as of the most recent turn ("current")
+	// GitBranchStartup is first-wins: the branch the conversation's
+	// FIRST turn was stamped with — the branch Claude Code was launched
+	// on. Immutable for the life of the conversation. Empty for convs
+	// indexed before schema v32, until the next .jsonl rescan heals it.
+	GitBranchStartup string
+	ProjectPath      string // Working directory path
+	IsSidechain      bool
+	IndexedAt        time.Time
+	ArchivedAt       time.Time // zero = active; non-zero = archived (soft-deleted)
 }
 
 // IsArchived reports whether this conv has been soft-deleted via
@@ -48,8 +53,9 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 	_, err = db.Exec(`INSERT INTO conv_index
 		(conv_id, project_dir, full_path, file_mtime, file_size,
 		 first_prompt, summary, custom_title, message_count,
-		 created, modified, git_branch, project_path, is_sidechain, indexed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		 git_branch_startup)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(conv_id) DO UPDATE SET
 		 project_dir=excluded.project_dir, full_path=excluded.full_path,
 		 file_mtime=excluded.file_mtime, file_size=excluded.file_size,
@@ -57,11 +63,12 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 		 custom_title=excluded.custom_title, message_count=excluded.message_count,
 		 created=excluded.created, modified=excluded.modified,
 		 git_branch=excluded.git_branch, project_path=excluded.project_path,
-		 is_sidechain=excluded.is_sidechain, indexed_at=excluded.indexed_at`,
+		 is_sidechain=excluded.is_sidechain, indexed_at=excluded.indexed_at,
+		 git_branch_startup=excluded.git_branch_startup`,
 		row.ConvID, row.ProjectDir, row.FullPath, row.FileMtime, row.FileSize,
 		row.FirstPrompt, row.Summary, row.CustomTitle, row.MessageCount,
 		row.Created, row.Modified, row.GitBranch, row.ProjectPath,
-		sidechain, row.IndexedAt.Format(time.RFC3339Nano))
+		sidechain, row.IndexedAt.Format(time.RFC3339Nano), row.GitBranchStartup)
 	return err
 }
 
@@ -75,7 +82,7 @@ func ListConvIndex(projectDir string) ([]*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at
+		archived_at, git_branch_startup
 		FROM conv_index WHERE project_dir = ?`, projectDir)
 	if err != nil {
 		return nil, err
@@ -95,7 +102,7 @@ func ListAllConvIndex() ([]*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at
+		archived_at, git_branch_startup
 		FROM conv_index`)
 	if err != nil {
 		return nil, err
@@ -122,7 +129,7 @@ func ListRecentConvIndex(limit int) ([]*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at
+		archived_at, git_branch_startup
 		FROM conv_index
 		WHERE is_sidechain = 0 AND archived_at = ''
 		ORDER BY file_mtime DESC LIMIT ?`, limit)
@@ -144,7 +151,7 @@ func GetConvIndex(convID string) (*ConvIndexRow, error) {
 	row := db.QueryRow(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at
+		archived_at, git_branch_startup
 		FROM conv_index WHERE conv_id = ?`, convID)
 
 	return scanConvIndexRow(row)
@@ -160,7 +167,7 @@ func FindConvIndexByPrefix(prefix string) (*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at
+		archived_at, git_branch_startup
 		FROM conv_index WHERE conv_id LIKE ? || '%'`, prefix)
 	if err != nil {
 		return nil, err
@@ -249,7 +256,7 @@ func scanOneConvIndex(s interface{ Scan(...any) error }) (*ConvIndexRow, error) 
 	err := s.Scan(&r.ConvID, &r.ProjectDir, &r.FullPath, &r.FileMtime, &r.FileSize,
 		&r.FirstPrompt, &r.Summary, &r.CustomTitle, &r.MessageCount,
 		&r.Created, &r.Modified, &r.GitBranch, &r.ProjectPath,
-		&sidechain, &indexedAt, &archivedAt)
+		&sidechain, &indexedAt, &archivedAt, &r.GitBranchStartup)
 	if err != nil {
 		return nil, err
 	}

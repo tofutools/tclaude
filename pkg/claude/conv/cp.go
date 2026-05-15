@@ -155,18 +155,19 @@ func RunCp(params *CpParams, stdout, stderr *os.File, stdin *os.File) int {
 	if err == nil {
 		now := time.Now().UTC().Format(time.RFC3339)
 		newEntry := SessionEntry{
-			SessionID:    newConvID,
-			FullPath:     dstConvFile,
-			FileMtime:    dstInfo.ModTime().UnixMilli(),
-			FirstPrompt:  srcEntry.FirstPrompt,
-			Summary:      srcEntry.Summary,
-			CustomTitle:  srcEntry.CustomTitle,
-			MessageCount: srcEntry.MessageCount,
-			Created:      now,
-			Modified:     now,
-			GitBranch:    srcEntry.GitBranch,
-			ProjectPath:  params.DestPath,
-			IsSidechain:  srcEntry.IsSidechain,
+			SessionID:        newConvID,
+			FullPath:         dstConvFile,
+			FileMtime:        dstInfo.ModTime().UnixMilli(),
+			FirstPrompt:      srcEntry.FirstPrompt,
+			Summary:          srcEntry.Summary,
+			CustomTitle:      srcEntry.CustomTitle,
+			MessageCount:     srcEntry.MessageCount,
+			Created:          now,
+			Modified:         now,
+			GitBranch:        srcEntry.GitBranch,
+			GitBranchStartup: srcEntry.GitBranchStartup,
+			ProjectPath:      params.DestPath,
+			IsSidechain:      srcEntry.IsSidechain,
 		}
 		if err := UpsertSessionsIndexEntry(dstProjectPath, newEntry); err != nil {
 			fmt.Fprintf(stderr, "Warning: failed to update sessions-index.json for %s: %v\n", dstProjectPath, err)
