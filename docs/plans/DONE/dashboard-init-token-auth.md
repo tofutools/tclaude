@@ -80,7 +80,5 @@ unidentifiable peer (PID 0), matching the guard already in `requirePermission`.
   double-forks + `setsid` to reparent under init. That already defeats
   `requirePermission` on the Unix socket — this change brings the dashboard to
   parity with the rest of agentd, not beyond it.
-- The popup `/approve` endpoints keep their own `/proc`-scrape residual — see
-  `docs/plans/TODO/future/popup-transport-hardening.md`. Their approval ID, unlike
-  the old dashboard token, was already never dispensed by an unauthenticated GET,
-  so they were less exposed than the dashboard was.
+- The popup `/approve` endpoints had a related gap; it was closed with the same
+  init-token-exchange technique — see `docs/plans/DONE/popup-transport-hardening.md`.

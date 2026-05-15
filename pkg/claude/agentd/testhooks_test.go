@@ -152,6 +152,43 @@ func NewSessionReaperForTest(grace time.Duration, onNotify func(convID, prevStat
 // Tick runs one reaper sweep and returns the number of sessions reaped.
 func (h *SessionReaperHandle) Tick() int { return h.r.tick(time.Now()) }
 
+// RegisterPopupRoutesForTest mounts the approval-popup route
+// (`/approve/...`) on mux so flow tests can exercise handlePopupApprove
+// without binding a real loopback listener.
+func RegisterPopupRoutesForTest(mux *http.ServeMux) {
+	mux.HandleFunc("/approve/", handlePopupApprove)
+}
+
+// SeedPendingApprovalForTest registers a minimal pending approval under
+// id so flow tests can drive handlePopupApprove against it. The
+// decision channel is buffered, so a POST approve/deny records without
+// a blocked reader. Returns a cleanup that removes the entry.
+func SeedPendingApprovalForTest(id string) func() {
+	req := &approvalRequest{
+		id:        id,
+		perm:      "self.rename",
+		decision:  make(chan bool, 1),
+		extend:    make(chan time.Duration, 1),
+		createdAt: time.Now(),
+		timeout:   60 * time.Second,
+	}
+	approvals.mu.Lock()
+	approvals.pending[id] = req
+	approvals.mu.Unlock()
+	return func() {
+		approvals.mu.Lock()
+		delete(approvals.pending, id)
+		approvals.mu.Unlock()
+	}
+}
+
+// MintApproveInitTokenForTest mints a single-use init token scoped to
+// the approval popup for id — what tclaude agentd and the tray embed
+// in the URL they launch.
+func MintApproveInitTokenForTest(id string) string {
+	return mintInitToken(initScopeApprove(id))
+}
+
 type dashTestHandler struct{ inner http.Handler }
 
 func (h *dashTestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
