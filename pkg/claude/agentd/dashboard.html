@@ -848,7 +848,11 @@ summary.dnd-drop-over.dnd-effect-clone {
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Descr</span>
-      <textarea id="agent-spawn-descr" rows="3" placeholder="optional — longer-form description shown in the welcome message" spellcheck="false"></textarea>
+      <textarea id="agent-spawn-descr" rows="2" placeholder="optional — short one-line description shown on the dashboard" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Initial msg</span>
+      <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — sent to the new agent as its first prompt, right after the welcome (newlines collapse to spaces)" spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
@@ -2953,6 +2957,7 @@ summary.dnd-drop-over.dnd-effect-clone {
     $('#agent-spawn-alias').value = '';
     $('#agent-spawn-role').value = '';
     $('#agent-spawn-descr').value = '';
+    $('#agent-spawn-init-msg').value = '';
     $('#agent-spawn-cwd').value = '';
     // Restore the auto-focus checkbox from the human's last choice
     // (defaults on — see spawnAutoFocusPref).
@@ -2992,6 +2997,10 @@ summary.dnd-drop-over.dnd-effect-clone {
     const alias = $('#agent-spawn-alias').value.trim();
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
+    // The initial message rides in via tmux send-keys, where a raw
+    // newline would land as a premature submit — collapse to a single
+    // line, same as the clone modal's follow-up.
+    const initMsg = normaliseFollowUp($('#agent-spawn-init-msg').value);
     const cwd = $('#agent-spawn-cwd').value.trim();
     const autoFocus = $('#agent-spawn-focus').checked;
     const errEl = $('#agent-spawn-error');
@@ -3013,7 +3022,7 @@ summary.dnd-drop-over.dnd-effect-clone {
       const r = await fetch(`/api/groups/${encodeURIComponent(group)}/spawn`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alias, role, descr, cwd: effectiveCwd, auto_focus: autoFocus }),
+        body: JSON.stringify({ alias, role, descr, initial_message: initMsg, cwd: effectiveCwd, auto_focus: autoFocus }),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
