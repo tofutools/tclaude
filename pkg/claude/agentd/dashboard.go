@@ -312,16 +312,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := agentRows[convID]; ok {
 			return existing
 		}
-		row := agent.FreshConvRowResolved(convID)
-		title := "(unknown)"
-		if row != nil {
-			if t := agent.DisplayTitle(row); t != "" {
-				title = t
-			}
-		}
 		a := &dashboardAgent{
 			ConvID: convID,
-			Title:  title,
+			Title:  agent.FreshTitle(convID),
 			Online: isConvOnline(convID),
 			State:  stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
@@ -364,17 +357,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		memberSet := map[string]bool{}
 		for _, m := range members {
 			memberSet[m.ConvID] = true
-			row := agent.FreshConvRowResolved(m.ConvID)
-			title := "(unknown)"
-			if row != nil {
-				if t := agent.DisplayTitle(row); t != "" {
-					title = t
-				}
-			}
 			online := isConvOnline(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID: m.ConvID,
-				Title:  title,
+				Title:  agent.FreshTitle(m.ConvID),
 				Alias:  m.Alias,
 				Role:   m.Role,
 				Descr:  m.Descr,
@@ -398,17 +384,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			if memberSet[ownerConv] {
 				continue
 			}
-			row := agent.FreshConvRowResolved(ownerConv)
-			title := "(unknown)"
-			if row != nil {
-				if t := agent.DisplayTitle(row); t != "" {
-					title = t
-				}
-			}
 			online := isConvOnline(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID: ownerConv,
-				Title:  title,
+				Title:  agent.FreshTitle(ownerConv),
 				Role:   "owner",
 				Online: online,
 				Owner:  true,

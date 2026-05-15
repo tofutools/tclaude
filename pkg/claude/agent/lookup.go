@@ -297,6 +297,30 @@ func FreshConvRowResolved(convID string) *db.ConvIndexRow {
 	return FreshConvRowAt(convID, rows[0].Cwd)
 }
 
+// UnknownTitle is the placeholder a listing surface shows for a conv
+// whose display name can't be resolved at all (no conv_index row, no
+// session row to derive a cwd from, deleted .jsonl).
+const UnknownTitle = "(unknown)"
+
+// FreshTitle resolves convID to the display name shown on listing
+// surfaces (`agent ls`, `groups members`, the dashboard). It refreshes
+// the conv_index row from the underlying .jsonl first via
+// FreshConvRowResolved, so a conv that was renamed or freshly spawned
+// since the last index pass shows its real name rather than a stale
+// title or "(unknown)".
+//
+// This is the common "name an agent for display" helper — prefer it
+// over a bare db.GetConvIndex in any handler that renders agent names,
+// so every surface picks up source changes uniformly.
+func FreshTitle(convID string) string {
+	if row := FreshConvRowResolved(convID); row != nil {
+		if t := displayTitle(row); t != "" {
+			return t
+		}
+	}
+	return UnknownTitle
+}
+
 // ShortID truncates a conv-id to the first 8 hex chars.
 func ShortID(convID string) string {
 	return short(convID)
@@ -636,21 +660,23 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 8},
-		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
+		table.Column{Header: "ALIAS", MinWidth: 6, Weight: 0.5, Truncate: true},
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, pe := range peers {
-		alias := pe.Alias
-		if alias == "" {
-			alias = pe.Title
-		}
+		// ALIAS is the per-group handle (may be empty for ungrouped
+		// online agents); NAME is the conv's display title. Kept as
+		// separate columns so a renamed agent and its group alias are
+		// both visible at a glance.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(pe.Online),
 			short(pe.ConvID),
-			alias,
+			pe.Alias,
+			pe.Title,
 			pe.Role,
 			strings.Join(pe.Groups, ","),
 			pe.Descr,

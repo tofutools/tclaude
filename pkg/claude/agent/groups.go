@@ -425,16 +425,13 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 8},
-		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.8, Truncate: true},
+		table.Column{Header: "ALIAS", MinWidth: 6, Weight: 0.5, Truncate: true},
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, m := range members {
-		alias := m.Alias
-		if alias == "" {
-			alias = m.Title
-		}
 		// Tag owners inline so the human can see at a glance who's
 		// privileged. A pure-owner (not a member) is surfaced by the
 		// daemon with role=="owner" already, so we only need to
@@ -445,10 +442,14 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		} else if m.Owner && role == "" {
 			role = "owner"
 		}
+		// ALIAS is the per-group handle (empty for pure owners);
+		// NAME is the conv's display title. Separate columns so a
+		// renamed agent and its group alias are both visible.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(m.Online),
 			short(m.ConvID),
-			alias,
+			m.Alias,
+			m.Title,
 			role,
 			m.Descr,
 		}})
