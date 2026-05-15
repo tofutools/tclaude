@@ -355,13 +355,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
+	// Validate the requested cwd before doing any work. Expands "~",
+	// makes the path absolute, and confirms it exists as a directory.
+	// Catching a bad cwd here turns what used to be a silent 30s
+	// conv-id-poll timeout into an immediate, actionable error.
+	cwd, cwdErr := resolveSpawnCwd(body.Cwd)
+	if cwdErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_cwd", cwdErr.Error())
+		return
+	}
+
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
 	// random hex; we mirror that with a "spwn-" prefix so these
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, body.Cwd); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return

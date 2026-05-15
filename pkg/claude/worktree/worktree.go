@@ -125,52 +125,16 @@ type WorktreeInfo struct {
 	IsBare bool   // True if this is a bare worktree
 }
 
-// ListWorktrees returns all git worktrees
+// ListWorktrees returns all git worktrees of the repo in the current
+// working directory. The porcelain parsing is shared with the
+// repo-anchored ListWorktreesIn — see parseWorktreePorcelain in repo.go.
 func ListWorktrees() ([]WorktreeInfo, error) {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list worktrees: %w", err)
 	}
-
-	var worktrees []WorktreeInfo
-	var current WorktreeInfo
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			if current.Path != "" {
-				worktrees = append(worktrees, current)
-				current = WorktreeInfo{}
-			}
-			continue
-		}
-
-		if strings.HasPrefix(line, "worktree ") {
-			current.Path = strings.TrimPrefix(line, "worktree ")
-		} else if strings.HasPrefix(line, "HEAD ") {
-			current.Commit = strings.TrimPrefix(line, "HEAD ")
-		} else if strings.HasPrefix(line, "branch ") {
-			ref := strings.TrimPrefix(line, "branch ")
-			// refs/heads/main -> main
-			current.Branch = strings.TrimPrefix(ref, "refs/heads/")
-		} else if line == "bare" {
-			current.IsBare = true
-		}
-	}
-
-	// Add last worktree if any
-	if current.Path != "" {
-		worktrees = append(worktrees, current)
-	}
-
-	// Mark the main worktree (first one, or the non-linked one)
-	if len(worktrees) > 0 {
-		worktrees[0].IsMain = true
-	}
-
-	return worktrees, nil
+	return parseWorktreePorcelain(string(output)), nil
 }
 
 // GetBranchCompletions returns branch names for shell completion
