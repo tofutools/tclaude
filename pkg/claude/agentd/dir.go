@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -25,10 +26,10 @@ import (
 //
 // GET returns all three. POST opens a terminal window in one of them —
 // the daemon runs outside the agent's sandbox, so it can spawn the
-// window the agent itself cannot. Read + open are both ungated:
-// reporting a path is harmless, and opening a terminal is something
-// the human asked for (it's their machine). Identity is still
-// resolved for the audit log.
+// window the agent itself cannot. GET is ungated: reporting a path is
+// harmless. POST is gated: an agent may open a terminal only for
+// itself; spawning a window targeting another agent is human-only
+// (the human is the one whose desktop the window lands on).
 
 // dirResp is the wire shape for GET .../dir.
 type dirResp struct {
@@ -152,6 +153,15 @@ func handleAgentDir(w http.ResponseWriter, r *http.Request, convID string) {
 	case http.MethodGet:
 		writeDirInfo(w, convID, caller)
 	case http.MethodPost:
+		// Opening a terminal lands a window on the human's desktop. An
+		// agent may do that for itself, but spawning windows targeting
+		// *other* agents is human-only. Humans (no claude ancestor)
+		// always pass; an agent passes only when it IS the target.
+		if p := peerFromContext(r.Context()); p.HasClaudeAncestor && p.ConvID != convID {
+			writeError(w, http.StatusForbidden, "permission",
+				"an agent may open a terminal only for itself; cross-agent terminal spawn is human-only")
+			return
+		}
 		openDirTerminal(w, r, convID, caller)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
@@ -183,8 +193,14 @@ func openDirTerminal(w http.ResponseWriter, r *http.Request, convID, caller stri
 	var req struct {
 		Which string `json:"which"`
 	}
+	// The body is optional — an empty body (io.EOF) means "use the
+	// default". Any other decode error is malformed JSON: reject it
+	// rather than silently opening the default directory.
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "malformed JSON body: "+err.Error())
+			return
+		}
 	}
 	which, ok := normaliseWhich(req.Which)
 	if !ok {
@@ -249,8 +265,12 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Which string `json:"which"`
 	}
+	// Optional body; empty (io.EOF) is fine, malformed JSON is a 400.
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+			http.Error(w, "malformed JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	which, ok := normaliseWhich(body.Which)
 	if !ok {

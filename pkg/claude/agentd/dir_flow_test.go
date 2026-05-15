@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -196,6 +197,67 @@ func TestDir_WorktreeDir(t *testing.T) {
 			map[string]string{"which": "worktree"}), conv))
 	require.Equal(t, http.StatusOK, rec.Code, "open worktree: body=%s", rec.Body.String())
 	assert.Contains(t, gotCmd, worktreeRoot, "terminal command should cd into the worktree root")
+}
+
+// Scenario: one agent tries to open a terminal targeting a different
+// agent via the cross-agent route.
+//
+// Expected: 403 — spawning a window on the human's desktop for someone
+// else is human-only. The human (no agent identity) is allowed.
+func TestDir_OpenForAnotherAgentIsHumanOnly(t *testing.T) {
+	f := newFlow(t)
+
+	const caller = "dirc-aaaa-bbbb-cccc-dddd"
+	const target = "dirt-aaaa-bbbb-cccc-dddd"
+
+	f.HaveConvWithTitle(target, "victim")
+	f.HaveAliveSession(target, "lbl-dirt", "tclaude-dirt", "/home/u/git")
+	require.NoError(t, db.UpsertAgentWorkdir(target, "/home/u/git/repo"), "seed workdir")
+
+	opened := false
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		opened = true
+		return nil
+	}))
+
+	// An agent must not open a terminal for a different agent.
+	rec := testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+target+"/dir",
+			map[string]string{"which": "current"}), caller))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"cross-agent open should be 403; body=%s", rec.Body.String())
+	assert.False(t, opened, "no terminal should have been spawned")
+
+	// The human is allowed — it's their desktop.
+	rec = testharness.Serve(f.Mux,
+		agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+target+"/dir",
+			map[string]string{"which": "current"})))
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"human cross-agent open should be allowed; body=%s", rec.Body.String())
+	assert.True(t, opened, "human open should have spawned a terminal")
+}
+
+// Scenario: a POST arrives with a malformed JSON body.
+//
+// Expected: 400, and no terminal spawned — bad input must not fall
+// through to the default directory.
+func TestDir_OpenRejectsMalformedJSON(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "dirm-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(conv, "badjson")
+	f.HaveAliveSession(conv, "lbl-dirm", "tclaude-dirm", "/home/u/git")
+
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		t.Error("openTerminal must not run on malformed input")
+		return nil
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/whoami/dir", strings.NewReader("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"malformed body should be 400; body=%s", rec.Body.String())
 }
 
 // Scenario: the agent's current dir is not inside any git repo.

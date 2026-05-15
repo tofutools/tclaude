@@ -1,6 +1,6 @@
 # agent-dir — report / open the directory an agent is working in
 
-Shipped 2026-05 (prototype / first cut).
+Shipped 2026-05 (prototype / first cut) — PR #55.
 
 Claude Code records a single launch `cwd` in its conversation jsonl —
 where it was *started*. That's often not where the agent is actually
@@ -65,7 +65,7 @@ seam so flow tests can record without popping a window.
 
 `tclaude agent dir [selector] [--start|--worktree] [--open]`:
 
-```
+```bash
 tclaude agent dir                  # current working dir of self
 tclaude agent dir --worktree       # git worktree/repo root of self
 tclaude agent dir --start          # launch dir of self
