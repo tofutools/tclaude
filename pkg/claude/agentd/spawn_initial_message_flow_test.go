@@ -18,11 +18,11 @@ import (
 // to be smuggled in via the description.
 //
 // Expected:
-//   - The initial message is delivered to the new agent's INBOX as an
-//     agent_messages row — not typed into its tmux pane. This preserves
-//     newlines (see TestSpawn_InitialMessageMultiLinePreserved).
-//   - The welcome line points the agent at that inbox message by ID,
-//     instead of telling it to sit idle.
+//   - The initial message is delivered to the new agent's INBOX as the
+//     "Startup context" agent_messages row — not typed into its tmux
+//     pane. The pane stays free of CC's input-size limit; newlines
+//     survive (see TestSpawn_InitialMessageMultiLinePreserved).
+//   - The welcome line points the agent at that inbox message by id.
 //   - The long brief never lands in the pane as typed keystrokes.
 //   - The group member's stored `descr` — what the dashboard's
 //     description column renders — is the SHORT descr, never the long
@@ -44,18 +44,20 @@ func TestSpawn_InitialMessageDeliveredToInbox(t *testing.T) {
 	}
 
 	// The initial message rode in via the inbox: the handler inserts the
-	// agent_messages row synchronously, so it is already present.
+	// "Startup context" agent_messages row synchronously, so it is
+	// already present by the time the spawn response returns.
 	rows, err := db.ListAgentMessagesForConv(spawn.ConvID, 100)
 	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "spawned agent should have exactly one inbox message (the brief)")
+	require.Len(t, rows, 1, "spawned agent should have exactly one inbox message (the briefing)")
 	msg := rows[0]
-	assert.Equal(t, initialMessage, msg.Body, "inbox message body should be the verbatim brief")
-	assert.Equal(t, "Initial context", msg.Subject, "inbox message subject")
+	assert.Equal(t, "Startup context", msg.Subject, "inbox message subject")
 	assert.Equal(t, spawn.ConvID, msg.ToConv, "inbox message addressed to the new agent")
+	assert.Contains(t, msg.Body, initialMessage, "the briefing must carry the verbatim task brief")
+	assert.Contains(t, msg.Body, "Your task brief:", "the task-brief section header")
 
 	target := spawn.TmuxTarget()
 	// /rename lands first, then the welcome — each its own turn. The
-	// welcome must point the agent at the inbox message by ID. 5s gives
+	// welcome must point the agent at the inbox message by id. 5s gives
 	// slack for the post-init goroutine.
 	f.AssertSentContains(target, "/rename worker", 5*time.Second)
 	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
@@ -66,7 +68,7 @@ func TestSpawn_InitialMessageDeliveredToInbox(t *testing.T) {
 	// log is stable to scan here.
 	for _, sk := range f.World.Tmux.Sent() {
 		assert.NotContains(t, sk.Text, "timing-safe",
-			"the initial brief must reach the agent via the inbox, never as pane keystrokes")
+			"the briefing must reach the agent via the inbox, never as pane keystrokes")
 	}
 
 	// The contact surface a human reads: `tclaude agent groups members`.
@@ -112,10 +114,10 @@ func TestSpawn_InitialMessageMultiLinePreserved(t *testing.T) {
 	rows, err := db.ListAgentMessagesForConv(spawn.ConvID, 100)
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, rows, 1, "spawned agent should have exactly one inbox message")
-	assert.Equal(t, initialMessage, rows[0].Body,
+	// Contains is an exact-substring match — newlines included — so this
+	// alone proves the multi-line brief survived the round-trip verbatim.
+	assert.Contains(t, rows[0].Body, initialMessage,
 		"the multi-line brief must survive verbatim — newlines and all")
-	assert.Equal(t, strings.Count(initialMessage, "\n"), strings.Count(rows[0].Body, "\n"),
-		"every newline in the brief must be preserved")
 }
 
 // Scenario: a caller posts an initial_message carrying a genuinely

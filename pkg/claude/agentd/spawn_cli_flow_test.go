@@ -112,7 +112,9 @@ func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
 	rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, rows, 1, "spawned agent should have one inbox message")
-	assert.Equal(t, brief, rows[0].Body, "multi-line brief must survive verbatim")
+	// Contains is an exact-substring match — newlines included — so this
+	// proves the brief survived CLI → wire → daemon → DB verbatim.
+	assert.Contains(t, rows[0].Body, brief, "multi-line brief must survive verbatim")
 }
 
 // Scenario: a human runs `tclaude agent spawn alpha worker` from a

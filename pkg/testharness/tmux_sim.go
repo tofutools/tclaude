@@ -29,6 +29,11 @@ type TmuxSim struct {
 	mu       sync.Mutex
 	sessions map[string]*tmuxSession
 	sentLog  []SentKey
+	// buffers models tmux's named paste buffers. set-buffer stores into
+	// it; paste-buffer reads it back and routes the content to the
+	// target pane's CCSim — the test-time stand-in for the bracketed
+	// paste injectMultilineAndSubmit uses to land multi-line text.
+	buffers map[string]string
 }
 
 type tmuxSession struct {
@@ -38,7 +43,10 @@ type tmuxSession struct {
 }
 
 func newTmuxSim() *TmuxSim {
-	return &TmuxSim{sessions: map[string]*tmuxSession{}}
+	return &TmuxSim{
+		sessions: map[string]*tmuxSession{},
+		buffers:  map[string]string{},
+	}
 }
 
 // Command satisfies the clcommon.Tmux interface. Returns a no-op
@@ -54,10 +62,67 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return exec.Command("false")
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		t.routeSendKeys(args[2], args[3])
+	case len(args) >= 3 && args[0] == "set-buffer":
+		t.setBuffer(args[1:])
+	case len(args) >= 3 && args[0] == "paste-buffer":
+		t.pasteBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
 		t.killSession(args[2])
 	}
 	return exec.Command("true")
+}
+
+// setBuffer models `tmux set-buffer -b <name> <data>` — it stores the
+// trailing data argument under the named buffer. injectMultilineAndSubmit
+// stages the group startup context this way before pasting it.
+func (t *TmuxSim) setBuffer(args []string) {
+	name := ""
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-b" {
+			name = args[i+1]
+		}
+	}
+	// The data is the final positional argument.
+	data := args[len(args)-1]
+	t.mu.Lock()
+	t.buffers[name] = data
+	t.mu.Unlock()
+}
+
+// pasteBuffer models `tmux paste-buffer [-dpr] -b <name> -t <target>`.
+// It looks up the named buffer and routes its contents to the target
+// pane exactly as a send-keys would — production uses bracketed paste
+// here so multi-line text lands as one block; the simulator just
+// needs the text to reach the CCSim. With -d the buffer is dropped.
+func (t *TmuxSim) pasteBuffer(args []string) {
+	name, target := "", ""
+	del := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-b":
+			if i+1 < len(args) {
+				name = args[i+1]
+				i++
+			}
+		case "-t":
+			if i+1 < len(args) {
+				target = args[i+1]
+				i++
+			}
+		case "-d":
+			del = true
+		}
+	}
+	t.mu.Lock()
+	text, ok := t.buffers[name]
+	if del {
+		delete(t.buffers, name)
+	}
+	t.mu.Unlock()
+	if !ok {
+		return
+	}
+	t.routeSendKeys(target, text)
 }
 
 // routeSendKeys logs the call and forwards text to the attached CCSim.

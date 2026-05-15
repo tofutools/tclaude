@@ -49,6 +49,7 @@ func groupsCmd() *cobra.Command {
 			groupsRevokeOwnerCmd(),
 			groupsRenameCmd(),
 			groupsSetDefaultDirCmd(),
+			groupsSetContextCmd(),
 			groupsCloneCmd(),
 			groupsLinkCmd(),
 			groupsLinksAllCmd(),
@@ -159,10 +160,12 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 // creates the group first, then spawns one fresh CC session per member
 // (via the existing `groups.spawn` daemon endpoint).
 type GroupsCreateParams struct {
-	Name     string   `pos:"true" help:"Group name"`
-	Descr    string   `long:"descr" short:"d" optional:"true" help:"Optional description"`
-	Members  []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (alias=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'alias' is required; 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
-	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+	Name        string   `pos:"true" help:"Group name"`
+	Descr       string   `long:"descr" short:"d" optional:"true" help:"Optional description"`
+	Context     string   `long:"context" optional:"true" help:"Shared startup context delivered to the inbox of agents spawned into this group. For multi-line context use --context-file."`
+	ContextFile string   `long:"context-file" optional:"true" help:"Read the group startup context from this file (alternative to --context)."`
+	Members     []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (alias=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'alias' is required; 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
+	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsCreateCmd() *cobra.Command {
@@ -239,6 +242,22 @@ func RunGroupsCreate(p *GroupsCreateParams, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 
+	// Resolve the optional startup context: --context inline or
+	// --context-file from disk, not both.
+	if p.Context != "" && p.ContextFile != "" {
+		fmt.Fprintf(stderr, "Error: pass --context OR --context-file, not both\n")
+		return rcInvalidArg
+	}
+	groupContext := p.Context
+	if p.ContextFile != "" {
+		data, err := os.ReadFile(p.ContextFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: reading %q: %v\n", p.ContextFile, err)
+			return rcInvalidArg
+		}
+		groupContext = string(data)
+	}
+
 	// Parse member specs up-front so a typo doesn't leave an empty
 	// group sitting around. Fails the whole command before any DB work.
 	specs := make([]*memberSpec, 0, len(p.Members))
@@ -267,8 +286,9 @@ func RunGroupsCreate(p *GroupsCreateParams, stdout, stderr io.Writer) int {
 		Name string `json:"name"`
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/groups", map[string]string{
-		"name":  p.Name,
-		"descr": p.Descr,
+		"name":            p.Name,
+		"descr":           p.Descr,
+		"default_context": groupContext,
 	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -1049,6 +1069,85 @@ func runGroupsSetDefaultDir(p *groupsSetDefaultDirParams, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "%s: default spawn dir cleared\n", resp.Group)
 	} else {
 		fmt.Fprintf(stdout, "%s: default spawn dir set to %s\n", resp.Group, resp.DefaultCwd)
+	}
+	return rcOK
+}
+
+// --- groups set-context ---
+
+type groupsSetContextParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Context  string `pos:"true" optional:"true" help:"Startup context delivered to the inbox of agents spawned into this group. Omit (and omit --file) to clear it."`
+	File     string `long:"file" short:"f" optional:"true" help:"Read the startup context from this file instead of the positional argument (handy for multi-line context)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetContextCmd() *cobra.Command {
+	return boa.CmdT[groupsSetContextParams]{
+		Use:   "set-context",
+		Short: "Set (or clear) a group's shared startup context",
+		Long: "Set a block of guidance that the daemon delivers to the inbox of every " +
+			"agent spawned into this group, as part of its startup briefing. Pass " +
+			"the context as the second argument, or with --file to load it from " +
+			"a file (better for multi-line context). Omit both to clear it. " +
+			"Each spawn can still opt out individually (the dashboard's 'include " +
+			"group default context' checkbox). Gated on the `groups.rename` " +
+			"permission (default human-only).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetContextParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetContextParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetContext(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetContext(p *groupsSetContextParams, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if p.Context != "" && p.File != "" {
+		fmt.Fprintf(stderr, "Error: pass the context as an argument OR via --file, not both\n")
+		return rcInvalidArg
+	}
+	context := p.Context
+	if p.File != "" {
+		data, err := os.ReadFile(p.File)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: reading %q: %v\n", p.File, err)
+			return rcInvalidArg
+		}
+		context = string(data)
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group          string `json:"group"`
+		DefaultContext string `json:"default_context"`
+	}
+	body := map[string]string{"default_context": context}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.DefaultContext == "" {
+		fmt.Fprintf(stdout, "%s: startup context cleared\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s: startup context set (%d chars)\n", resp.Group, len(resp.DefaultContext))
 	}
 	return rcOK
 }
