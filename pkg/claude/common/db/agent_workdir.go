@@ -56,6 +56,34 @@ func UpsertAgentWorkdir(convID, dir, worktreeRoot, branch string) error {
 	return err
 }
 
+// HealAgentWorkdirGit backfills the git worktree root + branch on a
+// row whose hook left them empty — a row written by a pre-v28 hook, or
+// one whose edit-time git resolution failed. A reader that resolves the
+// repo root on demand (see agent.ResolveLocation) calls this so the
+// next read is a pure DB lookup again, honouring the v28 design goal of
+// not shelling out to git per dashboard refresh.
+//
+// The `worktree_root = ''` guard makes it a no-op once any writer — an
+// earlier heal, or a fresh PostToolUse hook — has populated the row, so
+// a stale heal can never clobber a real edit. updated_at is left
+// untouched: a heal corrects stored data, it is not a new edit.
+//
+// Empty convID or worktreeRoot is a silent no-op: there is nothing to
+// heal a row to.
+func HealAgentWorkdirGit(convID, worktreeRoot, branch string) error {
+	if convID == "" || worktreeRoot == "" {
+		return nil
+	}
+	conn, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = conn.Exec(`UPDATE agent_workdir SET worktree_root = ?, branch = ?
+		WHERE conv_id = ? AND worktree_root = ''`,
+		worktreeRoot, branch, convID)
+	return err
+}
+
 // GetAgentWorkdir returns the recorded current location for convID.
 // Returns a zero-value AgentWorkdir (and nil error) when no row exists
 // — the caller falls back to the launch cwd.

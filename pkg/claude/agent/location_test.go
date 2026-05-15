@@ -48,13 +48,17 @@ func TestResolveLocation(t *testing.T) {
 	assert.Equal(t, "feature-x", loc.CurrentBranch)
 	assert.True(t, loc.Moved(), "agent has moved into a sub-repo")
 
-	// A row last written by a pre-v28 hook carries no worktree_root —
-	// CurrentDir falls back to the edit dir rather than going blank.
+	// A row with no worktree_root and an edit dir that isn't a
+	// resolvable git repo (this path doesn't exist on disk) — the
+	// on-demand resolution finds nothing, so CurrentDir falls back to
+	// the edit dir rather than going blank. A stale row pointing at a
+	// real repo is covered end-to-end by the agentd flow tests, which
+	// can stand up an actual git repo on disk.
 	require.NoError(t, db.UpsertAgentWorkdir(conv,
 		"/home/u/git/monorepo/svc/api/pkg", "", ""))
 	loc = ResolveLocation(conv)
 	assert.True(t, loc.Tracked)
 	assert.Equal(t, "/home/u/git/monorepo/svc/api/pkg", loc.CurrentDir,
-		"current falls back to the edit dir when worktree_root is unset")
+		"current falls back to the edit dir when no git repo resolves")
 	assert.Empty(t, loc.CurrentBranch)
 }

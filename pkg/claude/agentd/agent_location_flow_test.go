@@ -1,6 +1,9 @@
 package agentd_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,4 +123,82 @@ func TestAgentLocation_FollowsLatestEdit(t *testing.T) {
 	cur, dir = branchFor(conv)
 	assert.Equal(t, "web-feature", cur, "branch follows the hop to svc/web")
 	assert.Equal(t, monorepo+"/svc/web", dir, "dir follows the hop to svc/web")
+}
+
+// Scenario: an agent's agent_workdir row predates the v28 hook (or its
+// edit-time git resolution failed) — it carries a deep edit dir but no
+// worktree_root/branch. Reading any location surface must resolve the
+// edit dir's git repo root + branch on demand, so "now" shows the repo
+// root (not the deep sub-path) and a branch — and must heal the row so
+// the next read is a pure DB lookup again.
+//
+// This is the regression guard for the CWD/Branch dashboard columns:
+// before the on-demand resolution, a stale row surfaced the raw deep
+// edit dir as "now", which both looked wrong and never collapsed
+// against the launch dir.
+func TestAgentLocation_StaleRowResolvedToRepoRoot(t *testing.T) {
+	f := newFlow(t)
+
+	// A real git repo on disk; the agent's last edit was deep inside it.
+	repo := initGitRepoForTest(t, "feature-x")
+	editDir := filepath.Join(repo, "pkg", "claude", "agentd")
+	require.NoError(t, os.MkdirAll(editDir, 0o755))
+
+	const conv = "loc3aaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	const monorepo = "/home/u/git/monorepo"
+
+	f.HaveGroup("squad")
+	f.HaveAliveSessionOnBranch(conv, "lbl-loc3", "tmux-loc3", monorepo, "")
+	f.HaveMember("squad", conv, "worker")
+
+	// A pre-v28-shaped row: edit dir recorded, worktree_root + branch
+	// left empty (the v28 columns the old hook never wrote).
+	require.NoError(t, db.UpsertAgentWorkdir(conv, editDir, "", ""),
+		"seed a stale agent_workdir row")
+
+	// The members surface resolves the repo root + branch on demand.
+	var m *testharness.MemberView
+	for _, mm := range f.ListGroupMembers("squad") {
+		mm := mm
+		if mm.ConvID == conv {
+			m = &mm
+		}
+	}
+	require.NotNil(t, m, "conv not listed in group members")
+	assert.Equal(t, repo, m.CurrentDir, "now = git repo root, not the deep edit dir")
+	assert.Equal(t, "feature-x", m.Branch, "now branch resolved from the repo")
+
+	// ...and it healed the row, so the next read is a pure DB lookup.
+	w, err := db.GetAgentWorkdir(conv)
+	require.NoError(t, err)
+	assert.Equal(t, repo, w.WorktreeRoot, "heal wrote the worktree root back")
+	assert.Equal(t, "feature-x", w.Branch, "heal wrote the branch back")
+	assert.Equal(t, editDir, w.Dir, "heal left the edit dir untouched")
+}
+
+// initGitRepoForTest creates a real git repo in a fresh temp dir, on
+// the named branch with one commit, and returns its symlink-resolved
+// path. git reports the resolved path from rev-parse, while t.TempDir
+// can hand back a path with a symlink component (e.g. /var →
+// /private/var on macOS) — resolving here keeps test assertions exact.
+func initGitRepoForTest(t *testing.T, branch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "tclaude tests")
+	run("config", "commit.gpgsign", "false")
+	run("commit", "-q", "--allow-empty", "-m", "init")
+	run("checkout", "-q", "-b", branch)
+	resolved, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	return resolved
 }
