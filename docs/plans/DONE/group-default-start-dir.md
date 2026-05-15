@@ -55,6 +55,16 @@ human-only.
 delegates straight to `handleGroupUpdate` with `asDashboardHumanPeer`,
 same as `dashboardSpawnInGroup`.
 
+### Create-time default
+
+`POST /v1/groups` also accepts an optional `default_cwd` alongside
+`default_context`. It is validated up front through the same
+`resolveGroupDefaultCwd` (expand `~`, require absolute → 400 on a
+relative path) **before** the row is inserted, so a bad value never
+leaves a half-created group behind, then applied as a post-create
+`SetAgentGroupDefaultCwd` — mirroring how `default_context` is handled.
+This is the path the dashboard's "create group" modal rides.
+
 ### Spawn fallback
 
 `handleGroupSpawn` (`lifecycle.go`): when the spawn request leaves
@@ -88,6 +98,11 @@ default. Tab-completion suggests existing group names.
   input mid-keystroke. (There is no separate "start dir" button — an
   earlier cut had one next to "rename"; the chip absorbed it so the
   affordance sits on the thing it edits.)
+- **Create modal**: the "create group" form carries a **Default cwd**
+  field (`#group-create-cwd`) alongside name / descr / startup context.
+  `submitGroupCreate()` sends it as `default_cwd` in the `POST
+  /api/groups` body; an empty field omits the default. Enter in the
+  field submits the form, same as the name / descr inputs.
 - **Spawn modal**: `prefillSpawnCwd()` fills the CWD field from the
   selected group's `default_cwd` when the modal opens, and re-fills it
   when the group `<select>` changes (Agents-tab spawn). It never
@@ -107,13 +122,19 @@ default. Tab-completion suggests existing group names.
 - `TestGroupDefaultCwd_PatchRejectsRelative` — a relative `default_cwd`
   400s and nothing is persisted.
 - `TestGroupDefaultCwd_PatchEmptyBodyRejected` — empty PATCH body 400s.
+- `TestGroupDefaultCwd_CreateWithCwd` — `POST /v1/groups` with
+  `default_cwd` stores it at create time; a later blank-cwd spawn
+  inherits it.
+- `TestGroupDefaultCwd_CreateRejectsRelative` — a relative `default_cwd`
+  in the create payload 400s and no group is inserted.
 
 ## Files
 
 - `pkg/claude/common/db/migrate.go` — `migrateV26toV27`, `currentVersion = 27`
 - `pkg/claude/common/db/agent.go` — `DefaultCwd`, `SetAgentGroupDefaultCwd`,
   `scanAgentGroup` + group SELECTs
-- `pkg/claude/agentd/handlers.go` — `PATCH` dispatch + `handleGroupUpdate`
+- `pkg/claude/agentd/handlers.go` — `PATCH` dispatch + `handleGroupUpdate`;
+  `handleGroups` POST accepts `default_cwd`
 - `pkg/claude/agentd/cwd.go` — `resolveGroupDefaultCwd` (expand `~`, require absolute)
 - `pkg/claude/agentd/lifecycle.go` — `handleGroupSpawn` blank-cwd fallback
 - `pkg/claude/agentd/dashboard.go` — `dashboardGroup.DefaultCwd`
@@ -124,10 +145,12 @@ default. Tab-completion suggests existing group names.
 
 ## Out of scope (deferred)
 
-- **`groups create --default-dir`** — setting the default at creation
-  time. Cheap to add later (POST `/v1/groups` body + `CreateAgentGroup`
-  or a post-create `SetAgentGroupDefaultCwd`); for now `create` then
-  `set-default-dir` covers it.
+- **`groups create --default-dir`** (CLI flag) — the create-time
+  default now ships for the dashboard + the `POST /v1/groups` API, but
+  the `tclaude agent groups create` CLI still has no `--default-dir`
+  flag. Cheap to add later (a `GroupsCreateParams` field + the existing
+  `default_cwd` body key); for now CLI users `create` then
+  `set-default-dir`.
 - **Per-group reincarnate/clone inheriting the dir** — clone/reincarnate
   already carry the predecessor's own cwd; the group default only
   governs fresh spawns.

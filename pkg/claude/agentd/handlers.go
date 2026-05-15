@@ -1650,6 +1650,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Name           string `json:"name"`
 			Descr          string `json:"descr,omitempty"`
+			DefaultCwd     string `json:"default_cwd,omitempty"`
 			DefaultContext string `json:"default_context,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1660,9 +1661,14 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "name is required")
 			return
 		}
-		// Validate the optional startup context up front, before any DB
-		// write, so a too-long context fails cleanly without leaving a
-		// half-configured group behind.
+		// Validate the optional default cwd + startup context up front,
+		// before any DB write, so a bad value fails cleanly without
+		// leaving a half-configured group behind.
+		groupCwd, err := resolveGroupDefaultCwd(body.DefaultCwd)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+			return
+		}
 		groupContext, err := normalizeGroupContext(body.DefaultContext)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1677,11 +1683,17 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		// Apply the startup context as a post-create update — keeps
-		// CreateAgentGroup's signature untouched (it's shared with the
-		// clone path and flow-test helpers). A failure here is logged
+		// Apply the default cwd + startup context as post-create updates
+		// — keeps CreateAgentGroup's signature untouched (it's shared with
+		// the clone path and flow-test helpers). A failure here is logged
 		// but doesn't unwind the create; the human can set it later via
 		// `groups set-context` or the dashboard.
+		if groupCwd != "" {
+			if _, err := db.SetAgentGroupDefaultCwd(body.Name, groupCwd); err != nil {
+				slog.Warn("groups create: failed to set default cwd",
+					"group", body.Name, "error", err)
+			}
+		}
 		if groupContext != "" {
 			if _, err := db.SetAgentGroupDefaultContext(body.Name, groupContext); err != nil {
 				slog.Warn("groups create: failed to set default context",

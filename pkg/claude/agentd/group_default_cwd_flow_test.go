@@ -146,3 +146,50 @@ func TestGroupDefaultCwd_PatchEmptyBodyRejected(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "empty PATCH body=%s", rec.Body.String())
 }
+
+// Scenario: a group created with a default start dir in one shot —
+// POST /v1/groups carries default_cwd, applied as a post-create
+// update. This is the create-time path the dashboard's create modal
+// rides: the "Default cwd" field is sent alongside name/descr/context.
+func TestGroupDefaultCwd_CreateWithCwd(t *testing.T) {
+	f := newFlow(t)
+
+	defaultDir := t.TempDir()
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/groups",
+		map[string]any{"name": "beta", "default_cwd": defaultDir}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	g, err := db.GetAgentGroupByName("beta")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Equal(t, defaultDir, g.DefaultCwd, "created group carries the default cwd")
+
+	// End-to-end: a blank-cwd spawn into the freshly created group
+	// inherits the default set at create time.
+	spawn := f.AsHuman().Spawn("beta", "worker")
+	s, err := db.LoadSession(spawn.Label)
+	require.NoError(t, err)
+	require.NotNil(t, s, "spawned session row missing")
+	assert.Equal(t, defaultDir, s.Cwd, "spawn inherited the create-time default dir")
+}
+
+// Scenario: a relative default_cwd in the create payload is rejected
+// up front — before the group is inserted — so a bad value never
+// leaves a group behind. Mirrors the PATCH-path rejection.
+func TestGroupDefaultCwd_CreateRejectsRelative(t *testing.T) {
+	f := newFlow(t)
+
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/groups",
+		map[string]any{"name": "beta", "default_cwd": "relative/sub/dir"}))
+	rec := testharness.Serve(f.Mux, r)
+	assert.Equalf(t, http.StatusBadRequest, rec.Code,
+		"relative default_cwd should 400; body=%s", rec.Body.String())
+
+	// The create was rejected before the insert — no group exists.
+	g, err := db.GetAgentGroupByName("beta")
+	require.NoError(t, err)
+	assert.Nil(t, g, "rejected create must not leave a group behind")
+}
