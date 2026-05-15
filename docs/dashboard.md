@@ -89,6 +89,13 @@ Every group, expandable to its members. Each member row shows the online
 indicator, alias / role / description, working directory, git branch or
 worktree, effective permissions, and an **owner** badge where applicable.
 
+The **working-directory** cell is clickable — clicking a path opens a terminal
+window there (the same out-of-sandbox spawn the **term** button does, minus the
+dir picker). The **branch** cell links to the branch's GitHub compare view, and
+when the branch has a pull request a `#<num>` link to it is shown alongside.
+Branch/PR links resolve in the background (cached, best-effort) and are simply
+absent for a non-GitHub repo or when `gh` is unavailable.
+
 Per-member actions: edit alias/role/descr, **wake** / **shut down** / **focus**
 the session, schedule a **cron** job, toggle ownership, and remove from the
 group. Per-group actions live in the group header: rename, **+ add member**

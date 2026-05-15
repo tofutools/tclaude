@@ -320,6 +320,9 @@ type dashboardMember struct {
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
+	// repoLinksView carries the GitHub web links for the branch cells
+	// — dashboard-only enrichment, see branchlinks.go.
+	repoLinksView
 	Online bool       `json:"online"`
 	Owner  bool       `json:"owner,omitempty"`
 	State  agentState `json:"state"`
@@ -331,6 +334,9 @@ type dashboardAgent struct {
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
+	// repoLinksView carries the GitHub web links for the branch cells
+	// — dashboard-only enrichment, see branchlinks.go.
+	repoLinksView
 	Online      bool                 `json:"online"`
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
@@ -439,10 +445,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := agentRows[convID]; ok {
 			return existing
 		}
+		loc := locationView(convID)
 		a := &dashboardAgent{
 			ConvID:            convID,
 			Title:             agent.FreshTitle(convID),
-			agentLocationView: locationView(convID),
+			agentLocationView: loc,
+			repoLinksView:     branchLinksFor(loc),
 			Online:            isConvOnline(convID),
 			State:             stateForConv(convID),
 			// init non-nil so JSON serializes [] not null;
@@ -486,13 +494,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		for _, m := range members {
 			memberSet[m.ConvID] = true
 			online := isConvOnline(m.ConvID)
+			loc := locationView(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            m.ConvID,
 				Title:             agent.FreshTitle(m.ConvID),
 				Alias:             m.Alias,
 				Role:              m.Role,
 				Descr:             m.Descr,
-				agentLocationView: locationView(m.ConvID),
+				agentLocationView: loc,
+				repoLinksView:     branchLinksFor(loc),
 				Online:            online,
 				Owner:             ownerSet[m.ConvID],
 				State:             stateForConv(m.ConvID),
@@ -514,11 +524,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			online := isConvOnline(ownerConv)
+			ownerLoc := locationView(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            ownerConv,
 				Title:             agent.FreshTitle(ownerConv),
 				Role:              "owner",
-				agentLocationView: locationView(ownerConv),
+				agentLocationView: ownerLoc,
+				repoLinksView:     branchLinksFor(ownerLoc),
 				Online:            online,
 				Owner:             true,
 				State:             stateForConv(ownerConv),
