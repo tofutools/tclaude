@@ -136,9 +136,12 @@ details[open] > summary .group-actions { opacity: 1; }
 }
 .group-default-cwd {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
-  margin-left: 8px;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent;
 }
+.group-default-cwd:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-cwd.unset { color: #484f58; font-style: italic; }
+.group-default-cwd.unset:hover { color: #d4d4d4; }
 .group-default-cwd-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
@@ -1126,13 +1129,12 @@ summary.dnd-drop-over.dnd-effect-clone {
           <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
           <span class="muted">— ${members.length} members, ${g.online || 0} online</span>
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
-          <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-group-default-cwd="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) : 'No default spawn directory set'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
+          <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
-            <button data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Set the working directory pre-filled when spawning agents into this group">start dir</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
           </span>
         </summary>
@@ -3825,12 +3827,16 @@ summary.dnd-drop-over.dnd-effect-clone {
           }
           case 'set-group-dir': {
             // Inline edit of the group's default spawn directory.
-            // Mirrors rename-group: replace the .group-default-cwd
-            // chip with an <input>, Enter saves (PATCH /api/groups/
-            // {name}), Esc / blur cancels. Auto-refresh suspended via
-            // renameEditing so the 5s tick can't drop the input.
-            const summary = btn.closest('summary');
-            const cwdEl = summary && summary.querySelector('.group-default-cwd');
+            // The 📁 chip itself is the click target (data-act lives
+            // on the .group-default-cwd span), so btn IS the chip:
+            // replace it with an <input>, Enter saves (PATCH
+            // /api/groups/{name}), Esc / blur cancels. Auto-refresh
+            // suspended via renameEditing so the 5s tick can't drop
+            // the input. Fall back to a summary lookup in case the
+            // click landed on a descendant rather than the span.
+            const cwdEl = btn.classList.contains('group-default-cwd')
+              ? btn
+              : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-cwd'));
             if (!cwdEl) {
               toast('start dir: could not locate the dir element', true);
               return;
