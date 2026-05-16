@@ -72,7 +72,10 @@ func TestMigrateV42toV43_FreshSchemaHasExitReason(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 43, currentVersion, "currentVersion is 43")
+	// The literal currentVersion pin lives in the newest migration's
+	// test (migrate_v44_test.go) — it moves forward with the head so it
+	// stays a tripwire. v43 is no longer the head; the exit_reason
+	// column checks below still prove the v43 block ran.
 
 	// A session inserted without exit_reason has it NULL.
 	_, err = d.Exec(`INSERT INTO sessions

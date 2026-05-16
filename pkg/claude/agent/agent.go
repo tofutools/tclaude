@@ -36,6 +36,7 @@ func Cmd() *cobra.Command {
 			lsCmd(),
 			messageCmd(),
 			replyCmd(),
+			notifyHumanCmd(),
 			groupsCmd(),
 			aliasCmd(),
 			spawnCmd(),
