@@ -27,7 +27,7 @@ import (
 
 // Scenario B / explicit knob: a PO spawns a worker but routes the
 // worker's startup-brief replies to a THIRD agent (a coordinator),
-// named by group alias via `reply_to`. The briefing's FromConv must be
+// named via `reply_to`. The briefing's FromConv must be
 // the resolved coordinator, not the spawner.
 func TestSpawn_ReplyTo_RoutesStartupBriefToNamedTarget(t *testing.T) {
 	f := newFlow(t)
@@ -35,14 +35,17 @@ func TestSpawn_ReplyTo_RoutesStartupBriefToNamedTarget(t *testing.T) {
 
 	const poConv = "popo-aaaa-bbbb-cccc-111111111111"
 	const coordConv = "coor-aaaa-bbbb-cccc-222222222222"
-	f.HaveMember("alpha", poConv, "PO")
-	f.HaveMember("alpha", coordConv, "coordinator")
+	// The coordinator's name is its conversation title — that's what
+	// `reply_to` resolves against now that there is no per-group alias.
+	f.HaveConvWithTitle(coordConv, "coordinator")
+	f.HaveMember("alpha", poConv)
+	f.HaveMember("alpha", coordConv)
 	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
 
 	resp := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": "Task: do the thing",
-		"reply_to":        "coordinator", // resolved via the group alias
+		"reply_to":        "coordinator", // resolved via the agent's title
 	})
 	require.Equal(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
 	require.NotEmpty(t, resp.ConvID, "spawn must return a conv-id")
@@ -64,11 +67,11 @@ func TestSpawn_NoReplyTo_AgentCaller_WorkerReplyReachesSpawner(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	const poConv = "popo-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("alpha", poConv, "PO")
+	f.HaveMember("alpha", poConv)
 	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
 
 	resp := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": "Task: do the thing",
 	})
 	require.Equal(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
@@ -105,7 +108,7 @@ func TestSpawn_HumanCaller_BriefHasNoSender_ReplyRejected(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	resp := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": "Task: do the thing",
 	})
 	require.Equal(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
@@ -140,11 +143,11 @@ func TestSpawn_ReplyTo_UnresolvableSelector_Rejected(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	const poConv = "popo-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("alpha", poConv, "PO")
+	f.HaveMember("alpha", poConv)
 	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
 
 	resp := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": "Task: do the thing",
 		"reply_to":        "nobody-by-this-name",
 	})

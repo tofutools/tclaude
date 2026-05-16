@@ -94,7 +94,7 @@ func runGroupsOwners(p *groupsOwnersParams, stdout, stderr io.Writer) int {
 
 type groupsGrantOwnerParams struct {
 	Group    string `pos:"true" help:"Group name"`
-	Conv     string `pos:"true" help:"Conversation: UUID, prefix, alias, or current title"`
+	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup. Capped at 300s. Timeout = deny."`
 }
 
@@ -152,7 +152,7 @@ func runGroupsGrantOwner(p *groupsGrantOwnerParams, stdout, stderr io.Writer) in
 
 type groupsRevokeOwnerParams struct {
 	Group    string `pos:"true" help:"Group name"`
-	Conv     string `pos:"true" help:"Conversation: UUID, prefix, alias, or current title"`
+	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup. Capped at 300s. Timeout = deny."`
 }
 

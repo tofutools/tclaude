@@ -30,8 +30,8 @@ type NewParams struct {
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
-	JoinGroup string `long:"join-group" optional:"true" help:"Spawn the session and add it to an existing agent group (alias of agent spawn + foreground attach)"`
-	Alias     string `long:"alias" optional:"true" help:"Alias for the new member in --join-group (e.g. 'reviewer')"`
+	JoinGroup string `long:"join-group" optional:"true" help:"Spawn the session and add it to an existing agent group (shorthand for agent spawn + foreground attach)"`
+	Name      string `long:"name" optional:"true" help:"Name for the new agent in --join-group (e.g. 'reviewer'); becomes its conversation title"`
 	Role      string `long:"role" optional:"true" help:"Role tag for the new member in --join-group (e.g. 'tech-lead')"`
 	Descr     string `long:"descr" optional:"true" help:"Description of the new member's purpose in --join-group"`
 }

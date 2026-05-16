@@ -13,7 +13,7 @@ import (
 // smallest integer not already used by any conv_index.custom_title
 // matching the new prefix; reincarnating-a-reincarnate strips the
 // existing `-r-N` (or legacy `-reincarnate-N`) before recomputing.
-// Mirrors uniqueCloneAlias's contract exactly, just on a different
+// Mirrors uniqueCloneTitle's contract exactly, just on a different
 // namespace.
 
 func upsertCustomTitle(t *testing.T, convID, title string) {

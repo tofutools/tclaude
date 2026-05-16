@@ -26,8 +26,8 @@ func TestInboxOperator_SlugLetsCallerReadAnothersInbox(t *testing.T) {
 	const sender = "snd-aaaa-bbbb-cccc-2222"
 	const recipient = "rcv-aaaa-bbbb-cccc-3333"
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", sender, "alice")
-	f.HaveMember("alpha", recipient, "bob")
+	f.HaveMember("alpha", sender)
+	f.HaveMember("alpha", recipient)
 	// Operator is NOT a peer of either; they hold the slug instead.
 	require.NoError(t, db.GrantAgentPermission(operator, agentd.PermAgentInboxWatch, "test"), "grant")
 
@@ -84,8 +84,8 @@ func TestInboxOperator_GroupOwnerImplicitAccess(t *testing.T) {
 	const member = "mem-aaaa-bbbb-cccc-2222"
 	const sender = "snd-aaaa-bbbb-cccc-3333"
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", member, "bob")
-	f.HaveMember("alpha", sender, "alice")
+	f.HaveMember("alpha", member)
+	f.HaveMember("alpha", sender)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "AddAgentGroupOwner")
 
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
@@ -123,7 +123,7 @@ func TestInboxOperator_ThirdPartyForbidden(t *testing.T) {
 	const stranger = "xxx-aaaa-bbbb-cccc-1111"
 	const recipient = "rcv-aaaa-bbbb-cccc-2222"
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", recipient, "bob")
+	f.HaveMember("alpha", recipient)
 
 	// Drop a message into the recipient's inbox to make the negative
 	// case unambiguous (nothing else to "find").
@@ -153,8 +153,8 @@ func TestInboxOperator_NoHeaderUsesCallerOwnInbox(t *testing.T) {
 	const a = "aaa-aaaa-bbbb-cccc-1111"
 	const b = "bbb-aaaa-bbbb-cccc-2222"
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", a, "alice")
-	f.HaveMember("alpha", b, "bob")
+	f.HaveMember("alpha", a)
+	f.HaveMember("alpha", b)
 
 	// Message addressed to b. a should NOT see it without --target.
 	id, err := db.InsertAgentMessage(&db.AgentMessage{

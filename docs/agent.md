@@ -93,8 +93,8 @@ tclaude setup --install-agent-skills
 
 # 3. As the human, set up a group and add some sessions.
 tclaude agent groups create reviewer-team --descr "code review crew"
-tclaude agent groups add reviewer-team <conv1> --alias lead   --role tech-lead
-tclaude agent groups add reviewer-team <conv2> --alias tester --role test-runner
+tclaude agent groups add reviewer-team <conv1> --role tech-lead
+tclaude agent groups add reviewer-team <conv2> --role test-runner
 
 # 4. From inside a CC session, an agent can now reach peers.
 tclaude agent ls
@@ -118,8 +118,8 @@ Every command is associated with a *caller identity*:
 `tclaude agent whoami` prints whichever the daemon resolved.
 
 Most commands accept a *selector* wherever they take an agent: a full
-conv-id, an 8+-char conv-id prefix, a group alias, a global head
-alias, or a current display title.
+conv-id, an 8+-char conv-id prefix, a global head alias, or a current
+display title.
 
 ## Commands
 
@@ -131,7 +131,7 @@ they're for.
 
 ```bash
 tclaude agent whoami           # who am I (or <human>)
-tclaude agent lookup <name>    # resolve alias / prefix / title to a full conv-id
+tclaude agent lookup <name>    # resolve prefix / title to a full conv-id
 tclaude agent ls               # peers in any group I'm in (online indicator + groups)
 tclaude agent ls --json
 ```
@@ -180,11 +180,11 @@ RFC-822-shaped headers — `From`, `To`, `Group`, `Subject`, `Date`,
 tclaude agent groups ls                                   # all groups + member/online counts
 tclaude agent groups members <group>                      # members + ● online indicator
 tclaude agent groups owners <group>                       # owners (can message members without being one)
-tclaude agent groups create <group> [--descr "..."] [--member alias=lead,role=...]
+tclaude agent groups create <group> [--descr "..."] [--member name=lead,role=...]
 tclaude agent groups rm <group>                           # destroys the group + history; fails if messages reference it
-tclaude agent groups add <group> <conv> [--alias N --role R --descr T]
+tclaude agent groups add <group> <conv> [--role R --descr T]
 tclaude agent groups remove <group> <conv>
-tclaude agent groups update-member <group> <conv> [--alias N --role R --descr T]
+tclaude agent groups update-member <group> <conv> [--role R --descr T]
 tclaude agent groups rename <group> <new-name>
 tclaude agent groups grant-owner <group> <conv>
 tclaude agent groups revoke-owner <group> <conv>
@@ -198,10 +198,11 @@ tclaude agent groups resume <group>                        # spawn a session for
 tclaude agent groups why-can-i-message <target>            # explain which group/link authorises a send
 ```
 
-`update-member` only touches the flags you pass; pass `--alias=` (an
-explicit empty string) to clear a field. `--member` on `create`
-bootstraps a whole team in one call (each value is a comma-separated
-`key=value` list — `alias=lead,role=tech-lead,cwd=.`).
+`update-member` only touches the flags you pass; pass `--role=` (an
+explicit empty string) to clear a field. To rename an agent use
+`tclaude agent rename`. `--member` on `create` bootstraps a whole team
+in one call (each value is a comma-separated `key=value` list —
+`name=lead,role=tech-lead,cwd=.`).
 
 **Inter-group links** are directed edges that let one group's members
 message another group's members without co-membership:
@@ -220,7 +221,7 @@ All mutating subcommands take `--ask-human <duration>` (see
 ### spawn
 
 ```bash
-tclaude agent spawn <group> [--alias N --role R --descr T --cwd DIR]
+tclaude agent spawn <group> [--name N --role R --descr T --cwd DIR]
 ```
 
 Launches a fresh detached CC session, waits for its conv-id to
@@ -261,9 +262,10 @@ tclaude agent compact [follow-up]            # inject /compact into the pane
 tclaude agent context-info                   # show this conversation's context-window state (read-only)
 ```
 
-A **clone** inherits identity (group memberships with a `-clone`
-alias suffix, per-conv grants, ownerships) and, by default, a copy of
-the conversation jsonl — the original stays alive. A **reincarnate**
+A **clone** inherits identity (group memberships, per-conv grants,
+ownerships) and, by default, a copy of the conversation jsonl — the
+original stays alive, and the clone is renamed to a `-c-<N>` title
+suffix. A **reincarnate**
 migrates identity onto a fresh conv-id and soft-stops the old one; the
 follow-up prompt is mandatory so the successor isn't left idle.
 
@@ -307,9 +309,9 @@ another agent's needs `agent.schedule` (or group ownership).
 
 ```bash
 tclaude agent permissions slugs                          # registry of known slugs + descriptions
-tclaude agent permissions ls [<conv|alias|default>]      # defaults + grants, or effective set for one agent
-tclaude agent permissions grant <conv|alias|default> <slug>
-tclaude agent permissions revoke <conv|alias|default> <slug>
+tclaude agent permissions ls [<conv|title|default>]      # defaults + grants, or effective set for one agent
+tclaude agent permissions grant <conv|title|default> <slug>
+tclaude agent permissions revoke <conv|title|default> <slug>
 ```
 
 `sudo` requests a **bundle of slugs for a bounded duration** (capped
@@ -345,10 +347,15 @@ tclaude agent alias ls / get / rm
 hard security gate, because the title becomes literal keystroke
 input.
 
+An agent has exactly one name: its conversation title, set with
+`rename`. That title is what selectors resolve and what `ls` /
+`groups members` display.
+
 A **head alias** is a stable, daemon-wide handle (`po`, `ceo`, …) that
 always resolves to the live head of a conv chain — it survives
-arbitrary reincarnation depth without re-pointing. It complements the
-per-group `--alias`, which is group-scoped.
+arbitrary reincarnation depth without re-pointing. Unlike a title,
+which moves with each rename and each reincarnation, a head alias is
+the fixed handle you anchor once and keep using.
 
 ### delete
 
@@ -481,7 +488,7 @@ embeds.
 |--------------------------------------------------------------------------|-----------------------------------------------------------------|
 | `Error: tclaude agentd is not running.`                                  | Start it: `tclaude agentd serve` (in a non-sandboxed shell).    |
 | `Error: not in a shared group with target`                               | Add both convs to the same group, or add an inter-group link.   |
-| `Error: selector matches multiple conversations`                         | Use the 8-char conv-id prefix instead of the alias/title.       |
+| `Error: selector matches multiple conversations`                         | Use the 8-char conv-id prefix instead of the title.            |
 | `Error: caller is not granted permission "<slug>"`                       | Grant via `permissions grant`, retry with `--ask-human`, or `sudo request`. |
 | Dashboard shows `403` on `GET /`                                         | Open it via `tclaude agent dashboard` — the cookie is only issued by the init-token exchange. |
 | Popup didn't open / opened wrong browser                                 | On WSL, the daemon shells out to `/mnt/c/Windows/System32/cmd.exe /c start`. Check `tclaude agentd serve` logs. |

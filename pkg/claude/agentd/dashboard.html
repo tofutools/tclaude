@@ -91,7 +91,7 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 }
 .last-hook { color: #7d8590; font-size: 11px; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
-.alias { font-weight: 600; }
+.rowname { font-weight: 600; }
 .title { color: #d4d4d4; }
 .slug { font-family: ui-monospace, monospace; font-size: 12px; }
 .muted { color: #7d8590; }
@@ -329,7 +329,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .add-member-row:last-child { border-bottom: none; }
 .add-member-row.highlighted { background: #1f2937; }
-.add-member-row .alias { color: #d4d4d4; font-weight: bold; flex: 0 0 auto; }
+.add-member-row .rowname { color: #d4d4d4; font-weight: bold; flex: 0 0 auto; }
 .add-member-row .id { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
 .add-member-row .role { color: #58a6ff; flex: 0 0 auto; }
 .add-member-row .descr {
@@ -746,7 +746,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 <main>
   <section id="tab-groups" class="active">
     <div class="filter-bar">
-      <input id="filter-groups" type="text" placeholder="Filter (group name + member alias/title/role/descr/cwd/branch)" autocomplete="off" spellcheck="false" />
+      <input id="filter-groups" type="text" placeholder="Filter (group name + member title/role/descr/cwd/branch)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-groups-count"></span>
       <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
       <label class="filter-toggle" title="Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.">
@@ -769,7 +769,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   </section>
   <section id="tab-agents">
     <div class="filter-bar">
-      <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + alias/role/descr/cwd/branch + group tags)" autocomplete="off" spellcheck="false" />
+      <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + role/descr/cwd/branch + group tags)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-agents-count"></span>
       <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
       <label class="filter-toggle" title="Show agents whose tmux pane is offline">
@@ -874,10 +874,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
     <h3 id="edit-member-title">Edit member</h3>
     <div class="modal-meta" id="edit-member-meta"></div>
     <div class="field">
-      <label for="edit-member-alias">Alias</label>
-      <input id="edit-member-alias" type="text" autocomplete="off" spellcheck="false" />
-    </div>
-    <div class="field">
       <label for="edit-member-role">Role</label>
       <input id="edit-member-role" type="text" autocomplete="off" spellcheck="false" />
     </div>
@@ -894,7 +890,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 <div class="modal-overlay" id="add-member-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="add-member-title">
     <h3 id="add-member-title">Add member to <span class="muted" id="add-member-group"></span></h3>
-    <input id="add-member-search" class="add-member-search" type="text" placeholder="Filter by alias / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
+    <input id="add-member-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
     <div class="add-member-list" id="add-member-list"></div>
     <div class="add-member-foot">
       <label title="Include archived / never-online conversations in the candidate list">
@@ -908,7 +904,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 <div class="modal-overlay" id="sudo-pick-agent-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="sudo-pick-agent-title">
     <h3 id="sudo-pick-agent-title">Grant sudo to <span class="muted">— pick agent</span></h3>
-    <input id="sudo-pick-agent-search" class="add-member-search" type="text" placeholder="Filter by alias / title / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
+    <input id="sudo-pick-agent-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id…" autocomplete="off" spellcheck="false" />
     <div class="add-member-list" id="sudo-pick-agent-list"></div>
     <div class="add-member-foot">
       <label title="Include offline / archived agents (the daemon will still grant; the agent will see the slug on next wake)">
@@ -925,7 +921,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     <p class="sudo-grant-hint">Proactively elevate an agent for a bounded window. Same blocklist + duration cap as the agent-initiated path; granted_by records <code>&lt;human-dashboard&gt;:proactive</code> on the audit row.</p>
     <label class="sudo-grant-row">
       <span class="sudo-grant-label">Conv</span>
-      <input id="sudo-grant-conv" type="text" placeholder="alias / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+      <input id="sudo-grant-conv" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
     </label>
     <label class="sudo-grant-row">
       <span class="sudo-grant-label">Slugs</span>
@@ -955,7 +951,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 <div class="modal-overlay" id="cron-pick-target-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="cron-pick-target-title">
     <h3 id="cron-pick-target-title">Pick target <span class="muted">— agent</span></h3>
-    <input id="cron-pick-target-search" class="add-member-search" type="text" placeholder="Filter by alias / title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false" />
+    <input id="cron-pick-target-search" class="add-member-search" type="text" placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false" />
     <div class="add-member-list" id="cron-pick-target-list"></div>
     <div class="add-member-foot">
       <label title="Include offline / archived agents in the candidate pool">
@@ -978,7 +974,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <span class="cron-create-label">Owner</span>
       <div class="cron-create-target">
         <div class="cron-target-input-row">
-          <input id="cron-create-owner" type="text" placeholder="(default: dashboard human) alias / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+          <input id="cron-create-owner" type="text" placeholder="(default: dashboard human) title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
           <button type="button" id="cron-create-owner-pick" title="Pick from agent list">🔍</button>
         </div>
       </div>
@@ -991,7 +987,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           <label><input type="radio" name="cron-target-mode" value="group" /> Group (multicast)</label>
         </div>
         <div class="cron-target-input-row" id="cron-create-target-solo">
-          <input id="cron-create-target" type="text" placeholder="alias / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+          <input id="cron-create-target" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
           <button type="button" id="cron-create-target-pick" title="Pick from agent list">🔍</button>
         </div>
         <div class="cron-target-input-row" id="cron-create-target-group" style="display:none">
@@ -1159,8 +1155,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <select id="agent-spawn-group"></select>
     </label>
     <label class="cron-create-row">
-      <span class="cron-create-label">Alias</span>
-      <input id="agent-spawn-alias" type="text" placeholder="optional — sets /rename on the new pane" autocomplete="off" spellcheck="false" />
+      <span class="cron-create-label">Name</span>
+      <input id="agent-spawn-name" type="text" placeholder="optional — sets /rename on the new pane" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Role</span>
@@ -1187,8 +1183,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <span class="cron-create-label">Worktree</span>
       <select id="agent-spawn-worktree"><option value="">(enter a CWD to enable worktrees)</option></select>
     </label>
-    <label class="cron-create-enabled" id="agent-spawn-wt-sync-row" title="Spawn the agent in a fresh git worktree whose branch is named after the alias above. Needs a CWD inside a git repo.">
-      <input id="agent-spawn-wt-sync" type="checkbox" checked /> Sync worktree branch with alias
+    <label class="cron-create-enabled" id="agent-spawn-wt-sync-row" title="Spawn the agent in a fresh git worktree whose branch is named after the name above. Needs a CWD inside a git repo.">
+      <input id="agent-spawn-wt-sync" type="checkbox" checked /> Sync worktree branch with name
     </label>
     <label class="cron-create-row" id="agent-spawn-wt-new-row" style="display:none">
       <span class="cron-create-label">New branch</span>
@@ -1374,7 +1370,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // source's identity (groups / perms / ownership). The original keeps
   // running.
   function cloneAgentButton(m) {
-    const label = m.alias || m.title || m.conv_id;
+    const label = m.title || m.conv_id;
     const cwd = (m.state && m.state.cwd) || m.cwd || '';
     return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-cwd="${esc(cwd)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
   }
@@ -1383,7 +1379,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // instance that inherits identity, then soft-exits the original. The
   // new title is auto-suffixed with -r-<N>.
   function reincarnateAgentButton(m) {
-    const label = m.alias || m.title || m.conv_id;
+    const label = m.title || m.conv_id;
     return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Replace with a fresh CC instance that inherits identity; the original is soft-exited. Requires a follow-up message so the successor isn't idle.">reincarnate</button>`;
   }
   // renameAgentButton renders a "rename" button for any row that
@@ -1391,19 +1387,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // an explicit title or check "auto" to ask the agent to pick one
   // for itself via the agent-rename skill / CLI.
   function renameAgentButton(m) {
-    const label = m.alias || m.title || m.conv_id;
+    const label = m.title || m.conv_id;
     const current = m.title || '';
     return `<button data-act="rename-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-current="${esc(current)}" title="Change this conversation's title. Type one or check 'auto' to let the agent pick.">rename</button>`;
   }
   function sudoMemberButton(m) {
-    return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
+    return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
   }
   // cronMemberButton renders the ⏰ "schedule a nudge for this member"
   // button. Opens the cron-create modal prefilled with Solo target =
   // this conv-id, and Owner = this conv-id too (self-nudge is the
   // common case from member rows).
   function cronMemberButton(m) {
-    const label = m.alias || m.title || m.conv_id;
+    const label = m.title || m.conv_id;
     const prefill = JSON.stringify({
       targetMode: 'solo',
       target: m.conv_id,
@@ -1417,7 +1413,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // the directory is known from the DB regardless of whether the
   // agent's tmux pane is currently alive.
   function termButton(m) {
-    const label = m.alias || m.title || m.conv_id;
+    const label = m.title || m.conv_id;
     return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
   }
 
@@ -1427,7 +1423,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // is always present. Used by both the Groups tab member rows and the
   // Agents tab top-level rows so the surface is identical in both.
   function lifecycleAndFocusButtons(m) {
-    const label = m.alias || m.title || m.conv_id;
+    const label = m.title || m.conv_id;
     if (m.online) {
       return [
         `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`,
@@ -1440,20 +1436,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   function editMemberButton(g, m) {
-    return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" data-alias="${esc(m.alias || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit alias / role / description">edit</button>`;
+    return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit role / description">edit</button>`;
   }
   function ownerToggleButton(g, m) {
     return m.owner
-      ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
-      : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
+      ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
+      : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
   }
   function removeMemberButton(g, m) {
-    return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.alias || m.title || m.conv_id)}" title="Remove from group">remove</button>`;
+    return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Remove from group">remove</button>`;
   }
 
   // ungroupedMemberActions renders the per-row action cell for a row
   // in the virtual "Ungrouped" group. It deliberately OMITS every
-  // group-affecting button (edit alias/role/descr, owner toggle,
+  // group-affecting button (edit role/descr, owner toggle,
   // remove-from-group) — the agent belongs to no group, so those are
   // meaningless here. What remains is the agent-level lifecycle set,
   // identical to the Agents tab: focus / term / shut down / wake,
@@ -1674,7 +1670,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   const MEMBER_COLS = [
     { label: '' },
     { label: 'ID', col: 'id' },
-    { label: 'Alias / Title', col: 'alias' },
+    { label: 'Name', col: 'title' },
     { label: 'State', col: 'state' },
     { label: 'Last', col: 'last' },
     { label: 'CWD', col: 'cwd' },
@@ -1685,7 +1681,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   ];
   const MEMBER_ACCESSORS = {
     id:     m => m.conv_id,
-    alias:  m => m.alias || m.title,
+    title:  m => m.title,
     state:  m => (m.state || {}).status,
     last:   m => (m.state || {}).last_hook,
     cwd:    m => m.current_dir || (m.state || {}).cwd,
@@ -1895,12 +1891,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return `
                 <tr class="dnd-draggable" draggable="true" ${dndSource}
                     data-dnd-conv="${esc(m.conv_id)}"
-                    data-dnd-label="${esc(m.alias || m.title || m.conv_id)}">
+                    data-dnd-label="${esc(m.title || m.conv_id)}">
                   <td>${onlineDot(m.online)}</td>
                   <td class="id">${esc(shortId(m.conv_id))}</td>
                   <td>
-                    <div class="alias">${esc(m.alias || m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
-                    ${m.alias && m.title ? `<div class="title muted">${esc(m.title)}</div>` : ''}
+                    <div class="rowname">${esc(m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
                   </td>
                   <td>
                     ${statePill(state, m.online)}
@@ -1983,7 +1978,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
                     data-dnd-label="${esc(c.title || c.conv_id)}">
                   <td>${onlineDot(c.online)}</td>
                   <td class="id">${esc(shortId(c.conv_id))}</td>
-                  <td><span class="alias">${esc(c.title || '(untitled)')}</span></td>
+                  <td><span class="rowname">${esc(c.title || '(untitled)')}</span></td>
                   <td><span class="last-hook">${esc(c.modified ? relTime(c.modified) : '')}</span></td>
                   <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="Promote this conversation into an agent">promote</button></div></td>
                 </tr>`).join('')}
@@ -2032,7 +2027,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
                     data-dnd-label="${esc(a.title || a.conv_id)}">
                   <td>${onlineDot(a.online)}</td>
                   <td class="id">${esc(shortId(a.conv_id))}</td>
-                  <td><span class="alias">${esc(a.title || '(untitled)')}</span></td>
+                  <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
                   <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
                   <td>${esc(a.retired_by || '')}</td>
                   <td class="muted">${esc(a.retire_reason || '')}</td>
@@ -2136,7 +2131,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       return `
         <tr>
           <td><span class="muted">${arrow}</span></td>
-          <td><span class="alias">${esc(other || '(deleted)')}</span></td>
+          <td><span class="rowname">${esc(other || '(deleted)')}</span></td>
           <td><span class="id">${esc(l.mode)}</span></td>
           <td><div class="row-actions">
             <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
@@ -2179,7 +2174,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
               <td>${onlineDot(a.online)}</td>
               <td class="id">${esc(shortId(a.conv_id))}</td>
               <td>
-                <span class="alias">${esc(a.title)}</span>
+                <span class="rowname">${esc(a.title)}</span>
                 ${sudoBadge(a.active_sudo, a.conv_id)}
               </td>
               <td>
@@ -2191,7 +2186,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
               <td>${branchCell(a)}</td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, alias: '', title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, alias: '', title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}${renameAgentButton({conv_id: a.conv_id, alias: '', title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, title: a.title})}${renameAgentButton({conv_id: a.conv_id, title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -2214,7 +2209,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <tr>
               <td>${onlineDot(c.online)}</td>
               <td class="id">${esc(shortId(c.conv_id))}</td>
-              <td><span class="alias">${esc(c.title || '(untitled)')}</span></td>
+              <td><span class="rowname">${esc(c.title || '(untitled)')}</span></td>
               <td><span class="last-hook">${esc(c.modified ? relTime(c.modified) : '')}</span></td>
               <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="Promote this conversation into an agent — adds it to the roster">promote</button></div></td>
             </tr>`).join('')}
@@ -2236,7 +2231,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <tr>
               <td>${onlineDot(a.online)}</td>
               <td class="id">${esc(shortId(a.conv_id))}</td>
-              <td><span class="alias">${esc(a.title || '(untitled)')}</span></td>
+              <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
               <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
               <td>${esc(a.retired_by || '')}</td>
               <td>${esc(a.retire_reason || '')}</td>
@@ -2264,7 +2259,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
               ${Object.entries(grants).map(([k, slugs]) => `
                 <tr>
                   <td class="id">${esc(shortId(k))}</td>
-                  <td class="alias">${esc(titleByConv[k] || '(unknown)')}</td>
+                  <td class="rowname">${esc(titleByConv[k] || '(unknown)')}</td>
                   <td>${slugs.map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ')}</td>
                 </tr>
               `).join('')}
@@ -2315,8 +2310,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const descrHit = (g.descr || '').toLowerCase().includes(needle);
       const matchedMembers = (g.members || []).filter(m => {
         const state = m.state || {};
-        return ((m.alias || '').toLowerCase().includes(needle)) ||
-               ((m.title || '').toLowerCase().includes(needle)) ||
+        return ((m.title || '').toLowerCase().includes(needle)) ||
                ((m.conv_id || '').toLowerCase().includes(needle)) ||
                ((m.role || '').toLowerCase().includes(needle)) ||
                ((m.descr || '').toLowerCase().includes(needle)) ||
@@ -2338,7 +2332,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return out;
   }
 
-  // memberMetaForAgent pulls alias / role / descr from any group
+  // memberMetaForAgent pulls role / descr from any group
   // membership the agent has. The Agents tab's snapshot rows don't
   // dedupe these onto the top-level agent record (they belong to
   // group_members rows); we look them up here so the Agents-tab
@@ -2349,11 +2343,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
     for (const g of (lastSnapshot?.groups || [])) {
       for (const m of (g.members || [])) {
         if (m.conv_id === convID) {
-          return {alias: m.alias || '', role: m.role || '', descr: m.descr || ''};
+          return {role: m.role || '', descr: m.descr || ''};
         }
       }
     }
-    return {alias: '', role: '', descr: ''};
+    return {role: '', descr: ''};
   }
 
   function filterAgents(agents, q) {
@@ -2366,7 +2360,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
              ((a.conv_id || '').toLowerCase().includes(needle)) ||
              ((a.branch || '').toLowerCase().includes(needle)) ||
              ((a.startup_branch || '').toLowerCase().includes(needle)) ||
-             ((meta.alias || '').toLowerCase().includes(needle)) ||
              ((meta.role  || '').toLowerCase().includes(needle)) ||
              ((meta.descr || '').toLowerCase().includes(needle)) ||
              ((state.cwd || '').toLowerCase().includes(needle)) ||
@@ -2415,7 +2408,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // filterConvLike is a lightweight title / conv-id substring filter
   // for the Agents-tab secondary lists (Conversations, Retired), which
-  // carry no group / alias metadata to match against.
+  // carry no group / member metadata to match against.
   function filterConvLike(rows, q) {
     if (!q) return rows;
     const needle = q.toLowerCase();
@@ -2473,7 +2466,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       return `<span class="tag">group:${esc(j.group_name)}</span>`;
     }
     if (j.target_conv) {
-      return `<span class="alias">${esc(j.target_label || j.target_conv.slice(0, 8))}</span>`;
+      return `<span class="rowname">${esc(j.target_label || j.target_conv.slice(0, 8))}</span>`;
     }
     return '<span class="muted">(no target)</span>';
   }
@@ -2510,7 +2503,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
               <tr>
                 <td>${enabledDot}</td>
                 <td class="id">${j.id}</td>
-                <td><div class="alias">${esc(j.name)}</div>${j.subject ? `<div class="muted">${esc(j.subject)}</div>` : ''}</td>
+                <td><div class="rowname">${esc(j.name)}</div>${j.subject ? `<div class="muted">${esc(j.subject)}</div>` : ''}</td>
                 <td><span class="muted">${esc(j.owner_label || j.owner_conv.slice(0, 8))}</span></td>
                 <td>${cronTargetCell(j)}</td>
                 <td><span class="id">${esc(formatInterval(j.interval_seconds))}</span></td>
@@ -2585,7 +2578,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           ${applySort('sudo', rows, SUDO_ACCESSORS).map(r => `
             <tr>
               <td>
-                <span class="alias">${esc(r.conv_title || '(unknown)')}</span>
+                <span class="rowname">${esc(r.conv_title || '(unknown)')}</span>
                 <span class="id">${esc(shortId(r.conv_id))}</span>
               </td>
               <td><span class="tag slug">${esc(r.slug)}</span></td>
@@ -2627,9 +2620,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
           ${applySort('links', rows, LINK_ACCESSORS).map(l => `
             <tr>
               <td class="id">${l.id}</td>
-              <td><span class="alias">${esc(l.from || '(deleted)')}</span></td>
+              <td><span class="rowname">${esc(l.from || '(deleted)')}</span></td>
               <td class="muted">→</td>
-              <td><span class="alias">${esc(l.to || '(deleted)')}</span></td>
+              <td><span class="rowname">${esc(l.to || '(deleted)')}</span></td>
               <td><span class="id">${esc(l.mode)}</span></td>
               <td><span class="muted">${esc(relTime(l.created_at) || '')}</span></td>
               <td><div class="row-actions">
@@ -2804,7 +2797,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           // "extend alice's window" without a tab switch.
           const badge = sudoBadge(sudoByConv[a.conv_id], a.conv_id);
           return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
-                 `${dot}<span class="alias">${esc(a.title || '(unnamed)')}</span>` +
+                 `${dot}<span class="rowname">${esc(a.title || '(unnamed)')}</span>` +
                  `<span class="id">${esc(shortId(a.conv_id))}</span>${badge}${groups}` +
                  `</div>`;
         }).join('');
@@ -3013,7 +3006,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     // validation too, so we don't need to enumerate every rule here.
     if (!target) {
       errEl.textContent = mode === 'solo'
-        ? 'Target is required — type an alias / conv-id or use 🔍 to pick.'
+        ? 'Target is required — type a title / conv-id or use 🔍 to pick.'
         : 'Pick a group from the dropdown (or create one first via the Groups tab).';
       return;
     }
@@ -3159,7 +3152,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
             : '';
           return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
-                 `${dot}<span class="alias">${esc(a.title || '(unnamed)')}</span>` +
+                 `${dot}<span class="rowname">${esc(a.title || '(unnamed)')}</span>` +
                  `<span class="id">${esc(shortId(a.conv_id))}</span>${groups}` +
                  `</div>`;
         }).join('');
@@ -3811,17 +3804,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // worktree picker.
   const SPAWN_WT_NONE = '(no worktree — use CWD above)';
 
-  // applyWtSync reflects the "Sync worktree branch with alias"
+  // applyWtSync reflects the "Sync worktree branch with name"
   // checkbox into the spawn modal's worktree picker. Call it after
-  // the picker (re)loads, after the alias changes, and whenever the
+  // the picker (re)loads, after the name changes, and whenever the
   // checkbox itself is toggled.
   //
   // The sync only works when the picker landed on a usable git repo —
   // wtRefresh leaves the <select> disabled in every other state ((no
   // CWD), (not a repo), still loading) — so the checkbox is disabled
-  // to match. When checked with a non-empty alias it forces the
-  // picker into "+ create new worktree" and mirrors the alias into
-  // the new-branch field; clearing the alias drops it back to "no
+  // to match. When checked with a non-empty name it forces the
+  // picker into "+ create new worktree" and mirrors the name into
+  // the new-branch field; clearing the name drops it back to "no
   // worktree".
   function applyWtSync() {
     const syncEl = $('#agent-spawn-wt-sync');
@@ -3830,13 +3823,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
     syncEl.disabled = !usable;
     $('#agent-spawn-wt-sync-row').classList.toggle('disabled', !usable);
     if (!usable || !syncEl.checked) return;
-    const alias = $('#agent-spawn-alias').value.trim();
-    if (alias) {
+    const name = $('#agent-spawn-name').value.trim();
+    if (name) {
       if (select.value !== WT_NEW) select.value = WT_NEW;
       wtToggleNew('agent-spawn', true);
-      $('#agent-spawn-wt-branch').value = alias;
+      $('#agent-spawn-wt-branch').value = name;
     } else if (select.value === WT_NEW) {
-      // Alias cleared while syncing — fall back to "no worktree".
+      // Name cleared while syncing — fall back to "no worktree".
       select.value = '';
       wtToggleNew('agent-spawn', false);
       $('#agent-spawn-wt-branch').value = '';
@@ -3844,7 +3837,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   // spawnWtLoad reloads the spawn worktree picker for `cwd`, then
-  // re-applies the alias-sync checkbox once the list settles (the
+  // re-applies the name-sync checkbox once the list settles (the
   // checkbox's usable state depends on whether `cwd` is a git repo).
   function spawnWtLoad(cwd) {
     return wtLoad('agent-spawn', cwd, SPAWN_WT_NONE).then(applyWtSync);
@@ -3875,7 +3868,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       groupRow.style.display = '';
       if (!select.value && groups.length) select.value = groups[0].name;
     }
-    $('#agent-spawn-alias').value = '';
+    $('#agent-spawn-name').value = '';
     $('#agent-spawn-role').value = '';
     $('#agent-spawn-descr').value = '';
     $('#agent-spawn-init-msg').value = '';
@@ -3897,10 +3890,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
     spawnWtRepoEdited = false;
     $('#agent-spawn-subrepo-list').innerHTML = '';
     $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
-    // Restore the alias→branch sync to its default-on state.
+    // Restore the name→branch sync to its default-on state.
     $('#agent-spawn-wt-sync').checked = true;
     // Load the worktree picker against the Worktree-repo field, then
-    // apply the alias-sync checkbox once it settles.
+    // apply the name-sync checkbox once it settles.
     spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     $('#agent-spawn-error').textContent = '';
     const meta = $('#agent-spawn-meta');
@@ -3912,7 +3905,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     }
     $('#agent-spawn-modal').classList.add('show');
     setTimeout(() => {
-      if (groupName) $('#agent-spawn-alias').focus();
+      if (groupName) $('#agent-spawn-name').focus();
       else select.focus();
     }, 0);
   }
@@ -3923,7 +3916,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   async function submitAgentSpawn() {
     const group = $('#agent-spawn-group').value;
-    const alias = $('#agent-spawn-alias').value.trim();
+    const name = $('#agent-spawn-name').value.trim();
     const role = $('#agent-spawn-role').value.trim();
     const descr = $('#agent-spawn-descr').value.trim();
     // The initial message is delivered to the new agent's inbox (an
@@ -3954,7 +3947,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       //     still launches in CWD; the worktree path + branch ride
       //     along so the daemon's welcome points the agent at it.
       const sel = await wtResolve('agent-spawn', wtRepo);
-      const body = { alias, role, descr, initial_message: initMsg, auto_focus: autoFocus, include_group_context: includeGroupContext };
+      const body = { name, role, descr, initial_message: initMsg, auto_focus: autoFocus, include_group_context: includeGroupContext };
       if (sel.path && wtRepo && wtRepo !== cwd) {
         body.cwd = cwd;
         body.worktree_path = sel.path;
@@ -3976,7 +3969,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       let payload = {};
       try { payload = await r.json(); } catch (_) {}
       closeAgentSpawnModal();
-      const label = alias || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
+      const label = name || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
       toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
       // Keep the destination group expanded so the new member is visible.
       try { localStorage.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
@@ -4004,11 +3997,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
     $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
     bindWtPicker('agent-spawn');
-    // Alias-sync wiring: typing in the alias mirrors into the
+    // Name-sync wiring: typing in the name mirrors into the
     // worktree branch; toggling the checkbox re-applies the sync;
     // hand-editing the branch or picking a worktree by hand turns the
     // sync off so it stops fighting the human.
-    $('#agent-spawn-alias').addEventListener('input', applyWtSync);
+    $('#agent-spawn-name').addEventListener('input', applyWtSync);
     $('#agent-spawn-wt-sync').addEventListener('change', applyWtSync);
     $('#agent-spawn-wt-branch').addEventListener('input', () => {
       $('#agent-spawn-wt-sync').checked = false;
@@ -4610,21 +4603,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
     });
   }
 
-  // editMemberModal pops the alias/role/descr editor pre-filled with
-  // current values. Resolves to the new {alias, role, descr} object on
+  // editMemberModal pops the role/descr editor pre-filled with
+  // current values. Resolves to the new {role, descr} object on
   // Save (only fields that actually changed are kept; unchanged fields
   // are sent as null so the daemon leaves them alone), or null on
   // Cancel / outside-click / Escape. Auto-refresh suspends while the
   // modal is open via the modalEditing flag.
-  function editMemberModal({label, alias, role, descr}) {
+  function editMemberModal({label, role, descr}) {
     return new Promise(resolve => {
       const overlay = $('#edit-member-modal');
       $('#edit-member-meta').textContent = label || '';
       $('#edit-member-meta').style.display = label ? 'block' : 'none';
-      const aliasEl = $('#edit-member-alias');
       const roleEl = $('#edit-member-role');
       const descrEl = $('#edit-member-descr');
-      aliasEl.value = alias || '';
       roleEl.value = role || '';
       descrEl.value = descr || '';
       const saveBtn = $('#edit-member-save');
@@ -4645,10 +4636,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
         // either differs from the original (send the new value, even
         // if empty) or is unchanged (send null).
         const out = {};
-        const newAlias = aliasEl.value;
         const newRole = roleEl.value;
         const newDescr = descrEl.value;
-        if (newAlias !== (alias || '')) out.alias = newAlias;
         if (newRole !== (role || '')) out.role = newRole;
         if (newDescr !== (descr || '')) out.descr = newDescr;
         cleanup(Object.keys(out).length === 0 ? 'noop' : out);
@@ -4668,8 +4657,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       overlay.addEventListener('click', onOverlay);
       document.addEventListener('keydown', onKey);
       overlay.classList.add('show');
-      aliasEl.focus();
-      aliasEl.select();
+      roleEl.focus();
+      roleEl.select();
     });
   }
 
@@ -4745,7 +4734,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
         return out;
       }
 
-      // Pull alias / role / descr off the per-group member row in any
+      // Pull role / descr off the per-group member row in any
       // group the agent already belongs to. Lets the search match on
       // human-meaningful fields the snapshot's `agents[]` view doesn't
       // surface (it dedupes across groups). A conv that's a member of
@@ -4754,11 +4743,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
         for (const g of lastSnapshot?.groups || []) {
           for (const m of g.members || []) {
             if (m.conv_id === convID) {
-              return {alias: m.alias || '', role: m.role || '', descr: m.descr || ''};
+              return {role: m.role || '', descr: m.descr || ''};
             }
           }
         }
-        return {alias: '', role: '', descr: ''};
+        return {role: '', descr: ''};
       }
 
       function applyFilter(list, q) {
@@ -4768,7 +4757,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
           const meta = memberMetaForConv(a.conv_id);
           return ((a.title || '').toLowerCase().includes(needle)) ||
                  ((a.conv_id || '').toLowerCase().includes(needle)) ||
-                 ((meta.alias || '').toLowerCase().includes(needle)) ||
                  ((meta.role  || '').toLowerCase().includes(needle)) ||
                  ((meta.descr || '').toLowerCase().includes(needle)) ||
                  (a.groups || []).some(g => g.toLowerCase().includes(needle));
@@ -4789,7 +4777,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
         }
         list.innerHTML = candidates.map((a, i) => {
           const meta = memberMetaForConv(a.conv_id);
-          const display = meta.alias || a.title || '(unnamed)';
+          const display = a.title || '(unnamed)';
           const dot = a.online
             ? '<span class="online" title="online">●</span>'
             : '<span class="offline" title="offline">○</span>';
@@ -4802,7 +4790,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             ? '<span class="groups-tag promote-tag" title="Not an agent yet — adding it here promotes it">promotes to agent</span>'
             : '';
           return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
-                 `${dot}<span class="alias">${esc(display)}</span>` +
+                 `${dot}<span class="rowname">${esc(display)}</span>` +
                  `<span class="id">${esc(shortId(a.conv_id))}</span>` +
                  `${role}${descr}${groups}${promote}` +
                  `</div>`;
@@ -4824,8 +4812,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           toast(`add failed: ${await r.text()}`, true);
           return;
         }
-        const meta = memberMetaForConv(cand.conv_id);
-        const label = meta.alias || cand.title || cand.conv_id;
+        const label = cand.title || cand.conv_id;
         toast(`added ${label} to ${groupName}`);
         // Optimistic local mutation: append to lastSnapshot's group so
         // the next render filters this row out without waiting for the
@@ -5763,13 +5750,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
           }
           case 'edit-member': {
             const cur = {
-              alias: btn.getAttribute('data-alias') || '',
               role: btn.getAttribute('data-role') || '',
               descr: btn.getAttribute('data-descr') || '',
             };
             const result = await editMemberModal({
               label: `${label} → ${group}`,
-              alias: cur.alias, role: cur.role, descr: cur.descr,
+              role: cur.role, descr: cur.descr,
             });
             if (result === null) return; // cancelled
             if (result === 'noop') {

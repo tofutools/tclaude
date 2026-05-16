@@ -31,7 +31,7 @@ func TestSpawn_SubdirWorktree_LaunchesInMonorepoTellsWorktree(t *testing.T) {
 	worktreeDir := t.TempDir()
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"cwd":             monorepo,
 		"worktree_path":   worktreeDir,
 		"worktree_branch": "feature-x",
@@ -63,7 +63,7 @@ func TestSpawn_SubdirWorktree_InvalidWorktreePathRejected(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	resp := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":         "worker",
+		"name":          "worker",
 		"cwd":           t.TempDir(),
 		"worktree_path": "/no/such/worktree/anywhere",
 	})
@@ -81,8 +81,8 @@ func TestSpawn_SubdirWorktree_OmittedLeavesWelcomeClean(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias": "worker",
-		"cwd":   t.TempDir(),
+		"name": "worker",
+		"cwd":  t.TempDir(),
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 

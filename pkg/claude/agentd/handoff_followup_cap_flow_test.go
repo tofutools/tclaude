@@ -38,7 +38,7 @@ func TestReincarnate_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	// Over the retired 4096-byte cap, under the 16384 inbox cap, and
 	// multi-line — both the length AND the newlines used to be rejected.
@@ -102,7 +102,7 @@ func TestReincarnate_RejectsFollowUpOverInboxCap(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	got := f.AsHuman().ReincarnateWith(oldConv, map[string]any{
 		"follow_up": strings.Repeat("a", 20000),
@@ -128,7 +128,7 @@ func TestClone_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	followUp := "Clone handoff - explore the parallel approach.\n\n" +
 		strings.Repeat("Background paragraph the clone should read first.\n", 120) +

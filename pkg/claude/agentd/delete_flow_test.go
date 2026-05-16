@@ -41,7 +41,7 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 	f.HaveConvWithTitle(target, "doomed")
 	f.HaveAliveSession(target, label, tmuxSess, "/tmp/work")
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", target, "doomed")
+	f.HaveMember("alpha", target)
 	require.NoError(t, db.GrantAgentPermission(target, "self.compact", "test"), "grant")
 
 	// Capture the recorded cwd BEFORE delete clears the session row.

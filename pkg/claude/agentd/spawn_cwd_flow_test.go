@@ -23,8 +23,8 @@ func TestSpawn_InvalidCwdReportsError(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	resp := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias": "worker",
-		"cwd":   "/no/such/directory/anywhere",
+		"name": "worker",
+		"cwd":  "/no/such/directory/anywhere",
 	})
 
 	assert.Equalf(t, http.StatusBadRequest, resp.Code,
@@ -42,8 +42,8 @@ func TestSpawn_TildeCwdExpands(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	resp := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias": "worker",
-		"cwd":   "~",
+		"name": "worker",
+		"cwd":  "~",
 	})
 
 	require.Equalf(t, http.StatusOK, resp.Code,

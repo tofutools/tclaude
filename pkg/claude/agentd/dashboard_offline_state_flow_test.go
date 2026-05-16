@@ -34,8 +34,8 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 	// Both join a group so they surface in the snapshot (an offline
 	// ungrouped conv with no grants is intentionally absent everywhere).
 	f.HaveGroup("crew")
-	f.HaveMember("crew", onlineConv, "onln")
-	f.HaveMember("crew", offlineConv, "offl")
+	f.HaveMember("crew", onlineConv)
+	f.HaveMember("crew", offlineConv)
 
 	// Freeze the offline conv's hook status at "idle" — exactly the row
 	// a cleanly-finished agent leaves behind — then kill its tmux

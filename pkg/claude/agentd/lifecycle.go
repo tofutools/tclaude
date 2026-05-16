@@ -24,7 +24,7 @@ import (
 // which failed.
 type memberOpResult struct {
 	ConvID  string `json:"conv_id"`
-	Alias   string `json:"alias,omitempty"`
+	Title   string `json:"title,omitempty"`
 	Action  string `json:"action"`           // "soft_stopped", "killed", "resumed", "skipped:already_online", "skipped:no_conv_id", "error"
 	Detail  string `json:"detail,omitempty"` // human-readable note (e.g. error message)
 	TmuxSes string `json:"tmux_session,omitempty"`
@@ -60,7 +60,7 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
 	for _, m := range members {
 		res := stopOneConv(m.ConvID, force)
-		res.Alias = m.Alias
+		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -123,7 +123,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	out := groupOpResp{Group: g.Name, Action: "resume", Members: []memberOpResult{}}
 	for _, m := range members {
 		res := resumeOneConv(m.ConvID)
-		res.Alias = m.Alias
+		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -323,7 +323,9 @@ func pickAliveSession(convID string) *db.SessionRow {
 //     daemon's chain.
 //  3. Poll the sessions table for that label until conv-id appears
 //     (CC's first hook callback writes it). 30s default timeout.
-//  4. Add the conv to the group with the supplied alias/role/descr.
+//  4. Add the conv to the group with the supplied role/descr; the
+//     `name` (when set) becomes the new agent's conversation title
+//     via the post-spawn /rename injection.
 //
 // Permission: groups.spawn (default human-only — this lets an agent
 // run arbitrary CC instances on the human's machine, blast radius
@@ -341,8 +343,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var body struct {
-		Alias string `json:"alias,omitempty"`
-		Role  string `json:"role,omitempty"`
+		// Name, when set, becomes the new agent's conversation title:
+		// runSpawnPostInit injects `/rename <name>` into the fresh pane.
+		// An agent has exactly one name — its title — so there is no
+		// separate per-group handle.
+		Name string `json:"name,omitempty"`
+		Role string `json:"role,omitempty"`
 		// Descr is the short, one-line description shown on the dashboard
 		// (the group-member "Description" column). Keep it terse — the
 		// agent's actual task brief goes in InitialMessage instead.
@@ -381,8 +387,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 
 		// ReplyTo optionally names whom the spawned agent's `reply` to
 		// its startup briefing should reach — any selector
-		// agent.ResolveSelector accepts (conv-id / prefix / title /
-		// group alias). Omitted: the briefing's sender defaults to the
+		// agent.ResolveSelector accepts (conv-id / prefix / title).
+		// Omitted: the briefing's sender defaults to the
 		// spawn requester (spawnerConvID — empty for a human-initiated
 		// spawn). Set it to hand a worker off to a coordinator other
 		// than the spawner.
@@ -517,7 +523,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g.ID,
 		ConvID:  convID,
-		Alias:   body.Alias,
 		Role:    body.Role,
 		Descr:   body.Descr,
 	}); err != nil {
@@ -584,7 +589,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
-	// Post-spawn injection: rename the new pane to the agent's alias
+	// Post-spawn injection: rename the new pane to the agent's name
 	// and drop a [system: ...] welcome that describes the agent's
 	// identity. Two purposes:
 	//
@@ -597,14 +602,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	//      the file before anyone closes the pane.
 	//
 	//   2. Give the new agent its name + context up front. The agent
-	//      sees its alias in tmux/dashboard immediately, the welcome
+	//      sees its title in tmux/dashboard immediately, the welcome
 	//      describes its role/descr/group, and — when a startup
 	//      briefing was queued above — points it at the inbox message.
 	//
 	// Runs in a goroutine so the spawn response returns promptly; the
 	// goroutine waits for the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Alias, body.Role, body.Descr, g.Name,
+		runSpawnPostInit(convID, body.Name, body.Role, body.Descr, g.Name,
 			spawnContextMsgID, body.InitialMessage != "", worktreePath, worktreeBranch)
 	})
 
@@ -620,7 +625,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // runSpawnPostInit fires asynchronously after a successful spawn. It
 // waits for the new tmux pane to come online, then injects, in order:
 //
-//  1. /rename <alias> — when alias is a valid rename title.
+//  1. /rename <name> — when name is a valid rename title. This is the
+//     agent's single name; it becomes the conversation title.
 //  2. The welcome [system: ...] line orienting the agent.
 //
 // Each is its own turn. Failures are logged, never bubbled — the spawn
@@ -637,7 +643,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // landing a write on the .jsonl before any other turn happens. Even
 // if a later injection fails, the file exists and `agent resume` can
 // find it.
-func runSpawnPostInit(convID, alias, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) {
+func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -651,24 +657,24 @@ func runSpawnPostInit(convID, alias, role, descr, groupName string, spawnContext
 	}
 	target := sess.TmuxSession + ":0.0"
 
-	// /rename first — see the doc comment. Skipped when alias is empty
+	// /rename first — see the doc comment. Skipped when name is empty
 	// or not a valid rename title (some callers pass human-friendly
-	// aliases that don't fit the rename charset); the welcome below
+	// names that don't fit the rename charset); the welcome below
 	// still materialises the .jsonl in that case.
-	if alias != "" && isValidRenameTitle(alias) {
-		if err := injectTextAndSubmit(target, "/rename "+alias); err != nil {
+	if name != "" && isValidRenameTitle(name) {
+		if err := injectTextAndSubmit(target, "/rename "+name); err != nil {
 			slog.Warn("spawn: /rename injection failed",
-				"conv", convID, "alias", alias, "error", err)
+				"conv", convID, "name", name, "error", err)
 		}
-	} else if alias != "" {
-		slog.Warn("spawn: alias not a valid rename title; skipping /rename",
-			"conv", convID, "alias", alias)
+	} else if name != "" {
+		slog.Warn("spawn: name not a valid rename title; skipping /rename",
+			"conv", convID, "name", name)
 	}
 
 	// Welcome: a single-line [system: ...] turn orienting the agent
 	// (identity, role, descr, group, where its startup briefing waits,
 	// and — for a sub-repo worktree — where to make code edits).
-	welcome := buildSpawnWelcome(alias, role, descr, groupName,
+	welcome := buildSpawnWelcome(name, role, descr, groupName,
 		spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch)
 	if err := injectTextAndSubmit(target, welcome); err != nil {
 		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
@@ -727,10 +733,10 @@ func buildSpawnContextBody(groupName, groupContext, initialMessage string) strin
 //     point the agent at the inbox message and tell it to act.
 //   - a briefing with only the group's shared startup context →
 //     point at the inbox message, then tell it to wait.
-func buildSpawnWelcome(alias, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
+func buildSpawnWelcome(name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
 	parts := []string{"spawned by the human"}
-	if alias != "" {
-		parts = append(parts, fmt.Sprintf("as %q", alias))
+	if name != "" {
+		parts = append(parts, fmt.Sprintf("as %q", name))
 	}
 	if role != "" {
 		parts = append(parts, fmt.Sprintf("(role: %s)", role))

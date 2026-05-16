@@ -14,7 +14,7 @@ import (
 
 // handleAgentByConv dispatches POST /v1/agent/{selector}/{verb} to a
 // per-verb handler. The {selector} is resolved via agent.ResolveSelector
-// (alias, full conv-id, or 8+-char prefix); the {verb} routes to one
+// (title, full conv-id, or 8+-char prefix); the {verb} routes to one
 // of the cross-agent operations (today: reincarnate; clone, compact,
 // rename are future work).
 //
@@ -181,7 +181,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 // is set, behaves like requireAgent — returns the caller's own conv.
 // When the header IS set:
 //
-//   - The target is resolved via agent.ResolveSelector (alias / prefix /
+//   - The target is resolved via agent.ResolveSelector (title / prefix /
 //     full conv-id), same convention as the manager-pattern verbs.
 //   - The caller must hold the agent.inbox-watch slug, or own a group
 //     containing the target. Humans (no claude ancestor) bypass.
@@ -202,8 +202,8 @@ func requireInboxAccess(w http.ResponseWriter, r *http.Request) (effectiveConv s
 		convID, ok := requireAgent(w, r)
 		return convID, false, ok
 	}
-	// Resolve aliases / prefixes the same way the lifecycle dispatcher
-	// does, so callers can pass `--target some-alias`.
+	// Resolve titles / prefixes the same way the lifecycle dispatcher
+	// does, so callers can pass `--target some-name`.
 	res, _, err := agent.ResolveSelector(target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found",

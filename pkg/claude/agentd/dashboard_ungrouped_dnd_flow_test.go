@@ -90,7 +90,7 @@ func TestDashboardUngrouped_DragOutOfGroupReturnsToUngrouped(t *testing.T) {
 	f.HaveConvWithTitle(conv, "grouped-worker")
 	f.HaveAliveSession(conv, "spwn-drop", "tmux-drop", "/tmp/drop")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", conv, "worker")
+	f.HaveMember("alpha", conv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
@@ -135,7 +135,7 @@ func TestDashboardUngrouped_DeletedGroupMembersSurfaceInUngrouped(t *testing.T) 
 	f.HaveConvWithTitle(conv, "orphan-to-be")
 	f.HaveAliveSession(conv, "spwn-orph", "tmux-orph", "/tmp/orph")
 	f.HaveGroup("doomed")
-	f.HaveMember("doomed", conv, "worker")
+	f.HaveMember("doomed", conv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 

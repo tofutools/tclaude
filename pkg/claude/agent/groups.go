@@ -173,7 +173,7 @@ type GroupsCreateParams struct {
 	Descr       string   `long:"descr" short:"d" optional:"true" help:"Optional description"`
 	Context     string   `long:"context" optional:"true" help:"Shared startup context delivered to the inbox of agents spawned into this group. For multi-line context use --context-file."`
 	ContextFile string   `long:"context-file" optional:"true" help:"Read the group startup context from this file (alternative to --context)."`
-	Members     []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (alias=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'alias' is required; 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
+	Members     []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (name=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'name' is required (it becomes the new agent's conversation title); 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
 	MaxMembers  int      `long:"max-members" optional:"true" help:"Hard cap on the group's member count (0 = unlimited, the default). A spawn that would exceed it is refused. Change later with 'groups set-max-members'."`
 	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
@@ -185,8 +185,9 @@ func groupsCreateCmd() *cobra.Command {
 		Long: "Create a new group. With one or more `--member` flags, immediately " +
 			"spawn fresh CC sessions for each member and add them to the group. Each " +
 			"`--member` value is a comma-separated list of key=value pairs: " +
-			"`alias=lead,role=tech-lead,descr=Owns the diff,cwd=.`. Member spawn " +
-			"requires `groups.spawn` (default human-only).",
+			"`name=lead,role=tech-lead,descr=Owns the diff,cwd=.`. The `name` becomes " +
+			"the new agent's conversation title. Member spawn requires `groups.spawn` " +
+			"(default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *GroupsCreateParams, _ *cobra.Command) error {
 			// `Name` is brand-new on create; no value-completion to offer.
@@ -201,13 +202,13 @@ func groupsCreateCmd() *cobra.Command {
 
 // memberSpec is the parsed shape of one `--member` flag value.
 type memberSpec struct {
-	Alias string
+	Name  string
 	Role  string
 	Descr string
 	Cwd   string
 }
 
-// parseMemberSpec turns "alias=lead,role=tech-lead,descr=Owns the diff,cwd=."
+// parseMemberSpec turns "name=lead,role=tech-lead,descr=Owns the diff,cwd=."
 // into a memberSpec. Values can't contain commas or '=' (for v1) — the
 // helper documents this trade-off in the user-facing error.
 func parseMemberSpec(s string) (*memberSpec, error) {
@@ -225,8 +226,8 @@ func parseMemberSpec(s string) (*memberSpec, error) {
 		key := strings.ToLower(strings.TrimSpace(kv[0]))
 		val := strings.TrimSpace(kv[1])
 		switch key {
-		case "alias":
-			spec.Alias = val
+		case "name":
+			spec.Name = val
 		case "role":
 			spec.Role = val
 		case "descr":
@@ -234,11 +235,11 @@ func parseMemberSpec(s string) (*memberSpec, error) {
 		case "cwd":
 			spec.Cwd = val
 		default:
-			return nil, fmt.Errorf("--member %q: unknown key %q (allowed: alias, role, descr, cwd)", s, key)
+			return nil, fmt.Errorf("--member %q: unknown key %q (allowed: name, role, descr, cwd)", s, key)
 		}
 	}
-	if spec.Alias == "" {
-		return nil, fmt.Errorf("--member %q: 'alias' is required", s)
+	if spec.Name == "" {
+		return nil, fmt.Errorf("--member %q: 'name' is required", s)
 	}
 	return spec, nil
 }
@@ -341,7 +342,7 @@ func bootstrapMembers(groupName string, specs []*memberSpec, stdout, stderr io.W
 			cwd = callerCwd
 		}
 		body := map[string]any{
-			"alias":           spec.Alias,
+			"name":            spec.Name,
 			"role":            spec.Role,
 			"descr":           spec.Descr,
 			"cwd":             cwd,
@@ -349,12 +350,12 @@ func bootstrapMembers(groupName string, specs []*memberSpec, stdout, stderr io.W
 		}
 		var sresp SpawnResponse
 		if err := DaemonRequest(http.MethodPost, path, body, &sresp, DaemonOpts{}); err != nil {
-			fmt.Fprintf(stderr, "  Failed to spawn member alias=%q: %v\n", spec.Alias, err)
+			fmt.Fprintf(stderr, "  Failed to spawn member name=%q: %v\n", spec.Name, err)
 			failed++
 			continue
 		}
-		fmt.Fprintf(stdout, "  Spawned member alias=%q conv=%s tmux=%s\n",
-			spec.Alias, short(sresp.ConvID), sresp.TmuxSession)
+		fmt.Fprintf(stdout, "  Spawned member name=%q conv=%s tmux=%s\n",
+			spec.Name, short(sresp.ConvID), sresp.TmuxSession)
 		spawned++
 	}
 	return spawned, failed
@@ -432,7 +433,6 @@ func groupsMembersCmd() *cobra.Command {
 type memberEntry struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	// Branch is the git branch / worktree the member is working on,
@@ -466,7 +466,6 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 8},
-		table.Column{Header: "ALIAS", MinWidth: 6, Weight: 0.5, Truncate: true},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "BRANCH", MinWidth: 8, Weight: 0.6, Truncate: true},
@@ -484,13 +483,10 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		} else if m.Owner && role == "" {
 			role = "owner"
 		}
-		// ALIAS is the per-group handle (empty for pure owners);
-		// NAME is the conv's display title. Separate columns so a
-		// renamed agent and its group alias are both visible.
+		// NAME is the conv's display title — an agent's single name.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(m.Online),
 			short(m.ConvID),
-			m.Alias,
 			m.Title,
 			role,
 			m.Branch,
@@ -506,7 +502,6 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 type groupsAddParams struct {
 	Group    string `pos:"true" help:"Group name"`
 	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
-	Alias    string `long:"alias" short:"a" optional:"true" help:"Alias to use for this conv inside the group"`
 	Role     string `long:"role" short:"r" optional:"true" help:"Role label, e.g. 'lead', 'reviewer'"`
 	Descr    string `long:"descr" short:"d" optional:"true" help:"Short description of this member"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
@@ -546,7 +541,6 @@ func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(p.Group)+"/members", map[string]string{
 		"conv":  p.Conv,
-		"alias": p.Alias,
 		"role":  p.Role,
 		"descr": p.Descr,
 	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
@@ -557,7 +551,7 @@ func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
 	if len(shortID) >= 8 {
 		shortID = shortID[:8]
 	}
-	fmt.Fprintf(stdout, "Added %s to group %q (alias=%q role=%q)\n", shortID, p.Group, p.Alias, p.Role)
+	fmt.Fprintf(stdout, "Added %s to group %q (role=%q)\n", shortID, p.Group, p.Role)
 	return rcOK
 }
 
@@ -708,7 +702,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		Action  string `json:"action"`
 		Members []struct {
 			ConvID  string `json:"conv_id"`
-			Alias   string `json:"alias,omitempty"`
+			Title   string `json:"title,omitempty"`
 			Action  string `json:"action"`
 			Detail  string `json:"detail,omitempty"`
 			TmuxSes string `json:"tmux_session,omitempty"`
@@ -725,18 +719,18 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 	}
 	tbl := table.New(
 		table.Column{Header: "ID", Width: 8},
-		table.Column{Header: "ALIAS", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, m := range resp.Members {
-		alias := m.Alias
-		if alias == "" {
-			alias = "(unnamed)"
+		name := m.Title
+		if name == "" {
+			name = "(unnamed)"
 		}
 		tbl.AddRow(table.Row{Cells: []string{
-			short(m.ConvID), alias, m.Action, m.Detail,
+			short(m.ConvID), name, m.Action, m.Detail,
 		}})
 	}
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
@@ -749,7 +743,6 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 type groupsUpdateMemberParams struct {
 	Group    string `pos:"true" help:"Group name"`
 	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
-	Alias    string `long:"alias" short:"a" optional:"true" help:"New alias (pass empty string to clear)"`
 	Role     string `long:"role" short:"r" optional:"true" help:"New role label (pass empty string to clear)"`
 	Descr    string `long:"descr" short:"d" optional:"true" help:"New description (pass empty string to clear)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
@@ -758,8 +751,8 @@ type groupsUpdateMemberParams struct {
 func groupsUpdateMemberCmd() *cobra.Command {
 	return boa.CmdT[groupsUpdateMemberParams]{
 		Use:         "update-member",
-		Short:       "Edit alias/role/descr on an existing group member",
-		Long:        "Patch the alias, role, or descr of a member already in a group. Only the flags you pass are touched; pass an empty string (e.g. --alias='') to clear a field. Same human-only gate as `add`/`remove`.",
+		Short:       "Edit role/descr on an existing group member",
+		Long:        "Patch the role or descr of a member already in a group. Only the flags you pass are touched; pass an empty string (e.g. --role='') to clear a field. To rename an agent use `tclaude agent rename` — an agent's single name is its conversation title, not a per-group field. Same human-only gate as `add`/`remove`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsUpdateMemberParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -783,9 +776,6 @@ func runGroupsUpdateMember(p *groupsUpdateMemberParams, cmd *cobra.Command, stdo
 		return rcInvalidArg
 	}
 	body := map[string]any{}
-	if cmd.Flags().Changed("alias") {
-		body["alias"] = p.Alias
-	}
 	if cmd.Flags().Changed("role") {
 		body["role"] = p.Role
 	}
@@ -793,7 +783,7 @@ func runGroupsUpdateMember(p *groupsUpdateMemberParams, cmd *cobra.Command, stdo
 		body["descr"] = p.Descr
 	}
 	if len(body) == 0 {
-		fmt.Fprintf(stderr, "Error: at least one of --alias / --role / --descr is required\n")
+		fmt.Fprintf(stderr, "Error: at least one of --role / --descr is required\n")
 		return rcInvalidArg
 	}
 	if ask > 0 {
@@ -919,7 +909,7 @@ func runGroupsClone(p *groupsCloneParams, stdout, stderr io.Writer) int {
 		Members      []struct {
 			SrcConv string `json:"src_conv"`
 			NewConv string `json:"new_conv,omitempty"`
-			Alias   string `json:"alias,omitempty"`
+			Title   string `json:"title,omitempty"`
 			Label   string `json:"label,omitempty"`
 			Error   string `json:"error,omitempty"`
 		} `json:"members"`
@@ -938,8 +928,8 @@ func runGroupsClone(p *groupsCloneParams, stdout, stderr io.Writer) int {
 			failed++
 			continue
 		}
-		fmt.Fprintf(stdout, "  + %s -> %s (alias %s)\n",
-			m.SrcConv, m.NewConv, m.Alias)
+		fmt.Fprintf(stdout, "  + %s -> %s (title %s)\n",
+			m.SrcConv, m.NewConv, m.Title)
 	}
 	if failed > 0 {
 		fmt.Fprintf(stderr, "%d member(s) failed; retry with `tclaude agent clone <src-conv> --target %s`\n",

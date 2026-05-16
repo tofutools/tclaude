@@ -24,8 +24,8 @@ func TestInboxDelete_RecipientPurgesSharedRow(t *testing.T) {
 	const senderConv = "snd-aaaa-bbbb-cccc-1111"
 	const recipConv = "rcv-aaaa-bbbb-cccc-2222"
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", senderConv, "alice")
-	f.HaveMember("alpha", recipConv, "bob")
+	f.HaveMember("alpha", senderConv)
+	f.HaveMember("alpha", recipConv)
 
 	// Insert the message via the production DB writer to mirror what
 	// /v1/messages would store; we exercise the delete endpoint, not
@@ -77,8 +77,8 @@ func TestInboxDelete_ThirdPartyForbidden(t *testing.T) {
 	const recipConv = "rcv-cccc-1111-2222-4444"
 	const stranger = "xxx-cccc-1111-2222-5555"
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", senderConv, "alice")
-	f.HaveMember("alpha", recipConv, "bob")
+	f.HaveMember("alpha", senderConv)
+	f.HaveMember("alpha", recipConv)
 
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:  g.ID,

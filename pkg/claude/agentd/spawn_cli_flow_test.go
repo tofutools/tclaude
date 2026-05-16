@@ -103,7 +103,7 @@ func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
 
 	stderr := new(bytes.Buffer)
 	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Alias: "worker", InitialMessage: brief},
+		&agent.SpawnParams{Group: "alpha", Name: "worker", InitialMessage: brief},
 		new(bytes.Buffer), stderr,
 	)
 	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
@@ -138,7 +138,7 @@ func TestSpawnCLI_DefaultsCwdToCallersCwd(t *testing.T) {
 
 	stdout := new(bytes.Buffer)
 	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Alias: "worker"},
+		&agent.SpawnParams{Group: "alpha", Name: "worker"},
 		stdout, new(bytes.Buffer),
 	)
 	require.Equal(t, 0, rc, "RunSpawn stdout=%s", stdout.String())
@@ -165,7 +165,7 @@ func TestSpawnCLI_ExplicitCwdOverridesCallersCwd(t *testing.T) {
 	chdirTo(t, callerCwd)
 
 	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Alias: "worker", Cwd: explicitCwd},
+		&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: explicitCwd},
 		new(bytes.Buffer), new(bytes.Buffer),
 	)
 	require.Equal(t, 0, rc, "RunSpawn rc")

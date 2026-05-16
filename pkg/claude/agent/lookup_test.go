@@ -93,18 +93,19 @@ func TestResolveSelector_NotFound(t *testing.T) {
 	require.Error(t, err, "expected error for missing selector")
 }
 
-// TestResolveSelector_ByGroupAlias covers the v2 fallback: a conv that
-// only lives in agent_group_members (no conv_index row, e.g. fresh
-// from `agent spawn`) is findable by its per-group alias.
-func TestResolveSelector_ByGroupAlias(t *testing.T) {
+// TestResolveSelector_ByGroupConvID covers the membership fallback: a
+// conv that only lives in agent_group_members (no conv_index row, e.g.
+// fresh from `agent spawn` before its /rename is scanned) is still
+// findable by its full conv-id.
+func TestResolveSelector_ByGroupConvID(t *testing.T) {
 	setupTestDB(t)
 	g, _ := db.CreateAgentGroup("alpha", "")
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g, ConvID: "f6c6e261-deaf-bead-cafe-feedfacefeed",
-		Alias: "second-banana", Role: "builder",
+		Role: "builder",
 	}), "AddAgentGroupMember")
 
-	r, _, err := resolveSelector("second-banana")
+	r, _, err := resolveSelector("f6c6e261-deaf-bead-cafe-feedfacefeed")
 	require.NoError(t, err, "resolveSelector")
 	assert.Equal(t, "f6c6e261-deaf-bead-cafe-feedfacefeed", r.ConvID, "conv_id, want freshly-spawned uuid")
 	assert.Nil(t, r.Row, "Row should be nil for non-indexed conv")
@@ -118,30 +119,11 @@ func TestResolveSelector_ByGroupConvPrefix(t *testing.T) {
 	g, _ := db.CreateAgentGroup("alpha", "")
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g, ConvID: "f6c6e261-deaf-bead-cafe-feedfacefeed",
-		Alias: "x",
 	}), "AddAgentGroupMember")
 
 	r, _, err := resolveSelector("f6c6e261")
 	require.NoError(t, err, "resolveSelector")
 	assert.Equal(t, "f6c6e261-deaf-bead-cafe-feedfacefeed", r.ConvID, "conv_id, want freshly-spawned uuid")
-}
-
-// TestResolveSelector_GroupAliasAmbiguous: same alias in two groups
-// for two different convs is genuinely ambiguous.
-func TestResolveSelector_GroupAliasAmbiguous(t *testing.T) {
-	setupTestDB(t)
-	g1, _ := db.CreateAgentGroup("alpha", "")
-	g2, _ := db.CreateAgentGroup("beta", "")
-	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g1, ConvID: "11111111-1111-1111-1111-111111111111", Alias: "dup",
-	}))
-	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g2, ConvID: "22222222-2222-2222-2222-222222222222", Alias: "dup",
-	}))
-
-	_, matches, err := resolveSelector("dup")
-	require.True(t, errors.Is(err, errAmbiguous), "expected errAmbiguous, got %v matches=%d", err, len(matches))
-	assert.Len(t, matches, 2, "expected 2 distinct matches")
 }
 
 // TestResolveSelector_PrefersConvIndexOverMembers: when both have
@@ -154,7 +136,7 @@ func TestResolveSelector_PrefersConvIndexOverMembers(t *testing.T) {
 
 	g, _ := db.CreateAgentGroup("alpha", "")
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g, ConvID: convID, Alias: "alias-only",
+		GroupID: g, ConvID: convID,
 	}))
 
 	// A conv-index hit on the prefix returns the Row; we don't fall

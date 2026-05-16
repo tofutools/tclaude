@@ -35,7 +35,7 @@ func TestCrossAgentAskHuman_NoHeaderStillRefuses(t *testing.T) {
 	f.HaveConvWithTitle(targetConv, "worker")
 	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", targetConv, "worker")
+	f.HaveMember("alpha", targetConv)
 
 	// A separate caller conv that is NOT in the group and holds no
 	// agent.reincarnate slug. The default newFlow human path bypasses
@@ -72,7 +72,7 @@ func TestCrossAgentAskHuman_HeaderAndApprovalAllowsCall(t *testing.T) {
 	f.HaveConvWithTitle(targetConv, "worker")
 	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", targetConv, "worker")
+	f.HaveMember("alpha", targetConv)
 
 	const callerConv = "cccc-1111-2222-3333-4444"
 	r := testharness.JSONRequest(t, http.MethodPost,
@@ -105,7 +105,7 @@ func TestCrossAgentAskHuman_HeaderAndDenialStillRefuses(t *testing.T) {
 	f.HaveConvWithTitle(targetConv, "worker")
 	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", targetConv, "worker")
+	f.HaveMember("alpha", targetConv)
 
 	const callerConv = "cccc-1111-2222-3333-4444"
 	r := testharness.JSONRequest(t, http.MethodPost,

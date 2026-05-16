@@ -86,7 +86,7 @@ seven tabs. Common affordances across the data tabs:
 ### Groups
 
 Every group, expandable to its members. Each member row shows the online
-indicator, alias / role / description, working directory, git branch or
+indicator, role / description, working directory, git branch or
 worktree, effective permissions, and an **owner** badge where applicable.
 
 The **working-directory** cell is clickable — clicking a path opens a terminal
@@ -96,7 +96,7 @@ when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
-Per-member actions: edit alias/role/descr, **wake** / **shut down** / **focus**
+Per-member actions: edit role/descr, **wake** / **shut down** / **focus**
 the session, schedule a **cron** job, toggle ownership, and remove from the
 group. Per-group actions live in the group header: rename, **+ add member**
 (a searchable keyboard-navigable overlay), **+ spawn agent**, **🧹 cleanup**
@@ -162,7 +162,7 @@ browser equivalent of `tclaude agent permissions slugs`.
 ## Spawning agents from the dashboard
 
 The **+ spawn agent** (into a group) and **+ new agent** (standalone) buttons
-open a modal: alias, role, description, and a working-directory field with a
+open a modal: name, role, description, and a working-directory field with a
 git-worktree picker. The group's start-dir default pre-fills the directory when
 present.
 

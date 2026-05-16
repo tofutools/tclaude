@@ -25,10 +25,10 @@ func writeJSONIndentAlias(w io.Writer, v any) int {
 
 // aliasCmd is `tclaude agent alias …` — global head-alias layer.
 // Stable handles that resolve to the live head of a conv-succession
-// chain via db.ResolveLatestConv. Complements per-group
-// agent_group_members.alias by being NOT scoped to a group: useful
-// for convs that aren't (yet) in any group, or where a global handle
-// is more memorable across the whole daemon.
+// chain via db.ResolveLatestConv. Distinct from an agent's name (its
+// conversation title): a head alias is a deliberately-stable handle
+// that survives reincarnation, useful where a fixed global name is
+// more memorable than whatever the chain head is currently titled.
 //
 // Read verbs (`ls`, `get`) are open; mutating verbs (`set`, `rm`)
 // are human-only at the daemon today (no slug yet — agents who need
@@ -40,8 +40,9 @@ func aliasCmd() *cobra.Command {
 		Long: "Set, list, and remove daemon-wide head aliases. A head alias is a stable " +
 			"handle (e.g. \"po\", \"ceo\") that always resolves to the live head of a conv " +
 			"chain — survives arbitrary reincarnation depth without re-pointing the row. " +
-			"Complements per-group agent_group_members.alias by being global rather than " +
-			"group-scoped. Resolved by `tclaude agent message <handle>` and friends.",
+			"Distinct from an agent's name (its conversation title): a head alias is a " +
+			"fixed handle the human curates. Resolved by `tclaude agent message <handle>` " +
+			"and friends.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			aliasSetCmd(),
@@ -67,7 +68,7 @@ type headAliasJSON struct {
 
 type aliasSetParams struct {
 	Handle string `pos:"true" help:"The handle to set (lower-cased; cannot look like a UUID, start with 'group:', or be . / -)"`
-	Conv   string `pos:"true" help:"Conv selector (UUID / prefix / title / per-group alias) to anchor the handle to"`
+	Conv   string `pos:"true" help:"Conv selector (UUID / prefix / title) to anchor the handle to"`
 }
 
 func aliasSetCmd() *cobra.Command {

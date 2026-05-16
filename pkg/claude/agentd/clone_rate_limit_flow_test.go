@@ -45,13 +45,13 @@ func TestClone_RateLimitBlocksRapidSecondClone(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	grp := f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "")
+	f.HaveMember("alpha", oldConv)
 	// oldConv owns its group, so it can clone members of that group
 	// (itself) via the manager-pattern path — an agent-initiated clone.
 	require.NoError(t, db.AddAgentGroupOwner(grp.ID, oldConv, "test"), "AddAgentGroupOwner")
 
 	// First clone — succeeds.
-	c1 := f.AsAgent(oldConv).CloneFresh(oldConv, "")
+	c1 := f.AsAgent(oldConv).CloneFresh(oldConv)
 	require.NotEmpty(t, c1.NewConv, "first clone returned empty NewConv: %s", c1.Raw)
 
 	// Second clone of the same source — should be 429. Use the raw
@@ -93,17 +93,17 @@ func TestClone_RateLimitClearsAfterCooldown(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	grp := f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "")
+	f.HaveMember("alpha", oldConv)
 	require.NoError(t, db.AddAgentGroupOwner(grp.ID, oldConv, "test"), "AddAgentGroupOwner")
 
 	// First clone lands.
-	c1 := f.AsAgent(oldConv).CloneFresh(oldConv, "")
+	c1 := f.AsAgent(oldConv).CloneFresh(oldConv)
 	require.NotEmpty(t, c1.NewConv, "first clone returned empty NewConv: %s", c1.Raw)
 
 	// Drop cooldown to 0 — the next clone should pass.
 	agentd.CloneCooldown = 0
 
-	c2 := f.AsAgent(oldConv).CloneFresh(oldConv, "")
+	c2 := f.AsAgent(oldConv).CloneFresh(oldConv)
 	require.NotEmpty(t, c2.NewConv, "second clone returned empty NewConv after cooldown drop: %s", c2.Raw)
 	assert.NotEqual(t, c1.NewConv, c2.NewConv, "expected distinct new convs from two clones")
 }
@@ -126,14 +126,14 @@ func TestClone_RateLimitIsPerSource(t *testing.T) {
 	f.HaveConvWithTitle(bConv, "beta-worker")
 	f.HaveAliveSession(bConv, "spwn-b-001", "tclaude-spwn-b-001", "/tmp/work-b")
 	grp := f.HaveGroup("team")
-	f.HaveMember("team", aConv, "alpha")
-	f.HaveMember("team", bConv, "beta")
+	f.HaveMember("team", aConv)
+	f.HaveMember("team", bConv)
 	// aConv owns the team, so as an agent it can clone both members.
 	require.NoError(t, db.AddAgentGroupOwner(grp.ID, aConv, "test"), "AddAgentGroupOwner")
 
-	cA := f.AsAgent(aConv).CloneFresh(aConv, "")
+	cA := f.AsAgent(aConv).CloneFresh(aConv)
 	require.NotEmpty(t, cA.NewConv, "clone of A failed: %s", cA.Raw)
-	cB := f.AsAgent(aConv).CloneFresh(bConv, "")
+	cB := f.AsAgent(aConv).CloneFresh(bConv)
 	require.NotEmpty(t, cB.NewConv, "clone of B failed despite being a different source: %s", cB.Raw)
 }
 
@@ -159,12 +159,12 @@ func TestClone_RateLimitExemptsHuman(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, "spwn-old-001", "tclaude-spwn-old-001", "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "")
+	f.HaveMember("alpha", oldConv)
 
 	// Two human clones back-to-back — both land despite the 1h cooldown.
-	c1 := f.AsHuman().CloneFresh(oldConv, "")
+	c1 := f.AsHuman().CloneFresh(oldConv)
 	require.NotEmpty(t, c1.NewConv, "first human clone returned empty NewConv: %s", c1.Raw)
-	c2 := f.AsHuman().CloneFresh(oldConv, "")
+	c2 := f.AsHuman().CloneFresh(oldConv)
 	require.NotEmpty(t, c2.NewConv, "second human clone was rate-limited; humans must be exempt: %s", c2.Raw)
 	assert.NotEqual(t, c1.NewConv, c2.NewConv, "expected distinct new convs from two clones")
 

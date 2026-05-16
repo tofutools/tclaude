@@ -70,7 +70,7 @@ func TestRequireCrossAgentPermission_GroupOwnerOfTargetAllows(t *testing.T) {
 	gID, err := db.CreateAgentGroup("team", "")
 	require.NoError(t, err, "create group")
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker", Alias: "w1",
+		GroupID: gID, ConvID: "worker",
 	}), "add member")
 	require.NoError(t, db.AddAgentGroupOwner(gID, "manager", "<test>"), "add owner")
 	w := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestHandleAgentByConv_KnownVerbsRoute(t *testing.T) {
 	setupTestDB(t)
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w",
+		GroupID: gID, ConvID: "worker-conv-id-12345678",
 	})
 	// Grant manager the slug for both verbs so we get past auth.
 	require.NoError(t, db.GrantAgentPermission("manager", PermAgentReincarnate, "<test>"), "grant")
@@ -163,7 +163,7 @@ func TestHandleAgentByConv_UnknownVerb(t *testing.T) {
 	setupTestDB(t)
 	// Seed a conv so the selector resolves.
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker-conv-id-12345678"})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/agent/w/teleport", nil)
@@ -175,8 +175,8 @@ func TestHandlePeers_HumanSeesAllGroups(t *testing.T) {
 	setupTestDB(t)
 	g1, _ := db.CreateAgentGroup("alpha", "")
 	g2, _ := db.CreateAgentGroup("beta", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "agent-1", Alias: "a1"})
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "agent-2", Alias: "a2"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "agent-1"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "agent-2"})
 
 	// Human caller: PID set, but no claude ancestor and no conv-id.
 	w := httptest.NewRecorder()

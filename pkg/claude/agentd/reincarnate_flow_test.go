@@ -11,7 +11,7 @@ import (
 // again.
 //
 // Setup: a worker is running under the title "worker-r-3" with a
-// live tmux pane. It belongs to group "alpha" with alias "worker".
+// live tmux pane. It belongs to group "alpha".
 // (Reincarnation replaces a CC instance with a fresh successor that
 // inherits the same identity but starts with a clean conversation.)
 //
@@ -24,8 +24,8 @@ import (
 //     strictly greater than the parent's.
 //   - The new pane is renamed to "worker-r-4".
 //   - The old pane receives `/exit`.
-//   - Group membership moves from old to new under the same alias;
-//     the old conv is no longer a member.
+//   - Group membership moves from old to new; the old conv is no
+//     longer a member.
 func TestReincarnate_OfRN_ProducesRNplus1(t *testing.T) {
 	f := newFlow(t)
 
@@ -36,7 +36,7 @@ func TestReincarnate_OfRN_ProducesRNplus1(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker-r-3")
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
@@ -48,11 +48,11 @@ func TestReincarnate_OfRN_ProducesRNplus1(t *testing.T) {
 
 	// Surface-level invariants the human would see post-reincarnate
 	// in `tclaude agent groups members alpha`:
-	//   - the new conv shows up under the worker alias with the
-	//     bumped -r-4 title (catches both the daemon's title-bump
-	//     math AND the rename actually landing as a renderable title);
+	//   - the new conv shows up with the bumped -r-4 title (catches
+	//     both the daemon's title-bump math AND the rename actually
+	//     landing as a renderable title);
 	//   - the old conv is gone (catches the membership migration
 	//     that reincarnate has to do atomically).
-	f.AssertGroupMember(g.Name, r.NewConv, "worker", "worker-r-4", 5*time.Second)
+	f.AssertGroupMember(g.Name, r.NewConv, "worker-r-4", 5*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
 }

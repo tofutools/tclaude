@@ -40,7 +40,7 @@ type cloneGroupResp struct {
 	Members      []struct {
 		SrcConv string `json:"src_conv"`
 		NewConv string `json:"new_conv,omitempty"`
-		Alias   string `json:"alias,omitempty"`
+		Title   string `json:"title,omitempty"`
 		Label   string `json:"label,omitempty"`
 		Error   string `json:"error,omitempty"`
 	} `json:"members"`
@@ -48,7 +48,8 @@ type cloneGroupResp struct {
 
 // Scenario: clone a 2-member group with no explicit name. Default name
 // should be "<src>-c-1"; the source group is left untouched; both
-// members spawn fresh conv-ids in the new group with -c-N aliases.
+// members spawn fresh conv-ids in the new group, each renamed to a
+// `<src-member-title>-c-N` title.
 func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	f := newFlow(t)
 
@@ -59,8 +60,8 @@ func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
 	f.HaveAliveSession(bConv, "spwn-b", "tclaude-spwn-b", "/tmp/work")
 	src := f.HaveGroup("team")
-	f.HaveMember("team", aConv, "alice")
-	f.HaveMember("team", bConv, "bob")
+	f.HaveMember("team", aConv)
+	f.HaveMember("team", bConv)
 
 	resp := groupCloneRequest(t, f, "team", nil)
 	assert.Equal(t, "team-c-1", resp.Group, "default name")
@@ -69,6 +70,10 @@ func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	for _, m := range resp.Members {
 		assert.Empty(t, m.Error, "member %s reported error: %s", m.SrcConv, m.Error)
 		assert.NotEmpty(t, m.NewConv, "member %s missing new_conv", m.SrcConv)
+		// Each clone is renamed to `<src-title>-c-<N>` — the title
+		// carries the agent's single name now that membership rows
+		// have none.
+		assert.Contains(t, m.Title, "-c-", "clone %s should get a -c-<N> title; got %q", m.SrcConv, m.Title)
 	}
 
 	// Source group untouched: same id, same 2 members.
@@ -84,9 +89,6 @@ func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	require.NotNil(t, newGroup, "team-c-1 should exist")
 	newMembers, _ := db.ListAgentGroupMembers(newGroup.ID)
 	assert.Len(t, newMembers, 2, "new group member count")
-	for _, m := range newMembers {
-		assert.NotEmpty(t, m.Alias, "new member should have a -c-<N> alias; got %+v", m)
-	}
 }
 
 // Scenario: clone with an explicit name that doesn't collide.
@@ -97,7 +99,7 @@ func TestGroupsClone_ExplicitName(t *testing.T) {
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
 	f.HaveGroup("team")
-	f.HaveMember("team", aConv, "alice")
+	f.HaveMember("team", aConv)
 
 	resp := groupCloneRequest(t, f, "team", map[string]any{"new_name": "team-experiment"})
 	assert.Equal(t, "team-experiment", resp.Group, "explicit name")
@@ -116,7 +118,7 @@ func TestGroupsClone_NameCollisionIsConflict(t *testing.T) {
 	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
 	f.HaveGroup("team")
 	f.HaveGroup("team-experiment")
-	f.HaveMember("team", aConv, "alice")
+	f.HaveMember("team", aConv)
 
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
 		"/v1/groups/team/clone",
@@ -137,7 +139,7 @@ func TestGroupsClone_OwnersCopied(t *testing.T) {
 	f.HaveConvWithTitle(memberConv, "worker")
 	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", "/tmp/work")
 	src := f.HaveGroup("team")
-	f.HaveMember("team", memberConv, "worker")
+	f.HaveMember("team", memberConv)
 	require.NoError(t, db.AddAgentGroupOwner(src.ID, ownerConv, "test"), "AddAgentGroupOwner")
 
 	resp := groupCloneRequest(t, f, "team", nil)
@@ -152,7 +154,7 @@ func TestGroupsClone_OwnersCopied(t *testing.T) {
 
 // Scenario: clone-of-clone strips the existing -c-<N> suffix when
 // computing the next default name. team-c-1 cloned should produce
-// team-c-2, NOT team-c-1-c-1. Mirrors uniqueCloneAlias for symmetry.
+// team-c-2, NOT team-c-1-c-1. Mirrors uniqueCloneTitle for symmetry.
 func TestGroupsClone_OfClone_StripsSuffix(t *testing.T) {
 	f := newFlow(t)
 
@@ -160,7 +162,7 @@ func TestGroupsClone_OfClone_StripsSuffix(t *testing.T) {
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
 	f.HaveGroup("team-c-1") // pretend this is already a clone
-	f.HaveMember("team-c-1", aConv, "alice")
+	f.HaveMember("team-c-1", aConv)
 
 	resp := groupCloneRequest(t, f, "team-c-1", nil)
 	// The base is "team" (after stripping -c-1); the next free N is
@@ -179,7 +181,7 @@ func TestGroupsClone_ArchivedSourceRejected(t *testing.T) {
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
 	f.HaveGroup("team")
-	f.HaveMember("team", aConv, "alice")
+	f.HaveMember("team", aConv)
 	require.NoError(t, db.ArchiveAgentGroup("team"), "archive")
 
 	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
@@ -203,8 +205,8 @@ func TestGroupsClone_OfflineMemberSkipped(t *testing.T) {
 	f.HaveAliveSession(liveConv, "spwn-liv", "tclaude-spwn-liv", "/tmp/work")
 	// deadConv intentionally has NO live session.
 	f.HaveGroup("team")
-	f.HaveMember("team", liveConv, "alice")
-	f.HaveMember("team", deadConv, "ghost")
+	f.HaveMember("team", liveConv)
+	f.HaveMember("team", deadConv)
 
 	resp := groupCloneRequest(t, f, "team", nil)
 	require.Len(t, resp.Members, 2, "members reported")

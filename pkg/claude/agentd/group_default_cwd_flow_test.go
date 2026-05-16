@@ -19,7 +19,7 @@ import (
 // substitutes it server-side when the spawn request leaves cwd
 // blank — so the default reaches the CLI and API too, not just the
 // dashboard's client-side prefill. The Spawn DSL helper sends only
-// `{alias}` (no cwd), which is exactly the blank-cwd path.
+// `{name}` (no cwd), which is exactly the blank-cwd path.
 func TestGroupDefaultCwd_PrefillsSpawn(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -70,8 +70,8 @@ func TestGroupDefaultCwd_ExplicitCwdOverrides(t *testing.T) {
 	// The explicit cwd is real — resolveSpawnCwd validates it exists.
 	explicitDir := t.TempDir()
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias": "worker",
-		"cwd":   explicitDir,
+		"name": "worker",
+		"cwd":  explicitDir,
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	require.NotEmpty(t, spawn.Label, "spawn response missing label")

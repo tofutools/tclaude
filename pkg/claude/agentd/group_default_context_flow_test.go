@@ -42,7 +42,7 @@ func soleInboxMessage(t *testing.T, convID string) *db.AgentMessage {
 //
 // This is the feature's core promise: PATCH /v1/groups/{name} stores
 // default_context, and the spawn folds it into the agent's inbox
-// briefing. The Spawn DSL helper sends only {alias} (the flag
+// briefing. The Spawn DSL helper sends only {name} (the flag
 // omitted), which exercises the opt-in default — every spawn path
 // inherits the group context unless it explicitly opts out.
 func TestGroupDefaultContext_InjectedOnSpawn(t *testing.T) {
@@ -89,7 +89,7 @@ func TestGroupDefaultContext_OptOutSkipsInjection(t *testing.T) {
 	}
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":                 "worker",
+		"name":                  "worker",
 		"include_group_context": false,
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
@@ -206,7 +206,7 @@ func TestGroupDefaultContext_MergedWithInitialMessage(t *testing.T) {
 	}
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": brief,
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)

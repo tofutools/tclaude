@@ -43,7 +43,7 @@ func TestDaemonSpawn_NotBlockedByNestedClaudeGuard(t *testing.T) {
 	// with `groups.spawn` granted — the realistic "a lead agent spawns
 	// a worker" path, and the one most at risk of being broken.
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("alpha", lead, "lead")
+	f.HaveMember("alpha", lead)
 	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"),
 		"grant groups.spawn to the requesting agent")
 
@@ -53,12 +53,13 @@ func TestDaemonSpawn_NotBlockedByNestedClaudeGuard(t *testing.T) {
 	require.NotEmpty(t, resp.ConvID, "daemon spawn must succeed with the guard armed")
 
 	// Real surface: the new teammate shows up in
-	// `tclaude agent groups members alpha`.
+	// `tclaude agent groups members alpha`. The /rename that sets its
+	// "worker" title is async; here we only pin that the membership
+	// row landed — spawn_flow_test.go covers the title surfacing.
 	var found bool
 	for _, m := range f.ListGroupMembers("alpha") {
 		if m.ConvID == resp.ConvID {
 			found = true
-			assert.Equal(t, "worker", m.Alias, "spawned member alias")
 		}
 	}
 	assert.True(t, found, "spawned worker must appear in group alpha")

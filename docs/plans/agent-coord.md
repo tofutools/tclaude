@@ -92,7 +92,7 @@ tclaude agent groups ls
 tclaude agent groups create <group-name> [--descr X]
 tclaude agent groups rm <group-name>
 tclaude agent groups members <group-name>           # list members
-tclaude agent groups add <group-name> <conv> [--alias X] [--role Y] [--descr Z]
+tclaude agent groups add <group-name> <conv> [--role Y] [--descr Z]
 tclaude agent groups remove <group-name> <conv>
 ```
 
@@ -118,7 +118,7 @@ Inside a conversation, the only commands intended for routine use are:
 - `tclaude agent groups members <group>` — for groups I'm in
 - `tclaude agent message <target> …`
 
-`tclaude agent ls` shows alias, role, description, conv short ID, group(s).
+`tclaude agent ls` shows name, role, description, conv short ID, group(s).
 
 ## Data model
 
@@ -135,7 +135,6 @@ CREATE TABLE agent_groups (
 CREATE TABLE agent_group_members (
     group_id    INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
     conv_id     TEXT NOT NULL,
-    alias       TEXT NOT NULL DEFAULT '',
     role        TEXT NOT NULL DEFAULT '',
     descr       TEXT NOT NULL DEFAULT '',
     joined_at   TEXT NOT NULL,
@@ -182,7 +181,7 @@ Reuses the `clcommon.TmuxCommand("send-keys", ...)` helper already used by
 ```go
 nudge := fmt.Sprintf(
     "[system: new message from %s in group %s. Read it with: cat %s",
-    fromAlias, groupName, inboxPath,
+    fromTitle, groupName, inboxPath,
 )
 clcommon.TmuxCommand("send-keys", "-t", target+":0.0", nudge, "Enter").Run()
 ```

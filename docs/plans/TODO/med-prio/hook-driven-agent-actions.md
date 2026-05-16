@@ -35,7 +35,7 @@ when    = "hook.SubagentStop"            # event name (see below)
 match   = { conv = "*", group = "tclaude-devs" }  # filter
 action  = "agent.message"
 target  = "tclaude-devs-product-owner"
-body    = "Worker {{conv.alias}} just finished a turn. Last commit: {{shell:git -C {{conv.cwd}} log -1 --oneline}}"
+body    = "Worker {{conv.title}} just finished a turn. Last commit: {{shell:git -C {{conv.cwd}} log -1 --oneline}}"
 
 [[rule]]
 when    = "hook.context_pct.crossed"
@@ -49,7 +49,7 @@ when    = "hook.error"
 match   = { tool = "Bash", exit_code = "!=0" }
 action  = "agent.message"
 target  = "group:tclaude-devs"           # broadcast
-body    = "Bash failed in {{conv.alias}} ({{conv.cwd}}): {{event.error}}"
+body    = "Bash failed in {{conv.title}} ({{conv.cwd}}): {{event.error}}"
 ```
 
 Each rule is a `(when, match, action, target, body)` quintuple.
@@ -105,7 +105,7 @@ Without baking any of those into the daemon source.
 
 Rule body uses a small `{{...}}` syntax:
 
-- `{{conv.alias}}`, `{{conv.cwd}}`, `{{conv.role}}` — caller's
+- `{{conv.title}}`, `{{conv.cwd}}`, `{{conv.role}}` — caller's
   resolved fields.
 - `{{event.<key>}}` — event-specific fields (e.g. `event.threshold`,
   `event.error`).

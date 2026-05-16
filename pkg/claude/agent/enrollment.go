@@ -30,7 +30,7 @@ import (
 // Humans always pass. Same shape as the other cross-agent verbs.
 
 type promoteParams struct {
-	Selector string `pos:"true" help:"Target conv: alias, full conv-id, or 8+-char prefix"`
+	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 }
 
 func promoteCmd() *cobra.Command {
@@ -87,7 +87,7 @@ func runPromote(p *promoteParams, stdout, stderr io.Writer) int {
 }
 
 type retireParams struct {
-	Selector string `pos:"true" help:"Target conv: alias, full conv-id, or 8+-char prefix"`
+	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	Reason   string `long:"reason" short:"r" help:"Why the agent is being retired (recorded in the audit trail)"`
 }
 
@@ -154,7 +154,7 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 }
 
 type reinstateParams struct {
-	Selector string `pos:"true" help:"Target conv: alias, full conv-id, or 8+-char prefix"`
+	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 }
 
 func reinstateCmd() *cobra.Command {

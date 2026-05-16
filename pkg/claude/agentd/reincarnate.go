@@ -383,7 +383,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		newMember := &db.AgentGroupMember{
 			GroupID: m.GroupID,
 			ConvID:  newConv,
-			Alias:   m.Alias,
 			Role:    m.Role,
 			Descr:   m.Descr,
 		}

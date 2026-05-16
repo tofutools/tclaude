@@ -321,12 +321,11 @@ type dashboardGroup struct {
 // /v1/groups/{name}/members:
 //   - true on a member row → that member is also a group owner
 //     (rendered as a badge alongside the role).
-//   - true on a row with Role=="owner" and no alias/descr → a
-//     pure owner who isn't a member (so the list stays comprehensive).
+//   - true on a row with Role=="owner" and no descr → a pure owner
+//     who isn't a member (so the list stays comprehensive).
 type dashboardMember struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	// agentLocationView carries `branch` (current branch) plus the
@@ -537,7 +536,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            m.ConvID,
 				Title:             agent.FreshTitle(m.ConvID),
-				Alias:             m.Alias,
 				Role:              m.Role,
 				Descr:             m.Descr,
 				agentLocationView: loc,
@@ -557,7 +555,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		// Surface owners who aren't members so the list stays
 		// comprehensive. Same shape as the CLI:
-		// role="owner", no alias/descr.
+		// role="owner", no descr.
 		for ownerConv := range ownerSet {
 			if memberSet[ownerConv] {
 				continue

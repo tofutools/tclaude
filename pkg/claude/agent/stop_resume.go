@@ -29,7 +29,7 @@ import (
 // agent.compact / agent.rename / agent.reincarnate.
 
 type stopParams struct {
-	Selector string `pos:"true" help:"Target conv: alias, full conv-id, or 8+-char prefix"`
+	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	Force    bool   `long:"force" short:"f" help:"Use tmux kill-session instead of soft-stop /exit (drops unsubmitted input)"`
 }
 
@@ -96,7 +96,7 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 }
 
 type resumeParams struct {
-	Selector string `pos:"true" help:"Target conv: alias, full conv-id, or 8+-char prefix"`
+	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 }
 
 func resumeCmd() *cobra.Command {
@@ -160,7 +160,7 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 // Wipes every row that references the conv-id across the agent /
 // conv / cron / succession / sessions tables, plus the .jsonl file
 // and the ~/.claude/session-env/<conv-id> token. Useful for
-// orphaned aliases left over from spawn-without-startup-write
+// orphaned agents left over from spawn-without-startup-write
 // (pre-bc7ec81 behaviour) or any agent the human just doesn't want
 // around any more.
 //
@@ -175,7 +175,7 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 // `tclaude conv rm` instead.
 
 type deleteParams struct {
-	Selector string `pos:"true" help:"Target conv: alias, full conv-id, or 8+-char prefix"`
+	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	Force    bool   `long:"force" short:"f" help:"Kill the tmux session before deleting (otherwise refuses when target is alive)"`
 	Yes      bool   `long:"yes" short:"y" help:"Skip the confirmation prompt"`
 }
@@ -183,7 +183,7 @@ type deleteParams struct {
 func deleteCmd() *cobra.Command {
 	return boa.CmdT[deleteParams]{
 		Use:   "delete",
-		Short: "Permanently delete an agent (cleanup orphans / unwanted aliases)",
+		Short: "Permanently delete an agent (cleanup orphans / unwanted agents)",
 		Long: "Wipes every row that references the conv-id across the agent / " +
 			"conv / cron / succession / sessions tables, plus the .jsonl file " +
 			"and the ~/.claude/session-env/<conv-id> token. " +
@@ -216,7 +216,7 @@ func runDelete(p *deleteParams, stdout, stderr io.Writer, stdin io.Reader) int {
 	}
 
 	// 1. Resolve the selector up front so the prompt shows the actual
-	//    conv(s) about to be deleted. Ambiguous selectors (e.g. an alias
+	//    conv(s) about to be deleted. Ambiguous selectors (e.g. a title
 	//    shared by an orphan and a fresh clone) become a batch delete —
 	//    we list every match before asking for confirmation.
 	targets, err := resolveDeleteTargets(selector)
@@ -291,15 +291,12 @@ func resolveDeleteTargets(selector string) ([]*peerEntry, error) {
 }
 
 // describeTarget returns a short human-readable summary used in the
-// confirmation prompt: "<alias> in groups [a, b]" / "<title>" / "(unknown)".
+// confirmation prompt: "<title> in groups [a, b]" / "(unknown)".
 func describeTarget(t *peerEntry) string {
 	parts := []string{}
-	switch {
-	case t.Alias != "":
-		parts = append(parts, t.Alias)
-	case t.Title != "":
+	if t.Title != "" {
 		parts = append(parts, t.Title)
-	default:
+	} else {
 		parts = append(parts, "(unknown)")
 	}
 	if len(t.Groups) > 0 {

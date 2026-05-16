@@ -22,8 +22,8 @@ func TestGroupsRename_BasicMembersSurvive(t *testing.T) {
 	g := f.HaveGroup("alpha")
 	const memberA = "aaa-aaaa-bbbb-cccc-1111"
 	const memberB = "bbb-aaaa-bbbb-cccc-2222"
-	f.HaveMember("alpha", memberA, "alice")
-	f.HaveMember("alpha", memberB, "bob")
+	f.HaveMember("alpha", memberA)
+	f.HaveMember("alpha", memberB)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, memberA, "test"), "AddAgentGroupOwner")
 
 	rec := postRename(t, f, "alpha", "alpha-renamed")

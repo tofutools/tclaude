@@ -37,7 +37,7 @@ tclaude agent whoami      # who am I (conv-id and display name)?
 tclaude agent ls          # peers reachable via shared groups
 ```
 
-`ls` shows alias, role, description, conv short ID, and which groups you
+`ls` shows name, role, description, conv short ID, and which groups you
 share with each peer.
 
 ## Reading a message you were nudged about
@@ -167,7 +167,7 @@ when you need to compact or reincarnate yourself, not this one.
     ```bash
     tclaude agent permissions slugs                       # what slugs exist
     tclaude agent permissions ls                          # everything
-    tclaude agent permissions ls <conv-or-alias>          # effective for one agent
+    tclaude agent permissions ls <conv-or-title>          # effective for one agent
     tclaude agent permissions grant default <slug>        # add to defaults
     tclaude agent permissions grant <conv> <slug>         # add per-agent
     tclaude agent permissions revoke <conv> <slug>
@@ -196,7 +196,7 @@ when you need to compact or reincarnate yourself, not this one.
 - `not in a shared group` → ask the human to add you and the peer to
   the same group.
 - `selector matches multiple conversations` → use a conv-id prefix
-  (the short 8-character form) instead of the alias.
+  (the short 8-character form) instead of the title.
 
 ## Installing the agent skills
 

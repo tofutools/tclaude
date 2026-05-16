@@ -119,7 +119,7 @@ func redirectResolvedToLatest(r *resolved) *resolved {
 }
 
 // tryResolve runs the cached lookup chain (UUID → prefix → title →
-// group-member alias/prefix) without touching disk beyond the SQLite
+// group-member conv-id/prefix) without touching disk beyond the SQLite
 // cache.
 func tryResolve(selector string) (*resolved, []*resolved, error) {
 	// 0) global head-alias lookup. A handle (e.g. "po", "ceo")
@@ -160,15 +160,14 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 		return nil, matches, errAmbiguous
 	}
 
-	// 4) fallback to agent_group_members so per-group aliases (e.g.
-	//    `tclaude agent message reviewer "..."`) work, and so freshly-
-	//    spawned convs are findable before their .jsonl gets scanned
-	//    into conv_index.
+	// 4) fallback to agent_group_members so a freshly-spawned conv is
+	//    findable by conv-id / prefix before its .jsonl gets scanned
+	//    into conv_index (spawn writes the membership row immediately,
+	//    but the title only lands once the /rename injection is
+	//    processed and the file is scanned).
 	//
 	//    Distinct by conv_id: an agent can be a member of multiple
-	//    groups under different aliases, but it's still one conv. If
-	//    the same alias points at different convs across groups,
-	//    that's genuinely ambiguous and we surface it.
+	//    groups, but it's still one conv.
 	if mem, err := db.FindAgentMembersBySelector(selector); err == nil && len(mem) > 0 {
 		seen := map[string]bool{}
 		var unique []*resolved
@@ -336,7 +335,7 @@ func FreshTitle(convID string) string {
 // promotion list renders through it so a plain conv's title matches the
 // CLI instead of leaking a raw, uncleaned first prompt (issue #91).
 // FreshTitle (the bare agent name) stays in use for agents — identity,
-// group rosters, alias derivation, reincarnate/clone name prefixes.
+// group rosters, reincarnate/clone name prefixes.
 //
 // UnknownTitle is returned only when the conv can't be resolved at all
 // (no conv_index row, no .jsonl). A resolved conv with no title
@@ -370,10 +369,14 @@ func ShortID(convID string) string {
 	return short(convID)
 }
 
-// AliasFor returns the recorded alias for (groupID, convID), or the conv's
-// display title, or "".
-func AliasFor(groupID int64, convID string) string {
-	return aliasFor(groupID, convID)
+// TitleFor returns convID's display title (custom title, else summary,
+// else first prompt) from the conv_index cache, or "" when the conv
+// isn't indexed yet. Cheap — no .jsonl rescan — so it suits decorating
+// message nudges and inbox headers with a friendly name. For the
+// refreshed, rescan-backed lookup used by listing surfaces, use
+// FreshTitle instead.
+func TitleFor(convID string) string {
+	return titleFor(convID)
 }
 
 // displayTitle returns the title we treat as the agent's name: custom title
@@ -650,7 +653,6 @@ func lsCmd() *cobra.Command {
 type peerEntry struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	// Branch is the git branch / worktree the agent is working on, as
@@ -708,7 +710,6 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 8},
-		table.Column{Header: "ALIAS", MinWidth: 6, Weight: 0.5, Truncate: true},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
@@ -717,14 +718,10 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, pe := range peers {
-		// ALIAS is the per-group handle (may be empty for ungrouped
-		// online agents); NAME is the conv's display title. Kept as
-		// separate columns so a renamed agent and its group alias are
-		// both visible at a glance.
+		// NAME is the conv's display title — an agent's single name.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(pe.Online),
 			short(pe.ConvID),
-			pe.Alias,
 			pe.Title,
 			pe.Role,
 			strings.Join(pe.Groups, ","),

@@ -21,7 +21,7 @@ func TestHandleAgentStop_SkipsOfflineTarget(t *testing.T) {
 	setupTestDB(t)
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w",
+		GroupID: gID, ConvID: "worker-conv-id-12345678",
 	})
 	require.NoError(t, db.GrantAgentPermission("manager", PermAgentStop, "<test>"), "grant")
 
@@ -46,7 +46,7 @@ func TestHandleAgentStop_NoSlugDenies(t *testing.T) {
 	setupTestDB(t)
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w",
+		GroupID: gID, ConvID: "worker-conv-id-12345678",
 	})
 
 	w := httptest.NewRecorder()
@@ -68,7 +68,7 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	setupTestDB(t)
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker-conv-id-12345678", Alias: "w",
+		GroupID: gID, ConvID: "worker-conv-id-12345678",
 	})
 	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"), "grant")
 

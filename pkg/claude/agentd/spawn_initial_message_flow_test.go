@@ -35,7 +35,7 @@ func TestSpawn_InitialMessageDeliveredToInbox(t *testing.T) {
 	const initialMessage = "Review the auth module for timing-safe comparison bugs and write a short report"
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"descr":           shortDescr,
 		"initial_message": initialMessage,
 	})
@@ -103,7 +103,7 @@ func TestSpawn_InitialMessageMultiLinePreserved(t *testing.T) {
 	const initialMessage = "Task: refactor the auth module.\n\nSteps:\n- audit timing-safe comparisons\n- write a short report\n\nReport back when done."
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": initialMessage,
 	})
 	if spawn.Code != http.StatusOK {
@@ -131,7 +131,7 @@ func TestSpawn_InitialMessageRejectsControlChars(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": "line one\x00line two",
 	})
 	if spawn.Code != http.StatusBadRequest {
@@ -157,7 +157,7 @@ func TestSpawn_InitialMessageLargeBriefAccepted(t *testing.T) {
 	initialMessage := strings.Repeat("a", 8000)
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": initialMessage,
 	})
 	if spawn.Code != http.StatusOK {
@@ -182,7 +182,7 @@ func TestSpawn_InitialMessageOverCapRejected(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias":           "worker",
+		"name":            "worker",
 		"initial_message": strings.Repeat("a", 17000),
 	})
 	if spawn.Code != http.StatusBadRequest {

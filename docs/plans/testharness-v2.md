@@ -241,9 +241,9 @@ it so the production read path (FreshConvRowResolved → ScanAndUpsertFile
 
 | Test | New surface assertion |
 |------|------------------------|
-| `TestSpawn_RenamesAndResumes` | `GET /v1/groups/alpha/members` lists the new conv with alias=worker AND title=worker (after the daemon's post-spawn /rename settles). |
-| `TestReincarnate_OfRN_ProducesRNplus1` | `GET /v1/groups/alpha/members` shows the new conv with alias=worker, title=worker-r-4; the old conv is no longer a member. |
-| `TestClone_EmptyAlias_DerivesFromOriginalTitle` | `GET /v1/groups/alpha/members` shows BOTH the original (unchanged title) AND the clone with the computed alias=worker-c-1 + matching title. |
+| `TestSpawn_RenamesAndResumes` | `GET /v1/groups/alpha/members` lists the new conv with title=worker (after the daemon's post-spawn /rename settles). |
+| `TestReincarnate_OfRN_ProducesRNplus1` | `GET /v1/groups/alpha/members` shows the new conv with title=worker-r-4; the old conv is no longer a member. |
+| `TestClone_DerivesTitleFromOriginal` | `GET /v1/groups/alpha/members` shows BOTH the original (unchanged title) AND the clone with the computed title worker-c-1. |
 | `TestDelete_PurgesAllReferencingRows` | `conv.ListSessions(projectDir)` (the same scan `tclaude conv ls` runs) does not re-discover the deleted conv — guards the orphan-jsonl bug class. |
 
 ## Phasing

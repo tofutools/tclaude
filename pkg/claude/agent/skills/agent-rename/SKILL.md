@@ -48,7 +48,7 @@ tclaude agent permissions grant default self.rename
 in SQLite (`agent_permissions`), not config.json. Run:
 
 ```bash
-tclaude agent permissions grant <conv-id-or-alias> self.rename
+tclaude agent permissions grant <conv-id-or-title> self.rename
 ```
 
 (The CLI resolves the selector to a full conv-id and persists the

@@ -33,7 +33,7 @@ func TestDashboardDnDMove_AddThenRemoveLeavesConvInTargetOnly(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-drag", "tmux-drag", "/tmp/drag")
 	f.HaveGroup("alpha")
 	f.HaveGroup("beta")
-	f.HaveMember("alpha", conv, "movee")
+	f.HaveMember("alpha", conv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
@@ -91,7 +91,7 @@ func TestDashboardDnDMove_PartialFailureLeavesConvInBoth(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-part", "tmux-part", "/tmp/part")
 	f.HaveGroup("alpha")
 	f.HaveGroup("beta")
-	f.HaveMember("alpha", conv, "partmove")
+	f.HaveMember("alpha", conv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 

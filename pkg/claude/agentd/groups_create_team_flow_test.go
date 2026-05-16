@@ -14,8 +14,8 @@ import (
 // Scenario: a human runs
 //
 //   tclaude agent groups create reviewer-team \
-//     --member alias=lead,role=tech-lead,descr=Owns the diff \
-//     --member alias=tester,role=test-runner
+//     --member name=lead,role=tech-lead,descr=Owns the diff \
+//     --member name=tester,role=test-runner
 //
 // from a project tree. The CLI must:
 //  1. create the group via POST /v1/groups,
@@ -25,8 +25,9 @@ import (
 //     where the human is, not where the daemon was launched.
 //
 // Real surface assertion: agent_group_members has one row per member
-// (with the right alias / role / descr) and each member has a live
-// SessionRow whose Cwd matches the caller's cwd.
+// (with the right role / descr) and each member has a live SessionRow
+// whose Cwd matches the caller's cwd. The `name` becomes the agent's
+// conversation title (via /rename), not a membership-row field.
 //
 // Pins the bug class for a future refactor that loses caller-cwd
 // propagation through the bootstrap path (the per-spawn cwd default
@@ -42,8 +43,8 @@ func TestGroupsCreateTeam_BootstrapsMembers(t *testing.T) {
 	rc := agent.RunGroupsCreate(&agent.GroupsCreateParams{
 		Name: "reviewer-team",
 		Members: []string{
-			"alias=lead,role=tech-lead,descr=Owns the diff",
-			"alias=tester,role=test-runner",
+			"name=lead,role=tech-lead,descr=Owns the diff",
+			"name=tester,role=test-runner",
 		},
 	}, stdout, new(bytes.Buffer))
 	require.Equal(t, 0, rc, "RunGroupsCreate stdout=%s", stdout.String())
@@ -54,30 +55,30 @@ func TestGroupsCreateTeam_BootstrapsMembers(t *testing.T) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	require.NoError(t, err, "ListAgentGroupMembers")
 	require.Len(t, members, 2, "expected 2 members: %+v", members)
-	byAlias := map[string]*db.AgentGroupMember{}
+	// Membership rows carry no name — identify members by their
+	// distinct role tags.
+	byRole := map[string]*db.AgentGroupMember{}
 	for _, m := range members {
-		byAlias[m.Alias] = m
+		byRole[m.Role] = m
 	}
-	lead := byAlias["lead"]
+	lead := byRole["tech-lead"]
 	require.NotNil(t, lead, "lead member missing")
-	assert.Equal(t, "tech-lead", lead.Role, "lead.Role")
 	assert.Equal(t, "Owns the diff", lead.Descr, "lead.Descr")
 
-	tester := byAlias["tester"]
+	tester := byRole["test-runner"]
 	require.NotNil(t, tester, "tester member missing")
-	assert.Equal(t, "test-runner", tester.Role, "tester.Role")
 
 	// Each member should have a live SessionRow whose cwd is the
 	// caller's cwd (since neither --member spec pinned `cwd=`).
 	for _, m := range members {
 		rows, err := db.FindSessionsByConvID(m.ConvID)
 		if !assert.NoError(t, err) || !assert.NotEmpty(t, rows,
-			"member %q (conv %s) has no session row", m.Alias, m.ConvID) {
+			"member %q (conv %s) has no session row", m.Role, m.ConvID) {
 			continue
 		}
 		got := resolveSym(t, rows[0].Cwd)
 		assert.Equal(t, callerCwd, got,
-			"member %q SessionRow.Cwd (caller's cwd)", m.Alias)
+			"member %q SessionRow.Cwd (caller's cwd)", m.Role)
 	}
 }
 
@@ -95,7 +96,7 @@ func TestGroupsCreateTeam_PerMemberCwdOverride(t *testing.T) {
 	rc := agent.RunGroupsCreate(&agent.GroupsCreateParams{
 		Name: "team",
 		Members: []string{
-			"alias=worker,cwd=" + memberCwd,
+			"name=worker,cwd=" + memberCwd,
 		},
 	}, stdout, new(bytes.Buffer))
 	require.Equal(t, 0, rc, "RunGroupsCreate stdout=%s", stdout.String())
@@ -121,8 +122,8 @@ func TestGroupsCreateTeam_BadSpecAbortsBeforeCreate(t *testing.T) {
 	rc := agent.RunGroupsCreate(&agent.GroupsCreateParams{
 		Name: "doomed",
 		Members: []string{
-			"alias=ok",
-			"role=tester", // missing alias — should fail
+			"name=ok",
+			"role=tester", // missing name — should fail
 		},
 	}, new(bytes.Buffer), stderr)
 	require.NotEqual(t, 0, rc, "expected non-zero rc on bad spec; stderr=%s", stderr.String())

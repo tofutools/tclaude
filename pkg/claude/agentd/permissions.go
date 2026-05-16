@@ -96,7 +96,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermMemberRedesignate,
-		Description: "Edit alias/role/descr on existing members (tclaude agent groups update-member)",
+		Description: "Edit role/descr on existing members (tclaude agent groups update-member)",
 	},
 	{
 		Slug:        PermPermissionsGrant,

@@ -19,7 +19,7 @@ import (
 // addressee in agent_messages.original_to_conv.
 //
 // Pins the gap the DONE/conv-succession-chain.md doc called out: the
-// reincarnate orchestration migrates membership eagerly so alias
+// reincarnate orchestration migrates membership eagerly so title
 // lookups already resolve to the live successor, but a literal
 // conv-id reference still needs the chain-walk on send. Without this
 // test the regression mode is "messages to a stale UUID silently
@@ -33,15 +33,15 @@ func TestMessageRouting_SupersededConv_RoutesToSuccessor(t *testing.T) {
 
 	g := f.HaveGroup("alpha")
 	_ = g
-	f.HaveMember("alpha", aliceConv, "alice")
+	f.HaveMember("alpha", aliceConv)
 	// Bob-r-1 is the live member; Bob-old has been retired and a
 	// succession row points old → new. This is the state the
 	// production reincarnate orchestration leaves behind.
-	f.HaveMember("alpha", bobNewConv, "bob")
+	f.HaveMember("alpha", bobNewConv)
 	require.NoError(t, db.RecordConvSuccession(bobOldConv, bobNewConv, "test"), "RecordConvSuccession")
 
 	// Alice POSTs addressing the OLD conv-id directly (skipping the
-	// alias resolution path that would already point at bob-new).
+	// title resolution path that would already point at bob-new).
 	body := map[string]any{
 		"to":   bobOldConv,
 		"body": "Are you still there?",
@@ -86,8 +86,8 @@ func TestMessageRouting_MultiHopSuccession_FollowsToHead(t *testing.T) {
 	const bobV2 = "bobv-2222-bbbb-cccc-4444"
 
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", aliceConv, "alice")
-	f.HaveMember("alpha", bobV2, "bob") // only the head is a live member
+	f.HaveMember("alpha", aliceConv)
+	f.HaveMember("alpha", bobV2) // only the head is a live member
 	require.NoError(t, db.RecordConvSuccession(bobV0, bobV1, "test"), "RecordConvSuccession v0→v1")
 	require.NoError(t, db.RecordConvSuccession(bobV1, bobV2, "test"), "RecordConvSuccession v1→v2")
 
@@ -121,8 +121,8 @@ func TestReply_FromSupersededSender_RoutesToSuccessor(t *testing.T) {
 	const bobNewConv = "bobn-aaaa-bbbb-cccc-3333"
 
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", aliceConv, "alice")
-	f.HaveMember("alpha", bobNewConv, "bob")
+	f.HaveMember("alpha", aliceConv)
+	f.HaveMember("alpha", bobNewConv)
 
 	// Pre-existing message: Bob-old → Alice. After it was sent, Bob
 	// reincarnated; the succession row records the move.
@@ -171,7 +171,7 @@ func TestMessageRouting_RedirectsOntoSelf_Rejected(t *testing.T) {
 	const aliceConv = "alic-aaaa-bbbb-cccc-1111"
 	const ghostConv = "ghos-aaaa-bbbb-cccc-9999"
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", aliceConv, "alice")
+	f.HaveMember("alpha", aliceConv)
 	require.NoError(t, db.RecordConvSuccession(ghostConv, aliceConv, "test"), "RecordConvSuccession")
 
 	body := map[string]any{
@@ -196,8 +196,8 @@ func TestMessageRouting_NoSuccession_NoRedirect(t *testing.T) {
 	const aliceConv = "alic-aaaa-bbbb-cccc-1111"
 	const bobConv = "bobl-aaaa-bbbb-cccc-2222"
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", aliceConv, "alice")
-	f.HaveMember("alpha", bobConv, "bob")
+	f.HaveMember("alpha", aliceConv)
+	f.HaveMember("alpha", bobConv)
 
 	body := map[string]any{"to": bobConv, "body": "no chain here"}
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
@@ -233,7 +233,7 @@ func TestReply_ChainResolvesToSelf_Rejected(t *testing.T) {
 	const predConv = "pred-aaaa-bbbb-cccc-2222"
 
 	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", meConv, "me")
+	f.HaveMember("alpha", meConv)
 
 	// Predecessor sent us a handoff message before reincarnating
 	// into us. Mirrors what reincarnate's handoff path produces.
