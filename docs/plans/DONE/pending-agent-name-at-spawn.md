@@ -13,7 +13,7 @@ immediately instead.
 The name a listing surface (dashboard, `agent groups members`, `agent
 ls`) shows for an agent is resolved by `agent.FreshTitle(convID)`:
 
-```
+```text
 FreshTitle → FreshConvRowResolved → RefreshConvIndexEntry
            → conv_index row → displayTitle(row)
            → CustomTitle || Summary || FirstPrompt   (else "(unknown)")
@@ -92,7 +92,7 @@ show the intended name.
 
 Resolution priority is now:
 
-```
+```text
 custom title  >  pending name  >  summary  >  first prompt  >  "(unknown)"
 ```
 
