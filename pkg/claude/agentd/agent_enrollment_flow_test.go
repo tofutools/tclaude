@@ -355,3 +355,47 @@ func TestEnrollment_AddToGroupPromotes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, db.EnrollmentActive, state, "the conv must be an active enrolled agent")
 }
+
+// Scenario: the dashboard's "drag a retired agent onto a group" gesture
+// — reinstate, then join. runDndReinstate(payload, targetGroup) fires
+// POST /api/agents/{conv}/reinstate followed by POST
+// /api/groups/{g}/members. Retire stripped the agent's old groups and
+// reinstate does not restore them, so the explicit join is what lands
+// it in the drop-target group. The agent must come back active AND a
+// clean member — not a retired ghost still excluded from the roster.
+func TestEnrollment_ReinstateThenJoinGroup(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "rejn-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "comeback-agent")
+	f.HaveRetiredAgent(conv)
+	f.HaveGroup("beta")
+
+	pre := fetchDashSnapshot(t, mux)
+	require.True(t, retiredInSnap(pre.Retired, conv), "pre: agent in retired[]")
+
+	// Step 1: reinstate (clears the retired flag).
+	res := postAgentVerb(t, mux, conv, "reinstate")
+	require.Equal(t, http.StatusOK, res.Code, "reinstate: %s", res.Body)
+
+	// Step 2: join the drop-target group.
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/groups/beta/members",
+		map[string]any{"conv": conv})
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "join group: %s", rec.Body.String())
+
+	post := fetchDashSnapshot(t, mux)
+	assert.True(t, agentInSnap(post.Agents, conv),
+		"reinstated agent must be back on the roster")
+	assert.False(t, retiredInSnap(post.Retired, conv),
+		"reinstated agent must leave retired[]")
+	assert.True(t, flowGroupHasMember(f, "beta", conv),
+		"reinstated agent must be a member of the drop-target group")
+
+	state, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, state,
+		"reinstated + joined agent must be active-enrolled, not a retired ghost")
+}

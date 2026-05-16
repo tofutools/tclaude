@@ -741,6 +741,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.">
         <input id="filter-groups-ungrouped" type="checkbox" checked /> show ungrouped
       </label>
+      <label class="filter-toggle" title="Show the virtual &quot;Retired&quot; group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back.">
+        <input id="filter-groups-retired" type="checkbox" checked /> show retired
+      </label>
       <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.">
         <input id="filter-groups-conversations" type="checkbox" /> show conversations
       </label>
@@ -1825,6 +1828,38 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return el ? el.checked : false;
   }
 
+  // The virtual "Retired" group — agents that were demoted back to
+  // plain conversations (retire). Surfaced in the Groups tab so a
+  // retired agent doesn't silently vanish off the tab: it lands here,
+  // mirroring the Agents tab's "Retired" section, and can be
+  // reinstated in place.
+  const RETIRED_LABEL = 'Retired';
+  const RETIRED_VKEY = ' retired-virtual';
+
+  // virtualRetiredGroup builds the synthetic group from the snapshot's
+  // retired[] rows. The `retired` flag is the discriminator renderGroups
+  // keys off to pick the retired-row renderer.
+  function virtualRetiredGroup(retired) {
+    const rows = (retired || []).slice();
+    return {
+      name: RETIRED_LABEL,
+      key: RETIRED_VKEY,
+      virtual: true,
+      retired: true,
+      descr: 'agents demoted back to plain conversations',
+      members: rows,
+      online: rows.filter(r => r.online).length,
+    };
+  }
+
+  // retiredVisible reports the "show retired" checkbox state. Defaults
+  // to true when the checkbox isn't in the DOM yet — a retired agent
+  // must not silently disappear from the Groups tab.
+  function retiredVisible() {
+    const el = $('#filter-groups-retired');
+    return el ? el.checked : true;
+  }
+
   // memberRowHTML renders one draggable member <tr>. `ctx` selects the
   // drag wiring + action set:
   //   - {group: <groupObj>}  — a real group member: the source group
@@ -1909,14 +1944,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // renderVirtualConversationsGroup renders the synthetic
   // "Conversations" group — non-agent conversations. Like the virtual
-  // Ungrouped group it is inert AS A GROUP, but it IS a drag source
-  // AND a drag target:
-  //   - its rows (data-dnd-source-conversation) drag onto a real group
-  //     → promote + join, or onto the Ungrouped header → promote with
-  //     no group;
-  //   - its summary (data-dnd-target-conversations) accepts an agent
-  //     row → retire it, demoting the agent back to a plain
-  //     conversation.
+  // Ungrouped group it is inert AS A GROUP, but it IS a drag source:
+  // its rows (data-dnd-source-conversation) drag onto a real group →
+  // promote + join, or onto the Ungrouped header → promote with no
+  // group. It is NOT a drop target — retiring an agent is done by
+  // dragging it onto the "Retired" group instead.
   function renderVirtualConversationsGroup(g) {
     const members = g.members || [];
     const key = g.key || g.name;
@@ -1941,11 +1973,62 @@ details.group-virtual .group-name { color: #8aa0b8; }
           </table>`;
     return `
       <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
-        <summary data-dnd-target-conversations="1">
+        <summary>
           <strong class="group-name">${esc(g.name)}</strong>
           <span class="group-virtual-badge" title="A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.">virtual</span>
           <span class="muted">— ${members.length} conversation${members.length === 1 ? '' : 's'} that aren't agents</span>
-          <span class="muted group-virtual-hint">drag a row onto a group to promote + add it · drag an agent here to retire it</span>
+          <span class="muted group-virtual-hint">drag a row onto a group to promote + add it</span>
+        </summary>
+        <div class="subtable">
+          ${body}
+        </div>
+      </details>
+    `;
+  }
+
+  // renderVirtualRetiredGroup renders the synthetic "Retired" group —
+  // agents demoted back to plain conversations. Like the virtual
+  // Conversations group it is inert AS A GROUP, but it IS a drag source
+  // AND a drag target:
+  //   - its summary (data-dnd-target-retired) accepts an agent row →
+  //     retire it, demoting the agent back to a plain conversation;
+  //   - its rows (data-dnd-source-retired) drag onto a real group →
+  //     reinstate + join, or onto the Ungrouped header → reinstate with
+  //     no group.
+  // It is the landing surface so a just-retired agent stays visible on
+  // the tab (the Agents-tab "Retired" section does the same). Each row
+  // also keeps the per-row "reinstate" button.
+  function renderVirtualRetiredGroup(g) {
+    const members = g.members || [];
+    const key = g.key || g.name;
+    const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+    const body = members.length === 0
+      ? '<div class="muted">(no retired agents)</div>'
+      : `
+          <table>
+            <thead><tr><th></th><th>conv</th><th>title</th><th>retired</th><th>by</th><th>reason</th><th></th></tr></thead>
+            <tbody>
+              ${members.map(a => `
+                <tr class="dnd-draggable" draggable="true" data-dnd-source-retired="1"
+                    data-dnd-conv="${esc(a.conv_id)}"
+                    data-dnd-label="${esc(a.title || a.conv_id)}">
+                  <td>${onlineDot(a.online)}</td>
+                  <td class="id">${esc(shortId(a.conv_id))}</td>
+                  <td><span class="alias">${esc(a.title || '(untitled)')}</span></td>
+                  <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
+                  <td>${esc(a.retired_by || '')}</td>
+                  <td class="muted">${esc(a.retire_reason || '')}</td>
+                  <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>`;
+    return `
+      <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
+        <summary data-dnd-target-retired="1">
+          <strong class="group-name">${esc(g.name)}</strong>
+          <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.">virtual</span>
+          <span class="muted">— ${members.length} retired agent${members.length === 1 ? '' : 's'}</span>
+          <span class="muted group-virtual-hint">drag an agent here to retire it · drag a retired row onto a group to reinstate + join it</span>
         </summary>
         <div class="subtable">
           ${body}
@@ -1959,7 +2042,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
     }
     return groups.map(g => {
-      if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g) : renderVirtualGroup(g);
+      if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)
+        : g.retired ? renderVirtualRetiredGroup(g)
+        : renderVirtualGroup(g);
       const members = g.members || [];
       // Offline visibility: per-group override falls back to the
       // tab-wide checkbox. Hidden members still count toward the
@@ -2285,6 +2370,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const list = realGroups.slice();
     if (ungroupedVisible()) {
       list.push(virtualUngroupedGroup(lastSnapshot.ungrouped || []));
+    }
+    // The virtual "Retired" group sits above Conversations: a retired
+    // agent is one step further along (it WAS an agent), so it lands
+    // somewhere visible on the tab instead of vanishing the moment it
+    // leaves its last group. On by default for the same reason.
+    if (retiredVisible()) {
+      list.push(virtualRetiredGroup(lastSnapshot.retired || []));
     }
     // The virtual "Conversations" group sorts below even Ungrouped —
     // it's the rawest bucket (not even agents yet). Opt-in via its
@@ -4257,6 +4349,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
         rerender();
       });
     }
+    // Optional "show retired" checkbox (groups tab only) — toggles the
+    // virtual Retired group. Defaults ON: a retired agent must stay
+    // visible somewhere on the tab rather than silently disappearing.
+    const retired = $(`#filter-${tab}-retired`);
+    if (retired) {
+      const rkey = `tclaude.dash.retired.${tab}`;
+      const saved = localStorage.getItem(rkey);
+      retired.checked = saved === null ? true : saved === '1';
+      retired.addEventListener('change', () => {
+        localStorage.setItem(rkey, retired.checked ? '1' : '0');
+        rerender();
+      });
+    }
   }
 
   async function refresh() {
@@ -6046,18 +6151,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // drag is in flight, so a 5s tick doesn't blow our optimistic
   // mutation away while the round-trip is mid-air.
   let dndDragActive = false;
-  // dndSourceUngrouped / dndSourceConversation: which virtual group the
-  // dragged row comes from. Set in dragstart, cleared in dragend.
-  // dragover can't read the DataTransfer payload (browsers gate getData
-  // to the drop event), so these module-level flags are how the hover
-  // handlers tell an inert no-op (e.g. an ungrouped row onto Ungrouped,
-  // or a conversation onto Conversations) from a real op.
+  // dndSourceUngrouped / dndSourceConversation / dndSourceRetired: which
+  // virtual group the dragged row comes from. Set in dragstart, cleared
+  // in dragend. dragover can't read the DataTransfer payload (browsers
+  // gate getData to the drop event), so these module-level flags are
+  // how the hover handlers tell an inert no-op (e.g. an ungrouped row
+  // onto Ungrouped, or a retired row onto Retired) from a real op.
   let dndSourceUngrouped = false;
   let dndSourceConversation = false;
-  // Every droppable summary — real group headers AND the two virtual
-  // group headers (Ungrouped, Conversations). The DnD listeners share
-  // this selector.
-  const DND_TARGET_SEL = 'summary[data-dnd-target-group],summary[data-dnd-target-ungrouped],summary[data-dnd-target-conversations]';
+  let dndSourceRetired = false;
+  // Every droppable summary — real group headers AND the two droppable
+  // virtual group headers (Ungrouped, Retired). The DnD listeners share
+  // this selector. The Conversations header is a drag SOURCE only.
+  const DND_TARGET_SEL = 'summary[data-dnd-target-group],summary[data-dnd-target-ungrouped],summary[data-dnd-target-retired]';
   // updateDndPill positions + labels the hint pill that tracks the
   // cursor during a drag. `info` is null to hide the pill, else
   // {text, clone} — text is the action label, clone tints it green.
@@ -6083,17 +6189,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const sourceGroup = row.getAttribute('data-dnd-source-group');
       const sourceUngrouped = row.hasAttribute('data-dnd-source-ungrouped');
       const sourceConversation = row.hasAttribute('data-dnd-source-conversation');
+      const sourceRetired = row.hasAttribute('data-dnd-source-retired');
       const label = row.getAttribute('data-dnd-label') || conv;
       // A draggable row is a real-group member (has a source group), a
-      // virtual-Ungrouped row, or a virtual-Conversations row. Anything
-      // else isn't a valid drag.
-      if (!conv || (!sourceGroup && !sourceUngrouped && !sourceConversation)) return;
+      // virtual-Ungrouped row, a virtual-Conversations row, or a
+      // virtual-Retired row. Anything else isn't a valid drag.
+      if (!conv || (!sourceGroup && !sourceUngrouped && !sourceConversation && !sourceRetired)) return;
       // Stash the payload on the DataTransfer so the eventual drop can
       // read it without globals. The MIME type 'text/plain' is the
       // most-supported channel; the JSON body keeps the encoding
       // self-describing. We allow both move (default) and copy effects
       // so Ctrl-drag can flip the cursor hint via dropEffect.
-      const payload = JSON.stringify({conv, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, label});
+      const payload = JSON.stringify({conv, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, label});
       e.dataTransfer.setData('application/x-tclaude-member', payload);
       e.dataTransfer.setData('text/plain', payload);
       e.dataTransfer.effectAllowed = 'copyMove';
@@ -6101,6 +6208,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       dndDragActive = true;
       dndSourceUngrouped = sourceUngrouped;
       dndSourceConversation = sourceConversation;
+      dndSourceRetired = sourceRetired;
       modalEditing = true; // suspend auto-refresh during the drag
     });
     document.addEventListener('dragend', (e) => {
@@ -6113,6 +6221,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       dndDragActive = false;
       dndSourceUngrouped = false;
       dndSourceConversation = false;
+      dndSourceRetired = false;
       modalEditing = false;
       refresh();
     });
@@ -6124,24 +6233,27 @@ details.group-virtual .group-name { color: #8aa0b8; }
         return;
       }
       const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
-      const targetConversation = summary.hasAttribute('data-dnd-target-conversations');
-      // Dropping a row onto the virtual group it already lives in is a
-      // pure no-op — don't preventDefault (so `drop` never fires) and
-      // don't show a hint.
+      const targetRetired = summary.hasAttribute('data-dnd-target-retired');
+      // No-op drops — don't preventDefault (so `drop` never fires) and
+      // don't show a hint:
+      //   - a row onto the virtual group it already lives in;
+      //   - a plain conversation onto Retired (only agents can retire).
       if ((targetUngrouped && dndSourceUngrouped) ||
-          (targetConversation && dndSourceConversation)) {
+          (targetRetired && (dndSourceRetired || dndSourceConversation))) {
         updateDndPill(e, null);
         return;
       }
       e.preventDefault(); // required for drop to fire on this element
-      // Clone is meaningful only for a real-group TARGET.
-      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetConversation;
+      // Clone is meaningful only for a real-group target, and never for
+      // a retired source (that path reinstates, it doesn't clone).
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetRetired && !dndSourceRetired;
       e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
       summary.classList.toggle('dnd-effect-clone', isClone);
       let text;
-      if (targetConversation) text = '↓ retire — demote to conversation';
-      else if (targetUngrouped) text = dndSourceConversation ? '↓ promote (no group)' : '↓ remove from group';
+      if (targetRetired) text = '↓ retire — demote to conversation';
+      else if (targetUngrouped) text = dndSourceRetired ? '↓ reinstate (no group)' : dndSourceConversation ? '↓ promote (no group)' : '↓ remove from group';
       else if (isClone) text = '→ clone into group';
+      else if (dndSourceRetired) text = '→ reinstate + join group';
       else if (dndSourceConversation) text = '→ promote into group';
       else if (dndSourceUngrouped) text = '→ add to group';
       else text = '→ move to group';
@@ -6151,9 +6263,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (!dndDragActive) return;
       const summary = e.target.closest(DND_TARGET_SEL);
       if (!summary) return;
-      // No highlight for the inert "drop onto own group" no-ops.
+      // No highlight for the inert no-ops — mirror the dragover guard.
       if ((summary.hasAttribute('data-dnd-target-ungrouped') && dndSourceUngrouped) ||
-          (summary.hasAttribute('data-dnd-target-conversations') && dndSourceConversation)) return;
+          (summary.hasAttribute('data-dnd-target-retired') && (dndSourceRetired || dndSourceConversation))) return;
       summary.classList.add('dnd-drop-over');
     });
     document.addEventListener('dragleave', (e) => {
@@ -6177,23 +6289,31 @@ details.group-virtual .group-name { color: #8aa0b8; }
       try { payload = JSON.parse(raw); } catch (_) { return; }
       if (!payload || !payload.conv) return;
       const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
-      const targetConversation = summary.hasAttribute('data-dnd-target-conversations');
+      const targetRetired = summary.hasAttribute('data-dnd-target-retired');
       const targetGroup = summary.getAttribute('data-dnd-target-group');
       const sourceUngrouped = !!payload.sourceUngrouped;
       const sourceConversation = !!payload.sourceConversation;
-      // Clone applies only to a real-group target.
-      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetConversation;
+      const sourceRetired = !!payload.sourceRetired;
+      // Clone applies only to a real-group target, never to a retired
+      // source (that path reinstates).
+      const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetRetired && !sourceRetired;
 
-      // Target = the virtual Conversations group → retire the agent,
+      // Target = the virtual Retired group → retire the agent,
       // demoting it back to a plain conversation.
-      if (targetConversation) {
-        if (sourceConversation) return; // already a conversation — no-op
-        await runDndRetireToConversation(payload);
+      if (targetRetired) {
+        if (sourceRetired || sourceConversation) return; // no-op (see dragover)
+        await runDndRetire(payload);
         return;
       }
       // Target = the virtual Ungrouped group.
       if (targetUngrouped) {
         if (sourceUngrouped) return; // already ungrouped — no-op
+        if (sourceRetired) {
+          // A retired agent dropped here → reinstate to an active
+          // agent, joining no group.
+          await runDndReinstate(payload, null);
+          return;
+        }
         if (sourceConversation) {
           // A conversation dropped here → promote to agent, no group.
           await runDndPromoteToUngrouped(payload);
@@ -6204,6 +6324,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
         return;
       }
       // Target = a real group.
+      if (sourceRetired) {
+        // A retired agent dragged onto a group → reinstate + join.
+        await runDndReinstate(payload, targetGroup);
+        return;
+      }
       if (isClone) {
         // Clone forks a sibling into the target group. Works whether
         // the source is grouped or ungrouped — runDndClone clones the
@@ -6392,12 +6517,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
     }
   }
 
-  // runDndRetireToConversation handles a drag of an AGENT row (a real-
-  // group member or a virtual-Ungrouped row) ONTO the virtual
-  // Conversations group — the agent is retired, demoting it back to a
-  // plain conversation. Retire revokes group memberships + grants, so
-  // it gets the same confirm modal as the per-row retire button.
-  async function runDndRetireToConversation(payload) {
+  // runDndRetire handles a drag of an AGENT row (a real-group member or
+  // a virtual-Ungrouped row) ONTO the virtual Retired group — the agent
+  // is retired, demoting it back to a plain conversation. Retire
+  // revokes group memberships + grants, so it gets the same confirm
+  // modal as the per-row retire button.
+  async function runDndRetire(payload) {
     const {conv, label} = payload;
     const confirmed = await confirmModal({
       title: 'Retire this agent?',
@@ -6444,6 +6569,45 @@ details.group-virtual .group-name { color: #8aa0b8; }
       toast(`promoted ${label} → agent (no group)`);
     } catch (err) {
       toast(`promote failed: ${err && err.message || err}`, true);
+    } finally {
+      await refresh();
+    }
+  }
+
+  // runDndReinstate handles a drag of a RETIRED agent row OUT of the
+  // virtual Retired group. The agent is reinstated — its retired flag
+  // is cleared, making it an active agent again. Retire stripped the
+  // agent's old group memberships and grants and reinstate does not
+  // restore them, so the agent starts fresh: when targetGroup is given
+  // (dropped onto a real group) it is then added to that group; when
+  // null (dropped onto Ungrouped) it joins no group and lands in the
+  // Ungrouped virtual group on the next snapshot.
+  async function runDndReinstate(payload, targetGroup) {
+    const {conv, label} = payload;
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reinstate`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        toast(`reinstate ${label} failed: ${await r.text()}`, true);
+        return;
+      }
+      if (targetGroup) {
+        const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({conv}),
+        });
+        if (!addRes.ok) {
+          toast(`reinstated ${label}, but join ${targetGroup} failed: ${await addRes.text()}`, true);
+          return;
+        }
+        toast(`reinstated ${label} → ${targetGroup}`);
+      } else {
+        toast(`reinstated ${label} → agent (no group)`);
+      }
+    } catch (err) {
+      toast(`reinstate failed: ${err && err.message || err}`, true);
     } finally {
       await refresh();
     }
