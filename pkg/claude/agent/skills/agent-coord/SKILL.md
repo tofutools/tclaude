@@ -75,6 +75,7 @@ The fastest path is `tclaude agent reply <id>`:
 
 ```bash
 tclaude agent reply 42 "Got it, will look at the diff this afternoon."
+tclaude agent reply 42 --file reply.md          # body from a file
 tclaude agent reply 42 --stdin <<EOF
 multi-line reply
 body
@@ -84,6 +85,9 @@ EOF
 `reply` looks up message 42, sends the body to its sender, and inherits
 the original subject as `Re: <subject>` (override with `--subject`).
 
+For a long, multi-line, or code-heavy reply, prefer `--file` — see
+"Long or code-heavy bodies" below.
+
 If you'd rather address the sender directly (e.g. starting a brand-new
 thread), use the `Reply-To` value from the headers as the target of
 `tclaude agent message`.
@@ -92,11 +96,11 @@ thread), use the `Reply-To` value from the headers as the target of
 
 ```bash
 tclaude agent message <peer> "your message text"
+tclaude agent message <peer> --file plan.md     # body from a file
 tclaude agent message <peer> --subject "ack" --stdin <<EOF
 multi-line
 body
 EOF
-tclaude agent message <peer> --file plan.md
 ```
 
 `<peer>` is the peer's display name, conv-id, or short ID. A peer in one
@@ -108,6 +112,30 @@ via `tclaude agent sudo`).
 If the target has a live tmux session, they get a system nudge on their
 next turn. If they're offline, the message stays queued in their inbox
 and they'll see it on resume.
+
+## Long or code-heavy bodies — use `--file`
+
+`tclaude agent message` and `tclaude agent reply` both accept
+`--file <path>` to read the body from a file instead of typing it on the
+command line (`--file -` reads stdin, so you can pipe a body in). The
+file content is sent verbatim — newlines and indentation preserved.
+
+**Reach for `--file` whenever the body is long, multi-line, or contains
+code.** Passing such a body inline is fragile:
+
+- **Backticks get eaten by the shell.** A body typed on the command line
+  is processed by the shell first, and an unescaped backtick starts a
+  command substitution — so ``message peer "see `foo`"`` runs `foo` and
+  drops the result into your message. `$(…)` has the same problem.
+  Quotes, `$`, and newlines all need careful escaping too.
+- **A body read from `--file` is immune.** Nothing re-interprets it —
+  backticks, `$(…)`, code blocks, and ``` ```fences``` ``` all survive
+  exactly as written in the file.
+
+So: write the body to a file (or a heredoc piped via `--file -`) and let
+tclaude read it. Don't fight shell quoting — for any non-trivial body,
+`--file` is the clean answer. The same flag exists on the lifecycle
+verbs (`reincarnate`, `clone`) and on `cron add` for the same reason.
 
 ## Broadcasting to a group
 

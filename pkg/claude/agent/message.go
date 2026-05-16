@@ -40,7 +40,7 @@ type messageParams struct {
 	Body    string   `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
 	Subject string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
 	Stdin   bool     `long:"stdin" help:"Read body from stdin"`
-	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file"`
+	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies (the shell eats backticks from an inline body)."`
 	Cc      []string `long:"cc" optional:"true" help:"CC recipient (title / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
 	Role    string   `long:"role" optional:"true" help:"With a 'group:' target, broadcast only to members holding this role (case-insensitive). Error on a 1:1 target."`
 }
@@ -315,10 +315,19 @@ func readBody(p *messageParams, stdin io.Reader, stderr io.Writer) (string, int)
 			return "", rcIOFailure
 		}
 		return string(data), rcOK
+	case p.File == "-":
+		// `--file -` is the universal "read stdin" convention, shared
+		// with spawn / reincarnate / clone / cron add via resolveBodyInput.
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error reading stdin: %v\n", err)
+			return "", rcIOFailure
+		}
+		return string(data), rcOK
 	case p.File != "":
 		data, err := os.ReadFile(p.File)
 		if err != nil {
-			fmt.Fprintf(stderr, "Error reading file: %v\n", err)
+			fmt.Fprintf(stderr, "Error reading file %q: %v\n", p.File, err)
 			return "", rcIOFailure
 		}
 		return string(data), rcOK

@@ -32,6 +32,7 @@ type SpawnParams struct {
 	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
 	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
+	File           string `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
 	Cwd            string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
 	Timeout        string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
@@ -53,6 +54,9 @@ func spawnCmd() *cobra.Command {
 			"title (injected as /rename on its pane). Prints the attach command for the " +
 			"new session. --descr is the short dashboard label; pass --initial-message to " +
 			"deliver the new agent its first task brief to its inbox (newlines preserved). " +
+			"For a long or multi-line brief, prefer --file <path> (or --file - to read " +
+			"stdin) — it reads the brief from a file and so sidesteps shell quoting, " +
+			"including backticks the shell would otherwise eat from an inline string. " +
 			"Requires the `groups.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
@@ -61,7 +65,7 @@ func spawnCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *SpawnParams, _ *cobra.Command, _ []string) {
-			_, rc := RunSpawn(p, os.Stdout, os.Stderr)
+			_, rc := RunSpawn(p, os.Stdout, os.Stderr, os.Stdin)
 			os.Exit(rc)
 		},
 	}.ToCobra()
@@ -70,13 +74,18 @@ func spawnCmd() *cobra.Command {
 // RunSpawn drives `tclaude agent spawn`. Returns the daemon's response
 // (nil on failure) alongside an exit code for the CLI wrapper. Flow
 // tests use the returned response to assert what the user would see
-// printed; the CLI wrapper just propagates the exit code.
-func RunSpawn(p *SpawnParams, stdout, stderr io.Writer) (*SpawnResponse, int) {
+// printed; the CLI wrapper just propagates the exit code. stdin backs
+// `--file -` (read the brief from a pipe).
+func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*SpawnResponse, int) {
 	if p.Group == "" {
 		fmt.Fprintln(stderr, "Error: group is required")
 		return nil, rcInvalidArg
 	}
-	initialMessage := strings.TrimSpace(p.InitialMessage)
+	rawMessage, rc := resolveBodyInput(p.InitialMessage, p.File, "--initial-message", stdin, stderr)
+	if rc != rcOK {
+		return nil, rc
+	}
+	initialMessage := strings.TrimSpace(rawMessage)
 	if !isValidInitialMessage(initialMessage) {
 		fmt.Fprintf(stderr, "Error: REJECTED. --initial-message must be at most %d characters.\n", MaxInitialMessageBytes)
 		fmt.Fprintln(stderr, "Newlines and tabs are allowed (the brief is delivered to the agent's")

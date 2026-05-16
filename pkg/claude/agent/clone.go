@@ -26,6 +26,7 @@ import (
 
 type cloneParams struct {
 	FollowUp   string `pos:"true" optional:"true" help:"Optional first-turn prompt for the clone (quote multi-word strings)."`
+	File       string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
 	Target     string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of a group containing the target."`
 	NoCopyConv bool   `long:"no-copy-conv" help:"Spawn the clone with a fresh context (default: copy the original's jsonl so the clone starts with the same conversation history)."`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
@@ -44,6 +45,11 @@ func cloneCmd() *cobra.Command {
 			"conv-id, so the clone starts with the same conversation history. Use " +
 			"--no-copy-conv to skip the copy and give the clone a blank context. " +
 			"\n\n" +
+			"For a long or multi-line follow-up, prefer --file <path> (or --file - " +
+			"to read stdin) — it reads the follow-up from a file and so sidesteps " +
+			"shell quoting, including backticks the shell would otherwise eat from " +
+			"an inline string. " +
+			"\n\n" +
 			"Cross-agent: --target <selector> clones ANOTHER agent (requires the " +
 			"agent.clone permission, or being an owner of a group containing the target). " +
 			"Otherwise self-targeted, requires the self.clone permission " +
@@ -55,13 +61,17 @@ func cloneCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *cloneParams, _ *cobra.Command, _ []string) {
-			os.Exit(runClone(p, os.Stdout, os.Stderr))
+			os.Exit(runClone(p, os.Stdin, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runClone(p *cloneParams, stdout, stderr io.Writer) int {
-	followUp := strings.TrimSpace(p.FollowUp)
+func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	rawFollowUp, rc := resolveBodyInput(p.FollowUp, p.File, "the follow-up argument", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	followUp := strings.TrimSpace(rawFollowUp)
 	target := strings.TrimSpace(p.Target)
 	// Validate against the lenient inbox rule — a grouped clone receives
 	// the handoff in its inbox, like a spawn brief. The client can't

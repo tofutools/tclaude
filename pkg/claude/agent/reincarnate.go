@@ -24,7 +24,8 @@ import (
 // design.
 
 type reincarnateParams struct {
-	FollowUp string `pos:"true" help:"First-turn prompt for the new agent (REQUIRED). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
+	FollowUp string `pos:"true" optional:"true" help:"First-turn prompt for the new agent (REQUIRED — give it inline here or via --file). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
+	File     string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
 	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
@@ -51,12 +52,15 @@ func reincarnateCmd() *cobra.Command {
 			"context window and would otherwise sit idle. If you have no concrete " +
 			"next directive, summarise your previous 'life' (what you were doing, " +
 			"where the relevant files are, what's next) so the successor has " +
-			"something to start from. The follow-up is delivered via the existing " +
-			"message-flush nudge pipeline (when the agent is in at least one group) " +
-			"or, for solo agents, by direct keystroke injection into the freshly- " +
-			"spawned pane. For cross-agent reincarnations the FromConv on the " +
-			"handoff message is the caller, so the new agent sees who asked it to " +
-			"pick up the work.",
+			"something to start from. For a long or multi-line follow-up, prefer " +
+			"--file <path> (or --file - to read stdin) — it reads the follow-up from " +
+			"a file and so sidesteps shell quoting, including backticks the shell " +
+			"would otherwise eat from an inline string. The follow-up is delivered " +
+			"via the existing message-flush nudge pipeline (when the agent is in at " +
+			"least one group) or, for solo agents, by direct keystroke injection " +
+			"into the freshly-spawned pane. For cross-agent reincarnations the " +
+			"FromConv on the handoff message is the caller, so the new agent sees " +
+			"who asked it to pick up the work.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *reincarnateParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
@@ -64,14 +68,19 @@ func reincarnateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *reincarnateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReincarnate(p.FollowUp, p.Target, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runReincarnate(p, os.Stdin, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runReincarnate(followUp, target, askHuman string, stdout, stderr io.Writer) int {
-	followUp = strings.TrimSpace(followUp)
-	target = strings.TrimSpace(target)
+func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	rawFollowUp, rc := resolveBodyInput(p.FollowUp, p.File, "the follow-up argument", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	followUp := strings.TrimSpace(rawFollowUp)
+	target := strings.TrimSpace(p.Target)
+	askHuman := p.AskHuman
 	if followUp == "" {
 		fmt.Fprintln(stderr, "Error: a follow-up prompt is required. The new agent comes up with a clean")
 		fmt.Fprintln(stderr, "context window and would otherwise sit idle. If you have no concrete next")
