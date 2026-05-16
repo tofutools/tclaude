@@ -415,6 +415,17 @@ type agentState struct {
 	SubagentCount int    `json:"subagent_count,omitempty"`
 	LastHook      string `json:"last_hook,omitempty"`
 	Cwd           string `json:"cwd,omitempty"`
+	// Context-window usage, read from the same sessions row the hook
+	// callbacks update — no new data source, one extra indexed read.
+	// ContextPct is Claude Code's authoritative "how full" figure from
+	// the statusline hook (0 = not reported yet). The token counts feed
+	// the dashboard context-meter's tooltip; all zero means the
+	// statusline hook hasn't fired for this session yet, which the UI
+	// renders as a neutral / empty meter.
+	ContextPct        float64 `json:"context_pct,omitempty"`
+	TokensInput       int64   `json:"tokens_input,omitempty"`
+	TokensOutput      int64   `json:"tokens_output,omitempty"`
+	ContextWindowSize int64   `json:"context_window_size,omitempty"`
 }
 
 // stateForConv looks up the most-recent live tmux session row for this
@@ -448,6 +459,17 @@ func stateForConv(convID string) agentState {
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)
+	}
+	// Context-window usage rides on the same sessions row — the
+	// statusline hook (UpdateContextSnapshot) keeps it current. We
+	// surface it regardless of liveness: a frozen context_pct for an
+	// exited agent is genuinely informative ("it died at 80%"), unlike
+	// a frozen "idle" status that would mislabel a dead agent.
+	if snap, err := db.GetContextSnapshot(pick.ID); err == nil {
+		out.ContextPct = snap.ContextPct
+		out.TokensInput = snap.TokensInput
+		out.TokensOutput = snap.TokensOutput
+		out.ContextWindowSize = snap.ContextWindowSize
 	}
 	// No live tmux session — the agent's process is gone. Report it as
 	// exited rather than letting the frozen hook status (typically

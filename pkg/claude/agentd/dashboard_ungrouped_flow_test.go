@@ -75,9 +75,13 @@ type dashAgent struct {
 
 // dashState mirrors the relevant fields of agentd.agentState.
 type dashState struct {
-	Status       string `json:"status,omitempty"`
-	StatusDetail string `json:"status_detail,omitempty"`
-	LastHook     string `json:"last_hook,omitempty"`
+	Status            string  `json:"status,omitempty"`
+	StatusDetail      string  `json:"status_detail,omitempty"`
+	LastHook          string  `json:"last_hook,omitempty"`
+	ContextPct        float64 `json:"context_pct,omitempty"`
+	TokensInput       int64   `json:"tokens_input,omitempty"`
+	TokensOutput      int64   `json:"tokens_output,omitempty"`
+	ContextWindowSize int64   `json:"context_window_size,omitempty"`
 }
 
 func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {
