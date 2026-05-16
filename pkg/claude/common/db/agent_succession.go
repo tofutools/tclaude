@@ -137,8 +137,15 @@ func ListAgentConvSuccessions() ([]*AgentConvSuccession, error) {
 
 // MigrateCronJobConvRef rewrites every agent_cron_jobs row referencing
 // oldConv (as either owner or target) to point at newConv instead.
-// Returns the number of rows updated. Used by the reincarnate
+// Returns the number of rows updated. Called by the reincarnate
 // orchestrator to keep cron jobs pointing at the live conv.
+//
+// This is an OPTIMIZATION, not a correctness dependency: fireCronJob
+// walks the succession chain (walkSuccession) for a conv target before
+// delivery, so a job is delivered to the live successor even if this
+// best-effort rewrite was skipped or missed a row. Keeping target_conv
+// current still pays off — it keeps the dashboard / `cron ls` rows
+// showing the live conv, and shortens the chain walk on every fire.
 //
 // Why this and not a generic "migrate every reference" pass: each
 // table's foreign-key story is different (some tables already get
