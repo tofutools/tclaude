@@ -1,6 +1,8 @@
 # Universal inbox — decouple agent messaging from groups-as-mechanism
 
-Status: **design pass / TODO**. Implementation is gated — see "Rollout".
+Status: **design of record / implementing** (Phase 3 — PO green light given,
+msg #95). Migration numbers and symbol names below are reconciled against
+`main` after PRs #99–#107 merged.
 
 ## Problem
 
@@ -22,6 +24,14 @@ routing group. Consequences:
   `reincarnate.go` / `clone.go`). That path is racy (keystrokes interleave
   with whatever the TUI is doing), unpersisted (nothing survives if the pane
   isn't ready), and invisible (`inbox ls` never shows it).
+- **A whole charset-rule split exists only to serve that fallback.**
+  `soloFollowUpRejection` (`handlers.go`) rejects a clone/reincarnate
+  follow-up for a *solo* successor unless it clears the strict
+  `isValidFollowUp` gate (≤4096 bytes, no control characters — because each
+  newline would submit as its own turn when typed into a pane), while a
+  *grouped* successor's handoff rides the inbox and may use the lenient
+  `isValidInitialMessage` rule (≤16384 bytes, newlines OK). Two rules for
+  one logical thing, purely because solo had no inbox.
 - **Group membership is overloaded.** It is currently *both* the transport
   mechanism (no group → no row) *and* the authorization policy (shared group
   → allowed to send). Those are two different concerns wearing one hat.
@@ -68,10 +78,9 @@ conv-id:
   is a safe sentinel — and it is *already* the established convention in
   this codebase: `agent_cron_jobs.group_id` documents `0 → solo`.
 - Group-routed messages still want their `group_id`: it drives `via_group`
-  in the send response, `agent.AliasFor(groupID, conv)` rendering, and
-  reply threading. Dropping the column entirely would touch every
-  `InsertAgentMessage` call site, `AliasFor`, multicast, and the reply
-  path for no real gain.
+  in the send response and reply threading. Dropping the column entirely
+  would touch every `InsertAgentMessage` call site, multicast, and the
+  reply path for no real gain.
 - Minimal blast radius — only the FK and the `NOT NULL` semantics change.
 
 New shape:
@@ -84,11 +93,14 @@ The FK (`REFERENCES agent_groups(id) ON DELETE RESTRICT`) is **dropped**.
 `0` could never satisfy a FK anyway, and the FK was only ever load-bearing
 as the thing `DeleteAgentGroup` had to work around.
 
-**Migration v32 → v33.** SQLite cannot `ALTER COLUMN` to drop a `NOT NULL`
-constraint or an FK, so this is the standard 12-step table rebuild — same
-shape as `migrateV27toV28` (it rebuilt `agent_workdir`). `agent_messages` is
-referenced by no other table (`parent_id` is a self-column with no declared
-FK), so the rebuild is a straight copy:
+**Migration v35 → v36.** `currentVersion` on `main` is **35** (`migrate.go`);
+this migration is `migrateV35toV36` and bumps `currentVersion` to **36**.
+(Re-verify the number at implementation time — a parallel branch can grab
+v36 first, in which case renumber.) SQLite cannot `ALTER COLUMN` to drop a
+`NOT NULL` constraint or an FK, so this is the standard table rebuild.
+`agent_messages` is referenced by no other table (`parent_id` is a
+self-column with no declared FK), so the rebuild is a straight column-named
+copy:
 
 ```sql
 CREATE TABLE agent_messages_new (
@@ -98,43 +110,57 @@ CREATE TABLE agent_messages_new (
     to_conv          TEXT NOT NULL,
     subject          TEXT NOT NULL DEFAULT '',
     body             TEXT NOT NULL DEFAULT '',
-    parent_id        INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL,
     delivered_at     TEXT NOT NULL DEFAULT '',
     read_at          TEXT NOT NULL DEFAULT '',
+    parent_id        INTEGER NOT NULL DEFAULT 0,
     to_recipients    TEXT NOT NULL DEFAULT '',
     cc_recipients    TEXT NOT NULL DEFAULT '',
     original_to_conv TEXT NOT NULL DEFAULT ''
 );
 INSERT INTO agent_messages_new
-    SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
-           created_at, delivered_at, read_at,
-           to_recipients, cc_recipients, original_to_conv
+    (id, group_id, from_conv, to_conv, subject, body, created_at,
+     delivered_at, read_at, parent_id, to_recipients, cc_recipients,
+     original_to_conv)
+    SELECT id, group_id, from_conv, to_conv, subject, body, created_at,
+           delivered_at, read_at, parent_id, to_recipients, cc_recipients,
+           original_to_conv
     FROM agent_messages;
 DROP TABLE agent_messages;
 ALTER TABLE agent_messages_new RENAME TO agent_messages;
-CREATE INDEX idx_agent_messages_to_conv ON agent_messages(to_conv, created_at);
-CREATE INDEX idx_agent_messages_parent  ON agent_messages(parent_id);
-UPDATE schema_version SET version = 33;
+CREATE INDEX IF NOT EXISTS idx_agent_messages_to_conv
+    ON agent_messages(to_conv, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_parent
+    ON agent_messages(parent_id);
+UPDATE schema_version SET version = 36;
 ```
 
 Existing rows keep their real `group_id` — no data loss, no behavioural
-change for already-grouped history. Bump `currentVersion` to `33`.
+change for already-grouped history.
 
-*Impl note:* verify the `PRAGMA foreign_keys` state during the rebuild. We
-are dropping the table that *holds* the outbound FK (nothing references
-`agent_messages`), and the rebuilt table declares no FK, so a straight
-rebuild is safe even with FKs enforced — but the migration should be
-written/tested deliberately, not assumed.
+*FK-pragma note:* the standard "12-step" rebuild disables `foreign_keys`
+only when the rebuilt table is *referenced by* other tables (so child rows
+aren't orphaned mid-rebuild). Nothing references `agent_messages`, and the
+rebuilt table declares no FK, so a straight rebuild is safe with FKs
+enforced. Still: write and test the migration deliberately.
 
-**`DeleteAgentGroup` follow-on.** With the FK gone, the `ON DELETE RESTRICT`
-protection disappears and the explicit "purge `agent_messages` first"
-transaction step in `DeleteAgentGroup` is no longer *required*. Recommend
-changing that step from `DELETE FROM agent_messages WHERE group_id = ?` to
-`UPDATE agent_messages SET group_id = 0 WHERE group_id = ?` — deleting a
-group then **preserves** its message history as direct messages instead of
-destroying it, and leaves no dangling `group_id`. (Open question for PO
-below if they would rather keep the hard purge.)
+**`DeleteAgentGroup` follow-on — Q1 resolved: PRESERVE** (PO, msg #95, human
+decision). With the FK gone, the `ON DELETE RESTRICT` protection disappears
+and the explicit "purge `agent_messages` first" step in `DeleteAgentGroup`
+is no longer required. It changes from
+
+```sql
+DELETE FROM agent_messages WHERE group_id = ?
+```
+
+to
+
+```sql
+UPDATE agent_messages SET group_id = 0 WHERE group_id = ?
+```
+
+so deleting a group **preserves** its message history as direct messages
+instead of destroying it, and leaves no dangling `group_id`.
 
 `Go` side: `AgentMessage.GroupID int64` is unchanged — `0` is already its
 zero value, so `scanAgentMessage` / `InsertAgentMessage` need no struct
@@ -144,11 +170,11 @@ change. `InsertAgentMessage` simply stops being rejected by the FK when
 ### (b) How a solo agent gets an inbox
 
 It already has one, structurally. `agent_messages` rows are addressed by
-`to_conv`; the read path (`ListAgentMessagesForConv`, `ListAgentMessages
-FromConv`, `inbox ls/read`, the flush/nudge pipeline) never joins on a
-group. The **only** thing standing between a solo agent and a working inbox
-is the write-side FK. Once (a) lands, *any* conv-id can be a `to_conv` and
-`inbox ls` works for it unchanged.
+`to_conv`; the read path (`ListAgentMessagesForConv`,
+`ListAgentMessagesFromConv`, `inbox ls/read`, the flush/nudge pipeline)
+never joins on a group. The **only** thing standing between a solo agent and
+a working inbox is the write-side FK. Once (a) lands, *any* conv-id can be a
+`to_conv` and `inbox ls` works for it unchanged.
 
 So "give solo agents an inbox" is not new plumbing — it is the removal of
 one constraint. Nudge delivery (`nudgeIfAlive`), offline queueing
@@ -161,8 +187,8 @@ already group-agnostic and work for a solo recipient as-is.
 
 ```
 message.direct — Send a 1:1 message to ANY agent regardless of shared-group
-                 membership (the off-group / cross-group escape hatch).
-                 Intra-group messaging needs no slug.
+                 membership (the off-group escape hatch). Intra-group
+                 messaging needs no slug.
 ```
 
 - **Default: NOT granted.** It is not added to
@@ -171,6 +197,11 @@ message.direct — Send a 1:1 message to ANY agent regardless of shared-group
 - Registered in `permissionRegistry` (`permissions.go`) and as a
   `PermMessageDirect = "message.direct"` constant in `identity.go`,
   alongside the existing slugs.
+- Name confirmed (PO, msg #71): chosen over `message.cross-group` — which
+  is inaccurate, since either party may be ungrouped and so nothing is
+  strictly "crossed" — and over `message.any` / `agent.message`. It reads
+  cleanly in CLI grants (`tclaude agent permissions grant <conv>
+  message.direct`) and establishes a `message.*` namespace.
 - Scope: **1:1 direct sends only.** It does *not* authorize multicast into
   a foreign group — `handleMulticast` keeps its member-or-owner gate
   (broadcasting *into* a group you are not part of is a bigger act than
@@ -186,16 +217,7 @@ paths, only one of which is a *new* slug:
 | link        | `agent_group_links` (group→group edge) | no — shipped feature |
 | admin-style | owner-of-a-group-containing-the-target | no — `agent_group_owners`, shipped |
 
-The "link" path is created with the already-shipped `groups.link.add` slug;
-the "admin-style" path is group ownership. So Tier 2 adds exactly **one**
-slug.
-
-Name **confirmed: `message.direct`** (PO, msg #71). Chosen over
-`message.cross-group` — which is inaccurate, since either party may be
-ungrouped and so nothing is strictly "crossed" — and over `message.any` /
-`agent.message`. It reads cleanly in CLI grants
-(`tclaude agent permissions grant <conv> message.direct`) and establishes a
-`message.*` namespace.
+So Tier 2 adds exactly **one** slug.
 
 ### (d) How the default intra-group policy folds into `CanSenderReachTarget`
 
@@ -216,33 +238,36 @@ via, _, err := db.CanSenderReachTarget(fromID, finalConv)
 if via == nil { 403 }
 ```
 
-After Tier 2 it becomes a small composed authorizer (proposed helper
-`resolveMessageRouting(w, r, fromID, targetID) (groupID int64, viaName
-string, ok bool)`):
+After Tier 2 it becomes a small composed authorizer — proposed helper
+`resolveMessageRouting(w, fromID, targetID) (groupID int64, viaName string,
+ok bool)`:
 
-1. `CanSenderReachTarget` — if it returns a group, use it
+1. `CanSenderReachTarget` — if it returns a group, route through it
    (`groupID = via.ID`, `viaName = via.Name`). This is the default
    intra-group path **plus** owner / link. `requireGroupActive` still
    applies. **Unchanged behaviour.**
-2. Otherwise, check the `message.direct` slug (same dual/triple-source
-   check the lifecycle verbs use: `cfg.HasDefaultPermission` →
-   `db.HasAgentPermissionRow` → `db.HasActiveSudoGrant`, and the
-   `X-Tclaude-Ask-Human` popup escape hatch). If held → allow with
-   `groupID = 0`, `viaName = ""` (direct). No `requireGroupActive` —
-   there is no group.
-3. Otherwise → `403` with a message naming `message.direct` so the agent
-   can tell its human what to grant.
+2. Otherwise, check the `message.direct` slug via a new `holdsPermission
+   (convID, slug)` helper — the same triple-source check the lifecycle
+   verbs use (`config` default-permissions → `agent_permissions` row →
+   active `agent_sudo_grants`). If held → allow with `groupID = 0`,
+   `viaName = ""` (direct). No `requireGroupActive` — there is no group.
+3. Otherwise → `403` naming `message.direct` so the agent can tell its
+   human what to grant (or get a `tclaude agent sudo` grant).
 
 The slug fallback is **strictly additive** — a sender that *can* reach the
 target through a group is still routed through that group (preserving
-`via_group`, alias rendering, and reply threading). `message.direct` only
-ever fires when no group-policy path exists. The same composed check applies
-uniformly to the primary recipient and to each `--cc` recipient in
-`handleMultiRecipient`.
+`via_group` and reply threading). `message.direct` only ever fires when no
+group-policy path exists. The same composed check applies uniformly to the
+primary recipient and to each `--cc` recipient in `handleMultiRecipient`.
 
-This makes `requireCrossAgentPermission`-style reasoning consistent across
-the daemon: owner-of-group is implicit power; an explicit slug is the
-escape hatch; the human popup is the last resort.
+*Popup escape hatch:* `requirePermission` lets a denied agent open an
+`X-Tclaude-Ask-Human` approval popup. `resolveMessageRouting` deliberately
+uses the non-interactive `holdsPermission` instead, because `handleMessages`
+has already consumed the request body (it needs `req.To` to resolve the
+target) and the multi-recipient path would otherwise open one popup per CC.
+The `agent_sudo_grants` source *is* the time-bounded escape hatch and is
+included in `holdsPermission`. Wiring a popup specifically for off-group
+sends is a noted follow-up, not part of this PR.
 
 ### (e) Fate of the clone / reincarnate solo send-keys fallback — it disappears
 
@@ -256,10 +281,17 @@ Concretely:
 - **Delete** `injectFollowUpDirect` (`reincarnate.go`).
 - **Delete** the solo branch of `runReincarnatePostSpawn` — the
   `if hasGroup { flush } else { send-keys }` collapses to always-flush.
-  `runReincarnatePostSpawn` loses its `hasGroup` parameter.
+  `runReincarnatePostSpawn` loses its `hasGroup` (and now-unused
+  `followUp`) parameters.
 - **Delete** the `else { injectFollowUpDirect }` branch in `clone.go`'s
   follow-up block — clone always does `InsertAgentMessage` +
   `deliverHandoffViaFlush`.
+- **Delete `soloFollowUpRejection`** (`handlers.go`) and its two call sites
+  (`clone.go`, `reincarnate.go`). With every handoff riding the inbox, the
+  strict solo-pane charset rule no longer applies; the lenient
+  `isValidInitialMessage` gate already enforced in `decodeReincarnate
+  FollowUp` / `decodeCloneBody` is the only rule, for grouped and solo
+  alike. Update the comments at the call sites that reference it.
 - No slug check on this path: the daemon is performing a lifecycle
   operation it has *already* authorized (`self.clone` / `agent.clone` /
   `self.reincarnate` / `agent.reincarnate`). The handoff insert with
@@ -272,66 +304,68 @@ handoff stops being raw text typed into the pane and becomes an
 `[system: new agent message #N ...]` nudge and runs `tclaude agent inbox
 read N`. This makes solo handoffs **consistent** with grouped handoffs
 (which already work exactly this way today) and gains persistence +
-`inbox ls` visibility + atomic claim-delivery. That is the point of the
-feature, not a regression — but worth confirming with PO.
-
-Net deletion: ~60 lines of fragile tmux-timing code, replaced by the path
-already exercised for grouped agents.
+`inbox ls` visibility + atomic claim-delivery. Confirmed acceptable by PO
+(msg #71).
 
 ### Reply path
 
 `handleMessageReply` currently does `db.GetAgentGroupByID(orig.GroupID)` and
-**errors** ("original message references a group that no longer exists") if
+**500s** ("original message references a group that no longer exists") if
 the group is gone. With direct messages, `orig.GroupID == 0`:
 
-- If `orig.GroupID == 0` → the reply is itself direct: insert with
-  `GroupID = 0`, skip the group lookup and `requireGroupActive`. Replies are
-  already documented as allowed back to the sender regardless of current
-  group membership, so no extra authorization is needed for the reply
-  direction.
-- If `orig.GroupID > 0` but the group was since deleted → with the
-  recommended `DeleteAgentGroup` change (set `group_id = 0` instead of
-  purge) this case folds into the above. If PO keeps the hard purge, the
-  message row is gone too, so the stale-group error becomes unreachable
-  anyway.
+- `orig.GroupID == 0` → the reply is itself direct: insert with
+  `GroupID = 0`, `via_group ""`, skip the group lookup and
+  `requireGroupActive`. Replies are already allowed back to the sender
+  regardless of current group membership, so no extra authorization is
+  needed for the reply direction.
+- `orig.GroupID > 0` but the group was since deleted → with Q1 resolved
+  to PRESERVE, `DeleteAgentGroup` rewrites those rows to `group_id = 0`,
+  so this case folds into the above. The stale-group `500` becomes
+  unreachable and is removed; defensively, a `nil` group from
+  `GetAgentGroupByID` is treated as direct rather than erroring.
 
 ### Touch-point checklist (for the impl PR)
 
-- `db/migrate.go` — `migrateV32toV33`, bump `currentVersion`.
+- `db/migrate.go` — `migrateV35toV36` (table rebuild), bump
+  `currentVersion` to 36.
 - `db/agent.go` — `InsertAgentMessage` (no struct change; works with
   `GroupID == 0`), `DeleteAgentGroup` (purge → `SET group_id = 0`).
+  Update the stale FK comment on `DeleteAgentGroup`.
 - `agentd/identity.go` — `PermMessageDirect` constant.
 - `agentd/permissions.go` — register `message.direct` in
   `permissionRegistry`.
-- `agentd/handlers.go` — `resolveMessageRouting` helper; `handleMessages`
-  + `handleMultiRecipient` use it; `handleMessageReply` handles
-  `GroupID == 0`. Verify `agent.AliasFor(0, conv)` and `groupByID(0)`
-  degrade gracefully (expected: alias falls back to a conv-derived label,
-  `groupByID` returns nil → `"group": ""` in `inbox read`).
+- `agentd/handlers.go` — `holdsPermission` + `resolveMessageRouting`
+  helpers; `handleMessages` + `handleMultiRecipient` use them
+  (`handleMultiRecipient`'s `primaryVia *db.AgentGroup` param becomes
+  `primaryGroupID int64` + `primaryViaName string`); `handleMessageReply`
+  handles `GroupID == 0`; delete `soloFollowUpRejection`.
 - `agentd/reincarnate.go` — delete `injectFollowUpDirect`, drop the solo
-  branch + `hasGroup` param of `runReincarnatePostSpawn`, always
-  `InsertAgentMessage` + flush.
+  branch + `hasGroup`/`followUp` params of `runReincarnatePostSpawn`,
+  always `InsertAgentMessage` + flush; drop the `soloFollowUpRejection`
+  call.
 - `agentd/clone.go` — delete the `injectFollowUpDirect` branch, always
-  `InsertAgentMessage` + `deliverHandoffViaFlush`.
+  `InsertAgentMessage` + `deliverHandoffViaFlush`; drop the
+  `soloFollowUpRejection` call.
+- CLI display — `agent message` / `inbox read` rendering of an empty
+  `via_group` (show `(direct)` or omit, rather than a blank `Group:`).
 - Skill docs — `agent/skills/agent-coord` (mention `message.direct` and
-  that off-group sends need it); the `agent-lifecycle` skill text where it
-  describes solo handoffs.
+  that off-group sends need it).
 
 ### (f) Flow-test plan
 
 Flow tests under `pkg/claude/agentd/*_flow_test.go`, testharness v2 (`Flow`
 DSL — `newFlow(t)`, `HaveGroup` / `HaveMember` / `HaveAliveSession` /
 `HaveEnrolledAgent`, `AsAgent` / `AsHuman`, `Reincarnate` / `CloneFresh`,
-`AssertSentContains`, `f.do(...)` for raw HTTP). Likely add two small DSL
-helpers — `f.Message(...)` (`POST /v1/messages`) and `f.Inbox(conv)`
-(`GET /v1/inbox`) — assert at real surfaces, per the harness philosophy.
+`AssertSentContains`, `f.do(...)` for raw HTTP). A grant in a test is just
+`db.GrantAgentPermission(conv, agentd.PermMessageDirect, "test")`.
 
 New `universal_inbox_flow_test.go`:
 
 1. **Solo → solo with `message.direct`.** Two enrolled agents, neither in
    any group; sender granted `message.direct`. `POST /v1/messages`
-   succeeds, row written with `group_id = 0`, recipient's `inbox ls` shows
-   it, an alive recipient gets the `[system: new agent message #N]` nudge.
+   succeeds, row written with `group_id = 0`, recipient's
+   `ListAgentMessagesForConv` shows it, an alive recipient gets the
+   `[system: new agent message #N]` nudge.
 2. **Solo → solo WITHOUT the slug → 403** naming `message.direct`. No row
    written.
 3. **Intra-group still needs no slug.** Two members of one group, neither
@@ -345,11 +379,10 @@ New `universal_inbox_flow_test.go`:
    `message.direct` (`via_group` non-empty, `group_id > 0`).
 6. **Reincarnate of a solo agent.** Alive solo session, no group;
    `Reincarnate(target, "follow up")`. Assert: a `group_id = 0`
-   `agent_messages` row exists addressed to the new conv; it is delivered
-   via the flush pipeline (nudge `[system: new agent message #N]` lands in
-   the new pane); **no** raw follow-up text was send-keys'd
-   (`injectFollowUpDirect` is gone — assert the pane did *not* receive the
-   literal follow-up string as a bare prompt).
+   `agent_messages` row addressed to the new conv exists; it is delivered
+   via the flush pipeline (the `[system: new agent message #N]` nudge
+   lands in the new pane); the pane did **not** receive the literal
+   follow-up string as a bare prompt (`injectFollowUpDirect` is gone).
 7. **Clone of a solo agent.** Same as 6 for `CloneFresh` + a follow-up.
 8. **Reply to a direct message.** Recipient of a `group_id = 0` message
    replies via `POST /v1/messages/{id}/reply`; reply row also has
@@ -358,28 +391,23 @@ New `universal_inbox_flow_test.go`:
 9. **`--cc` with an off-group CC.** Primary in-group, one CC off-group:
    without `message.direct` → 403 (whole send rejected, pre-validation);
    with it → all rows written, off-group CC row has `group_id = 0`.
-10. **Group deletion preserves history** (if PO accepts the
-    `DeleteAgentGroup` change). Group with messages → `groups rm` → group
-    gone, message rows survive with `group_id = 0`, still in both parties'
-    `inbox ls`.
+10. **Group deletion preserves history.** Group with messages →
+    `groups rm` → group gone, message rows survive with `group_id = 0`,
+    still in both parties' `ListAgentMessagesForConv`.
 
-DB-level / migration test in `pkg/claude/common/db/agent_test.go` (or a
-`migrate` test): a v32 DB with existing `agent_messages` rows migrates to
-v33 with `group_id` values preserved; a subsequent `InsertAgentMessage`
+DB-level / migration test in `pkg/claude/common/db/` (`migrate` or
+`agent_test.go`): a v35 DB with existing `agent_messages` rows migrates to
+v36 with `group_id` values preserved; a subsequent `InsertAgentMessage`
 with `GroupID: 0` succeeds (would have failed the FK pre-migration).
 
 ## Rollout
 
-- **Phase 1 — design (this doc).** Small PR, doc only.
-- **Phase 2 — park.** Do NOT implement until PO gives the green light.
-  The in-flight `alias-removal`, `spawn-guardrails`, and the Tier 1
-  follow-up cap PR all touch messaging / permission / migration code;
-  implementing concurrently risks conflict pile-up and a migration-number
-  race (whoever lands a `migrateV32toV33` first wins; the loser must
-  rebase to `V33toV34`).
-- **Phase 3 — implement.** Fresh worktree, separate PR rebased on current
-  `main`, with the flow tests above. Move this doc to `docs/plans/DONE/`
-  as part of that PR.
+- **Phase 1 — design (this doc).** ✅ PR #102 (doc only).
+- **Phase 2 — park.** ✅ Held until the in-flight `alias-removal`,
+  `spawn-guardrails`, and Tier 1 cap PRs (now #99–#107) merged.
+- **Phase 3 — implement.** ⏳ In progress: fresh worktree, separate PR
+  rebased on current `main`, with the flow tests above. This doc moves to
+  `docs/plans/DONE/` as part of that PR.
 
 ## Follow-ups (out of scope, noted)
 
@@ -388,25 +416,19 @@ with `GroupID: 0` succeeds (would have failed the FK pre-migration).
   cron jobs can drop their send-keys branch and always enqueue an
   `agent_messages` row. Natural fast-follow; not bundled here to keep the
   PR scoped.
+- **Popup escape hatch for off-group sends.** `resolveMessageRouting` uses
+  the non-interactive `holdsPermission` (which already includes
+  time-bounded `agent_sudo_grants`). Wiring an `X-Tclaude-Ask-Human`
+  popup specifically for `POST /v1/messages` would let an agent ask the
+  human for a one-off off-group send; deferred because the body is already
+  consumed at auth time and the multi-recipient path complicates it.
 
 ## Open questions
 
-### Resolved (PO, msg #71)
+All resolved.
 
-- **Slug name → `message.direct`.** Confirmed. Chosen over
-  `message.cross-group` (inaccurate — either party may be ungrouped, so
-  nothing is strictly "crossed"), `message.any`, and `agent.message`.
-- **Solo handoff via inbox → yes.** Confirmed. A solo clone/reincarnate
-  follow-up becoming an `agent_messages` row (`[system: …]` nudge +
-  `inbox read N`) instead of raw pane text is the intended outcome: solo
-  handoffs become identical to grouped handoffs, gaining persistence +
-  inbox visibility. Proceed — delete `injectFollowUpDirect`.
-
-### Pending — human decision (arrives with the Phase 3 green light)
-
-- **`DeleteAgentGroup` on group delete:** preserve message history by
-  `SET group_id = 0` (recommended by this doc; PO leans the same way), or
-  keep the current hard `DELETE FROM agent_messages`? Preserving means a
-  deleted group's conversations survive as direct messages — a user-facing
-  data-retention change, so PO is taking it to the human. Final answer
-  lands with the Phase 3 green light.
+- **Slug name → `message.direct`.** Confirmed (PO, msg #71).
+- **Solo handoff via inbox → yes.** Confirmed (PO, msg #71).
+- **`DeleteAgentGroup` on group delete → PRESERVE** via
+  `UPDATE agent_messages SET group_id = 0`. Confirmed (PO, msg #95 —
+  human decision).
