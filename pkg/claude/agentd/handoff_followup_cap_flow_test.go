@@ -10,18 +10,12 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// These tests pin the per-delivery-path follow-up cap for clone /
-// reincarnate handoffs:
-//
-//   - A GROUPED successor receives the handoff as an agent_messages
-//     inbox row — the same path a spawn --initial-message takes — so a
-//     long, multi-line brief (≤16384 bytes) is accepted verbatim.
-//   - A SOLO (groupless) successor's handoff is typed into the new pane
-//     via tmux send-keys, so it keeps the strict ≤4096-byte, no-newline
-//     limit.
-//
-// Before this change the strict limit was applied uniformly, needlessly
-// capping a grouped handoff that was always going to ride the inbox.
+// These tests pin the follow-up handling for clone / reincarnate
+// handoffs. Since the universal inbox, EVERY successor — grouped or
+// solo — has an inbox, so every handoff rides it as an agent_messages
+// row: a long, multi-line brief is accepted verbatim regardless of
+// group membership. A solo handoff is simply a direct message
+// (group_id 0). Only the lenient 16384-byte inbox cap still bounds it.
 
 // Scenario: a grouped worker is reincarnated with a real handoff brief
 // — multi-paragraph, well over the retired 4096-byte follow-up cap.
@@ -62,11 +56,13 @@ func TestReincarnate_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 }
 
 // Scenario: a solo (groupless) agent is reincarnated with a multi-line
-// follow-up. A solo successor has no inbox; its handoff is typed into
-// the new pane via send-keys, where each newline would submit early.
+// follow-up. With the universal inbox a solo successor HAS an inbox —
+// the handoff rides it exactly like a grouped successor's, as a direct
+// (group_id 0) agent_messages row, with no tmux send-keys fallback.
 //
-// Expected: 400 invalid_follow_up, naming the solo/send-keys reason.
-func TestReincarnate_SoloHandoffRejectsMultiLineFollowUp(t *testing.T) {
+// Expected: accepted. The multi-line brief lands in the successor's
+// inbox verbatim, with group_id 0.
+func TestReincarnate_SoloHandoffRidesInbox(t *testing.T) {
 	f := newFlow(t)
 
 	const oldConv = "solo-aaaa-bbbb-cccc-dddd"
@@ -77,15 +73,24 @@ func TestReincarnate_SoloHandoffRejectsMultiLineFollowUp(t *testing.T) {
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	// No HaveGroup / HaveMember: this agent is solo.
 
-	got := f.AsHuman().ReincarnateWith(oldConv, map[string]any{
-		"follow_up": "first line\nsecond line",
-	})
-	assert.Equal(t, http.StatusBadRequest, got.Code,
-		"solo reincarnate with a multi-line follow-up should be rejected; body=%s", got.Raw)
-	assert.Contains(t, string(got.Raw), "invalid_follow_up",
-		"error body should name the invalid_follow_up code")
-	assert.Contains(t, string(got.Raw), "no group",
-		"rejection should explain the solo/send-keys reason")
+	followUp := "Handoff brief - picking up where I left off.\n\n" +
+		"Files: pkg/foo/bar.go, pkg/foo/baz.go.\n" +
+		"Next: finish the refactor, then run the tests."
+	require.Contains(t, followUp, "\n", "test brief must be multi-line")
+
+	r := f.AsHuman().Reincarnate(oldConv, followUp)
+
+	// The solo successor has an inbox now — the handoff rode it as a
+	// direct message, the same agent_messages path a grouped handoff
+	// takes.
+	rows, err := db.ListAgentMessagesForConv(r.NewConv, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, rows, 1, "solo successor should have exactly one inbox message (the handoff)")
+	assert.Equal(t, "reincarnation handoff", rows[0].Subject, "handoff subject")
+	assert.Equal(t, followUp, rows[0].Body,
+		"handoff body must survive verbatim — length and newlines intact")
+	assert.Equal(t, int64(0), rows[0].GroupID,
+		"a solo handoff is a direct message — group_id 0")
 }
 
 // Scenario: a follow-up exceeds even the lenient 16384-byte inbox cap.
@@ -153,11 +158,12 @@ func TestClone_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 }
 
 // Scenario: a solo (groupless) agent is cloned with a multi-line
-// follow-up.
+// follow-up. As with reincarnate, the universal inbox gives the solo
+// clone an inbox; the handoff rides it as a direct (group_id 0)
+// agent_messages row.
 //
-// Expected: 400 invalid_follow_up — rejected before the rate-limit
-// claim, so a corrected retry isn't blocked by the clone cooldown.
-func TestClone_SoloHandoffRejectsMultiLineFollowUp(t *testing.T) {
+// Expected: accepted. The brief lands in the clone's inbox verbatim.
+func TestClone_SoloHandoffRidesInbox(t *testing.T) {
 	f := newFlow(t)
 
 	const oldConv = "solo-aaaa-bbbb-cccc-dddd"
@@ -168,14 +174,22 @@ func TestClone_SoloHandoffRejectsMultiLineFollowUp(t *testing.T) {
 	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
 	// No HaveGroup / HaveMember: this agent is solo.
 
-	got := f.AsHuman().CloneWith(oldConv, map[string]any{
+	followUp := "Clone handoff - take the parallel spike.\n\n" +
+		"Start from pkg/foo/spike.go; report back when done."
+	require.Contains(t, followUp, "\n", "test brief must be multi-line")
+
+	c := f.AsHuman().CloneWith(oldConv, map[string]any{
 		"no_copy_conv": true,
-		"follow_up":    "first line\nsecond line",
+		"follow_up":    followUp,
 	})
-	assert.Equal(t, http.StatusBadRequest, got.Code,
-		"solo clone with a multi-line follow-up should be rejected; body=%s", got.Raw)
-	assert.Contains(t, string(got.Raw), "invalid_follow_up",
-		"error body should name the invalid_follow_up code")
-	assert.Contains(t, string(got.Raw), "no group",
-		"rejection should explain the solo/send-keys reason")
+	require.Equal(t, http.StatusOK, c.Code, "solo clone should succeed; body=%s", c.Raw)
+
+	rows, err := db.ListAgentMessagesForConv(c.NewConv, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, rows, 1, "solo clone should have exactly one inbox message (the handoff)")
+	assert.Equal(t, "clone handoff", rows[0].Subject, "handoff subject")
+	assert.Equal(t, followUp, rows[0].Body,
+		"handoff body must survive verbatim — length and newlines intact")
+	assert.Equal(t, int64(0), rows[0].GroupID,
+		"a solo handoff is a direct message — group_id 0")
 }

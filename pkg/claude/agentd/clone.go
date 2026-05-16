@@ -294,12 +294,10 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
-	// Charset/length: validate against the LENIENT inbox rule here. A
-	// grouped clone receives the handoff as an inbox message, so it
-	// tolerates the same ≤16384-byte, newline-friendly charset as a
-	// spawn --initial-message. The stricter solo-pane rule is enforced
-	// later by soloFollowUpRejection, once the membership snapshot in
-	// runCloneOrchestration reveals which delivery path applies.
+	// Charset/length: validate against the inbox rule. Every clone
+	// handoff — grouped or solo — rides the inbox as an agent_messages
+	// row (the universal-inbox transport), so it tolerates the same
+	// ≤16384-byte, newline-friendly charset as a spawn --initial-message.
 	if body.FollowUp != "" && !isValidInitialMessage(body.FollowUp) {
 		writeError(w, http.StatusBadRequest, "invalid_follow_up",
 			fmt.Sprintf("REJECTED. follow_up must be at most %d characters; newlines "+
@@ -369,15 +367,6 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		if m != nil {
 			oldMembers = append(oldMembers, m)
 		}
-	}
-
-	// A solo (groupless) clone has no inbox — its handoff is typed into
-	// the new pane via send-keys. decodeCloneBody only applied the
-	// lenient inbox charset; enforce the strict pane rule now that the
-	// delivery path is known.
-	if reason := soloFollowUpRejection(followUp, len(oldMembers) > 0); reason != "" {
-		writeError(w, http.StatusBadRequest, "invalid_follow_up", reason)
-		return
 	}
 
 	// Rate limit: refuse a second clone of the same source within
@@ -504,28 +493,29 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	})
 
 	// 5. Optional follow-up. Same shape as reincarnate: enqueue an
-	// agent_messages row when there's at least one shared group,
-	// otherwise direct send-keys into the new pane. FromConv is the
-	// caller (original for self-clone, manager for cross-clone), so
-	// the new clone sees who asked it to pick up work.
+	// agent_messages row and let the flush pipeline deliver it. A solo
+	// (groupless) clone still gets a row — group_id 0 is a direct
+	// message, the universal-inbox transport. FromConv is the caller
+	// (original for self-clone, manager for cross-clone), so the new
+	// clone sees who asked it to pick up work.
 	var msgID int64
 	if followUp != "" {
+		var handoffGroupID int64
 		if len(oldMembers) > 0 {
-			id, err := db.InsertAgentMessage(&db.AgentMessage{
-				GroupID:  oldMembers[0].GroupID,
-				FromConv: caller,
-				ToConv:   newConv,
-				Subject:  "clone handoff",
-				Body:     followUp,
-			})
-			if err != nil {
-				slog.Warn("clone: insert handoff message failed", "error", err)
-			} else {
-				msgID = id
-				goBackground(func() { deliverHandoffViaFlush(newConv) })
-			}
+			handoffGroupID = oldMembers[0].GroupID
+		}
+		id, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:  handoffGroupID,
+			FromConv: caller,
+			ToConv:   newConv,
+			Subject:  "clone handoff",
+			Body:     followUp,
+		})
+		if err != nil {
+			slog.Warn("clone: insert handoff message failed", "error", err)
 		} else {
-			goBackground(func() { injectFollowUpDirect(newConv, followUp) })
+			msgID = id
+			goBackground(func() { deliverHandoffViaFlush(newConv) })
 		}
 	}
 

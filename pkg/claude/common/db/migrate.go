@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 35
+const currentVersion = 36
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -233,6 +233,90 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 36 {
+		if err := migrateV35toV36(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV35toV36 makes agent_messages.group_id optional. The column was
+//
+//	group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE RESTRICT
+//
+// which meant a message row could not exist without a shared routing
+// group — so solo (groupless) agents had no inbox at all. The "universal
+// inbox" change makes agent_messages the universal transport: group_id
+// becomes `NOT NULL DEFAULT 0`, where 0 means "direct (no routing
+// group)", and the foreign key is dropped (0 can never satisfy it, and
+// the FK only ever served as the thing DeleteAgentGroup had to work
+// around). Group membership becomes purely an authorisation policy, not a
+// transport constraint.
+//
+// SQLite cannot ALTER a column's NOT NULL / FK in place, so this is the
+// standard table rebuild: create the replacement, copy the rows, drop
+// the original, rename. agent_messages is referenced by no other table
+// (parent_id is a self-column with no declared FK), so a straight
+// column-named copy is safe even with foreign_keys enforced — the
+// "12-step" pragma dance is only needed when the rebuilt table is
+// *referenced by* FKs elsewhere.
+//
+// The whole rebuild runs in one explicit transaction. That makes it
+// atomic: a failure mid-rebuild rolls back cleanly, so there is never a
+// partial state — no orphaned scratch table, and no window where
+// agent_messages has been dropped but not yet replaced.
+//
+// The scratch table is named agent_messages_v2 — the convention being
+// "<table>_vN for the Nth rebuild of that table", so a future second
+// rebuild would use _v3 and the migration history reads unambiguously.
+// It is renamed to agent_messages before the transaction commits and
+// never outlives this function.
+func migrateV35toV36(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v35→v36: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`
+		CREATE TABLE agent_messages_v2 (
+			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id         INTEGER NOT NULL DEFAULT 0,
+			from_conv        TEXT NOT NULL,
+			to_conv          TEXT NOT NULL,
+			subject          TEXT NOT NULL DEFAULT '',
+			body             TEXT NOT NULL DEFAULT '',
+			created_at       TEXT NOT NULL,
+			delivered_at     TEXT NOT NULL DEFAULT '',
+			read_at          TEXT NOT NULL DEFAULT '',
+			parent_id        INTEGER NOT NULL DEFAULT 0,
+			to_recipients    TEXT NOT NULL DEFAULT '',
+			cc_recipients    TEXT NOT NULL DEFAULT '',
+			original_to_conv TEXT NOT NULL DEFAULT ''
+		);
+		INSERT INTO agent_messages_v2
+			(id, group_id, from_conv, to_conv, subject, body, created_at,
+			 delivered_at, read_at, parent_id, to_recipients, cc_recipients,
+			 original_to_conv)
+			SELECT id, group_id, from_conv, to_conv, subject, body, created_at,
+			       delivered_at, read_at, parent_id, to_recipients, cc_recipients,
+			       original_to_conv
+			FROM agent_messages;
+		DROP TABLE agent_messages;
+		ALTER TABLE agent_messages_v2 RENAME TO agent_messages;
+		CREATE INDEX IF NOT EXISTS idx_agent_messages_to_conv
+			ON agent_messages(to_conv, created_at);
+		CREATE INDEX IF NOT EXISTS idx_agent_messages_parent
+			ON agent_messages(parent_id);
+
+		UPDATE schema_version SET version = 36;
+	`); err != nil {
+		return fmt.Errorf("migrate v35→v36: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v35→v36: commit: %w", err)
+	}
 	return nil
 }
 

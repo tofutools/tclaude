@@ -12,6 +12,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -272,6 +273,67 @@ type recipient struct {
 // fans out to every member of that group except the sender.
 const multicastPrefix = "group:"
 
+// holdsPermission reports whether an agent conv holds permission slug
+// through any non-interactive source: the config default-permissions
+// list, a per-conv agent_permissions grant, or an active
+// agent_sudo_grants row. It mirrors the allow-sources of
+// requirePermission minus the X-Tclaude-Ask-Human popup — callers that
+// only need the boolean (not the interactive escalation) use this.
+func holdsPermission(convID, slug string) bool {
+	if convID == "" {
+		return false
+	}
+	cfg, _ := config.Load()
+	if cfg.HasDefaultPermission(slug) {
+		return true
+	}
+	if ok, err := db.HasAgentPermissionRow(convID, slug); err == nil && ok {
+		return true
+	}
+	if ok, err := db.HasActiveSudoGrant(convID, slug); err == nil && ok {
+		return true
+	}
+	return false
+}
+
+// resolveMessageRouting authorises a 1:1 send fromID→targetID and
+// returns the group_id to stamp on the agent_messages row. Two
+// outcomes:
+//
+//   - A group-policy path exists (db.CanSenderReachTarget: shared
+//     group, owner-of-group, or via-link) → the message routes through
+//     that group; groupID is its id, viaName its name. This is the
+//     default intra-group policy and needs no permission slug.
+//   - No group-policy path → the send is "off-group" (to an ungrouped
+//     agent, or across a group boundary) and requires the elevated
+//     message.direct slug. When the sender holds it, the send is
+//     allowed as a direct message: groupID 0, viaName "".
+//
+// On denial — no path and no slug, or the routing group is archived —
+// the error response is already written and ok is false.
+func resolveMessageRouting(w http.ResponseWriter, fromID, targetID string) (groupID int64, viaName string, ok bool) {
+	via, _, err := db.CanSenderReachTarget(fromID, targetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return 0, "", false
+	}
+	if via != nil {
+		if !requireGroupActive(w, via) {
+			return 0, "", false
+		}
+		return via.ID, via.Name, true
+	}
+	if !holdsPermission(fromID, PermMessageDirect) {
+		writeError(w, http.StatusForbidden, "auth",
+			fmt.Sprintf("no shared group with %s and you do not own a group containing it; "+
+				"messaging an agent outside your group requires the %q permission "+
+				"(ask the human to grant it, or get a time-bounded grant via `tclaude agent sudo`)",
+				short8(targetID), PermMessageDirect))
+		return 0, "", false
+	}
+	return 0, "", true
+}
+
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -328,23 +390,16 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "cannot message self")
 		return
 	}
-	// Authorisation: shared-group OR sender owns a group containing
-	// target. Owner-as-non-member lets a coordinator agent address its
-	// teams without itself being a peer. Authority is checked against
-	// the LIVE successor — the outdated id may have lost membership
-	// by the time the successor took over, but the successor is who
-	// actually receives the message.
-	via, _, err := db.CanSenderReachTarget(fromID, finalConv)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if via == nil {
-		writeError(w, http.StatusForbidden, "auth",
-			"no shared group with target and you do not own a group containing the target")
-		return
-	}
-	if !requireGroupActive(w, via) {
+	// Authorisation + routing. The default policy is intra-group: a
+	// shared group (or owner-of-group / via-link) routes the message
+	// through that group. Off-group sends — to an ungrouped agent, or
+	// across a group boundary — require the elevated message.direct
+	// slug and route as direct messages (group_id 0). Authority is
+	// checked against the LIVE successor: the outdated id may have lost
+	// membership by the time the successor took over, but the
+	// successor is who actually receives the message.
+	groupID, viaName, ok := resolveMessageRouting(w, fromID, finalConv)
+	if !ok {
 		return
 	}
 
@@ -353,12 +408,12 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	// ambiguously / not at all / aren't reachable surface as a 4xx so
 	// the sender can fix the typo before any rows are written.
 	if len(req.Cc) > 0 {
-		handleMultiRecipient(w, fromID, finalConv, originalTo, via, &req)
+		handleMultiRecipient(w, fromID, finalConv, originalTo, groupID, viaName, &req)
 		return
 	}
 
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:        via.ID,
+		GroupID:        groupID,
 		FromConv:       fromID,
 		ToConv:         finalConv,
 		OriginalToConv: originalTo,
@@ -377,7 +432,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             id,
 		Delivered:      delivered,
-		ViaGroup:       via.Name,
+		ViaGroup:       viaName,
 		RedirectedFrom: originalTo,
 	})
 }
@@ -401,20 +456,23 @@ func walkSuccession(convID string) (finalConv, originalTo string) {
 // handleMultiRecipient writes one row per (primary + each CC) of a
 // `--cc`-flagged send, where every row carries the same to_recipients
 // / cc_recipients arrays so each receiver's `inbox read` sees the full
-// audience. The primary's `via` group has already been validated by
-// the caller; each CC is independently resolved and authorised.
+// audience. The primary's routing has already been resolved by the
+// caller (primaryGroupID / primaryViaName — 0 / "" for an off-group
+// direct send); each CC is independently resolved and authorised via
+// resolveMessageRouting, so a CC may route through its own group or
+// off-group as a direct message, just like the primary.
 //
 // Pre-validation: if any CC fails (ambiguous, unknown, unreachable,
 // duplicate of self/primary), the whole send is rejected before any
 // rows are written. Half-broadcasts are confusing for the recipient
 // who notices an extra "CC: <missing>" entry that wasn't actually
 // delivered.
-func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOriginalTo string, primaryVia *db.AgentGroup, req *sendReq) {
+func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOriginalTo string, primaryGroupID int64, primaryViaName string, req *sendReq) {
 	type resolvedCC struct {
 		ConvID         string
 		OriginalToConv string
 		Title          string
-		Via            *db.AgentGroup
+		GroupID        int64
 	}
 	resolved := make([]resolvedCC, 0, len(req.Cc))
 	seen := map[string]bool{primaryConv: true, fromID: true}
@@ -456,23 +514,16 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 			continue
 		}
 		seen[ccConv] = true
-		via, _, err := db.CanSenderReachTarget(fromID, ccConv)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
-		if via == nil {
-			writeError(w, http.StatusForbidden, "auth",
-				fmt.Sprintf("CC %q: no shared group and you do not own a group containing it", sel))
-			return
-		}
-		if via.IsArchived() {
-			writeError(w, http.StatusConflict, "archived",
-				fmt.Sprintf("CC %q routes via archived group %q", sel, via.Name))
+		ccGroupID, _, ok := resolveMessageRouting(w, fromID, ccConv)
+		if !ok {
+			// resolveMessageRouting already wrote the 4xx — no
+			// group-policy path and no message.direct slug, or an
+			// archived routing group. Pre-validation: abort the whole
+			// send before any rows are written.
 			return
 		}
 		title := agent.TitleFor(ccConv)
-		resolved = append(resolved, resolvedCC{ConvID: ccConv, OriginalToConv: ccOriginal, Title: title, Via: via})
+		resolved = append(resolved, resolvedCC{ConvID: ccConv, OriginalToConv: ccOriginal, Title: title, GroupID: ccGroupID})
 	}
 
 	toRecipients := []string{primaryConv}
@@ -481,13 +532,13 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 		ccRecipients = append(ccRecipients, r.ConvID)
 	}
 
-	out := sendResp{ViaGroup: primaryVia.Name, Recipients: []recipient{}}
+	out := sendResp{ViaGroup: primaryViaName, Recipients: []recipient{}}
 
 	// Insert + nudge primary first so the response order matches the
 	// "To:, CC: ..." header order in inbox read.
 	primaryTitle := agent.TitleFor(primaryConv)
 	primaryID, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:        primaryVia.ID,
+		GroupID:        primaryGroupID,
 		FromConv:       fromID,
 		ToConv:         primaryConv,
 		OriginalToConv: primaryOriginalTo,
@@ -511,7 +562,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 
 	for _, r := range resolved {
 		id, err := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:        r.Via.ID,
+			GroupID:        r.GroupID,
 			FromConv:       fromID,
 			ToConv:         r.ConvID,
 			OriginalToConv: r.OriginalToConv,
@@ -1030,37 +1081,6 @@ func isValidInitialMessage(s string) bool {
 	return true
 }
 
-// soloFollowUpRejection reports why a clone/reincarnate handoff cannot
-// reach a SOLO (groupless) successor, or "" when it can.
-//
-// The two delivery paths impose different charset rules:
-//
-//   - A GROUPED successor receives the handoff as an agent_messages
-//     inbox row — the same path a spawn --initial-message takes — so it
-//     tolerates the lenient isValidInitialMessage rules (≤16384 bytes,
-//     newlines and tabs allowed). decodeReincarnateFollowUp /
-//     decodeCloneBody already enforced that at decode time; nothing
-//     more to check for a grouped successor.
-//   - A SOLO successor has no group and therefore no inbox; its handoff
-//     is typed into the freshly-spawned pane via tmux send-keys, so it
-//     must clear the strict isValidFollowUp gate (≤4096 bytes, no
-//     control characters — each newline would submit as its own turn).
-//
-// The caller passes grouped = (len(oldMembers) > 0), known only after
-// the membership snapshot — which is why this check lives in the
-// orchestration rather than the decode step. An empty follow-up is
-// always fine (clone permits it; reincarnate rejects empty earlier).
-func soloFollowUpRejection(followUp string, grouped bool) string {
-	if grouped || followUp == "" || isValidFollowUp(followUp) {
-		return ""
-	}
-	return "this agent belongs to no group, so its handoff is typed into the " +
-		"successor's pane via tmux send-keys — the follow-up must be at most " +
-		"4096 characters with no newlines, tabs, or other control characters. " +
-		"(A grouped agent's handoff rides its inbox and may be longer and " +
-		"multi-line.)"
-}
-
 // handleWhoamiContext returns the caller's own context-window state.
 // Read-only and self-targeted, so no permission gate — any agent can
 // introspect its own session. Returns 0/0 if the row hasn't been
@@ -1281,18 +1301,27 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 	// — the member can still reply. The shared-group rule still
 	// applies to *spontaneous* messages (handleMessages).
 	//
-	// Routing: keep the reply on the same group_id as the original,
-	// so threads stay coherent on the recipient's side even when
-	// shared membership has since dissolved.
-	via, err := db.GetAgentGroupByID(orig.GroupID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if via == nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"original message references a group that no longer exists")
-		return
+	// Routing: keep the reply on the same group_id as the original, so
+	// threads stay coherent on the recipient's side even when shared
+	// membership has since dissolved. A group_id of 0 means the
+	// original was a direct message (the universal-inbox transport for
+	// off-group / solo sends) — the reply is direct too.
+	var replyGroupID int64
+	var replyViaName string
+	if orig.GroupID != 0 {
+		via, err := db.GetAgentGroupByID(orig.GroupID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		// via == nil: the routing group was deleted since the original
+		// was sent. DeleteAgentGroup now rewrites such rows to
+		// group_id 0, so this is unreachable in practice — but treat a
+		// missing group as "direct" rather than erroring, defensively.
+		if via != nil {
+			replyGroupID = via.ID
+			replyViaName = via.Name
+		}
 	}
 	// Reply target is the original sender. If they've since
 	// reincarnated, their old conv-id is still on the message row
@@ -1328,7 +1357,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		return
 	}
 	newID, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:        via.ID,
+		GroupID:        replyGroupID,
 		FromConv:       myID,
 		ToConv:         replyTarget,
 		OriginalToConv: replyOriginalTo,
@@ -1344,7 +1373,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             newID,
 		Delivered:      delivered,
-		ViaGroup:       via.Name,
+		ViaGroup:       replyViaName,
 		RedirectedFrom: replyOriginalTo,
 	})
 }

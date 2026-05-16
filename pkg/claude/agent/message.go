@@ -135,8 +135,14 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		if hasCC && !isMulticast {
 			header = "Sent (multi-recipient)"
 		}
-		fmt.Fprintf(stdout, "%s via group %q: %d recipients (%d delivered, %d queued).\n",
-			header, resp.ViaGroup, len(resp.Recipients), delivered, len(resp.Recipients)-delivered)
+		// A --cc send whose primary routed off-group has an empty
+		// via_group; multicast always has a real group.
+		scope := ""
+		if resp.ViaGroup != "" {
+			scope = fmt.Sprintf(" via group %q", resp.ViaGroup)
+		}
+		fmt.Fprintf(stdout, "%s%s: %d recipients (%d delivered, %d queued).\n",
+			header, scope, len(resp.Recipients), delivered, len(resp.Recipients)-delivered)
 		for _, rcp := range resp.Recipients {
 			name := rcp.Title
 			if name == "" {
@@ -162,14 +168,20 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	if resp.Delivered {
 		state = "delivered"
 	}
+	// An off-group send (the message.direct path) has no routing group;
+	// render it as a direct message rather than `via group ""`.
+	via := "directly"
+	if resp.ViaGroup != "" {
+		via = fmt.Sprintf("via group %q", resp.ViaGroup)
+	}
 	if resp.RedirectedFrom != "" {
 		// Direct-send redirect: addressed conv was superseded; daemon
 		// re-routed to the live successor. Surface the hop so the
 		// sender can correct stale selectors.
-		fmt.Fprintf(stdout, "Sent message #%d via group %q (%s) → redirected from %s, superseded by current target\n",
-			resp.ID, resp.ViaGroup, state, short(resp.RedirectedFrom))
+		fmt.Fprintf(stdout, "Sent message #%d %s (%s) → redirected from %s, superseded by current target\n",
+			resp.ID, via, state, short(resp.RedirectedFrom))
 	} else {
-		fmt.Fprintf(stdout, "Sent message #%d via group %q (%s)\n", resp.ID, resp.ViaGroup, state)
+		fmt.Fprintf(stdout, "Sent message #%d %s (%s)\n", resp.ID, via, state)
 	}
 	return rcOK
 }

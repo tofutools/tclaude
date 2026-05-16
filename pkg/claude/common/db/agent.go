@@ -268,10 +268,13 @@ func SetAgentGroupMaxMembers(name string, max int) (int64, error) {
 }
 
 // DeleteAgentGroup removes a group by name. Cascades to membership +
-// ownership rows (ON DELETE CASCADE in schema) and explicitly purges
-// the group's message history first within a single transaction
-// (the agent_messages FK is ON DELETE RESTRICT, so a bare DELETE of
-// the parent group fails when any messages still reference it).
+// ownership rows (ON DELETE CASCADE in schema) and, within the same
+// transaction, rewrites the group's messages to group_id = 0 so the
+// conversation history survives the group's deletion as direct
+// messages. agent_messages no longer has a foreign key to
+// agent_groups (the "universal inbox" change dropped it), so this is a
+// data-retention choice rather than an FK workaround: a deleted group
+// should not silently destroy what its members said to each other.
 //
 // No-op if the group doesn't exist.
 func DeleteAgentGroup(name string) error {
@@ -291,7 +294,7 @@ func DeleteAgentGroup(name string) error {
 		}
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM agent_messages WHERE group_id = ?`, gID); err != nil {
+	if _, err := tx.Exec(`UPDATE agent_messages SET group_id = 0 WHERE group_id = ?`, gID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
@@ -818,7 +821,10 @@ func FindMemberInGroup(groupID int64, convID string) (*AgentGroupMember, error) 
 	return m, err
 }
 
-// InsertAgentMessage records a delivered message and returns its ID.
+// InsertAgentMessage records a message and returns its ID. A GroupID of
+// 0 means "direct" — a message with no routing group, the universal-
+// inbox transport for solo agents and cross-group sends. Any positive
+// GroupID is the group that authorised a group-routed send.
 func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	db, err := Open()
 	if err != nil {

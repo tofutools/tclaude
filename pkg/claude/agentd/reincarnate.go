@@ -245,12 +245,10 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 				"something to start from.")
 		return "", false
 	}
-	// Charset/length: validate against the LENIENT inbox rule here. A
-	// grouped successor receives the handoff as an inbox message, so it
-	// tolerates the same ≤16384-byte, newline-friendly charset as a
-	// spawn --initial-message. The stricter solo-pane rule is enforced
-	// later by soloFollowUpRejection, once the membership snapshot in
-	// runReincarnationOrchestration reveals which delivery path applies.
+	// Charset/length: validate against the inbox rule. Every handoff —
+	// grouped or solo — rides the inbox as an agent_messages row (the
+	// universal-inbox transport), so it tolerates the same ≤16384-byte,
+	// newline-friendly charset as a spawn --initial-message.
 	if !isValidInitialMessage(body.FollowUp) {
 		writeError(w, http.StatusBadRequest, "invalid_follow_up",
 			fmt.Sprintf("REJECTED. follow_up must be at most %d characters; newlines "+
@@ -309,16 +307,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		if m != nil {
 			oldMembers = append(oldMembers, m)
 		}
-	}
-
-	// A solo (groupless) successor has no inbox — its handoff is typed
-	// into the new pane via send-keys. decodeReincarnateFollowUp only
-	// applied the lenient inbox charset; now that the membership
-	// snapshot is in, reject a follow-up the strict pane rule can't
-	// carry. Done before the spawn so a bad request wastes no session.
-	if reason := soloFollowUpRejection(followUp, len(oldMembers) > 0); reason != "" {
-		writeError(w, http.StatusBadRequest, "invalid_follow_up", reason)
-		return
 	}
 
 	oldPerms, err := db.ListAgentPermissionsForConv(target)
@@ -460,33 +448,35 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	}
 	newTitle := uniqueReincarnateTitle(prevTitle)
 
-	// 7. Queue the follow-up message BEFORE the post-spawn goroutine
-	// runs — gets the row written so the rename can land first and
-	// the message delivery picks it up next. Solo path has no row to
-	// queue; the goroutine below sends the text directly after the
-	// rename. (decodeReincarnateFollowUp guarantees followUp != "".)
-	var msgID int64
+	// 7. Queue the follow-up as an agent_messages row BEFORE the
+	// post-spawn goroutine runs — the row is written so the rename can
+	// land first and the flush delivery picks the message up next. A
+	// solo (groupless) successor still gets a row: group_id 0 is a
+	// direct message, the universal-inbox transport. (decodeReincarnate
+	// FollowUp guarantees followUp != "".)
+	var handoffGroupID int64
 	if len(oldMembers) > 0 {
-		id, err := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:  oldMembers[0].GroupID,
-			FromConv: caller,
-			ToConv:   newConv,
-			Subject:  "reincarnation handoff",
-			Body:     followUp,
-		})
-		if err != nil {
-			slog.Warn("reincarnate: insert handoff message failed", "error", err)
-		} else {
-			msgID = id
-		}
+		handoffGroupID = oldMembers[0].GroupID
+	}
+	var msgID int64
+	if id, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:  handoffGroupID,
+		FromConv: caller,
+		ToConv:   newConv,
+		Subject:  "reincarnation handoff",
+		Body:     followUp,
+	}); err != nil {
+		slog.Warn("reincarnate: insert handoff message failed", "error", err)
+	} else {
+		msgID = id
 	}
 
-	// 8. Post-spawn injection: wait for alive → /rename → follow-up.
-	// Single goroutine so ordering is deterministic — without this,
-	// rename and follow-up race and the user briefly sees the wrong
-	// title in the new pane.
+	// 8. Post-spawn injection: wait for alive → /rename → flush the
+	// handoff. Single goroutine so ordering is deterministic — without
+	// this, the rename and the handoff nudge race and the user briefly
+	// sees the wrong title in the new pane.
 	goBackground(func() {
-		runReincarnatePostSpawn(newConv, newTitle, followUp, len(oldMembers) > 0)
+		runReincarnatePostSpawn(newConv, newTitle)
 	})
 
 	// 9. Mark the old conv as archived (soft-deleted), then soft-stop.
@@ -553,7 +543,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive message #%d",
 			short8(target), carry, newTitle, msgID)
 	} else {
-		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive the follow-up directly",
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q; WARNING: the handoff message failed to queue (see daemon logs)",
 			short8(target), carry, newTitle)
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -561,15 +551,16 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 
 // runReincarnatePostSpawn is the single goroutine that handles
 // post-spawn injection in deterministic order: wait-for-alive →
-// /rename → follow-up. Renaming first means the new pane's CC
-// title shows the proper `<prev>-reincarnate-<N>` immediately,
-// before any work output starts streaming.
+// /rename → flush the handoff. Renaming first means the new pane's CC
+// title shows the proper `<prev>-reincarnate-<N>` immediately, before
+// any work output starts streaming.
 //
-// followUp is guaranteed non-empty (decodeReincarnateFollowUp
-// rejects empty bodies). Skips rename when newTitle == "" (defensive
-// — should not happen in practice since uniqueReincarnateTitle
-// always returns a non-empty string).
-func runReincarnatePostSpawn(newConv, newTitle, followUp string, hasGroup bool) {
+// The handoff follow-up was already written as an agent_messages row
+// before this goroutine fired (group_id 0 for a solo successor); flush
+// delivers it through the normal nudge pipeline. Skips rename when
+// newTitle == "" (defensive — uniqueReincarnateTitle always returns a
+// non-empty string in practice).
+func runReincarnatePostSpawn(newConv, newTitle string) {
 	if !waitForConvAlive(newConv) {
 		slog.Warn("reincarnate: new conv never came online; rename + handoff abandoned", "conv", newConv)
 		return
@@ -579,38 +570,10 @@ func runReincarnatePostSpawn(newConv, newTitle, followUp string, hasGroup bool) 
 			slog.Warn("reincarnate: rename injection failed", "conv", newConv, "title", newTitle)
 		}
 		// Gap so CC has time to process the rename slash command
-		// before we type the follow-up. Without this the follow-up
-		// keystrokes can land in the rename's still-open prompt.
+		// before the handoff message's nudge lands.
 		time.Sleep(reincarnateReadyDelay)
 	}
-	if hasGroup {
-		// agent_messages row was already inserted before this
-		// goroutine fired; flush picks it up via the normal nudge
-		// pipeline.
-		flush(newConv, realFlushSender)
-		return
-	}
-	// Solo (no group) follow-up: direct send-keys, mirroring
-	// injectFollowUpDirect's tmux pattern. The pane is already
-	// alive (waitForConvAlive returned true) so no second wait.
-	sess := pickAliveSession(newConv)
-	if sess == nil {
-		slog.Warn("reincarnate: solo follow-up — pane went away between rename and send", "conv", newConv)
-		return
-	}
-	target := sess.TmuxSession + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, followUp).Run(); err != nil {
-		slog.Warn("reincarnate: solo follow-up text send failed", "error", err, "tmux", sess.TmuxSession)
-		return
-	}
-	// 500ms gap — paste-mode coalescing safety; see injectTextAndSubmit.
-	time.Sleep(500 * time.Millisecond)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("reincarnate: solo follow-up submit failed", "error", err, "tmux", sess.TmuxSession)
-		return
-	}
-	time.Sleep(500 * time.Millisecond)
-	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
+	flush(newConv, realFlushSender)
 }
 
 // deliverHandoffViaFlush waits for the new pane to come online, then
@@ -630,46 +593,6 @@ func deliverHandoffViaFlush(newConv string) {
 	}
 	slog.Warn("reincarnate: new conv never came online; handoff message left in inbox for next agent request",
 		"conv", newConv)
-}
-
-// injectFollowUpDirect is the no-group fallback. Waits for the new
-// pane to be alive, then types the follow-up directly via send-keys
-// — splitting text from the submit Enter to defeat CC's TUI paste-
-// mode coalescing (where embedded Enters become newlines instead of
-// submits).
-func injectFollowUpDirect(newConv, followUp string) {
-	deadline := time.Now().Add(reincarnateAliveTimeout)
-	var sess *db.SessionRow
-	for time.Now().Before(deadline) {
-		s := pickAliveSession(newConv)
-		if s != nil {
-			sess = s
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if sess == nil {
-		slog.Warn("reincarnate: solo follow-up injection — new conv never came online", "conv", newConv)
-		return
-	}
-	time.Sleep(reincarnateReadyDelay)
-	target := sess.TmuxSession + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, followUp).Run(); err != nil {
-		slog.Warn("reincarnate: solo follow-up text send failed", "error", err, "tmux", sess.TmuxSession)
-		return
-	}
-	// 500ms gap so the text and the submit Enter arrive in separate
-	// reads on CC's side; otherwise the trailing Enter risks being
-	// treated as a paste-newline. Same as injectTextAndSubmit.
-	time.Sleep(500 * time.Millisecond)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("reincarnate: solo follow-up submit failed", "error", err, "tmux", sess.TmuxSession)
-		return
-	}
-	time.Sleep(500 * time.Millisecond)
-	// Belt-and-suspenders second Enter — same pattern injectSlashCommand
-	// uses; harmless if the first one already submitted.
-	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 }
 
 // switchTmuxClients moves tmux clients currently attached to oldTmux
