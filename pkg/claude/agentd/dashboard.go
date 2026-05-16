@@ -434,6 +434,13 @@ type agentState struct {
 	TokensInput       int64   `json:"tokens_input,omitempty"`
 	TokensOutput      int64   `json:"tokens_output,omitempty"`
 	ContextWindowSize int64   `json:"context_window_size,omitempty"`
+	// ExitReason is why a now-offline agent's session ended: a graceful
+	// SessionEnd `reason`, or 'unexpected' when the process died with no
+	// clean shutdown (reaper-stamped). Only populated for an offline
+	// agent; empty for a live one, or for a row that exited before the
+	// exit_reason column existed. The dashboard renders 'unexpected' as
+	// "crashed" and everything else (incl. empty) as a plain exit.
+	ExitReason string `json:"exit_reason,omitempty"`
 }
 
 // stateForConv looks up the most-recent live tmux session row for this
@@ -492,6 +499,13 @@ func stateForConv(convID string) agentState {
 	if !alive {
 		out.Status = session.StatusExited
 		out.StatusDetail = ""
+		// Surface WHY it ended so the dashboard can tell a clean exit
+		// from an unexpected death. An empty result (NULL exit_reason —
+		// a pre-migration corpse, or a death the reaper has not swept
+		// yet) renders as a plain exit, never as a crash.
+		if reason, err := db.GetSessionExitReason(pick.ID); err == nil {
+			out.ExitReason = reason
+		}
 	}
 	return out
 }

@@ -246,13 +246,22 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 // The session reaper uses this so a session that resumed in the gap
 // between "observed dead" and "write exited" is never clobbered. A
 // false return is benign — the reaper re-evaluates the row next sweep.
+//
+// Reaching this path means no graceful SessionEnd hook fired for the
+// session: the reaper only ever marks a row whose status was still
+// live — a cleanly-exited row is already status='exited' and the
+// reaper skips it. So when no exit_reason was recorded the death was
+// unexpected (a crash, an OOM kill, `tclaude session kill`, a reboot),
+// and the COALESCE stamps 'unexpected'. An exit_reason already present
+// — a narrow race where a real SessionEnd landed first — is preserved.
 func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt time.Time) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE sessions
-		SET status = 'exited', status_detail = '', updated_at = ?
+		SET status = 'exited', status_detail = '', updated_at = ?,
+			exit_reason = COALESCE(exit_reason, 'unexpected')
 		WHERE id = ? AND status = ? AND updated_at = ?`,
 		time.Now().Format(time.RFC3339Nano),
 		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
@@ -264,6 +273,54 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// SetSessionExitReason records why a session ended — the `reason` from
+// a graceful SessionEnd hook (logout / prompt_input_exit / resume /
+// bypass_permissions_disabled / other). It is authoritative: a real
+// SessionEnd overrides any 'unexpected' a reaper sweep stamped in a
+// narrow race. Cleared by ClearSessionExitReason when the session comes
+// back alive.
+func SetSessionExitReason(id, reason string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE sessions SET exit_reason = ? WHERE id = ?`, reason, id)
+	return err
+}
+
+// ClearSessionExitReason drops a session's exit_reason back to NULL.
+// Called on SessionStart: a fresh or resumed session is alive again, so
+// a stale reason from a previous exit must not linger — otherwise a
+// later unexpected death could be misread as that old clean exit.
+func ClearSessionExitReason(id string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE sessions SET exit_reason = NULL WHERE id = ?`, id)
+	return err
+}
+
+// GetSessionExitReason returns the recorded exit_reason for a session,
+// or "" when none is recorded (NULL) — a live session, or a row that
+// exited before the exit_reason column existed. A "" result must be
+// rendered as a plain exit, never as a crash.
+func GetSessionExitReason(id string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var reason sql.NullString
+	err = d.QueryRow(`SELECT exit_reason FROM sessions WHERE id = ?`, id).Scan(&reason)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return reason.String, nil
 }
 
 // UpdateContextPct stores the latest context window usage percentage for a session.
