@@ -306,3 +306,64 @@ func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 	f.AssertGroupMember(g.Name, resp.NewConv, "worker-r-4", 5*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
 }
+
+// Scenario: force mode with no follow_up is rejected with the SPECIFIC
+// missing-follow_up error. This is the round-trip guard for
+// dashboardReincarnateAgent's body buffering + ContentLength reset: if
+// the buffered body did not reach handleAgentReincarnate's decoder
+// intact, force-mode could still 400 — but with a generic decode error
+// rather than "missing_follow_up". Asserting the specific code proves
+// the body round-tripped and decodeReincarnateFollowUp ran on it.
+func TestDashboardReincarnate_ForceMode_MissingFollowUpRejected(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "reih-aaaa-bbbb-cccc-000000000001"
+	const tmux = "tclaude-spwn-reih"
+	f.HaveConvWithTitle(conv, "worker-nofu")
+	f.HaveAliveSession(conv, "spwn-reih", tmux, "/tmp/work")
+	f.HaveGroup("team")
+	f.HaveMember("team", conv)
+
+	mux := reincDashMux(t)
+	rec := postReincarnate(t, mux, conv, map[string]any{"mode": "force"})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "missing_follow_up",
+		"force mode with no follow_up must hit the specific missing-follow_up error, "+
+			"not a generic decode failure — that proves the buffered body round-tripped")
+
+	assert.True(t, f.World.Tmux.IsAlive(tmux), "a rejected force request never touches the session")
+	assert.Equal(t, conv, db.ResolveLatestConv(conv), "a rejected force request records no succession")
+	rows, err := db.ListAgentMessagesForConv(conv, 100)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a rejected force request writes no inbox row")
+}
+
+// Scenario: force mode with a control-character follow_up is rejected
+// — the force-path counterpart of the self-path control-char focus-hint
+// test. The follow_up rides the inbox as the successor's handoff, so it
+// must clear isValidInitialMessage's charset rule.
+func TestDashboardReincarnate_ForceMode_RejectsControlCharFollowUp(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "reii-aaaa-bbbb-cccc-000000000001"
+	const tmux = "tclaude-spwn-reii"
+	f.HaveConvWithTitle(conv, "worker-badfu")
+	f.HaveAliveSession(conv, "spwn-reii", tmux, "/tmp/work")
+	f.HaveGroup("team")
+	f.HaveMember("team", conv)
+
+	mux := reincDashMux(t)
+	rec := postReincarnate(t, mux, conv, map[string]any{
+		"mode":      "force",
+		"follow_up": "bad\x01handoff",
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "invalid_follow_up",
+		"a control-char follow_up must hit the charset-validation error")
+
+	assert.True(t, f.World.Tmux.IsAlive(tmux), "a rejected force request never touches the session")
+	assert.Equal(t, conv, db.ResolveLatestConv(conv), "a rejected force request records no succession")
+	rows, err := db.ListAgentMessagesForConv(conv, 100)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a rejected force request writes no inbox row")
+}
