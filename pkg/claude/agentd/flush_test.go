@@ -17,6 +17,9 @@ func setupTestDB(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	// os.UserHomeDir() reads USERPROFILE on Windows; set it too so a
+	// Windows test run stays in the temp dir instead of the real home.
+	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
 }
 

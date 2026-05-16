@@ -3,10 +3,12 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 )
 
 // Config represents the tclaude configuration file structure.
@@ -305,38 +307,55 @@ func Load() (*Config, error) {
 		return DefaultConfig(), err
 	}
 
-	// Apply defaults for missing fields
-	if config.LogLevel == "" {
-		config.LogLevel = "info"
-	}
-
-	// Apply defaults for missing sections
-	if config.Notifications == nil {
-		config.Notifications = DefaultConfig().Notifications
-	} else {
-		// Apply defaults for missing notification fields
-		if config.Notifications.CooldownSeconds == 0 {
-			config.Notifications.CooldownSeconds = 5
-		}
-		if len(config.Notifications.Transitions) == 0 {
-			config.Notifications.Transitions = DefaultConfig().Notifications.Transitions
-		}
-	}
-	if config.RateLimit != nil {
-		if v := config.RateLimit.FiveHourPercentMaxUsed; v <= 0 || v > 100 {
-			slog.Warn("Invalid ratelimit.five_hour_percent_max_used; using default", "value", v)
-			config.RateLimit.FiveHourPercentMaxUsed = 99.0
-		}
-		if v := config.RateLimit.SevenDayPercentMaxUsed; v <= 0 || v > 100 {
-			slog.Warn("Invalid ratelimit.seven_day_percent_max_used; using default", "value", v)
-			config.RateLimit.SevenDayPercentMaxUsed = 99.9
-		}
-	}
-
+	Normalize(&config)
 	return &config, nil
 }
 
-// Save saves the config to ~/.tclaude/config.json.
+// Normalize fills in tclaude's defaults and clamps out-of-range values
+// on a Config in place: an empty log level becomes "info", a missing
+// notifications block is populated, a zero cooldown / empty transition
+// list fall back to defaults, and an out-of-range rate-limit percent is
+// clamped to its safe default. It is idempotent.
+//
+// Load runs it after unmarshalling the config file. The dashboard's
+// visual config editor also runs it (after Validate) so the form, the
+// diff preview and the bytes written to disk all agree on one canonical
+// shape — there is no second "Load re-applies defaults" surprise.
+func Normalize(c *Config) {
+	if c == nil {
+		return
+	}
+	if c.LogLevel == "" {
+		c.LogLevel = "info"
+	}
+	if c.Notifications == nil {
+		c.Notifications = DefaultConfig().Notifications
+	} else {
+		if c.Notifications.CooldownSeconds == 0 {
+			c.Notifications.CooldownSeconds = 5
+		}
+		if len(c.Notifications.Transitions) == 0 {
+			c.Notifications.Transitions = DefaultConfig().Notifications.Transitions
+		}
+	}
+	if c.RateLimit != nil {
+		if v := c.RateLimit.FiveHourPercentMaxUsed; v <= 0 || v > 100 {
+			slog.Warn("Invalid ratelimit.five_hour_percent_max_used; using default", "value", v)
+			c.RateLimit.FiveHourPercentMaxUsed = 99.0
+		}
+		if v := c.RateLimit.SevenDayPercentMaxUsed; v <= 0 || v > 100 {
+			slog.Warn("Invalid ratelimit.seven_day_percent_max_used; using default", "value", v)
+			c.RateLimit.SevenDayPercentMaxUsed = 99.9
+		}
+	}
+}
+
+// Save writes the config to ~/.tclaude/config.json atomically: the
+// bytes go to a sibling temp file which is then renamed over the
+// target. A crash, power loss or disk-full partway through must never
+// leave a truncated config.json — the next Load would silently degrade
+// to DefaultConfig and revert every persisted setting. Rename within a
+// directory is atomic on POSIX and replace-existing on Windows.
 func Save(config *Config) error {
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -348,7 +367,143 @@ func Save(config *Config) error {
 		return err
 	}
 
-	return os.WriteFile(ConfigPath(), data, 0644)
+	tmp, err := os.CreateTemp(dir, "config-*.json.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// Removes the temp file on every error path; a no-op once the
+	// rename below has consumed it.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// CreateTemp makes the file 0600; match the historical 0644.
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, ConfigPath())
+}
+
+// Validate checks a Config for problems that would make it unsafe or
+// nonsensical to persist, returning a list of human-readable error
+// strings (empty when the config is acceptable). It is the gatekeeper
+// for the dashboard's visual config editor: every problem is reported
+// at once so the human fixes them in a single pass instead of one
+// failed save at a time. Load() is deliberately more lenient — it
+// degrades a bad value to a default and carries on — but a human
+// editing config through the dashboard wants to be told.
+func Validate(c *Config) []string {
+	if c == nil {
+		return []string{"config is nil"}
+	}
+	var errs []string
+
+	switch c.LogLevel {
+	case "", "debug", "info", "warn", "error":
+	default:
+		errs = append(errs, fmt.Sprintf("log_level %q is not one of debug, info, warn, error", c.LogLevel))
+	}
+
+	if c.AutoCompactPercent != nil {
+		if p := *c.AutoCompactPercent; p < 1 || p > 100 {
+			errs = append(errs, fmt.Sprintf("auto_compact_percent %d is out of range (1–100)", p))
+		}
+	}
+
+	if c.RateLimit != nil {
+		if v := c.RateLimit.FiveHourPercentMaxUsed; v <= 0 || v > 100 {
+			errs = append(errs, fmt.Sprintf("ratelimit.five_hour_percent_max_used %g is out of range (>0 and ≤100)", v))
+		}
+		if v := c.RateLimit.SevenDayPercentMaxUsed; v <= 0 || v > 100 {
+			errs = append(errs, fmt.Sprintf("ratelimit.seven_day_percent_max_used %g is out of range (>0 and ≤100)", v))
+		}
+	}
+
+	if c.Notifications != nil {
+		if c.Notifications.CooldownSeconds < 0 {
+			errs = append(errs, "notifications.cooldown_seconds must not be negative")
+		}
+		for i, tr := range c.Notifications.Transitions {
+			if tr.From == "" || tr.To == "" {
+				errs = append(errs, fmt.Sprintf("notifications.transitions[%d] needs both from and to (use \"*\" for any state)", i))
+			}
+		}
+	}
+
+	if c.Agent != nil {
+		a := c.Agent
+		if a.CloneCooldown != "" {
+			if d, err := time.ParseDuration(a.CloneCooldown); err != nil {
+				errs = append(errs, fmt.Sprintf("agent.clone_cooldown %q is not a valid duration (e.g. \"1m\", \"30s\", \"0\")", a.CloneCooldown))
+			} else if d < 0 {
+				errs = append(errs, "agent.clone_cooldown must not be negative")
+			}
+		}
+		if a.SpawnMaxPerHour != nil && *a.SpawnMaxPerHour < 0 {
+			errs = append(errs, "agent.spawn_max_per_hour must not be negative (0 = unlimited)")
+		}
+		if cn := a.ContextNudge; cn != nil {
+			// When the nudge is enabled, 0 is a footgun: Resolved()
+			// silently rewrites a non-positive ladder value to its
+			// built-in default, so the human's "0" never takes effect.
+			// Require a real 1–100 value while enabled; tolerate 0 (the
+			// inert zero value) when the nudge is off.
+			lo := 0
+			if cn.Enabled {
+				lo = 1
+			}
+			if cn.MinPct < lo || cn.MinPct > 100 {
+				errs = append(errs, fmt.Sprintf("agent.context_nudge.min_pct %d is out of range (%d–100)", cn.MinPct, lo))
+			}
+			if cn.IntervalPct < lo || cn.IntervalPct > 100 {
+				errs = append(errs, fmt.Sprintf("agent.context_nudge.interval_pct %d is out of range (%d–100)", cn.IntervalPct, lo))
+			}
+		}
+		errs = append(errs, validateSudo(a.Sudo)...)
+	}
+
+	return errs
+}
+
+// validateSudo reports duration-parse problems in a SudoConfig and its
+// per-conv overrides. Split out of Validate to keep the nesting flat.
+func validateSudo(s *SudoConfig) []string {
+	if s == nil {
+		return nil
+	}
+	var errs []string
+	chk := func(label, val string) {
+		if val == "" {
+			return
+		}
+		if d, err := time.ParseDuration(val); err != nil {
+			errs = append(errs, fmt.Sprintf("%s %q is not a valid duration (e.g. \"30m\", \"2h\")", label, val))
+		} else if d < 0 {
+			errs = append(errs, label+" must not be negative")
+		}
+	}
+	chk("agent.sudo.max_duration", s.MaxDuration)
+	chk("agent.sudo.default_duration", s.DefaultDuration)
+	chk("agent.sudo.popup_timeout", s.PopupTimeout)
+	for k, ov := range s.Overrides {
+		if ov == nil {
+			continue
+		}
+		chk(fmt.Sprintf("agent.sudo.overrides[%q].max_duration", k), ov.MaxDuration)
+		chk(fmt.Sprintf("agent.sudo.overrides[%q].default_duration", k), ov.DefaultDuration)
+		chk(fmt.Sprintf("agent.sudo.overrides[%q].popup_timeout", k), ov.PopupTimeout)
+	}
+	return errs
 }
 
 // MatchesTransition checks if a state transition matches any configured rule.
