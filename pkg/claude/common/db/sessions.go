@@ -252,7 +252,21 @@ func UpdateContextPct(sessionID string, pct float64) error {
 //
 // All four fields are written together so a partial update can never
 // leave the row in a state where pct disagrees with abs counts.
+//
+// An all-zero snapshot is SKIPPED, not written. Claude Code emits
+// statusline renders whose context_window block is empty/absent (e.g.
+// before a turn's first API response); those arrive here as
+// (0, 0, 0, 0). Writing them would clobber a good snapshot back to
+// zero — the bug behind the dashboard context meter flickering empty.
+// context_pct is never legitimately 0 for a live session (the system
+// prompt + conversation always occupy the window), so an all-zero
+// input is unambiguously "no data", not "0% used". This guard lives
+// at the DB chokepoint so no caller — present or future — can
+// reintroduce the clobber.
 func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOutput, windowSize int64) error {
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
+		return nil
+	}
 	db, err := Open()
 	if err != nil {
 		return err

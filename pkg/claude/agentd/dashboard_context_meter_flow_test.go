@@ -105,3 +105,52 @@ func TestDashboardSnapshot_ContextMeterUnknownWhenNoUsage(t *testing.T) {
 	assert.Zero(t, agentRow.State.TokensOutput, "no-usage agent should report 0 tokens_output")
 	assert.Zero(t, agentRow.State.ContextWindowSize, "no-usage agent should report 0 window size")
 }
+
+// Regression: the dashboard context meter flickered empty because the
+// statusline hook clobbered a good snapshot. Claude Code emits
+// statusline renders whose context_window block is empty (e.g. before
+// a turn's first API response); the hook turned those into an
+// UpdateContextSnapshot(0,0,0,0) call that overwrote the row's good
+// data with zeros. The next populated render restored it — hence the
+// intermittent empty meter, and `tclaude agent context-info` "working"
+// only when read during a good window.
+//
+// The fix makes the write non-destructive at the DB chokepoint: an
+// all-zero snapshot is skipped, never written. This test reproduces
+// the bug — a good snapshot, then an empty render — and asserts the
+// good snapshot still surfaces on /api/snapshot. Pre-fix it fails (the
+// empty write zeroes the row); post-fix the data survives.
+func TestDashboardSnapshot_ContextMeterSurvivesEmptyStatuslineRender(t *testing.T) {
+	const conv = "ctxc-1111-2222-3333-4444"
+	const label = "spwn-ctxc"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveAliveSession(conv, label, "tmux-ctxc", "/tmp/ctxc")
+	f.HaveEnrolledAgent(conv)
+
+	// A populated statusline render writes a good snapshot.
+	require.NoError(t,
+		db.UpdateContextSnapshot(label, 15.0, 146000, 2000, 1000000),
+		"good snapshot")
+
+	// A subsequent render whose context_window block is empty arrives
+	// as an all-zero write. It must NOT clobber the good snapshot.
+	require.NoError(t,
+		db.UpdateContextSnapshot(label, 0, 0, 0, 0),
+		"empty statusline render")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+	assert.Equal(t, 15.0, agentRow.State.ContextPct,
+		"context_pct must survive an empty statusline render")
+	assert.Equal(t, int64(146000), agentRow.State.TokensInput,
+		"tokens_input must survive an empty statusline render")
+	assert.Equal(t, int64(2000), agentRow.State.TokensOutput,
+		"tokens_output must survive an empty statusline render")
+	assert.Equal(t, int64(1000000), agentRow.State.ContextWindowSize,
+		"context_window_size must survive an empty statusline render")
+}
