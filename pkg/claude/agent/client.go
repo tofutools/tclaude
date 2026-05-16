@@ -165,6 +165,12 @@ type DaemonOpts struct {
 	// the caller's own. Resolved daemon-side via agent.ResolveSelector,
 	// so titles / prefixes work too.
 	TargetConv string
+	// Timeout, when > 0, overrides the default 10s client timeout for
+	// this one request. Needed by slow endpoints — template
+	// instantiation spawns a whole agent team and can run well past
+	// 10s. Ignored when AskHuman is set (that path picks its own
+	// generous timeout).
+	Timeout time.Duration
 }
 
 // DaemonGet performs a GET against the daemon and decodes the JSON body
@@ -219,12 +225,15 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	client := httpClient()
-	if opts.AskHuman > 0 {
+	switch {
+	case opts.AskHuman > 0:
 		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
 		// The default client has a short timeout; popup approvals can
 		// take up to 300s. Use a per-request client whose timeout is
 		// generous enough to outlive the daemon's wait.
 		client = httpClientWithTimeout(opts.AskHuman + 30*time.Second)
+	case opts.Timeout > 0:
+		client = httpClientWithTimeout(opts.Timeout)
 	}
 	if opts.TargetConv != "" {
 		req.Header.Set("X-Tclaude-Target-Conv", opts.TargetConv)
