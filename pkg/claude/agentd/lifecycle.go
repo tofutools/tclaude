@@ -403,9 +403,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.InitialMessage = strings.TrimSpace(body.InitialMessage)
 	if !isValidInitialMessage(body.InitialMessage) {
 		writeError(w, http.StatusBadRequest, "invalid_initial_message",
-			"initial_message must be at most 4096 characters; newlines and tabs "+
+			fmt.Sprintf("initial_message must be at most %d characters; newlines and tabs "+
 				"are allowed (it is delivered to the agent's inbox, not typed into "+
-				"its pane), but other control characters are not")
+				"its pane), but other control characters are not", agent.MaxInitialMessageBytes))
 		return
 	}
 

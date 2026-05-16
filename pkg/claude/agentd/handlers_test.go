@@ -192,10 +192,11 @@ func TestIsValidInitialMessage(t *testing.T) {
 		{"blank line between paragraphs", "para one\n\npara two", true},
 		{"tab", "before\tafter", true},
 		{"unicode", "résumé 🎉", true},
-		{"max length", strings.Repeat("a", 4096), true},
+		{"over the retired 4096 cap", strings.Repeat("a", 8000), true},
+		{"max length", strings.Repeat("a", 16384), true},
 
 		// --- rejected ---
-		{"oversize 4097", strings.Repeat("a", 4097), false},
+		{"oversize 16385", strings.Repeat("a", 16385), false},
 		{"carriage return", "before\rafter", false},
 		{"NUL", "before\x00after", false},
 		{"DEL", "before\x7fafter", false},

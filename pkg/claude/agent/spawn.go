@@ -77,7 +77,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer) (*SpawnResponse, int) {
 	}
 	initialMessage := strings.TrimSpace(p.InitialMessage)
 	if !isValidInitialMessage(initialMessage) {
-		fmt.Fprintln(stderr, "Error: REJECTED. --initial-message must be at most 4096 characters.")
+		fmt.Fprintf(stderr, "Error: REJECTED. --initial-message must be at most %d characters.\n", MaxInitialMessageBytes)
 		fmt.Fprintln(stderr, "Newlines and tabs are allowed (the brief is delivered to the agent's")
 		fmt.Fprintln(stderr, "inbox, not typed into its pane), but other control characters are not.")
 		return nil, rcInvalidArg
