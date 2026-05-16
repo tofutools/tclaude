@@ -1666,10 +1666,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const pct = Math.max(0, Math.min(100, Number((state && state.context_pct) || 0)));
     const winSize = Number((state && state.context_window_size) || 0);
     const known = pct > 0 || winSize > 0;
-    // filled = lit segment count. ceil so any non-zero usage lights at
-    // least one block; clamped so 100% fills exactly CTX_SEGMENTS.
-    const filled = known
-      ? Math.min(CTX_SEGMENTS, Math.ceil(pct / (100 / CTX_SEGMENTS)))
+    // filled = lit segment count. Round to the nearest block so the
+    // meter tracks the true percentage instead of running a block
+    // ahead (ceil over-reported — 41% lit 3 of 5). max(1, …) keeps any
+    // non-zero usage lighting at least one block; clamped so 100% fills
+    // exactly CTX_SEGMENTS. pct == 0 (and the unknown state, which
+    // pins pct to 0) lights none.
+    const filled = pct > 0
+      ? Math.min(CTX_SEGMENTS, Math.max(1, Math.round(pct / (100 / CTX_SEGMENTS))))
       : 0;
     let segs = '';
     for (let i = 0; i < CTX_SEGMENTS; i++) {

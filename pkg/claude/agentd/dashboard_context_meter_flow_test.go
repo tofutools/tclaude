@@ -45,7 +45,7 @@ func findDashMember(snap dashSnapshot, group, convID string) *dashMember {
 // for the agent BOTH on the Agents[] roster and on the group Members[]
 // row (the two places memberRowHTML / the agents table draw the
 // meter). A known 60% value is the JS contract: with 5 segments at 20%
-// each, ceil(60/20)=3 segments light bottom-up (2 green + 1 yellow).
+// each, round(60/20)=3 segments light bottom-up (2 green + 1 yellow).
 func TestDashboardSnapshot_ContextMeterUsageSurfaced(t *testing.T) {
 	const conv = "ctxm-1111-2222-3333-4444"
 	const label = "spwn-ctxm"
