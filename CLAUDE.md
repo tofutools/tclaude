@@ -95,6 +95,15 @@ When discovering a new CC or tmux quirk that bites in production, **encode it in
 
 See `docs/plans/testharness-v2.md` for the full design.
 
+## Code review
+
+CodeRabbit reviews every PR automatically, but it is frequently rate-limited or out of usage credits. When that happens its status check still goes **green** — but as a no-review *skip*, not a review or an approval. A green CodeRabbit check does not by itself mean the PR was reviewed.
+
+When CodeRabbit has not produced a real review, do an **independent review** before merge:
+
+- The reviewer must be a **fresh agent** — a local sub-agent, or a spawned review agent — that sees the PR diff **cold**: given only the diff and a review instruction, not the design backstory or how the change was built. The point is a review uncorrelated with the author's assumptions, so it catches what the author already rationalised away.
+- Triage its findings the same way CodeRabbit's would be: fix the valid ones, document any deliberate skips.
+
 ## Active design / TODO docs
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
