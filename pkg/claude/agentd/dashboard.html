@@ -155,6 +155,15 @@ details[open] > summary::before { content: "▼ "; }
 .copy-cmd::before { content: "$ "; color: #7d8590; }
 #status { font-size: 11px; color: #7d8590; }
 #status.error { color: #f85149; }
+/* Whole-dashboard emergency-shutdown button — sits top-right, just to
+   the right of the live dot (#status). Danger-styled but compact so it
+   doesn't shout louder than the dashboard title. */
+#emergency-all-btn {
+  background: #4d1d1d; border: 1px solid #f85149; color: #f85149;
+  border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
+  font-family: inherit; white-space: nowrap;
+}
+#emergency-all-btn:hover { background: #f85149; color: #fff; }
 /* Subscription-usage readout in the top bar, left of the live dot.
    Mirrors the statusbar's "5h [bar] 17% (2h16m)" format per window. */
 #usage { font-size: 11px; color: #7d8590; display: flex; align-items: center; gap: 12px; }
@@ -196,6 +205,7 @@ details[open] > summary .group-actions { opacity: 1; }
 }
 .group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+.group-actions button.warn:hover { color: #d29922; border-color: #d29922; }
 .group-rename-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit; font-weight: bold;
@@ -852,6 +862,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   <span class="meta" id="meta">loading…</span>
   <span class="meta" style="margin-left:auto" id="usage"></span>
   <span class="meta" id="status"></span>
+  <button id="emergency-all-btn" data-act="emergency-shutdown-all" title="Emergency shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">⏻ shut down all</button>
 </header>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
@@ -2312,6 +2323,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>
+            <button class="warn" data-act="emergency-shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Emergency shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 emergency shutdown</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
           </span>
         </summary>
@@ -4966,6 +4978,71 @@ details.group-virtual .group-name { color: #8aa0b8; }
     });
   }
 
+  // emergencyShutdown drives the group-level and whole-dashboard
+  // emergency-shutdown buttons. It counts the running agents in scope
+  // from the last snapshot, pops a confirm modal that states the
+  // count and spells out that this is stop-only (no data deleted),
+  // POSTs /api/emergency-shutdown, then toasts the outcome summary.
+  // scope is "group" (groupName set) or "all" (groupName ignored).
+  async function emergencyShutdown(scope, groupName) {
+    const snap = lastSnapshot || {};
+    let running = 0;
+    let where = '';
+    let metaLine = '';
+    if (scope === 'group') {
+      const g = (snap.groups || []).find(x => x.name === groupName);
+      running = g ? (g.online || 0) : 0;
+      where = `group "${groupName}"`;
+      metaLine = groupName;
+    } else {
+      running = (snap.agents || []).filter(a => a.online).length;
+      where = 'the whole dashboard';
+      metaLine = 'every group + ungrouped agents';
+    }
+    if (running === 0) {
+      toast(`emergency shutdown: no running agents in ${where}`);
+      return;
+    }
+    const n = running === 1 ? '1 running agent' : `${running} running agents`;
+    const confirmed = await confirmModal({
+      title: 'Emergency shutdown?',
+      body: `This stops ${n} in ${where}. Each agent is sent /exit, then `
+        + `force-killed only if it has not exited within the grace period. `
+        + `Stop only — no conversations, group memberships, enrollment or `
+        + `permissions are deleted. Resume any session to bring that agent back.`,
+      meta: metaLine,
+      okLabel: `Shut down ${running === 1 ? '1 agent' : running + ' agents'}`,
+    });
+    if (!confirmed) return;
+    const payload = scope === 'group' ? {scope: 'group', group: groupName} : {scope: 'all'};
+    let r;
+    try {
+      r = await fetch('/api/emergency-shutdown', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      toast(`emergency shutdown failed: ${e && e.message || e}`, true);
+      return;
+    }
+    if (!r.ok) {
+      toast(`emergency shutdown failed: ${await r.text()}`, true);
+      return;
+    }
+    const out = await r.json().catch(() => null);
+    if (!out) {
+      toast('emergency shutdown: done');
+      refresh();
+      return;
+    }
+    const parts = [`${out.exited_gracefully} exited gracefully`, `${out.force_killed} force-killed`];
+    if (out.already_offline) parts.push(`${out.already_offline} already offline`);
+    if (out.failed) parts.push(`${out.failed} failed`);
+    toast(`emergency shutdown (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
+    refresh();
+  }
+
   // retireConfirm pops the retire confirmation: the same explanatory
   // copy as the old confirmModal-based prompt, plus an "also shut down
   // the running session" checkbox (checked by default). Resolves to
@@ -6550,6 +6627,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
             // Open the bulk-cleanup overlay scoped to this group. The
             // modal manages its own POST + refresh on success.
             openCleanupModal({ mode: 'group', group });
+            return;
+          }
+          case 'emergency-shutdown-group': {
+            // emergencyShutdown owns its confirm modal, POST, toast
+            // and refresh — return so the default toast doesn't fire.
+            await emergencyShutdown('group', group);
+            return;
+          }
+          case 'emergency-shutdown-all': {
+            // The top-bar button: shut down every running agent the
+            // dashboard shows. No group context.
+            await emergencyShutdown('all', null);
             return;
           }
           case 'set-group-context': {
