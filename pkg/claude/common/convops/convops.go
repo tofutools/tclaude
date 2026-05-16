@@ -267,6 +267,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			filepath.Base(projectPath), len(entries), scannedCount, len(entries)-scannedCount, time.Since(start))
 	}
 
+	backfillProjectPaths(entries)
 	return &SessionsIndex{Version: 1, Entries: entries}, nil
 }
 
@@ -528,7 +529,59 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 		}
 		entries = append(entries, dbRowToEntry(r, r.FileSize))
 	}
+	backfillProjectPaths(entries)
 	return entries, nil
+}
+
+// backfillProjectPaths fills in a missing ProjectPath from a sibling
+// conversation in the same Claude project directory, and persists it.
+//
+// Claude Code stamps the working directory onto every conversation
+// *turn*; a conversation that was named but never took a turn (see
+// parseJSONLSession) records no cwd at all. But every .jsonl filed
+// under the same ~/.claude/projects/<dir> was launched from the same
+// cwd — so any sibling that did take a turn is an authoritative
+// source. The key is the .jsonl's parent directory (filepath.Dir of
+// FullPath): that IS the per-cwd Claude project directory.
+//
+// The derived cwd is written back onto the conv_index row, so it is
+// resolved once and then served from the cache like any other field.
+// LoadSessionsIndex and LoadEntriesFromDB call this, so the first
+// `conv ls` / watch refresh after a named-but-turnless conversation
+// appears heals its row for every reader.
+func backfillProjectPaths(entries []SessionEntry) {
+	pathByDir := make(map[string]string)
+	for i := range entries {
+		e := &entries[i]
+		if e.ProjectPath == "" || e.FullPath == "" {
+			continue
+		}
+		if dir := filepath.Dir(e.FullPath); pathByDir[dir] == "" {
+			pathByDir[dir] = e.ProjectPath
+		}
+	}
+	if len(pathByDir) == 0 {
+		return
+	}
+	for i := range entries {
+		e := &entries[i]
+		if e.ProjectPath != "" || e.FullPath == "" {
+			continue
+		}
+		p := pathByDir[filepath.Dir(e.FullPath)]
+		if p == "" {
+			continue
+		}
+		e.ProjectPath = p
+		// Persist the derived cwd so every reader — the next watch
+		// refresh, the dashboard, `agent` lookups — sees it without
+		// re-deriving. Best-effort: a failed write only costs the
+		// re-derivation on the next listing.
+		if err := db.SetConvIndexProjectPath(e.SessionID, p); err != nil {
+			slog.Warn("conv_index: project-path backfill write failed",
+				"conv_id", e.SessionID, "error", err)
+		}
+	}
 }
 
 // isStubRow reports whether a conv_index row is a stub — the

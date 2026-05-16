@@ -297,6 +297,28 @@ func SetConvIndexArchived(convID string, archived bool) error {
 	return nil
 }
 
+// SetConvIndexProjectPath persists a conversation's working directory
+// onto its conv_index row. It backfills a conversation that was named
+// before its first turn: Claude Code stamps cwd onto turns, so such a
+// conversation has none of its own, and the value is derived from a
+// sibling in the same Claude project directory (see
+// convops.backfillProjectPaths).
+//
+// The WHERE clause only fills a row whose project_path is still empty,
+// so a real recorded cwd is never overwritten. A conv_id with no row,
+// or one that already has a cwd, is a no-op and not an error — this is
+// a best-effort setter.
+func SetConvIndexProjectPath(convID, projectPath string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(
+		`UPDATE conv_index SET project_path = ? WHERE conv_id = ? AND (project_path = '' OR project_path IS NULL)`,
+		projectPath, convID)
+	return err
+}
+
 func scanConvIndexRow(row *sql.Row) (*ConvIndexRow, error) {
 	r, err := scanOneConvIndex(row)
 	if err == sql.ErrNoRows {
