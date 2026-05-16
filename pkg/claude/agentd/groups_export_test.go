@@ -1,6 +1,15 @@
 package agentd
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
+)
 
 // TestRewritePathPrefix pins the boundary rules of the import path
 // rewrite: a prefix is rewritten only when the match is a discrete path
@@ -42,4 +51,36 @@ func TestRewritePathPrefix(t *testing.T) {
 	if got := rewritePathPrefix("/home/alice/x", old, old); got != "/home/alice/x" {
 		t.Errorf("old==new should be a no-op, got %q", got)
 	}
+}
+
+// TestDashboardGroupExport pins that the dashboard's GET
+// /api/groups/{name}/export route runs the shared, permission-checked
+// handleGroupExport: the route wraps the cookie-authed request with
+// asDashboardHumanPeer so requirePermission(groups.export) sees a human
+// and passes. Without that wrap the request would 401 on PID==0, so a
+// 200 here also proves the wiring.
+func TestDashboardGroupExport(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	gID, err := db.CreateAgentGroup("team", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: gID, ConvID: "worker-conv",
+	}))
+
+	w := httptest.NewRecorder()
+	serveDashboardGroups(w, dashboardRequest(http.MethodGet, "/api/groups/team/export", ""))
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.Equal(t, groupexport.ContentType, w.Header().Get("Content-Type"))
+
+	// The body is a real, parseable export archive — end-to-end proof
+	// the dashboard route reached serveGroupExport through the shared
+	// handler.
+	exp, err := groupexport.Unmarshal(w.Body.Bytes())
+	require.NoError(t, err, "dashboard export body should be a valid archive")
+	assert.Equal(t, "team", exp.SourceGroup)
+	require.Len(t, exp.Members, 1)
+	assert.Equal(t, "worker-conv", exp.Members[0].ConvID)
 }

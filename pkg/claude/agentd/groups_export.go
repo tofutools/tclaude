@@ -44,19 +44,26 @@ const maxImportArchiveBytes = 512 << 20 // 512 MiB
 
 // --- export ---
 
-// handleGroupExport serves GET /v1/groups/{name}/export — the CLI path.
-// Permission slug: groups.export (default human-only).
+// handleGroupExport serves the group-export download. It is the single
+// handler behind BOTH surfaces:
+//
+//   - GET /v1/groups/{name}/export — the CLI path. The caller is a real
+//     SO_PEERCRED peer; requirePermission gates an agent on groups.export
+//     and lets a human straight through.
+//   - GET /api/groups/{name}/export — the dashboard button. The dashboard
+//     route wraps the request with asDashboardHumanPeer first (the
+//     cookie + Origin pin in checkDashboardAuth being the human-consent
+//     layer), so requirePermission sees a permission-bypassing human.
+//
+// Routing both surfaces through this one permission-checked handler —
+// rather than letting the dashboard path call serveGroupExport directly
+// — keeps groups.export structurally enforced on every path and mirrors
+// how the other shared dashboard/v1 handlers (e.g. handleGroupUpdate)
+// are wired.
 func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if _, ok := requirePermission(w, r, PermGroupsExport); !ok {
 		return
 	}
-	serveGroupExport(w, g.Name)
-}
-
-// handleDashboardGroupExport serves GET /api/groups/{name}/export — the
-// dashboard's per-group export button. groupRoute has already run the
-// cookie auth and resolved the group.
-func handleDashboardGroupExport(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
 	serveGroupExport(w, g.Name)
 }
 

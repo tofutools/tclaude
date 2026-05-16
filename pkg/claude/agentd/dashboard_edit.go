@@ -322,7 +322,12 @@ func looksLikeConvID(s string) bool {
 func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups", handleDashboardGroupsCreate)
 
-	mux.HandleFunc("GET /api/groups/{name}/export", groupRoute(handleDashboardGroupExport))
+	mux.HandleFunc("GET /api/groups/{name}/export", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		// asDashboardHumanPeer so the shared, permission-checked
+		// handleGroupExport sees the cookie-authed dashboard caller as a
+		// human — same wiring as PATCH /api/groups/{name}.
+		handleGroupExport(w, asDashboardHumanPeer(r), g)
+	}))
 
 	mux.HandleFunc("DELETE /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardDeleteGroup(w, g.Name)
