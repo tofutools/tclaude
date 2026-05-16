@@ -337,11 +337,15 @@ func FreshTitle(convID string) string {
 // CLI instead of leaking a raw, uncleaned first prompt (issue #91).
 // FreshTitle (the bare agent name) stays in use for agents — identity,
 // group rosters, alias derivation, reincarnate/clone name prefixes.
+//
+// UnknownTitle is returned only when the conv can't be resolved at all
+// (no conv_index row, no .jsonl). A resolved conv with no title
+// material yields FormatConvTitle's canonical empty string verbatim —
+// exactly what `conv ls` would print — so the two surfaces stay in
+// lockstep; the dashboard's own "(untitled)" fallback covers the blank.
 func FreshConvTitle(convID string) string {
 	if row := FreshConvRowResolved(convID); row != nil {
-		if t := convindex.FormatConvTitle(row.CustomTitle, row.Summary, row.FirstPrompt); t != "" {
-			return t
-		}
+		return convindex.FormatConvTitle(row.CustomTitle, row.Summary, row.FirstPrompt)
 	}
 	return UnknownTitle
 }

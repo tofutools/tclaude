@@ -42,6 +42,34 @@ func TestDashboardSnapshot_PlainConvTitleMatchesConvLs(t *testing.T) {
 		"plain-conv title must be the cleaned first prompt, conv ls parity")
 }
 
+// Scenario: a plain conversation whose first prompt is *entirely*
+// system-injected noise cleans down to the empty string. FreshConvTitle
+// must return that canonical empty string verbatim — exactly what
+// `conv ls` prints — NOT the "(unknown)" placeholder, which is reserved
+// for convs that can't be resolved at all. The dashboard's own
+// "(untitled)" JS fallback then covers the blank cell.
+func TestDashboardSnapshot_PlainConvEmptyTitleIsNotUnknown(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const plainConv = "noiz-1111-2222-3333-444444444444"
+	f.HaveConvWithPrompt(plainConv,
+		"<system-reminder>only injected noise, nothing the user typed</system-reminder>")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	got := ""
+	found := false
+	for _, c := range snap.Conversations {
+		if c.ConvID == plainConv {
+			got, found = c.Title, true
+		}
+	}
+	require.True(t, found, "plain conv should still surface in conversations[]")
+	assert.Equal(t, "", got,
+		"a resolved-but-titleless conv yields the canonical empty title, not (unknown)")
+}
+
 // Scenario: the fix is scoped to plain conversations only. An agent's
 // title (its custom name, set via /rename) must keep displaying bare —
 // NOT wrapped as "[name]: prompt" — because agent titles already render
