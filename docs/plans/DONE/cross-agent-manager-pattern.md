@@ -34,6 +34,7 @@ shared orchestration helper with the target conv as subject.
 | `agent.clone` | `agent clone --target` | human-only |
 | `agent.stop` | `agent stop <selector>` | human-only |
 | `agent.resume` | `agent resume <selector>` | human-only |
+| `agent.schedule` | `agent cron add --target` | human-only |
 
 Self path uses `self.<verb>`; cross-agent uses `agent.<verb>` OR
 group ownership. Both paths call the same shared orchestration
