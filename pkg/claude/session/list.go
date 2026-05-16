@@ -22,8 +22,8 @@ type ListParams struct {
 	Sort  string   `short:"s" long:"sort" optional:"true" help:"Sort by column" alts:"id,directory,status,age,updated"`
 	Asc   bool     `long:"asc" help:"Sort ascending (default for id/directory/status)"`
 	Desc  bool     `long:"desc" help:"Sort descending (default for updated)"`
-	Show  []string `long:"show" optional:"true" help:"Only show these statuses" alts:"all,idle,working,awaiting_permission,awaiting_input,exited"`
-	Hide  []string `long:"hide" optional:"true" help:"Hide these statuses" alts:"idle,working,awaiting_permission,awaiting_input,exited"`
+	Show  []string `long:"show" optional:"true" help:"Only show these statuses" alts:"all,idle,working,awaiting_permission,awaiting_input,error,exited"`
+	Hide  []string `long:"hide" optional:"true" help:"Hide these statuses" alts:"idle,working,awaiting_permission,awaiting_input,error,exited"`
 }
 
 func ListCmd() *cobra.Command {

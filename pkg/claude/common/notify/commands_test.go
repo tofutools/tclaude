@@ -169,6 +169,7 @@ func TestNotificationTitle(t *testing.T) {
 		{"working", "Claude: Working"},
 		{"awaiting_permission", "Claude: Awaiting permission"},
 		{"awaiting_input", "Claude: Awaiting input"},
+		{"error", "Claude: Error"},
 		{"exited", "Claude: Exited"},
 		{"unknown", "Claude: unknown"},
 	}

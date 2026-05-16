@@ -194,6 +194,6 @@ func TestRunHookCallback_ErrorClearedByNextEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StatusWorking, got.Status,
 		"the next normal hook event must clear the error status back to working")
-	assert.NotEqual(t, "server_error", got.StatusDetail,
-		"the stale error_type must not linger in status_detail")
+	assert.Equal(t, "UserPromptSubmit", got.StatusDetail,
+		"the next event overwrites status_detail with its own — the stale error_type is gone")
 }
