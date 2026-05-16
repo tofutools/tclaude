@@ -9184,11 +9184,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
     cfg.notifications = n;
 
     if ($('#cfg-ratelimit-enabled').checked) {
-      cfg.ratelimit = {
-        five_hour_percent_max_used: cfgFloat('cfg-ratelimit-5h', 99),
-        seven_day_percent_max_used: cfgFloat('cfg-ratelimit-7d', 99.9),
-      };
+      // Clone the existing block rather than build a fresh one, so a
+      // future ratelimit sub-field with no widget still round-trips.
+      const rl = (cfg.ratelimit && typeof cfg.ratelimit === 'object') ? cfg.ratelimit : {};
+      rl.five_hour_percent_max_used = cfgFloat('cfg-ratelimit-5h', 99);
+      rl.seven_day_percent_max_used = cfgFloat('cfg-ratelimit-7d', 99.9);
+      cfg.ratelimit = rl;
     } else {
+      // The whole section is switched off — the human chose to drop it.
       delete cfg.ratelimit;
     }
 
@@ -9208,25 +9211,25 @@ details.group-virtual .group-name { color: #8aa0b8; }
     }
     if ($('#cfg-agent-spawnmax-enabled').checked) a.spawn_max_per_hour = cfgInt('cfg-agent-spawnmax', 10);
     else delete a.spawn_max_per_hour;
+    // Clone the existing context_nudge block so a future sub-field with
+    // no widget round-trips, then set the ladder from the form.
+    const cn = (a.context_nudge && typeof a.context_nudge === 'object') ? a.context_nudge : {};
     if ($('#cfg-nudge-enabled').checked) {
-      a.context_nudge = {
-        enabled: true,
-        min_pct: cfgInt('cfg-nudge-min', 30),
-        interval_pct: cfgInt('cfg-nudge-interval', 10),
-      };
+      cn.enabled = true;
+      cn.min_pct = cfgInt('cfg-nudge-min', 30);
+      cn.interval_pct = cfgInt('cfg-nudge-interval', 10);
+      a.context_nudge = cn;
     } else {
-      // Disabled: keep any ladder values the user has entered so that
-      // toggling off then on round-trips and an existing on-disk block
-      // (enabled:false but with min/interval) is not spuriously dropped.
+      // Disabled: drop the enabled flag (false is the omitempty default)
+      // but keep the ladder values the user entered so toggling off then
+      // on round-trips. Drop the block only when nothing is left to keep.
+      delete cn.enabled;
       const minRaw = $('#cfg-nudge-min').value.trim();
       const ivRaw = $('#cfg-nudge-interval').value.trim();
-      if (minRaw || ivRaw) {
-        a.context_nudge = { enabled: false };
-        if (minRaw) a.context_nudge.min_pct = cfgInt('cfg-nudge-min', 0);
-        if (ivRaw) a.context_nudge.interval_pct = cfgInt('cfg-nudge-interval', 0);
-      } else {
-        delete a.context_nudge;
-      }
+      if (minRaw) cn.min_pct = cfgInt('cfg-nudge-min', 0); else delete cn.min_pct;
+      if (ivRaw) cn.interval_pct = cfgInt('cfg-nudge-interval', 0); else delete cn.interval_pct;
+      if (Object.keys(cn).length) a.context_nudge = cn;
+      else delete a.context_nudge;
     }
     const perms = readCfgStringList('cfg-agent-permissions');
     if (perms.length) a.default_permissions = perms; else delete a.default_permissions;
