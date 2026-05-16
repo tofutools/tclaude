@@ -1,0 +1,1167 @@
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  background: #0f1419;
+  color: #d4d4d4;
+}
+header {
+  padding: 16px 24px 12px;
+  border-bottom: 1px solid #2a3340;
+  background: #161b22;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header .meta { color: #7d8590; font-size: 12px; }
+nav { display: flex; gap: 4px; padding: 0 24px; background: #161b22; border-bottom: 1px solid #2a3340; }
+nav button {
+  background: none; border: none; color: #7d8590; padding: 10px 16px;
+  cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent;
+}
+nav button.active { color: #d4d4d4; border-bottom-color: #58a6ff; }
+nav button:hover { color: #d4d4d4; }
+/* Messages tab — unread badge on the nav button + message cards. */
+.tab-badge {
+  display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px;
+  font-size: 11px; line-height: 16px; text-align: center;
+  background: #f85149; color: #fff; border-radius: 8px; font-weight: 600;
+}
+/* renderMessagesBadge() sets the `hidden` attribute at 0 unread. The
+   `display: inline-block` above is a class rule, so it outranks the UA
+   `[hidden] { display: none }` rule — without this the badge would
+   never hide and a bright-red `0` would always show. This restores
+   hide-at-0; the red badge then appears only when unread > 0. */
+.tab-badge[hidden] { display: none; }
+.msg-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 8px;
+}
+.msg-card.msg-unread { border-left: 3px solid #58a6ff; }
+.msg-head { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.msg-dot { color: #58a6ff; font-size: 10px; }
+.msg-from { font-weight: 600; color: #d4d4d4; }
+.msg-group { color: #7d8590; }
+.msg-id { color: #7d8590; font-family: ui-monospace, monospace; font-size: 11px; }
+.msg-time { color: #7d8590; font-size: 12px; }
+.msg-subject { font-weight: 600; color: #d4d4d4; margin-top: 6px; }
+.msg-body { color: #c9d1d9; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.msg-actions { margin-top: 8px; display: flex; gap: 6px; }
+main { padding: 16px 24px; }
+section { display: none; }
+section.active { display: block; }
+table { border-collapse: collapse; width: 100%; }
+table th, table td {
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3340;
+  vertical-align: top;
+}
+table th { color: #7d8590; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+table th.sortable { cursor: pointer; user-select: none; }
+table th.sortable:hover { color: #c9d1d9; }
+table th.sort-active { color: #58a6ff; }
+.sort-arrow { font-size: 8px; margin-left: 4px; }
+table th.sortable .sort-arrow { color: #484f58; opacity: 0; transition: opacity .1s; }
+table th.sortable:hover .sort-arrow { opacity: .7; }
+table th.sort-active .sort-arrow { color: #58a6ff; opacity: 1; }
+table tr:hover { background: #161b22; }
+.online { color: #3fb950; }
+.offline { color: #484f58; }
+/* The per-agent status light doubles as an on/off toggle: a real
+   <button> so it is keyboard-reachable, but chrome-free so it still
+   reads as a status dot. Online = green, click turns the agent off;
+   offline = grey, click turns it back on. */
+.status-dot {
+  background: none; border: none; margin: 0; padding: 2px 5px;
+  font: inherit; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.status-dot-online { color: #3fb950; }
+.status-dot-offline { color: #484f58; }
+/* An online agent whose last turn ended in an error (CC StopFailure):
+   a louder red than the offline grey so a broken agent stands out. */
+.status-dot-error { color: #f85149; }
+.status-dot:hover { background: #1f2937; }
+.status-dot:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.state-pill {
+  display: inline-block; padding: 1px 8px; font-size: 11px;
+  border-radius: 10px; font-family: ui-monospace, monospace; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.state-working   { background: #0a3622; color: #3fb950; border-color: #1d4d2c; }
+.state-idle      { background: #36280a; color: #d29922; border-color: #4d3a1d; }
+.state-awaiting  { background: #3a1010; color: #ff7b72; border-color: #4d1d1d; }
+/* error: a turn ended in an API/auth/billing error (CC StopFailure).
+   A bolder red than .state-awaiting — brighter text + a louder border
+   — so a broken agent reads as more urgent than one merely waiting. */
+.state-error     { background: #3a0a0a; color: #ff9492; border-color: #8b1a1a; }
+.state-exited    { background: #21262d; color: #7d8590; border-color: #2a3340; }
+.state-offline   { background: #161b22; color: #484f58; border-color: #2a3340; }
+/* crashed: an offline agent whose process died without a clean exit —
+   no SessionEnd hook fired (crash, kill, or reboot). Amber, so it
+   reads as "needs a look": louder than the calm grey of a clean
+   offline, but not the red of a live error. */
+.state-crashed   { background: #3a2a05; color: #e3b341; border-color: #5c4611; }
+.state-detail { color: #7d8590; font-size: 11px; margin-left: 6px; }
+/* The STATE column cell. The context meter leads the cell (fixed
+   horizontal position, independent of how long the state string is),
+   then the state pill, then the subagent detail. nowrap keeps all
+   three on one line — the cell widens rather than wrapping the meter
+   under the pill. */
+.state-cell { white-space: nowrap; }
+/* Context-window meter: a vertical 5-segment gauge that fills
+   bottom-up as an agent's context window fills. Lit segments carry
+   traffic-light band colours (green low → yellow mid → red high);
+   unlit segments stay dim. An agent with no reported usage renders
+   all-dim via .ctx-unknown. Pure CSS — no canvas, no per-frame work. */
+.ctx-meter {
+  display: inline-flex; flex-direction: column-reverse;
+  gap: 1px; vertical-align: middle; margin-right: 7px;
+  width: 9px; cursor: default;
+}
+.ctx-seg {
+  box-sizing: border-box; height: 4px; border-radius: 1px;
+  background: #21262d; border: 1px solid #2a3340;
+}
+.ctx-seg.lit-green  { background: #3fb950; border-color: #2ea043; }
+.ctx-seg.lit-yellow { background: #d29922; border-color: #bb8009; }
+.ctx-seg.lit-red    { background: #f85149; border-color: #da3633; }
+.ctx-meter.ctx-unknown { opacity: 0.45; }
+.cwd {
+  display: inline-block; max-width: 280px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
+}
+.branch {
+  display: inline-block; max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e;
+}
+/* Clickable cell variants: a CWD path opens a terminal there; a branch
+   name links to its GitHub compare view, with an optional PR link. */
+.cwd-link { cursor: pointer; }
+.cwd-link:hover { color: #d4d4d4; text-decoration: underline; }
+a.branch-link { color: #8b949e; text-decoration: none; }
+a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
+.pr-link {
+  font-family: ui-monospace, monospace; font-size: 11px;
+  color: #3fb950; text-decoration: none; margin-left: 5px;
+}
+.pr-link:hover { text-decoration: underline; }
+/* loc-pair stacks an init/now value pair in one CWD or Branch cell,
+   shown only when the agent's launch location differs from where it
+   is working now — keeps the column narrow instead of adding a 2nd. */
+.loc-pair { display: flex; flex-direction: column; gap: 1px; }
+.loc-row { display: flex; align-items: baseline; gap: 5px; }
+.loc-tag {
+  flex: 0 0 auto; width: 26px; font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; color: #6e7681;
+}
+.last-hook { color: #7d8590; font-size: 11px; }
+.id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
+.rowname { font-weight: 600; }
+.title { color: #d4d4d4; }
+.slug { font-family: ui-monospace, monospace; font-size: 12px; }
+.muted { color: #7d8590; }
+details { margin: 4px 0; }
+details > summary {
+  cursor: pointer; padding: 6px 0; list-style: none;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "▶ "; color: #7d8590; font-size: 10px; }
+details[open] > summary::before { content: "▼ "; }
+.subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
+.group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
+.group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
+.group-links-section > table { margin: 4px 0 6px 0; }
+.group-links-section > button { margin-left: 6px; }
+.tag {
+  display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
+  background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
+  border-radius: 12px; font-size: 11px; font-family: ui-monospace, monospace;
+}
+.tag.default { border-color: #1f6feb; color: #58a6ff; }
+.tag.slug.deny { border-color: #da3633; color: #ff7b72; }
+.owner-badge {
+  display: inline-block; padding: 1px 6px; margin-left: 4px;
+  background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;
+  border-radius: 10px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.copy-cmd {
+  display: block; margin-top: 8px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
+  color: #c9d1d9; cursor: pointer;
+  white-space: nowrap; overflow-x: auto;
+}
+.copy-cmd:hover { border-color: #58a6ff; }
+.copy-cmd::before { content: "$ "; color: #7d8590; }
+#status { font-size: 11px; color: #7d8590; }
+#status.error { color: #f85149; }
+/* Whole-dashboard emergency-shutdown button — sits top-right, just to
+   the right of the live dot (#status). Danger-styled but compact so it
+   doesn't shout louder than the dashboard title. */
+#emergency-all-btn {
+  background: #4d1d1d; border: 1px solid #f85149; color: #f85149;
+  border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
+  font-family: inherit; white-space: nowrap;
+}
+#emergency-all-btn:hover { background: #f85149; color: #fff; }
+/* Subscription-usage readout in the top bar, left of the live dot.
+   Mirrors the statusbar's "5h [bar] 17% (2h16m)" format per window. */
+#usage { font-size: 11px; color: #7d8590; display: flex; align-items: center; gap: 12px; }
+#usage.na { color: #6e7681; font-style: italic; }
+#usage .uw { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+#usage .ulabel { color: #7d8590; }
+#usage .ubar { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -1px; }
+/* The bar's filled and empty cells use the SAME block glyph (█),
+   differing only in colour — so both segments render at an identical
+   height. (A shade glyph like ░ rendered taller than █ in the browser
+   monospace font, leaving the empty run too tall.) The fill colour is
+   set inline per threshold; the empty track is a dim grey. */
+#usage .ubar-empty { color: #30363d; }
+#usage .upct { color: #c9d1d9; }
+#usage .urem { color: #6e7681; }
+.empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
+.row-actions {
+  display: inline-flex; gap: 4px; opacity: 0.4;
+}
+tr:hover .row-actions { opacity: 1; }
+.row-actions button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
+  font-family: inherit;
+}
+.row-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
+.row-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+.row-actions button.warn:hover { color: #d29922; border-color: #d29922; }
+.group-actions {
+  display: inline-flex; gap: 4px; margin-left: 8px;
+  opacity: 0.4; transition: opacity 0.15s ease;
+}
+details > summary:hover .group-actions,
+details[open] > summary .group-actions { opacity: 1; }
+.group-actions button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
+  font-family: inherit;
+}
+.group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+.group-actions button.warn:hover { color: #d29922; border-color: #d29922; }
+.group-rename-input {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 1px 6px; font: inherit; font-weight: bold;
+  min-width: 8em;
+}
+.group-default-cwd {
+  font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent;
+}
+.group-default-cwd:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-cwd.unset { color: #484f58; font-style: italic; }
+.group-default-cwd.unset:hover { color: #d4d4d4; }
+.group-default-cwd-input {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 1px 6px; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 11px; min-width: 16em;
+}
+.group-default-context {
+  font-size: 11px; color: #7d8590;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent;
+}
+.group-default-context:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-context.unset { color: #484f58; font-style: italic; }
+.group-default-context.unset:hover { color: #d4d4d4; }
+.group-max-members {
+  font-size: 11px; color: #7d8590;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent;
+}
+.group-max-members:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-max-members.unset { color: #484f58; font-style: italic; }
+.group-max-members.unset:hover { color: #d4d4d4; }
+.group-max-members.full { color: #f0883e; }
+.group-max-members-input {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 1px 6px; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 11px; width: 6em;
+}
+.modal-context-textarea {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 3px;
+  color: #d4d4d4; padding: 6px; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 12px;
+}
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-overlay.show { display: flex; }
+/* The cron-pick-target overlay is opened FROM inside the cron-create
+   form (Owner / Target 🔍 buttons), so it has to stack on top of the
+   create modal — not below it. Plain z-index:100 ties with the create
+   modal and the later DOM order wins, hiding the picker. Bumping the
+   picker to 150 keeps it on top regardless of DOM order. */
+#cron-pick-target-modal { z-index: 150; }
+.modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.modal h3 { margin: 0 0 8px; font-size: 16px; color: #d4d4d4; }
+.modal p { margin: 8px 0; color: #c9d1d9; }
+.modal .modal-meta {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
+  color: #c9d1d9; margin: 8px 0;
+}
+.modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; padding: 6px 14px; font-size: 14px;
+  font-family: inherit;
+}
+.modal-buttons button.confirm-danger {
+  background: #4d1d1d; border-color: #f85149; color: #f85149;
+}
+.modal-buttons button.confirm-danger:hover { background: #f85149; color: #fff; }
+.modal-buttons button:hover { border-color: #58a6ff; }
+.modal .field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.modal .field label { font-size: 12px; color: #7d8590; }
+.modal .field input,
+.modal .field textarea {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
+  color: #d4d4d4; padding: 6px 8px; font-family: inherit; font-size: 13px;
+}
+.modal .field input:focus,
+.modal .field textarea:focus { border-color: #58a6ff; outline: none; }
+.modal .field textarea { resize: vertical; min-height: 60px; }
+/* Drag-and-drop: move a member from group A onto group B's
+   header to migrate. The member <tr> is draggable; the <summary>
+   row is the drop target. While dragging, the source row dims so
+   the user can track its origin and we highlight every other group's
+   summary as a valid drop target. The source's own summary stays
+   un-highlighted (move-onto-self is a no-op). */
+.dnd-draggable {
+  cursor: grab;
+}
+.dnd-draggable:active { cursor: grabbing; }
+.dnd-source-row {
+  opacity: 0.45;
+  background: #161b22;
+}
+summary.dnd-drop-over {
+  background: #1f3148;
+  outline: 1px dashed #58a6ff;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+summary.dnd-drop-over.dnd-effect-clone {
+  background: #1d2c1f;
+  outline-color: #3fb950;
+}
+.dnd-mod-pill {
+  position: fixed;
+  top: 0; left: 0;
+  pointer-events: none;
+  background: #161b22;
+  border: 1px solid #58a6ff;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #c9d1d9;
+  z-index: 300;
+  display: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.dnd-mod-pill.show { display: block; }
+.dnd-mod-pill.clone {
+  border-color: #3fb950;
+  color: #3fb950;
+}
+/* The virtual "Ungrouped" group: online agents in no group. Styled
+   distinctly from real groups — a dashed left rule + muted name — so
+   it reads as a derived bucket, not a real group you can operate on. */
+details.group-virtual > summary {
+  border-left: 2px dashed #2a3340;
+  padding-left: 6px;
+}
+details.group-virtual .group-name { color: #8aa0b8; }
+.group-virtual-badge {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px;
+  color: #7d8590; border: 1px solid #2a3340; border-radius: 3px;
+  vertical-align: 1px; cursor: help;
+}
+.group-virtual-hint { margin-left: 8px; font-size: 11px; font-style: italic; }
+.add-member-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column; max-height: 70vh;
+}
+.add-member-modal h3 { margin: 0 0 8px; font-size: 14px; color: #d4d4d4; }
+.add-member-modal h3 .muted { font-weight: normal; }
+.add-member-modal .add-member-search {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  color: #d4d4d4; padding: 6px 10px; font: inherit; font-size: 13px;
+  margin-bottom: 8px;
+}
+.add-member-modal .add-member-search:focus { outline: none; border-color: #58a6ff; }
+.add-member-list {
+  flex: 1 1 auto; overflow-y: auto; min-height: 80px; max-height: 50vh;
+  border: 1px solid #2a3340; border-radius: 4px; background: #0d1117;
+}
+.add-member-row {
+  padding: 6px 10px; border-bottom: 1px solid #161b22; cursor: pointer;
+  display: flex; gap: 8px; align-items: baseline;
+  font-size: 12px;
+}
+.add-member-row:last-child { border-bottom: none; }
+.add-member-row.highlighted { background: #1f2937; }
+.add-member-row .rowname { color: #d4d4d4; font-weight: bold; flex: 0 0 auto; }
+.add-member-row .id { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
+.add-member-row .role { color: #58a6ff; flex: 0 0 auto; }
+.add-member-row .descr {
+  color: #7d8590; flex: 1 1 auto; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.add-member-row .promote-tag { color: #3fb950; border-color: #1f3d27; }
+.add-member-row .groups-tag {
+  color: #7d8590; font-size: 11px; flex: 0 0 auto;
+}
+.add-member-row .online { color: #3fb950; }
+.add-member-row .offline { color: #7d8590; }
+.add-member-empty {
+  padding: 14px; color: #7d8590; font-size: 12px; text-align: center;
+}
+.add-member-foot {
+  display: flex; align-items: center; gap: 12px;
+  padding-top: 8px; font-size: 11px; color: #7d8590;
+}
+.add-member-foot label { cursor: pointer; user-select: none; }
+.add-member-foot input[type=checkbox] { vertical-align: middle; margin-right: 4px; }
+.add-member-foot .spacer { flex: 1; }
+.add-member-foot kbd {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 1px 5px; font-size: 10px; color: #c9d1d9;
+}
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
+  border-radius: 4px; padding: 10px 14px; color: #c9d1d9;
+  font-size: 13px; max-width: 360px; z-index: 200;
+  opacity: 0; transform: translateY(8px); pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.toast.error { border-left-color: #f85149; }
+.filter-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 12px 0;
+}
+.filter-bar input {
+  flex: 1; max-width: 360px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 6px 10px; font-size: 13px; color: #c9d1d9;
+  font-family: inherit;
+}
+.filter-bar input:focus { outline: none; border-color: #58a6ff; }
+.filter-bar .filter-count { font-size: 11px; color: #7d8590; }
+.filter-bar button.clear-filter {
+  background: transparent; border: none; color: #7d8590;
+  cursor: pointer; padding: 4px 8px; font-size: 12px;
+  font-family: inherit;
+}
+.filter-bar button.clear-filter:hover { color: #d4d4d4; }
+.filter-bar .spacer { flex: 1; }
+.filter-bar button.primary {
+  background: #1f6feb; border: 1px solid #1f6feb; color: white;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.filter-bar button.primary:hover { background: #388bfd; border-color: #388bfd; }
+.filter-bar button.tool {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.filter-bar button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+.filter-bar label.filter-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: #7d8590; cursor: pointer; user-select: none;
+  white-space: nowrap;
+}
+.filter-bar label.filter-toggle:hover { color: #d4d4d4; }
+.filter-bar label.filter-toggle input { cursor: pointer; margin: 0; }
+.group-offline-toggle {
+  font-size: 11px; color: #7d8590; margin-left: 8px;
+  border: 1px solid #2a3340; border-radius: 4px;
+  padding: 1px 7px; cursor: pointer; background: #161b22;
+  white-space: nowrap;
+}
+.group-offline-toggle:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-offline-toggle.inherit { color: #484f58; font-style: italic; }
+.sudo-badge {
+  display: inline-block; margin-left: 4px; font-size: 11px; cursor: help;
+  color: #ffa657;
+}
+.sudo-badge:hover { color: #ffd47a; }
+.sudo-grant-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 460px; max-width: 560px;
+  display: flex; flex-direction: column; gap: 12px;
+  color: #c9d1d9;
+}
+.sudo-grant-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.sudo-grant-hint { margin: 0; font-size: 11px; color: #7d8590; line-height: 1.4; }
+.sudo-grant-hint code {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 1px 4px; font-size: 10px;
+}
+.sudo-grant-row {
+  display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
+}
+.sudo-grant-row .sudo-grant-label {
+  flex: 0 0 64px; color: #7d8590; padding-top: 6px;
+}
+.sudo-grant-row input[type=text] {
+  flex: 1;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
+}
+.sudo-grant-row input[type=text]:focus { outline: none; border-color: #58a6ff; }
+.sudo-grant-slugs-wrap { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.sudo-grant-slugs-toolbar { display: flex; gap: 6px; }
+.sudo-grant-slugs-toolbar button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.sudo-grant-slugs-toolbar button:hover { background: #2d333b; }
+.sudo-grant-slugs {
+  display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 4px 0;
+}
+.sudo-grant-slugs label {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; cursor: pointer; color: #c9d1d9;
+}
+.sudo-grant-slugs label.checked { background: #1f6feb; border-color: #388bfd; color: white; }
+.sudo-grant-slugs label.blocked { color: #7d8590; cursor: not-allowed; opacity: 0.5; }
+.sudo-grant-slugs label input { display: none; }
+.sudo-grant-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.sudo-grant-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.sudo-grant-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.sudo-grant-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.sudo-grant-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
+/* Permanent-permission editor — the per-agent tri-state modal. Reuses
+   the .sudo-grant-modal dialog/buttons shape but is taller (one row per
+   registry slug, so it scrolls) and its banner deliberately contrasts
+   with the orange "+ sudo" affordance: these overrides are PERMANENT. */
+.perm-edit-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 560px; max-width: 680px;
+  width: calc(100% - 32px);
+  display: flex; flex-direction: column; gap: 10px;
+  color: #c9d1d9; max-height: 88vh;
+}
+.perm-edit-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.perm-edit-banner {
+  font-size: 11px; line-height: 1.5; color: #d2a8ff;
+  background: #1d1b2e; border: 1px solid #3a2d5c;
+  border-left: 3px solid #a371f7; border-radius: 4px; padding: 7px 10px;
+}
+.perm-edit-banner strong { color: #e9d8ff; }
+.perm-edit-subtitle { margin: 0; font-size: 11px; color: #7d8590; }
+.perm-edit-toolbar { display: flex; gap: 8px; align-items: center; }
+.perm-edit-toolbar input[type=text] {
+  flex: 1; background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 9px; font-size: 12px; color: #c9d1d9; font-family: inherit;
+}
+.perm-edit-toolbar input[type=text]:focus { outline: none; border-color: #58a6ff; }
+.perm-edit-toolbar button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 4px 10px; font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.perm-edit-toolbar button:hover { background: #2d333b; }
+.perm-edit-list {
+  display: flex; flex-direction: column;
+  border: 1px solid #2a3340; border-radius: 4px;
+  overflow-y: auto; max-height: 52vh;
+}
+.perm-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; border-bottom: 1px solid #21262d;
+}
+.perm-row:last-child { border-bottom: none; }
+.perm-row.hidden { display: none; }
+.perm-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.perm-row-slug { font-size: 12px; color: #c9d1d9; }
+.perm-row-desc {
+  font-size: 10px; color: #7d8590; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
+.perm-row-eff.granted { color: #3fb950; }
+.perm-row-eff.denied { color: #f85149; }
+.perm-tristate {
+  flex: 0 0 auto; display: inline-flex;
+  border: 1px solid #2a3340; border-radius: 4px; overflow: hidden;
+}
+.perm-tristate button {
+  background: #0d1117; border: none; border-right: 1px solid #2a3340;
+  padding: 3px 9px; font-size: 11px; color: #7d8590;
+  font-family: inherit; cursor: pointer;
+}
+.perm-tristate button:last-child { border-right: none; }
+.perm-tristate button:hover { background: #21262d; }
+.perm-tristate button.active[data-effect=default] { background: #30363d; color: #c9d1d9; }
+.perm-tristate button.active[data-effect=grant] { background: #238636; color: #fff; }
+.perm-tristate button.active[data-effect=deny] { background: #da3633; color: #fff; }
+.perm-edit-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.perm-edit-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.perm-edit-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.perm-edit-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
+/* Cron-create modal — reuses .sudo-grant-modal CSS shape for the
+   outer dialog/buttons. Cron form has more rows (name, owner, target
+   radio, schedule presets, subject, body, enabled), so we widen
+   slightly and let the body textarea grow. */
+.cron-create-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 520px; max-width: 640px;
+  width: calc(100% - 32px);
+  display: flex; flex-direction: column; gap: 10px;
+  color: #c9d1d9; max-height: 86vh; overflow-y: auto;
+}
+.cron-create-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.cron-create-modal .modal-meta {
+  font-size: 11px; color: #7d8590;
+  padding: 4px 8px; background: #0d1117;
+  border-left: 2px solid #2a3340; margin-top: -4px;
+}
+.cron-create-row {
+  display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
+}
+.cron-create-row .cron-create-label {
+  flex: 0 0 72px; color: #7d8590; padding-top: 6px;
+}
+.cron-create-row input[type=text],
+.cron-create-row select,
+.cron-create-row textarea {
+  flex: 1;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
+}
+.cron-create-row input[type=text]:focus,
+.cron-create-row select:focus,
+.cron-create-row textarea:focus { outline: none; border-color: #58a6ff; }
+.cron-create-row textarea {
+  min-height: 80px; max-height: 220px; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cron-create-target {
+  flex: 1; display: flex; flex-direction: column; gap: 6px;
+}
+.cron-create-target .cron-target-modes {
+  display: flex; gap: 12px; font-size: 12px; color: #c9d1d9;
+}
+.cron-create-target .cron-target-modes label { cursor: pointer; }
+.cron-create-target .cron-target-input-row {
+  display: flex; gap: 6px; align-items: center;
+}
+.cron-create-target .cron-target-input-row input[type=text],
+.cron-create-target .cron-target-input-row select {
+  flex: 1;
+}
+.cron-create-target .cron-target-input-row button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 10px; font-size: 12px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.cron-create-target .cron-target-input-row button:hover { background: #2d333b; }
+.cron-create-schedule {
+  flex: 1; display: flex; flex-direction: column; gap: 6px;
+}
+.cron-create-schedule .cron-schedule-chips {
+  display: flex; flex-wrap: wrap; gap: 4px 6px;
+}
+.cron-create-schedule .cron-schedule-chips button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.cron-create-schedule .cron-schedule-chips button.selected {
+  background: #1f6feb; border-color: #388bfd; color: white;
+}
+.cron-create-enabled {
+  display: flex; align-items: center; gap: 6px; font-size: 12px;
+  color: #c9d1d9;
+}
+.cron-create-enabled input { margin: 0; }
+.cron-create-enabled.disabled { color: #6e7681; }
+.cron-create-enabled.disabled input { cursor: not-allowed; }
+.cron-create-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.cron-create-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.cron-create-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.cron-create-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.cron-create-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
+.cron-create-modal .modal-buttons .spacer { flex: 1; }
+.cron-create-modal .modal-buttons .secondary {
+  background: transparent; border-color: #2a3340; color: #7d8590;
+}
+.cron-create-modal .modal-buttons .secondary:hover { color: #c9d1d9; }
+/* Import-group modal — the ⤒ import overlay. Reuses .cron-create-modal
+   for the shell + rows; these rules style the file picker and the
+   dry-run preview panel (manifest summary + collision report). */
+.cron-create-row input[type=file] {
+  flex: 1; color: #c9d1d9; font-size: 12px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 8px; font-family: inherit;
+}
+.cron-create-row input[type=file]::file-selector-button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  color: #c9d1d9; font-family: inherit; font-size: 12px;
+  padding: 3px 10px; margin-right: 8px; cursor: pointer;
+}
+.cron-create-row input[type=file]::file-selector-button:hover { background: #2d333b; }
+.group-import-preview {
+  font-size: 12px; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 8px 12px; display: flex;
+  flex-direction: column; gap: 3px; max-height: 246px; overflow-y: auto;
+}
+.group-import-preview .gi-head {
+  color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: 10px;
+}
+.group-import-preview .gi-sep {
+  border-top: 1px solid #2a3340; margin: 4px 0 1px; padding-top: 5px;
+}
+.group-import-preview .gi-row { display: flex; gap: 8px; }
+.group-import-preview .gi-row .gi-k { flex: 0 0 118px; color: #7d8590; }
+.group-import-preview .gi-row .gi-v { color: #c9d1d9; word-break: break-word; }
+.group-import-preview .gi-ok { color: #3fb950; }
+.group-import-preview .gi-warn { color: #f0883e; }
+.group-import-preview .gi-bad { color: #f85149; }
+.group-import-preview .gi-verdict { font-weight: bold; }
+.group-import-preview .gi-collide-list {
+  margin: 2px 0 0; padding-left: 18px; color: #c9d1d9;
+}
+.group-import-preview .gi-collide-list li { word-break: break-word; }
+/* Group templates — the Templates tab list + the editor / instantiate
+   / from-group modals. The modals reuse .cron-create-modal for the
+   shell + rows; these rules add the template-specific surfaces. */
+.template-editor-modal { min-width: 620px; max-width: 760px; max-height: 90vh; overflow-y: auto; }
+.template-agents-head {
+  display: flex; align-items: center; gap: 10px;
+  color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: 10px; margin-top: 4px;
+}
+.template-agents-head .tool { margin-left: auto; }
+#template-editor-agents { display: flex; flex-direction: column; gap: 10px; }
+.template-agent-row {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 6px;
+}
+.template-agent-row-head { display: flex; align-items: center; gap: 10px; }
+.template-agent-num { color: #58a6ff; font-size: 11px; font-weight: 600; }
+.template-agent-owner {
+  display: flex; align-items: center; gap: 4px; font-size: 11px;
+  color: #c9d1d9; cursor: pointer; user-select: none;
+}
+.template-agent-owner input { margin: 0; }
+.template-agent-row-head .ta-remove { margin-left: auto; padding: 1px 7px; }
+.template-agent-grid { display: flex; gap: 6px; }
+.template-agent-row input[type=text],
+.template-agent-row textarea {
+  flex: 1; background: #161b22; color: #c9d1d9; font-family: inherit;
+  font-size: 12px; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 8px; box-sizing: border-box; width: 100%;
+}
+.template-agent-row textarea { resize: vertical; }
+.template-agent-row input:focus,
+.template-agent-row textarea:focus { outline: none; border-color: #58a6ff; }
+.ta-perms-details { font-size: 11px; }
+.ta-perms-details summary { cursor: pointer; color: #7d8590; user-select: none; }
+.ta-perms-details summary:hover { color: #c9d1d9; }
+.ta-perms-list {
+  display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 6px;
+  max-height: 150px; overflow-y: auto;
+}
+.ta-perms-list label {
+  display: flex; align-items: center; gap: 4px; color: #c9d1d9;
+  cursor: pointer; flex: 0 0 calc(50% - 6px);
+}
+.ta-perms-list label input { margin: 0; }
+.template-preview {
+  flex: 1; font-size: 12px; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 7px 10px; display: flex;
+  flex-direction: column; gap: 3px; min-height: 24px;
+}
+.template-preview .tp-row { display: flex; gap: 8px; align-items: baseline; }
+.template-preview .tp-name { color: #c9d1d9; font-weight: 600; }
+.template-preview .tp-meta { color: #7d8590; }
+.template-preview .tp-owner { color: #d29922; }
+.template-preview .tp-empty { color: #6e7681; }
+/* Templates tab list — one card per template. */
+.template-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 10px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.template-card .tc-head { display: flex; align-items: baseline; gap: 10px; }
+.template-card .tc-name { font-size: 14px; font-weight: 600; color: #d4d4d4; }
+.template-card .tc-descr { color: #7d8590; font-size: 12px; }
+.template-card .tc-count { color: #6e7681; font-size: 11px; }
+.template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
+.template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
+.template-card .tc-agent {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
+}
+.template-card .tc-agent .tc-owner { color: #d29922; }
+.template-card .tc-agent .tc-role { color: #7d8590; }
+.template-empty { color: #6e7681; padding: 14px; font-size: 13px; }
+/* Cleanup modal — the 🧹 bulk-cleanup overlay. Reuses the
+   cron-create-modal outer shape and the add-member list look for the
+   editable candidate rows. */
+.cleanup-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 540px; max-width: 660px;
+  width: calc(100% - 32px);
+  display: flex; flex-direction: column; gap: 10px;
+  color: #c9d1d9; max-height: 86vh;
+}
+.cleanup-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.cleanup-hint { margin: 0; font-size: 11px; color: #7d8590; line-height: 1.4; }
+.cleanup-hint.danger { color: #f0883e; }
+.cleanup-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: #7d8590;
+}
+.cleanup-toolbar button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.cleanup-toolbar button:hover { background: #2d333b; }
+.cleanup-toolbar .spacer { flex: 1; }
+.cleanup-toolbar input[type=number] {
+  width: 3.6em; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 3px; color: #d4d4d4; padding: 1px 4px;
+  font: inherit; font-size: 11px;
+}
+.cleanup-toolbar input[type=search] {
+  flex: 0 1 160px; min-width: 80px;
+  background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 3px; color: #d4d4d4; padding: 1px 6px;
+  font: inherit; font-size: 11px;
+}
+.cleanup-count { color: #c9d1d9; }
+/* Category-filter row — Agents-tab modal only. */
+.cleanup-cats {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: 11px; color: #7d8590;
+}
+.cleanup-cats-label { text-transform: uppercase; letter-spacing: 0.04em; }
+.cleanup-cat-toggle {
+  display: flex; gap: 4px; align-items: baseline;
+  cursor: pointer; color: #c9d1d9;
+}
+.cleanup-cat-toggle input { cursor: pointer; }
+/* Category sub-header inside the candidate list. */
+.cleanup-cat-head {
+  padding: 4px 10px; font-size: 10px; color: #7d8590;
+  background: #161b22; border-bottom: 1px solid #21262d;
+  position: sticky; top: 0;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.cleanup-cat-head span { color: #545d68; }
+.cleanup-list {
+  flex: 1 1 auto; overflow-y: auto; min-height: 80px; max-height: 44vh;
+  border: 1px solid #2a3340; border-radius: 4px; background: #0d1117;
+}
+.cleanup-row {
+  padding: 6px 10px; border-bottom: 1px solid #161b22;
+  display: flex; gap: 8px; align-items: baseline; font-size: 12px;
+}
+.cleanup-row:last-child { border-bottom: none; }
+.cleanup-row label {
+  display: flex; gap: 8px; align-items: baseline; flex: 1;
+  cursor: pointer; min-width: 0;
+}
+.cleanup-row input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
+.cleanup-row.disabled label { cursor: default; opacity: 0.5; }
+.cleanup-row .title { color: #d4d4d4; font-weight: bold; flex: 0 0 auto; }
+.cleanup-row .id { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
+.cleanup-row .meta {
+  color: #7d8590; flex: 1 1 auto; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.cleanup-row .seen { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
+.cleanup-badge {
+  font-size: 10px; padding: 0 5px; border-radius: 8px;
+  border: 1px solid #2a3340; color: #7d8590; flex: 0 0 auto;
+}
+.cleanup-badge.owner { color: #d29922; border-color: #4d3c12; }
+.cleanup-badge.online { color: #58a6ff; border-color: #1f3a5a; }
+.cleanup-badge.removed, .cleanup-badge.deleted, .cleanup-badge.retired,
+.cleanup-badge.reinstated {
+  color: #3fb950; border-color: #1d3a23;
+}
+.cleanup-badge.skipped { color: #d29922; border-color: #4d3c12; }
+.cleanup-badge.failed { color: #f85149; border-color: #4d1d1d; }
+.cleanup-empty {
+  padding: 16px; color: #7d8590; font-size: 12px; text-align: center;
+}
+.cleanup-options {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12px; color: #c9d1d9;
+}
+.cleanup-options label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+}
+.cleanup-options label.disabled { opacity: 0.5; cursor: default; }
+.cleanup-options .opt-note { font-size: 11px; color: #7d8590; }
+.cleanup-tier {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; margin-bottom: 2px;
+  border: 1px solid #30363d; border-radius: 6px; background: #161b22;
+}
+/* Agents-tab secondary lists — Conversations (promotion candidates)
+   and Retired (reinstatable demoted agents). */
+.sub-list-head {
+  margin: 20px 0 8px; font-size: 13px; color: #d4d4d4;
+  border-top: 1px solid #21262d; padding-top: 14px;
+}
+.sub-list-head .muted { font-weight: normal; font-size: 11px; }
+.sub-list-head.collapsible { cursor: pointer; user-select: none; }
+/* The 🧹 cleanup button parked in a sub-list header (Retired agents). */
+.sub-list-head button.sub-list-tool {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 2px 8px; font-size: 11px;
+  font-weight: normal; cursor: pointer; font-family: inherit;
+  margin-left: 10px; vertical-align: middle;
+}
+.sub-list-head button.sub-list-tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+#retired-caret, #conversations-caret { display: inline-block; width: 12px; color: #7d8590; }
+.cleanup-error { color: #f85149; font-size: 12px; min-height: 14px; }
+.cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
+.cleanup-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.cleanup-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.cleanup-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.cleanup-modal .modal-buttons button.primary.danger {
+  background: #4d1d1d; border-color: #f85149; color: #f85149;
+}
+.cleanup-modal .modal-buttons button.primary.danger:hover {
+  background: #f85149; color: #fff;
+}
+.cleanup-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default; color: #c9d1d9;
+}
+/* delete-agent modal — the worktree opt-in row. */
+.delete-agent-wt {
+  display: flex; gap: 6px; align-items: baseline;
+  font-size: 12px; color: #c9d1d9; margin: 12px 0 0;
+}
+.delete-agent-wt.disabled { opacity: 0.55; }
+.delete-agent-wt input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
+.delete-agent-wt.disabled input[type=checkbox] { cursor: default; }
+.delete-agent-wt .wt-note { color: #7d8590; font-size: 11px; }
+/* Bulk window focus/unfocus selection modal. Reuses the cleanup-modal
+   shell (toolbar / list / rows / buttons); the rules below are
+   specific to this modal: the focus-vs-unfocus direction picker and
+   the by-role quick-select chips. */
+.window-direction {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22;
+}
+.window-direction label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-size: 12px; color: #c9d1d9;
+}
+.window-direction input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+.window-direction .opt-note { font-size: 11px; color: #7d8590; }
+/* Reincarnate modal — the self-vs-force mode picker. Same vertical
+   radio-list-with-notes shape as .window-direction above. */
+.reincarnate-mode {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22; margin: 6px 0;
+}
+.reincarnate-mode label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-size: 12px; color: #c9d1d9;
+}
+.reincarnate-mode input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+.reincarnate-mode .opt-note { font-size: 11px; color: #7d8590; }
+.window-roles {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: #7d8590; min-height: 18px;
+}
+.window-roles .roles-label { text-transform: uppercase; letter-spacing: 0.04em; }
+.window-role-chip {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 10px;
+  padding: 1px 9px; font-size: 11px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.window-role-chip:hover { border-color: #58a6ff; }
+.window-role-chip.on { background: #1f3a5a; border-color: #58a6ff; color: #d4d4d4; }
+.window-role-chip.partial { border-color: #58a6ff; color: #d4d4d4; }
+/* Whole-dashboard window focus/unfocus trigger — sits in the top bar,
+   left of the emergency-shutdown button. Compact, neutral styling: it
+   is non-destructive (window-only), so it must not shout. */
+#window-all-btn {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
+  font-family: inherit; white-space: nowrap;
+}
+#window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
+/* === Config tab — visual editor for ~/.tclaude/config.json ========== */
+#tab-config { max-width: 780px; }
+.cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
+.cfg-intro code { background: #161b22; padding: 1px 5px; border-radius: 4px; color: #c9d1d9; }
+.cfg-section {
+  border: 1px solid #30363d; border-radius: 8px; background: #0f141a;
+  margin: 0 0 14px; padding: 2px 14px 12px;
+}
+.cfg-section > h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: #58a6ff; margin: 13px 0 6px;
+}
+.cfg-field {
+  display: flex; align-items: center; gap: 9px; margin: 9px 0;
+  font-size: 12px; color: #c9d1d9; flex-wrap: wrap;
+}
+.cfg-field .cfg-label { flex: 0 0 168px; color: #c9d1d9; }
+.cfg-field input[type=text], .cfg-field input[type=number], .cfg-field select {
+  background: #010409; border: 1px solid #30363d; border-radius: 4px;
+  color: #d4d4d4; padding: 4px 7px; font-family: inherit; font-size: 12px;
+}
+.cfg-field input[type=text] { min-width: 210px; }
+.cfg-field input[type=number] { width: 84px; }
+.cfg-field input:focus, .cfg-field select:focus { outline: none; border-color: #58a6ff; }
+.cfg-field input:disabled, .cfg-field select:disabled { opacity: 0.4; cursor: default; }
+.cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.cfg-field input[type=checkbox] { cursor: pointer; }
+.cfg-hint { font-size: 11px; color: #7d8590; flex-basis: 100%; padding-left: 177px; }
+.cfg-list { display: flex; flex-direction: column; gap: 5px; width: 100%; padding-left: 177px; }
+.cfg-list-row { display: flex; gap: 6px; align-items: center; }
+.cfg-list-row input[type=text] { flex: 1; min-width: 80px; }
+.cfg-list-row .cfg-arrow { color: #7d8590; flex: 0 0 auto; }
+.cfg-row-del, .cfg-list-add {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 11px;
+  padding: 3px 9px; flex: 0 0 auto;
+}
+.cfg-row-del:hover { border-color: #f85149; color: #f85149; }
+.cfg-list-add { align-self: flex-start; }
+.cfg-list-add:hover { border-color: #58a6ff; }
+.cfg-list-empty { font-size: 11px; color: #7d8590; font-style: italic; }
+.cfg-advanced { margin: 0 0 14px; border: 1px solid #30363d; border-radius: 8px; background: #0f141a; }
+.cfg-advanced > summary {
+  cursor: pointer; font-size: 11px; color: #58a6ff; padding: 10px 14px;
+  text-transform: uppercase; letter-spacing: 0.06em; list-style-position: inside;
+}
+.cfg-advanced .cfg-advanced-body { padding: 0 14px 12px; }
+.cfg-advanced .cfg-hint { padding-left: 0; }
+.cfg-advanced textarea {
+  width: 100%; box-sizing: border-box; background: #010409;
+  border: 1px solid #30363d; border-radius: 6px; color: #d4d4d4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  padding: 8px; min-height: 150px; resize: vertical; margin-top: 6px;
+}
+.cfg-advanced textarea:focus { outline: none; border-color: #58a6ff; }
+.cfg-footer {
+  display: flex; align-items: center; gap: 10px; margin-top: 14px;
+  position: sticky; bottom: 0; background: #0d1117; padding: 12px 0;
+  border-top: 1px solid #21262d;
+}
+.cfg-footer .spacer { flex: 1; }
+.cfg-footer button {
+  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
+  padding: 6px 16px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
+}
+.cfg-footer button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.cfg-footer button:disabled { opacity: 0.5; cursor: default; }
+.cfg-footer button:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-footer button.primary:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-status { font-size: 11px; color: #7d8590; }
+.cfg-errors {
+  border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
+  color: #ffa198; font-size: 12px; padding: 8px 12px; margin: 0 0 14px;
+}
+.cfg-errors strong { color: #ff7b72; }
+.cfg-errors ul { margin: 5px 0 0; padding-left: 18px; }
+.cfg-notice {
+  border: 1px solid #9e6a03; background: #2b2007; border-radius: 6px;
+  color: #e3b341; font-size: 12px; padding: 8px 12px; margin: 0 0 14px;
+}
+.cfg-notice strong { color: #f0b849; }
+.cfg-notice ul { margin: 5px 0 0; padding-left: 18px; }
+/* config diff-confirmation modal */
+.config-diff-modal {
+  background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
+  padding: 18px 20px; width: min(720px, 92vw); max-height: 86vh;
+  display: flex; flex-direction: column;
+}
+.config-diff-modal h3 { margin: 0 0 4px; font-size: 14px; color: #d4d4d4; }
+.config-diff-modal .cfg-diff-sub { font-size: 12px; color: #7d8590; margin: 0 0 10px; }
+.config-diff-warn {
+  border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
+  color: #ffa198; font-size: 12px; padding: 8px 12px; margin: 4px 0 10px;
+  line-height: 1.5;
+}
+.config-diff {
+  flex: 1; overflow: auto; background: #010409; border: 1px solid #21262d;
+  border-radius: 6px; padding: 8px 0; margin-bottom: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.5;
+}
+.config-diff .dl { display: block; padding: 0 12px; white-space: pre-wrap; word-break: break-word; }
+.config-diff .dl.add { background: #12261a; color: #56d364; }
+.config-diff .dl.del { background: #2d1416; color: #f85149; }
+.config-diff .dl.ctx { color: #6e7681; }

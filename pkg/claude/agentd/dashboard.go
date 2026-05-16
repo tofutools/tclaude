@@ -17,11 +17,35 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// dashboardHTML is the entire single-page UI. Lives in its own file so
-// JS template literals (backticks) don't collide with Go raw strings.
+// The dashboard single-page UI. The CSS and JS were extracted out of
+// dashboard.html into sibling files purely for editor tooling (syntax
+// highlighting, linting, navigation) — the markup shell keeps an empty
+// <style></style> and <script></script> into which assembleDashboardHTML
+// splices them back. The reassembly is byte-for-byte the pre-split
+// single-file dashboard.html; see TestDashboardHTML_SplitIsByteIdentical.
 //
 //go:embed dashboard.html
-var dashboardHTML string
+var dashboardShellHTML string
+
+//go:embed dashboard.css
+var dashboardCSS string
+
+//go:embed dashboard.js
+var dashboardJS string
+
+// dashboardHTML is the fully assembled page served verbatim to the
+// browser — the shell with the CSS and JS spliced back in.
+var dashboardHTML = assembleDashboardHTML()
+
+// assembleDashboardHTML splices the extracted CSS and JS back into the
+// markup shell's empty <style></style> / <script></script> elements.
+// It is a pure concatenation: the result is byte-for-byte identical to
+// the pre-split single-file dashboard.html.
+func assembleDashboardHTML() string {
+	h := strings.Replace(dashboardShellHTML, "<style></style>", "<style>"+dashboardCSS+"</style>", 1)
+	h = strings.Replace(h, "<script></script>", "<script>"+dashboardJS+"</script>", 1)
+	return h
+}
 
 // dashboardSessionToken is generated once per agentd process and gates
 // every /api/* request. It's set as an HttpOnly + SameSite=Strict
