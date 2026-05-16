@@ -395,6 +395,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
+	// Spawn guardrails — runaway-prevention for an agent that the human
+	// granted `groups.spawn`. Three checks: the group's hard member cap
+	// (binds the human too), and — for agent callers only (spawnerConvID
+	// != "") — the group restriction and the per-caller rate limit. Run
+	// here, before any subprocess is launched, so a rejected spawn costs
+	// nothing. See spawn_guardrails.go.
+	if !checkSpawnGuardrails(w, g, spawnerConvID) {
+		return
+	}
+
 	// The initial message is delivered to the new agent's inbox as an
 	// agent_messages row — not typed into its tmux pane — so newlines
 	// survive verbatim and a multi-line task brief arrives intact. We
@@ -859,4 +869,3 @@ func liveSpawnResume(convID, cwd string) error {
 	}()
 	return nil
 }
-

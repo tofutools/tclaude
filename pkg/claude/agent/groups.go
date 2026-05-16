@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,7 @@ func groupsCmd() *cobra.Command {
 			groupsRenameCmd(),
 			groupsSetDefaultDirCmd(),
 			groupsSetContextCmd(),
+			groupsSetMaxMembersCmd(),
 			groupsCloneCmd(),
 			groupsLinkCmd(),
 			groupsLinksAllCmd(),
@@ -82,11 +84,12 @@ func groupsLsCmd() *cobra.Command {
 }
 
 type groupSummary struct {
-	Name     string `json:"name"`
-	Descr    string `json:"descr,omitempty"`
-	Members  int    `json:"members"`
-	Online   int    `json:"online"`
-	Archived bool   `json:"archived,omitempty"`
+	Name       string `json:"name"`
+	Descr      string `json:"descr,omitempty"`
+	Members    int    `json:"members"`
+	Online     int    `json:"online"`
+	MaxMembers int    `json:"max_members,omitempty"` // hard member cap; 0 = unlimited
+	Archived   bool   `json:"archived,omitempty"`
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
@@ -130,7 +133,7 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 	}
 	tbl := table.New(
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "MEMBERS", Width: 7, Align: table.AlignRight},
+		table.Column{Header: "MEMBERS", Width: 9, Align: table.AlignRight},
 		table.Column{Header: "ONLINE", Width: 6, Align: table.AlignRight},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.4, Truncate: true},
 	)
@@ -142,9 +145,15 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 			// them from live groups when --archived is on.
 			name += " (archived)"
 		}
+		// Show the member count against the cap (e.g. "3/10") when the
+		// group has one; a bare count when it's unlimited.
+		members := fmt.Sprintf("%d", g.Members)
+		if g.MaxMembers > 0 {
+			members = fmt.Sprintf("%d/%d", g.Members, g.MaxMembers)
+		}
 		tbl.AddRow(table.Row{Cells: []string{
 			name,
-			fmt.Sprintf("%d", g.Members),
+			members,
 			fmt.Sprintf("%d", g.Online),
 			g.Descr,
 		}})
@@ -165,6 +174,7 @@ type GroupsCreateParams struct {
 	Context     string   `long:"context" optional:"true" help:"Shared startup context delivered to the inbox of agents spawned into this group. For multi-line context use --context-file."`
 	ContextFile string   `long:"context-file" optional:"true" help:"Read the group startup context from this file (alternative to --context)."`
 	Members     []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (alias=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'alias' is required; 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
+	MaxMembers  int      `long:"max-members" optional:"true" help:"Hard cap on the group's member count (0 = unlimited, the default). A spawn that would exceed it is refused. Change later with 'groups set-max-members'."`
 	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
@@ -258,6 +268,11 @@ func RunGroupsCreate(p *GroupsCreateParams, stdout, stderr io.Writer) int {
 		groupContext = string(data)
 	}
 
+	if p.MaxMembers < 0 {
+		fmt.Fprintf(stderr, "Error: --max-members must be >= 0 (0 = unlimited)\n")
+		return rcInvalidArg
+	}
+
 	// Parse member specs up-front so a typo doesn't leave an empty
 	// group sitting around. Fails the whole command before any DB work.
 	specs := make([]*memberSpec, 0, len(p.Members))
@@ -285,10 +300,11 @@ func RunGroupsCreate(p *GroupsCreateParams, stdout, stderr io.Writer) int {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := DaemonRequest(http.MethodPost, "/v1/groups", map[string]string{
+	if err := DaemonRequest(http.MethodPost, "/v1/groups", map[string]any{
 		"name":            p.Name,
 		"descr":           p.Descr,
 		"default_context": groupContext,
+		"max_members":     p.MaxMembers,
 	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -1148,6 +1164,88 @@ func runGroupsSetContext(p *groupsSetContextParams, stdout, stderr io.Writer) in
 		fmt.Fprintf(stdout, "%s: startup context cleared\n", resp.Group)
 	} else {
 		fmt.Fprintf(stdout, "%s: startup context set (%d chars)\n", resp.Group, len(resp.DefaultContext))
+	}
+	return rcOK
+}
+
+// --- groups set-max-members ---
+
+type groupsSetMaxMembersParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Max      string `pos:"true" optional:"true" help:"Hard cap on the group's member count. A spawn that would exceed it is refused. Omit (or pass 0) to clear the cap (unlimited)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetMaxMembersCmd() *cobra.Command {
+	return boa.CmdT[groupsSetMaxMembersParams]{
+		Use:   "set-max-members",
+		Short: "Set (or clear) a group's hard member cap",
+		Long: "Cap how many members a group may hold. A `tclaude agent spawn` " +
+			"that would push the group over the cap is refused with 409 — the " +
+			"spawn-guardrail layer that keeps a spawn-capable agent from growing " +
+			"a team without bound. The cap is a hard property of the group: it " +
+			"applies to every caller, the human included; a human raises it to " +
+			"add more. Omit <max> or pass 0 to clear it (unlimited, the " +
+			"default). Gated on the `groups.rename` permission (default " +
+			"human-only).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetMaxMembersParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetMaxMembersParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetMaxMembers(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetMaxMembers(p *groupsSetMaxMembersParams, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	// An omitted <max> clears the cap; otherwise parse it. A negative
+	// value is rejected here rather than silently clamped, so a typo
+	// surfaces at the CLI instead of becoming a confusing "unlimited".
+	maxMembers := 0
+	if s := strings.TrimSpace(p.Max); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: invalid <max> %q: expected a non-negative integer\n", p.Max)
+			return rcInvalidArg
+		}
+		if n < 0 {
+			fmt.Fprintf(stderr, "Error: <max> must be >= 0 (0 clears the cap)\n")
+			return rcInvalidArg
+		}
+		maxMembers = n
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group      string `json:"group"`
+		MaxMembers int    `json:"max_members"`
+	}
+	body := map[string]any{"max_members": maxMembers}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.MaxMembers == 0 {
+		fmt.Fprintf(stdout, "%s: member cap cleared (unlimited)\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s: member cap set to %d\n", resp.Group, resp.MaxMembers)
 	}
 	return rcOK
 }

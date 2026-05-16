@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 32
+const currentVersion = 34
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -215,6 +215,79 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 33 {
+		if err := migrateV32toV33(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 34 {
+		if err := migrateV33toV34(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV33toV34 adds agent_spawn_history — an append-only audit of
+// every agent-initiated `tclaude agent spawn` that passed the spawn
+// rate-limit check. The daemon's spawn handler does an atomic
+// INSERT-WHERE-(count < max) against this table to cap how many agents
+// a single caller-agent can spawn per rolling window (see
+// db.ClaimSpawnSlot), so a spawn-capable agent stuck in a loop can't
+// fork CC instances unboundedly.
+//
+// Sibling of agent_clone_history (v18→v19): same append-only shape,
+// but keyed on the *spawner* (the caller) rather than a source conv,
+// and counted (N per window) rather than gated (1 per cooldown) —
+// `tclaude agent spawn` always creates a brand-new conv, so there is
+// no "same source" to deduplicate against.
+//
+// Shape:
+//   - spawner_conv_id is the caller-agent that requested the spawn.
+//     Human-initiated spawns are never recorded (humans bypass the
+//     rate limit), so the column is always a real conv-id.
+//   - spawned_at is the wall-clock instant the slot was claimed
+//     (RFC3339Nano so closely-spaced attempts compare correctly).
+//
+// Append-only by construction: rows are never updated or deleted in
+// the production code path. A future cleanup verb could prune rows
+// older than the widest window if the table grows uncomfortably.
+func migrateV33toV34(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_spawn_history (
+			spawner_conv_id TEXT NOT NULL,
+			spawned_at      TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_spawn_history_spawner
+			ON agent_spawn_history(spawner_conv_id, spawned_at);
+
+		UPDATE schema_version SET version = 34;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v33→v34: %w", err)
+	}
+	return nil
+}
+
+// migrateV32toV33 adds agent_groups.max_members — an optional hard cap
+// on how many members a group may hold. A `tclaude agent spawn` that
+// would push the group over the cap is refused (the spawn-guardrail
+// layer). 0 means unlimited (the pre-feature behaviour), so existing
+// rows keep their prior unbounded semantics on upgrade. A human raises
+// the cap to add more; it is a property of the group, not of any
+// caller.
+func migrateV32toV33(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_groups
+			ADD COLUMN max_members INTEGER NOT NULL DEFAULT 0;
+
+		UPDATE schema_version SET version = 33;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v32→v33: %w", err)
+	}
 	return nil
 }
 

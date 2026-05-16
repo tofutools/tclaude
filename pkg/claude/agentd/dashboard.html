@@ -182,6 +182,20 @@ details[open] > summary .group-actions { opacity: 1; }
 .group-default-context:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-context.unset { color: #484f58; font-style: italic; }
 .group-default-context.unset:hover { color: #d4d4d4; }
+.group-max-members {
+  font-size: 11px; color: #7d8590;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent;
+}
+.group-max-members:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-max-members.unset { color: #484f58; font-style: italic; }
+.group-max-members.unset:hover { color: #d4d4d4; }
+.group-max-members.full { color: #f0883e; }
+.group-max-members-input {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 1px 6px; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 11px; width: 6em;
+}
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #0d1117; border: 1px solid #30363d; border-radius: 3px;
@@ -1036,6 +1050,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
     <label class="cron-create-row">
       <span class="cron-create-label">Startup context</span>
       <textarea id="group-create-context" class="modal-context-textarea" rows="5" placeholder="optional — shared guidance delivered to the inbox of every agent spawned into this group (multi-line OK)" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Max members</span>
+      <input id="group-create-max-members" type="number" min="0" step="1" placeholder="optional — 0 = unlimited; a spawn that would exceed it is refused" autocomplete="off" />
     </label>
     <div class="cron-create-error" id="group-create-error"></div>
     <div class="modal-buttons">
@@ -2063,6 +2081,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           ${g.descr ? `<span class="muted"> — ${esc(g.descr)}</span>` : ''}
           <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
           <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) delivered to the inbox of agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
+          <span class="group-max-members${g.max_members ? (members.length >= g.max_members ? ' full' : '') : ' unset'}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${g.max_members ? 'Member cap: ' + members.length + '/' + g.max_members + (members.length >= g.max_members ? ' — group is full, spawns refused' : '') + ' — click to edit' : 'No member cap — a spawn-capable agent can grow this group without bound; click to set one'}">👥 ${g.max_members ? members.length + '/' + g.max_members : 'no member cap'}</span>
           ${groupOfflineToggleHTML(g.name)}
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
@@ -3266,6 +3285,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#group-create-descr').value = '';
     $('#group-create-cwd').value = '';
     $('#group-create-context').value = '';
+    $('#group-create-max-members').value = '';
     $('#group-create-error').textContent = '';
     $('#group-create-modal').classList.add('show');
     setTimeout(() => $('#group-create-name').focus(), 0);
@@ -3286,13 +3306,24 @@ details.group-virtual .group-name { color: #8aa0b8; }
       errEl.textContent = 'name is required';
       return;
     }
+    // Max members: blank means unlimited (0); a negative value is a
+    // mistake — surface it rather than letting the daemon clamp it.
+    const maxRaw = $('#group-create-max-members').value.trim();
+    let maxMembers = 0;
+    if (maxRaw !== '') {
+      maxMembers = parseInt(maxRaw, 10);
+      if (!Number.isInteger(maxMembers) || maxMembers < 0) {
+        errEl.textContent = 'max members must be a non-negative integer (0 = unlimited)';
+        return;
+      }
+    }
     const submitBtn = $('#group-create-submit');
     submitBtn.disabled = true;
     try {
       const r = await fetch('/api/groups', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, descr, default_cwd: cwd, default_context: context }),
+        body: JSON.stringify({ name, descr, default_cwd: cwd, default_context: context, max_members: maxMembers }),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -5969,6 +6000,72 @@ details.group-virtual .group-name { color: #8aa0b8; }
             });
             input.addEventListener('blur', () => {
               // Blur cancels (like rename) — explicit Enter to save.
+              if (renameEditing) restore();
+            });
+            return; // Skip the default refresh; commit() / restore() handle it.
+          }
+          case 'set-group-max-members': {
+            // Inline edit of the group's hard member cap (the 👥
+            // chip). Mirrors set-group-dir: swap the chip for a number
+            // <input>, Enter PATCHes /api/groups/{name}, Esc / blur
+            // cancels. Auto-refresh suspended via renameEditing so the
+            // 5s tick can't drop the input mid-edit.
+            const capEl = btn.classList.contains('group-max-members')
+              ? btn
+              : (btn.closest('summary') && btn.closest('summary').querySelector('.group-max-members'));
+            if (!capEl) {
+              toast('max members: could not locate the cap element', true);
+              return;
+            }
+            const prevSnapshot = lastSnapshot;
+            renameEditing = true;
+            const origEl = capEl.cloneNode(true);
+            const oldMax = parseInt(capEl.getAttribute('data-max') || '0', 10) || 0;
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = '0';
+            input.step = '1';
+            input.className = 'group-max-members-input';
+            input.value = String(oldMax);
+            input.title = '0 clears the cap (unlimited)';
+            capEl.replaceWith(input);
+            input.focus();
+            input.select();
+            const restore = () => {
+              if (input.parentNode) input.replaceWith(origEl);
+              renameEditing = false;
+              lastSnapshot = prevSnapshot;
+            };
+            const commit = async () => {
+              const newMax = parseInt(input.value, 10);
+              if (!Number.isInteger(newMax) || newMax < 0) {
+                toast('max members must be a non-negative integer (0 = unlimited)', true);
+                restore();
+                return;
+              }
+              if (newMax === oldMax) {
+                restore();
+                return;
+              }
+              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+                method: 'PATCH', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ max_members: newMax }),
+              });
+              if (!r.ok) {
+                toast(`set max members failed: ${await r.text()}`, true);
+                restore();
+                return;
+              }
+              renameEditing = false;
+              toast(newMax > 0 ? `${group}: member cap → ${newMax}` : `${group}: member cap cleared`);
+              refresh();
+            };
+            input.addEventListener('keydown', (ev) => {
+              if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+              else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+            });
+            input.addEventListener('blur', () => {
               if (renameEditing) restore();
             });
             return; // Skip the default refresh; commit() / restore() handle it.
