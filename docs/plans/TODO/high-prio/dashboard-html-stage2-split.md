@@ -1,366 +1,371 @@
-# Dashboard refactor — Stage 2: split `dashboard.js`
+# Dashboard refactor — Stage 2: native ES modules for `dashboard.js`
 
-**Status:** planned, not started. Execution begins after human review (parked
-Stage-2 agent holds for a resume nudge). This file is the plan; it changes no
-served bytes.
+**Status:** planned, not started. The approach **decision is made** (see §2);
+execution begins after human review — the parked Stage-2 agent holds for a
+resume nudge. This file is the plan; it changes no code.
+
+> **Decision history.** An earlier draft of this plan recommended a
+> *mechanical*, byte-identical fragmentation — splitting `dashboard.js` into
+> concatenated files behind a SHA-256 pin (option (a) in §2). On **2026-05-17**
+> the human reviewed that and chose instead to **go straight to native ES
+> modules**, explicitly accepting that this is a *non-mechanical, byte-changing
+> rewrite* with no byte-identity safety net. This document is rewritten to plan
+> the ES-modules route. The option analysis is kept, condensed, in §2 as the
+> rationale record.
 
 ## 1. What Stage 2 is
 
 `pkg/claude/agentd/dashboard.html` — the agentd browser dashboard — had grown
 into a single file of **10,303 lines** (verified at commit `31dfeaa`, its last
-single-file state before Stage 1), ~79% of it inline JavaScript. A staged refactor is
-making it maintainable under one hard rule: **every mechanical stage produces
-byte-identical served output.**
+single-file state), ~79% of it inline JavaScript. A staged refactor is making
+it maintainable.
 
 **Stage 1 shipped** (PR #152, commit `2b20159`). The inline `<style>` and
 `<script>` bodies were extracted from `dashboard.html` into sibling files
 `dashboard.css` and `dashboard.js`. All three are `//go:embed`'d;
 `assembleDashboardHTML()` splices the CSS and JS back into the markup shell's
-empty `<style></style>` / `<script></script>` placeholders at package init:
-
-```go
-func assembleDashboardHTML() string {
-	h := strings.Replace(dashboardShellHTML, "<style></style>", "<style>"+dashboardCSS+"</style>", 1)
-	h = strings.Replace(h, "<script></script>", "<script>"+dashboardJS+"</script>", 1)
-	return h
-}
-```
-
-A SHA-256 pin test (`TestDashboardHTML_SplitIsByteIdentical`,
-`dashboard_split_test.go`) asserts the assembled bytes equal the pre-split
-`dashboard.html` exactly. No bundler, no ES modules, no `html/template` — the
-build stays build-step-free.
+empty `<style></style>` / `<script></script>` placeholders at package init.
+That was a *pure mechanical relocation*: a SHA-256 pin test
+(`TestDashboardHTML_SplitIsByteIdentical`) asserts the assembled bytes equal
+the pre-split `dashboard.html` exactly.
 
 **What remains:** `dashboard.js` is still one file — **8,130 lines**, ~295
-top-level declarations, all wrapped in a single IIFE. `dashboard.css` (1,167
-lines) and the markup shell `dashboard.html` (1,006 lines) are comparatively
-fine and are **out of Stage 2 scope**. Stage 2 is exclusively: break
-`dashboard.js` into navigable pieces, mechanically, byte-identically.
+top-level declarations, all inside a single IIFE (`(function() { … })()`).
+`dashboard.css` (1,167 lines) and the markup shell `dashboard.html` (1,006
+lines) are comparatively fine.
 
-Current shape of `dashboard.js`, by natural section (line ranges approximate):
+**Stage 2 is:** convert `dashboard.js` from one IIFE into a set of **native ES
+modules** — real `import`/`export`, one file per feature, served as
+`<script type="module">`. This is the subject of the rest of this document.
 
-| Lines        | Section                                                              |
-|--------------|----------------------------------------------------------------------|
+Current shape of `dashboard.js`, by natural section — these become the module
+boundaries (line ranges at commit `2b20159`):
+
+| Lines        | Section → module                                                      |
+|--------------|-----------------------------------------------------------------------|
 | 1–436        | shared helpers — `$`/`esc`, status dots & pills, context meter, cells, `relTime`, offline toggles |
-| 437–617      | sorting + column/accessor tables (`MEMBER_COLS`, `AGENT_COLS`, …)     |
+| 437–617      | sorting + column/accessor tables (`MEMBER_COLS`, `AGENT_COLS`, …)      |
 | 619–722      | virtual groups (Ungrouped / Conversations / Retired)                  |
 | 724–1276     | rendering — `memberRowHTML`, `renderGroups`, `renderAgents`, messages, usage |
-| 1278–1673    | snapshot state, tab filters, `render*Tab`, cron/sudo/links tables     |
+| 1278–1673    | snapshot state, tab filters, `render*Tab`, cron/sudo/links tables      |
 | 1674–4574    | modals — sudo, cron + target picker, message, perm, group create, templates, group import/context, link, worktree picker, spawn/clone/reincarnate/rename |
 | 4575–6227    | `refresh()`, tab/copy/sort bindings, confirm/window/emergency/cleanup modals, toast |
-| 6228–7021    | `bindRowActions()` — one ~800-line delegated click router            |
-| 7022–7599    | drag-and-drop (`bindDnd` + `runDnd*`)                                 |
-| 7600–8100    | Config tab                                                            |
-| 8101–8130    | boot — the `bind*()` / `refresh()` / `setInterval` calls, IIFE close  |
+| 6228–7021    | `bindRowActions()` — one ~800-line delegated click router             |
+| 7022–7599    | drag-and-drop (`bindDnd` + `runDnd*`)                                  |
+| 7600–8100    | Config tab                                                             |
+| 8101–8130    | boot — the `bind*()` / `refresh()` / `setInterval` calls, IIFE close   |
 
-## 2. The (a) vs (b) analysis
+## 2. The decision: native ES modules (and why)
 
-The human floated two directions. They are **not symmetric**, and the
-asymmetry is the whole decision — so spell it out before weighing them.
+Three directions were on the table. The decision record:
 
-Stage 1 was unambiguously mechanical because relocating an inline `<script>`
-body into a sibling file is byte-trivial: you cut a contiguous text run and the
-splice puts it back. Stage 2 inherits that property **for JavaScript** but not
-automatically for everything a "component" drags along.
+- **(a) Mechanical fragmentation** — split `dashboard.js` into line-range
+  fragment files, `//go:embed` them, concatenate back into one byte-identical
+  blob behind a SHA pin. *Safe* (purely mechanical, same discipline as Stage 1)
+  but the tooling win is only partial: every fragment is a slice of one IIFE
+  body, not a standalone valid module — per-file linting stays broken and
+  cross-file navigation is incidental, not real.
+- **(b) Whole components (HTML+CSS+JS together)** — *unsound mechanically*:
+  `dashboard.css` is a flat 687-rule global stylesheet whose cascade is
+  source-order-sensitive, so regrouping rules by component is a potential
+  rendering change, not a pinnable byte change. And under the old no-modules
+  constraint (b)'s JS half collapsed into exactly (a)'s outcome anyway.
+- **(c) Native ES modules** — real `import`/`export`, one module per feature.
+  Browsers run ES modules **natively**: no bundler and no build step are
+  required (only the project's own past *constraint* forbade them — that
+  constraint is now lifted, §4). This is the only option that yields genuinely
+  independent, individually-valid, individually-lintable files with real
+  cross-file go-to-definition and import/export checking.
 
-### Option (a) — fragment `dashboard.js` by feature/tab; concatenate
+**The human chose (c), go-straight-to-ES-modules**, with eyes open about the
+cost: it is *not* a mechanical relocation. The page's served bytes change, the
+Stage-1 byte-identity SHA pin is retired, and agentd grows a static-asset
+route. Those costs are accepted deliberately because (c) is the only option
+that actually delivers the maintainability goal the whole refactor exists for.
 
-Split the one JS file into ~12 files along the section boundaries above;
-`assembleDashboardJS()` concatenates them, in an explicit order, into the
-`dashboardJS` string that `assembleDashboardHTML()` already splices.
+This plan therefore drops options (a) and (b) entirely.
 
-- **Mechanical?** Fully. A `<script>` element does not care about file
-  boundaries — its content is a byte stream. If the fragments are contiguous
-  line-ranges of the original and the concatenation joins them with the empty
-  string, the result is the original `dashboard.js`, byte-for-byte. Nothing is
-  reordered, rewritten, or rescoped.
-- **Cost:** every fragment is a *slice of one IIFE body*, not a standalone
-  program. The wrapper `(function() {` lives in the first fragment and `})();`
-  in the last; middle fragments are runs of complete top-level declarations
-  with no wrapper of their own. See §6 for what that does to editor tooling
-  (short version: navigation mostly survives, per-file lint gets noisier).
+## 3. What this changes about Stage 1's safety model
 
-### Option (b) — break out whole components (HTML + CSS + JS together)
+Stage 1's rule was "every *mechanical* stage produces byte-identical served
+output," guarded by a SHA-256 pin. Stage 2 is **not a mechanical stage** — it
+is the deliberate, openly-reviewed, byte-changing rewrite. That is not a
+violation of the discipline; the discipline always allowed byte-changing steps
+*as long as they are explicit and separately reviewed* rather than smuggled
+into a "mechanical split." Stage 2 is exactly that explicit step.
 
-Pull one feature at a time — say the cron modal — into a triplet: its markup,
-its styles, its script, co-located, and have assembly splice each third back
-into the right slot.
+The human has also confirmed (2026-05-17) that **byte-identical refactor output
+is not a goal they value** — functional correctness is the bar. So retiring the
+pin gives up nothing the project actually depended on; it was a convenience, not
+a requirement.
 
-This sounds tidier but **cannot be done mechanically**, and the blocker is CSS:
+Concretely:
 
-- **CSS is cascade-ordered.** `dashboard.css` is a flat global stylesheet —
-  687 top-level rules, no scoping. Which rule wins on a given element depends
-  on source order among equal-specificity rules. You *can* cut CSS into
-  contiguous fragments in original order (that is byte-safe, exactly like the
-  JS). But option (b)'s premise is *regrouping* rules **by component** — and
-  regrouping reorders the cascade. That is not a byte change you can pin away;
-  it is a potential **rendering** change. Reproducing the original cascade
-  while physically reordering rules is not a mechanical operation.
-- **A component's JS is not self-contained.** Every modal leans on shared
-  helpers — `$`, `esc`, `confirmModal`, `toast`, `showStatus`, the API
-  helpers. Under the no-modules constraint (§4) those can only be shared via
-  one common scope. So the "JS third" of every component is *still* a fragment
-  of the shared IIFE — exactly what option (a) produces — just relocated into
-  a component folder. Option (b) buys nothing for the JS that (a) doesn't.
-- **HTML is the one cooperative third.** Each modal (`<div class="modal-overlay"
-  id="…">`) and each tab (`<section id="tab-…">`) *is* a contiguous subtree, so
-  HTML could be fragmented contiguously. But splitting markup alone has little
-  value, and it does not rescue the CSS problem.
+- `assembleDashboardHTML()` and the `<style></style>`/`<script></script>`
+  splice are **removed**. The dashboard is served as ordinary static assets.
+- `TestDashboardHTML_SplitIsByteIdentical` and
+  `TestDashboardHTML_AssemblySpliceIsClean` (in `dashboard_split_test.go`) are
+  **retired** — there is no longer a single assembled blob to pin.
+- New guards replace them — see §7.
 
-So option (b) is **strictly worse**: it takes on the CSS-cascade risk that
-(a) never incurs, and its JS outcome is identical to (a)'s. Its only unique
-deliverable — true per-component encapsulation — is unreachable anyway while
-ES modules are forbidden (§4, §9).
+## 4. Constraints
 
-### A third option, named honestly
+| Constraint           | Stage 2 status                                                  |
+|----------------------|-----------------------------------------------------------------|
+| No ES modules        | **LIFTED** — by the human's 2026-05-17 decision. This is the one constraint Stage 2 removes, and it is removed deliberately and on the record. |
+| No bundler           | **Holds.** Native ESM needs no webpack/esbuild/rollup — the browser resolves `import` graphs itself. |
+| Build-step-free      | **Holds.** No compile/transpile/concat step. Go `//go:embed`s the module files and serves them as-is; the browser loads them natively. |
+| No `html/template`   | **Holds** — more so. With assembly gone, `dashboard.html` is served verbatim. |
 
-There is a real third path, and it should be on the record rather than
-discovered later: **native ES modules** (`import`/`export`, served as
-`<script type="module">`). Browsers run those with **no bundler and no build
-step**, so "build-step-free" alone does not forbid them — only the explicit
-"no ES modules" constraint does. Native ESM is the *only* approach that yields
-genuinely independent, individually-valid, individually-lintable component
-files with working cross-file go-to-definition.
+So Stage 2 lifts exactly one constraint, the one that was blocking the real
+fix, and keeps the other three intact.
 
-But it is a **non-mechanical rewrite**: it changes the served bytes (the page
-gains `import` statements and multiple script fetches or an embedded module
-graph), so it breaks byte-identity outright and cannot be a "mechanical split"
-PR. It is a possible *Stage 3*, gated on the human lifting the no-modules
-constraint. **Stage 2 as planned does not need it and does not touch it** — it
-is raised in §9 as an open question, not proposed here.
+## 5. Target architecture
 
-## 3. Byte-identical preservation
+### File layout
 
-**Option (a) stays purely mechanical.** The plan:
+A `dashboard/` directory replaces the three flat sibling files:
 
-1. Each fragment file is a verbatim contiguous line-range of today's
-   `dashboard.js`. Splits happen only at `\n` boundaries.
-2. `assembleDashboardJS()` concatenates the fragments **in an explicit fixed
-   order** with the empty string as the joiner (every line already carries its
-   own `\n`; do **not** join with `"\n"` — that would inject bytes).
-3. `dashboardJS` becomes `assembleDashboardJS()` instead of a direct
-   `//go:embed`. `assembleDashboardHTML()` is **unchanged** — it still splices
-   one `dashboardJS` string into one `<script>`.
+```
+pkg/claude/agentd/dashboard/
+├── dashboard.html          served verbatim at "/"
+├── dashboard.css           served at "/static/dashboard.css" via <link>
+└── js/
+    ├── dashboard.js        entrypoint module — imports the rest, runs boot
+    ├── helpers.js          $, esc, dots, pills, context meter, cells, relTime
+    ├── sort.js             sort state + column/accessor tables
+    ├── virtual-groups.js   Ungrouped / Conversations / Retired
+    ├── render.js           row/group/agent/message/usage rendering
+    ├── tabs.js             snapshot state, filters, render*Tab, cron/sudo/links tables
+    ├── modal-cron.js       sudo-grant + cron modal + target picker
+    ├── modal-message.js    message + sudo + perm-edit + group-create modals
+    ├── modal-templates.js  templates UI + group import + group context
+    ├── modal-link-wt.js    link modal + worktree picker
+    ├── modal-spawn.js      spawn / clone / reincarnate / rename modals
+    ├── refresh.js          refresh(), tab/copy/sort binds, confirm/window/cleanup modals, toast
+    ├── row-actions.js      bindRowActions() delegated click router
+    ├── dnd.js              drag-and-drop
+    ├── config.js           Config tab
+    └── state.js            shared mutable state (only if §6 needs it)
+```
 
-Because the concatenation reproduces the original `dashboard.js` byte-for-byte,
-the assembled page is unchanged, so:
+`dashboard.html` is `//go:embed`-served as a real document:
 
-- `TestDashboardHTML_SplitIsByteIdentical` — the existing whole-page SHA-256
-  pin — **keeps passing untouched**. Stage 2 changes no served byte.
-- `TestDashboardHTML_AssemblySpliceIsClean` also keeps passing: `dashboardJS`
-  is still a single spliced string; the length and `Contains` checks hold.
+```html
+<link rel="stylesheet" href="static/dashboard.css">
+...
+<script type="module" src="static/js/dashboard.js"></script>
+```
 
-**Add one new guard:** `TestDashboardJS_ConcatIsByteIdentical`, a SHA-256 pin
-on the assembled `dashboardJS` alone (seed it from
-`git show 2b20159:pkg/claude/agentd/dashboard.js | sha256sum`). The whole-page
-pin already catches a broken JS concat, but it blames the whole page; a
-JS-specific pin fails with a JS-specific message and localises the regression.
+(Relative paths resolve against `/`; a module's own `import './helpers.js'`
+resolves against `/static/js/`.)
 
-**The wrapper stays in the files.** `(function() {` in the first fragment,
-`})();` in the last — as bytes, version-controlled, not synthesised in Go.
-Moving the wrapper into a Go string literal would not make middle fragments
-any more standalone (they would still be body slices) and only adds a
-fragile hand-typed-bytes hazard.
+### Serving — agentd
 
-**The realistic break risk is editor hygiene, not logic.** "Insert final
-newline", "trim trailing whitespace", and auto-formatters will *silently*
-mutate a fragment and break byte-identity. Mitigations: the new JS SHA pin
-catches it in CI; add an `.editorconfig` stanza for the fragment directory
-disabling final-newline insertion and trailing-whitespace trimming; the carve
-PRs must be reviewed as pure line-moves.
+`dashboard.go` changes:
 
-**Anything that changes served bytes is not Stage 2.** A genuine content edit
-— including the CSS-tidy in §8 — is a separate, explicitly-reviewed PR that
-deliberately recomputes the relevant SHA constant. It must never ride inside a
-"mechanical split" PR.
+- `//go:embed dashboard` → an `embed.FS`; `fs.Sub` to root it at `dashboard/`.
+- `handleDashboardRoot` keeps its job — token consumption, the session cookie,
+  auth — and now serves `dashboard.html` *read from the embed.FS* (no
+  assembly).
+- A new static route, e.g. `/static/`, serves the CSS and JS modules from the
+  embed.FS via `http.FileServerFS`, **wrapped in `checkDashboardAuth`** (cookie
+  check — same gate as `/api/*`). `http.FileServerFS` sets the `Content-Type`
+  from the extension; this matters — **browsers refuse to execute a module
+  served as `text/plain`**; `.js` must be `text/javascript`. Modern Go's mime
+  table does this correctly, but a test should assert it (§7).
+- Auth flows fine: the first navigation to `/` is a same-site top-level GET, so
+  the `SameSite=Strict` cookie is set; every subsequent module fetch is a
+  same-origin subresource request and carries that cookie automatically. A
+  module URL hit cold (no cookie) gets rejected — same protection as today.
+- `assembleDashboardHTML()`, `dashboardShellHTML`/`dashboardCSS`/`dashboardJS`
+  string vars, and the splice are deleted.
 
-## 4. Constraints (unchanged from Stage 1)
+### The IIFE → module conversion
 
-- **Build-step-free** — no compile/transpile/concat step in the build or CI.
-  Assembly happens in Go at package init, from `//go:embed`'d files.
-- **No bundler** — no webpack/esbuild/rollup/etc.
-- **No ES modules** — no `import`/`export`, no `<script type="module">`.
-  (This is the constraint — not "build-step-free" — that actually forces the
-  concatenation approach; see §2's third option and §9.)
-- **No `html/template`** — assembly is plain `strings.Replace` splicing.
+An ES module already *has* its own private scope — that is what the IIFE was
+faking. So the wrapper `(function() {` / `})();` is simply deleted; the body
+becomes the module body. Modules are also implicitly **strict mode**: if the
+current sloppy-mode IIFE relies on anything strict mode forbids (an accidental
+global, a duplicate parameter name, octal literal, …) it will throw once it is
+a module. PR 1 (§8) must verify the dashboard still works after the wrapper
+strip — most likely it is already clean, but this is the one place a "just
+delete the wrapper" assumption can bite.
 
-Option (a) honours all four. Within them, concatenation of fragments is the
-*only* way to multi-file the JS at all — which is itself a strong reason it is
-the answer.
+## 6. The non-mechanical core: shared mutable state
 
-## 5. Incremental PR breakdown
+This is the part that makes Stage 2 genuinely *not* a line-move, and the part
+the executor must design rather than mechanically apply.
 
-Splitting 8k lines big-bang is reviewable in principle (the SHA pin proves
-safety) but unreviewable in practice — a human cannot eyeball that a
-2,900-line modal block moved untouched. So: **isolate the mechanism, then
-carve one section at a time.** PR size here is purely review ergonomics; the
-SHA pin makes every step equally *safe*.
+Inside today's single IIFE, ~30 `let`/`var` module-scope variables are read
+*and written* from many functions scattered across the file — e.g. `sortState`,
+`lastSnapshot`, `renameEditing`, `sudoGrantBlocklist`, `sudoByConv`,
+`cronEditId`, `cronOriginalTarget`, `cronOriginalGroupID`, `targetPickerScopes`,
+`messageScopedGroup`, `permEditConv`, `templateEditorEditing`,
+`templateEditorAgents`, `giInspectSeq`, `giLastInspection`, `giAsDebounce`,
+`groupContextModalGroup`, `linkModalState`, `lastSpawnCwdPrefill`,
+`spawnWtRepoEdited`, `configObj`, `configBaseRaw`, `configLoaded`,
+`configFileMalformed`, `toastTimer`, `dndDragActive`, `dndSource*`.
 
-**PR 1 — mechanism only, zero content cut.**
-Create `pkg/claude/agentd/dashboard-js/`, move `dashboard.js` into it verbatim
-as a single fragment (e.g. `_rest.js`), add `assembleDashboardJS()` that
-concatenates an explicit ordered list of `//go:embed` vars (one entry, for
-now), point `dashboardJS` at it, add `TestDashboardJS_ConcatIsByteIdentical`,
-add the `.editorconfig` stanza. Diff: one file move + a small Go change. No
-line-range is cut, so there is no content risk to review — only the embed/
-assembly wiring. Both existing pins stay green.
+ES modules give **live, read-only bindings**: an importing module sees the
+current value of an imported variable but **cannot assign to it**. So a `let`
+cannot simply be `export`ed and mutated from elsewhere. Each piece of mutable
+state needs a deliberate home:
 
-**PRs 2–N — one carve per PR.** Each PR lifts one contiguous line-range out of
-the shrinking `_rest.js` into a named fragment and inserts its embed var at the
-correct position in the ordered list. The diff is ~all rename/move; the
-reviewer checks two things — "lines only moved" and "embed order correct" —
-and the SHA pin does the rest. Suggested fragments (carve order = file order):
+1. **Co-locate state with its mutators.** Most of these `let`s are private to
+   one feature (`cronEditId` ↔ the cron modal, `configObj` ↔ the Config tab).
+   Put the variable in that feature's module; nothing else touches it. This
+   covers the large majority.
+2. **For genuinely cross-cutting state**, expose an explicit setter from the
+   owning module (`export function setSortState(v){…}`) — or, if several such
+   vars exist, gather them in `state.js` with getter/setter pairs. `lastSnapshot`
+   and `sortState` are the likely candidates.
 
-| #  | Fragment file              | Carved from lines |
-|----|----------------------------|-------------------|
-| 1  | `00-helpers.js`            | 1–436 (incl. `(function() {`) |
-| 2  | `10-sorting.js`            | 437–617           |
-| 3  | `20-virtual-groups.js`     | 619–722           |
-| 4  | `30-render.js`             | 724–1276          |
-| 5  | `40-tabs.js`               | 1278–1673         |
-| 6  | `50-modal-cron.js`         | 1674–2411         |
-| 7  | `51-modal-message-perm.js` | 2412–2934         |
-| 8  | `52-modal-templates.js`    | 2935–3689         |
-| 9  | `53-modal-link-worktree.js`| 3690–3975         |
-| 10 | `54-modal-spawn.js`        | 3976–4574         |
-| 11 | `60-refresh-binds.js`      | 4575–6227         |
-| 12 | `70-row-actions.js`        | 6228–7021         |
-| 13 | `80-dnd.js`                | 7022–7599         |
-| 14 | `90-config.js`             | 7600–8100         |
-| 15 | `99-boot.js`               | 8101–8130 (incl. `})();`) — `_rest.js` renamed once empty |
+Each carve PR (§8) makes this call for the state it touches. This is design
+judgement, not mechanism — and it is why Stage 2 needs real review per PR, not
+just a green pin.
 
-That is ~15 PRs at one carve each. They may be **batched** — 2–3 carves per PR
-cuts it to ~6 PRs — at the reviewer's discretion; the carves are independent
-and the pin guards any size. Default to small; batch only adjacent sections.
+A related note: cyclic `import`s between modules are fine for **functions**
+(hoisted, live bindings) but can hit a temporal-dead-zone error if module A
+*uses an imported `const` at its own top level* before module B has
+initialized. Today's top-level `const`s (`CTX_SEGMENTS`, `MEMBER_COLS`, …) are
+all consumed *inside* functions called later, so this is not expected to bite —
+but carve leaf modules (helpers, constants) first so their bindings initialize
+before dependents, and keep top-level code to the entrypoint's boot sequence.
 
-**Ordering mechanism — recommendation.** Use an **explicit ordered list of
-`//go:embed` vars** in `dashboard.go`, concatenated in source order. The order
-is then under code review, and adding a fragment is a visible Go diff. The
-alternative the brief floated — `//go:embed dashboard-js/*` into an `embed.FS`
-and concatenate `ReadDir` output — also works (entries sort by filename, hence
-the `NN-` numeric prefixes above), but it has one footgun: renaming a file
-silently reorders the JS. JS is order-sensitive for the boot tail and every
-top-level `const`/`let`, so a silent reorder is a real hazard. Explicit vars
-avoid it. (Either way the SHA pin would catch an actual mistake — this is about
-which mechanism makes mistakes *hard*.) Minor; the human may veto in §9.
+## 7. Testing / guards (replacing the SHA pin)
 
-## 6. Editor-tooling angle
+The byte-identity pin is gone (§3). Replacements, in order of value:
 
-Stage 1's tooling win was unambiguous: a `.js` file gets a JS language service
-instead of being an opaque string inside HTML. Stage 2's win is **more mixed,
-and honesty here matters**:
+1. **Editor / language-service diagnostics — a *new* net ESM gives us.** Real
+   `import`/`export` means the JS language service resolves the graph: a typo'd
+   import, a missing `export`, an unused export, an undefined symbol are all
+   flagged *at edit time*. The IIFE never offered this. A `jsconfig.json` in
+   `dashboard/js/` makes it explicit. This is the single biggest correctness
+   gain and the main point of the whole exercise.
+2. **A CI syntax check.** `node --check` on each module file catches syntax
+   errors cheaply. GitHub-hosted runners ship Node, so this adds no install
+   step. **Open question (§11): is adding a Node-touching CI step acceptable
+   for an otherwise pure-Go project, or keep CI pure-Go and rely on (1)+(3)?**
+   `node --check` validates syntax only — it does not catch a missing `export`
+   (that is a runtime `undefined`); (1) and (3) cover that.
+3. **Manual dashboard verification per PR.** Each carve PR keeps the dashboard
+   fully working; the reviewer/author loads it and exercises the touched
+   feature. ESM fails *loudly* — a bad import is an immediate console error —
+   so regressions surface fast.
+4. **A Go test for the served shape.** Assert the embed.FS contains the
+   expected files, that `dashboard.html` references the entrypoint module and
+   the stylesheet, and that the static handler serves `.js` with a
+   JavaScript MIME type and `.css` with `text/css`. This guards the *plumbing*
+   (the part Go owns) without trying to validate JS semantics.
 
-- **Gained:** small files. ~300–800 lines each instead of one 8k file — faster
-  to open, less scrolling, `git blame`/history localised per feature, and
-  "which file" becomes a navigation aid (open `54-modal-spawn.js`, not line
-  3,976 of a monolith).
-- **Roughly preserved:** cross-file go-to-definition. VS Code's JavaScript
-  service treats all non-module `.js` files in a folder as one shared global
-  scope. Because each middle fragment loses the IIFE wrapper, its functions
-  *look* top-level/global to the service — so it still links a call in one
-  fragment to a definition in another. Navigation is not a clean win, but it
-  largely survives. (An optional `jsconfig.json` in the fragment dir — not a
-  served file, no byte impact — can make this explicit; worth adding in PR 1.)
-- **Degraded:** per-file linting. Each fragment is an IIFE-body slice: the
-  first has an unclosed `(function() {`, the last a dangling `})();`, and all
-  middle fragments sit at the wrapper's 2-space base indent. A linter run on
-  one fragment in isolation will flag the brace imbalance and the indentation.
-  This is noise, not breakage — the assembled whole is valid — but it is real.
+There is no pretending this matches the SHA pin's bit-exactness — it cannot,
+because Stage 2 deliberately changes the bytes. The honest trade is: lose a
+bit-exact pin on a frozen blob, gain real static analysis on living modules.
 
-Net: option (a) clearly helps **file size and locality**, roughly **preserves
-navigation**, and mildly **hurts per-file lint cleanliness**. Option (b)'s JS
-half lands in exactly the same place (same fragments, same IIFE-slice nature),
-so it offers **no tooling advantage over (a)** — while adding the CSS risk.
-Native ESM (§2, §9) is the only option that would make each file independently
-valid and lintable, and it is out of Stage 2 scope.
+## 8. Delivery — PR breakdown
 
-## 7. Recommendation
+Stage 2 is **one rewrite**, not a sequence of refactor stages. The human's
+decision was explicitly to go straight to ES modules — the full conversion —
+*not* a mechanical-split-then-ESM gradual path. What follows is only how that
+single rewrite is split into reviewable PRs; the end state (the §5 module
+structure) is committed up front. Every PR leaves a working dashboard.
 
-**Do option (a): mechanically fragment `dashboard.js` into ~15 concatenated
-files, explicit ordered `//go:embed` vars, guarded by a new JS SHA-256 pin,
-delivered as ~6–15 small carve PRs after a mechanism-only PR 1.**
+**PR 1 — the cutover.** Move the three files into `dashboard/`. Strip the IIFE
+wrapper from `dashboard.js`, leaving it as one entrypoint module (no `import`s
+yet). Switch `dashboard.html` to `<link rel="stylesheet">` + `<script
+type="module" src="…">`. In `dashboard.go`: embed the directory, add the
+auth-gated `/static/` route, serve `dashboard.html` from the embed.FS, delete
+`assembleDashboardHTML()` and the splice. Retire the two SHA/splice tests; add
+the §7.4 Go test (and, pending §11, the §7.2 CI step). The JS *body* is
+untouched apart from the two deleted wrapper lines, so this PR is mostly
+HTML + Go + tests. After it, the dashboard runs as one ES module.
 
-Why, decisively:
+**PRs 2–N — module extraction.** Lift the §1 clusters into their own modules,
+in dependency order (leaves first): move the code, `export` the public
+surface, `import` it where used, and apply the §6 state decision for any
+mutable state. With byte-identity no longer a gate, these need not be tiny —
+**group them into a handful of coherent PRs**, sized so each stays reviewable,
+e.g.:
 
-1. It is the **only** option that stays purely mechanical and byte-identical —
-   the same safety property that made Stage 1 land cleanly. Option (b) cannot
-   make that promise because of CSS cascade order.
-2. The constraints (§4) — specifically no ES modules — mean any multi-file JS
-   is concatenated fragments sharing one scope. Option (b)'s "encapsulated
-   component" is therefore unattainable for the JS regardless; (b)'s JS
-   outcome *is* (a)'s outcome, reached via a riskier route.
-3. It delivers the concrete, real win — file size and locality — at near-zero
-   risk, in small independently-mergeable PRs.
+- helpers + sort + virtual-groups
+- render + tabs
+- the five `modal-*.js`
+- refresh + row-actions + dnd
+- config
 
-The honest caveat, on the record: this does **not** give per-file-valid,
-independently-lintable modules. Nothing within the current constraints can.
-If that gap is later judged to matter, it is a deliberate Stage 3 (native
-ESM), not a defect in this plan — see §9.
+~4–6 PRs; finer is fine if a reviewer prefers it.
 
-## 8. Coordination / sequencing
+**Final state.** `dashboard.js` becomes the entrypoint: the `import`s plus the
+boot sequence (`bindTabs()`, `refresh()`, `setInterval`, …). Optionally rename
+it `main.js` (cosmetic; keep the HTML `src` in sync).
 
-Two other items may touch these files. Neither blocks Stage 2 and Stage 2
-blocks neither — but sequencing avoids needless rebase pain.
+So Stage 2 lands in roughly **5–7 PRs total**. They are not mechanical — each
+carries export/import design and the §6 state decisions — so each wants genuine
+review, not just a green check.
 
-### Notification-setting follow-up (not yet in flight)
+## 9. Editor-tooling angle
 
-An opt-in desktop notification for new human messages, likely a Config-tab
-toggle. It would touch `dashboard.html` (a new control in `<section
-id="tab-config">`), possibly `dashboard.css`, and the Config-tab JS — which
-Stage 2 carves into `90-config.js`. It is a **feature** (changes served bytes,
-recomputes the whole-page SHA pin); Stage 2 carves are **mechanical** (move
-bytes, change no SHA). They do not hard-conflict — different concerns,
-different SHA effects — but both edit the Config-tab JS region.
+This is finally the unambiguous win. Stage 1 gave `dashboard.js` JS tooling
+*as a file*. Stage 2 (c) gives every feature its own **independently valid,
+independently lintable** module: linters run per file with no IIFE-slice
+noise; the language service resolves `import`s for real cross-file
+go-to-definition, find-references, and missing-/unused-export detection;
+files are ~200–800 lines each. Options (a) and (b) could not deliver this —
+(a)'s fragments were never valid standalone files, and (b)'s JS collapsed into
+(a). ES modules are the only option that makes the tooling goal real, which is
+why it is the chosen path.
 
-*Sequencing:* land the **`90-config.js` carve early** in the Stage 2 sequence
-so the notification feature has a stable, final-shaped target file to edit. If
-the feature lands first instead, the later carve simply moves a slightly
-larger region — also fine. Just do not run the config carve and the feature in
-the same PR: one is mechanical, one is not.
+## 10. Coordination / sequencing
 
-### CSS-tidy: deprecated `word-break: break-word`
+Two other items touch these files. Neither blocks Stage 2; sequencing just
+avoids rebase churn.
 
-CodeRabbit flagged on #152 that `dashboard.css` uses `word-break: break-word`
-(deprecated; the modern spelling is `overflow-wrap: anywhere`), 4×. It was
-correctly left alone on #152 to preserve byte-identity.
+**Notification-setting follow-up (not yet in flight)** — an opt-in desktop
+notification for new human messages, likely a Config-tab toggle. It touches
+`dashboard.html` (a control in `<section id="tab-config">`) and the Config-tab
+JS, which Stage 2 carves into `config.js`. Recommendation: land PR 1 (the
+cutover) first so the feature is written against the new static-asset layout,
+then carve `config.js` early so the feature has a stable module target — or let
+the feature land against the entrypoint module and the carve moves slightly
+more code. Either works; just do not combine the feature with a carve PR.
 
-This is **not part of Stage 2** — Stage 2 is JS-only and `dashboard.css` is out
-of scope. It is a **separate, tiny, content-changing PR**: editing those 4
-declarations changes the served bytes, so that PR must deliberately recompute
-`preSplitDashboardSHA256` (the whole-page pin). It is fully orthogonal to the
-Stage 2 carves — they touch `dashboard.js`, it touches `dashboard.css`, no file
-conflict — so it can land before, during, or after Stage 2 with no
-coordination beyond "it owns the SHA-pin bump." Recommend: land it as its own
-PR whenever convenient; do not fold it into a Stage 2 PR.
+**CSS-tidy: deprecated `word-break: break-word`** — CodeRabbit flagged on #152
+that `dashboard.css` uses `word-break: break-word` (deprecated; modern spelling
+`overflow-wrap: anywhere`), 4×. It was left alone on #152 to preserve
+byte-identity. **Stage 2 removes that obstacle entirely:** once the SHA pin is
+retired (§3) and `dashboard.css` is served as a plain static file, editing
+those four declarations is a trivial one-line PR with *zero* ceremony — no pin
+to recompute. Recommendation: do it as its own tiny PR any time after PR 1
+lands; it no longer needs to be fenced off.
 
-## 9. Open questions for the human
+## 11. Open questions for the human
 
-1. **Native ES modules — permanently off the table, or a possible Stage 3?**
-   This is the one decision that matters. Native ESM needs no bundler and no
-   build step, and is the *only* path to genuinely independent, per-file-valid,
-   per-file-lintable component files (and the closest thing to option (b)'s
-   "encapsulated components"). It is a non-mechanical rewrite that changes the
-   served bytes. Stage 2 as planned does not need it. Question: keep the
-   no-modules constraint permanent, or earmark "evaluate native ESM" as a
-   future Stage 3 once Stage 2 lands?
-2. **Fragment granularity** — the plan proposes ~15 fragments at ~300–800 lines.
-   Acceptable, or prefer coarser (~6–8 larger files)? Recommendation: ~15;
-   one screenful of features per file beats one screenful of lines.
-3. **Ordering mechanism** — explicit ordered `//go:embed` vars (recommended,
-   §5) vs `embed.FS` directory + numeric-prefix sort. Minor; flagged for
-   awareness.
-4. **PR batching** — ~15 one-carve PRs vs ~6 batched (2–3 carves each).
-   Recommendation: default small, batch only adjacent sections, reviewer's
-   call. No architectural impact either way.
+1. **CI Node dependency.** §7.2 proposes a `node --check` syntax-check step in
+   CI. GitHub-hosted runners already have Node, so it costs no install — but it
+   does put a non-Go tool in an otherwise pure-Go pipeline. Acceptable, or keep
+   CI strictly Go and rely on editor diagnostics + the Go plumbing test +
+   manual verification?
+2. **CSS delivery.** This plan serves `dashboard.css` as a static file via
+   `<link>` (it falls out naturally once a `/static/` route exists, and it
+   lets the splice be deleted cleanly). Acceptable? The conservative
+   alternative — keep CSS spliced into the HTML and only modularise the JS —
+   leaves a vestigial half-splice and is not recommended, but it is the
+   smaller change if desired.
+3. **Static route path.** `/static/` is proposed for the CSS + JS modules.
+   Any preference (`/dashboard/`, `/assets/`)? Minor — executor's call unless
+   flagged.
+4. **Entrypoint rename.** Keep the entrypoint module named `dashboard.js`, or
+   rename it `main.js` once it is just imports + boot? Cosmetic.
 
 ## Relevant source files
 
-- `pkg/claude/agentd/dashboard.js` — 8,130 lines, the Stage 2 subject.
+- `pkg/claude/agentd/dashboard.js` — 8,130 lines, the Stage 2 subject; becomes
+  the `dashboard/js/` module set.
+- `pkg/claude/agentd/dashboard.html`, `dashboard.css` — move into `dashboard/`;
+  HTML switches to `<link>` + `<script type="module">`, served verbatim.
 - `pkg/claude/agentd/dashboard.go` — `//go:embed` directives,
-  `assembleDashboardHTML()`; Stage 2 adds `assembleDashboardJS()` + the
-  ordered embed-var list.
-- `pkg/claude/agentd/dashboard_split_test.go` — `TestDashboardHTML_SplitIsByteIdentical`
-  (whole-page SHA pin), `TestDashboardHTML_AssemblySpliceIsClean`; Stage 2 adds
-  `TestDashboardJS_ConcatIsByteIdentical`.
-- `pkg/claude/agentd/dashboard.html`, `dashboard.css` — siblings, out of Stage 2
-  scope (referenced only by §8 coordination).
+  `assembleDashboardHTML()` (deleted), `handleDashboardRoot`,
+  `registerDashboardRoutes`; gains the auth-gated `/static/` route.
+- `pkg/claude/agentd/dashboard_split_test.go` — the two SHA/splice tests are
+  retired; replaced by the §7.4 served-shape Go test.
