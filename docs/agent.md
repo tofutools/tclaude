@@ -189,6 +189,7 @@ tclaude agent groups rename <group> <new-name>
 tclaude agent groups grant-owner <group> <conv>
 tclaude agent groups revoke-owner <group> <conv>
 tclaude agent groups set-default-dir <group> [dir]        # default cwd for agents spawned into the group
+tclaude agent groups set-max-members <group> [max]        # cap member count; a spawn that would exceed it is refused (0 = unlimited)
 tclaude agent groups archive <group>                      # soft-delete: freeze, hide, keep history
 tclaude agent groups unarchive <group>                    # reverse an archive
 tclaude agent groups clone <source> [new-name]            # fork every member into a brand-new group
@@ -227,6 +228,24 @@ materialise, and adds it to `<group>`. The new session lands in
 `--cwd` (defaults to the caller's cwd, or the group's
 [default dir](#groups)). Requires the `groups.spawn` permission
 (human-only by default).
+
+**Spawn guardrails.** `groups.spawn` is human-only by default, but the
+human can grant it to a coordinator agent so it can grow its own team.
+To keep a spawn-capable agent from running away (a recursive spawn
+explosion), an **agent** caller is bound by three checks — a human
+bypasses the agent-only ones, exactly as humans bypass every other
+permission gate:
+
+| Guardrail | Default | Refusal |
+|-----------|---------|---------|
+| **Group restriction** — an agent may only spawn into a group it is a member or owner of | on | `403 group_restricted` |
+| **Rate limit** — spawns per caller-agent per rolling hour | 10 | `429 rate_limited` |
+| **Max group size** — `agent_groups.max_members`; binds the human too | unlimited (0) | `409 group_full` |
+
+The first two are tuned in `~/.tclaude/config.json` under `agent`
+(`spawn_group_restriction`, `spawn_allowed_groups`, `spawn_max_per_hour`);
+the member cap is a per-group property — `groups set-max-members`, or the
+👥 chip on the dashboard's Groups tab. See [Permission model](#permission-model).
 
 ### clone / reincarnate / compact / context-info
 

@@ -101,10 +101,12 @@ the session, schedule a **cron** job, toggle ownership, and remove from the
 group. Per-group actions live in the group header: rename, **+ add member**
 (a searchable keyboard-navigable overlay), **+ spawn agent**, **🧹 cleanup**
 (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)), delete the
-group, **⏰ multicast** cron, and a click-to-edit **start-dir** chip (the
-default working directory for agents spawned into that group). The tab's
-filter bar also carries a **🧹 clean up** button that sweeps every group at
-once.
+group, **⏰ multicast** cron, a click-to-edit **start-dir** chip (the
+default working directory for agents spawned into that group), and a
+click-to-edit **👥 member-cap** chip (`agent_groups.max_members` — a spawn
+that would exceed it is refused; the chip turns orange when the group is
+full). The tab's filter bar also carries a **🧹 clean up** button that
+sweeps every group at once.
 
 **Drag-and-drop.** Drag a member row onto another group's header to **move**
 it; hold **Ctrl** (**Cmd** on macOS) while dragging to **clone** it into the

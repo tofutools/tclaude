@@ -1631,11 +1631,14 @@ func groupByID(id int64) (*db.AgentGroup, error) {
 // --- /v1/groups (GET = anyone, POST = human only) ---
 
 type groupSummary struct {
-	Name     string `json:"name"`
-	Descr    string `json:"descr,omitempty"`
-	Members  int    `json:"members"`
-	Online   int    `json:"online"`
-	Archived bool   `json:"archived,omitempty"`
+	Name    string `json:"name"`
+	Descr   string `json:"descr,omitempty"`
+	Members int    `json:"members"`
+	Online  int    `json:"online"`
+	// MaxMembers is the group's hard member cap (agent_groups.max_members);
+	// 0 = unlimited. A spawn that would exceed it is refused.
+	MaxMembers int  `json:"max_members,omitempty"`
+	Archived   bool `json:"archived,omitempty"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -1680,11 +1683,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			out = append(out, groupSummary{
-				Name:     g.Name,
-				Descr:    g.Descr,
-				Members:  len(members),
-				Online:   online,
-				Archived: g.IsArchived(),
+				Name:       g.Name,
+				Descr:      g.Descr,
+				Members:    len(members),
+				Online:     online,
+				MaxMembers: g.MaxMembers,
+				Archived:   g.IsArchived(),
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -1698,6 +1702,9 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			Descr          string `json:"descr,omitempty"`
 			DefaultCwd     string `json:"default_cwd,omitempty"`
 			DefaultContext string `json:"default_context,omitempty"`
+			// MaxMembers is the group's hard member cap; 0 = unlimited.
+			// A negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
+			MaxMembers int `json:"max_members,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1743,6 +1750,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if groupContext != "" {
 			if _, err := db.SetAgentGroupDefaultContext(body.Name, groupContext); err != nil {
 				slog.Warn("groups create: failed to set default context",
+					"group", body.Name, "error", err)
+			}
+		}
+		if body.MaxMembers != 0 {
+			if _, err := db.SetAgentGroupMaxMembers(body.Name, body.MaxMembers); err != nil {
+				slog.Warn("groups create: failed to set max members",
 					"group", body.Name, "error", err)
 			}
 		}
@@ -1942,17 +1955,21 @@ func normalizeGroupContext(s string) (string, error) {
 //   - default_context — a block of shared startup guidance delivered
 //     to the inbox of agents spawned into the group (see
 //     handleGroupSpawn).
+//   - max_members — the group's hard member cap (0 = unlimited); a
+//     spawn that would exceed it is refused by the spawn-guardrail
+//     layer. See checkSpawnGuardrails.
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
-// fields present (non-nil) in the body are touched. Both are *string
-// so a caller can clear either by sending "" — distinct from omitting
-// it. An empty body (neither field) is a 400.
+// fields present (non-nil) in the body are touched. default_cwd /
+// default_context are *string so a caller can clear either by sending
+// "" — distinct from omitting it; max_members is *int and clears to
+// "unlimited" with 0. An empty body (no field) is a 400.
 //
-// Permission: groups.rename. Setting a group's default cwd / context
-// is the same class of human-curated group config as renaming it (the
-// blast radius is a UI prefill / spawn-time injection, strictly lower
-// than a rename), so it rides the existing slug rather than minting a
-// new one. Default human-only.
+// Permission: groups.rename. Setting a group's default cwd / context /
+// member cap is the same class of human-curated group config as
+// renaming it (the blast radius is a UI prefill / spawn-time injection
+// / spawn refusal, strictly lower than a rename), so it rides the
+// existing slug rather than minting a new one. Default human-only.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if _, ok := requirePermission(w, r, PermGroupsRename); !ok {
 		return
@@ -1963,14 +1980,17 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	var body struct {
 		DefaultCwd     *string `json:"default_cwd,omitempty"`
 		DefaultContext *string `json:"default_context,omitempty"`
+		// MaxMembers is the group's hard member cap; 0 = unlimited. A
+		// negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
+		MaxMembers *int `json:"max_members,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.DefaultCwd == nil && body.DefaultContext == nil {
+	if body.DefaultCwd == nil && body.DefaultContext == nil && body.MaxMembers == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected default_cwd and/or default_context)")
+			"nothing to update (expected default_cwd, default_context and/or max_members)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -2017,6 +2037,26 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		resp["default_context"] = ctx
+	}
+
+	if body.MaxMembers != nil {
+		// db.SetAgentGroupMaxMembers clamps a negative value to 0
+		// (unlimited) rather than rejecting it, so a careless caller
+		// can never wedge a group with an impossible cap.
+		n, err := db.SetAgentGroupMaxMembers(g.Name, *body.MaxMembers)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		stored := *body.MaxMembers
+		if stored < 0 {
+			stored = 0
+		}
+		resp["max_members"] = stored
 	}
 
 	writeJSON(w, http.StatusOK, resp)

@@ -127,6 +127,12 @@ func runServe(p *serveParams) error {
 	CloneCooldown = cooldown
 	slog.Info("clone cooldown", "cooldown", cooldown, "source", source)
 
+	// Spawn guardrails — resolve the runaway-prevention knobs from the
+	// config.json `agent` section into the agentd package vars once,
+	// here at startup; handleGroupSpawn reads them per request. Absent
+	// fields keep the built-in defaults. See spawn_guardrails.go.
+	slog.Info("agent-spawn guardrails", "config", resolveSpawnGuardrailConfig(cfg))
+
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
 	// (tier 1) overrides it here. Resolve then runs the one-time

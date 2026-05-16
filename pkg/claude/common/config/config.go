@@ -63,12 +63,40 @@ type Config struct {
 // ignored, falling through to the flag/default. The cooldown applies
 // only to agent-initiated clones — human-initiated clones (CLI or
 // dashboard) are never rate-limited.
+//
+// SpawnGroupRestriction / SpawnAllowedGroups / SpawnMaxPerHour are the
+// global knobs of the agent-spawn guardrail layer — runaway-prevention
+// for the case where the human grants an AGENT the `groups.spawn`
+// permission. They only ever affect agent callers; a human (no claude
+// ancestor) bypasses every spawn guardrail, as everywhere else.
+//
+//   - SpawnGroupRestriction toggles the group restriction: when on
+//     (the default — a nil pointer means on), an agent may only spawn
+//     into a group it is itself a member or owner of. Set it to false
+//     to let a spawn-capable agent spawn into any group.
+//   - SpawnAllowedGroups widens the restriction with a fixed allowlist
+//     of group names an agent may always spawn into, even when it is
+//     not a member/owner. Empty (the default) means no extra groups.
+//   - SpawnMaxPerHour caps how many agents one caller-agent may spawn
+//     per rolling hour. A nil pointer means the built-in default (10);
+//     0 disables the rate limit (unlimited). The daemon resolves it
+//     into agentd.SpawnMaxPerWindow once at startup.
+//
+// (CloneCooldown above is a distinct, separately-named knob — the
+// clone cooldown — not part of this guardrail layer.)
+//
+// The per-group member cap is NOT here — it is a hard property of the
+// group itself (agent_groups.max_members), set via `groups
+// set-max-members` / the dashboard, and applies to every caller.
 type AgentConfig struct {
-	DefaultPermissions  []string            `json:"default_permissions,omitempty"`
-	Sudo                *SudoConfig         `json:"sudo,omitempty"`
-	ContextNudge        *ContextNudgeConfig `json:"context_nudge,omitempty"`
-	AutoLaunchDashboard bool                `json:"auto_launch_dashboard,omitempty"`
-	CloneCooldown       string              `json:"clone_cooldown,omitempty"`
+	DefaultPermissions    []string            `json:"default_permissions,omitempty"`
+	Sudo                  *SudoConfig         `json:"sudo,omitempty"`
+	ContextNudge          *ContextNudgeConfig `json:"context_nudge,omitempty"`
+	AutoLaunchDashboard   bool                `json:"auto_launch_dashboard,omitempty"`
+	CloneCooldown         string              `json:"clone_cooldown,omitempty"`
+	SpawnGroupRestriction *bool               `json:"spawn_group_restriction,omitempty"`
+	SpawnAllowedGroups    []string            `json:"spawn_allowed_groups,omitempty"`
+	SpawnMaxPerHour       *int                `json:"spawn_max_per_hour,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

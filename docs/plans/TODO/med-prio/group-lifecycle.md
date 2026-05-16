@@ -18,6 +18,11 @@ the missing piece.
   group; default-hidden listings; mutating ops refused with 409.
 - `tclaude agent spawn <group>` — fresh CC + auto-join (slug
   `groups.spawn`, default human-only).
+- **Spawn guardrails** (2026-05) — `groups.spawn` is now safely
+  grantable to an agent: a guardrail layer (group restriction +
+  per-caller rate limit + per-group `max_members` cap) prevents a
+  runaway recursive spawn. See `DONE/agent-spawn-guardrails.md`. This
+  realises recommendation #3 below.
 - `tclaude --join-group <group>` — top-level + `session new` flag
   reusing the spawn endpoint, foreground attach.
 - **`groups create --member ...` spawn-on-create** (2026-05).
@@ -69,7 +74,10 @@ All gated by default — consistent with the existing `groups.*` /
   daemon), so there's nothing for the daemon to gate yet. Routing
   `session new` through the daemon would make this enforceable —
   bigger refactor, deferred. (See also
-  `agent-self-service-permissions.md`.)
+  `agent-self-service-permissions.md`.) NOTE: *group* spawn delegation
+  already shipped via the guardrail layer on the existing
+  `groups.spawn` slug (`DONE/agent-spawn-guardrails.md`); only this
+  non-group `session new` routing remains open.
 
 ### Open questions
 
