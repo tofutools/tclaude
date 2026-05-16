@@ -261,9 +261,13 @@ func TestDashboardReincarnate_UnknownMode_BadRequest(t *testing.T) {
 
 // Scenario: force mode is the unchanged direct reincarnation. The
 // daemon spawns a fresh successor, bumps the title, soft-exits the old
-// pane, and migrates group membership — exactly as the /v1 reincarnate
-// endpoint does. This is the regression guard that the mode switch did
-// not disturb the force path.
+// pane, migrates group membership, and delivers the follow-up to the
+// successor's inbox — exactly as the /v1 reincarnate endpoint does.
+// This is the regression guard that the mode switch did not disturb
+// the force path; the follow-up-text assertion is also the success-path
+// round-trip guard — a regression that dropped the buffered body would
+// still spawn / rename / exit / migrate and just deliver an empty
+// handoff, which only the inbox-body check catches.
 func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 	f := newFlow(t)
 
@@ -305,15 +309,33 @@ func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 	// the /v1 reincarnate flow test pins.
 	f.AssertGroupMember(g.Name, resp.NewConv, "worker-r-4", 5*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
+
+	// The follow-up text must actually REACH the successor — the daemon
+	// queues it as the handoff message addressed to the new conv. This
+	// is the success-path round-trip check: without it, a regression
+	// that dropped the buffered body would still pass every assertion
+	// above and just hand the successor an empty handoff.
+	succRows, err := db.ListAgentMessagesForConv(resp.NewConv, 100)
+	require.NoError(t, err)
+	require.Len(t, succRows, 1, "the successor receives exactly the handoff message")
+	assert.Equal(t, "reincarnation handoff", succRows[0].Subject,
+		"the successor's one message is the reincarnation handoff")
+	assert.Equal(t, "fresh start", succRows[0].Body,
+		"the force-mode follow_up reaches the successor's inbox verbatim")
 }
 
 // Scenario: force mode with no follow_up is rejected with the SPECIFIC
-// missing-follow_up error. This is the round-trip guard for
-// dashboardReincarnateAgent's body buffering + ContentLength reset: if
-// the buffered body did not reach handleAgentReincarnate's decoder
-// intact, force-mode could still 400 — but with a generic decode error
-// rather than "missing_follow_up". Asserting the specific code proves
-// the body round-tripped and decodeReincarnateFollowUp ran on it.
+// missing-follow_up error — not a generic decode failure or some other
+// 400. This pins that mode=force dispatches to the force path and that
+// path surfaces decodeReincarnateFollowUp's missing-follow_up branch,
+// and that a rejected request touches nothing.
+//
+// This deliberately does NOT claim to prove the buffered body
+// round-tripped: an entirely empty body would yield missing_follow_up
+// just the same. The genuine round-trip guards are
+// RejectsControlCharFollowUp (invalid_follow_up can only fire if the
+// follow_up field actually reached the decoder) and
+// StillDirectReincarnation (the follow-up text reaches the successor).
 func TestDashboardReincarnate_ForceMode_MissingFollowUpRejected(t *testing.T) {
 	f := newFlow(t)
 
@@ -329,7 +351,7 @@ func TestDashboardReincarnate_ForceMode_MissingFollowUpRejected(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "missing_follow_up",
 		"force mode with no follow_up must hit the specific missing-follow_up error, "+
-			"not a generic decode failure — that proves the buffered body round-tripped")
+			"not a generic decode failure or a different 400")
 
 	assert.True(t, f.World.Tmux.IsAlive(tmux), "a rejected force request never touches the session")
 	assert.Equal(t, conv, db.ResolveLatestConv(conv), "a rejected force request records no succession")
@@ -342,6 +364,11 @@ func TestDashboardReincarnate_ForceMode_MissingFollowUpRejected(t *testing.T) {
 // — the force-path counterpart of the self-path control-char focus-hint
 // test. The follow_up rides the inbox as the successor's handoff, so it
 // must clear isValidInitialMessage's charset rule.
+//
+// This is also a genuine round-trip guard: invalid_follow_up can only
+// fire once the follow_up field has actually reached
+// decodeReincarnateFollowUp — a broken body buffer / ContentLength
+// reset would drop the field and surface missing_follow_up instead.
 func TestDashboardReincarnate_ForceMode_RejectsControlCharFollowUp(t *testing.T) {
 	f := newFlow(t)
 
