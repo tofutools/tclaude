@@ -70,6 +70,35 @@ func handleDashboardGroupsCreate(w http.ResponseWriter, r *http.Request) {
 	handleGroups(w, asDashboardHumanPeer(r))
 }
 
+// handleDashboardGroupImport is the cookie-auth twin of POST
+// /v1/groups/import — the dashboard's "⤒ import" button. It delegates to
+// the SHARED, permission-checked handleGroupImport after stamping a
+// synthetic human peer with asDashboardHumanPeer, exactly as the export
+// route does (commit 6a1ade5): the cookie + Origin pin is the
+// human-consent layer, and routing through the shared handler keeps the
+// groups.import slug structurally enforced on every path. handleGroupImport
+// reads the multipart upload (an "archive" file part + into / as fields)
+// the browser posts. Registered as `POST /api/groups/import`.
+func handleDashboardGroupImport(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	handleGroupImport(w, asDashboardHumanPeer(r))
+}
+
+// handleDashboardGroupImportInspect is the cookie-auth twin of POST
+// /v1/groups/import/inspect — the dashboard import preview. It delegates
+// to the shared, permission-checked handleGroupImportInspect after
+// stamping a synthetic human peer; the dashboard calls it the moment a
+// .zip is picked to render the manifest summary + collision report.
+// Writes nothing. Registered as `POST /api/groups/import/inspect`.
+func handleDashboardGroupImportInspect(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	handleGroupImportInspect(w, asDashboardHumanPeer(r))
+}
+
 // handleDashboardJumpAPI dispatches:
 //
 //	POST /api/jump/{conv}    → focus the agent's tmux-attached terminal
@@ -298,6 +327,8 @@ func looksLikeConvID(s string) bool {
 // endpoints onto the loopback mux as Go 1.22 method+pattern routes:
 //
 //	POST   /api/groups                          → create a group
+//	POST   /api/groups/import                   → import a group from an uploaded .zip
+//	POST   /api/groups/import/inspect           → dry-run analyse an uploaded .zip (preview)
 //	DELETE /api/groups/{name}                   → delete group
 //	PATCH  /api/groups/{name}                   → update settings (body: {default_cwd})
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
@@ -321,6 +352,13 @@ func looksLikeConvID(s string) bool {
 // one segment of the *escaped* path, so the embedded slash survives.
 func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups", handleDashboardGroupsCreate)
+
+	// Import is NOT group-scoped (it creates a group), so it carries no
+	// {name} wildcard. The literal `import` segment is more specific than
+	// the {name} wildcard, so these coexist with the /{name}/... routes
+	// below without ambiguity — the mux always picks the literal match.
+	mux.HandleFunc("POST /api/groups/import", handleDashboardGroupImport)
+	mux.HandleFunc("POST /api/groups/import/inspect", handleDashboardGroupImportInspect)
 
 	mux.HandleFunc("GET /api/groups/{name}/export", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		// asDashboardHumanPeer so the shared, permission-checked

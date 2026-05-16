@@ -96,10 +96,11 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 // --- groups import ---
 
 type groupsImportParams struct {
-	File string `pos:"true" help:"Path to the .zip export archive"`
-	Into string `long:"into" help:"Target working directory the imported agents are bound to. Required — on a different machine the source path will not exist, so you choose where the group lives now."`
-	As   string `long:"as" optional:"true" help:"Import the group under this name instead of its exported name. Required when a group with the exported name already exists locally."`
-	JSON bool   `long:"json" help:"Output the import result as JSON"`
+	File   string `pos:"true" help:"Path to the .zip export archive"`
+	Into   string `long:"into" help:"Target working directory the imported agents are bound to. Required — on a different machine the source path will not exist, so you choose where the group lives now."`
+	As     string `long:"as" optional:"true" help:"Import the group under this name instead of its exported name. Required when a group with the exported name already exists locally."`
+	DryRun bool   `long:"dry-run" help:"Inspect the archive and report what would be imported — manifest summary plus group-name and conv-id collisions — WITHOUT importing anything. --into is not needed with --dry-run."`
+	JSON   bool   `long:"json" help:"Output the import (or --dry-run inspection) as JSON"`
 }
 
 func groupsImportCmd() *cobra.Command {
@@ -116,8 +117,12 @@ func groupsImportCmd() *cobra.Command {
 			"fresh id and an agent title suffixed '-i-N' so the copy is " +
 			"distinguishable; non-colliding conv-ids are preserved. If the " +
 			"group name is already taken, the import is refused — pass --as to " +
-			"choose a different name. Gated server-side on the groups.import " +
-			"permission (default human-only).",
+			"choose a different name.\n\n" +
+			"--dry-run inspects the archive and prints what WOULD be imported — " +
+			"the manifest summary plus the group-name and conv-id collisions — " +
+			"without writing anything; the dashboard's import preview uses the " +
+			"same check. Gated server-side on the groups.import permission " +
+			"(default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *groupsImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGroupsImport(p, os.Stdout, os.Stderr))
@@ -130,7 +135,9 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: path to the export archive is required\n")
 		return rcInvalidArg
 	}
-	if strings.TrimSpace(p.Into) == "" {
+	// --into is the target directory the imported agents bind to — needed
+	// for a real import, but irrelevant to --dry-run (which writes nothing).
+	if !p.DryRun && strings.TrimSpace(p.Into) == "" {
 		fmt.Fprintf(stderr, "Error: --into <dir> is required (the working directory for the imported agents)\n")
 		return rcInvalidArg
 	}
@@ -139,15 +146,20 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: reading %q: %v\n", p.File, err)
 		return rcInvalidArg
 	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+
+	if p.DryRun {
+		return runGroupsImportDryRun(p, archive, stdout, stderr)
+	}
+
 	// Resolve --into to an absolute path CLI-side so the value the daemon
 	// stores does not depend on the daemon's working directory.
 	into, err := filepath.Abs(p.Into)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: resolving --into %q: %v\n", p.Into, err)
 		return rcInvalidArg
-	}
-	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
-		return rc
 	}
 
 	path := "/v1/groups/import?into=" + url.QueryEscape(into)
@@ -194,6 +206,90 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 	}
 	for _, w := range resp.FileWarnings {
 		fmt.Fprintf(stdout, "  warning: %s\n", w)
+	}
+	return rcOK
+}
+
+// runGroupsImportDryRun drives `groups import --dry-run`: it POSTs the
+// archive to the inspect endpoint, which analyses it WITHOUT importing
+// anything, and prints the manifest summary plus the group-name and
+// conv-id collisions the human would hit. The dashboard's import preview
+// calls the very same endpoint.
+func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr io.Writer) int {
+	path := "/v1/groups/import/inspect"
+	if p.As != "" {
+		path += "?as=" + url.QueryEscape(p.As)
+	}
+	var insp struct {
+		SourceGroup     string `json:"source_group"`
+		FormatVersion   int    `json:"format_version"`
+		SchemaVersion   int    `json:"schema_version"`
+		SourceHome      string `json:"source_home"`
+		SourceOS        string `json:"source_os"`
+		ExportedAt      string `json:"exported_at"`
+		AgentCount      int    `json:"agent_count"`
+		MessageCount    int    `json:"message_count"`
+		ConvCount       int    `json:"conv_count"`
+		MissingConvs    int    `json:"missing_convs"`
+		TargetName      string `json:"target_name"`
+		TargetNameValid bool   `json:"target_name_valid"`
+		TargetNameError string `json:"target_name_error"`
+		GroupNameTaken  bool   `json:"group_name_taken"`
+		ConvCollisions  []struct {
+			ConvID string `json:"conv_id"`
+			Title  string `json:"title"`
+		} `json:"conv_collisions"`
+	}
+	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(insp); err != nil {
+			return rcIOFailure
+		}
+		return rcOK
+	}
+
+	fmt.Fprintf(stdout, "Dry run — nothing was imported.\n\n")
+	fmt.Fprintf(stdout, "Archive contents:\n")
+	fmt.Fprintf(stdout, "  source group:   %s\n", insp.SourceGroup)
+	fmt.Fprintf(stdout, "  agents:         %d\n", insp.AgentCount)
+	fmt.Fprintf(stdout, "  messages:       %d\n", insp.MessageCount)
+	fmt.Fprintf(stdout, "  conversations:  %d", insp.ConvCount)
+	if insp.MissingConvs > 0 {
+		fmt.Fprintf(stdout, " (%d with no .jsonl content)", insp.MissingConvs)
+	}
+	fmt.Fprintln(stdout)
+	if insp.SourceOS != "" || insp.SourceHome != "" {
+		fmt.Fprintf(stdout, "  source machine: %s, home %s\n", insp.SourceOS, insp.SourceHome)
+	}
+	if insp.ExportedAt != "" {
+		fmt.Fprintf(stdout, "  exported at:    %s\n", insp.ExportedAt)
+	}
+	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
+
+	fmt.Fprintf(stdout, "\nWould import as: %s\n", insp.TargetName)
+	switch {
+	case !insp.TargetNameValid:
+		fmt.Fprintf(stdout, "  REFUSED: invalid group name — %s\n", insp.TargetNameError)
+	case insp.GroupNameTaken:
+		fmt.Fprintf(stdout, "  REFUSED: a group named %q already exists — pass --as to import under a free name\n", insp.TargetName)
+	default:
+		fmt.Fprintf(stdout, "  OK: the name is free\n")
+	}
+
+	if len(insp.ConvCollisions) > 0 {
+		fmt.Fprintf(stdout, "\n%d conv-id(s) already exist locally — each would be imported as a fresh copy (-i-N):\n",
+			len(insp.ConvCollisions))
+		for _, c := range insp.ConvCollisions {
+			fmt.Fprintf(stdout, "  %s  (%s)\n", short(c.ConvID), c.Title)
+		}
+	} else {
+		fmt.Fprintf(stdout, "\nNo conv-id collisions — every conversation id would be preserved.\n")
 	}
 	return rcOK
 }

@@ -343,6 +343,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/agent/", handleAgentByConv)
 	mux.HandleFunc("/v1/groups", handleGroups)
 	mux.HandleFunc("POST /v1/groups/import", handleGroupImport)
+	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
 	mux.HandleFunc("GET /v1/groups/transfers", handleGroupTransfers)
 	registerV1GroupRoutes(mux)
 	mux.HandleFunc("/v1/links", handleLinksAll)
