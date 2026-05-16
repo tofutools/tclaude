@@ -132,14 +132,16 @@ func runSudoGrantsCleanup(now time.Time) {
 // fireCronJob delivers a single job's payload. Returns the status
 // tag stored in last_run_status (visible in the dashboard).
 //
-// Two delivery paths, mirroring the reincarnate / clone follow-up
-// fork:
-//   - GroupID > 0 → insert agent_messages row, let the existing
-//     flush nudge pipeline pick it up next time the target is alive.
-//     Reliable across target offline windows.
-//   - GroupID == 0 → direct tmux send-keys into the target's pane.
-//     Requires the target to be alive RIGHT NOW; "no_target" status
-//     when no live pane is found.
+// Three delivery paths, keyed off the job's target:
+//   - group target → fan the body out to every CURRENT member of the
+//     target group (fireCronGroupJob). Membership is resolved at fire
+//     time so a recurring job tracks the live roster.
+//   - conv target, GroupID > 0 → insert one agent_messages row, let
+//     the existing flush nudge pipeline pick it up next time the
+//     target is alive. Reliable across target offline windows.
+//   - conv target, GroupID == 0 → direct tmux send-keys into the
+//     target's pane. Requires the target to be alive RIGHT NOW;
+//     "no_target" status when no live pane is found.
 func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	subject := j.Subject
 	if subject == "" {
@@ -151,6 +153,10 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		subject = "[cron:" + j.Name + "] " + subject
 	} else {
 		subject = "[cron] " + subject
+	}
+
+	if j.IsGroupTarget() {
+		return fireCronGroupJob(j, subject)
 	}
 
 	if j.GroupID > 0 {
@@ -192,5 +198,48 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	}
 	time.Sleep(500 * time.Millisecond)
 	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
+	return "ok"
+}
+
+// fireCronGroupJob delivers a group-targeted job: it fans the body out
+// to every CURRENT member of the target group, reusing fanOutToGroup —
+// the same path that backs `group:` multicast sends. Membership is
+// resolved here, at fire time, so a recurring job always tracks the
+// live roster as members join and leave between ticks.
+//
+// The owner conv is the message sender, and (like a `group:` multicast)
+// is skipped if it is itself a member — a PO that schedules a recurring
+// team ping does not ping itself. Each recipient gets its own
+// agent_messages row + a tmux nudge when alive.
+//
+// Status: "no_target" if the group was deleted out from under the job;
+// "send_failed" if any recipient row failed to insert; "ok" otherwise
+// — including a fan-out to zero other members, which (as with an
+// empty-group multicast) is a successful no-op, not an error.
+func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
+	g, err := db.GetAgentGroupByID(j.GroupID)
+	if err != nil {
+		slog.Warn("cron: group lookup failed",
+			"job", j.ID, "group", j.GroupID, "error", err)
+		return "send_failed"
+	}
+	if g == nil {
+		// Target group deleted — nothing to fan out to. Mirrors the solo
+		// path's "no_target".
+		return "no_target"
+	}
+	recipients, err := fanOutToGroup(g, j.OwnerConv, subject, j.Body, "")
+	if err != nil {
+		slog.Warn("cron: group fan-out failed",
+			"job", j.ID, "group", g.Name, "error", err)
+		return "send_failed"
+	}
+	for _, r := range recipients {
+		// fanOutToGroup records a failed insert as MessageID 0; surface
+		// the job as send_failed so the dashboard pill flags it.
+		if r.MessageID == 0 {
+			return "send_failed"
+		}
+	}
 	return "ok"
 }

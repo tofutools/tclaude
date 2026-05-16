@@ -2873,12 +2873,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   // cronTargetCell describes where a cron job fires. Two shapes:
-  //  - group:<name>  → the daemon enqueues an agent_messages row
-  //                    visible to every member.
-  //  - <conv-label>  → solo target; daemon does send-keys directly.
+  //  - group:<name>  → group-target job; the scheduler fans the body
+  //                    out to every current member of the group.
+  //  - <conv-label>  → conv target; one recipient (the conv-routing
+  //                    group_id, if any, is not shown here).
+  // The discriminator is target_kind, NOT group_id>0 — a conv-target
+  // job routed through a shared group also carries a non-zero group_id.
   function cronTargetCell(j) {
-    if (j.group_id && j.group_name) {
-      return `<span class="tag">group:${esc(j.group_name)}</span>`;
+    if (j.target_kind === 'group') {
+      return `<span class="tag">group:${esc(j.group_name || ('#' + j.group_id))}</span>`;
     }
     if (j.target_conv) {
       return `<span class="rowname">${esc(j.target_label || j.target_conv.slice(0, 8))}</span>`;
@@ -3316,7 +3319,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   function jobToPrefill(job) {
-    const isGroup = job.group_id && job.group_id > 0;
+    // target_kind, not group_id>0: a conv-target job routed through a
+    // shared group also has a non-zero group_id but is not a multicast.
+    const isGroup = job.target_kind === 'group';
     return {
       name: job.name || '',
       owner: job.owner_label || job.owner_conv || '',

@@ -725,15 +725,38 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 			fmt.Sprintf("you are not a member or owner of group %q", g.Name))
 		return
 	}
-	members, err := db.ListAgentGroupMembers(g.ID)
+	recipients, err := fanOutToGroup(g, fromID, req.Subject, req.Body, req.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	roleFilter := strings.TrimSpace(req.Role)
-	out := sendResp{ViaGroup: g.Name, Recipients: []recipient{}}
+	writeJSON(w, http.StatusOK, sendResp{ViaGroup: g.Name, Recipients: recipients})
+}
+
+// fanOutToGroup delivers (subject, body) to every member of group g
+// except fromConv. Membership is read at call time, so a recurring
+// caller — a group-targeted cron job — always tracks the live roster
+// as members join and leave. Each recipient gets its own agent_messages
+// row stamped with g.ID plus a tmux nudge when alive; a per-row insert
+// failure is recorded (MessageID 0, Delivered false) and does NOT abort
+// the rest of the fan-out. roleFilter, when non-empty, narrows the
+// recipient set case-insensitively AFTER membership is read — it can
+// only shrink reach, never widen it.
+//
+// This is the shared fan-out core behind both the `group:` multicast
+// send (handleMulticast) and group-targeted cron jobs (fireCronJob).
+// Keeping the two on this one path means a delivery fix lands for both
+// and they can never drift apart. Caller-supplied auth is the caller's
+// responsibility — fanOutToGroup itself does no permission checking.
+func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string) ([]recipient, error) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return nil, err
+	}
+	roleFilter = strings.TrimSpace(roleFilter)
+	out := []recipient{}
 	for _, m := range members {
-		if m.ConvID == fromID {
+		if m.ConvID == fromConv {
 			continue
 		}
 		// Role filter: skip members whose role does not match. Roles are
@@ -748,26 +771,26 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 		// could leave a stale row. Walk the chain so the message
 		// always lands on the live successor; cheap insurance.
 		finalConv, originalTo := walkSuccession(m.ConvID)
-		if finalConv == fromID {
-			// Sender's own conv may be the live successor of a member
-			// row (rare manager-pattern edge case); skip self-send.
+		if finalConv == fromConv {
+			// fromConv may be the live successor of a member row (rare
+			// manager-pattern edge case); skip the self-send.
 			continue
 		}
 		id, err := db.InsertAgentMessage(&db.AgentMessage{
 			GroupID:        g.ID,
-			FromConv:       fromID,
+			FromConv:       fromConv,
 			ToConv:         finalConv,
 			OriginalToConv: originalTo,
-			Subject:        req.Subject,
-			Body:           req.Body,
+			Subject:        subject,
+			Body:           body,
 		})
 		if err != nil {
-			// Don't abort the whole broadcast on one DB error; record
-			// it and continue. The sender sees per-recipient status
-			// in the response and can retry the failures explicitly.
-			slog.Warn("multicast: insert failed",
+			// Don't abort the whole fan-out on one DB error; record it
+			// and continue. The caller sees per-recipient status and can
+			// retry the failures explicitly.
+			slog.Warn("fan-out: insert failed",
 				"group", g.Name, "to", finalConv, "error", err)
-			out.Recipients = append(out.Recipients, recipient{
+			out = append(out, recipient{
 				ConvID:         finalConv,
 				Title:          agent.TitleFor(finalConv),
 				MessageID:      0,
@@ -777,7 +800,7 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 			continue
 		}
 		delivered := nudgeIfAlive(id, finalConv)
-		out.Recipients = append(out.Recipients, recipient{
+		out = append(out, recipient{
 			ConvID:         finalConv,
 			Title:          agent.TitleFor(finalConv),
 			MessageID:      id,
@@ -785,7 +808,7 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 			RedirectedFrom: originalTo,
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // nudgeIfAlive looks up the target's tmux session and, if alive, sends
