@@ -2564,7 +2564,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           <span class="group-actions">
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
-            <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
+            <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring cron job scoped to ${esc(g.name)} — multicast the whole group, or nudge a single member">⏰ multicast</button>
             <button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>
@@ -3459,7 +3459,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
     cronEditId = null;
     cronOriginalTarget = null;
     cronOriginalGroupID = null;
-    $('#cron-create-title').textContent = 'Schedule a cron job';
+    const scopeGroup = prefill && prefill.scopeGroup;
+    $('#cron-create-title').textContent = scopeGroup
+      ? `Schedule a cron job for group "${scopeGroup}"`
+      : 'Schedule a cron job';
     $('#cron-create-meta').style.display = 'none';
     $('#cron-create-submit').textContent = 'Create';
     $('#cron-create-save-another').style.display = '';
@@ -3515,7 +3518,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#cron-create-interval').value = interval;
     setSelectedChip(interval);
     // Target — shared solo/group picker. Accepts { targetMode, target,
-    // groupName } straight off the prefill object.
+    // groupName } straight off the prefill object. scopeGroup, set only
+    // by a group header's "⏰ multicast" button, locks the picker to
+    // that group: the dropdown cannot retarget, and Solo mode offers
+    // only that group's members. Absent (global "+ new cron job", a
+    // member ⏰, an edit) → the picker is unrestricted, as before.
+    setTargetPickerScope('cron-create', p.scopeGroup);
     populateTargetPicker('cron-create', p);
     $('#cron-create-error').textContent = '';
   }
@@ -3534,6 +3542,25 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // a host's own JS can still address fields directly. The host places
   // an empty <div id="${prefix}-target-mount"> in its modal markup;
   // bindTargetPicker mounts the picker into it once at page init.
+  //
+  // targetPickerScopes[prefix] — when set to a group name, the picker
+  // is "scoped" to that group: Group mode locks its dropdown to that
+  // one group, and Solo mode offers a <select> of only that group's
+  // members instead of the all-agents free-text input + 🔍. The
+  // selection then cannot structurally leave the group. setTargetPicker‑
+  // Scope arms / clears it; only the cron form's group-multicast entry
+  // point ("⏰ multicast" on a group header) sets a scope today.
+  const targetPickerScopes = {};
+  function setTargetPickerScope(prefix, groupName) {
+    if (groupName) targetPickerScopes[prefix] = groupName;
+    else delete targetPickerScopes[prefix];
+    // Keep the group dropdown's locked (disabled) state in sync with
+    // the scope right here — so it can never be left disabled by an
+    // earlier scoped open, independent of when populateTargetPickerGroups
+    // next runs.
+    const sel = $('#' + prefix + '-group');
+    if (sel) sel.disabled = !!groupName;
+  }
 
   function targetPickerMarkup(prefix) {
     return `
@@ -3544,6 +3571,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <div class="cron-target-input-row" id="${prefix}-target-solo">
         <input id="${prefix}-target" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
         <button type="button" id="${prefix}-target-pick" title="Pick from agent list">🔍</button>
+      </div>
+      <!-- Scoped solo row — shown instead of the free-text input when
+           the picker is scoped to a group (setTargetPickerScope): a
+           <select> of just that group's members, so a scoped solo
+           target cannot structurally leave the group. -->
+      <div class="cron-target-input-row" id="${prefix}-target-scoped" style="display:none">
+        <select id="${prefix}-scoped-member"></select>
       </div>
       <div class="cron-target-input-row" id="${prefix}-target-group" style="display:none">
         <select id="${prefix}-group"></select>
@@ -3569,19 +3603,47 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   function setTargetPickerMode(prefix, mode, populateOnly) {
     const solo = mode === 'solo';
-    $('#' + prefix + '-target-solo').style.display = solo ? '' : 'none';
+    const scoped = !!targetPickerScopes[prefix];
+    // Solo mode shows the free-text input + 🔍 normally, or — when the
+    // picker is scoped to a group — a <select> of that group's members.
+    $('#' + prefix + '-target-solo').style.display = (solo && !scoped) ? '' : 'none';
+    $('#' + prefix + '-target-scoped').style.display = (solo && scoped) ? '' : 'none';
     $('#' + prefix + '-target-group').style.display = solo ? 'none' : '';
-    if (!solo && !populateOnly) populateTargetPickerGroups(prefix);
+    if (!populateOnly) {
+      if (solo && scoped) populateTargetPickerMembers(prefix);
+      else if (!solo) populateTargetPickerGroups(prefix);
+    }
   }
 
   function populateTargetPickerGroups(prefix) {
     const sel = $('#' + prefix + '-group');
-    const groups = (lastSnapshot?.groups || []).map(g => g.name).sort();
+    const scope = targetPickerScopes[prefix];
+    // Scoped → the dropdown is locked to the one scoped group, so a
+    // scoped multicast cannot be retargeted to a different group.
+    const groups = scope
+      ? [scope]
+      : (lastSnapshot?.groups || []).map(g => g.name).sort();
     const prev = sel.value;
     sel.innerHTML = groups.length
       ? groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
       : '<option value="">(no groups — create one first)</option>';
     if (prev && groups.includes(prev)) sel.value = prev;
+    sel.disabled = !!scope;
+  }
+
+  // populateTargetPickerMembers fills the scoped-mode solo <select>
+  // with the members of the scoped group — the structural guarantee
+  // that a scoped solo target can only ever be a member of that group.
+  function populateTargetPickerMembers(prefix) {
+    const sel = $('#' + prefix + '-scoped-member');
+    const scope = targetPickerScopes[prefix];
+    const g = (lastSnapshot?.groups || []).find(x => x.name === scope);
+    const members = (g && g.members) || [];
+    const prev = sel.value;
+    sel.innerHTML = members.length
+      ? members.map(m => `<option value="${esc(m.conv_id)}">${esc(m.title || m.conv_id)}${m.online ? '' : ' (offline)'}</option>`).join('')
+      : '<option value="">(no members in this group)</option>';
+    if (prev && members.some(m => m.conv_id === prev)) sel.value = prev;
   }
 
   // populateTargetPicker fills the picker from a prefill object
@@ -3594,7 +3656,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
     });
     setTargetPickerMode(prefix, mode, /*populateOnly=*/true);
     if (mode === 'solo') {
-      $('#' + prefix + '-target').value = (p && p.target) || '';
+      if (targetPickerScopes[prefix]) {
+        // Scoped solo → pick from the group's member <select>. Honour a
+        // prefilled target only when it is actually a member.
+        populateTargetPickerMembers(prefix);
+        const sel = $('#' + prefix + '-scoped-member');
+        const want = (p && p.target) || '';
+        if (want && Array.from(sel.options).some(o => o.value === want)) {
+          sel.value = want;
+        } else if (sel.options.length) {
+          sel.selectedIndex = 0;
+        }
+      } else {
+        $('#' + prefix + '-target').value = (p && p.target) || '';
+      }
     } else {
       populateTargetPickerGroups(prefix);
       const sel = $('#' + prefix + '-group');
@@ -3622,7 +3697,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const mode = ($$('input[name=' + prefix + '-target-mode]:checked')[0] || {}).value || 'solo';
     let target = '';
     if (mode === 'solo') {
-      target = $('#' + prefix + '-target').value.trim();
+      target = targetPickerScopes[prefix]
+        ? $('#' + prefix + '-scoped-member').value.trim()
+        : $('#' + prefix + '-target').value.trim();
     } else {
       const g = $('#' + prefix + '-group').value;
       if (g) target = 'group:' + g;
@@ -3637,6 +3714,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
   function closeCronCreateModal() {
     $('#cron-create-modal').classList.remove('show');
     cronEditId = null;
+    // Drop the scope so the registry's lifetime matches the modal's;
+    // the next open re-arms it from its prefill regardless.
+    setTargetPickerScope('cron-create', null);
   }
 
   // submitCronForm POSTs (create) or PATCHes (edit). On success, the
@@ -3657,9 +3737,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
     // modal's #sudo-grant-error pattern. Daemon does authoritative
     // validation too, so we don't need to enumerate every rule here.
     if (!target) {
-      errEl.textContent = mode === 'solo'
-        ? 'Target is required — type a title / conv-id or use 🔍 to pick.'
-        : 'Pick a group from the dropdown (or create one first via the Groups tab).';
+      // Scoped solo mode has no free-text input / 🔍 — its empty case
+      // is an empty group, so the instruction must not mention them.
+      const scopedSolo = mode === 'solo' && !!targetPickerScopes['cron-create'];
+      errEl.textContent = mode === 'group'
+        ? 'Pick a group from the dropdown (or create one first via the Groups tab).'
+        : scopedSolo
+          ? 'This group has no members to nudge — switch to Group (multicast), or add a member to the group first.'
+          : 'Target is required — type a title / conv-id or use 🔍 to pick.';
       return;
     }
     if (!bodyText) {
