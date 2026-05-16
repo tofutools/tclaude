@@ -1280,7 +1280,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 <div class="modal-overlay" id="message-create-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="message-create-title">
     <h3 id="message-create-title">Send a message</h3>
-    <p style="margin:4px 0; font-size:12px; color:#7d8590">Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.</p>
+    <p id="message-create-desc" style="margin:4px 0; font-size:12px; color:#7d8590">Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.</p>
     <label class="cron-create-row">
       <span class="cron-create-label">From</span>
       <div class="cron-create-target">
@@ -1290,12 +1290,31 @@ details.group-virtual .group-name { color: #8aa0b8; }
         </div>
       </div>
     </label>
-    <label class="cron-create-row">
+    <label class="cron-create-row" id="message-create-target-row">
       <span class="cron-create-label">Target</span>
       <!-- Solo/group target picker — markup mounted by the shared
            targetPicker module (see bindTargetPicker('message-create')). -->
       <div class="cron-create-target" id="message-create-target-mount"></div>
     </label>
+    <!-- Group-scoped recipient selector. Shown instead of the Target
+         picker when the modal is opened from a specific group's ✉
+         button: the modal locks to that group and lists its members
+         as checkboxes, all ticked by default so "message the whole
+         group" stays one click. Unticking narrows the send to the
+         chosen subset (see submitMessageForm). -->
+    <div class="cron-create-row" id="message-create-group-row" style="display:none">
+      <span class="cron-create-label">Recipients</span>
+      <div class="cron-create-target">
+        <p class="cleanup-hint" id="message-create-group-hint"></p>
+        <div class="cleanup-toolbar">
+          <button type="button" id="message-create-members-all">select all</button>
+          <button type="button" id="message-create-members-none">select none</button>
+          <span class="spacer"></span>
+          <span class="cleanup-count" id="message-create-members-count"></span>
+        </div>
+        <div class="cleanup-list" id="message-create-members"></div>
+      </div>
+    </div>
     <label class="cron-create-row">
       <span class="cron-create-label">Subject</span>
       <input id="message-create-subject" type="text" placeholder="optional, shows in inbox listings" maxlength="100" autocomplete="off" spellcheck="false" />
@@ -2516,7 +2535,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
-            <button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to every member of ${esc(g.name)}">✉ message</button>
+            <button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>
             <button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>
@@ -3836,39 +3855,128 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   // --- one-shot message modal -----------------------------------------
-  // Sends a single immediate message — to a solo agent, or multicast to
-  // every member of a group — through POST /api/message. Reuses the
-  // shared solo/group target picker (prefix "message-create") and the
-  // cron-pick-target agent overlay. Unlike the cron form there is no
-  // schedule: the send fires once, now.
+  // Sends a single immediate message through POST /api/message. The
+  // modal has two shapes, chosen by the entry-point button:
+  //
+  //   - per-agent ✉ → SOLO mode: the shared solo/group target picker
+  //     (prefix "message-create") picks any agent or any group, exactly
+  //     as before.
+  //   - per-group ✉ message → GROUP-SCOPED mode: the modal locks to
+  //     that one group and replaces the target picker with a checkbox
+  //     list of its members, all ticked by default. Sending with every
+  //     box ticked is a plain group multicast; unticking some narrows
+  //     the send to the chosen subset.
+  //
+  // Either way there is no schedule — the send fires once, now.
+
+  // messageScopedGroup holds { name, members:[{conv_id,title,online,
+  // checked}] } while the modal is open in group-scoped mode, and null
+  // in solo mode. openMessageCreateModal sets it; submitMessageForm
+  // branches on it.
+  let messageScopedGroup = null;
 
   // openMessageCreateModal opens the modal. prefill is an optional
   // object { from, targetMode, target, groupName } — the context-aware
   // entry-point buttons (per-agent ✉, per-group ✉ message) drop the
-  // relevant defaults in before opening.
+  // relevant defaults in before opening. A prefill naming a group
+  // (targetMode 'group' + groupName) opens the modal scoped to that
+  // group; anything else opens the solo/group target picker.
   function openMessageCreateModal(prefill) {
     prefill = prefill || {};
     $('#message-create-from').value = prefill.from || '';
     $('#message-create-subject').value = '';
     $('#message-create-body').value = '';
     $('#message-create-error').textContent = '';
-    populateTargetPicker('message-create', prefill);
+    // Enabled by default; group-scoped mode disables it again below
+    // when the group has no members to tick (updateMessageMembersCount).
+    $('#message-create-submit').disabled = false;
+    const scoped = prefill.targetMode === 'group' && !!prefill.groupName;
+    if (scoped) {
+      setupMessageGroupScope(prefill.groupName);
+    } else {
+      messageScopedGroup = null;
+      $('#message-create-target-row').style.display = '';
+      $('#message-create-group-row').style.display = 'none';
+      populateTargetPicker('message-create', prefill);
+    }
+    $('#message-create-title').textContent = scoped
+      ? `Send a message to group "${prefill.groupName}"`
+      : 'Send a message';
+    $('#message-create-desc').textContent = scoped
+      ? `Delivers one immediate message to the members of "${prefill.groupName}" ticked below — every member is ticked by default, untick any to send to just a subset. Each recipient gets an inbox row plus a tmux nudge if online.`
+      : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.';
     $('#message-create-modal').classList.add('show');
     setTimeout(() => $('#message-create-from').focus(), 0);
   }
 
-  function closeMessageCreateModal() {
-    $('#message-create-modal').classList.remove('show');
+  // setupMessageGroupScope switches the modal into group-scoped mode:
+  // it hides the solo/group target picker, shows the member checkbox
+  // list, and snapshots the group's members (all ticked) into
+  // messageScopedGroup.
+  function setupMessageGroupScope(groupName) {
+    $('#message-create-target-row').style.display = 'none';
+    $('#message-create-group-row').style.display = '';
+    const g = (lastSnapshot?.groups || []).find(x => x.name === groupName);
+    const members = ((g && g.members) || []).map(m => ({
+      conv_id: m.conv_id, title: m.title || '', online: !!m.online, checked: true,
+    }));
+    messageScopedGroup = { name: groupName, members };
+    $('#message-create-group-hint').textContent = members.length
+      ? `Members of "${groupName}" — all ticked; untick any to message a subset.`
+      : `Group "${groupName}" has no members to message.`;
+    renderMessageMembers();
   }
 
-  // submitMessageForm POSTs /api/message. On a multicast it reports how
-  // many group members the send reached; on a solo send whether the
-  // recipient was nudged live or the row just queued in their inbox.
+  // renderMessageMembers redraws the member checkbox list from
+  // messageScopedGroup (preserving each member's checked state) and
+  // refreshes the "N of M selected" count.
+  function renderMessageMembers() {
+    if (!messageScopedGroup) return;
+    const listEl = $('#message-create-members');
+    const members = messageScopedGroup.members;
+    if (members.length === 0) {
+      listEl.innerHTML = '<div class="cleanup-empty">no members in this group</div>';
+    } else {
+      listEl.innerHTML = members.map(m => {
+        const online = m.online ? '<span class="cleanup-badge online">online</span>' : '';
+        return `<div class="cleanup-row"><label>`
+          + `<input type="checkbox" data-conv="${esc(m.conv_id)}"${m.checked ? ' checked' : ''} />`
+          + `<span class="title">${esc(m.title || '(untitled)')}</span>`
+          + `<span class="id">${esc(m.conv_id.slice(0, 8))}</span>`
+          + `${online}</label></div>`;
+      }).join('');
+    }
+    updateMessageMembersCount();
+  }
+
+  // updateMessageMembersCount refreshes the "N of M selected" readout
+  // without re-rendering the whole list (cheap on a checkbox toggle),
+  // and disables Send when nothing is ticked — an empty group, or every
+  // box cleared, has no recipient, so the send is blocked at the button
+  // rather than failing on submit.
+  function updateMessageMembersCount() {
+    if (!messageScopedGroup) return;
+    const members = messageScopedGroup.members;
+    const n = members.filter(m => m.checked).length;
+    $('#message-create-members-count').textContent = `${n} of ${members.length} selected`;
+    $('#message-create-submit').disabled = n === 0;
+  }
+
+  function closeMessageCreateModal() {
+    $('#message-create-modal').classList.remove('show');
+    messageScopedGroup = null;
+  }
+
+  // submitMessageForm POSTs /api/message. In solo mode it reads the
+  // shared target picker; in group-scoped mode it sends to the ticked
+  // members — a plain group: multicast when every box is ticked, or an
+  // explicit member subset when some are unticked. On a multicast it
+  // reports how many members the send reached; on a solo send whether
+  // the recipient was nudged live or the row just queued in their inbox.
   async function submitMessageForm() {
     const errEl = $('#message-create-error');
     errEl.textContent = '';
     const from = $('#message-create-from').value.trim();
-    const { mode, target } = readTargetPicker('message-create');
     const subject = $('#message-create-subject').value.trim();
     const bodyText = $('#message-create-body').value;
     // Client-side gates with inline errors — the daemon validates
@@ -3877,23 +3985,49 @@ details.group-virtual .group-name { color: #8aa0b8; }
       errEl.textContent = 'From is required — type a sender agent or use 🔍 to pick.';
       return;
     }
-    if (!target) {
-      errEl.textContent = mode === 'solo'
-        ? 'Target is required — type a title / conv-id or use 🔍 to pick.'
-        : 'Pick a group from the dropdown (or create one first via the Groups tab).';
-      return;
+    // Resolve the recipient(s): `mode` drives the success toast, `to`
+    // is the raw selector / "group:NAME" token, `members` is an
+    // explicit conv-id subset (group-scoped mode only) or null.
+    let mode, to, members = null;
+    if (messageScopedGroup) {
+      mode = 'group';
+      to = 'group:' + messageScopedGroup.name;
+      const all = messageScopedGroup.members;
+      const picked = all.filter(m => m.checked);
+      if (picked.length === 0) {
+        errEl.textContent = 'Pick at least one recipient — tick the members this message should reach.';
+        return;
+      }
+      // Every member ticked → a plain group: multicast, which tracks the
+      // LIVE roster (a member who joined since the modal opened is still
+      // reached). A subset → send the explicit conv-id list.
+      if (picked.length < all.length) {
+        members = picked.map(m => m.conv_id);
+      }
+    } else {
+      const picked = readTargetPicker('message-create');
+      mode = picked.mode;
+      to = picked.target;
+      if (!to) {
+        errEl.textContent = mode === 'solo'
+          ? 'Target is required — type a title / conv-id or use 🔍 to pick.'
+          : 'Pick a group from the dropdown (or create one first via the Groups tab).';
+        return;
+      }
     }
     if (!bodyText) {
       errEl.textContent = 'Body is required (the message text to send).';
       return;
     }
+    const payload = { from, to, subject, body: bodyText };
+    if (members) payload.members = members;
     const submitBtn = $('#message-create-submit');
     submitBtn.disabled = true;
     try {
       const r = await fetch('/api/message', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: target, subject, body: bodyText }),
+        body: JSON.stringify(payload),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
@@ -3905,8 +4039,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
         const n = recipients.length;
         const live = recipients.filter(x => x.delivered).length;
         toast(n
-          ? `multicast reached ${n} member${n === 1 ? '' : 's'} of ${resp.via_group || target} (${live} nudged live)`
-          : `no other members in ${resp.via_group || target} — nothing sent`);
+          ? `multicast reached ${n} member${n === 1 ? '' : 's'} of ${resp.via_group || to} (${live} nudged live)`
+          : `no recipients reached in ${resp.via_group || to} — nothing sent`);
       } else {
         toast(resp.delivered
           ? 'message sent — recipient nudged live'
@@ -3916,7 +4050,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
     } catch (e) {
       errEl.textContent = 'Network error: ' + e;
     } finally {
-      submitBtn.disabled = false;
+      // In group-scoped mode the Send button's disabled state tracks
+      // the live recipient selection — re-derive it (rather than
+      // blindly re-enabling) so a failed request still honours the
+      // disabled-when-empty invariant, even if the user cleared the
+      // last checkbox while the request was in flight.
+      if (messageScopedGroup) updateMessageMembersCount();
+      else submitBtn.disabled = false;
     }
   }
 
@@ -3927,6 +4067,26 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#message-create-submit').addEventListener('click', submitMessageForm);
     $('#message-create-modal').addEventListener('click', (e) => {
       if (e.target.id === 'message-create-modal') closeMessageCreateModal();
+    });
+    // Group-scoped recipient list: per-member checkbox changes + the
+    // select all / none shortcuts. The list markup is (re)rendered by
+    // renderMessageMembers; these delegated listeners are bound once.
+    $('#message-create-members').addEventListener('change', (e) => {
+      const cb = e.target.closest('input[type=checkbox]');
+      if (!cb || !messageScopedGroup) return;
+      const m = messageScopedGroup.members.find(x => x.conv_id === cb.getAttribute('data-conv'));
+      if (m) m.checked = cb.checked;
+      updateMessageMembersCount();
+    });
+    $('#message-create-members-all').addEventListener('click', () => {
+      if (!messageScopedGroup) return;
+      messageScopedGroup.members.forEach(m => { m.checked = true; });
+      renderMessageMembers();
+    });
+    $('#message-create-members-none').addEventListener('click', () => {
+      if (!messageScopedGroup) return;
+      messageScopedGroup.members.forEach(m => { m.checked = false; });
+      renderMessageMembers();
     });
     // From picker reuses the cron-pick-target agent overlay.
     $('#message-create-from-pick').addEventListener('click', async () => {

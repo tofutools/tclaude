@@ -239,6 +239,22 @@ type sendReq struct {
 	// "group:") to members whose agent_group_members.role matches it
 	// case-insensitively. It is an error on a 1:1 (non-group:) target.
 	Role string `json:"role,omitempty"`
+	// Members, when non-empty on a "group:" multicast, narrows the
+	// fan-out to exactly the listed conv-ids — the dashboard's
+	// group-scoped message modal sets it when the human ticks a subset
+	// of a group's members. Like Role it is applied AFTER the live
+	// roster is read, so it can only shrink the recipient set, never
+	// widen it: a listed id that is not a current member of the target
+	// group simply matches nothing. Empty → the multicast reaches every
+	// member. It is an error on a 1:1 (non-group:) target.
+	//
+	// As part of the shared sendReq it is decoded on BOTH front doors —
+	// the dashboard's POST /api/message and the agent-facing POST
+	// /v1/messages — even though the `tclaude agent message` CLI
+	// exposes no flag for it today. That is safe: handleMulticast still
+	// gates the sender on group membership/ownership, and Members can
+	// only shrink reach, so an agent gains no authority it lacked.
+	Members []string `json:"members,omitempty"`
 }
 
 // sendResp carries the result of either a direct send or a group
@@ -360,6 +376,14 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	if strings.TrimSpace(req.Role) != "" && !strings.HasPrefix(req.To, multicastPrefix) {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"--role is only valid with a 'group:' multicast target")
+		return
+	}
+	// Members, like Role, only narrows a group: multicast's recipient
+	// set. On a 1:1 target there is no roster to narrow, so the field
+	// is meaningless and almost certainly a mistake — reject it loudly.
+	if len(req.Members) > 0 && !strings.HasPrefix(req.To, multicastPrefix) {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"members is only valid with a 'group:' multicast target")
 		return
 	}
 	if strings.HasPrefix(req.To, multicastPrefix) {
@@ -737,7 +761,7 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 			fmt.Sprintf("you are not a member or owner of group %q", g.Name))
 		return
 	}
-	recipients, err := fanOutToGroup(g, fromID, req.Subject, req.Body, req.Role)
+	recipients, err := fanOutToGroup(g, fromID, req.Subject, req.Body, req.Role, req.Members)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -753,19 +777,43 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 // failure is recorded (MessageID 0, Delivered false) and does NOT abort
 // the rest of the fan-out. roleFilter, when non-empty, narrows the
 // recipient set case-insensitively AFTER membership is read — it can
-// only shrink reach, never widen it.
+// only shrink reach, never widen it. memberFilter, when non-empty,
+// narrows it the same way: only members whose conv-id appears in the
+// list receive the message. The two filters compose (a member must
+// clear both); an id in memberFilter that is not a current member
+// matches nothing, so the filter can never widen reach.
 //
 // This is the shared fan-out core behind both the `group:` multicast
 // send (handleMulticast) and group-targeted cron jobs (fireCronJob).
 // Keeping the two on this one path means a delivery fix lands for both
 // and they can never drift apart. Caller-supplied auth is the caller's
 // responsibility — fanOutToGroup itself does no permission checking.
-func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string) ([]recipient, error) {
+func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string) ([]recipient, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return nil, err
 	}
 	roleFilter = strings.TrimSpace(roleFilter)
+	// memberFilter narrows the fan-out to the listed conv-ids. Each
+	// entry is resolved to its live successor up front, and matched
+	// below against the likewise successor-walked roster id — so a
+	// subset that named a member who has since reincarnated still
+	// reaches the live agent (the dashboard builds the subset list from
+	// a point-in-time snapshot that can lag the roster).
+	//
+	// hasMemberFilter — whether the caller passed any memberFilter at
+	// all, NOT whether memberSet ended up non-empty — is what arms the
+	// filter. A caller that passed a non-empty list asked to narrow, so
+	// a list whose entries all trim away ({"members":[" "]}) must match
+	// NOBODY, never fall back to a full-group broadcast: the filter can
+	// only ever shrink reach.
+	hasMemberFilter := len(memberFilter) > 0
+	memberSet := make(map[string]bool, len(memberFilter))
+	for _, c := range memberFilter {
+		if c = strings.TrimSpace(c); c != "" {
+			memberSet[db.ResolveLatestConv(c)] = true
+		}
+	}
 	out := []recipient{}
 	for _, m := range members {
 		if m.ConvID == fromConv {
@@ -786,6 +834,13 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string)
 		if finalConv == fromConv {
 			// fromConv may be the live successor of a member row (rare
 			// manager-pattern edge case); skip the self-send.
+			continue
+		}
+		// Member filter: skip members the caller did not select. Matched
+		// on the successor-walked id against the likewise-resolved
+		// memberSet, so neither a stale roster row nor a stale id in the
+		// caller's list causes a false miss.
+		if hasMemberFilter && !memberSet[finalConv] {
 			continue
 		}
 		id, err := db.InsertAgentMessage(&db.AgentMessage{

@@ -242,7 +242,7 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
 		// path's "no_target".
 		return "no_target"
 	}
-	recipients, err := fanOutToGroup(g, j.OwnerConv, subject, j.Body, "")
+	recipients, err := fanOutToGroup(g, j.OwnerConv, subject, j.Body, "", nil)
 	if err != nil {
 		slog.Warn("cron: group fan-out failed",
 			"job", j.ID, "group", g.Name, "error", err)
