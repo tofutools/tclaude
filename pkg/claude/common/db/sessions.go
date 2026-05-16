@@ -22,16 +22,48 @@ type SessionRow struct {
 	LastHook       time.Time
 }
 
-// SaveSession inserts or replaces a session, setting updated_at to now.
+// SaveSession inserts or updates a session, setting updated_at to now.
+//
+// On an existing row this is an UPSERT that writes ONLY the twelve
+// columns SaveSession owns. It deliberately does NOT touch the
+// context-window columns (context_pct, tokens_input, tokens_output,
+// context_window_size) or the compact bookkeeping (compact_pending,
+// nudged_pct). Those are out-of-band: owned by the statusline hook
+// (UpdateContextSnapshot) and the compact path, written on a different
+// cadence from the state-tracking hooks that call SaveSession on every
+// tick.
+//
+// This used to be INSERT OR REPLACE — which deletes and re-inserts the
+// whole row, silently resetting every out-of-band column to its
+// DEFAULT 0 on every hook tick. That was the dashboard context-meter
+// dropout: a state-tracking hook (Stop -> idle, UserPromptSubmit)
+// fired SaveSession between statusline renders and wiped context_pct
+// back to 0 until the next render restored it. context-window data is
+// only ever reliably present in the statusline hook, so only that hook
+// may write it; SaveSession must leave those columns alone.
+// (migrateV25toV26 already documents this exact hazard — agent_workdir
+// was made its own table specifically to dodge INSERT OR REPLACE.)
 func SaveSession(s *SessionRow) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
 	s.UpdatedAt = time.Now()
-	_, err = db.Exec(`INSERT OR REPLACE INTO sessions
+	_, err = db.Exec(`INSERT INTO sessions
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, auto_registered, created_at, updated_at, last_hook)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			tmux_session = excluded.tmux_session,
+			pid = excluded.pid,
+			cwd = excluded.cwd,
+			conv_id = excluded.conv_id,
+			status = excluded.status,
+			status_detail = excluded.status_detail,
+			subagent_count = excluded.subagent_count,
+			auto_registered = excluded.auto_registered,
+			created_at = excluded.created_at,
+			updated_at = excluded.updated_at,
+			last_hook = excluded.last_hook`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, boolToInt(s.AutoRegistered),
 		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano))
