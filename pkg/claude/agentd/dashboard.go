@@ -268,7 +268,10 @@ type snapshotPayload struct {
 	// Usage is the account-wide subscription usage readout (5h + 7d
 	// rolling windows) rendered in the dashboard's top bar. Always
 	// present — Available=false carries the graceful "n/a" state.
-	Usage     dashboardUsage `json:"usage"`
+	Usage dashboardUsage `json:"usage"`
+	// Templates are the group-template blueprints rendered in the
+	// Templates tab. Empty slice (not nil) so JS .map() is safe.
+	Templates []templateJSON `json:"templates"`
 	PopupBase string         `json:"popup_base"` // for tray-shareable display
 }
 
@@ -790,6 +793,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
+	out.Templates = collectTemplatesSnapshot()
 
 	writeJSON(w, http.StatusOK, out)
 }

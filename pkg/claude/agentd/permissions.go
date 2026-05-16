@@ -158,6 +158,14 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermGroupsImport,
 		Description: "Import a group from a .zip archive, recreating the group, its agents, permissions and conversations on this machine (tclaude agent groups import). Not default-granted (effectively human-only).",
 	},
+	{
+		Slug:        PermTemplatesManage,
+		Description: "Create, edit, delete group templates and snapshot a live group into a template (dashboard Templates tab). A template is a reusable blueprint, not a conversation snapshot. Not default-granted (effectively human-only).",
+	},
+	{
+		Slug:        PermTemplatesUse,
+		Description: "Instantiate a working group from a template — creates the group and spawns its whole agent team in one shot. Strictly more powerful than groups.spawn (a whole team at once), so not default-granted (effectively human-only).",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

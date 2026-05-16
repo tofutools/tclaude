@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 41
+const currentVersion = 42
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -269,6 +269,59 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 42 {
+		if err := migrateV41toV42(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV41toV42 adds group_templates + group_template_agents — the
+// storage behind the dashboard's group-template feature.
+//
+// A template is a reusable BLUEPRINT for a working group: a name, an
+// optional shared startup context, and an ordered list of agent specs
+// (name / role / descr / per-role task brief / owner flag / permission
+// slugs). It is deliberately distinct from a group EXPORT (agent_*
+// rows + .jsonl, a conv-bound snapshot of a live group): a template has
+// no conv-ids — instantiating one creates a fresh group and spawns one
+// new agent per spec.
+//
+// group_template_agents.permissions is a JSON array of permission
+// slugs, granted to the agent as per-conv overrides right after it
+// spawns. The agent rows cascade-delete with their template.
+func migrateV41toV42(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS group_templates (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			name            TEXT NOT NULL UNIQUE,
+			descr           TEXT NOT NULL DEFAULT '',
+			default_context TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL,
+			updated_at      TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS group_template_agents (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			template_id     INTEGER NOT NULL
+			                  REFERENCES group_templates(id) ON DELETE CASCADE,
+			ordinal         INTEGER NOT NULL DEFAULT 0,
+			name            TEXT NOT NULL,
+			role            TEXT NOT NULL DEFAULT '',
+			descr           TEXT NOT NULL DEFAULT '',
+			initial_message TEXT NOT NULL DEFAULT '',
+			is_owner        INTEGER NOT NULL DEFAULT 0,
+			permissions     TEXT NOT NULL DEFAULT '[]'
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_template_agents_template
+			ON group_template_agents(template_id);
+
+		UPDATE schema_version SET version = 42;
+	`); err != nil {
+		return fmt.Errorf("migrate v41→v42 (add group templates): %w", err)
+	}
 	return nil
 }
 

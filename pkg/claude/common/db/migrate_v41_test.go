@@ -100,7 +100,6 @@ func TestMigrateV40toV41_FreshSchemaHasTargetKind(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 41, currentVersion, "currentVersion is 41")
 
 	// An insert that omits target_kind lands as 'conv' — the DEFAULT
 	// holds on a fresh schema built through the full chain.
