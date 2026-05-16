@@ -195,7 +195,7 @@ func (m model) matchesShowFilter(status string) bool {
 			return true
 		}
 		// Handle grouped filters
-		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
+		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput || status == StatusError) {
 			return true
 		}
 		if f == StatusWorking && status == StatusMainAgentIdle {
@@ -215,7 +215,7 @@ func (m model) matchesHideFilter(status string) bool {
 			return true
 		}
 		// Handle grouped filters
-		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput) {
+		if f == "attention" && (status == StatusAwaitingPermission || status == StatusAwaitingInput || status == StatusError) {
 			return true
 		}
 		if f == StatusWorking && status == StatusMainAgentIdle {

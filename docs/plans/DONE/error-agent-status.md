@@ -44,6 +44,24 @@ surfaces an explicit, transient `error` status.
   first), the `session` watch filter list, and `normalizeStatusFilter`
   (`--show error`, and `attention` now includes it).
 
+## Follow-up fix (post-merge cold review)
+
+The PO's independent cold review of #137 caught one defect that both
+the author's cold review and the brief missed:
+
+- **Watch-TUI `attention` filter omitted errors.** `session/watch.go`
+  has its own `matchesShowFilter` / `matchesHideFilter` (model methods,
+  separate from `list.go`'s) that expand the `attention` group inline —
+  they listed only `awaiting_permission` / `awaiting_input`. So
+  `session ls --show attention` surfaced an errored agent on the CLI
+  but the interactive watch TUI silently did not. Fixed: both now
+  include `StatusError`. Also added `StatusError` to the
+  `runStatusCallback` validation switch (`status_callback.go`) — a
+  latent trap, not a live bug (StopFailure routes via `hook-callback`,
+  never the positional `status-callback`). Test coverage added for the
+  previously-untested watch filter methods and the needs-attention
+  rendering switches.
+
 - **Notifications.** Default notification rules
   (`config.DefaultConfig`) gained `{from:"*", to:"error"}`, and
   `notify.formatStatus` renders it as "Error" — so a transition into
