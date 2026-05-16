@@ -149,6 +149,15 @@ details[open] > summary::before { content: "▼ "; }
 .copy-cmd::before { content: "$ "; color: #7d8590; }
 #status { font-size: 11px; color: #7d8590; }
 #status.error { color: #f85149; }
+/* Subscription-usage readout in the top bar, left of the live dot.
+   Mirrors the statusbar's "5h [bar] 17% (2h16m)" format per window. */
+#usage { font-size: 11px; color: #7d8590; display: flex; align-items: center; gap: 12px; }
+#usage.na { color: #6e7681; font-style: italic; }
+#usage .uw { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+#usage .ulabel { color: #7d8590; }
+#usage .ubar { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -1px; }
+#usage .upct { color: #c9d1d9; }
+#usage .urem { color: #6e7681; }
 .empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
 .row-actions {
   display: inline-flex; gap: 4px; opacity: 0.4;
@@ -829,7 +838,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
 <header>
   <h1>🤝 tclaude agent dashboard</h1>
   <span class="meta" id="meta">loading…</span>
-  <span class="meta" style="margin-left:auto" id="status"></span>
+  <span class="meta" style="margin-left:auto" id="usage"></span>
+  <span class="meta" id="status"></span>
 </header>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
@@ -2508,6 +2518,61 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const el = $('#status');
     el.textContent = text;
     el.classList.toggle('error', !!isError);
+  }
+
+  // === Subscription-usage readout (top bar, left of the live dot) ===
+  // Account-wide, not per-agent: one readout for the whole dashboard.
+  // Mirrors the statusbar's "5h [bar] 17% (2h16m) | 7d ..." format.
+  const USAGE_BAR_WIDTH = 8;
+
+  // usageBarColor matches the statusbar thresholds: red >=80, yellow
+  // >=60, green otherwise.
+  function usageBarColor(pct) {
+    if (pct >= 80) return '#f85149';
+    if (pct >= 60) return '#d29922';
+    return '#3fb950';
+  }
+
+  // usageBar renders a mini block-character progress bar like the
+  // statusbar's "█████░░░".
+  function usageBar(pct) {
+    const p = Math.max(0, Math.min(100, pct || 0));
+    const filled = Math.round(p / 100 * USAGE_BAR_WIDTH);
+    return '█'.repeat(filled) + '░'.repeat(USAGE_BAR_WIDTH - filled);
+  }
+
+  // usageWindowHTML renders one rolling-limit window: label, coloured
+  // mini bar, percent, and the remaining-time hint.
+  function usageWindowHTML(label, win) {
+    const pct = win.pct || 0;
+    const rem = win.remaining
+      ? ' <span class="urem">(' + esc(win.remaining) + ')</span>' : '';
+    return '<span class="uw"><span class="ulabel">' + label + '</span>'
+      + '<span class="ubar" style="color:' + usageBarColor(pct) + '">'
+      + usageBar(pct) + '</span>'
+      + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';
+  }
+
+  // renderUsage paints the top-bar readout from snapshot.usage. When
+  // usage data is unavailable it degrades to a muted "usage: n/a"
+  // rather than a broken or error state.
+  function renderUsage(u) {
+    const el = $('#usage');
+    if (!el) return;
+    const wins = [];
+    if (u && u.available) {
+      if (u.five_hour) wins.push(usageWindowHTML('5h', u.five_hour));
+      if (u.seven_day) wins.push(usageWindowHTML('7d', u.seven_day));
+    }
+    if (wins.length) {
+      el.classList.remove('na');
+      el.innerHTML = wins.join('');
+      el.title = 'Subscription usage limits — 5-hour and 7-day rolling windows';
+    } else {
+      el.classList.add('na');
+      el.textContent = 'usage: n/a';
+      el.title = 'Subscription usage data is currently unavailable';
+    }
   }
 
   // Last successful snapshot, kept so the filter inputs can re-render
@@ -4780,6 +4845,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       renderLinksTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
+      renderUsage(data.usage);
       showStatus('● live', false);
     } catch (e) {
       showStatus('snapshot failed: ' + (e.message || e), true);

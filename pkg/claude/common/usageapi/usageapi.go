@@ -647,6 +647,16 @@ func UpdateFromStatusLine(fiveHour, sevenDay, sevenDaySonnet *CachedBucket) {
 	saveCache(cached)
 }
 
+// Peek returns whatever usage data is cached in SQLite, regardless of
+// age, or nil if nothing is cached or the cached blob is corrupt.
+// Unlike GetCached it never makes a network call — it is the cheap
+// read path for consumers (e.g. agentd's dashboard snapshot) that want
+// the last-known figures without blocking on the usage API. Callers
+// decide for themselves whether CachedUsage.FetchedAt is fresh enough.
+func Peek() *CachedUsage {
+	return loadCacheStale()
+}
+
 // GetCached returns usage percentages, using a file cache (5 min TTL) to
 // avoid hammering the API. On fetch errors, returns stale cached data if available.
 func GetCached() (*CachedUsage, error) {

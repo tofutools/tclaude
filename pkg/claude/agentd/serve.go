@@ -159,6 +159,13 @@ func runServe(p *serveParams) error {
 	// channel.
 	startSessionReaper(cronStop)
 
+	// Subscription-usage poller. Keeps the SQLite usage_cache row fresh
+	// so the dashboard's top-bar 5h/7d readout stays current even when
+	// no Claude Code statusbar is running to populate it. Side-effect
+	// only and cheap — usageapi.GetCached's own TTL keeps API hits rare.
+	// Shares the daemon-wide stop channel.
+	startUsagePoller(cronStop)
+
 	// One-shot: enroll any conv that is online right now but not yet
 	// in agent_enrollment. The v29→v30 migration backfills agents from
 	// the durable agentic tables, but a still-running agent that was
