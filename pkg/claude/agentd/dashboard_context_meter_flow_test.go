@@ -154,3 +154,58 @@ func TestDashboardSnapshot_ContextMeterSurvivesEmptyStatuslineRender(t *testing.
 	assert.Equal(t, int64(1000000), agentRow.State.ContextWindowSize,
 		"context_window_size must survive an empty statusline render")
 }
+
+// Regression: the dashboard context meter dropped to empty whenever an
+// agent's state changed — going to 0 exactly on "idle" and "working:
+// UserPromptSubmit", correct only while "working: Bash/Write".
+//
+// Root cause: the state-tracking hooks (Stop, UserPromptSubmit, every
+// PreToolUse tick) call db.SaveSession to update the row's status, and
+// SaveSession's INSERT OR REPLACE re-created the whole row — resetting
+// the context columns the statusline hook owns back to DEFAULT 0. The
+// next statusline render restored them, hence the flicker; an idle
+// agent has no further renders, so it stayed empty. The statusbar
+// display never blipped because it reads Claude Code's input directly,
+// not the DB. The fix makes SaveSession an UPSERT that leaves the
+// out-of-band context columns untouched.
+//
+// This writes a good snapshot, then fires a SaveSession (what a Stop /
+// UserPromptSubmit hook does), and asserts /api/snapshot still carries
+// the usage. Pre-fix it fails — the SaveSession zeroes the row.
+func TestDashboardSnapshot_ContextMeterSurvivesStateHookWrite(t *testing.T) {
+	const conv = "ctxs-1111-2222-3333-4444"
+	const label = "spwn-ctxs"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveAliveSession(conv, label, "tmux-ctxs", "/tmp/ctxs")
+	f.HaveEnrolledAgent(conv)
+
+	// The statusline hook writes a good context snapshot.
+	require.NoError(t,
+		db.UpdateContextSnapshot(label, 24.0, 241000, 5000, 1000000),
+		"context snapshot")
+
+	// A state-tracking hook fires — e.g. Stop (-> idle) or
+	// UserPromptSubmit — re-saving the session row to update its
+	// status. It must not wipe the context columns.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: "tmux-ctxs",
+		ConvID:      conv,
+		Cwd:         "/tmp/ctxs",
+		Status:      "idle",
+	}), "state-update SaveSession")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+	assert.Equal(t, 24.0, agentRow.State.ContextPct,
+		"context_pct must survive a state-tracking hook's SaveSession")
+	assert.Equal(t, int64(241000), agentRow.State.TokensInput,
+		"tokens_input must survive a state-tracking hook's SaveSession")
+	assert.Equal(t, int64(1000000), agentRow.State.ContextWindowSize,
+		"context_window_size must survive a state-tracking hook's SaveSession")
+}

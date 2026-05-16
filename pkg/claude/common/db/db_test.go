@@ -192,6 +192,49 @@ func TestUpdateContextSnapshotEmptyDoesNotClobber(t *testing.T) {
 	assert.Equal(t, 22.0, got.ContextPct, "ContextPct updates on the next populated render")
 }
 
+// TestSaveSessionPreservesOutOfBandColumns locks down the dashboard
+// context-meter dropout fix. The context-window columns and the
+// compact bookkeeping are owned by the statusline hook
+// (UpdateContextSnapshot) and the compact path — NOT by SaveSession.
+// A state-tracking hook (Stop -> idle, UserPromptSubmit, every
+// PreToolUse tick) calls SaveSession to update status, and that write
+// must leave the out-of-band columns alone. It used to wipe them:
+// INSERT OR REPLACE re-created the whole row, resetting every unlisted
+// column to its DEFAULT 0 on every hook tick.
+func TestSaveSessionPreservesOutOfBandColumns(t *testing.T) {
+	setupTestDB(t)
+
+	s := &SessionRow{ID: "keep-001", ConvID: "conv-keep", Status: "working", CreatedAt: time.Now()}
+	require.NoError(t, SaveSession(s), "initial SaveSession")
+
+	// The statusline hook and the compact path write out-of-band
+	// columns SaveSession does not own.
+	require.NoError(t, UpdateContextSnapshot("keep-001", 24.0, 241_000, 5_000, 1_000_000), "context snapshot")
+	claimed, err := TryClaimCompact("keep-001")
+	require.NoError(t, err, "TryClaimCompact")
+	require.True(t, claimed, "compact claim")
+
+	// A state-tracking hook re-saves the row to flip status (e.g. the
+	// Stop hook marking the agent idle). None of the out-of-band
+	// columns may be disturbed.
+	s.Status = "idle"
+	s.StatusDetail = ""
+	require.NoError(t, SaveSession(s), "state-update SaveSession")
+
+	snap, err := GetContextSnapshot("keep-001")
+	require.NoError(t, err, "GetContextSnapshot")
+	assert.Equal(t, 24.0, snap.ContextPct, "context_pct survives a state-update SaveSession")
+	assert.Equal(t, int64(241_000), snap.TokensInput, "tokens_input survives")
+	assert.Equal(t, int64(5_000), snap.TokensOutput, "tokens_output survives")
+	assert.Equal(t, int64(1_000_000), snap.ContextWindowSize, "context_window_size survives")
+	assert.NotZero(t, snap.CompactPending, "compact_pending survives")
+
+	// The status update itself still landed.
+	reloaded, err := LoadSession("keep-001")
+	require.NoError(t, err, "LoadSession")
+	assert.Equal(t, "idle", reloaded.Status, "status update applied")
+}
+
 func TestCompactStateRoundTrip(t *testing.T) {
 	setupTestDB(t)
 
