@@ -107,19 +107,28 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, 
 	return newConv, newTmux, label, nil
 }
 
+// defaultCloneCooldown is the built-in fallback for CloneCooldown when
+// neither the `--agent-spawn-rate-limit` serve flag nor the
+// agent.spawn_rate_limit config field is set. resolveSpawnRateLimit
+// returns it as the lowest-priority tier.
+const defaultCloneCooldown = time.Minute
+
 // CloneCooldown is the minimum time between two clones of the same
 // source conv. The clone handler does an atomic INSERT-WHERE-NOT-
 // EXISTS against agent_clone_history to enforce this — see
-// db.ClaimCloneSlot. Default 1 minute; flow tests shrink it via
-// t.Cleanup-restored assignment to drive the locked/unlocked branches
-// without sleeping.
+// db.ClaimCloneSlot. Defaults to defaultCloneCooldown; `tclaude agentd
+// serve` overwrites it at startup from resolveSpawnRateLimit (flag >
+// config > default), and flow tests shrink it via t.Cleanup-restored
+// assignment to drive the locked/unlocked branches without sleeping.
 //
-// Per source conv, not per caller: the runaway scenario the TODO
-// flagged is "the same conv being cloned in a tight loop", regardless
-// of which agent triggered it. A manager that wants to fan out clones
-// of *different* sources hits the limit only if it tries to fan out
-// the *same* source twice within cooldown.
-var CloneCooldown = time.Minute
+// Keyed by source conv, and applied only to agent-initiated clones:
+// the runaway scenario the TODO flagged is "an agent cloning the same
+// conv in a tight loop". Human-initiated clones (caller == "") are
+// exempt — a human can't loop at machine speed and clones
+// deliberately. A manager agent that fans out clones of *different*
+// sources hits the limit only if it tries the *same* source twice
+// within cooldown.
+var CloneCooldown = defaultCloneCooldown
 
 // `tclaude agent clone` — fork the calling agent into a sibling that
 // inherits its identity (groups, permissions, ownerships) but
@@ -340,21 +349,29 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	}
 
 	// Rate limit: refuse a second clone of the same source within
-	// CloneCooldown. Clone is the only default-granted, agent-reachable
-	// fork-doubling verb (self.clone is granted by default; reincarnate
-	// is 1-in-1-out, spawn is human-only) — without this gate, an agent
-	// stuck in a tight loop could fork itself unboundedly. Atomic at
-	// the DB layer so two concurrent claim attempts can't both pass.
-	if err := db.ClaimCloneSlot(target, CloneCooldown, time.Now().UTC()); err != nil {
-		if errors.Is(err, db.ErrCloneRateLimited) {
-			writeError(w, http.StatusTooManyRequests, "rate_limited",
-				"clone of "+short8(target)+" too recent; cooldown is "+CloneCooldown.String()+
-					" between consecutive clones of the same source conv")
+	// CloneCooldown — but only for agent-initiated clones. The gate
+	// exists to bound a runaway *agent*: clone is the only default-
+	// granted, agent-reachable fork-doubling verb (self.clone is
+	// granted by default; reincarnate is 1-in-1-out, spawn is
+	// human-only), so an agent stuck in a tight loop could fork itself
+	// unboundedly. A human (caller == "") can't loop at machine speed
+	// and clones deliberately, so human-initiated clones — CLI or
+	// dashboard — skip the cooldown entirely and don't even record a
+	// slot. Manager *agents* cloning peers via agent.clone still have a
+	// non-empty caller and stay limited. Atomic at the DB layer so two
+	// concurrent claim attempts can't both pass.
+	if caller != "" {
+		if err := db.ClaimCloneSlot(target, CloneCooldown, time.Now().UTC()); err != nil {
+			if errors.Is(err, db.ErrCloneRateLimited) {
+				writeError(w, http.StatusTooManyRequests, "rate_limited",
+					"clone of "+short8(target)+" too recent; cooldown is "+CloneCooldown.String()+
+						" between consecutive clones of the same source conv")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "io",
+				"clone rate-limit check: "+err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "io",
-			"clone rate-limit check: "+err.Error())
-		return
 	}
 
 	oldGroups, err := db.ListGroupsForConv(target)
