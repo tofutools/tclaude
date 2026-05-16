@@ -233,6 +233,22 @@ func (f *Flow) HaveConvWithTitle(convID, customTitle string) {
 	}
 }
 
+// HaveConvWithPrompt drops a conv_index row carrying only a first
+// prompt — a "plain conversation" that was never /rename'd and has no
+// summary. The firstPrompt is stored verbatim, exactly as Claude Code's
+// .jsonl scan records it (inline system tags, newlines and all), so a
+// listing surface's title-cleaning path is genuinely exercised.
+func (f *Flow) HaveConvWithPrompt(convID, firstPrompt string) {
+	f.T.Helper()
+	if err := db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      convID,
+		FirstPrompt: firstPrompt,
+		IndexedAt:   time.Now(),
+	}); err != nil {
+		f.T.Fatalf("HaveConvWithPrompt: %v", err)
+	}
+}
+
 // HaveAliveSession sets up a live agent at convID: builds a real
 // CCSim (so its .jsonl exists and accepts /exit / /rename), writes
 // the SessionRow so isConvOnline / pickAliveSession find it, and
