@@ -32,13 +32,15 @@ func permissionsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "permissions",
 		Short: "Inspect and manage agent permission slugs",
-		Long: "List, grant, and revoke agent permission slugs without hand-editing ~/.tclaude/config.json. " +
-			"`ls` and `slugs` are open to anyone; `grant` and `revoke` are gated on permissions.grant / permissions.revoke. " +
-			"Use the magic target `default` to modify the global defaults list, or pass a conv selector (UUID/prefix/title) to set per-conv overrides.",
+		Long: "List, grant, deny, and revoke agent permission slugs without hand-editing ~/.tclaude/config.json. " +
+			"`ls` and `slugs` are open to anyone; `grant`, `deny`, and `revoke` are gated on permissions.grant / permissions.revoke. " +
+			"Use the magic target `default` to modify the global defaults list, or pass a conv selector (UUID/prefix/title) to set per-conv overrides. " +
+			"`grant` adds a slug, `deny` blocks an otherwise-default slug for one agent, and `revoke` clears either back to the inherited default.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			permissionsLsCmd(),
 			permissionsGrantCmd(),
+			permissionsDenyCmd(),
 			permissionsRevokeCmd(),
 			permissionsSlugsCmd(),
 		},
@@ -50,6 +52,9 @@ func permissionsCmd() *cobra.Command {
 type permissionsState struct {
 	Defaults []string            `json:"defaults"`
 	Grants   map[string][]string `json:"grants"`
+	// Overrides is the full tri-state per-conv view — conv-id → slug →
+	// "grant" | "deny". Grants is its grant-only projection.
+	Overrides map[string]map[string]string `json:"overrides"`
 }
 
 type permSlugEntry struct {
@@ -121,25 +126,34 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 			fmt.Fprintf(stdout, "  %s\n", s)
 		}
 	}
-	if len(state.Grants) == 0 {
-		fmt.Fprintln(stdout, "PER-AGENT GRANTS: (none)")
+	if len(state.Overrides) == 0 {
+		fmt.Fprintln(stdout, "PER-AGENT OVERRIDES: (none)")
 		return rcOK
 	}
-	fmt.Fprintln(stdout, "PER-AGENT GRANTS:")
+	fmt.Fprintln(stdout, "PER-AGENT OVERRIDES:")
 	tbl := table.New(
 		table.Column{Header: "ID", Width: 8},
-		table.Column{Header: "TITLE", MinWidth: 8, Weight: 0.8, Truncate: true},
-		table.Column{Header: "SLUGS", MinWidth: 12, Weight: 1.4, Truncate: true},
+		table.Column{Header: "TITLE", MinWidth: 8, Weight: 0.7, Truncate: true},
+		table.Column{Header: "GRANTED", MinWidth: 10, Weight: 1.2, Truncate: true},
+		table.Column{Header: "DENIED", MinWidth: 8, Weight: 1.0, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
-	keys := make([]string, 0, len(state.Grants))
-	for k := range state.Grants {
+	keys := make([]string, 0, len(state.Overrides))
+	for k := range state.Overrides {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		slugs := append([]string{}, state.Grants[k]...)
-		sort.Strings(slugs)
+		var granted, denied []string
+		for slug, effect := range state.Overrides[k] {
+			if effect == "deny" {
+				denied = append(denied, slug)
+			} else {
+				granted = append(granted, slug)
+			}
+		}
+		sort.Strings(granted)
+		sort.Strings(denied)
 		// Try to surface a friendly title for keys that look like full
 		// conv-ids. Prefixes and arbitrary strings are passed through.
 		title := grantKeyTitle(k)
@@ -147,7 +161,11 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 		if len(k) > 8 {
 			idShort = k[:8]
 		}
-		tbl.AddRow(table.Row{Cells: []string{idShort, title, strings.Join(slugs, ", ")}})
+		tbl.AddRow(table.Row{Cells: []string{
+			idShort, title,
+			strings.Join(granted, ", "),
+			strings.Join(denied, ", "),
+		}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
@@ -233,19 +251,38 @@ func renderEffectivePerms(p *permissionsLsParams, state permissionsState, stdout
 }
 
 // effectivePermsFor returns the slug list the daemon would consult for
-// this agent. Per-agent grants live in SQLite keyed by full conv-id;
-// they ADD to the global defaults rather than replace them, so an
-// agent's effective permission set is union(defaults, grants).
+// this agent. Per-conv overrides live in SQLite keyed by full conv-id:
+// a grant override ADDS a slug on top of the global defaults, a deny
+// override SUBTRACTS one. So the effective set is
+// (defaults ∪ grants) − denies.
 //
-// The returned label names the matched source ("defaults+grants:<conv>"
-// when there are per-agent grants, "defaults" otherwise).
+// The returned label names the matched sources ("defaults",
+// "defaults+grants:<conv>", with " −denies" appended when any deny
+// override applies).
 func effectivePermsFor(state permissionsState, convID, _ string) ([]string, string) {
-	defaults := append([]string{}, state.Defaults...)
-	if perms, ok := state.Grants[convID]; ok && len(perms) > 0 {
-		merged := mergeUnique(defaults, perms)
-		return merged, "defaults+grants:" + convID
+	effective := append([]string{}, state.Defaults...)
+	source := "defaults"
+	if grants, ok := state.Grants[convID]; ok && len(grants) > 0 {
+		effective = mergeUnique(effective, grants)
+		source = "defaults+grants:" + convID
 	}
-	return defaults, "defaults"
+	denied := map[string]bool{}
+	for slug, effect := range state.Overrides[convID] {
+		if effect == "deny" {
+			denied[slug] = true
+		}
+	}
+	if len(denied) > 0 {
+		kept := make([]string, 0, len(effective))
+		for _, s := range effective {
+			if !denied[s] {
+				kept = append(kept, s)
+			}
+		}
+		effective = kept
+		source += " −denies"
+	}
+	return effective, source
 }
 
 func mergeUnique(a, b []string) []string {
@@ -291,11 +328,39 @@ func permissionsGrantCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// --- permissions deny ---
+
+type permissionsDenyParams struct {
+	Target   string `pos:"true" help:"A conv selector (UUID, prefix, or current title). Unlike grant/revoke, 'default' is not accepted — deny is a per-conv override."`
+	Slug     string `pos:"true" help:"Permission slug to deny (see 'tclaude agent permissions slugs')"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func permissionsDenyCmd() *cobra.Command {
+	return boa.CmdT[permissionsDenyParams]{
+		Use:   "deny",
+		Short: "Deny a permission slug for a specific agent (blocks an otherwise-default slug)",
+		Long: "Write a per-conv DENY override: the agent will not hold the slug even if it is in the global defaults list. " +
+			"Use 'revoke' to clear the deny back to the inherited default. The 'default' target is not valid here — " +
+			"to remove a slug for every agent, revoke it from the defaults list instead.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *permissionsDenyParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completePermissionTargets)
+			boa.GetParamT(ctx, &p.Slug).SetAlternativesFunc(completePermissionSlugs)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *permissionsDenyParams, _ *cobra.Command, _ []string) {
+			os.Exit(runPermissionsMutate("/v1/permissions/deny", "Denied", p.Target, p.Slug, p.AskHuman, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
 // --- permissions revoke ---
 
 type permissionsRevokeParams struct {
 	Target   string `pos:"true" help:"'default' or a conv selector (UUID, prefix, or current title)"`
-	Slug     string `pos:"true" help:"Permission slug to revoke"`
+	Slug     string `pos:"true" help:"Permission slug to revoke (clears a grant or deny back to the inherited default)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 

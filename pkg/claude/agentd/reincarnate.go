@@ -309,7 +309,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		}
 	}
 
-	oldPerms, err := db.ListAgentPermissionsForConv(target)
+	// Migrate the full permission posture — grant AND deny overrides —
+	// so the successor inherits the source's lockdown, not just grants.
+	oldPerms, err := db.ListAgentPermissionOverridesForConv(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot perms: "+err.Error())
@@ -384,9 +386,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		migrated = append(migrated, fmt.Sprintf("group:%d", m.GroupID))
 	}
 
-	for _, slug := range oldPerms {
-		if err := db.GrantAgentPermission(newConv, slug, granter); err != nil {
-			slog.Warn("reincarnate: grant new perm failed", "slug", slug, "error", err)
+	for slug, effect := range oldPerms {
+		if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
+			slog.Warn("reincarnate: copy new perm failed", "slug", slug, "effect", effect, "error", err)
 			continue
 		}
 		if _, err := db.RevokeAgentPermission(target, slug); err != nil {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -120,15 +119,19 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate permission")
 		return "", false
 	}
-	cfg, _ := config.Load()
-	if cfg.HasDefaultPermission(perm) {
+	switch resolvePermission(p.ConvID, perm) {
+	case permAllow:
 		return p.ConvID, true
-	}
-	if ok, err := db.HasAgentPermissionRow(p.ConvID, perm); err == nil && ok {
-		return p.ConvID, true
-	}
-	if ownerOfGroupContaining(p.ConvID, targetConv) {
-		return p.ConvID, true
+	case permUndecided:
+		// No grant source — the group-owner structural bypass still
+		// applies: an owner can manage members of groups it owns.
+		if ownerOfGroupContaining(p.ConvID, targetConv) {
+			return p.ConvID, true
+		}
+	case permDeny:
+		// Explicit per-conv deny override — authoritative; it suppresses
+		// the owner bypass too. Fall through to the human-approval popup
+		// so the human can still grant a one-off exception.
 	}
 
 	// Last chance: human-approval popup. Same shape as the

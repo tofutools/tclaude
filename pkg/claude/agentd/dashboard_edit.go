@@ -52,6 +52,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/term/", handleDashboardTermAPI)
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
+	mux.HandleFunc("/api/permissions", handleDashboardPermissionsAPI)
 	mux.HandleFunc("/api/cleanup/", handleDashboardCleanup)
 	registerDashboardCronRoutes(mux)
 }
@@ -945,4 +946,107 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 	out, status := insertSudoBundle(res.ConvID, title, body.Slugs, dur,
 		strings.TrimSpace(body.Reason), dashboardSudoGranter)
 	writeJSON(w, status, out)
+}
+
+// handleDashboardPermissionsAPI is the cookie-auth endpoint behind the
+// dashboard's permanent-permission editor. It applies a batch of
+// per-conv tri-state overrides in a single round-trip:
+//
+//	POST /api/permissions
+//	  { "conv": "<selector>",
+//	    "overrides": { "<slug>": "grant" | "deny" | "default" } }
+//
+// "grant" / "deny" write an agent_permissions row; "default" clears any
+// existing row so the slug falls back to the config defaults. Slugs
+// absent from the map are left untouched. These are PERMANENT
+// overrides — distinct from the time-bounded `+ sudo` elevation.
+//
+// The dashboard cookie + Origin pin is the human-consent layer, same as
+// every other /api mutation; the granter is recorded as
+// "<human-dashboard>". The whole batch is validated before any write,
+// so a malformed slug / effect can't leave a partial apply behind.
+func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Conv      string            `json:"conv"`
+		Overrides map[string]string `json:"overrides"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Conv = strings.TrimSpace(body.Conv)
+	if body.Conv == "" {
+		http.Error(w, "missing conv (selector for the agent to edit)", http.StatusBadRequest)
+		return
+	}
+	if len(body.Overrides) == 0 {
+		http.Error(w, "overrides{} is required (at least one slug → grant|deny|default)", http.StatusBadRequest)
+		return
+	}
+	// Validate the whole batch before touching the DB.
+	for slug, effect := range body.Overrides {
+		if !IsKnownPermSlug(slug) {
+			http.Error(w, "unknown permission slug: "+slug, http.StatusBadRequest)
+			return
+		}
+		switch effect {
+		case db.PermEffectGrant, db.PermEffectDeny, "default":
+		default:
+			http.Error(w, "invalid effect "+strconv.Quote(effect)+" for slug "+slug+
+				" (want grant, deny, or default)", http.StatusBadRequest)
+			return
+		}
+	}
+	res, _, err := agent.ResolveSelector(body.Conv)
+	if err != nil {
+		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	current, err := db.ListAgentPermissionOverridesForConv(res.ConvID)
+	if err != nil {
+		http.Error(w, "load current overrides: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	changed := 0
+	for slug, effect := range body.Overrides {
+		if effect == "default" {
+			if _, ok := current[slug]; !ok {
+				continue // already at the inherited default
+			}
+			if _, err := db.RevokeAgentPermission(res.ConvID, slug); err != nil {
+				http.Error(w, "clear "+slug+": "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			changed++
+			continue
+		}
+		if current[slug] == effect {
+			continue // already at the requested grant/deny
+		}
+		if err := db.SetAgentPermissionOverride(res.ConvID, slug, effect, dashboardGranter); err != nil {
+			http.Error(w, "set "+slug+": "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		changed++
+	}
+	overrides, _ := db.ListAgentPermissionOverridesForConv(res.ConvID)
+	effective, _ := db.ListAgentPermissionsForConv(res.ConvID)
+	title := ""
+	if row := agent.FreshConvRowResolved(res.ConvID); row != nil {
+		title = agent.DisplayTitle(row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conv_id":   res.ConvID,
+		"title":     title,
+		"changed":   changed,
+		"overrides": overrides,
+		"effective": effective,
+	})
 }
