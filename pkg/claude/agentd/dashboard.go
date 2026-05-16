@@ -313,6 +313,7 @@ type dashboardGroup struct {
 	Descr          string            `json:"descr"`
 	DefaultCwd     string            `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
 	DefaultContext string            `json:"default_context"` // shared startup context injected into spawned agents; "" = none
+	MaxMembers     int               `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
 	Members        []dashboardMember `json:"members"`
 	Online         int               `json:"online"`
 }
@@ -519,7 +520,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, MaxMembers: g.MaxMembers, Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.
