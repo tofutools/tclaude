@@ -412,6 +412,21 @@ func (f *Flow) Reincarnate(target, followUp string) ReincarnateResp {
 	return resp
 }
 
+// ReincarnateWith drives POST /v1/agent/{target}/reincarnate with an
+// arbitrary JSON body and returns the outcome WITHOUT fatal-on-error,
+// so tests can exercise rejection paths (oversized or solo-pane-invalid
+// follow-up). Mirrors CloneWith. On a non-200 the Code + Raw fields
+// carry the daemon's response.
+func (f *Flow) ReincarnateWith(target string, body map[string]any) ReincarnateResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+target+"/reincarnate", body)
+	var resp ReincarnateResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp
+}
+
 // CloneResp parses POST /v1/agent/{target}/clone. Note: clone has no
 // `new_title` field — the per-group alias is computed and stored in
 // agent_group_members; tests assert via AssertCloneAliasInGroup.

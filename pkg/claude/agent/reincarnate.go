@@ -79,10 +79,17 @@ func runReincarnate(followUp, target, askHuman string, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, "relevant files are, what's next) so the successor has something to start from.")
 		return rcInvalidArg
 	}
-	if !isValidFollowUp(followUp) {
-		fmt.Fprintln(stderr, "Error: REJECTED. Follow-up must be 1-4096 printable characters; control")
-		fmt.Fprintln(stderr, "characters (newlines, tabs, etc.) are not allowed because each newline")
-		fmt.Fprintln(stderr, "would be treated as a separate prompt-submit by tmux send-keys.")
+	// Validate against the lenient inbox rule — a grouped successor
+	// receives the handoff in its inbox, like a spawn brief. The client
+	// can't know group membership, so the strict solo-pane limit is the
+	// daemon's call; this is just a fast local error for the always-bad
+	// cases (oversize / NUL / escape).
+	if !isValidInitialMessage(followUp) {
+		fmt.Fprintf(stderr, "Error: REJECTED. Follow-up must be at most %d characters; newlines and\n", MaxInitialMessageBytes)
+		fmt.Fprintln(stderr, "tabs are allowed (a grouped agent's handoff rides its inbox, like a spawn")
+		fmt.Fprintln(stderr, "brief), but NUL / escape / other control characters are not. A solo agent")
+		fmt.Fprintln(stderr, "(in no group) keeps a stricter 4096-char, single-line limit — the daemon")
+		fmt.Fprintln(stderr, "enforces that once it knows the agent's group membership.")
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {

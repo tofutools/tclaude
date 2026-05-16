@@ -302,11 +302,18 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (followUp string, n
 		}
 	}
 	body.FollowUp = strings.TrimSpace(body.FollowUp)
-	if body.FollowUp != "" && !isValidFollowUp(body.FollowUp) {
+	// Charset/length: validate against the LENIENT inbox rule here. A
+	// grouped clone receives the handoff as an inbox message, so it
+	// tolerates the same ≤16384-byte, newline-friendly charset as a
+	// spawn --initial-message. The stricter solo-pane rule is enforced
+	// later by soloFollowUpRejection, once the membership snapshot in
+	// runCloneOrchestration reveals which delivery path applies.
+	if body.FollowUp != "" && !isValidInitialMessage(body.FollowUp) {
 		writeError(w, http.StatusBadRequest, "invalid_follow_up",
-			"REJECTED. Follow-up must be 1-4096 printable characters; tabs, newlines, "+
-				"and other control characters are not allowed (each newline would be "+
-				"treated as a submit by tmux send-keys, splitting the prompt).")
+			fmt.Sprintf("REJECTED. follow_up must be at most %d characters; newlines "+
+				"and tabs are allowed (a grouped clone receives the handoff in its "+
+				"inbox, like a spawn brief), but NUL / escape / other control "+
+				"characters are not.", agent.MaxInitialMessageBytes))
 		return "", false, "", false
 	}
 	return body.FollowUp, body.NoCopyConv, strings.TrimSpace(body.Cwd), true
@@ -348,6 +355,39 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		cwd = resolved
 	}
 
+	// Snapshot group membership up-front — before the rate-limit claim
+	// and the spawn. It decides how the handoff follow-up is delivered
+	// (grouped → inbox, solo → send-keys) and therefore which charset
+	// rule applies; doing it here means a follow-up the solo pane can't
+	// carry is rejected without burning a rate-limit slot.
+	oldGroups, err := db.ListGroupsForConv(target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"snapshot groups: "+err.Error())
+		return
+	}
+	oldMembers := make([]*db.AgentGroupMember, 0, len(oldGroups))
+	for _, g := range oldGroups {
+		m, err := db.FindMemberInGroup(g.ID, target)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io",
+				"snapshot membership: "+err.Error())
+			return
+		}
+		if m != nil {
+			oldMembers = append(oldMembers, m)
+		}
+	}
+
+	// A solo (groupless) clone has no inbox — its handoff is typed into
+	// the new pane via send-keys. decodeCloneBody only applied the
+	// lenient inbox charset; enforce the strict pane rule now that the
+	// delivery path is known.
+	if reason := soloFollowUpRejection(followUp, len(oldMembers) > 0); reason != "" {
+		writeError(w, http.StatusBadRequest, "invalid_follow_up", reason)
+		return
+	}
+
 	// Rate limit: refuse a second clone of the same source within
 	// CloneCooldown — but only for agent-initiated clones. The gate
 	// exists to bound a runaway *agent*: clone is the only default-
@@ -371,25 +411,6 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 			writeError(w, http.StatusInternalServerError, "io",
 				"clone rate-limit check: "+err.Error())
 			return
-		}
-	}
-
-	oldGroups, err := db.ListGroupsForConv(target)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"snapshot groups: "+err.Error())
-		return
-	}
-	oldMembers := make([]*db.AgentGroupMember, 0, len(oldGroups))
-	for _, g := range oldGroups {
-		m, err := db.FindMemberInGroup(g.ID, target)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io",
-				"snapshot membership: "+err.Error())
-			return
-		}
-		if m != nil {
-			oldMembers = append(oldMembers, m)
 		}
 	}
 

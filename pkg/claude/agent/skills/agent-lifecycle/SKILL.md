@@ -229,17 +229,26 @@ know exactly what to run.
 
 ## Follow-up charset
 
-Free-form prose works: punctuation, slashes, paths, quotes, unicode,
-emoji. Two limits:
+Free-form prose always works: punctuation, slashes, paths, quotes,
+unicode, emoji. The length and newline limits depend on **how the
+follow-up is delivered** — which the daemon decides, not you:
 
-- **No control characters** (newlines, tabs, etc.). Each newline in
-  `tmux send-keys` would land as a separate prompt-submit, fragmenting
-  the follow-up. Use spaces or `;` between thoughts; reformat to a
-  single line.
-- **Max 4096 bytes** — keeps the tmux invocation reasonable.
+- **`compact` follow-up**, and **`clone` / `reincarnate` of a _solo_
+  agent** (one in no group): typed into the pane via `tmux send-keys`.
+  Strict limit — **≤4096 bytes, no control characters**. Each newline
+  in `send-keys` lands as a separate prompt-submit, fragmenting the
+  follow-up; use spaces or `;` between thoughts, keep it single-line.
+- **`clone` / `reincarnate` of a _grouped_ agent**: the handoff rides
+  the successor's inbox as a message (exactly like a spawn
+  `--initial-message`), not the pane. Lenient limit — **≤16384 bytes,
+  newlines and tabs allowed** — so a multi-paragraph handoff brief
+  keeps its structure.
 
-Both limits are enforced by the daemon (the security boundary) and
-mirrored client-side for fast errors.
+You don't pick the path. Write a `clone`/`reincarnate` handoff freely,
+multi-line if it helps; if the agent turns out to be solo, the daemon
+rejects it with a message telling you to single-line it under 4096
+bytes. All limits are enforced by the daemon (the security boundary)
+and mirrored client-side for fast errors.
 
 ## What can go wrong
 
