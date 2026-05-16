@@ -56,6 +56,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/cleanup/", handleDashboardCleanup)
 	mux.HandleFunc("/api/emergency-shutdown", handleEmergencyShutdown)
 	registerDashboardCronRoutes(mux)
+	registerDashboardMessageRoutes(mux)
 }
 
 // handleDashboardGroupsCreate is the cookie-auth twin of POST /v1/groups.

@@ -1202,19 +1202,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Target</span>
-      <div class="cron-create-target">
-        <div class="cron-target-modes">
-          <label><input type="radio" name="cron-target-mode" value="solo" checked /> Solo agent</label>
-          <label><input type="radio" name="cron-target-mode" value="group" /> Group (multicast)</label>
-        </div>
-        <div class="cron-target-input-row" id="cron-create-target-solo">
-          <input id="cron-create-target" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
-          <button type="button" id="cron-create-target-pick" title="Pick from agent list">🔍</button>
-        </div>
-        <div class="cron-target-input-row" id="cron-create-target-group" style="display:none">
-          <select id="cron-create-group"></select>
-        </div>
-      </div>
+      <!-- Solo/group target picker — markup mounted by the shared
+           targetPicker module (see bindTargetPicker('cron-create')). -->
+      <div class="cron-create-target" id="cron-create-target-mount"></div>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Every</span>
@@ -1246,6 +1236,41 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <span class="spacer"></span>
       <button id="cron-create-save-another" class="secondary" type="button" title="Save and reset the form so you can create another in the same sitting">Save &amp; create another</button>
       <button id="cron-create-submit" class="primary" type="button">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="message-create-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="message-create-title">
+    <h3 id="message-create-title">Send a message</h3>
+    <p style="margin:4px 0; font-size:12px; color:#7d8590">Delivers one immediate message to a single agent, or multicasts it to every member of a group. Each recipient gets an inbox row plus a tmux nudge if online.</p>
+    <label class="cron-create-row">
+      <span class="cron-create-label">From</span>
+      <div class="cron-create-target">
+        <div class="cron-target-input-row">
+          <input id="message-create-from" type="text" placeholder="sender agent — title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+          <button type="button" id="message-create-from-pick" title="Pick from agent list">🔍</button>
+        </div>
+      </div>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Target</span>
+      <!-- Solo/group target picker — markup mounted by the shared
+           targetPicker module (see bindTargetPicker('message-create')). -->
+      <div class="cron-create-target" id="message-create-target-mount"></div>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Subject</span>
+      <input id="message-create-subject" type="text" placeholder="optional, shows in inbox listings" maxlength="100" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Body</span>
+      <textarea id="message-create-body" rows="4" placeholder="message text (required)" spellcheck="false"></textarea>
+    </label>
+    <div class="cron-create-error" id="message-create-error"></div>
+    <div class="modal-buttons">
+      <button id="message-create-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="message-create-submit" class="primary" type="button">Send</button>
     </div>
   </div>
 </div>
@@ -2421,6 +2446,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
+            <button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to every member of ${esc(g.name)}">✉ message</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>
             <button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>
@@ -2528,7 +2554,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
               <td>${branchCell(a)}</td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, title: a.title})}${renameAgentButton({conv_id: a.conv_id, title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="perm-edit" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Edit this agent's permanent permissions (grant / deny / inherit-default)">permissions</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, title: a.title})}${renameAgentButton({conv_id: a.conv_id, title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="perm-edit" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Edit this agent's permanent permissions (grant / deny / inherit-default)">permissions</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Send a one-shot message to this agent">✉</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -3346,24 +3372,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const interval = p.interval || '';
     $('#cron-create-interval').value = interval;
     setSelectedChip(interval);
-    // Target mode.
-    const mode = p.targetMode || 'solo';
-    $$('#cron-create-modal input[name=cron-target-mode]').forEach(r => {
-      r.checked = r.value === mode;
-    });
-    setCronTargetMode(mode, /*populateOnly=*/true);
-    if (mode === 'solo') {
-      $('#cron-create-target').value = p.target || '';
-    } else {
-      populateGroupSelect();
-      const sel = $('#cron-create-group');
-      const want = p.groupName || '';
-      let found = false;
-      Array.from(sel.options).forEach(o => {
-        if (o.value === want) { o.selected = true; found = true; }
-      });
-      if (!found && sel.options.length) sel.selectedIndex = 0;
-    }
+    // Target — shared solo/group picker. Accepts { targetMode, target,
+    // groupName } straight off the prefill object.
+    populateTargetPicker('cron-create', p);
     $('#cron-create-error').textContent = '';
   }
 
@@ -3372,21 +3383,109 @@ details.group-virtual .group-name { color: #8aa0b8; }
     chips.forEach(c => c.classList.toggle('selected', c.dataset.chip === value));
   }
 
-  function setCronTargetMode(mode, populateOnly) {
-    const solo = mode === 'solo';
-    $('#cron-create-target-solo').style.display = solo ? '' : 'none';
-    $('#cron-create-target-group').style.display = solo ? 'none' : '';
-    if (!solo && !populateOnly) populateGroupSelect();
+  // --- shared solo/group target picker --------------------------------
+  // A solo-agent / group-multicast target selector shared by the cron
+  // form and the one-shot message form, so the two never drift. Each
+  // host passes a unique idPrefix; the markup + element ids are derived
+  // from it (e.g. prefix "cron-create" → #cron-create-target,
+  // #cron-create-group, radio group name "cron-create-target-mode"), so
+  // a host's own JS can still address fields directly. The host places
+  // an empty <div id="${prefix}-target-mount"> in its modal markup;
+  // bindTargetPicker mounts the picker into it once at page init.
+
+  function targetPickerMarkup(prefix) {
+    return `
+      <div class="cron-target-modes">
+        <label><input type="radio" name="${prefix}-target-mode" value="solo" checked /> Solo agent</label>
+        <label><input type="radio" name="${prefix}-target-mode" value="group" /> Group (multicast)</label>
+      </div>
+      <div class="cron-target-input-row" id="${prefix}-target-solo">
+        <input id="${prefix}-target" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+        <button type="button" id="${prefix}-target-pick" title="Pick from agent list">🔍</button>
+      </div>
+      <div class="cron-target-input-row" id="${prefix}-target-group" style="display:none">
+        <select id="${prefix}-group"></select>
+      </div>`;
   }
 
-  function populateGroupSelect() {
-    const sel = $('#cron-create-group');
+  // bindTargetPicker mounts the picker markup into #${prefix}-target-mount
+  // (idempotent) and wires the mode radios + the 🔍 agent-picker button.
+  function bindTargetPicker(prefix) {
+    const mount = $('#' + prefix + '-target-mount');
+    if (mount && !mount.dataset.mounted) {
+      mount.innerHTML = targetPickerMarkup(prefix);
+      mount.dataset.mounted = '1';
+    }
+    $$('input[name=' + prefix + '-target-mode]').forEach(rdo => {
+      rdo.addEventListener('change', () => setTargetPickerMode(prefix, rdo.value, false));
+    });
+    $('#' + prefix + '-target-pick').addEventListener('click', async () => {
+      const conv = await pickCronTargetModal();
+      if (conv) $('#' + prefix + '-target').value = conv;
+    });
+  }
+
+  function setTargetPickerMode(prefix, mode, populateOnly) {
+    const solo = mode === 'solo';
+    $('#' + prefix + '-target-solo').style.display = solo ? '' : 'none';
+    $('#' + prefix + '-target-group').style.display = solo ? 'none' : '';
+    if (!solo && !populateOnly) populateTargetPickerGroups(prefix);
+  }
+
+  function populateTargetPickerGroups(prefix) {
+    const sel = $('#' + prefix + '-group');
     const groups = (lastSnapshot?.groups || []).map(g => g.name).sort();
     const prev = sel.value;
     sel.innerHTML = groups.length
       ? groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
       : '<option value="">(no groups — create one first)</option>';
     if (prev && groups.includes(prev)) sel.value = prev;
+  }
+
+  // populateTargetPicker fills the picker from a prefill object
+  // { targetMode, target, groupName } — all optional, defaulting to a
+  // blank solo target.
+  function populateTargetPicker(prefix, p) {
+    const mode = (p && p.targetMode) || 'solo';
+    $$('input[name=' + prefix + '-target-mode]').forEach(r => {
+      r.checked = r.value === mode;
+    });
+    setTargetPickerMode(prefix, mode, /*populateOnly=*/true);
+    if (mode === 'solo') {
+      $('#' + prefix + '-target').value = (p && p.target) || '';
+    } else {
+      populateTargetPickerGroups(prefix);
+      const sel = $('#' + prefix + '-group');
+      const want = (p && p.groupName) || '';
+      // Preserve a target group that is no longer in the snapshot
+      // (archived / deleted since the job was created) as an explicit
+      // "(missing)" option — silently falling back to the first group
+      // would, on a cron edit-save, reroute the job to the wrong group.
+      const found = Array.from(sel.options).some(o => o.value === want);
+      if (want && !found) {
+        const opt = document.createElement('option');
+        opt.value = want;
+        opt.textContent = `${want} (missing)`;
+        sel.prepend(opt);
+      }
+      if (want) sel.value = want;
+      else if (sel.options.length) sel.selectedIndex = 0;
+    }
+  }
+
+  // readTargetPicker returns { mode, target } where target is a raw
+  // solo selector or a "group:NAME" multicast token, or "" when the
+  // picker has no usable value (the caller surfaces the inline error).
+  function readTargetPicker(prefix) {
+    const mode = ($$('input[name=' + prefix + '-target-mode]:checked')[0] || {}).value || 'solo';
+    let target = '';
+    if (mode === 'solo') {
+      target = $('#' + prefix + '-target').value.trim();
+    } else {
+      const g = $('#' + prefix + '-group').value;
+      if (g) target = 'group:' + g;
+    }
+    return { mode, target };
   }
 
   function showCronCreateModal() {
@@ -3408,14 +3507,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     errEl.textContent = '';
     const name = $('#cron-create-name').value.trim();
     const owner = $('#cron-create-owner').value.trim();
-    const mode = ($$('#cron-create-modal input[name=cron-target-mode]:checked')[0] || {}).value;
-    let target = '';
-    if (mode === 'solo') {
-      target = $('#cron-create-target').value.trim();
-    } else {
-      const g = $('#cron-create-group').value;
-      if (g) target = 'group:' + g;
-    }
+    const { mode, target } = readTargetPicker('cron-create');
     const interval = $('#cron-create-interval').value.trim();
     const subject = $('#cron-create-subject').value.trim();
     const bodyText = $('#cron-create-body').value;
@@ -3621,10 +3713,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#cron-create-modal').addEventListener('click', (e) => {
       if (e.target.id === 'cron-create-modal') closeCronCreateModal();
     });
-    // Mode radio toggles between solo/group input panes.
-    $$('#cron-create-modal input[name=cron-target-mode]').forEach(r => {
-      r.addEventListener('change', () => setCronTargetMode(r.value, false));
-    });
+    // Solo/group target picker — markup + mode radios + 🔍 button.
+    bindTargetPicker('cron-create');
     // Schedule chips push value into the text input + highlight.
     $('#cron-create-chips').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-chip]');
@@ -3637,18 +3727,130 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#cron-create-interval').addEventListener('input', () => {
       setSelectedChip($('#cron-create-interval').value.trim());
     });
-    // Owner / target picker buttons reuse the cron-pick-target overlay.
+    // Owner picker reuses the cron-pick-target overlay (the target
+    // picker's own 🔍 is wired by bindTargetPicker above).
     $('#cron-create-owner-pick').addEventListener('click', async () => {
       const conv = await pickCronTargetModal();
       if (conv) $('#cron-create-owner').value = conv;
     });
-    $('#cron-create-target-pick').addEventListener('click', async () => {
+    document.addEventListener('keydown', (e) => {
+      // Skip when the shared agent-picker overlay is open — its own Esc
+      // handler closes it; closing the modal too would drop the draft.
+      if (e.key === 'Escape'
+          && $('#cron-create-modal').classList.contains('show')
+          && !$('#cron-pick-target-modal').classList.contains('show')) {
+        closeCronCreateModal();
+      }
+    });
+  }
+
+  // --- one-shot message modal -----------------------------------------
+  // Sends a single immediate message — to a solo agent, or multicast to
+  // every member of a group — through POST /api/message. Reuses the
+  // shared solo/group target picker (prefix "message-create") and the
+  // cron-pick-target agent overlay. Unlike the cron form there is no
+  // schedule: the send fires once, now.
+
+  // openMessageCreateModal opens the modal. prefill is an optional
+  // object { from, targetMode, target, groupName } — the context-aware
+  // entry-point buttons (per-agent ✉, per-group ✉ message) drop the
+  // relevant defaults in before opening.
+  function openMessageCreateModal(prefill) {
+    prefill = prefill || {};
+    $('#message-create-from').value = prefill.from || '';
+    $('#message-create-subject').value = '';
+    $('#message-create-body').value = '';
+    $('#message-create-error').textContent = '';
+    populateTargetPicker('message-create', prefill);
+    $('#message-create-modal').classList.add('show');
+    modalEditing = true;
+    setTimeout(() => $('#message-create-from').focus(), 0);
+  }
+
+  function closeMessageCreateModal() {
+    $('#message-create-modal').classList.remove('show');
+    modalEditing = false;
+  }
+
+  // submitMessageForm POSTs /api/message. On a multicast it reports how
+  // many group members the send reached; on a solo send whether the
+  // recipient was nudged live or the row just queued in their inbox.
+  async function submitMessageForm() {
+    const errEl = $('#message-create-error');
+    errEl.textContent = '';
+    const from = $('#message-create-from').value.trim();
+    const { mode, target } = readTargetPicker('message-create');
+    const subject = $('#message-create-subject').value.trim();
+    const bodyText = $('#message-create-body').value;
+    // Client-side gates with inline errors — the daemon validates
+    // authoritatively too, so this only catches the obvious misses.
+    if (!from) {
+      errEl.textContent = 'From is required — type a sender agent or use 🔍 to pick.';
+      return;
+    }
+    if (!target) {
+      errEl.textContent = mode === 'solo'
+        ? 'Target is required — type a title / conv-id or use 🔍 to pick.'
+        : 'Pick a group from the dropdown (or create one first via the Groups tab).';
+      return;
+    }
+    if (!bodyText) {
+      errEl.textContent = 'Body is required (the message text to send).';
+      return;
+    }
+    const submitBtn = $('#message-create-submit');
+    submitBtn.disabled = true;
+    try {
+      const r = await fetch('/api/message', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: target, subject, body: bodyText }),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
+        return;
+      }
+      const resp = await r.json();
+      if (mode === 'group') {
+        const recipients = resp.recipients || [];
+        const n = recipients.length;
+        const live = recipients.filter(x => x.delivered).length;
+        toast(n
+          ? `multicast reached ${n} member${n === 1 ? '' : 's'} of ${resp.via_group || target} (${live} nudged live)`
+          : `no other members in ${resp.via_group || target} — nothing sent`);
+      } else {
+        toast(resp.delivered
+          ? 'message sent — recipient nudged live'
+          : 'message sent — queued in recipient inbox');
+      }
+      closeMessageCreateModal();
+    } catch (e) {
+      errEl.textContent = 'Network error: ' + e;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  function bindMessageModal() {
+    // Solo/group target picker — markup + mode radios + 🔍 button.
+    bindTargetPicker('message-create');
+    $('#message-create-cancel').addEventListener('click', closeMessageCreateModal);
+    $('#message-create-submit').addEventListener('click', submitMessageForm);
+    $('#message-create-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'message-create-modal') closeMessageCreateModal();
+    });
+    // From picker reuses the cron-pick-target agent overlay.
+    $('#message-create-from-pick').addEventListener('click', async () => {
       const conv = await pickCronTargetModal();
-      if (conv) $('#cron-create-target').value = conv;
+      if (conv) $('#message-create-from').value = conv;
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && $('#cron-create-modal').classList.contains('show')) {
-        closeCronCreateModal();
+      // Skip when the shared agent-picker overlay is open — its own Esc
+      // handler closes it; closing the modal too would drop the draft.
+      if (e.key === 'Escape'
+          && $('#message-create-modal').classList.contains('show')
+          && !$('#cron-pick-target-modal').classList.contains('show')) {
+        closeMessageCreateModal();
       }
     });
   }
@@ -7180,6 +7382,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
             openCronCreateModal(prefill);
             return;
           }
+          case 'message-new': {
+            // Context-aware "send message" buttons from the Agents row
+            // (✉, solo) and group headers (✉ message, group multicast).
+            // data-prefill is a JSON blob: { from, targetMode, target,
+            // groupName }. Empty / missing → default form.
+            let prefill = {};
+            const raw = btn.getAttribute('data-prefill');
+            if (raw) {
+              try { prefill = JSON.parse(raw); } catch (_) {}
+            }
+            openMessageCreateModal(prefill);
+            return;
+          }
           case 'link-new': {
             // From per-group "+ link" button: preset FROM to the
             // current group so the user only has to pick TO.
@@ -7718,6 +7933,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();
+  bindMessageModal();
   bindGroupCreateModal();
   bindGroupImportModal();
   bindGroupContextModal();
