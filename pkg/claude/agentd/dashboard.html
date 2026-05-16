@@ -918,6 +918,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .window-direction input[type=radio] { cursor: pointer; flex: 0 0 auto; }
 .window-direction .opt-note { font-size: 11px; color: #7d8590; }
+/* Reincarnate modal — the self-vs-force mode picker. Same vertical
+   radio-list-with-notes shape as .window-direction above. */
+.reincarnate-mode {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22; margin: 6px 0;
+}
+.reincarnate-mode label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-size: 12px; color: #c9d1d9;
+}
+.reincarnate-mode input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+.reincarnate-mode .opt-note { font-size: 11px; color: #7d8590; }
 .window-roles {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   font-size: 11px; color: #7d8590; min-height: 18px;
@@ -1580,16 +1593,33 @@ details.group-virtual .group-name { color: #8aa0b8; }
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="reincarnate-agent-title">
     <h3 id="reincarnate-agent-title">Reincarnate agent</h3>
     <div class="modal-meta" id="reincarnate-agent-meta"></div>
-    <p style="margin:4px 0; font-size:12px; color:#7d8590">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>&lt;prev&gt;-r-&lt;N&gt;</code>.</p>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Follow-up</span>
-      <textarea id="reincarnate-agent-followup" rows="4" placeholder="required — what should the successor pick up? Summarise the current task, where the relevant files are, what's next (no newlines, ≤4096 chars)" spellcheck="false"></textarea>
-    </label>
+    <div class="reincarnate-mode" id="reincarnate-mode" role="radiogroup" aria-label="Reincarnate mode">
+      <label><input type="radio" name="reincarnate-mode" value="self" checked />
+        <span>Ask the agent to reincarnate itself</span>
+        <span class="opt-note">— graceful. Sends the agent a message; at its next clean point it writes its own handoff, collecting the context that matters, then reincarnates. May take a moment. Recommended.</span></label>
+      <label><input type="radio" name="reincarnate-mode" value="force" />
+        <span>Force reincarnate now</span>
+        <span class="opt-note">— immediate. The daemon spawns the successor and soft-exits the original right away. The agent gets no chance to write its own handoff — use only when it is stuck or unresponsive.</span></label>
+    </div>
+    <div id="reincarnate-self-fields">
+      <p style="margin:4px 0; font-size:12px; color:#7d8590">The agent is messaged and reincarnates itself at a clean point. Because it collects its own context, the successor inherits a handoff that reflects the agent's actual working state.</p>
+      <label class="cron-create-row">
+        <span class="cron-create-label">Focus hint</span>
+        <textarea id="reincarnate-agent-focus" rows="3" maxlength="4000" placeholder="optional — what should the agent concentrate on while gathering context for its handoff? e.g. focus on the open questions about X, or capture the current state of subsystem Y. Leave blank for a general handoff." spellcheck="false"></textarea>
+      </label>
+    </div>
+    <div id="reincarnate-force-fields" hidden>
+      <p style="margin:4px 0; font-size:12px; color:#7d8590">Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>&lt;prev&gt;-r-&lt;N&gt;</code>.</p>
+      <label class="cron-create-row">
+        <span class="cron-create-label">Follow-up</span>
+        <textarea id="reincarnate-agent-followup" rows="4" placeholder="required — what should the successor pick up? Summarise the current task, where the relevant files are, what's next (no newlines, ≤4096 chars)" spellcheck="false"></textarea>
+      </label>
+    </div>
     <div class="cron-create-error" id="reincarnate-agent-error"></div>
     <div class="modal-buttons">
       <button id="reincarnate-agent-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
-      <button id="reincarnate-agent-submit" class="primary" type="button" disabled>Reincarnate</button>
+      <button id="reincarnate-agent-submit" class="primary" type="button">Ask agent</button>
     </div>
   </div>
 </div>
@@ -1802,12 +1832,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-cwd="${esc(cwd)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
   }
   // reincarnateAgentButton renders a "reincarnate" button for any row
-  // that represents a single agent. Reincarnate spawns a fresh CC
-  // instance that inherits identity, then soft-exits the original. The
-  // new title is auto-suffixed with -r-<N>.
+  // that represents a single agent. The modal it opens defaults to
+  // asking the agent to reincarnate ITSELF (it writes its own handoff);
+  // a force mode does the immediate daemon-driven reincarnation.
   function reincarnateAgentButton(m) {
     const label = m.title || m.conv_id;
-    return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Replace with a fresh CC instance that inherits identity; the original is soft-exited. Requires a follow-up message so the successor isn't idle.">reincarnate</button>`;
+    return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.">reincarnate</button>`;
   }
   // renameAgentButton renders a "rename" button for any row that
   // represents a single agent. Opens a modal where the user can type
@@ -5241,20 +5271,47 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // ---- Reincarnate agent modal --------------------------------------------
   //
-  // Submit POSTs to /api/agents/{conv}/reincarnate with `{follow_up}`.
-  // follow_up is REQUIRED (the server rejects empty/missing). Submit
-  // is disabled until the textarea has non-whitespace content.
+  // Two modes, chosen by the radiogroup; both POST to
+  // /api/agents/{conv}/reincarnate:
+  //   - "self" (the DEFAULT): POST {mode:'self', focus_hint?} — the
+  //     daemon messages the agent to reincarnate itself. focus_hint is
+  //     OPTIONAL, so Submit is always enabled.
+  //   - "force": POST {mode:'force', follow_up} — the immediate
+  //     daemon-driven reincarnation. follow_up is REQUIRED, so Submit
+  //     is disabled until the follow-up textarea has content.
+
+  function reincarnateMode() {
+    const checked = $('input[name=reincarnate-mode]:checked');
+    return (checked && checked.value) || 'self';
+  }
+
+  // updateReincarnateMode shows the fields for the selected mode,
+  // relabels Submit, and recomputes its disabled state. Self-mode's
+  // Submit is always enabled (the focus hint is optional); force-mode's
+  // is gated on a non-empty follow-up.
+  function updateReincarnateMode() {
+    const isForce = reincarnateMode() === 'force';
+    $('#reincarnate-self-fields').hidden = isForce;
+    $('#reincarnate-force-fields').hidden = !isForce;
+    const submitBtn = $('#reincarnate-agent-submit');
+    submitBtn.textContent = isForce ? 'Force reincarnate' : 'Ask agent';
+    submitBtn.disabled = isForce && !normaliseFollowUp($('#reincarnate-agent-followup').value);
+  }
 
   function openReincarnateAgentModal(conv, label) {
     const meta = $('#reincarnate-agent-meta');
     meta.textContent = label ? `target: ${label}` : `target: ${shortId(conv)}`;
     $('#reincarnate-agent-followup').value = '';
+    $('#reincarnate-agent-focus').value = '';
     $('#reincarnate-agent-error').textContent = '';
-    $('#reincarnate-agent-submit').disabled = true;
+    // Every open resets to the self-reincarnate default.
+    const selfRadio = $('input[name=reincarnate-mode][value=self]');
+    if (selfRadio) selfRadio.checked = true;
+    updateReincarnateMode();
     $('#reincarnate-agent-modal').dataset.conv = conv;
     $('#reincarnate-agent-modal').dataset.label = label || '';
     $('#reincarnate-agent-modal').classList.add('show');
-    setTimeout(() => $('#reincarnate-agent-followup').focus(), 0);
+    setTimeout(() => $('#reincarnate-agent-focus').focus(), 0);
   }
 
   function closeReincarnateAgentModal() {
@@ -5265,21 +5322,31 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const modal = $('#reincarnate-agent-modal');
     const conv = modal.dataset.conv;
     const label = modal.dataset.label || shortId(conv);
-    const followUp = normaliseFollowUp($('#reincarnate-agent-followup').value);
     const errEl = $('#reincarnate-agent-error');
     errEl.textContent = '';
-    if (!followUp) {
-      errEl.textContent = 'follow_up is required';
-      return;
+    const mode = reincarnateMode();
+    let body;
+    if (mode === 'force') {
+      const followUp = normaliseFollowUp($('#reincarnate-agent-followup').value);
+      if (!followUp) {
+        errEl.textContent = 'follow-up is required for force reincarnate';
+        return;
+      }
+      body = { mode: 'force', follow_up: followUp };
+    } else {
+      // Focus hint is optional — send it trimmed, or omit when blank.
+      const hint = $('#reincarnate-agent-focus').value.trim();
+      body = { mode: 'self' };
+      if (hint) body.focus_hint = hint;
     }
     const submitBtn = $('#reincarnate-agent-submit');
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Reincarnating…';
+    submitBtn.textContent = mode === 'force' ? 'Reincarnating…' : 'Asking…';
     try {
       const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reincarnate`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ follow_up: followUp }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) {
         errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -5288,23 +5355,33 @@ details.group-virtual .group-name { color: #8aa0b8; }
       let payload = {};
       try { payload = await r.json(); } catch (_) {}
       closeReincarnateAgentModal();
-      const suffix = payload.new_title ? ' → ' + payload.new_title : (payload.new_conv ? ' → ' + shortId(payload.new_conv) : '');
-      toast(`reincarnated ${label}${suffix}`);
+      if (mode === 'force') {
+        const suffix = payload.new_title ? ' → ' + payload.new_title : (payload.new_conv ? ' → ' + shortId(payload.new_conv) : '');
+        toast(`reincarnated ${label}${suffix}`);
+      } else {
+        toast(`asked ${label} to reincarnate itself`);
+      }
       refresh();
     } catch (err) {
       errEl.textContent = (err && err.message) || String(err);
     } finally {
-      submitBtn.textContent = 'Reincarnate';
-      // Leave disabled if the textarea is empty after the error path.
-      submitBtn.disabled = !normaliseFollowUp($('#reincarnate-agent-followup').value);
+      // Recompute label + disabled state for whatever mode is selected
+      // (relevant only on the error path — success closed the modal).
+      updateReincarnateMode();
     }
   }
 
   function bindReincarnateAgentModal() {
     $('#reincarnate-agent-cancel').addEventListener('click', closeReincarnateAgentModal);
     $('#reincarnate-agent-submit').addEventListener('click', submitReincarnateAgent);
-    $('#reincarnate-agent-followup').addEventListener('input', () => {
-      $('#reincarnate-agent-submit').disabled = !normaliseFollowUp($('#reincarnate-agent-followup').value);
+    $('#reincarnate-agent-followup').addEventListener('input', updateReincarnateMode);
+    $$('input[name=reincarnate-mode]').forEach(rdo => {
+      rdo.addEventListener('change', () => {
+        updateReincarnateMode();
+        const focusEl = reincarnateMode() === 'force'
+          ? $('#reincarnate-agent-followup') : $('#reincarnate-agent-focus');
+        setTimeout(() => focusEl.focus(), 0);
+      });
     });
     $('#reincarnate-agent-modal').addEventListener('click', (e) => {
       if (e.target.id === 'reincarnate-agent-modal') closeReincarnateAgentModal();
