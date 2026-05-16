@@ -59,6 +59,24 @@ table tr:hover { background: #161b22; }
 .state-exited    { background: #21262d; color: #7d8590; border-color: #2a3340; }
 .state-offline   { background: #161b22; color: #484f58; border-color: #2a3340; }
 .state-detail { color: #7d8590; font-size: 11px; margin-left: 6px; }
+/* Context-window meter: a vertical 5-segment gauge that fills
+   bottom-up as an agent's context window fills. Lit segments carry
+   traffic-light band colours (green low → yellow mid → red high);
+   unlit segments stay dim. An agent with no reported usage renders
+   all-dim via .ctx-unknown. Pure CSS — no canvas, no per-frame work. */
+.ctx-meter {
+  display: inline-flex; flex-direction: column-reverse;
+  gap: 1px; vertical-align: middle; margin-left: 7px;
+  width: 9px; cursor: default;
+}
+.ctx-seg {
+  box-sizing: border-box; height: 4px; border-radius: 1px;
+  background: #21262d; border: 1px solid #2a3340;
+}
+.ctx-seg.lit-green  { background: #3fb950; border-color: #2ea043; }
+.ctx-seg.lit-yellow { background: #d29922; border-color: #bb8009; }
+.ctx-seg.lit-red    { background: #f85149; border-color: #da3633; }
+.ctx-meter.ctx-unknown { opacity: 0.45; }
 .cwd {
   display: inline-block; max-width: 280px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
@@ -1448,6 +1466,67 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
   }
 
+  // CTX_SEGMENTS is the block count of the context-window meter — a
+  // value in the 3-6 design range. 5 splits cleanly into 20%-wide
+  // bands and leaves room for 2 green / 2 yellow / 1 red.
+  const CTX_SEGMENTS = 5;
+
+  // fmtTokens renders a token count compactly for the meter tooltip:
+  // 1200 → "1k", 120000 → "120k", 1000000 → "1M".
+  function fmtTokens(n) {
+    n = Number(n) || 0;
+    if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + 'M';
+    if (n >= 1000) return Math.round(n / 1000) + 'k';
+    return String(n);
+  }
+
+  // contextMeterTooltip describes the meter on hover. With real token
+  // counts it mirrors `tclaude agent context-info` ("X / Y tokens —
+  // N%"); with only a percentage it falls back to "N% full"; with
+  // nothing reported it says so plainly.
+  function contextMeterTooltip(state, pct, known) {
+    if (!known) return 'context window: usage not reported yet';
+    const tin = Number((state && state.tokens_input) || 0);
+    const tout = Number((state && state.tokens_output) || 0);
+    const win = Number((state && state.context_window_size) || 0);
+    const total = tin + tout;
+    if (win > 0 && total > 0) {
+      return `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens — ${Math.round(pct)}%`;
+    }
+    return `context: ${Math.round(pct)}% full`;
+  }
+
+  // contextMeter renders a vertical segmented gauge of an agent's
+  // context-window fill. It reads state.context_pct — Claude Code's
+  // authoritative figure, surfaced by /api/snapshot from the same DB
+  // row the statusline hook keeps current, so the meter rides on data
+  // the snapshot already has. Segments fill bottom-up and light by
+  // band (green low → yellow mid → red high). A freshly-spawned agent
+  // with no usage record renders a neutral all-dim meter, never a
+  // broken one.
+  function contextMeter(state) {
+    const pct = Math.max(0, Math.min(100, Number((state && state.context_pct) || 0)));
+    const winSize = Number((state && state.context_window_size) || 0);
+    const known = pct > 0 || winSize > 0;
+    // filled = lit segment count. ceil so any non-zero usage lights at
+    // least one block; clamped so 100% fills exactly CTX_SEGMENTS.
+    const filled = known
+      ? Math.min(CTX_SEGMENTS, Math.ceil(pct / (100 / CTX_SEGMENTS)))
+      : 0;
+    let segs = '';
+    for (let i = 0; i < CTX_SEGMENTS; i++) {
+      // Band colour by segment position (i=0 is the bottom block,
+      // because the flex container is column-reverse). 2 green, 2
+      // yellow, 1 red for CTX_SEGMENTS=5.
+      let band = 'green';
+      if (i >= 4) band = 'red';
+      else if (i >= 2) band = 'yellow';
+      segs += `<span class="ctx-seg${i < filled ? ' lit-' + band : ''}"></span>`;
+    }
+    const tip = contextMeterTooltip(state, pct, known);
+    return `<span class="ctx-meter${known ? '' : ' ctx-unknown'}" title="${esc(tip)}">${segs}</span>`;
+  }
+
   // groupTagsCell renders the Groups column on the Agents view. Each
   // group becomes a tag; groups the agent owns get an "owner" badge
   // appended to the tag so the manager-vs-member distinction is
@@ -2026,6 +2105,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
                   <td>
                     ${statePill(state, m.online)}
                     ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
+                    ${contextMeter(state)}
                   </td>
                   <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
                   <td>${cwdCell(m)}</td>
@@ -2306,6 +2386,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
               <td>
                 ${statePill(state, a.online)}
                 ${subagents > 0 ? `<span class="state-detail">+${subagents} subagent${subagents > 1 ? 's' : ''}</span>` : ''}
+                ${contextMeter(state)}
               </td>
               <td><span class="last-hook">${esc(lh)}</span></td>
               <td>${cwdCell(a)}</td>
