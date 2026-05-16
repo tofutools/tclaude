@@ -2809,9 +2809,35 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // True while an inline rename input is open; suspends the auto-
   // refresh so the 5s tick doesn't blow the input away mid-edit.
   let renameEditing = false;
-  // True while the edit-member modal is open; same purpose as
-  // renameEditing — refresh() short-circuits on either flag.
-  let modalEditing = false;
+
+  // refreshSuspended() is the single source of truth for whether the
+  // auto-refresh is allowed to re-render the DOM right now. refresh()
+  // consults it both BEFORE its /api/snapshot fetch and AGAIN after,
+  // so a refresh that started before a drag/modal opened can never
+  // resume mid-gesture and re-render underneath it.
+  //
+  // Modal state is derived from the DOM (.modal-overlay.show) rather
+  // than a hand-maintained boolean on purpose: a flag must be reset on
+  // every close path or it leaks and wedges auto-refresh forever — the
+  // exact failure mode behind the drag-retire-freezes-refresh bug. The
+  // DOM cannot leak: once an overlay's .show class is gone the modal
+  // simply stops suspending, with no reset to forget. It is also
+  // uniform — every modal, present and future, shares .modal-overlay,
+  // so all of them suspend auto-refresh while open without each having
+  // to remember to toggle a flag.
+  function refreshSuspended() {
+    // An inline rename <input> is open — re-rendering would destroy it
+    // mid-keystroke.
+    if (renameEditing) return true;
+    // A drag-and-drop gesture is in flight — re-rendering would detach
+    // the dragged row, and a dragend dispatched on a now-detached node
+    // never bubbles up to the document-level handler, so the drag's
+    // own cleanup (this suspension included) would be lost forever.
+    if (dndDragActive) return true;
+    // Any modal overlay is open.
+    if (document.querySelector('.modal-overlay.show')) return true;
+    return false;
+  }
 
   function filterGroups(groups, q) {
     if (!q) return groups;
@@ -3200,11 +3226,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#sudo-grant-error').textContent = '';
     $('#sudo-grant-modal').classList.add('show');
     setTimeout(() => $('#sudo-grant-conv').focus(), 0);
-    modalEditing = true;
   }
   function closeSudoGrantModal() {
     $('#sudo-grant-modal').classList.remove('show');
-    modalEditing = false;
   }
 
   async function submitSudoGrant() {
@@ -3322,7 +3346,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
       function close(convID) {
         overlay.classList.remove('show');
-        modalEditing = false;
         document.removeEventListener('keydown', onKey);
         resolve(convID || '');
       }
@@ -3351,7 +3374,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
       overlay.onclick = (e) => { if (e.target === overlay) close(''); };
       document.addEventListener('keydown', onKey);
 
-      modalEditing = true;
       overlay.classList.add('show');
       render();
       setTimeout(() => search.focus(), 0);
@@ -3561,12 +3583,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   function showCronCreateModal() {
     $('#cron-create-modal').classList.add('show');
-    modalEditing = true;
     setTimeout(() => $('#cron-create-name').focus(), 0);
   }
   function closeCronCreateModal() {
     $('#cron-create-modal').classList.remove('show');
-    modalEditing = false;
     cronEditId = null;
   }
 
@@ -3834,13 +3854,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#message-create-error').textContent = '';
     populateTargetPicker('message-create', prefill);
     $('#message-create-modal').classList.add('show');
-    modalEditing = true;
     setTimeout(() => $('#message-create-from').focus(), 0);
   }
 
   function closeMessageCreateModal() {
     $('#message-create-modal').classList.remove('show');
-    modalEditing = false;
   }
 
   // submitMessageForm POSTs /api/message. On a multicast it reports how
@@ -4020,13 +4038,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
     }
     list.scrollTop = 0;
     $('#perm-edit-modal').classList.add('show');
-    modalEditing = true;
     setTimeout(() => $('#perm-edit-filter').focus(), 0);
   }
 
   function closePermEditModal() {
     $('#perm-edit-modal').classList.remove('show');
-    modalEditing = false;
   }
 
   async function submitPermEdit() {
@@ -5485,11 +5501,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   async function refresh() {
-    if (renameEditing || modalEditing) {
-      // An inline-edit input or a modal is open; re-rendering would
-      // either blow the input away mid-keystroke or refocus the
-      // textarea. Skip this tick — commit() / cancel() handlers will
-      // re-trigger refresh() when the user is done.
+    if (refreshSuspended()) {
+      // An inline-edit input, a modal, or a drag is in progress;
+      // re-rendering now would blow the input away mid-keystroke,
+      // disrupt the modal, or detach the dragged row. Skip this tick —
+      // the commit / cancel / dragend handlers each re-trigger
+      // refresh() once the user is done.
       return;
     }
     try {
@@ -5499,6 +5516,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
         return;
       }
       const data = await r.json();
+      // The guard above was sampled BEFORE the fetch. A drag or a modal
+      // may have opened while it was in flight — re-check now, before
+      // touching the DOM. Bailing here (ahead of the lastSnapshot
+      // assignment) also preserves any optimistic drag mutation already
+      // applied to the old snapshot; the drag/modal teardown re-runs
+      // refresh() when it finishes.
+      if (refreshSuspended()) return;
       lastSnapshot = data;
       $('#meta').textContent = data.popup_base + ' · refreshed ' + new Date(data.generated_at).toLocaleTimeString();
       // Refresh the proactive-grant blocklist hint from the snapshot
@@ -6036,7 +6060,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // Save (only fields that actually changed are kept; unchanged fields
   // are sent as null so the daemon leaves them alone), or null on
   // Cancel / outside-click / Escape. Auto-refresh suspends while the
-  // modal is open via the modalEditing flag.
+  // modal is open — refreshSuspended() sees its .modal-overlay.show.
   function editMemberModal({label, role, descr}) {
     return new Promise(resolve => {
       const overlay = $('#edit-member-modal');
@@ -6048,14 +6072,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
       descrEl.value = descr || '';
       const saveBtn = $('#edit-member-save');
       const cancelBtn = $('#edit-member-cancel');
-      modalEditing = true;
       const cleanup = (result) => {
         overlay.classList.remove('show');
         saveBtn.removeEventListener('click', onSave);
         cancelBtn.removeEventListener('click', onCancel);
         overlay.removeEventListener('click', onOverlay);
         document.removeEventListener('keydown', onKey);
-        modalEditing = false;
         resolve(result);
       };
       const onSave = () => {
@@ -6264,7 +6286,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
         list.removeEventListener('mousemove', onListMouseMove);
         document.removeEventListener('keydown', onKey, true);
         overlay.removeEventListener('click', onOverlay);
-        modalEditing = false;
         resolve();
       };
       const onInput = () => { highlight = 0; render(); };
@@ -6303,7 +6324,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
       };
       const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
 
-      modalEditing = true;
       search.addEventListener('input', onInput);
       includeAll.addEventListener('change', onInput);
       list.addEventListener('click', onListClick);
@@ -7769,9 +7789,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // never groupless mid-drag — on a failed delete it ends up in both
   // groups (visible, recoverable) instead of nowhere (silently lost).
   //
-  // Auto-refresh suspends via the existing modalEditing flag while a
-  // drag is in flight, so a 5s tick doesn't blow our optimistic
-  // mutation away while the round-trip is mid-air.
+  // Auto-refresh suspends while a drag is in flight via the
+  // dndDragActive flag below — refreshSuspended() checks it — so a 5s
+  // tick doesn't blow our optimistic mutation away while the
+  // round-trip is mid-air. The drag deliberately does NOT share the
+  // modal suspension: a single shared boolean let a drag and a modal
+  // clobber each other's reset, which is how auto-refresh used to
+  // wedge after a drag-and-drop retire.
   let dndDragActive = false;
   // dndSourceUngrouped / dndSourceConversation / dndSourceRetired: which
   // virtual group the dragged row comes from. Set in dragstart, cleared
@@ -7831,20 +7855,27 @@ details.group-virtual .group-name { color: #8aa0b8; }
       dndSourceUngrouped = sourceUngrouped;
       dndSourceConversation = sourceConversation;
       dndSourceRetired = sourceRetired;
-      modalEditing = true; // suspend auto-refresh during the drag
+      // dndDragActive (set above) is what suspends auto-refresh for the
+      // duration of the drag — see refreshSuspended().
     });
     document.addEventListener('dragend', (e) => {
+      // Clear the drag state FIRST, ahead of any DOM cleanup below: if
+      // a classList / query call here ever threw, auto-refresh must
+      // still come back. dragend fires for every drag that had a
+      // dragstart — a successful drop, an Escape-cancel, or a release
+      // over nothing — so this is the one guaranteed reset covering
+      // every drag-end outcome (join, leave, retire, reinstate,
+      // promote, clone, cancelled drop, error path).
+      dndDragActive = false;
+      dndSourceUngrouped = false;
+      dndSourceConversation = false;
+      dndSourceRetired = false;
       const row = e.target.closest('.dnd-draggable');
       if (row) row.classList.remove('dnd-source-row');
       // Clear any lingering hover highlight (Firefox sometimes fires
       // dragend without a final dragleave on the target).
       $$('summary.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
       $('#dnd-pill').classList.remove('show', 'clone');
-      dndDragActive = false;
-      dndSourceUngrouped = false;
-      dndSourceConversation = false;
-      dndSourceRetired = false;
-      modalEditing = false;
       refresh();
     });
     document.addEventListener('dragover', (e) => {
