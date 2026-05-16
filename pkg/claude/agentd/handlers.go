@@ -1014,11 +1014,11 @@ func isValidFollowUp(s string) bool {
 // tabs are allowed (and wanted: a multi-line brief keeps its
 // paragraph structure). We still reject other control characters
 // (NUL, escape, carriage return, …) that would corrupt a terminal
-// render, and cap the length at 4096 bytes.
+// render, and cap the length at agent.MaxInitialMessageBytes.
 //
 // An empty string is valid — it simply means "no initial message".
 func isValidInitialMessage(s string) bool {
-	if len(s) > 4096 {
+	if len(s) > agent.MaxInitialMessageBytes {
 		return false
 	}
 	for _, r := range s {

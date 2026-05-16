@@ -141,3 +141,54 @@ func TestSpawn_InitialMessageRejectsControlChars(t *testing.T) {
 	assert.True(t, strings.Contains(string(spawn.Raw), "invalid_initial_message"),
 		"error body should name the invalid_initial_message code, got %s", spawn.Raw)
 }
+
+// Scenario: a caller posts a genuinely large task brief — well over the
+// retired 4096-byte cap but under the current 16384-byte cap. Detailed
+// multi-paragraph briefs are exactly what the bump was for.
+//
+// Expected: the daemon accepts it (the brief rides in the inbox, a
+// SQLite row, never a tmux pane — so the old 4096 cap no longer binds)
+// and the stored body carries it verbatim.
+func TestSpawn_InitialMessageLargeBriefAccepted(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	// 8000 bytes: over the retired 4096 cap, under the 16384 cap.
+	initialMessage := strings.Repeat("a", 8000)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"alias":           "worker",
+		"initial_message": initialMessage,
+	})
+	if spawn.Code != http.StatusOK {
+		t.Fatalf("spawn with 8000-char initial_message: status=%d body=%s, want 200",
+			spawn.Code, spawn.Raw)
+	}
+
+	rows, err := db.ListAgentMessagesForConv(spawn.ConvID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, rows, 1, "spawned agent should have one inbox message")
+	assert.Contains(t, rows[0].Body, initialMessage,
+		"the large brief must survive verbatim into the inbox row")
+}
+
+// Scenario: a caller posts an initial_message that exceeds the
+// 16384-byte cap.
+//
+// Expected: 400 invalid_initial_message — the cap is generous but still
+// bounded.
+func TestSpawn_InitialMessageOverCapRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"alias":           "worker",
+		"initial_message": strings.Repeat("a", 17000),
+	})
+	if spawn.Code != http.StatusBadRequest {
+		t.Fatalf("spawn with 17000-char initial_message: status=%d body=%s, want 400",
+			spawn.Code, spawn.Raw)
+	}
+	assert.True(t, strings.Contains(string(spawn.Raw), "invalid_initial_message"),
+		"error body should name the invalid_initial_message code, got %s", spawn.Raw)
+}

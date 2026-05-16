@@ -100,14 +100,24 @@ func isValidFollowUp(s string) bool {
 	return true
 }
 
+// MaxInitialMessageBytes caps a spawn task-brief (`--initial-message`).
+// The brief is delivered to the new agent's inbox as a SQLite
+// agent_messages row — not typed into a tmux pane — so it carries none
+// of the follow-up's tmux-invocation constraints (see isValidFollowUp,
+// capped far lower for that reason) and can comfortably hold a detailed
+// multi-paragraph brief. Both the client-side validator here and the
+// daemon-side one (agentd/handlers.go) share this constant so their
+// caps stay identical.
+const MaxInitialMessageBytes = 16384
+
 // isValidInitialMessage mirrors the daemon-side isValidInitialMessage
 // check (agentd/handlers.go). Unlike a follow-up — which is typed into
 // a tmux pane — a spawn's initial message is delivered to the new
 // agent's inbox, so newlines and tabs are allowed; only NUL / escape /
 // other non-text control characters are rejected. An empty string is
-// valid (no initial message). Length is capped at 4096 bytes.
+// valid (no initial message). Length is capped at MaxInitialMessageBytes.
 func isValidInitialMessage(s string) bool {
-	if len(s) > 4096 {
+	if len(s) > MaxInitialMessageBytes {
 		return false
 	}
 	for _, r := range s {
