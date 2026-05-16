@@ -1,9 +1,12 @@
 package config
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A transition into the "error" status must be notify-worthy by
@@ -25,4 +28,77 @@ func TestDefaultConfig_NotifiesOnErrorTransition(t *testing.T) {
 	// And a transition with no matching rule still does not notify.
 	assert.False(t, n.MatchesTransition("idle", "working"),
 		"a transition with no matching rule must not notify")
+}
+
+// The default config must pass its own validator — the dashboard's
+// config editor would otherwise refuse to save a freshly-loaded config.
+func TestValidate_AcceptsDefaultConfig(t *testing.T) {
+	assert.Empty(t, Validate(DefaultConfig()),
+		"DefaultConfig must validate cleanly")
+}
+
+// Every nonsensical value the editor can submit must come back as a
+// human-readable error mentioning the offending field.
+func TestValidate_RejectsBadValues(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(*Config)
+		want string
+	}{
+		{"bad log level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
+		{"auto-compact too high", func(c *Config) { p := 150; c.AutoCompactPercent = &p }, "auto_compact_percent"},
+		{"auto-compact too low", func(c *Config) { p := 0; c.AutoCompactPercent = &p }, "auto_compact_percent"},
+		{"clone cooldown unparseable", func(c *Config) { c.Agent = &AgentConfig{CloneCooldown: "soon"} }, "clone_cooldown"},
+		{"negative spawn max", func(c *Config) { n := -1; c.Agent = &AgentConfig{SpawnMaxPerHour: &n} }, "spawn_max_per_hour"},
+		{"bad sudo duration", func(c *Config) { c.Agent = &AgentConfig{Sudo: &SudoConfig{MaxDuration: "ages"}} }, "sudo.max_duration"},
+		{"transition missing to", func(c *Config) {
+			c.Notifications = &NotificationConfig{Transitions: []TransitionRule{{From: "idle"}}}
+		}, "transitions[0]"},
+		{"context nudge out of range", func(c *Config) {
+			c.Agent = &AgentConfig{ContextNudge: &ContextNudgeConfig{MinPct: 200}}
+		}, "min_pct"},
+		{"ratelimit out of range", func(c *Config) {
+			c.RateLimit = &RateLimitConfig{FiveHourPercentMaxUsed: 0, SevenDayPercentMaxUsed: 50}
+		}, "five_hour_percent_max_used"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := DefaultConfig()
+			tc.mut(c)
+			errs := Validate(c)
+			require.NotEmpty(t, errs, "expected a validation error")
+			assert.Contains(t, strings.Join(errs, " | "), tc.want)
+		})
+	}
+}
+
+// A clone cooldown of "0" disables the cooldown and must validate — it
+// is a legal duration, not a missing value.
+func TestValidate_AcceptsZeroCloneCooldown(t *testing.T) {
+	c := DefaultConfig()
+	c.Agent = &AgentConfig{CloneCooldown: "0"}
+	assert.Empty(t, Validate(c))
+}
+
+// Normalize fills the same defaults Load applies, on a bare Config.
+func TestNormalize_FillsDefaults(t *testing.T) {
+	c := &Config{}
+	Normalize(c)
+	assert.Equal(t, "info", c.LogLevel)
+	require.NotNil(t, c.Notifications, "notifications block must be populated")
+	assert.Equal(t, 5, c.Notifications.CooldownSeconds)
+	assert.NotEmpty(t, c.Notifications.Transitions)
+}
+
+// Normalize must be idempotent — the dashboard editor relies on running
+// it once server-side producing the same bytes a later GET re-derives.
+func TestNormalize_Idempotent(t *testing.T) {
+	c := &Config{LogLevel: "warn", RateLimit: &RateLimitConfig{FiveHourPercentMaxUsed: 150, SevenDayPercentMaxUsed: 80}}
+	Normalize(c)
+	first, err := json.Marshal(c)
+	require.NoError(t, err)
+	Normalize(c)
+	second, err := json.Marshal(c)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(first), string(second))
 }

@@ -960,6 +960,100 @@ details.group-virtual .group-name { color: #8aa0b8; }
   font-family: inherit; white-space: nowrap;
 }
 #window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
+/* === Config tab — visual editor for ~/.tclaude/config.json ========== */
+#tab-config { max-width: 780px; }
+.cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
+.cfg-intro code { background: #161b22; padding: 1px 5px; border-radius: 4px; color: #c9d1d9; }
+.cfg-section {
+  border: 1px solid #30363d; border-radius: 8px; background: #0f141a;
+  margin: 0 0 14px; padding: 2px 14px 12px;
+}
+.cfg-section > h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: #58a6ff; margin: 13px 0 6px;
+}
+.cfg-field {
+  display: flex; align-items: center; gap: 9px; margin: 9px 0;
+  font-size: 12px; color: #c9d1d9; flex-wrap: wrap;
+}
+.cfg-field .cfg-label { flex: 0 0 168px; color: #c9d1d9; }
+.cfg-field input[type=text], .cfg-field input[type=number], .cfg-field select {
+  background: #010409; border: 1px solid #30363d; border-radius: 4px;
+  color: #d4d4d4; padding: 4px 7px; font-family: inherit; font-size: 12px;
+}
+.cfg-field input[type=text] { min-width: 210px; }
+.cfg-field input[type=number] { width: 84px; }
+.cfg-field input:focus, .cfg-field select:focus { outline: none; border-color: #58a6ff; }
+.cfg-field input:disabled, .cfg-field select:disabled { opacity: 0.4; cursor: default; }
+.cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.cfg-field input[type=checkbox] { cursor: pointer; }
+.cfg-hint { font-size: 11px; color: #7d8590; flex-basis: 100%; padding-left: 177px; }
+.cfg-list { display: flex; flex-direction: column; gap: 5px; width: 100%; padding-left: 177px; }
+.cfg-list-row { display: flex; gap: 6px; align-items: center; }
+.cfg-list-row input[type=text] { flex: 1; min-width: 80px; }
+.cfg-list-row .cfg-arrow { color: #7d8590; flex: 0 0 auto; }
+.cfg-row-del, .cfg-list-add {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 11px;
+  padding: 3px 9px; flex: 0 0 auto;
+}
+.cfg-row-del:hover { border-color: #f85149; color: #f85149; }
+.cfg-list-add { align-self: flex-start; }
+.cfg-list-add:hover { border-color: #58a6ff; }
+.cfg-list-empty { font-size: 11px; color: #7d8590; font-style: italic; }
+.cfg-advanced { margin: 0 0 14px; border: 1px solid #30363d; border-radius: 8px; background: #0f141a; }
+.cfg-advanced > summary {
+  cursor: pointer; font-size: 11px; color: #58a6ff; padding: 10px 14px;
+  text-transform: uppercase; letter-spacing: 0.06em; list-style-position: inside;
+}
+.cfg-advanced .cfg-advanced-body { padding: 0 14px 12px; }
+.cfg-advanced .cfg-hint { padding-left: 0; }
+.cfg-advanced textarea {
+  width: 100%; box-sizing: border-box; background: #010409;
+  border: 1px solid #30363d; border-radius: 6px; color: #d4d4d4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  padding: 8px; min-height: 150px; resize: vertical; margin-top: 6px;
+}
+.cfg-advanced textarea:focus { outline: none; border-color: #58a6ff; }
+.cfg-footer {
+  display: flex; align-items: center; gap: 10px; margin-top: 14px;
+  position: sticky; bottom: 0; background: #0d1117; padding: 12px 0;
+  border-top: 1px solid #21262d;
+}
+.cfg-footer .spacer { flex: 1; }
+.cfg-footer button {
+  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
+  padding: 6px 16px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
+}
+.cfg-footer button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.cfg-footer button:disabled { opacity: 0.5; cursor: default; }
+.cfg-footer button:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-footer button.primary:not(:disabled):hover { border-color: #58a6ff; }
+.cfg-status { font-size: 11px; color: #7d8590; }
+.cfg-errors {
+  border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
+  color: #ffa198; font-size: 12px; padding: 8px 12px; margin: 0 0 14px;
+}
+.cfg-errors strong { color: #ff7b72; }
+.cfg-errors ul { margin: 5px 0 0; padding-left: 18px; }
+/* config diff-confirmation modal */
+.config-diff-modal {
+  background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
+  padding: 18px 20px; width: min(720px, 92vw); max-height: 86vh;
+  display: flex; flex-direction: column;
+}
+.config-diff-modal h3 { margin: 0 0 4px; font-size: 14px; color: #d4d4d4; }
+.config-diff-modal .cfg-diff-sub { font-size: 12px; color: #7d8590; margin: 0 0 10px; }
+.config-diff {
+  flex: 1; overflow: auto; background: #010409; border: 1px solid #21262d;
+  border-radius: 6px; padding: 8px 0; margin-bottom: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.5;
+}
+.config-diff .dl { display: block; padding: 0 12px; white-space: pre-wrap; word-break: break-word; }
+.config-diff .dl.add { background: #12261a; color: #56d364; }
+.config-diff .dl.del { background: #2d1416; color: #f85149; }
+.config-diff .dl.ctx { color: #6e7681; }
 </style>
 </head>
 <body>
@@ -979,6 +1073,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   <button data-tab="links">Links</button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
+  <button data-tab="config">Config</button>
 </nav>
 <main>
   <section id="tab-groups" class="active">
@@ -1067,6 +1162,169 @@ details.group-virtual .group-name { color: #8aa0b8; }
   </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
+  <section id="tab-config">
+    <p class="cfg-intro">
+      Visual editor for <code id="cfg-path">~/.tclaude/config.json</code>. Edits stay in this
+      form until you press <strong>Save changes</strong> — which shows a diff to confirm before
+      anything is written. Most settings apply on next use; a few resolved when
+      <code>agentd</code> starts (spawn rate-limit, clone cooldown) take effect after an
+      agentd restart.
+    </p>
+    <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
+
+    <div class="cfg-section">
+      <h3>General</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Log level</span>
+        <select id="cfg-log-level">
+          <option value="debug">debug</option>
+          <option value="info">info</option>
+          <option value="warn">warn</option>
+          <option value="error">error</option>
+        </select>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Terminal</span>
+        <input type="text" id="cfg-terminal" list="cfg-terminal-list" placeholder="(auto-detect)" autocomplete="off" spellcheck="false" />
+        <datalist id="cfg-terminal-list">
+          <option value="ghostty"></option><option value="kitty"></option>
+          <option value="wezterm"></option><option value="alacritty"></option>
+          <option value="iterm2"></option><option value="gnome-terminal"></option>
+        </datalist>
+        <span class="cfg-hint">Terminal emulator the dashboard's spawn auto-focus / shell-attach opens. Empty = auto-detect.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Auto-compact</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-autocompact-enabled" /> enabled</label>
+        <input type="number" id="cfg-autocompact-pct" min="1" max="100" placeholder="80" />
+        <span>% context</span>
+        <span class="cfg-hint">Auto-run <code>/compact</code> once context usage reaches this percent. Off = no auto-compact.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Record hooks</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-record-hooks" /> log every hook callback payload</label>
+        <span class="cfg-hint">Debugging aid — verbose; leave off for normal use.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
+      <h3>Notifications</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Desktop notifications</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-notif-enabled" /> enabled</label>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Cooldown</span>
+        <input type="number" id="cfg-notif-cooldown" min="0" placeholder="5" />
+        <span>seconds between notifications</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Transitions</span>
+        <span class="cfg-hint" style="padding-left:0">State changes that fire a notification. Use <code>*</code> as a wildcard for any state.</span>
+        <div class="cfg-list" id="cfg-notif-transitions"></div>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Notification command</span>
+        <span class="cfg-hint" style="padding-left:0">Custom command to run instead of the OS default — one argument per row. Empty = OS default.</span>
+        <div class="cfg-list" id="cfg-notif-command"></div>
+      </div>
+    </div>
+
+    <div class="cfg-section">
+      <h3>Rate limit</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Rate-limit gating</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-ratelimit-enabled" /> enabled</label>
+        <span class="cfg-hint">When off, no rate-limit thresholds are configured.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">5-hour window</span>
+        <input type="number" id="cfg-ratelimit-5h" min="0" max="100" step="0.1" placeholder="99" />
+        <span>% max used</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">7-day window</span>
+        <input type="number" id="cfg-ratelimit-7d" min="0" max="100" step="0.1" placeholder="99.9" />
+        <span>% max used</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
+      <h3>Agent coordination</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Auto-launch dashboard</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-agent-autolaunch" /> open the dashboard when <code>agentd serve</code> starts</label>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Clone cooldown</span>
+        <input type="text" id="cfg-agent-clonecooldown" placeholder="1m" autocomplete="off" spellcheck="false" style="min-width:120px" />
+        <span class="cfg-hint">Minimum gap between two agent-initiated clones of the same agent (Go duration: <code>1m</code>, <code>30s</code>, <code>0</code> to disable). Empty = built-in default.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Spawn restriction</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-agent-spawnrestrict" /> agents may only spawn into groups they belong to</label>
+        <span class="cfg-hint">Only affects spawn-capable agents; humans always bypass spawn guardrails.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Spawn rate limit</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-agent-spawnmax-enabled" /> cap</label>
+        <input type="number" id="cfg-agent-spawnmax" min="0" placeholder="10" />
+        <span>spawns / agent / hour</span>
+        <span class="cfg-hint">0 = unlimited. Off = built-in default (10).</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Context nudge</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-nudge-enabled" /> enabled</label>
+        <span>start</span>
+        <input type="number" id="cfg-nudge-min" min="0" max="100" placeholder="30" />
+        <span>%, every</span>
+        <input type="number" id="cfg-nudge-interval" min="1" max="100" placeholder="10" />
+        <span>%</span>
+        <span class="cfg-hint">"Consider reincarnating" nudge as a long-running agent's context fills.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Default permissions</span>
+        <span class="cfg-hint" style="padding-left:0">Permission slugs granted to every agent.</span>
+        <div class="cfg-list" id="cfg-agent-permissions"></div>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Spawn allowed groups</span>
+        <span class="cfg-hint" style="padding-left:0">Extra groups a spawn-capable agent may always spawn into, on top of the restriction above.</span>
+        <div class="cfg-list" id="cfg-agent-allowedgroups"></div>
+      </div>
+    </div>
+
+    <datalist id="cfg-slug-list"></datalist>
+    <datalist id="cfg-group-list"></datalist>
+    <datalist id="cfg-state-list">
+      <option value="*"></option><option value="idle"></option>
+      <option value="working"></option><option value="awaiting_permission"></option>
+      <option value="awaiting_input"></option><option value="error"></option>
+      <option value="exited"></option>
+    </datalist>
+
+    <details class="cfg-advanced" id="cfg-advanced">
+      <summary>Advanced — sudo configuration (raw JSON)</summary>
+      <div class="cfg-advanced-body">
+        <p class="cfg-hint">
+          The <code>agent.sudo</code> block (time-bounded permission elevations, with optional
+          per-conversation overrides) is edited as raw JSON — it is the one nested-map structure
+          without a dedicated form. Leave blank for none. Validated on save.
+        </p>
+        <textarea id="cfg-sudo-json" spellcheck="false" placeholder='{
+  "max_duration": "2h",
+  "default_duration": "30m"
+}'></textarea>
+      </div>
+    </details>
+
+    <div class="cfg-footer">
+      <span class="cfg-status" id="cfg-status">loading…</span>
+      <span class="spacer"></span>
+      <button type="button" id="cfg-reload">Reload</button>
+      <button type="button" id="cfg-save" class="primary">Save changes…</button>
+    </div>
+  </section>
 </main>
 <div class="modal-overlay" id="confirm-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
@@ -1666,6 +1924,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <button id="rename-agent-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="rename-agent-submit" class="primary" type="button">Rename</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="config-diff-modal">
+  <div class="config-diff-modal" role="dialog" aria-modal="true" aria-labelledby="config-diff-title">
+    <h3 id="config-diff-title">Confirm config changes</h3>
+    <p class="cfg-diff-sub" id="config-diff-sub"></p>
+    <div class="config-diff" id="config-diff-body"></div>
+    <div class="modal-buttons">
+      <button id="config-diff-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="config-diff-confirm" class="primary" type="button">Save to config.json</button>
     </div>
   </div>
 </div>
@@ -8705,6 +8975,450 @@ details.group-virtual .group-name { color: #8aa0b8; }
     }
   }
 
+  // ===================================================================
+  // Config tab — visual editor for ~/.tclaude/config.json
+  //
+  // The form binds to a deep clone of the loaded config object, so any
+  // field the form does not surface (a future config key) rides along
+  // untouched. Save is two-phase: a dry-run POST validates server-side
+  // and returns the canonical "after" JSON, which is diffed against the
+  // on-disk baseline and shown in a confirmation modal before the real
+  // write.
+  // ===================================================================
+  let configObj = null;     // last loaded full config object (clone source)
+  let configBaseRaw = '';   // canonical JSON of the config currently on disk
+  let configLoaded = false;
+
+  function cfgInt(id, fallback) {
+    const v = parseInt($('#' + id).value, 10);
+    return Number.isFinite(v) ? v : fallback;
+  }
+  function cfgFloat(id, fallback) {
+    const v = parseFloat($('#' + id).value);
+    return Number.isFinite(v) ? v : fallback;
+  }
+
+  // cfgStringRow / cfgTransitionRow build one removable row of a list
+  // editor. renderCfg*List (re)populates a container with rows + an
+  // "+ add" button; readCfg*List collects the non-blank values back.
+  function cfgStringRow(value, datalistId, placeholder) {
+    const row = document.createElement('div');
+    row.className = 'cfg-list-row';
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.value = value || '';
+    inp.placeholder = placeholder || '';
+    inp.autocomplete = 'off';
+    inp.spellcheck = false;
+    if (datalistId) inp.setAttribute('list', datalistId);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'cfg-row-del';
+    del.textContent = '×';
+    del.title = 'Remove';
+    del.addEventListener('click', () => row.remove());
+    row.appendChild(inp);
+    row.appendChild(del);
+    return row;
+  }
+  function cfgTransitionRow(from, to) {
+    const row = document.createElement('div');
+    row.className = 'cfg-list-row';
+    const mk = (val, ph, role) => {
+      const i = document.createElement('input');
+      i.type = 'text';
+      i.value = val || '';
+      i.placeholder = ph;
+      i.autocomplete = 'off';
+      i.spellcheck = false;
+      i.dataset.role = role;
+      i.setAttribute('list', 'cfg-state-list');
+      return i;
+    };
+    const arrow = document.createElement('span');
+    arrow.className = 'cfg-arrow';
+    arrow.textContent = '→';
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'cfg-row-del';
+    del.textContent = '×';
+    del.title = 'Remove';
+    del.addEventListener('click', () => row.remove());
+    row.appendChild(mk(from, 'from state', 'from'));
+    row.appendChild(arrow);
+    row.appendChild(mk(to, 'to state', 'to'));
+    row.appendChild(del);
+    return row;
+  }
+  function renderCfgStringList(containerId, values, datalistId, placeholder) {
+    const c = $('#' + containerId);
+    c.innerHTML = '';
+    (values || []).forEach(v => c.appendChild(cfgStringRow(v, datalistId, placeholder)));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'cfg-list-add';
+    add.textContent = '+ add';
+    add.addEventListener('click', () => {
+      const row = cfgStringRow('', datalistId, placeholder);
+      c.insertBefore(row, add);
+      row.querySelector('input').focus();
+    });
+    c.appendChild(add);
+  }
+  function renderCfgTransitionList(values) {
+    const c = $('#cfg-notif-transitions');
+    c.innerHTML = '';
+    (values || []).forEach(t => c.appendChild(cfgTransitionRow(t.from, t.to)));
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'cfg-list-add';
+    add.textContent = '+ add transition';
+    add.addEventListener('click', () => {
+      const row = cfgTransitionRow('', '');
+      c.insertBefore(row, add);
+      row.querySelector('input').focus();
+    });
+    c.appendChild(add);
+  }
+  function readCfgStringList(containerId) {
+    return $$('#' + containerId + ' .cfg-list-row input')
+      .map(i => i.value.trim()).filter(Boolean);
+  }
+  function readCfgTransitionList() {
+    const out = [];
+    $$('#cfg-notif-transitions .cfg-list-row').forEach(row => {
+      const from = row.querySelector('input[data-role=from]').value.trim();
+      const to = row.querySelector('input[data-role=to]').value.trim();
+      // A row with either side filled is kept (a half-filled row then
+      // surfaces as a server validation error rather than silently
+      // vanishing); a fully blank row is dropped.
+      if (from || to) out.push({ from, to });
+    });
+    return out;
+  }
+
+  // syncCfgEnables greys out the companion inputs of any unchecked
+  // enable toggle, so the form reads the way it behaves.
+  function syncCfgEnables() {
+    $('#cfg-autocompact-pct').disabled = !$('#cfg-autocompact-enabled').checked;
+    const rl = $('#cfg-ratelimit-enabled').checked;
+    $('#cfg-ratelimit-5h').disabled = !rl;
+    $('#cfg-ratelimit-7d').disabled = !rl;
+    $('#cfg-agent-spawnmax').disabled = !$('#cfg-agent-spawnmax-enabled').checked;
+    const nudge = $('#cfg-nudge-enabled').checked;
+    $('#cfg-nudge-min').disabled = !nudge;
+    $('#cfg-nudge-interval').disabled = !nudge;
+  }
+
+  function populateConfigForm(cfg) {
+    cfg = cfg || {};
+    $('#cfg-log-level').value = cfg.log_level || 'info';
+    $('#cfg-terminal').value = cfg.terminal || '';
+    const acp = cfg.auto_compact_percent;
+    $('#cfg-autocompact-enabled').checked = acp != null;
+    $('#cfg-autocompact-pct').value = acp != null ? acp : '';
+    $('#cfg-record-hooks').checked = !!cfg.record_hooks;
+
+    const n = cfg.notifications || {};
+    $('#cfg-notif-enabled').checked = !!n.enabled;
+    $('#cfg-notif-cooldown').value = n.cooldown_seconds != null ? n.cooldown_seconds : '';
+    renderCfgTransitionList(n.transitions || []);
+    renderCfgStringList('cfg-notif-command', n.notification_command || [], null, 'argument');
+
+    const rl = cfg.ratelimit;
+    $('#cfg-ratelimit-enabled').checked = !!rl;
+    $('#cfg-ratelimit-5h').value = rl ? rl.five_hour_percent_max_used : '';
+    $('#cfg-ratelimit-7d').value = rl ? rl.seven_day_percent_max_used : '';
+
+    const a = cfg.agent || {};
+    $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
+    $('#cfg-agent-clonecooldown').value = a.clone_cooldown || '';
+    // nil / true both mean "on" (the default); only an explicit false is off.
+    $('#cfg-agent-spawnrestrict').checked = a.spawn_group_restriction !== false;
+    const smph = a.spawn_max_per_hour;
+    $('#cfg-agent-spawnmax-enabled').checked = smph != null;
+    $('#cfg-agent-spawnmax').value = smph != null ? smph : '';
+    const cn = a.context_nudge || {};
+    $('#cfg-nudge-enabled').checked = !!cn.enabled;
+    $('#cfg-nudge-min').value = cn.min_pct || '';
+    $('#cfg-nudge-interval').value = cn.interval_pct || '';
+    renderCfgStringList('cfg-agent-permissions', a.default_permissions || [], 'cfg-slug-list', 'permission slug');
+    renderCfgStringList('cfg-agent-allowedgroups', a.spawn_allowed_groups || [], 'cfg-group-list', 'group name');
+
+    $('#cfg-sudo-json').value = a.sudo ? JSON.stringify(a.sudo, null, 2) : '';
+    syncCfgEnables();
+  }
+
+  // assembleConfig builds the config object to submit. It starts from a
+  // deep clone of the loaded config so unknown keys survive, then the
+  // form widgets overwrite the paths they own. Throws on unparseable
+  // advanced sudo JSON — the caller surfaces that as a save error.
+  function assembleConfig() {
+    const cfg = JSON.parse(JSON.stringify(configObj || {}));
+
+    cfg.log_level = $('#cfg-log-level').value;
+    const term = $('#cfg-terminal').value.trim();
+    if (term) cfg.terminal = term; else delete cfg.terminal;
+    if ($('#cfg-autocompact-enabled').checked) cfg.auto_compact_percent = cfgInt('cfg-autocompact-pct', 80);
+    else delete cfg.auto_compact_percent;
+    cfg.record_hooks = $('#cfg-record-hooks').checked;
+
+    const n = (cfg.notifications && typeof cfg.notifications === 'object') ? cfg.notifications : {};
+    n.enabled = $('#cfg-notif-enabled').checked;
+    n.cooldown_seconds = cfgInt('cfg-notif-cooldown', 5);
+    const trans = readCfgTransitionList();
+    if (trans.length) n.transitions = trans; else delete n.transitions;
+    const cmd = readCfgStringList('cfg-notif-command');
+    if (cmd.length) n.notification_command = cmd; else delete n.notification_command;
+    cfg.notifications = n;
+
+    if ($('#cfg-ratelimit-enabled').checked) {
+      cfg.ratelimit = {
+        five_hour_percent_max_used: cfgFloat('cfg-ratelimit-5h', 99),
+        seven_day_percent_max_used: cfgFloat('cfg-ratelimit-7d', 99.9),
+      };
+    } else {
+      delete cfg.ratelimit;
+    }
+
+    const a = (cfg.agent && typeof cfg.agent === 'object') ? cfg.agent : {};
+    // Set optional keys only when meaningful so an all-default agent
+    // block stays genuinely empty (see the empty-agent drop below).
+    if ($('#cfg-agent-autolaunch').checked) a.auto_launch_dashboard = true;
+    else delete a.auto_launch_dashboard;
+    const cc = $('#cfg-agent-clonecooldown').value.trim();
+    if (cc) a.clone_cooldown = cc; else delete a.clone_cooldown;
+    // Checked = "on" = also the default (nil): preserve an existing nil
+    // or true rather than introducing a redundant explicit `true`.
+    if ($('#cfg-agent-spawnrestrict').checked) {
+      if (a.spawn_group_restriction === false) delete a.spawn_group_restriction;
+    } else {
+      a.spawn_group_restriction = false;
+    }
+    if ($('#cfg-agent-spawnmax-enabled').checked) a.spawn_max_per_hour = cfgInt('cfg-agent-spawnmax', 10);
+    else delete a.spawn_max_per_hour;
+    if ($('#cfg-nudge-enabled').checked) {
+      a.context_nudge = {
+        enabled: true,
+        min_pct: cfgInt('cfg-nudge-min', 30),
+        interval_pct: cfgInt('cfg-nudge-interval', 10),
+      };
+    } else {
+      // Disabled: keep any ladder values the user has entered so that
+      // toggling off then on round-trips and an existing on-disk block
+      // (enabled:false but with min/interval) is not spuriously dropped.
+      const minRaw = $('#cfg-nudge-min').value.trim();
+      const ivRaw = $('#cfg-nudge-interval').value.trim();
+      if (minRaw || ivRaw) {
+        a.context_nudge = { enabled: false };
+        if (minRaw) a.context_nudge.min_pct = cfgInt('cfg-nudge-min', 0);
+        if (ivRaw) a.context_nudge.interval_pct = cfgInt('cfg-nudge-interval', 0);
+      } else {
+        delete a.context_nudge;
+      }
+    }
+    const perms = readCfgStringList('cfg-agent-permissions');
+    if (perms.length) a.default_permissions = perms; else delete a.default_permissions;
+    const grps = readCfgStringList('cfg-agent-allowedgroups');
+    if (grps.length) a.spawn_allowed_groups = grps; else delete a.spawn_allowed_groups;
+
+    const sudoRaw = $('#cfg-sudo-json').value.trim();
+    if (sudoRaw) {
+      let parsed;
+      try {
+        parsed = JSON.parse(sudoRaw);
+      } catch (e) {
+        throw new Error('Advanced sudo JSON is not valid JSON: ' + (e.message || e));
+      }
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Advanced sudo JSON must be a JSON object (or left blank).');
+      }
+      a.sudo = parsed;
+    } else {
+      delete a.sudo;
+    }
+    // An all-default agent block marshals to "agent": {} on the server,
+    // which would show as a spurious diff against a config that simply
+    // had no agent key. Drop it when nothing is set.
+    if (Object.keys(a).length) cfg.agent = a;
+    else delete cfg.agent;
+    return cfg;
+  }
+
+  function clearConfigErrors() {
+    const el = $('#cfg-errors');
+    el.style.display = 'none';
+    el.innerHTML = '';
+  }
+  function showConfigErrors(errs) {
+    const el = $('#cfg-errors');
+    el.innerHTML = '<strong>Cannot save — fix these first:</strong><ul>' +
+      errs.map(e => `<li>${esc(e)}</li>`).join('') + '</ul>';
+    el.style.display = 'block';
+    el.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function loadConfigTab() {
+    // Refresh the slug / group datalists from the latest snapshot.
+    const snap = lastSnapshot || {};
+    $('#cfg-slug-list').innerHTML = (snap.slugs || [])
+      .map(s => `<option value="${esc(s.slug)}"></option>`).join('');
+    $('#cfg-group-list').innerHTML = (snap.groups || [])
+      .map(g => `<option value="${esc(g.name)}"></option>`).join('');
+    $('#cfg-status').textContent = 'loading…';
+    clearConfigErrors();
+    try {
+      const r = await fetch('/api/config', { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      configBaseRaw = data.raw || '{}';
+      configObj = JSON.parse(configBaseRaw);
+      if (data.path) $('#cfg-path').textContent = data.path;
+      populateConfigForm(configObj);
+      configLoaded = true;
+      if (data.warning) {
+        $('#cfg-status').textContent = 'loaded with a warning';
+        toast(data.warning, true);
+      } else {
+        $('#cfg-status').textContent = 'loaded — edits stay in this form until you Save';
+      }
+    } catch (e) {
+      configLoaded = false;
+      $('#cfg-status').textContent = 'failed to load';
+      showConfigErrors(['Could not load config: ' + (e.message || e)]);
+    }
+  }
+
+  // cfgLineDiff returns an LCS-based line diff of two strings. Config
+  // JSON is tiny (tens of lines) so the O(n·m) table is trivial.
+  function cfgLineDiff(aStr, bStr) {
+    const a = aStr.split('\n'), b = bStr.split('\n');
+    const n = a.length, m = b.length;
+    const dp = [];
+    for (let i = 0; i <= n; i++) dp.push(new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const out = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { out.push({ t: 'ctx', s: a[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: 'del', s: a[i] }); i++; }
+      else { out.push({ t: 'add', s: b[j] }); j++; }
+    }
+    while (i < n) out.push({ t: 'del', s: a[i++] });
+    while (j < m) out.push({ t: 'add', s: b[j++] });
+    return out;
+  }
+
+  // configDiffModal renders the before/after diff and resolves true on
+  // confirm, false on cancel / outside-click / Escape.
+  function configDiffModal(beforeRaw, afterRaw) {
+    return new Promise(resolve => {
+      const overlay = $('#config-diff-modal');
+      const diff = cfgLineDiff(beforeRaw, afterRaw);
+      const adds = diff.filter(d => d.t === 'add').length;
+      const dels = diff.filter(d => d.t === 'del').length;
+      $('#config-diff-sub').textContent =
+        `${adds} line(s) added, ${dels} removed — writing to ${$('#cfg-path').textContent}`;
+      const sign = { add: '+', del: '-', ctx: ' ' };
+      $('#config-diff-body').innerHTML = diff
+        .map(d => `<span class="dl ${d.t}">${esc(sign[d.t] + ' ' + d.s)}</span>`).join('');
+      const okBtn = $('#config-diff-confirm');
+      const cancelBtn = $('#config-diff-cancel');
+      const cleanup = (result) => {
+        overlay.classList.remove('show');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onOk = () => cleanup(true);
+      const onCancel = () => cleanup(false);
+      const onOverlay = (e) => { if (e.target === overlay) cleanup(false); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(false); };
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      okBtn.focus();
+    });
+  }
+
+  async function saveConfig() {
+    if (!configLoaded) { toast('Config not loaded yet', true); return; }
+    clearConfigErrors();
+    let edited;
+    try {
+      edited = assembleConfig();
+    } catch (e) {
+      showConfigErrors([e.message || String(e)]);
+      return;
+    }
+    const body = JSON.stringify(edited);
+    const saveBtn = $('#cfg-save');
+    saveBtn.disabled = true;
+    try {
+      // Phase 1: dry-run — server validates and returns the canonical
+      // "after" without writing anything.
+      const dry = await fetch('/api/config?dry_run=1', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body,
+      });
+      if (dry.status === 400) {
+        const d = await dry.json().catch(() => ({}));
+        showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
+        return;
+      }
+      if (!dry.ok) { showConfigErrors(['Server error: HTTP ' + dry.status]); return; }
+      const after = (await dry.json()).raw || '';
+      if (after === configBaseRaw) { toast('No changes to save'); return; }
+
+      // Phase 2: human confirms the diff before the real write.
+      const ok = await configDiffModal(configBaseRaw, after);
+      if (!ok) { toast('Save cancelled'); return; }
+
+      const res = await fetch('/api/config', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body,
+      });
+      if (res.status === 400) {
+        const d = await res.json().catch(() => ({}));
+        showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
+        return;
+      }
+      if (!res.ok) { showConfigErrors(['Save failed: HTTP ' + res.status]); return; }
+      const data = await res.json();
+      configBaseRaw = data.raw || configBaseRaw;
+      configObj = JSON.parse(configBaseRaw);
+      populateConfigForm(configObj);
+      $('#cfg-status').textContent = 'saved · ' + new Date().toLocaleTimeString();
+      toast('Config saved to ' + $('#cfg-path').textContent);
+    } catch (e) {
+      showConfigErrors(['Save failed: ' + (e.message || e)]);
+    } finally {
+      saveBtn.disabled = false;
+    }
+  }
+
+  function bindConfigTab() {
+    // Lazy-load on the first activation of the Config tab.
+    const navBtn = $('nav button[data-tab="config"]');
+    if (navBtn) navBtn.addEventListener('click', () => {
+      if (!configLoaded) loadConfigTab();
+    });
+    $('#cfg-reload').addEventListener('click', loadConfigTab);
+    $('#cfg-save').addEventListener('click', saveConfig);
+    ['cfg-autocompact-enabled', 'cfg-ratelimit-enabled',
+      'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
+      $('#' + id).addEventListener('change', syncCfgEnables);
+    });
+  }
+
   bindTabs();
   bindCopy();
   bindDetailsPersistence();
@@ -8728,6 +9442,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   bindCloneAgentModal();
   bindReincarnateAgentModal();
   bindRenameAgentModal();
+  bindConfigTab();
   refresh();
   setInterval(refresh, 5000);
 })();
