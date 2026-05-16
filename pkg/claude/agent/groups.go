@@ -56,6 +56,9 @@ func groupsCmd() *cobra.Command {
 			groupsLinkCmd(),
 			groupsLinksAllCmd(),
 			groupsWhyCanMessageCmd(),
+			groupsExportCmd(),
+			groupsImportCmd(),
+			groupsTransfersCmd(),
 		},
 	}.ToCobra()
 }

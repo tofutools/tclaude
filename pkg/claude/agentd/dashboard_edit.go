@@ -301,6 +301,7 @@ func looksLikeConvID(s string) bool {
 //	DELETE /api/groups/{name}                   → delete group
 //	PATCH  /api/groups/{name}                   → update settings (body: {default_cwd})
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
+//	GET    /api/groups/{name}/export            → download the group as a .zip archive
 //	POST   /api/groups/{name}/spawn             → spawn a new tclaude session and auto-join this group
 //	POST   /api/groups/{name}/members           → add member (body: {conv, role?, descr?})
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
@@ -320,6 +321,8 @@ func looksLikeConvID(s string) bool {
 // one segment of the *escaped* path, so the embedded slash survives.
 func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups", handleDashboardGroupsCreate)
+
+	mux.HandleFunc("GET /api/groups/{name}/export", groupRoute(handleDashboardGroupExport))
 
 	mux.HandleFunc("DELETE /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardDeleteGroup(w, g.Name)
