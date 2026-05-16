@@ -44,19 +44,28 @@ var selfPermsForBundledSkills = []string{
 const protocolVersion = "3"
 
 type Params struct {
-	Check                       bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
-	Force                       bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
-	AbsolutePaths               bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
-	Yes                         bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
-	InstallAgentSkills          bool `long:"install-agent-skills" help:"Install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
-	InstallDefaultAgentPerms    bool `long:"install-default-agent-permissions" help:"Grant the self-targeted permission slugs the bundled agent-* skills exercise (self.rename, self.compact, self.reincarnate, self.clone) as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
+	Check         bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
+	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
+	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude binary in hooks and callbacks"`
+	Yes           bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
+	// The --install-* flags add optional extras on top of the baseline
+	// setup (which always runs). They do not replace or gate the baseline.
+	InstallAll               bool `long:"install-all" help:"Install every optional extra (equivalent to passing all --install-* flags) on top of the baseline setup."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
+	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the self.* permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 }
 
 func Cmd() *cobra.Command {
 	return boa.CmdT[Params]{
-		Use:         "setup",
-		Short:       "Set up tclaude integration (hooks, protocol handler)",
-		Long:        "One-time setup for tclaude integration.\nInstalls hooks in ~/.claude/settings.json and registers the tclaude:// protocol handler for clickable notifications.",
+		Use:   "setup",
+		Short: "Set up tclaude integration (hooks, protocol handler)",
+		Long: "One-time setup for tclaude integration.\n\n" +
+			"The baseline setup always runs: it installs hooks in ~/.claude/settings.json, " +
+			"configures the status bar, and registers the tclaude:// protocol handler for " +
+			"clickable notifications.\n\n" +
+			"The --install-* flags add optional extras on top of the baseline (they do not " +
+			"replace it): --install-agent-skills, --install-default-agent-permissions. " +
+			"--install-all enables every extra.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runSetup(params); err != nil {
@@ -79,29 +88,21 @@ func runSetup(params *Params) error {
 		statusbar.ReinitStatusLineCommand()
 	}
 
-	// --install-agent-skills and --install-default-agent-permissions
-	// are focused operations; when either is set, skip the full setup
-	// flow and just run the requested action(s). The two are kept
-	// separate so users can upgrade their on-disk skills without
-	// re-establishing default permission slugs they may have revoked.
-	if params.InstallAgentSkills || params.InstallDefaultAgentPerms {
-		if params.InstallAgentSkills {
-			if err := installAgentSkills(); err != nil {
-				return err
-			}
-		}
-		if params.InstallDefaultAgentPerms {
-			if err := installDefaultAgentPermissions(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
+	// The baseline setup below always runs — hooks, status bar,
+	// protocol handler, notifications are the core integration and are
+	// never gated behind a flag. The --install-* flags only add
+	// optional extras (agent skills, default agent permissions) on top;
+	// they are applied by installExtras after the baseline completes.
 	fmt.Println("Setting up tclaude integration...")
 	fmt.Println()
 
-	// 0. Check tmux
+	// 0. Check tmux. tmux is a hard prerequisite for tclaude itself, so
+	// a missing tmux aborts the whole run — baseline AND the --install-*
+	// extras. The extras layer on top of the baseline; with no baseline
+	// there is nothing to layer onto, and installing skills onto a
+	// machine that cannot run tclaude is premature. The user installs
+	// tmux and re-runs `tclaude setup`, which then applies the baseline
+	// plus any extras idempotently.
 	fmt.Println("=== Prerequisites ===")
 	if isTmuxInstalled() {
 		fmt.Println("✓ tmux installed")
@@ -268,9 +269,35 @@ func runSetup(params *Params) error {
 		}
 	}
 
+	// 5. Optional extras layered on top of the baseline.
+	if err := installExtras(params); err != nil {
+		return err
+	}
+
 	fmt.Println("\n=== Setup Complete ===")
 	fmt.Println("You can verify with: tclaude setup --check")
 
+	return nil
+}
+
+// installExtras runs the optional, flag-gated installs that layer on
+// top of the always-run baseline setup: the bundled agent-* skills and
+// their default agent permissions. Each --install-* flag selects one
+// extra; --install-all selects every extra. With no flags set this is
+// a no-op, so the baseline-only `tclaude setup` is unaffected.
+func installExtras(params *Params) error {
+	if params.InstallAgentSkills || params.InstallAll {
+		fmt.Println("\n=== Agent Skills ===")
+		if err := installAgentSkills(); err != nil {
+			return err
+		}
+	}
+	if params.InstallDefaultAgentPerms || params.InstallAll {
+		fmt.Println("\n=== Default Agent Permissions ===")
+		if err := installDefaultAgentPermissions(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -291,11 +318,11 @@ func installAgentSkills() error {
 }
 
 // installDefaultAgentPermissions adds the self-targeted permission
-// slugs the bundled agent-* skills exercise (self.rename, self.compact,
-// self.reincarnate) to agent.default_permissions in ~/.tclaude/config.json,
-// creating the section if missing. Idempotent — slugs already present
-// are silently skipped. The user explicitly opted in by passing the
-// flag; we don't prompt further.
+// slugs the bundled agent-* skills exercise (selfPermsForBundledSkills)
+// to agent.default_permissions in ~/.tclaude/config.json, creating the
+// section if missing. Idempotent — slugs already present are silently
+// skipped. The user explicitly opted in by passing the flag (or
+// --install-all); we don't prompt further.
 func installDefaultAgentPermissions() error {
 	cfg, _ := config.Load()
 	if cfg == nil {
