@@ -338,6 +338,18 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	dispatchSend(w, fromID, &req)
+}
+
+// dispatchSend validates and routes a send from fromID. It is the
+// shared core behind two callers: POST /v1/messages (agent sender —
+// identity is the connecting socket peer) and the dashboard's POST
+// /api/message (human sender — identity is the From conv the human
+// picked). Every authority check the send must clear lives below
+// this point — the group member/owner gate inside handleMulticast,
+// the shared-group / message.direct gate inside resolveMessageRouting
+// — so neither caller can route around the gate.
+func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	if strings.TrimSpace(req.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
 		return
@@ -351,7 +363,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(req.To, multicastPrefix) {
-		handleMulticast(w, fromID, &req)
+		handleMulticast(w, fromID, req)
 		return
 	}
 	target, matches, err := agent.ResolveSelector(req.To)
@@ -406,7 +418,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	// ambiguously / not at all / aren't reachable surface as a 4xx so
 	// the sender can fix the typo before any rows are written.
 	if len(req.Cc) > 0 {
-		handleMultiRecipient(w, fromID, finalConv, originalTo, groupID, viaName, &req)
+		handleMultiRecipient(w, fromID, finalConv, originalTo, groupID, viaName, req)
 		return
 	}
 
