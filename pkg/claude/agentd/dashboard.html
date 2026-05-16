@@ -48,6 +48,18 @@ table th.sort-active .sort-arrow { color: #58a6ff; opacity: 1; }
 table tr:hover { background: #161b22; }
 .online { color: #3fb950; }
 .offline { color: #484f58; }
+/* The per-agent status light doubles as an on/off toggle: a real
+   <button> so it is keyboard-reachable, but chrome-free so it still
+   reads as a status dot. Online = green, click turns the agent off;
+   offline = grey, click turns it back on. */
+.status-dot {
+  background: none; border: none; margin: 0; padding: 2px 5px;
+  font: inherit; line-height: 1; cursor: pointer; border-radius: 4px;
+}
+.status-dot-online { color: #3fb950; }
+.status-dot-offline { color: #484f58; }
+.status-dot:hover { background: #1f2937; }
+.status-dot:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .state-pill {
   display: inline-block; padding: 1px 8px; font-size: 11px;
   border-radius: 10px; font-family: ui-monospace, monospace; white-space: nowrap;
@@ -1465,6 +1477,44 @@ details.group-virtual .group-name { color: #8aa0b8; }
       : '<span class="offline" title="offline">○</span>';
   }
 
+  // isIdleState reports whether an agent's recorded status is the
+  // plain "idle" state — the one case the status-dot toggle stops
+  // without a confirm. Everything else an online agent can be in
+  // (working, main_agent_idle, awaiting_permission, awaiting_input,
+  // or an unreported status) counts as non-idle: a click there pops
+  // a confirm first. Mirrors session/status_callback.go's StatusIdle.
+  function isIdleState(state) {
+    return ((state && state.status) || '') === 'idle';
+  }
+
+  // agentStatusDot renders an agent's status light as an interactive
+  // on/off toggle. It replaces the plain onlineDot on every row that
+  // represents a real agent (group members, the Agents tab). Online =
+  // green dot whose click turns the agent off (soft /exit); offline =
+  // grey dot whose click turns it back on (resume). It is a real
+  // <button> so it is keyboard-reachable (Tab + Enter/Space); the
+  // delegated data-act="dot-toggle" handler reuses the very same
+  // /api/agents/{conv}/{stop,resume} endpoints the "shut down" / "wake"
+  // row buttons hit — no parallel endpoint. The confirm-vs-immediate
+  // branch for an online click is decided in the handler from
+  // data-idle (see isIdleState).
+  function agentStatusDot(m) {
+    const label = m.title || m.conv_id;
+    const online = !!m.online;
+    const idle = isIdleState(m.state);
+    const tip = online
+      ? (idle
+          ? `online — click to turn off (soft-stop ${label})`
+          : `online & working — click to turn off (asks first, then soft-stops ${label})`)
+      : `offline — click to turn on (wake ${label})`;
+    const cls = online ? 'status-dot status-dot-online' : 'status-dot status-dot-offline';
+    const glyph = online ? '●' : '○';
+    return `<button type="button" class="${cls}" data-act="dot-toggle"` +
+      ` data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"` +
+      ` data-online="${online ? '1' : '0'}" data-idle="${idle ? '1' : '0'}"` +
+      ` title="${esc(tip)}" aria-label="${esc(tip)}">${glyph}</button>`;
+  }
+
   // statusPillClass mirrors session/list.go's getStatusColorFunc so
   // the dashboard's pill colors match the terminal `session ls` output.
   function statusPillClass(status) {
@@ -2130,7 +2180,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
                 <tr class="dnd-draggable" draggable="true" ${dndSource}
                     data-dnd-conv="${esc(m.conv_id)}"
                     data-dnd-label="${esc(m.title || m.conv_id)}">
-                  <td>${onlineDot(m.online)}</td>
+                  <td>${agentStatusDot(m)}</td>
                   <td class="id">${esc(shortId(m.conv_id))}</td>
                   <td>
                     <div class="rowname">${esc(m.title || '(unnamed)')}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
@@ -2411,7 +2461,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             const subagents = state.subagent_count || 0;
             return `
             <tr>
-              <td>${onlineDot(a.online)}</td>
+              <td>${agentStatusDot({conv_id: a.conv_id, title: a.title, online: a.online, state: state})}</td>
               <td class="id">${esc(shortId(a.conv_id))}</td>
               <td>
                 <span class="rowname">${esc(a.title)}</span>
@@ -6116,6 +6166,55 @@ details.group-virtual .group-name { color: #8aa0b8; }
     overlay.classList.add('show');
   }
 
+  // resumeAgentReq POSTs the resume endpoint, toasts the per-conv
+  // outcome, and refreshes on success. Shared by the "wake" row button
+  // and the offline status-dot click — both wake an agent the exact
+  // same way. Returns true on success.
+  async function resumeAgentReq(conv, label) {
+    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    if (!r.ok) {
+      toast(`wake failed: ${await r.text()}`, true);
+      return false;
+    }
+    // Surface the daemon's per-conv result so an "already-online" no-op
+    // shows up distinctly from a real wake. The body is JSON shaped
+    // like {action: "resumed" | "skipped:already_online" | ...}.
+    try {
+      const out = await r.json();
+      toast(`wake ${label}: ${out.action || 'ok'}`);
+    } catch (_) {
+      toast(`wake ${label}: ok`);
+    }
+    refresh();
+    return true;
+  }
+
+  // stopAgentReq POSTs the stop endpoint with the given blast radius
+  // (force=false → soft /exit, force=true → tmux kill), toasts the
+  // outcome, and refreshes on success. Shared by the "shut down" row
+  // button and the online status-dot click. Returns true on success.
+  async function stopAgentReq(conv, label, force) {
+    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/stop`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({force: !!force}),
+    });
+    if (!r.ok) {
+      toast(`shutdown failed: ${await r.text()}`, true);
+      return false;
+    }
+    try {
+      const out = await r.json();
+      toast(`shutdown ${label}: ${out.action || 'ok'}`);
+    } catch (_) {
+      toast(`shutdown ${label}: ok`);
+    }
+    refresh();
+    return true;
+  }
+
   // bindRowActions delegates clicks on row-action buttons to the
   // appropriate /api/groups/... call. After a successful mutation we
   // re-fetch the snapshot so the badge / button state updates.
@@ -6342,47 +6441,41 @@ details.group-virtual .group-name { color: #8aa0b8; }
             // Resume is non-destructive (only spawns a tmux session;
             // the conv jsonl is unchanged). No confirm modal — fire +
             // toast + refresh on success. Idempotent server-side.
-            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume`, {
-              method: 'POST', credentials: 'same-origin',
-            });
-            ok = r.ok;
-            if (!ok) {
-              toast(`wake failed: ${await r.text()}`, true);
-              break;
-            }
-            // Surface the daemon's per-conv result so an
-            // "already-online" no-op shows up distinctly from a real
-            // wake. The body is JSON shaped like
-            // {action: "resumed" | "skipped:already_online" | ...}.
-            try {
-              const out = await r.json();
-              toast(`wake ${label}: ${out.action || 'ok'}`);
-            } catch (_) {
-              toast(`wake ${label}: ok`);
-            }
-            refresh();
-            return; // Skip the default toast — already toasted above.
+            await resumeAgentReq(conv, label);
+            return; // Skip the default toast — resumeAgentReq toasted.
           }
           case 'shutdown-agent': {
             const choice = await shutdownConfirm({label});
             if (!choice) return;
-            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/stop`, {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({force: choice === 'force'}),
-            });
-            ok = r.ok;
-            if (!ok) {
-              toast(`shutdown failed: ${await r.text()}`, true);
-              break;
+            await stopAgentReq(conv, label, choice === 'force');
+            return; // Skip the default toast — stopAgentReq toasted.
+          }
+          case 'dot-toggle': {
+            // The per-agent status light doubles as an on/off toggle.
+            // It reuses the same resume / stop endpoints the "wake" and
+            // "shut down" row buttons hit — no parallel endpoint.
+            //   - offline dot → wake (resume). Non-destructive; starting
+            //     a session never needs a confirm.
+            //   - online + idle dot → soft-stop straight away. A misclick
+            //     only halts a non-busy, resumable session — low harm.
+            //   - online + working dot → confirm first, then soft-stop.
+            // online / idle are read from data-* set by agentStatusDot.
+            const online = btn.getAttribute('data-online') === '1';
+            if (!online) {
+              await resumeAgentReq(conv, label);
+              return;
             }
-            try {
-              const out = await r.json();
-              toast(`shutdown ${label}: ${out.action || 'ok'}`);
-            } catch (_) {
-              toast(`shutdown ${label}: ok`);
+            const idle = btn.getAttribute('data-idle') === '1';
+            if (!idle) {
+              const confirmed = await confirmModal({
+                title: 'Turn off a working agent?',
+                body: 'This agent is currently working. Turning it off injects /exit into its pane — in-flight tool calls are interrupted, but the conversation is preserved and the agent can be turned back on (resumed) later. This does not delete or retire anything.',
+                meta: label,
+                okLabel: 'Turn off',
+              });
+              if (!confirmed) return;
             }
-            refresh();
+            await stopAgentReq(conv, label, false);
             return;
           }
           case 'add-member': {
