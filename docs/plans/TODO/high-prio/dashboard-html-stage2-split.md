@@ -6,9 +6,10 @@ served bytes.
 
 ## 1. What Stage 2 is
 
-`pkg/claude/agentd/dashboard.html` — the agentd browser dashboard — was an
-8,736-line single file, ~81% inline JavaScript. A staged refactor is making it
-maintainable under one hard rule: **every mechanical stage produces
+`pkg/claude/agentd/dashboard.html` — the agentd browser dashboard — had grown
+into a single file of **10,303 lines** (verified at commit `31dfeaa`, its last
+single-file state before Stage 1), ~79% of it inline JavaScript. A staged refactor is
+making it maintainable under one hard rule: **every mechanical stage produces
 byte-identical served output.**
 
 **Stage 1 shipped** (PR #152, commit `2b20159`). The inline `<style>` and
@@ -49,7 +50,7 @@ Current shape of `dashboard.js`, by natural section (line ranges approximate):
 | 4575–6227    | `refresh()`, tab/copy/sort bindings, confirm/window/emergency/cleanup modals, toast |
 | 6228–7021    | `bindRowActions()` — one ~800-line delegated click router            |
 | 7022–7599    | drag-and-drop (`bindDnd` + `runDnd*`)                                 |
-| 7600–8129    | Config tab                                                            |
+| 7600–8100    | Config tab                                                            |
 | 8101–8130    | boot — the `bind*()` / `refresh()` / `setInterval` calls, IIFE close  |
 
 ## 2. The (a) vs (b) analysis
