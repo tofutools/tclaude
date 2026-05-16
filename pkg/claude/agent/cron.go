@@ -116,7 +116,8 @@ func runCronLs(stdout, stderr io.Writer) int {
 type cronAddParams struct {
 	Target   string `long:"target" optional:"true" help:"Selector for the conv that receives the cron message. Defaults to self when omitted."`
 	Interval string `long:"interval" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick)."`
-	Body     string `long:"body" help:"Message body the cron job sends each tick."`
+	Body     string `long:"body" optional:"true" help:"Message body the cron job sends each tick. Required unless --file is given."`
+	File     string `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
 	Subject  string `long:"subject" optional:"true" help:"Optional subject. Auto-prefixed with [cron:<name>] when delivered."`
 	Name     string `long:"name" optional:"true" help:"Short label for the job (used in dashboard + log lines)."`
 }
@@ -125,25 +126,29 @@ func cronAddCmd() *cobra.Command {
 	return boa.CmdT[cronAddParams]{
 		Use:         "add",
 		Short:       "Schedule a new recurring cron job",
-		Long:        "Creates a job that fires every --interval and delivers --body to --target. Defaults to self-targeted when --target is omitted.",
+		Long:        "Creates a job that fires every --interval and delivers a message body to --target. Defaults to self-targeted when --target is omitted. Give the body inline with --body, or with --file <path> (or --file - to read stdin) — the file form sidesteps shell quoting, including backticks the shell would otherwise eat from an inline string.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *cronAddParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
 			return nil
 		},
 		RunFunc: func(p *cronAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronAdd(p, os.Stdout, os.Stderr))
+			os.Exit(runCronAdd(p, os.Stdin, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runCronAdd(p *cronAddParams, stdout, stderr io.Writer) int {
+func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(p.Interval) == "" {
 		fmt.Fprintln(stderr, "Error: --interval is required (e.g. --interval 10m)")
 		return rcInvalidArg
 	}
-	if strings.TrimSpace(p.Body) == "" {
-		fmt.Fprintln(stderr, "Error: --body is required (the message text the cron job sends)")
+	jobBody, rc := resolveBodyInput(p.Body, p.File, "--body", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	if strings.TrimSpace(jobBody) == "" {
+		fmt.Fprintln(stderr, "Error: a message body is required — pass --body or --file")
 		return rcInvalidArg
 	}
 	target := strings.TrimSpace(p.Target)
@@ -158,7 +163,7 @@ func runCronAdd(p *cronAddParams, stdout, stderr io.Writer) int {
 	body := map[string]any{
 		"target":   target,
 		"interval": p.Interval,
-		"body":     p.Body,
+		"body":     jobBody,
 	}
 	if p.Subject != "" {
 		body["subject"] = p.Subject

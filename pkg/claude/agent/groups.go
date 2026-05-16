@@ -1087,7 +1087,7 @@ func runGroupsSetDefaultDir(p *groupsSetDefaultDirParams, stdout, stderr io.Writ
 type groupsSetContextParams struct {
 	Group    string `pos:"true" help:"Group to configure"`
 	Context  string `pos:"true" optional:"true" help:"Startup context delivered to the inbox of agents spawned into this group. Omit (and omit --file) to clear it."`
-	File     string `long:"file" short:"f" optional:"true" help:"Read the startup context from this file instead of the positional argument (handy for multi-line context)."`
+	File     string `long:"file" short:"f" optional:"true" help:"Read the startup context from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing context. Mutually exclusive with the positional argument."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
@@ -1098,10 +1098,12 @@ func groupsSetContextCmd() *cobra.Command {
 		Long: "Set a block of guidance that the daemon delivers to the inbox of every " +
 			"agent spawned into this group, as part of its startup briefing. Pass " +
 			"the context as the second argument, or with --file to load it from " +
-			"a file (better for multi-line context). Omit both to clear it. " +
-			"Each spawn can still opt out individually (the dashboard's 'include " +
-			"group default context' checkbox). Gated on the `groups.rename` " +
-			"permission (default human-only).",
+			"a file (--file - reads stdin). The file form is better for long or " +
+			"multi-line context and sidesteps shell quoting, including backticks " +
+			"the shell would otherwise eat from an inline string. Omit both to " +
+			"clear it. Each spawn can still opt out individually (the dashboard's " +
+			"'include group default context' checkbox). Gated on the " +
+			"`groups.rename` permission (default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetContextParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1109,28 +1111,19 @@ func groupsSetContextCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetContextParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetContext(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetContext(p, os.Stdin, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runGroupsSetContext(p *groupsSetContextParams, stdout, stderr io.Writer) int {
+func runGroupsSetContext(p *groupsSetContextParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if p.Group == "" {
 		fmt.Fprintf(stderr, "Error: group name is required\n")
 		return rcInvalidArg
 	}
-	if p.Context != "" && p.File != "" {
-		fmt.Fprintf(stderr, "Error: pass the context as an argument OR via --file, not both\n")
-		return rcInvalidArg
-	}
-	context := p.Context
-	if p.File != "" {
-		data, err := os.ReadFile(p.File)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error: reading %q: %v\n", p.File, err)
-			return rcInvalidArg
-		}
-		context = string(data)
+	context, rc := resolveBodyInput(p.Context, p.File, "the context argument", stdin, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc

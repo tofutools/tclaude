@@ -104,7 +104,7 @@ func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
 	stderr := new(bytes.Buffer)
 	resp, rc := agent.RunSpawn(
 		&agent.SpawnParams{Group: "alpha", Name: "worker", InitialMessage: brief},
-		new(bytes.Buffer), stderr,
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
 	)
 	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
 	require.NotNil(t, resp, "RunSpawn resp")
@@ -115,6 +115,59 @@ func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
 	// Contains is an exact-substring match — newlines included — so this
 	// proves the brief survived CLI → wire → daemon → DB verbatim.
 	assert.Contains(t, rows[0].Body, brief, "multi-line brief must survive verbatim")
+}
+
+// Scenario: a human runs `tclaude agent spawn alpha worker --file brief.md`.
+// The CLI reads the brief from the file and delivers it to the new
+// agent's inbox exactly as --initial-message would — same delivery path,
+// just a different source. Loading from a file also sidesteps shell
+// quoting, so a brief containing backticks survives verbatim.
+func TestSpawnCLI_InitialMessageFromFile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	const brief = "Task: wire up the `--file` flag.\n\nNotes:\n- backticks must survive\n- newlines too"
+	briefPath := filepath.Join(t.TempDir(), "brief.md")
+	require.NoError(t, os.WriteFile(briefPath, []byte(brief), 0o600))
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", File: briefPath},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+	require.NotNil(t, resp, "RunSpawn resp")
+
+	rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, rows, 1, "spawned agent should have one inbox message")
+	assert.Contains(t, rows[0].Body, brief, "file-sourced brief must reach the inbox verbatim")
+}
+
+// Scenario: a human pipes a brief in — `generate-brief | tclaude agent
+// spawn alpha worker --file -`. The CLI reads stdin and delivers the
+// brief like any other.
+func TestSpawnCLI_InitialMessageFromStdin(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	const brief = "piped brief\nsecond line"
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", File: "-"},
+		new(bytes.Buffer), stderr, bytes.NewBufferString(brief),
+	)
+	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+	require.NotNil(t, resp, "RunSpawn resp")
+
+	rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
+	require.NoError(t, err, "ListAgentMessagesForConv")
+	require.Len(t, rows, 1, "spawned agent should have one inbox message")
+	assert.Contains(t, rows[0].Body, brief, "stdin-piped brief must reach the inbox verbatim")
 }
 
 // Scenario: a human runs `tclaude agent spawn alpha worker` from a
@@ -139,7 +192,7 @@ func TestSpawnCLI_DefaultsCwdToCallersCwd(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	resp, rc := agent.RunSpawn(
 		&agent.SpawnParams{Group: "alpha", Name: "worker"},
-		stdout, new(bytes.Buffer),
+		stdout, new(bytes.Buffer), new(bytes.Buffer),
 	)
 	require.Equal(t, 0, rc, "RunSpawn stdout=%s", stdout.String())
 	require.NotNil(t, resp, "RunSpawn returned nil response")
@@ -166,7 +219,7 @@ func TestSpawnCLI_ExplicitCwdOverridesCallersCwd(t *testing.T) {
 
 	resp, rc := agent.RunSpawn(
 		&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: explicitCwd},
-		new(bytes.Buffer), new(bytes.Buffer),
+		new(bytes.Buffer), new(bytes.Buffer), new(bytes.Buffer),
 	)
 	require.Equal(t, 0, rc, "RunSpawn rc")
 	require.NotNil(t, resp, "RunSpawn resp")

@@ -146,7 +146,25 @@ tclaude agent compact "now reload /tmp/task-notes.md and continue"
 
 # Or reincarnate to start fresh while keeping your identity
 tclaude agent reincarnate "reload /tmp/task-notes.md and continue"
+
+# Long, multi-line, or code-heavy handoff? Read it from a file
+# instead of quoting it on the command line ('-' reads stdin).
+tclaude agent reincarnate --file /tmp/handoff.md
+tclaude agent clone --file -  <<EOF
+multi-paragraph handoff brief, paths in `backticks`, the lot
+EOF
 ```
+
+**Prefer `--file` for any non-trivial handoff.** `reincarnate` and
+`clone` accept `--file <path>` (and `--file -` for stdin) to read the
+follow-up from a file instead of an inline argument. It is mutually
+exclusive with the positional follow-up. Use it whenever the handoff is
+long, spans multiple lines, or contains code — a follow-up typed on the
+command line is mangled by the shell, and **backticks are eaten
+outright** (`` `path` `` runs `path` as a command substitution before
+tclaude sees it). A file-sourced follow-up is immune: it is read
+verbatim. The notes file you write before reincarnating is the natural
+thing to point `--file` at.
 
 For `compact` and `clone` the follow-up prompt is optional; for
 `reincarnate` it is **required** (see above). For `compact` the
@@ -249,6 +267,14 @@ multi-line if it helps; if the agent turns out to be solo, the daemon
 rejects it with a message telling you to single-line it under 4096
 bytes. All limits are enforced by the daemon (the security boundary)
 and mirrored client-side for fast errors.
+
+The charset note above is about what tclaude accepts — but a follow-up
+passed inline must *also* survive the shell first. Backticks, `$(…)`,
+`$VAR`, and unbalanced quotes are all rewritten by the shell before
+tclaude is invoked. To pass a follow-up containing any of those (code
+identifiers in backticks are the common case), use `--file` and put it
+in a file — a file-sourced follow-up is read verbatim, no shell in the
+way.
 
 ## What can go wrong
 

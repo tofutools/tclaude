@@ -17,7 +17,7 @@ type replyParams struct {
 	Body    string `pos:"true" optional:"true" help:"Reply body (or use --stdin / --file)"`
 	Subject string `long:"subject" short:"s" optional:"true" help:"Override the auto-generated 'Re: …' subject"`
 	Stdin   bool   `long:"stdin" help:"Read body from stdin"`
-	File    string `long:"file" short:"f" optional:"true" help:"Read body from a file"`
+	File    string `long:"file" short:"f" optional:"true" help:"Read body from a file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies (the shell eats backticks from an inline body)."`
 }
 
 func replyCmd() *cobra.Command {

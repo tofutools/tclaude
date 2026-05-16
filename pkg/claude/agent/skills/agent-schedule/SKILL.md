@@ -17,7 +17,7 @@ for solo targets).
 | Command                                                     | What it does                                                                          |
 |-------------------------------------------------------------|---------------------------------------------------------------------------------------|
 | `tclaude agent cron ls`                                     | List jobs visible to you (your own + jobs targeting you + jobs in groups you own)     |
-| `tclaude agent cron add --target <sel> --interval 10m --body "..." [--subject "..."] [--name "..."]` | Schedule a new job. Defaults to self-target when `--target` is omitted.               |
+| `tclaude agent cron add --target <sel> --interval 10m --body "..." [--subject "..."] [--name "..."]` | Schedule a new job. Defaults to self-target when `--target` is omitted. Give the body inline with `--body`, or read it from a file with `--file <path>` (`--file -` reads stdin). |
 | `tclaude agent cron rm <id>`                                | Delete a job by ID (from `cron ls`)                                                   |
 | `tclaude agent cron logs <id> [--limit N]`                  | Show recent fires (newest first), with status (`ok` / `send_failed` / `no_target`)    |
 
@@ -81,6 +81,22 @@ tclaude agent cron add \
 Workers will receive these as inbox messages with the subject
 auto-prefixed: `[cron:po-ping-backend] status check`. The prefix
 makes it obvious this is a scheduled nudge vs a hand-typed message.
+
+### Long or code-heavy job body — use `--file`
+
+Instead of `--body "..."`, pass `--file <path>` to read the job's
+message body from a file (`--file -` reads stdin). `--body` and
+`--file` are mutually exclusive. Reach for `--file` whenever the body
+is long, multi-line, or contains code: a `--body` string typed on the
+command line goes through the shell first, and **backticks in it are
+eaten** — `` `cmd` `` runs as a command substitution before tclaude
+sees it. A body read from a file is taken verbatim, so it is the safe
+choice for any non-trivial cron message.
+
+```bash
+tclaude agent cron add --target backend-worker --interval 30m \
+  --name nightly-brief --file /tmp/cron-brief.md
+```
 
 To check execution history:
 
