@@ -30,6 +30,17 @@ import (
 //                 decluttered. The agent process keeps running; the
 //                 window can be brought back at any time with focus.
 //
+// unfocus is detach-only — it runs `tmux detach-client`, never a
+// window-close. tmux clients are per-tty, so detaching is per window
+// OR per tab: a sibling tab and the window frame are never touched. A
+// terminal that tclaude spawned (the focus button / auto-focus open a
+// window or tab whose sole command is `tclaude session attach`) exits
+// and closes ITSELF once detach ends that attach process — and only
+// that one tab/window. A shell the human attached by hand just returns
+// to its prompt. We deliberately do not hunt down the OS window and
+// close it: that would be the heavy-handed thing that closes a whole
+// multi-tab window.
+//
 // Two scopes, picked the same way as the emergency-shutdown buttons:
 //   - {"scope":"group","group":"<name>"} — the members of one group.
 //   - {"scope":"all"}                    — every active agent on the

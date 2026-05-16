@@ -97,6 +97,27 @@ Both are package-var seams (mirroring the `openTerminal` seam in
 `dir.go`) so flow tests can record the dispatch set without popping
 real OS windows.
 
+## What unfocus does to windows
+
+unfocus is **detach-only** — it runs `tmux detach-client`, never a
+window-close. tmux clients are per-tty, so a detach is per window OR
+per tab; a sibling tab and the window frame are never touched.
+
+- A terminal **tclaude spawned** (the focus button / auto-focus open a
+  window or tab whose sole command is `tclaude session attach`) exits
+  and closes **itself** once detach ends that attach process — and
+  only that one tab/window.
+- A shell the human **attached by hand** (`tmux attach` typed into an
+  existing shell) just returns to its prompt; nothing closes.
+- Worst case — a window whose every tab was an agent attach, all
+  unfocused — is the now-empty window closing itself: correct
+  decluttering, and it never closes a window that still holds a
+  non-agent tab.
+
+We deliberately do **not** hunt down the OS window and close it: that
+would be the heavy-handed thing that closes a whole multi-tab window.
+`detach-client` is the gentlest correct mechanism.
+
 ## Files
 
 - `pkg/claude/agentd/window_focus.go` — endpoint, scope resolution,
