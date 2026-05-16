@@ -26,6 +26,40 @@ type Config struct {
 	// terminal-selection priority: the `tclaude agentd serve
 	// --terminal` flag overrides it; auto-detect is the fallback.
 	Terminal string `json:"terminal,omitempty"`
+
+	// HumanNotify configures the human-notification channel — the
+	// external transport an agent reaches the human through via
+	// `tclaude agent notify-human`. Nil / absent means the channel is
+	// not set up and `notify-human` returns a clear "not configured"
+	// error. Hand-written; the daemon reads but never rewrites it.
+	HumanNotify *HumanNotifyConfig `json:"human_notify,omitempty"`
+}
+
+// HumanNotifyConfig configures the human-notification channel.
+//
+// Transport names the active transport. Today the only implemented
+// value is "telegram"; it is a string (not a bool) so a later email /
+// Slack transport is a config change, not a schema change. An empty
+// Transport with the section otherwise present is treated as "not
+// configured".
+//
+// Telegram carries the Telegram-transport settings; it is consulted
+// only when Transport == "telegram".
+type HumanNotifyConfig struct {
+	Transport string          `json:"transport,omitempty"`
+	Telegram  *TelegramConfig `json:"telegram,omitempty"`
+}
+
+// TelegramConfig holds the two values the human supplies to wire up the
+// Telegram transport:
+//
+//   - BotToken — a bot token from @BotFather (message it, /newbot,
+//     pick a name + username, it returns a "<digits>:<rest>" token).
+//   - ChatID — the target chat. After messaging the new bot once,
+//     resolve it with `tclaude agent notify-human resolve-chat-id`.
+type TelegramConfig struct {
+	BotToken string `json:"bot_token,omitempty"`
+	ChatID   string `json:"chat_id,omitempty"`
 }
 
 // AgentConfig holds agent-coordination knobs (see agents_todo.md).

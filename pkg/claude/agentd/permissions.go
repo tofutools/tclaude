@@ -158,6 +158,10 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermGroupsImport,
 		Description: "Import a group from a .zip archive, recreating the group, its agents, permissions and conversations on this machine (tclaude agent groups import). Not default-granted (effectively human-only).",
 	},
+	{
+		Slug:        PermHumanNotify,
+		Description: "Send the human a notification on an external channel — e.g. Telegram — via `tclaude agent notify-human`. Lets a coordinating agent (the PO) reach the human outside the terminal. Not default-granted: the human grants it to the PO so workers cannot spam the channel.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

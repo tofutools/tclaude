@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/humannotify"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -246,6 +248,19 @@ func SetWorktreeFnsForTest(
 		inspectWorktreeFn = prevInspect
 		removeWorktreeFn = prevRemove
 	}
+}
+
+// SetHumanNotifyTransportForTest swaps the human-notify transport
+// resolver behind POST /v1/notify-human, so flow tests can drive the
+// permission-gating + delivery path against a fake transport without a
+// real Telegram call. The fake receives the resolved *config.Config and
+// returns a Transport (or an error — return humannotify.ErrNotConfigured
+// to exercise the not-configured branch). Returns a restore func for
+// t.Cleanup. Mirrors the openTerminal / gitInfoResolver seams.
+func SetHumanNotifyTransportForTest(fn func(*config.Config) (humannotify.Transport, error)) func() {
+	prev := resolveHumanNotifyTransport
+	resolveHumanNotifyTransport = fn
+	return func() { resolveHumanNotifyTransport = prev }
 }
 
 type dashTestHandler struct{ inner http.Handler }
