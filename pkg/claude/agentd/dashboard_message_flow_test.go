@@ -173,3 +173,58 @@ func TestDashboardMessage_EmptyBody_BadRequest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, rows, "a rejected send writes no row")
 }
+
+// Scenario: the authority gate is enforced on the dashboard path too.
+// A solo send whose From conv shares no group with the target and
+// holds no message.direct permission is refused with 403 — the exact
+// verdict POST /v1/messages would return for the same agent. This is
+// the gate-regression test: it proves /api/message reaches the gate
+// inside dispatchSend rather than bypassing it (the analog of the
+// export route's missing-asDashboardHumanPeer-wrap 401 test).
+func TestDashboardMessage_UnauthorizedFrom_Forbidden(t *testing.T) {
+	f := newFlow(t)
+
+	// Two ungrouped agents — no shared group, and the sender holds no
+	// message.direct grant, so the off-group direct send has no path.
+	const sender = "dmsg-unau-bbbb-cccc-000000000001"
+	const recip = "dmsg-recp-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(sender, "lone-sender")
+	f.HaveConvWithTitle(recip, "lone-recip")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(recip)
+
+	mux := dashMessageMux(t)
+	rec := postDashMessage(t, mux, map[string]any{
+		"from": sender, "to": recip, "body": "should be refused",
+	})
+	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+
+	rows, err := db.ListAgentMessagesForConv(recip, 100)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a gate-refused send writes no row")
+}
+
+// Scenario: the multicast gate is enforced on the dashboard path too.
+// A From conv that is neither a member nor an owner of the target
+// group cannot multicast into it — handleMulticast's member/owner
+// gate refuses it with 403, and no recipient row is written.
+func TestDashboardMessage_NonMemberFrom_GroupForbidden(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("team")
+	const member = "dmsg-mem4-bbbb-cccc-000000000001"
+	const outsider = "dmsg-outs-bbbb-cccc-000000000002"
+	f.HaveMember("team", member)
+	f.HaveConvWithTitle(outsider, "outsider")
+	f.HaveEnrolledAgent(outsider)
+
+	mux := dashMessageMux(t)
+	rec := postDashMessage(t, mux, map[string]any{
+		"from": outsider, "to": "group:team", "body": "let me in",
+	})
+	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+
+	rows, err := db.ListAgentMessagesForConv(member, 100)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a gate-refused multicast writes no row")
+}
