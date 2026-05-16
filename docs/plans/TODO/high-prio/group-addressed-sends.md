@@ -187,10 +187,17 @@ Role string `long:"role" optional:"true" help:"Restrict a group: multicast to me
   This is a UX nicety; the daemon check in (e) is the authoritative one.
 - `runMessageDaemon`: add `"role": p.Role` to the JSON payload when
   non-empty.
-- Multicast result rendering: when a role filter was active and
-  `resp.Recipients` is empty, print a role-aware line instead of the
-  current *"you're the only member"* text — e.g. *"No members with role
-  %q in group %q; nothing sent."* (still `rcOK` — see Open questions).
+- Multicast result rendering: **always print the resolved recipient
+  count** so a typo'd `--role` is visible rather than silently doing
+  nothing (PO ask, msg #102). The non-empty path already prints
+  `N recipients (...)`; the empty path must too:
+  - role filter active, `resp.Recipients` empty → role-aware line that
+    states the count, e.g. *"0 recipients: no members with role %q in
+    group %q; nothing sent."* — replaces the current *"you're the only
+    member"* text, which would be a wrong explanation.
+  - no role filter, `resp.Recipients` empty → keep today's
+    *"you're the only member"* line (it already conveys 0 sent).
+  Both stay `rcOK` — see Open questions.
 - Help text: update the `Target` positional help and the command `Long`
   to document `group:<name|id>`, empty `group:` = own group, and
   `--role`.
@@ -278,14 +285,16 @@ disappear entirely.
   `main` (post-`universal-inbox`), with the flow tests above. This doc
   moves to `docs/plans/DONE/`.
 
-## Open questions
+## Resolved questions
 
-Low-stakes; defaults chosen, PO can veto:
+Both were raised as low-stakes "defaults chosen, PO can veto" — **PO
+approved both as defaulted** (msg #102):
 
 - **Role match case-sensitivity → case-insensitive** (`EqualFold`).
-  Forgiving; avoids `PO`/`po` surprises. Alternative: exact match.
+  Roles are free-form human-set strings; nobody sanely creates `PO` and
+  `po` as distinct roles. Confirmed.
 - **`--role` matches nobody → non-error `200`** with an empty recipient
-  list, consistent with today's "empty group" multicast. The CLI line
-  makes a typo'd role visible to the sender. Alternative: treat zero
-  matches as a `404`/`400` so a typo fails loud. Recommendation: keep it
-  `200` for idempotency + consistency; the clear CLI message is enough.
+  list, consistent with today's "empty group" multicast. Confirmed, with
+  one PO ask now folded into (f): the CLI must **always print the
+  resolved recipient count** (incl. `0 recipients`) so a typo'd `--role`
+  is visibly a no-op rather than a silent one.
