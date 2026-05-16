@@ -78,8 +78,8 @@ func TestCleanup_Group_RemovesOfflineKeepsOnline(t *testing.T) {
 	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
 	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
 	f.HaveGroup("squad")
-	f.HaveMember("squad", offlineConv, "stale")
-	f.HaveMember("squad", onlineConv, "live")
+	f.HaveMember("squad", offlineConv)
+	f.HaveMember("squad", onlineConv)
 	f.MarkOffline("tmux-offl")
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -105,7 +105,7 @@ func TestCleanup_Group_OwnerExcludedUnlessOptedIn(t *testing.T) {
 	f.HaveConvWithTitle(ownerConv, "boss")
 	f.HaveAliveSession(ownerConv, "spwn-ownr", "tmux-ownr", "/tmp/ownr")
 	g := f.HaveGroup("squad")
-	f.HaveMember("squad", ownerConv, "boss")
+	f.HaveMember("squad", ownerConv)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, ownerConv, "test"), "seed owner")
 	f.MarkOffline("tmux-ownr")
 
@@ -143,8 +143,8 @@ func TestCleanup_Agents_DeleteOfflineSkipsOnline(t *testing.T) {
 	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
 	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
 	f.HaveGroup("squad")
-	f.HaveMember("squad", offlineConv, "stale")
-	f.HaveMember("squad", onlineConv, "live")
+	f.HaveMember("squad", offlineConv)
+	f.HaveMember("squad", onlineConv)
 	f.MarkOffline("tmux-offl")
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -171,8 +171,8 @@ func TestCleanup_Agents_RemoveFromAllGroupsKeepsConv(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-many", "tmux-many", "/tmp/many")
 	f.HaveGroup("alpha")
 	f.HaveGroup("beta")
-	f.HaveMember("alpha", conv, "rover")
-	f.HaveMember("beta", conv, "rover")
+	f.HaveMember("alpha", conv)
+	f.HaveMember("beta", conv)
 	f.MarkOffline("tmux-many")
 
 	mux := agentd.BuildDashboardHandlerForTest()

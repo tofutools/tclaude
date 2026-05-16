@@ -31,8 +31,8 @@ func TestHeadAlias_SurvivesReincarnationChain(t *testing.T) {
 
 	g := f.HaveGroup("alpha")
 	_ = g
-	f.HaveMember("alpha", aliceConv, "alice")
-	f.HaveMember("alpha", bobV2, "bob") // only the head is a live group member
+	f.HaveMember("alpha", aliceConv)
+	f.HaveMember("alpha", bobV2) // only the head is a live group member
 
 	// Human sets the global handle pointing at the original Bob.
 	require.NoError(t, db.SetHeadAlias("po", bobV0, ""), "SetHeadAlias")

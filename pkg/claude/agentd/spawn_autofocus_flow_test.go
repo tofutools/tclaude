@@ -26,7 +26,7 @@ func TestSpawn_AutoFocusOpensAttachTerminal(t *testing.T) {
 	}))
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias": "worker", "auto_focus": true,
+		"name": "worker", "auto_focus": true,
 	})
 	if spawn.Code != http.StatusOK {
 		t.Fatalf("spawn: status=%d body=%s", spawn.Code, spawn.Raw)
@@ -55,7 +55,7 @@ func TestSpawn_NoAutoFocusByDefault(t *testing.T) {
 	}))
 
 	// auto_focus omitted entirely — the CLI / agent-API default.
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"alias": "worker"})
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
 	if spawn.Code != http.StatusOK {
 		t.Fatalf("spawn (omitted): status=%d body=%s", spawn.Code, spawn.Raw)
 	}
@@ -64,7 +64,7 @@ func TestSpawn_NoAutoFocusByDefault(t *testing.T) {
 	// auto_focus explicitly false behaves the same.
 	opened = false
 	spawn = f.AsHuman().SpawnWith("alpha", map[string]any{
-		"alias": "worker2", "auto_focus": false,
+		"name": "worker2", "auto_focus": false,
 	})
 	if spawn.Code != http.StatusOK {
 		t.Fatalf("spawn (false): status=%d body=%s", spawn.Code, spawn.Raw)

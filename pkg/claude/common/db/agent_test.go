@@ -43,10 +43,10 @@ func TestAgentGroupMembershipAndShared(t *testing.T) {
 	b, _ := CreateAgentGroup("beta", "")
 
 	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
-		GroupID: a, ConvID: "conv-1", Alias: "planner", Role: "lead",
+		GroupID: a, ConvID: "conv-1", Role: "lead",
 	}), "AddAgentGroupMember")
 	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
-		GroupID: a, ConvID: "conv-2", Alias: "reviewer",
+		GroupID: a, ConvID: "conv-2", Role: "reviewer",
 	}), "AddAgentGroupMember")
 	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
 		GroupID: b, ConvID: "conv-2",
@@ -500,7 +500,7 @@ func TestDeleteAgentByConvID_PurgesAllReferencingTables(t *testing.T) {
 
 	// Membership + ownership.
 	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
-		GroupID: g, ConvID: target, Alias: "victim",
+		GroupID: g, ConvID: target,
 	}))
 	require.NoError(t, AddAgentGroupOwner(g, target, ""))
 	// A peer member so messages can route through the group.

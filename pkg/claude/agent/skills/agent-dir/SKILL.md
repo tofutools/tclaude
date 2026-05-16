@@ -73,7 +73,7 @@ it pops a window on their desktop. Don't call it speculatively.
 
 ## Manager pattern: another agent's directory
 
-Pass a selector (alias, conv-id, or 8+-char prefix) to query a peer
+Pass a selector (title, conv-id, or 8+-char prefix) to query a peer
 instead of yourself:
 
 ```bash

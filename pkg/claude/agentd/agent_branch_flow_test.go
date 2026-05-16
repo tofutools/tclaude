@@ -41,8 +41,8 @@ func TestAgentBranch_SurfacedAcrossListings(t *testing.T) {
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(aliceConv, "spwn-alice", "tmux-alice", "/tmp/wt/login", wantBranch[aliceConv])
 	f.HaveAliveSessionOnBranch(bobConv, "spwn-bob", "tmux-bob", "/tmp/wt/crash", wantBranch[bobConv])
-	f.HaveMember("squad", aliceConv, "alice")
-	f.HaveMember("squad", bobConv, "bob")
+	f.HaveMember("squad", aliceConv)
+	f.HaveMember("squad", bobConv)
 
 	// Stand in for the watch model: scan each conv's .jsonl into
 	// conv_index so the cached-read surfaces (peers, group members)
@@ -119,7 +119,7 @@ func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(conv, "spwn-x", "tmux-x", "/tmp/wt/x", "main")
-	f.HaveMember("squad", conv, "switcher")
+	f.HaveMember("squad", conv)
 
 	// First scan: the agent is still on the branch it started on, so
 	// the current and startup branches agree.

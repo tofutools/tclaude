@@ -119,7 +119,7 @@ func TestReadBody(t *testing.T) {
 }
 
 // TestFormatRecipientList covers the audience renderer in inbox read:
-// alias-decorated entries get "alias <prefix>", aliasless entries fall
+// title-decorated entries get "title <prefix>", titleless entries fall
 // back to the short prefix, and empty input yields "".
 func TestFormatRecipientList(t *testing.T) {
 	tests := []struct {
@@ -128,10 +128,10 @@ func TestFormatRecipientList(t *testing.T) {
 		want string
 	}{
 		{"empty", nil, ""},
-		{"alias only", []recipientLine{{ConvID: "11111111-aaaa", Alias: "planner"}}, "planner <11111111>"},
-		{"no alias", []recipientLine{{ConvID: "22222222-bbbb"}}, "22222222"},
+		{"title only", []recipientLine{{ConvID: "11111111-aaaa", Title: "planner"}}, "planner <11111111>"},
+		{"no title", []recipientLine{{ConvID: "22222222-bbbb"}}, "22222222"},
 		{"mixed", []recipientLine{
-			{ConvID: "11111111-aaaa", Alias: "planner"},
+			{ConvID: "11111111-aaaa", Title: "planner"},
 			{ConvID: "22222222-bbbb"},
 		}, "planner <11111111>, 22222222"},
 	}

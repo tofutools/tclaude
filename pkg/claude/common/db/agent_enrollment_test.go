@@ -33,8 +33,8 @@ func TestBackfillAgentEnrollment(t *testing.T) {
 	_, err = d.Exec(`DELETE FROM agent_enrollment`)
 	require.NoError(t, err, "clear agent_enrollment")
 
-	mustExec(t, d, `INSERT INTO agent_group_members (group_id, conv_id, alias, role, descr, joined_at)
-		VALUES (?, 'member-conv', 'm', '', '', '2020-01-01T00:00:00Z')`, gid)
+	mustExec(t, d, `INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
+		VALUES (?, 'member-conv', '', '', '2020-01-01T00:00:00Z')`, gid)
 	mustExec(t, d, `INSERT INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
 		VALUES (?, 'owner-conv', '2020-01-01T00:00:00Z', '')`, gid)
 	mustExec(t, d, `INSERT INTO agent_permissions (conv_id, slug, granted_at, granted_by)

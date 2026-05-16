@@ -31,7 +31,7 @@ import (
 
 type compactParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"Optional follow-up prompt to submit after /compact lands (quote multi-word strings)"`
-	Target   string `long:"target" optional:"true" help:"Compact ANOTHER agent's pane instead of self. Selector: alias, full conv-id, or 8+-char prefix. Requires the agent.compact permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Compact ANOTHER agent's pane instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.compact permission, or being an owner of a group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 

@@ -18,7 +18,7 @@ import (
 
 // upsertConvIndexLocal mirrors the agent package's test helper: drops a
 // placeholder .jsonl on disk + indexes it so ResolveSelector finds the
-// conv-id by alias / prefix.
+// conv-id by title / prefix.
 func upsertConvIndexLocal(t *testing.T, convID, customTitle string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "proj")

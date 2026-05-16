@@ -25,7 +25,7 @@ import (
 
 type reincarnateParams struct {
 	FollowUp string `pos:"true" help:"First-turn prompt for the new agent (REQUIRED). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
-	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: alias, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 

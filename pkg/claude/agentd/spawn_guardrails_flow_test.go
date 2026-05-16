@@ -30,7 +30,7 @@ func TestSpawnGuardrails_AgentSpawnsIntoOwnGroup_OK(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("alpha", lead, "lead")
+	f.HaveMember("alpha", lead)
 	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
 
 	// f.Spawn fatals on any non-200 — the success IS the assertion.
@@ -74,7 +74,7 @@ func TestSpawnGuardrails_AgentSpawnsIntoForeignGroup_Refused(t *testing.T) {
 	f.HaveGroup("beta")  // the caller's own group
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("beta", lead, "lead")
+	f.HaveMember("beta", lead)
 	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
 
 	resp := f.AsAgent(lead).SpawnWith("alpha", map[string]any{"alias": "worker"})
@@ -100,7 +100,7 @@ func TestSpawnGuardrails_AllowlistWidensForeignSpawn(t *testing.T) {
 	f.HaveGroup("beta")
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("beta", lead, "lead")
+	f.HaveMember("beta", lead)
 	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
 
 	resp := f.AsAgent(lead).SpawnWith("alpha", map[string]any{"alias": "worker"})
@@ -121,7 +121,7 @@ func TestSpawnGuardrails_RestrictionToggleOff_AllowsForeignSpawn(t *testing.T) {
 	f.HaveGroup("beta")
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("beta", lead, "lead")
+	f.HaveMember("beta", lead)
 	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
 
 	resp := f.AsAgent(lead).SpawnWith("alpha", map[string]any{"alias": "worker"})
@@ -143,7 +143,7 @@ func TestSpawnGuardrails_RateLimit_RefusesAfterN(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("alpha", lead, "lead")
+	f.HaveMember("alpha", lead)
 	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
 
 	a := f.AsAgent(lead)
@@ -176,8 +176,8 @@ func TestSpawnGuardrails_RateLimit_IsPerCaller(t *testing.T) {
 
 	const leadA = "leda-aaaa-bbbb-cccc-111111111111"
 	const leadB = "ledb-aaaa-bbbb-cccc-222222222222"
-	f.HaveMember("alpha", leadA, "lead-a")
-	f.HaveMember("alpha", leadB, "lead-b")
+	f.HaveMember("alpha", leadA)
+	f.HaveMember("alpha", leadB)
 	require.NoError(t, db.GrantAgentPermission(leadA, agentd.PermGroupsSpawn, "test"))
 	require.NoError(t, db.GrantAgentPermission(leadB, agentd.PermGroupsSpawn, "test"))
 
@@ -198,7 +198,7 @@ func TestSpawnGuardrails_MaxMembers_RefusesWhenFull_EvenForHuman(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	const incumbent = "exis-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("alpha", incumbent, "incumbent")
+	f.HaveMember("alpha", incumbent)
 	// Cap the group at its current size — it is now full.
 	_, err := db.SetAgentGroupMaxMembers("alpha", 1)
 	require.NoError(t, err, "SetAgentGroupMaxMembers")
@@ -221,7 +221,7 @@ func TestSpawnGuardrails_MaxMembers_RaisingCapAllowsSpawn(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	const incumbent = "exis-aaaa-bbbb-cccc-111111111111"
-	f.HaveMember("alpha", incumbent, "incumbent")
+	f.HaveMember("alpha", incumbent)
 	_, err := db.SetAgentGroupMaxMembers("alpha", 1)
 	require.NoError(t, err)
 

@@ -44,10 +44,9 @@ type Config struct {
 // Sudo carries the human-curated defaults for `tclaude agent sudo`
 // (time-bounded permission elevations). Hand-written; the daemon
 // reads but never rewrites it. Empty fields fall back to the agentd
-// hardcoded defaults. Per-conv overrides via Sudo.Overrides[] use the
-// same selector-shaped keys (conv-id / alias / title, with prefix
-// match against title and conv-id) the historical permission_overrides
-// block did.
+// hardcoded defaults. Per-conv overrides via Sudo.Overrides[] use
+// selector-shaped keys (conv-id / title, with prefix match against
+// title and conv-id) the historical permission_overrides block did.
 //
 // AutoLaunchDashboard, when true, makes `tclaude agentd serve` open the
 // browser dashboard on startup — the persistent twin of the
@@ -151,7 +150,7 @@ func (c *ContextNudgeConfig) Resolved() (enabled bool, minPct, intervalPct int) 
 // SudoConfig overrides the hardcoded sudo defaults globally. Each
 // field is optional: an empty/unset value preserves the agentd
 // fallback. Use Overrides to scope overrides to a specific conv /
-// alias / title.
+// title.
 //
 // Blocklist is a pointer-to-slice so we can distinguish "field
 // absent → keep the default block of permissions.grant /
@@ -178,13 +177,13 @@ type SudoConfigOverride struct {
 }
 
 // MatchSudoOverride picks the SudoConfigOverride that applies to the
-// caller (convID / alias / title). Match shape mirrors the historical
+// caller (convID / title). Match shape mirrors the historical
 // permission_overrides[<conv-id|prefix|title>] pattern: a key matches
-// if it equals one of the three identifiers OR is a prefix of conv-id
+// if it equals one of the two identifiers OR is a prefix of conv-id
 // (≥8 chars) or title. The longest matching key wins so a more
 // specific override beats a generic prefix. Returns nil when no key
 // matches.
-func (c *Config) MatchSudoOverride(convID, alias, title string) *SudoConfigOverride {
+func (c *Config) MatchSudoOverride(convID, title string) *SudoConfigOverride {
 	if c == nil || c.Agent == nil || c.Agent.Sudo == nil {
 		return nil
 	}
@@ -193,7 +192,7 @@ func (c *Config) MatchSudoOverride(convID, alias, title string) *SudoConfigOverr
 		best    *SudoConfigOverride
 	)
 	for k, v := range c.Agent.Sudo.Overrides {
-		if !sudoOverrideKeyMatches(k, convID, alias, title) {
+		if !sudoOverrideKeyMatches(k, convID, title) {
 			continue
 		}
 		if len(k) > len(bestKey) {
@@ -204,11 +203,11 @@ func (c *Config) MatchSudoOverride(convID, alias, title string) *SudoConfigOverr
 	return best
 }
 
-func sudoOverrideKeyMatches(key, convID, alias, title string) bool {
+func sudoOverrideKeyMatches(key, convID, title string) bool {
 	if key == "" {
 		return false
 	}
-	if key == convID || key == alias || key == title {
+	if key == convID || key == title {
 		return true
 	}
 	// Conv-id prefix match: 8 chars is the same threshold ResolveSelector

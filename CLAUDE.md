@@ -68,7 +68,7 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 Two layers, both run under bare `go test ./...`:
 
 - **Unit tests** sit next to the code they cover and exercise individual functions / handlers / DB ops in isolation.
-- **Flow tests** live in `pkg/claude/agentd/*_flow_test.go` and exercise multi-step coordination (spawn → /rename → resume, reincarnate-of-r-N, clone alias derivation, delete cleanup) via the daemon's HTTP mux. The daemon, conv, agent, session — all production code paths run unchanged. Only the two subprocess boundaries are mocked.
+- **Flow tests** live in `pkg/claude/agentd/*_flow_test.go` and exercise multi-step coordination (spawn → /rename → resume, reincarnate-of-r-N, clone title derivation, delete cleanup) via the daemon's HTTP mux. The daemon, conv, agent, session — all production code paths run unchanged. Only the two subprocess boundaries are mocked.
 
 **The two boundaries** (and only two) are interface vars in production source:
 

@@ -30,7 +30,7 @@ import (
 //
 // With no selector the target is the calling agent itself (resolved by
 // the daemon from the socket peer's process tree). Pass a selector
-// (alias / conv-id / 8+-char prefix) to query another agent — useful
+// (title / conv-id / 8+-char prefix) to query another agent — useful
 // from a manager agent or for a human at the CLI.
 func dirCmd() *cobra.Command {
 	return boa.CmdT[dirParams]{
@@ -57,7 +57,7 @@ func dirCmd() *cobra.Command {
 }
 
 type dirParams struct {
-	Selector string `pos:"true" optional:"true" help:"Agent to query: alias, conv-id, or 8+-char prefix. Omit for self."`
+	Selector string `pos:"true" optional:"true" help:"Agent to query: title, conv-id, or 8+-char prefix. Omit for self."`
 	Start    bool   `long:"start" help:"Use the launch directory (where Claude Code started)."`
 	Worktree bool   `long:"worktree" help:"Use the git worktree/repo root containing the current working dir (falls back to the launch dir if not in a git repo)."`
 	Open     bool   `long:"open" help:"Open a terminal window in the directory (via tclaude agentd) instead of printing it."`

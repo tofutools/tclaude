@@ -181,7 +181,7 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 	gID, _ := db.CreateAgentGroup("team", "")
 	const aliceConv = "alic-aaaa-bbbb-cccc-1111"
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: aliceConv, Alias: "alice",
+		GroupID: gID, ConvID: aliceConv,
 	}), "AddAgentGroupMember")
 
 	now := time.Now()
@@ -343,7 +343,7 @@ func TestSnapshot_ActiveSudoEmptyByDefault(t *testing.T) {
 
 	gID, _ := db.CreateAgentGroup("team", "")
 	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "alice", Alias: "alice",
+		GroupID: gID, ConvID: "alice",
 	}), "AddAgentGroupMember")
 
 	w := httptest.NewRecorder()

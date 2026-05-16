@@ -77,7 +77,7 @@ In the Groups tab, each group's settings/expanded view gets a
   current process state, only the conv jsonl survives").
 - **Grace period before auto-reincarnate:** preset chips (30s /
   2m / 5m / 15m / off). Default 5m.
-- Shows a preview row per current group member: "alias — context
+- Shows a preview row per current group member: "title — context
   N% (nudge / auto / nothing pending)".
 
 Also surface in the Agents tab per-agent: which group's policy

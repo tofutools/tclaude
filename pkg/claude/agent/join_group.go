@@ -40,7 +40,7 @@ func RunJoinGroup(params *session.NewParams) error {
 		}
 	}
 	body := map[string]any{
-		"alias":           params.Alias,
+		"name":            params.Name,
 		"role":            params.Role,
 		"descr":           params.Descr,
 		"cwd":             cwd,

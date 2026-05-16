@@ -125,7 +125,7 @@ func TestEnrollment_RetireDemotesAndRevokes(t *testing.T) {
 	const conv = "retr-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "doomed-agent")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", conv, "doomed") // HaveMember enrolls it
+	f.HaveMember("alpha", conv) // HaveMember enrolls it
 	require.NoError(t, db.GrantAgentPermission(conv, "self.rename", "human"))
 
 	pre := fetchDashSnapshot(t, mux)
@@ -181,7 +181,7 @@ func TestEnrollment_CleanupRetireTier(t *testing.T) {
 	const conv = "clnr-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "offline-worker")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", conv, "worker") // enrolled, offline (no session)
+	f.HaveMember("alpha", conv) // enrolled, offline (no session)
 
 	resp := postCleanup(t, mux, "/api/cleanup/agents",
 		`{"agents":["`+conv+`"],"mode":"retire"}`)
@@ -253,7 +253,7 @@ func TestEnrollment_ClonePreservesAgentStatus(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-clon", "tmux-clon", "/tmp/clon")
 	f.HaveEnrolledAgent(conv)
 
-	c := f.CloneFresh(conv, "worker-2")
+	c := f.CloneFresh(conv)
 	require.NotEmpty(t, c.NewConv, "clone should return a new conv-id")
 
 	cloneState, err := db.EnrollmentState(c.NewConv)

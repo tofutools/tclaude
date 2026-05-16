@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// The spawn modal's "Sync worktree branch with alias" checkbox lives
+// The spawn modal's "Sync worktree branch with name" checkbox lives
 // entirely in dashboard.html's embedded JS — there's no server code
 // path to exercise with a flow test. This guards the markup/JS against
 // being silently dropped in a future refactor of that file: it asserts
 // the checkbox exists and defaults on, the sync helpers are present,
 // and the events that drive (and detach) the sync are actually wired.
-func TestDashboardHTML_WorktreeAliasSyncWired(t *testing.T) {
+func TestDashboardHTML_WorktreeNameSyncWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
 		if !strings.Contains(dashboardHTML, needle) {
@@ -21,7 +21,7 @@ func TestDashboardHTML_WorktreeAliasSyncWired(t *testing.T) {
 
 	// The checkbox exists and is auto-checked.
 	must(`<input id="agent-spawn-wt-sync" type="checkbox" checked />`,
-		"alias-sync checkbox renders, default-on")
+		"name-sync checkbox renders, default-on")
 
 	// Sync helpers.
 	must("function applyWtSync(", "checkbox -> worktree picker bridge")
@@ -31,10 +31,10 @@ func TestDashboardHTML_WorktreeAliasSyncWired(t *testing.T) {
 	// disabled to match the worktree <select>.
 	must("syncEl.disabled = !usable;", "checkbox gated on a valid CWD/repo")
 
-	// Editing the alias mirrors into the worktree branch; toggling the
+	// Editing the name mirrors into the worktree branch; toggling the
 	// checkbox re-applies the sync.
-	must("$('#agent-spawn-alias').addEventListener('input', applyWtSync);",
-		"alias edits drive the sync")
+	must("$('#agent-spawn-name').addEventListener('input', applyWtSync);",
+		"name edits drive the sync")
 	must("$('#agent-spawn-wt-sync').addEventListener('change', applyWtSync);",
 		"toggling the checkbox re-applies the sync")
 

@@ -26,7 +26,7 @@ func TestPeers_RefreshesNeverIndexedMemberFromSource(t *testing.T) {
 	const bobConv = "bbbbbbb1-aaaa-bbbb-cccc-000000000001"
 
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", bobConv, "bob")
+	f.HaveMember("alpha", bobConv)
 	// HaveAliveSession materialises Bob's .jsonl + session row but does
 	// NOT index him into conv_index.
 	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", "/tmp/bob")
@@ -43,9 +43,8 @@ func TestPeers_RefreshesNeverIndexedMemberFromSource(t *testing.T) {
 
 	peer := f.AsHuman().FindPeer(bobConv)
 	require.NotNil(t, peer, "human's `agent ls` should list bob")
-	// NAME comes from the .jsonl refresh; ALIAS is the per-group handle.
+	// NAME comes from the .jsonl refresh — an agent's single name.
 	assert.Equal(t, "Bob The Builder", peer.Title, "name refreshed from source")
-	assert.Equal(t, "bob", peer.Alias, "per-group alias unchanged")
 }
 
 // Scenario: an agent was indexed once, then renamed again afterwards.
@@ -60,7 +59,7 @@ func TestPeers_RefreshesStaleTitleFromSource(t *testing.T) {
 	const bobConv = "bbbbbbb2-aaaa-bbbb-cccc-000000000002"
 
 	f.HaveGroup("beta")
-	f.HaveMember("beta", bobConv, "bob")
+	f.HaveMember("beta", bobConv)
 	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", "/tmp/bob")
 
 	cc := f.World.CCs.GetByConvID(bobConv)

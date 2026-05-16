@@ -20,10 +20,9 @@ import (
 //	POST /api/groups/{B}/members            # add clone to drop target
 //
 // This flow test pins the daemon-side guarantee: after both calls,
-// the new conv-id is a member of B (with the clone-alias suffix
-// scheme intact) and the original is untouched in A. Mirrors the
-// shape of the existing v1 clone tests but routes through the
-// dashboard cookie endpoint twin.
+// the new conv-id is a member of B and the original is untouched in
+// A. Mirrors the shape of the existing v1 clone tests but routes
+// through the dashboard cookie endpoint twin.
 func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
@@ -36,7 +35,7 @@ func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
 	srcGroup := f.HaveGroup("alpha")
 	tgtGroup := f.HaveGroup("beta")
 	_ = tgtGroup
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
@@ -75,20 +74,16 @@ func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
 	srcMembers, _ := db.ListAgentGroupMembers(srcGroup.ID)
 	{
 		hasOld, hasNew := false, false
-		var newAlias string
 		for _, m := range srcMembers {
 			if m.ConvID == oldConv {
 				hasOld = true
 			}
 			if m.ConvID == cloneResp.NewConv {
 				hasNew = true
-				newAlias = m.Alias
 			}
 		}
 		assert.True(t, hasOld, "alpha lost its original: %s missing from members", oldConv)
 		assert.True(t, hasNew, "alpha lost the clone: %s missing from members", cloneResp.NewConv)
-		assert.Equal(t, "worker-c-1", newAlias,
-			"clone alias in alpha (the inherited per-group alias from runCloneOrchestration)")
 	}
 
 	// Snapshot also surfaces both groups containing the clone.
@@ -124,7 +119,7 @@ func TestDashboardDnDClone_OntoSourceGroupYieldsSibling(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, "spwn-sib", "tmux-sib", "/tmp/sib")
 	srcGroup := f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 

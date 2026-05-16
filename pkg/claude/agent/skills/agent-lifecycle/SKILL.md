@@ -12,7 +12,7 @@ You have three commands for managing your own context window:
 | `tclaude agent context-info`                       | Print the current context_pct + any pending /compact claim                                                                                |
 | `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued.                                            |
 | `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
-| `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (with `-clone` alias suffix) and, by default, conv history. |
+| `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. |
 
 `context-info` is read-only and self-targeted, so no permission slug.
 `compact`, `reincarnate`, and `clone` are gated on `self.compact`,
@@ -61,8 +61,8 @@ already deep into the rotted regime. Pre-empt it: poll
   - You're at the very tail of the context window and even a compact
     won't buy enough headroom.
 - `clone` — fork instead of replace. Original keeps running; the
-  clone spawns alongside as a sibling that inherits identity (with a
-  `-clone` alias suffix in shared groups) and, by default, the same
+  clone spawns alongside as a sibling that inherits identity (renamed
+  to a `<title>-c-<N>` title suffix) and, by default, the same
   conv jsonl. Use when:
   - You want to **try a parallel approach** without losing the
     current one — the original keeps your line of investigation, the
@@ -161,7 +161,7 @@ new pane is ready, which is more reliable.
 
 The daemon migrates onto the new conv-id:
 
-- Group memberships (with their alias / role / descr per group)
+- Group memberships (with their role / descr per group)
 - Per-conv permission grants (the rows in `agent_permissions`)
 - Group ownerships
 
@@ -219,8 +219,8 @@ tclaude agent permissions grant default self.reincarnate
 **Option 2 — only for one specific conversation.**
 
 ```bash
-tclaude agent permissions grant <conv-id-or-alias> self.compact
-tclaude agent permissions grant <conv-id-or-alias> self.reincarnate
+tclaude agent permissions grant <conv-id-or-title> self.compact
+tclaude agent permissions grant <conv-id-or-title> self.reincarnate
 ```
 
 If you see `Error: caller is not granted permission "self.compact"`,
@@ -286,7 +286,7 @@ reincarnate needs) that you can't. Same architecture as
 
 All three lifecycle verbs (`compact`, `reincarnate`, `clone`) accept
 an optional `--target <selector>` that swaps the action onto a peer
-instead of yourself. The selector is the same alias / conv-id /
+instead of yourself. The selector is the same title / conv-id /
 8+-char prefix the rest of `tclaude agent` accepts.
 
 ```bash

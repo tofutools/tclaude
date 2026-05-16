@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 34
+const currentVersion = 35
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -227,6 +227,12 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 35 {
+		if err := migrateV34toV35(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -287,6 +293,31 @@ func migrateV32toV33(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v32→v33: %w", err)
+	}
+	return nil
+}
+
+// migrateV34toV35 drops the now-defunct agent_group_members.alias
+// column. An agent has exactly ONE name — its conversation title
+// (conv_index.custom_title). The per-group alias was pure duplication:
+// spawn always set it equal to the title (the daemon injected
+// `/rename <alias>`), and per-group semantics are already carried by
+// the member role/descr fields. See docs/plans/DONE/scrap-agent-alias.md.
+//
+// A plain ALTER TABLE ... DROP COLUMN suffices: the column is a bare
+// TEXT field — not part of the (group_id, conv_id) primary key, not
+// indexed (idx_agent_group_members_conv covers conv_id only), and not
+// referenced by any foreign key, generated column or CHECK constraint.
+// SQLite has supported DROP COLUMN since 3.35 and the bundled
+// modernc.org/sqlite is well past that, so no table-rebuild dance is
+// needed.
+func migrateV34toV35(db *sql.DB) error {
+	if _, err := db.Exec(`
+		ALTER TABLE agent_group_members DROP COLUMN alias;
+
+		UPDATE schema_version SET version = 35;
+	`); err != nil {
+		return fmt.Errorf("migrate v34→v35 (drop agent_group_members.alias): %w", err)
 	}
 	return nil
 }

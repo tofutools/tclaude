@@ -41,7 +41,7 @@ type messageParams struct {
 	Subject string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
 	Stdin   bool     `long:"stdin" help:"Read body from stdin"`
 	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file"`
-	Cc      []string `long:"cc" optional:"true" help:"CC recipient (alias / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
+	Cc      []string `long:"cc" optional:"true" help:"CC recipient (title / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
 }
 
 func messageCmd() *cobra.Command {
@@ -88,7 +88,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		RedirectedFrom string `json:"redirected_from,omitempty"`
 		Recipients     []struct {
 			ConvID         string `json:"conv_id"`
-			Alias          string `json:"alias,omitempty"`
+			Title          string `json:"title,omitempty"`
 			MessageID      int64  `json:"message_id"`
 			Delivered      bool   `json:"delivered"`
 			RedirectedFrom string `json:"redirected_from,omitempty"`
@@ -138,9 +138,9 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		fmt.Fprintf(stdout, "%s via group %q: %d recipients (%d delivered, %d queued).\n",
 			header, resp.ViaGroup, len(resp.Recipients), delivered, len(resp.Recipients)-delivered)
 		for _, rcp := range resp.Recipients {
-			alias := rcp.Alias
-			if alias == "" {
-				alias = "(unnamed)"
+			name := rcp.Title
+			if name == "" {
+				name = "(unnamed)"
 			}
 			state := "queued"
 			if rcp.Delivered {
@@ -154,7 +154,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 				// were typing a stale UUID.
 				redirect = fmt.Sprintf("  [redirected from %s, superseded]", short(rcp.RedirectedFrom))
 			}
-			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, short(rcp.ConvID), alias, state, redirect)
+			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, short(rcp.ConvID), name, state, redirect)
 		}
 		return rcOK
 	}
@@ -225,9 +225,9 @@ func runMessageDirect(p *messageParams, d *messageDeps, body string, stdout, std
 	if d != nil && d.nudge != nil {
 		if sess, err := db.FindSessionByConvID(target.ConvID); err == nil && sess != nil && sess.TmuxSession != "" {
 			if session.IsTmuxSessionAlive(sess.TmuxSession) {
-				fromAlias := aliasFor(via.ID, fromID)
-				if fromAlias == "" {
-					fromAlias = "(unnamed)"
+				fromTitle := titleFor(fromID)
+				if fromTitle == "" {
+					fromTitle = "(unnamed)"
 				}
 				subjectClause := ""
 				if p.Subject != "" {
@@ -235,7 +235,7 @@ func runMessageDirect(p *messageParams, d *messageDeps, body string, stdout, std
 				}
 				nudge := fmt.Sprintf(
 					"[system: new agent message #%d from %s (%s) in group %q.%s read with: tclaude agent inbox read %d. reply with: tclaude agent message %s \"...\".]",
-					id, fromAlias, short(fromID), via.Name, subjectClause, id, short(fromID),
+					id, fromTitle, short(fromID), via.Name, subjectClause, id, short(fromID),
 				)
 				if err := d.nudge(sess.TmuxSession, nudge); err != nil {
 					slog.Warn("failed to nudge target tmux session", "error", err, "session", sess.TmuxSession, "module", "agent")
@@ -295,16 +295,10 @@ func readBody(p *messageParams, stdin io.Reader, stderr io.Writer) (string, int)
 	return p.Body, rcOK
 }
 
-// aliasFor returns the alias (or empty) recorded for (group, conv) — used
-// in the nudge text so the receiver sees a friendly name.
-func aliasFor(groupID int64, convID string) string {
-	m, err := db.FindMemberInGroup(groupID, convID)
-	if err != nil || m == nil {
-		return ""
-	}
-	if m.Alias != "" {
-		return m.Alias
-	}
+// titleFor returns convID's display title from the conv_index cache,
+// or "" when the conv isn't indexed. Cheap (no .jsonl rescan) — used
+// to decorate message nudges and inbox headers with a friendly name.
+func titleFor(convID string) string {
 	row, _ := db.GetConvIndex(convID)
 	if row != nil {
 		return displayTitle(row)

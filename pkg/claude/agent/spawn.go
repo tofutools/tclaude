@@ -28,11 +28,11 @@ type SpawnResponse struct {
 // the actual spawn + group-join; this struct just shapes the request.
 type SpawnParams struct {
 	Group          string `pos:"true" help:"Existing group to join the new agent into"`
-	Alias          string `long:"alias" short:"a" optional:"true" help:"Alias for the new member in this group (e.g. 'reviewer')"`
+	Name           string `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
 	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
 	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
-	ReplyTo        string `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title / group alias). Defaults to you when you are an agent; empty for a human-initiated spawn"`
+	ReplyTo        string `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
 	Cwd            string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
 	Timeout        string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
 
@@ -49,9 +49,10 @@ func spawnCmd() *cobra.Command {
 		Short: "Spawn a fresh CC session and add it to an existing group",
 		Long: "Launches `tclaude session new -d --global` with a generated label, " +
 			"waits for the new conv-id to materialise, and adds the new conv to <group> " +
-			"with the given alias/role/descr. Prints the attach command for the new session. " +
-			"--descr is the short dashboard label; pass --initial-message to deliver the new " +
-			"agent its first task brief to its inbox (newlines preserved). " +
+			"with the given role/descr. --name becomes the new agent's conversation " +
+			"title (injected as /rename on its pane). Prints the attach command for the " +
+			"new session. --descr is the short dashboard label; pass --initial-message to " +
+			"deliver the new agent its first task brief to its inbox (newlines preserved). " +
 			"Requires the `groups.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
@@ -111,7 +112,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer) (*SpawnResponse, int) {
 		}
 	}
 	body := map[string]any{
-		"alias":           p.Alias,
+		"name":            p.Name,
 		"role":            p.Role,
 		"descr":           p.Descr,
 		"initial_message": initialMessage,

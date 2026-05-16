@@ -46,7 +46,6 @@ type dashGroup struct {
 type dashMember struct {
 	ConvID        string    `json:"conv_id"`
 	Title         string    `json:"title"`
-	Alias         string    `json:"alias,omitempty"`
 	Branch        string    `json:"branch,omitempty"`
 	StartupDir    string    `json:"startup_dir,omitempty"`
 	StartupBranch string    `json:"startup_branch,omitempty"`
@@ -116,7 +115,7 @@ func TestDashboardSnapshot_UngroupedSurfacesLooseConvs(t *testing.T) {
 	f.HaveEnrolledAgent(looseConv)
 	g := f.HaveGroup("alpha")
 	_ = g
-	f.HaveMember("alpha", joinedConv, "joined")
+	f.HaveMember("alpha", joinedConv)
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 

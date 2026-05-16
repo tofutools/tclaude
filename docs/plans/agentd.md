@@ -115,7 +115,7 @@ GET  /v1/lookup?selector=<id|prefix|title>
          "candidates": [...]}
 
 GET  /v1/peers
-  → 200 [{"conv_id": "...", "title": "...", "alias": "...",
+  → 200 [{"conv_id": "...", "title": "...",
           "role": "...", "descr": "...", "groups": [...]}]
 ```
 

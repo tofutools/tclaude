@@ -17,9 +17,9 @@ manipulation).
 Switchable from the top nav.
 
 - **Groups view** — root list of groups; expanding a group shows its
-  members with online indicator, alias/role/descr, and the group-
+  members with online indicator, role/descr, and the group-
   scoped permissions each holds. Search at the top filters by group
-  name / member alias / permission slug. Owner badges shipped.
+  name / member name / permission slug. Owner badges shipped.
 - **Agents view** — root list of conversations (members of any
   group + currently-online ones). Expanding an agent shows the
   groups it's in, its global permissions, and its per-group
@@ -93,11 +93,11 @@ verbs; creation + edit are still CLI-only. Two equivalents to add:
   [`DONE/dashboard-cron-create-form.md`](../../DONE/dashboard-cron-create-form.md).
 - **Agents.** "+ new agent" button at the top of the Agents tab
   (and inside each group header — pre-fills the group). Form:
-  alias, role, descr, group(s) to join (multi-select), cwd
+  name, role, descr, group(s) to join (multi-select), cwd
   (defaults to daemon's cwd; picker with file-system browse would
   be nice but optional v1). POST → existing `groups.spawn`
   endpoint per group.
-- **Inline edit alias / role / descr per member** → **shipped.** See
+- **Inline edit role / descr per member** → **shipped.** See
   [`DONE/dashboard-member-metadata-editing.md`](../../DONE/dashboard-member-metadata-editing.md).
 
 ## Framework migration trigger

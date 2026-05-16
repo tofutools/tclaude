@@ -37,7 +37,7 @@ func TestAgentLocation_StartupVsCurrentSurfaced(t *testing.T) {
 	// Launched in the monorepo. A monorepo dir isn't a git repo, so
 	// Claude Code stamps no gitBranch — the startup branch is empty.
 	f.HaveAliveSessionOnBranch(conv, "lbl-loc1", "tmux-loc1", monorepo, "")
-	f.HaveMember("squad", conv, "worker")
+	f.HaveMember("squad", conv)
 
 	// The PostToolUse hook recorded an edit inside the sub-repo
 	// worktree: the edit dir, its worktree root, and the branch.
@@ -100,7 +100,7 @@ func TestAgentLocation_FollowsLatestEdit(t *testing.T) {
 
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(conv, "lbl-loc2", "tmux-loc2", monorepo, "")
-	f.HaveMember("squad", conv, "rover")
+	f.HaveMember("squad", conv)
 
 	// First the agent works in svc/api...
 	require.NoError(t, db.UpsertAgentWorkdir(conv,
@@ -149,7 +149,7 @@ func TestAgentLocation_StaleRowResolvedToRepoRoot(t *testing.T) {
 
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(conv, "lbl-loc3", "tmux-loc3", monorepo, "")
-	f.HaveMember("squad", conv, "worker")
+	f.HaveMember("squad", conv)
 
 	// A pre-v28-shaped row: edit dir recorded, worktree_root + branch
 	// left empty (the v28 columns the old hook never wrote).

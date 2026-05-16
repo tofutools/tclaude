@@ -26,7 +26,7 @@ the missing piece.
 - `tclaude --join-group <group>` — top-level + `session new` flag
   reusing the spawn endpoint, foreground attach.
 - **`groups create --member ...` spawn-on-create** (2026-05).
-  Repeatable `--member alias=lead,role=tech-lead,descr=...,cwd=.`
+  Repeatable `--member name=lead,role=tech-lead,descr=...,cwd=.`
   flag. CLI parses + validates up-front, creates the group via the
   existing endpoint, then iterates `groups.spawn` calls. Partial
   failure leaves the group up with the successful members; the human
@@ -47,7 +47,7 @@ ids; or stop → re-spawn fresh conv-ids from the template).
 
 To ship this:
 - Persist member templates somewhere — either a new
-  `agent_group_member_templates(group_id, alias, role, descr, cwd,
+  `agent_group_member_templates(group_id, name, role, descr, cwd,
   bootstrap_prompt)` table, or a TOML file under
   `~/.tclaude/teams/<name>.toml` (docker-compose-shaped).
 - `groups spawn <group>` reads templates and spawns each (only those
@@ -91,7 +91,7 @@ All gated by default — consistent with the existing `groups.*` /
   the same conv-ids back) or "kill and recreate"? Reversible is
   much nicer for the human ("suspend this team for an hour");
   recreate is simpler.
-- **Where do we store team templates?** If `--member alias=...,role=...`
+- **Where do we store team templates?** If `--member name=...,role=...`
   flags get cumbersome, a `~/.tclaude/teams/<name>.toml` directory
   would feel natural — same shape as docker-compose / k8s manifests.
 - **Bootstrap prompts.** The message a freshly-spawned member sees

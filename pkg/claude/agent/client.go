@@ -163,7 +163,7 @@ type DaemonOpts struct {
 	// header so endpoints that support the operator view (today:
 	// /v1/inbox and /v1/messages/{id}) act on that conv-id instead of
 	// the caller's own. Resolved daemon-side via agent.ResolveSelector,
-	// so aliases / prefixes work too.
+	// so titles / prefixes work too.
 	TargetConv string
 }
 

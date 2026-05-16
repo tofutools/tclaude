@@ -145,14 +145,11 @@ var CloneCooldown = defaultCloneCooldown
 //     inherits identity only — useful for "stand up a peer in the
 //     same role without dragging the conversation history along."
 //
-// Identity in shared groups: the clone joins each of the original's
-// groups with alias `<original-alias>-clone` (or `-clone` if the
-// original had no alias). v1 doesn't auto-increment the suffix on
-// collision; subsequent clones of the same original would clobber
-// each other's clone-row alias if attempted in succession (the
-// underlying INSERT OR REPLACE is keyed on (group_id, conv_id), and
-// each clone has its own conv_id, so the clobber is alias-scoped
-// only — the rows themselves are distinct).
+// Identity: the clone is renamed to `<original-title>-c-<N>` (or
+// `c-<N>` if the original had no title) — the same `-c-` scheme
+// `groups clone` uses, and the title sibling of reincarnate's `-r-`.
+// The clone joins each of the original's groups, but membership rows
+// carry no name of their own: the clone's single name is its title.
 
 // cloneSuffixRegex matches a trailing clone suffix in either the
 // current short form `-c-<digits>` or the legacy long form
@@ -162,36 +159,36 @@ var CloneCooldown = defaultCloneCooldown
 // idea for reincarnateSuffixRegex.
 var cloneSuffixRegex = regexp.MustCompile(`^(.*?)-(?:c|clone)-\d+$`)
 
-// uniqueCloneAlias computes the clone's per-group alias. The format
+// uniqueCloneTitle computes the clone's conversation title. The format
 // is ALWAYS `<base>-c-<N>` (or `c-<N>` when the original had no
-// alias in this group). base is origAlias with any existing
-// `-c-<digits>` / `-clone-<digits>` stripped, so a clone-of-a-clone
-// bumps N rather than nesting suffixes (`worker-c-3` clones to
-// `worker-c-4`, not `worker-c-3-c-1`). The short `-c-` is paired
-// with `-r-` for reincarnations — distinct enough at a glance,
-// short enough to tile in dashboard rows.
+// title). base is origTitle with any existing `-c-<digits>` /
+// `-clone-<digits>` stripped, so a clone-of-a-clone bumps N rather
+// than nesting suffixes (`worker-c-3` clones to `worker-c-4`, not
+// `worker-c-3-c-1`). The short `-c-` is paired with `-r-` for
+// reincarnations — distinct enough at a glance, short enough to tile
+// in dashboard rows. Sibling of reincarnate's uniqueReincarnateTitle.
 //
 // N is monotonically larger than the previous clone's N: we start
 // the search at `prevN + 1`, then advance to the smallest free slot
 // from that floor. Without the floor, a previously-used N whose
-// agent_group_members row has since disappeared (member removed,
-// group deleted, etc.) gets recycled — chronologically confusing
-// when the new clone descends from a higher-numbered ancestor. The
-// "used" set still scans every group globally so parallel clones
-// don't collide; legacy `-clone-N` aliases don't reserve a number
-// in the new namespace.
+// conv_index row has since disappeared (pruned, retitled, file
+// deleted) gets recycled — chronologically confusing when the new
+// clone descends from a higher-numbered ancestor. The "used" set
+// scans every conv_index title so parallel clones don't collide;
+// legacy `-clone-N` titles don't reserve a number in the new
+// namespace.
 //
 // Lookup error → fall back to `prevN + 1` (or 1 when prevN is 0).
-func uniqueCloneAlias(origAlias string) string {
-	base := origAlias
+func uniqueCloneTitle(origTitle string) string {
+	base := origTitle
 	prevN := 0
 	if m := cloneSuffixRegex.FindStringSubmatch(base); m != nil {
 		base = m[1]
 		// Re-extract N from the final dash-separated token; the regex
 		// only captures the base. Same shape as the reincarnate
 		// counterpart for symmetry.
-		if i := strings.LastIndex(origAlias, "-"); i >= 0 {
-			if n, err := strconv.Atoi(origAlias[i+1:]); err == nil {
+		if i := strings.LastIndex(origTitle, "-"); i >= 0 {
+			if n, err := strconv.Atoi(origTitle[i+1:]); err == nil {
 				prevN = n
 			}
 		}
@@ -200,7 +197,7 @@ func uniqueCloneAlias(origAlias string) string {
 	if base != "" {
 		prefix = base + "-c-"
 	}
-	used := scanCloneSuffixesGlobal(prefix)
+	used := scanCloneSuffixes(prefix)
 	start := prevN + 1
 	if start < 1 {
 		start = 1
@@ -212,31 +209,26 @@ func uniqueCloneAlias(origAlias string) string {
 	}
 }
 
-// scanCloneSuffixesGlobal walks every group's members and returns the
-// set of integers N where some alias equals `<prefix><N>`. Used by
-// uniqueCloneAlias to pick the smallest free N.
-func scanCloneSuffixesGlobal(prefix string) map[int]bool {
+// scanCloneSuffixes walks every conv_index row and returns the set of
+// integers N where some custom_title equals `<prefix><N>`. Used by
+// uniqueCloneTitle to pick the smallest free N. Sibling of
+// scanReincarnateSuffixes.
+func scanCloneSuffixes(prefix string) map[int]bool {
 	used := map[int]bool{}
-	groups, err := db.ListAgentGroups()
+	rows, err := db.ListAllConvIndex()
 	if err != nil {
 		return used
 	}
-	for _, g := range groups {
-		members, err := db.ListAgentGroupMembers(g.ID)
+	for _, r := range rows {
+		if !strings.HasPrefix(r.CustomTitle, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(r.CustomTitle, prefix)
+		n, err := strconv.Atoi(suffix)
 		if err != nil {
 			continue
 		}
-		for _, m := range members {
-			if !strings.HasPrefix(m.Alias, prefix) {
-				continue
-			}
-			suffix := strings.TrimPrefix(m.Alias, prefix)
-			n, err := strconv.Atoi(suffix)
-			if err != nil {
-				continue
-			}
-			used[n] = true
-		}
+		used[n] = true
 	}
 	return used
 }
@@ -460,28 +452,22 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		// tie the new conv's grants back to the elevation window.
 		granter = fmt.Sprintf("system:clone:via-sudo:grant-id=%d", grantID)
 	}
-	// Resolve the original's display title once so per-group alias
-	// derivations can fall back to it when the original member row
-	// has no alias set. Without this fallback, a clone of a conv
-	// that's been added to a group without an alias gets generic
-	// `c-1` instead of the parent's name. Best-effort — empty string
-	// just means uniqueCloneAlias falls back to its existing
-	// "no-base" behaviour (`c-N`).
+	// Resolve the original's display title so the clone's title can be
+	// derived as `<base>-c-<N>`. Best-effort — an empty originalTitle
+	// just means uniqueCloneTitle falls back to a bare `c-<N>`.
 	originalTitle := ""
 	if row := agent.FreshConvRowResolved(target); row != nil {
 		originalTitle = agent.DisplayTitle(row)
 	}
+	newTitle := uniqueCloneTitle(originalTitle)
+
 	copied := []string{}
 	for _, m := range oldMembers {
-		base := m.Alias
-		if base == "" {
-			base = originalTitle
-		}
-		alias := uniqueCloneAlias(base)
+		// Membership rows carry no name of their own — the clone's
+		// single name is its title, set by the /rename below.
 		newMember := &db.AgentGroupMember{
 			GroupID: m.GroupID,
 			ConvID:  newConv,
-			Alias:   alias,
 			Role:    m.Role,
 			Descr:   m.Descr,
 		}
@@ -508,31 +494,13 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		copied = append(copied, fmt.Sprintf("owner:%d", gID))
 	}
 
-	// 4. Pick the rename target. Use the first computed clone alias —
-	// for the common single-group case this is the only one anyway,
-	// and for multi-group clones tmux/dashboard only displays one
-	// title at a time. Skipped when no membership rows landed (which
-	// is rare and points at a deeper failure that already logged
-	// above). Without this, a freshly-spawned clone has no startup
-	// write and ends up as an orphan if no one ever messages it —
-	// same trap that bit `tclaude agent spawn` before bc7ec81.
-	cloneAlias := ""
-	for _, c := range copied {
-		if !strings.HasPrefix(c, "group:") {
-			continue
-		}
-		var gid int64
-		_, _ = fmt.Sscanf(c, "group:%d", &gid)
-		if gid == 0 {
-			continue
-		}
-		if m, err := db.FindMemberInGroup(gid, newConv); err == nil && m != nil && m.Alias != "" {
-			cloneAlias = m.Alias
-			break
-		}
-	}
+	// 4. Rename the clone to its computed title, materialising the
+	// .jsonl. Done regardless of group membership — the clone has a
+	// title whether or not it joined any group. Without this startup
+	// write a never-messaged clone ends up an orphan — the same trap
+	// that bit `tclaude agent spawn` before bc7ec81.
 	goBackground(func() {
-		runClonePostInit(newConv, cloneAlias, target, caller)
+		runClonePostInit(newConv, newTitle, target, caller)
 	})
 
 	// 5. Optional follow-up. Same shape as reincarnate: enqueue an
@@ -599,24 +567,24 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 
 // runClonePostInit fires asynchronously after a successful clone. It
 // waits for the new pane to come online and injects /rename to the
-// computed clone alias, materialising the .jsonl with a meaningful
-// title. Same purpose as runSpawnPostInit, just for the clone path —
+// computed clone title, materialising the .jsonl with a meaningful
+// name. Same purpose as runSpawnPostInit, just for the clone path —
 // the original used to silently leave clones unrenamed (so they
 // showed up as "(unknown)" with whatever conv-id-derived label tmux
 // picked) and unrecoverable when never used.
 //
-// Skips when alias is empty or fails the rename charset gate.
+// Skips when title is empty or fails the rename charset gate.
 // Failures log; never bubble — the clone already succeeded as far as
 // the caller is concerned.
-func runClonePostInit(newConv, alias, target, caller string) {
+func runClonePostInit(newConv, title, target, caller string) {
 	if !waitForConvAlive(newConv) {
 		slog.Warn("clone: new conv never came online; rename abandoned", "conv", newConv)
 		return
 	}
-	if alias == "" || !isValidRenameTitle(alias) {
-		if alias != "" {
-			slog.Warn("clone: alias not a valid rename title; skipping /rename",
-				"conv", newConv, "alias", alias)
+	if title == "" || !isValidRenameTitle(title) {
+		if title != "" {
+			slog.Warn("clone: title not a valid rename title; skipping /rename",
+				"conv", newConv, "title", title)
 		}
 		return
 	}
@@ -627,7 +595,7 @@ func runClonePostInit(newConv, alias, target, caller string) {
 	// that path so it gets a synthetic welcome from runSpawnPostInit;
 	// clone doesn't need one. The /rename alone is enough to materialise
 	// the .jsonl.
-	if !injectSlashCommand(newConv, "/rename "+alias, "") {
-		slog.Warn("clone: /rename injection failed", "conv", newConv, "alias", alias)
+	if !injectSlashCommand(newConv, "/rename "+title, "") {
+		slog.Warn("clone: /rename injection failed", "conv", newConv, "title", title)
 	}
 }

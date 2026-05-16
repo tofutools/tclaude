@@ -42,7 +42,7 @@ type inboxLsParams struct {
 	Limit  int    `long:"limit" short:"n" help:"Max number of messages to show" default:"20"`
 	Unread bool   `long:"unread" help:"Only show messages without read_at"`
 	JSON   bool   `long:"json" help:"Output JSON"`
-	Target string `long:"target" optional:"true" help:"Read another agent's inbox (alias / prefix / conv-id). Requires the agent.inbox-watch slug or group ownership."`
+	Target string `long:"target" optional:"true" help:"Read another agent's inbox (title / prefix / conv-id). Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxLsCmd() *cobra.Command {
@@ -230,7 +230,7 @@ func outboxStatusGlyph(e inboxEntry) string {
 type inboxReadParams struct {
 	ID         string `pos:"true" help:"Message ID from inbox ls"`
 	KeepUnread bool   `long:"keep-unread" help:"Don't update read_at"`
-	Target     string `long:"target" optional:"true" help:"Read another agent's message (alias / prefix / conv-id). Implies --keep-unread. Requires the agent.inbox-watch slug or group ownership."`
+	Target     string `long:"target" optional:"true" help:"Read another agent's message (title / prefix / conv-id). Implies --keep-unread. Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxReadCmd() *cobra.Command {
@@ -264,16 +264,16 @@ func runInboxRead(p *inboxReadParams, stdout, stderr io.Writer) int {
 // arrays (to_recipients / cc_recipients on /v1/messages/{id}).
 type recipientLine struct {
 	ConvID string `json:"conv_id"`
-	Alias  string `json:"alias"`
+	Title  string `json:"title"`
 }
 
 // formatRecipientList renders a recipient list as comma-separated
-// "alias <prefix>" entries (or just the prefix when no alias is known).
+// "title <prefix>" entries (or just the prefix when no title is known).
 func formatRecipientList(rs []recipientLine) string {
 	parts := make([]string, 0, len(rs))
 	for _, r := range rs {
-		if r.Alias != "" {
-			parts = append(parts, fmt.Sprintf("%s <%s>", r.Alias, short(r.ConvID)))
+		if r.Title != "" {
+			parts = append(parts, fmt.Sprintf("%s <%s>", r.Title, short(r.ConvID)))
 		} else {
 			parts = append(parts, short(r.ConvID))
 		}
@@ -289,7 +289,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	var m struct {
 		ID             int64           `json:"id"`
 		From           string          `json:"from"`
-		FromAlias      string          `json:"from_alias"`
+		FromTitle      string          `json:"from_title"`
 		To             string          `json:"to"`
 		OriginalToConv string          `json:"original_to_conv,omitempty"`
 		Group          string          `json:"group"`
@@ -319,8 +319,8 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 			fmt.Fprintf(stdout, "  In-Reply-To: %d\n", m.InReplyTo)
 		}
 	}
-	if m.FromAlias != "" {
-		fmt.Fprintf(stdout, "  From:       %s <%s>\n", m.FromAlias, m.From)
+	if m.FromTitle != "" {
+		fmt.Fprintf(stdout, "  From:       %s <%s>\n", m.FromTitle, m.From)
 	} else {
 		fmt.Fprintf(stdout, "  From:       %s\n", m.From)
 	}
@@ -389,12 +389,12 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	if g, _ := groupByID(m.GroupID); g != nil {
 		groupName = g.Name
 	}
-	fromAlias := aliasFor(m.GroupID, m.FromConv)
+	fromTitle := titleFor(m.FromConv)
 
 	fmt.Fprintln(stdout, "Headers:")
 	fmt.Fprintf(stdout, "  Message-ID: %d\n", m.ID)
-	if fromAlias != "" {
-		fmt.Fprintf(stdout, "  From:       %s <%s>\n", fromAlias, m.FromConv)
+	if fromTitle != "" {
+		fmt.Fprintf(stdout, "  From:       %s <%s>\n", fromTitle, m.FromConv)
 	} else {
 		fmt.Fprintf(stdout, "  From:       %s\n", m.FromConv)
 	}

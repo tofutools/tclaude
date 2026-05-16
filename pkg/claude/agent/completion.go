@@ -65,7 +65,7 @@ func completeArchivedGroupNames(_ *cobra.Command, _ []string, toComplete string)
 
 // completeConvSelectors returns the 8-char prefix of every known
 // conv-id, decorated with `\t<title>` so shells with descriptions
-// (zsh, fish) can show context. We don't suggest aliases or titles
+// (zsh, fish) can show context. We don't suggest titles directly
 // because they often contain spaces / shell-unfriendly chars; the
 // resolver still accepts those at run time.
 func completeConvSelectors(_ *cobra.Command, _ []string, toComplete string) []string {
@@ -151,7 +151,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"groups.resume", "Resume a group's offline members"},
 			{"member.add", "Add members to a group"},
 			{"member.remove", "Remove members from a group"},
-			{"member.redesignate", "Edit alias/role/descr"},
+			{"member.redesignate", "Edit role/descr on group members"},
 			{"permissions.grant", "Grant agent permissions"},
 			{"permissions.revoke", "Revoke agent permissions"},
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -184,14 +185,16 @@ func (f *Flow) HaveGroup(name string) *db.AgentGroup {
 }
 
 // HaveMember inserts a (group, conv) row. Group must exist first.
-func (f *Flow) HaveMember(group, convID, alias string) {
+// A member has no per-group name — an agent's single name is its
+// conversation title.
+func (f *Flow) HaveMember(group, convID string) {
 	f.T.Helper()
 	g, err := db.GetAgentGroupByName(group)
 	if err != nil || g == nil {
 		f.T.Fatalf("HaveMember: group %q not found", group)
 	}
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g.ID, ConvID: convID, Alias: alias,
+		GroupID: g.ID, ConvID: convID,
 	}); err != nil {
 		f.T.Fatalf("HaveMember: %v", err)
 	}
@@ -316,19 +319,20 @@ type SpawnResp struct {
 // TmuxTarget is the pane address used by injectTextAndSubmit.
 func (s SpawnResp) TmuxTarget() string { return s.TmuxSession + ":0.0" }
 
-// Spawn drives POST /v1/groups/{group}/spawn with the alias. Mocks
-// must already be installed (DefaultMocks assigned to clcommon.Default
-// and agentd.Spawn — see flow_setup_test.go).
-func (f *Flow) Spawn(group, alias string) SpawnResp {
+// Spawn drives POST /v1/groups/{group}/spawn with the agent name (the
+// title injected via /rename on the new pane). Mocks must already be
+// installed (DefaultMocks assigned to clcommon.Default and
+// agentd.Spawn — see flow_setup_test.go).
+func (f *Flow) Spawn(group, name string) SpawnResp {
 	f.T.Helper()
 	rec := f.do(http.MethodPost,
 		"/v1/groups/"+group+"/spawn",
-		map[string]any{"alias": alias})
+		map[string]any{"name": name})
 	var resp SpawnResp
 	resp.Code = rec.Code
 	resp.Raw = rec.Body.Bytes()
 	if rec.Code != http.StatusOK {
-		f.T.Fatalf("Spawn(%q,%q): status=%d body=%s", group, alias, rec.Code, rec.Body.String())
+		f.T.Fatalf("Spawn(%q,%q): status=%d body=%s", group, name, rec.Code, rec.Body.String())
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		f.T.Fatalf("Spawn decode: %v body=%s", err, rec.Body.String())
@@ -428,8 +432,9 @@ func (f *Flow) ReincarnateWith(target string, body map[string]any) ReincarnateRe
 }
 
 // CloneResp parses POST /v1/agent/{target}/clone. Note: clone has no
-// `new_title` field — the per-group alias is computed and stored in
-// agent_group_members; tests assert via AssertCloneAliasInGroup.
+// `new_title` field — the clone's title is computed (`<base>-c-<N>`)
+// and injected via /rename asynchronously; tests assert it via
+// AssertCloneTitle once the rename lands.
 type CloneResp struct {
 	OldConv     string   `json:"old_conv"`
 	NewConv     string   `json:"new_conv"`
@@ -448,18 +453,18 @@ func (r CloneResp) TmuxTarget() string { return r.TmuxSession + ":0.0" }
 // `no_copy_conv: true`, which skips the jsonl copy and spawns a
 // brand-new CC instance. Identity migrates regardless. Used in
 // tests to avoid wiring a fake convops.CopyConversationToPath.
-func (f *Flow) CloneFresh(target, alias string) CloneResp {
+//
+// The clone's title (`<base>-c-<N>`) is derived from the original by
+// the daemon — there is no name to pass in.
+func (f *Flow) CloneFresh(target string) CloneResp {
 	f.T.Helper()
 	body := map[string]any{"no_copy_conv": true}
-	if alias != "" {
-		body["alias"] = alias
-	}
 	rec := f.do(http.MethodPost, "/v1/agent/"+target+"/clone", body)
 	var resp CloneResp
 	resp.Code = rec.Code
 	resp.Raw = rec.Body.Bytes()
 	if rec.Code != http.StatusOK {
-		f.T.Fatalf("CloneFresh(%q,%q): status=%d body=%s", target, alias, rec.Code, rec.Body.String())
+		f.T.Fatalf("CloneFresh(%q): status=%d body=%s", target, rec.Code, rec.Body.String())
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		f.T.Fatalf("CloneFresh decode: %v body=%s", err, rec.Body.String())
@@ -546,24 +551,27 @@ func (f *Flow) AssertReincarnateTitle(r ReincarnateResp, wantTitle string) {
 	}
 }
 
-// AssertCloneAliasInGroup asserts the clone's member row in `group`
-// has the expected alias. Clone-of-empty-alias is the canonical bug
-// here: the daemon should fall back to the original conv's display
-// title when the original member row had no alias, producing
-// `<title>-c-N` rather than bare `c-N`.
-func (f *Flow) AssertCloneAliasInGroup(c CloneResp, groupName, wantAlias string) {
+// AssertCloneTitle asserts the clone surfaces the expected title on
+// the `tclaude agent groups members <group>` surface. The clone's
+// title is derived as `<base>-c-<N>` from the original's title and
+// injected via /rename asynchronously, so this polls — each poll
+// re-hits the members handler, which refreshes the title from the
+// .jsonl (agent.FreshTitle). Clone-of-untitled-original is the
+// canonical edge: it should yield a bare `c-<N>`.
+func (f *Flow) AssertCloneTitle(c CloneResp, groupName, wantTitle string, timeout time.Duration) {
 	f.T.Helper()
-	g, err := db.GetAgentGroupByName(groupName)
-	if err != nil || g == nil {
-		f.T.Fatalf("AssertCloneAliasInGroup: group %q not found", groupName)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, m := range f.ListGroupMembers(groupName) {
+			if m.ConvID == c.NewConv && m.Title == wantTitle {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	m, err := db.FindMemberInGroup(g.ID, c.NewConv)
-	if err != nil || m == nil {
-		f.T.Fatalf("AssertCloneAliasInGroup: clone %s not found in %s", c.NewConv, groupName)
-	}
-	if m.Alias != wantAlias {
-		f.T.Errorf("clone alias in %s = %q, want %q", groupName, m.Alias, wantAlias)
-	}
+	last := f.ListGroupMembers(groupName)
+	f.T.Fatalf("AssertCloneTitle(%s, group=%q, title=%q): not found within %s; got %+v",
+		c.NewConv, groupName, wantTitle, timeout, last)
 }
 
 // MemberView is the parsed shape of one row in
@@ -575,7 +583,6 @@ func (f *Flow) AssertCloneAliasInGroup(c CloneResp, groupName, wantAlias string)
 type MemberView struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	// Branch is the agent's *current* git branch; StartupBranch is the
@@ -591,12 +598,10 @@ type MemberView struct {
 
 // PeerView is the parsed shape of one row in GET /v1/peers — what
 // `tclaude agent ls` renders. Like MemberView, Title is refreshed from
-// the .jsonl by the handler (agent.FreshTitle); Alias is the per-group
-// handle and is empty for ungrouped online agents.
+// the .jsonl by the handler (agent.FreshTitle).
 type PeerView struct {
 	ConvID string   `json:"conv_id"`
 	Title  string   `json:"title"`
-	Alias  string   `json:"alias,omitempty"`
 	Role   string   `json:"role,omitempty"`
 	Descr  string   `json:"descr,omitempty"`
 	Online bool     `json:"online"`
@@ -649,12 +654,12 @@ func (f *Flow) FindPeer(convID string) *PeerView {
 }
 
 // AssertGroupMember asserts that `tclaude agent groups members <group>`
-// shows convID with the expected alias and title. Polls because the
-// .jsonl write that follows /rename is async; each poll re-hits the
-// members handler, which refreshes the title from the .jsonl
-// (agent.FreshTitle) before responding — so the loop converges on its
-// own once the rename lands, with no test-side index priming.
-func (f *Flow) AssertGroupMember(group, convID, wantAlias, wantTitle string, timeout time.Duration) {
+// shows convID with the expected title. Polls because the .jsonl write
+// that follows /rename is async; each poll re-hits the members handler,
+// which refreshes the title from the .jsonl (agent.FreshTitle) before
+// responding — so the loop converges on its own once the rename lands,
+// with no test-side index priming.
+func (f *Flow) AssertGroupMember(group, convID, wantTitle string, timeout time.Duration) {
 	f.T.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -663,15 +668,50 @@ func (f *Flow) AssertGroupMember(group, convID, wantAlias, wantTitle string, tim
 			if m.ConvID != convID {
 				continue
 			}
-			if m.Alias == wantAlias && m.Title == wantTitle {
+			if m.Title == wantTitle {
 				return
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	last := f.ListGroupMembers(group)
-	f.T.Fatalf("AssertGroupMember(%q, %s, alias=%q, title=%q): not found within %s; got %+v",
-		group, convID, wantAlias, wantTitle, timeout, last)
+	f.T.Fatalf("AssertGroupMember(%q, %s, title=%q): not found within %s; got %+v",
+		group, convID, wantTitle, timeout, last)
+}
+
+// Lookup calls GET /v1/lookup?selector=<sel> — the surface
+// `tclaude agent lookup` renders. Returns the resolved conv-id (empty
+// on a miss) and the HTTP status code, so a test can assert both a
+// hit and a miss.
+func (f *Flow) Lookup(selector string) (convID string, code int) {
+	f.T.Helper()
+	rec := f.do(http.MethodGet, "/v1/lookup?selector="+url.QueryEscape(selector), nil)
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp.ConvID, rec.Code
+}
+
+// AssertResolvesByTitle polls GET /v1/lookup until `title` resolves to
+// wantConv. The /rename that sets a freshly-spawned agent's title is
+// async and resolution-by-title needs the .jsonl scanned into
+// conv_index — so this converges once the rename lands, no test-side
+// index priming required.
+func (f *Flow) AssertResolvesByTitle(title, wantConv string, timeout time.Duration) {
+	f.T.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastConv string
+	var lastCode int
+	for time.Now().Before(deadline) {
+		lastConv, lastCode = f.Lookup(title)
+		if lastCode == http.StatusOK && lastConv == wantConv {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	f.T.Fatalf("AssertResolvesByTitle(%q): want conv %s, got conv=%q code=%d after %s",
+		title, wantConv, lastConv, lastCode, timeout)
 }
 
 // AssertNotGroupMember asserts that convID is NOT in

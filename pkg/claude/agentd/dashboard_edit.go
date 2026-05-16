@@ -302,9 +302,9 @@ func looksLikeConvID(s string) bool {
 //	PATCH  /api/groups/{name}                   → update settings (body: {default_cwd})
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
 //	POST   /api/groups/{name}/spawn             → spawn a new tclaude session and auto-join this group
-//	POST   /api/groups/{name}/members           → add member (body: {conv, alias?, role?, descr?})
+//	POST   /api/groups/{name}/members           → add member (body: {conv, role?, descr?})
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
-//	PATCH  /api/groups/{name}/members/{conv}    → update alias/role/descr
+//	PATCH  /api/groups/{name}/members/{conv}    → update role/descr
 //	POST   /api/groups/{name}/owners            → grant owner (body: {conv})
 //	DELETE /api/groups/{name}/owners/{conv}     → revoke owner
 //
@@ -367,7 +367,7 @@ func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
 	case "members":
 		// /api/groups/{name}/members          — POST adds a new member.
 		// /api/groups/{name}/members/{conv}   — DELETE removes; PATCH
-		//                                       updates alias/role/descr.
+		//                                       updates role/descr.
 		if len(parts) < 3 || parts[2] == "" {
 			if r.Method != http.MethodPost {
 				http.Error(w, "POST /api/groups/{name}/members or DELETE/PATCH /api/groups/{name}/members/{conv}", http.StatusMethodNotAllowed)
@@ -623,7 +623,6 @@ func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		convSelector = u
 	}
 	var body struct {
-		Alias *string `json:"alias,omitempty"`
 		Role  *string `json:"role,omitempty"`
 		Descr *string `json:"descr,omitempty"`
 	}
@@ -631,8 +630,8 @@ func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.Alias == nil && body.Role == nil && body.Descr == nil {
-		http.Error(w, "at least one of alias/role/descr is required", http.StatusBadRequest)
+	if body.Role == nil && body.Descr == nil {
+		http.Error(w, "at least one of role/descr is required", http.StatusBadRequest)
 		return
 	}
 	res, _, err := agent.ResolveSelector(convSelector)
@@ -640,7 +639,7 @@ func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Alias, body.Role, body.Descr)
+	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Role, body.Descr)
 	if err != nil {
 		http.Error(w, "update member: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -750,13 +749,12 @@ func dashboardResumeAgent(w http.ResponseWriter, convSelector string) {
 }
 
 // dashboardAddMember is the cookie-auth twin of POST
-// /v1/groups/{name}/members. Body: `{conv, alias?, role?, descr?}`.
-// `conv` accepts an alias / prefix / full conv-id selector and is
+// /v1/groups/{name}/members. Body: `{conv, role?, descr?}`.
+// `conv` accepts a title / prefix / full conv-id selector and is
 // resolved through agent.ResolveSelector — same rules as the CLI.
 func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	var body struct {
 		Conv  string `json:"conv"`
-		Alias string `json:"alias,omitempty"`
 		Role  string `json:"role,omitempty"`
 		Descr string `json:"descr,omitempty"`
 	}
@@ -777,7 +775,6 @@ func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g.ID,
 		ConvID:  res.ConvID,
-		Alias:   body.Alias,
 		Role:    body.Role,
 		Descr:   body.Descr,
 	}); err != nil {
@@ -790,8 +787,9 @@ func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 // dashboardSpawnInGroup is the cookie-auth twin of POST
 // /v1/groups/{name}/spawn. Forks a fresh `tclaude session new -d --global`
 // detached, waits for its conv-id to materialise, then joins it to the
-// group with the supplied alias/role/descr. Delegates to handleGroupSpawn
-// with a synthetic human peer so the inner requirePermission passes.
+// group with the supplied role/descr (and renames it to the supplied
+// name). Delegates to handleGroupSpawn with a synthetic human peer so
+// the inner requirePermission passes.
 func dashboardSpawnInGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	handleGroupSpawn(w, asDashboardHumanPeer(r), g)
 }
@@ -986,7 +984,7 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		title = agent.DisplayTitle(row)
 	}
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, res.ConvID, "", title)
+	policy := resolveSudoConfig(cfg, res.ConvID, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		http.Error(w,

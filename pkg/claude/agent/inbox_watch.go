@@ -25,7 +25,7 @@ import (
 type inboxWatchParams struct {
 	Limit  int    `long:"limit" short:"n" help:"Max number of messages to show" default:"50"`
 	Unread bool   `long:"unread" help:"Only show messages without read_at"`
-	Target string `long:"target" optional:"true" help:"Watch another agent's inbox (alias / prefix / conv-id). Read-only: reply / delete are disabled in operator view. Requires the agent.inbox-watch slug or group ownership."`
+	Target string `long:"target" optional:"true" help:"Watch another agent's inbox (title / prefix / conv-id). Read-only: reply / delete are disabled in operator view. Requires the agent.inbox-watch slug or group ownership."`
 }
 
 func inboxWatchCmd() *cobra.Command {

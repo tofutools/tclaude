@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -91,7 +92,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	type memberResult struct {
 		SrcConv string `json:"src_conv"`
 		NewConv string `json:"new_conv,omitempty"`
-		Alias   string `json:"alias,omitempty"`
+		Title   string `json:"title,omitempty"`
 		Label   string `json:"label,omitempty"`
 		Error   string `json:"error,omitempty"`
 	}
@@ -120,15 +121,15 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// Add ONLY to the new group — the source group is left
 		// untouched. Per-conv permissions are copied so the clone
 		// inherits its source's slugs (mirrors runCloneOrchestration).
-		baseAlias := m.Alias
-		if baseAlias == "" {
-			baseAlias = m.Role
-		}
-		newAlias := uniqueCloneAlias(baseAlias)
+		//
+		// The clone's title is derived from the source member's title
+		// as `<base>-c-<N>`, then injected via /rename below — exactly
+		// the per-conv `agent clone` naming scheme. Membership rows
+		// carry no name of their own.
+		newTitle := uniqueCloneTitle(agent.FreshTitle(m.ConvID))
 		newMember := &db.AgentGroupMember{
 			GroupID: newGroupID,
 			ConvID:  newConv,
-			Alias:   newAlias,
 			Role:    m.Role,
 			Descr:   m.Descr,
 		}
@@ -138,12 +139,16 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			results = append(results, memberResult{
 				SrcConv: m.ConvID,
 				NewConv: newConv,
-				Alias:   newAlias,
+				Title:   newTitle,
 				Label:   label,
 				Error:   "add to new group: " + err.Error(),
 			})
 			continue
 		}
+		// Rename the clone to its computed title, materialising the
+		// .jsonl — same post-init the per-conv clone path runs.
+		srcConv := m.ConvID
+		goBackground(func() { runClonePostInit(newConv, newTitle, srcConv, caller) })
 		// Per-conv perms — best-effort, mirror runCloneOrchestration.
 		if perms, err := db.ListAgentPermissionsForConv(m.ConvID); err == nil {
 			for _, slug := range perms {
@@ -156,7 +161,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		results = append(results, memberResult{
 			SrcConv: m.ConvID,
 			NewConv: newConv,
-			Alias:   newAlias,
+			Title:   newTitle,
 			Label:   label,
 		})
 	}
@@ -187,7 +192,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 // in the agent_groups namespace. base is srcName with any trailing
 // `-c-<digits>` stripped, so a clone-of-a-clone bumps N rather than
 // nesting (`team-c-2` clones to `team-c-3`, not `team-c-2-c-1`).
-// Reuses the same regex as the per-conv clone-alias logic for symmetry.
+// Reuses the same regex as the per-conv clone-title logic for symmetry.
 //
 // Lookup error → fall back to `<base>-c-1`. The caller will hit the
 // 409 collision check next, so a corrupt DB still fails loudly
@@ -209,8 +214,8 @@ func nextGroupCloneName(srcName string) string {
 // scanGroupCloneSuffixes walks every group and returns the set of
 // integers N where some name equals `<prefix><N>`. Used by
 // nextGroupCloneName to pick the smallest free N. Sibling of
-// scanCloneSuffixesGlobal but scoped to group names rather than
-// per-group member aliases.
+// scanCloneSuffixes but scoped to group names rather than conv
+// titles.
 func scanGroupCloneSuffixes(prefix string) map[int]bool {
 	used := map[int]bool{}
 	groups, err := db.ListAgentGroups()

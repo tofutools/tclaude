@@ -29,10 +29,13 @@ func (g *AgentGroup) IsArchived() bool {
 }
 
 // AgentGroupMember is a row in agent_group_members.
+//
+// A member has no per-group name: an agent's single name is its
+// conversation title (conv_index.custom_title). Role and Descr carry
+// the per-group semantics.
 type AgentGroupMember struct {
 	GroupID  int64
 	ConvID   string
-	Alias    string
 	Role     string
 	Descr    string
 	JoinedAt time.Time
@@ -519,9 +522,9 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 		m.JoinedAt = time.Now()
 	}
 	_, err = db.Exec(`INSERT OR REPLACE INTO agent_group_members
-		(group_id, conv_id, alias, role, descr, joined_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		m.GroupID, m.ConvID, m.Alias, m.Role, m.Descr,
+		(group_id, conv_id, role, descr, joined_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		m.GroupID, m.ConvID, m.Role, m.Descr,
 		m.JoinedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return err
@@ -535,17 +538,13 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
 // Pass a nil pointer for any field you don't want to change. Returns
 // (rowsAffected, error); 0 rows means no such (group, conv) pair.
-func UpdateAgentGroupMember(groupID int64, convID string, alias, role, descr *string) (int64, error) {
+func UpdateAgentGroupMember(groupID int64, convID string, role, descr *string) (int64, error) {
 	db, err := Open()
 	if err != nil {
 		return 0, err
 	}
 	sets := []string{}
 	args := []any{}
-	if alias != nil {
-		sets = append(sets, "alias = ?")
-		args = append(args, *alias)
-	}
 	if role != nil {
 		sets = append(sets, "role = ?")
 		args = append(args, *role)
@@ -693,15 +692,15 @@ func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
 	return n, nil
 }
 
-// ListAgentGroupMembers returns the members of a group, ordered by alias
-// then conv_id.
+// ListAgentGroupMembers returns the members of a group, ordered by
+// joined_at then conv_id.
 func ListAgentGroupMembers(groupID int64) ([]*AgentGroupMember, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT group_id, conv_id, alias, role, descr, joined_at
-		FROM agent_group_members WHERE group_id = ? ORDER BY alias, conv_id`, groupID)
+	rows, err := db.Query(`SELECT group_id, conv_id, role, descr, joined_at
+		FROM agent_group_members WHERE group_id = ? ORDER BY joined_at, conv_id`, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -810,7 +809,7 @@ func FindMemberInGroup(groupID int64, convID string) (*AgentGroupMember, error) 
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT group_id, conv_id, alias, role, descr, joined_at
+	row := db.QueryRow(`SELECT group_id, conv_id, role, descr, joined_at
 		FROM agent_group_members WHERE group_id = ? AND conv_id = ?`, groupID, convID)
 	m, err := scanAgentGroupMember(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1095,14 +1094,14 @@ func CanSenderReachTarget(senderID, targetID string) (*AgentGroup, string, error
 	return nil, "", nil
 }
 
-// FindAgentMembersBySelector returns every row whose alias or conv_id
-// matches the selector. Used as a fallback by the agent CLI's target
-// resolver: a conv that was just added to a group via spawn lives in
+// FindAgentMembersBySelector returns every row whose conv_id matches
+// the selector. Used as a fallback by the agent CLI's target resolver:
+// a conv that was just added to a group via spawn lives in
 // agent_group_members before its .jsonl is scanned into conv_index, so
-// the conv_index-only resolver can't find it.
+// the conv_index-only resolver can't find it by title yet — but its
+// conv_id is already resolvable here.
 //
 // Match rules:
-//   - exact alias (case-sensitive)
 //   - exact conv_id
 //   - prefix on conv_id (8+ chars typed, like the rest of tclaude)
 //
@@ -1116,13 +1115,12 @@ func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT group_id, conv_id, alias, role, descr, joined_at
+	q := `SELECT group_id, conv_id, role, descr, joined_at
 		FROM agent_group_members
-		WHERE alias = ?
-		   OR conv_id = ?
+		WHERE conv_id = ?
 		   OR conv_id LIKE ?
 		ORDER BY joined_at DESC`
-	rows, err := d.Query(q, selector, selector, selector+"%")
+	rows, err := d.Query(q, selector, selector+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -1131,7 +1129,7 @@ func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
 	for rows.Next() {
 		var m AgentGroupMember
 		var joined string
-		if err := rows.Scan(&m.GroupID, &m.ConvID, &m.Alias, &m.Role, &m.Descr, &joined); err != nil {
+		if err := rows.Scan(&m.GroupID, &m.ConvID, &m.Role, &m.Descr, &joined); err != nil {
 			return nil, err
 		}
 		m.JoinedAt = parseTimeOrZero(joined)
@@ -1376,7 +1374,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 func scanAgentGroupMember(s rowScanner) (*AgentGroupMember, error) {
 	var m AgentGroupMember
 	var joinedAt string
-	if err := s.Scan(&m.GroupID, &m.ConvID, &m.Alias, &m.Role, &m.Descr, &joinedAt); err != nil {
+	if err := s.Scan(&m.GroupID, &m.ConvID, &m.Role, &m.Descr, &joinedAt); err != nil {
 		return nil, err
 	}
 	m.JoinedAt = parseTimeOrZero(joinedAt)

@@ -26,7 +26,7 @@ import (
 
 type cloneParams struct {
 	FollowUp   string `pos:"true" optional:"true" help:"Optional first-turn prompt for the clone (quote multi-word strings)."`
-	Target     string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: alias, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of a group containing the target."`
+	Target     string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of a group containing the target."`
 	NoCopyConv bool   `long:"no-copy-conv" help:"Spawn the clone with a fresh context (default: copy the original's jsonl so the clone starts with the same conversation history)."`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
@@ -36,9 +36,9 @@ func cloneCmd() *cobra.Command {
 		Use:   "clone",
 		Short: "Fork this agent (or another, with --target) into a sibling that inherits its identity",
 		Long: "Spawns a fresh CC instance that inherits the target agent's identity " +
-			"(group memberships with `-clone` alias suffix, per-conv permission grants, " +
-			"group ownerships). The ORIGINAL keeps running — that's the difference vs " +
-			"reincarnate. " +
+			"(group memberships, per-conv permission grants, group ownerships). The " +
+			"clone is renamed to `<original-title>-c-<N>`. The ORIGINAL keeps running " +
+			"— that's the difference vs reincarnate. " +
 			"\n\n" +
 			"By default the original's conv jsonl is copied onto the clone's fresh " +
 			"conv-id, so the clone starts with the same conversation history. Use " +

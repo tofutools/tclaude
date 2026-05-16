@@ -116,7 +116,7 @@ func FormatTitleAndPrompt(title, prompt string) string {
 // "prompt" by FormatTitleAndPrompt.
 //
 // Note this is distinct from an agent's bare *name* (custom title, else
-// summary, else first prompt — used for identity, alias derivation and
+// summary, else first prompt — used for identity, name derivation and
 // reincarnate/clone name prefixes). That stays bare; this is the
 // browse-a-conversation rendering.
 func FormatConvTitle(customTitle, summary, firstPrompt string) string {

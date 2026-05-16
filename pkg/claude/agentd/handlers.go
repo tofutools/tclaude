@@ -106,7 +106,6 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 type peerEntry struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	// agentLocationView carries `branch` (current branch) plus the
@@ -166,7 +165,6 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				pe = &peerEntry{
 					ConvID:            m.ConvID,
 					Title:             agent.FreshTitle(m.ConvID),
-					Alias:             m.Alias,
 					Role:              m.Role,
 					Descr:             m.Descr,
 					agentLocationView: locationView(m.ConvID),
@@ -260,7 +258,7 @@ type sendResp struct {
 
 type recipient struct {
 	ConvID    string `json:"conv_id"`
-	Alias     string `json:"alias,omitempty"`
+	Title     string `json:"title,omitempty"`
 	MessageID int64  `json:"message_id"`
 	Delivered bool   `json:"delivered"`
 	// RedirectedFrom mirrors sendResp.RedirectedFrom on a per-recipient
@@ -317,9 +315,9 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	// and the sender gets a redirect notice. Compare the raw input
 	// string (after trim) to target.ConvID — when they differ AND the
 	// input walks to target.ConvID via the chain, the input was a
-	// superseded conv-id and the resolver redirected it. Alias / prefix
+	// superseded conv-id and the resolver redirected it. Title / prefix
 	// inputs naturally skip this branch (they don't have chain rows
-	// keyed on the literal alias text).
+	// keyed on the literal title text).
 	finalConv := target.ConvID
 	originalTo := ""
 	rawInput := strings.TrimSpace(req.To)
@@ -415,7 +413,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 	type resolvedCC struct {
 		ConvID         string
 		OriginalToConv string
-		Alias          string
+		Title          string
 		Via            *db.AgentGroup
 	}
 	resolved := make([]resolvedCC, 0, len(req.Cc))
@@ -473,8 +471,8 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 				fmt.Sprintf("CC %q routes via archived group %q", sel, via.Name))
 			return
 		}
-		alias := agent.AliasFor(via.ID, ccConv)
-		resolved = append(resolved, resolvedCC{ConvID: ccConv, OriginalToConv: ccOriginal, Alias: alias, Via: via})
+		title := agent.TitleFor(ccConv)
+		resolved = append(resolved, resolvedCC{ConvID: ccConv, OriginalToConv: ccOriginal, Title: title, Via: via})
 	}
 
 	toRecipients := []string{primaryConv}
@@ -487,7 +485,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 
 	// Insert + nudge primary first so the response order matches the
 	// "To:, CC: ..." header order in inbox read.
-	primaryAlias := agent.AliasFor(primaryVia.ID, primaryConv)
+	primaryTitle := agent.TitleFor(primaryConv)
 	primaryID, err := db.InsertAgentMessage(&db.AgentMessage{
 		GroupID:        primaryVia.ID,
 		FromConv:       fromID,
@@ -505,7 +503,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 	primaryDelivered := nudgeIfAlive(primaryID, primaryConv)
 	out.Recipients = append(out.Recipients, recipient{
 		ConvID:         primaryConv,
-		Alias:          primaryAlias,
+		Title:          primaryTitle,
 		MessageID:      primaryID,
 		Delivered:      primaryDelivered,
 		RedirectedFrom: primaryOriginalTo,
@@ -529,7 +527,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 				"to", r.ConvID, "error", err)
 			out.Recipients = append(out.Recipients, recipient{
 				ConvID:    r.ConvID,
-				Alias:     r.Alias,
+				Title:     r.Title,
 				MessageID: 0,
 				Delivered: false,
 			})
@@ -538,7 +536,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 		delivered := nudgeIfAlive(id, r.ConvID)
 		out.Recipients = append(out.Recipients, recipient{
 			ConvID:         r.ConvID,
-			Alias:          r.Alias,
+			Title:          r.Title,
 			MessageID:      id,
 			Delivered:      delivered,
 			RedirectedFrom: r.OriginalToConv,
@@ -634,7 +632,7 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 				"group", g.Name, "to", finalConv, "error", err)
 			out.Recipients = append(out.Recipients, recipient{
 				ConvID:         finalConv,
-				Alias:          m.Alias,
+				Title:          agent.TitleFor(finalConv),
 				MessageID:      0,
 				Delivered:      false,
 				RedirectedFrom: originalTo,
@@ -644,7 +642,7 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 		delivered := nudgeIfAlive(id, finalConv)
 		out.Recipients = append(out.Recipients, recipient{
 			ConvID:         finalConv,
-			Alias:          m.Alias,
+			Title:          agent.TitleFor(finalConv),
 			MessageID:      id,
 			Delivered:      delivered,
 			RedirectedFrom: originalTo,
@@ -684,7 +682,7 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 	// reply addressing — all of that lives in the message itself, fetched
 	// via `tclaude agent inbox read <id>`. Keeping the bracket text terse
 	// avoids leaking ephemeral details (short conv-id prefixes,
-	// alias-of-the-moment) into the receiver's transcript.
+	// title-of-the-moment) into the receiver's transcript.
 	nudge := fmt.Sprintf(
 		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
 		msgID, msgID,
@@ -1406,7 +1404,7 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"id":         m.ID,
 		"from":       m.FromConv,
-		"from_alias": agent.AliasFor(m.GroupID, m.FromConv),
+		"from_title": agent.TitleFor(m.FromConv),
 		"to":         m.ToConv,
 		"group":      groupName,
 		"subject":    m.Subject,
@@ -1415,7 +1413,7 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		// Reply-To is the conv-id to address when replying. Same as
 		// `from` today; broken out so clients have an obvious affordance
 		// and so we can support distinct reply-to addresses later
-		// (e.g. shared-inbox aliases) without breaking the wire format.
+		// without breaking the wire format.
 		"reply_to": m.FromConv,
 		// Reply-Cmd is a ready-to-paste shell command for the human-friendly
 		// case. Agents in skills should prefer the `agent reply` command,
@@ -1432,13 +1430,13 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	}
 	// Email-style audience (schema v18). Each recipient row carries the
 	// same arrays so any reader can render "To: ...; CC: ..." identically.
-	// Decorated with aliases when known so the receiver sees friendly names
-	// alongside the conv-ids.
+	// Decorated with conv titles when known so the receiver sees friendly
+	// names alongside the conv-ids.
 	if len(m.ToRecipients) > 0 {
-		resp["to_recipients"] = decorateRecipients(m.GroupID, m.ToRecipients)
+		resp["to_recipients"] = decorateRecipients(m.ToRecipients)
 	}
 	if len(m.CcRecipients) > 0 {
-		resp["cc_recipients"] = decorateRecipients(m.GroupID, m.CcRecipients)
+		resp["cc_recipients"] = decorateRecipients(m.CcRecipients)
 	}
 	// In-Reply-To: only set on threaded messages so the renderer can
 	// hide the header for top-of-thread messages.
@@ -1592,24 +1590,24 @@ func bodyPreview(s string) string {
 }
 
 // recipientLine pairs a conv-id with the friendly label resolved for it
-// (alias if known, else the conv-index title, else empty). Returned as
-// part of /v1/messages/{id} so `inbox read` can render
-// "To: alice <abcd1234>" without a second round-trip.
+// (the conv-index title, else empty). Returned as part of
+// /v1/messages/{id} so `inbox read` can render "To: alice <abcd1234>"
+// without a second round-trip.
 type recipientLine struct {
 	ConvID string `json:"conv_id"`
-	Alias  string `json:"alias,omitempty"`
+	Title  string `json:"title,omitempty"`
 }
 
 // decorateRecipients turns a recipients array (conv-ids only, as stored
 // in agent_messages) into a labelled list. Best-effort lookup: a conv
-// without an alias / index row just gets ConvID set, so the renderer
-// can fall back to the short prefix.
-func decorateRecipients(groupID int64, ids []string) []recipientLine {
+// without an index row just gets ConvID set, so the renderer can fall
+// back to the short prefix.
+func decorateRecipients(ids []string) []recipientLine {
 	out := make([]recipientLine, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, recipientLine{
 			ConvID: id,
-			Alias:  agent.AliasFor(groupID, id),
+			Title:  agent.TitleFor(id),
 		})
 	}
 	return out
@@ -2065,7 +2063,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 type memberJSON struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Alias  string `json:"alias,omitempty"`
 	Role   string `json:"role,omitempty"`
 	Descr  string `json:"descr,omitempty"`
 	// agentLocationView carries `branch` (current branch) plus the
@@ -2097,7 +2094,6 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		out = append(out, memberJSON{
 			ConvID:            m.ConvID,
 			Title:             agent.FreshTitle(m.ConvID),
-			Alias:             m.Alias,
 			Role:              m.Role,
 			Descr:             m.Descr,
 			agentLocationView: locationView(m.ConvID),
@@ -2106,8 +2102,8 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		})
 	}
 	// Surface owners who aren't members so the list is comprehensive.
-	// They get an "owner" role tag and no alias/descr (those are
-	// member-scoped fields).
+	// They get an "owner" role tag and no descr (that is a
+	// member-scoped field).
 	for ownerConv := range ownerSet {
 		if memberSet[ownerConv] {
 			continue
@@ -2232,7 +2228,6 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	var body struct {
 		Conv  string `json:"conv"`
-		Alias string `json:"alias,omitempty"`
 		Role  string `json:"role,omitempty"`
 		Descr string `json:"descr,omitempty"`
 	}
@@ -2252,7 +2247,6 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g.ID,
 		ConvID:  res.ConvID,
-		Alias:   body.Alias,
 		Role:    body.Role,
 		Descr:   body.Descr,
 	}); err != nil {
@@ -2262,7 +2256,7 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
 }
 
-// handleGroupMembersUpdate patches alias/role/descr on an existing member.
+// handleGroupMembersUpdate patches role/descr on an existing member.
 // Only fields explicitly present in the request body are touched — pass
 // `null` (or omit) to leave a field unchanged. Gated on member.redesignate.
 func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
@@ -2273,7 +2267,6 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 		return
 	}
 	var body struct {
-		Alias *string `json:"alias,omitempty"`
 		Role  *string `json:"role,omitempty"`
 		Descr *string `json:"descr,omitempty"`
 	}
@@ -2281,8 +2274,8 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	if body.Alias == nil && body.Role == nil && body.Descr == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "at least one of alias/role/descr is required")
+	if body.Role == nil && body.Descr == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "at least one of role/descr is required")
 		return
 	}
 	res, _, err := agent.ResolveSelector(convSelector)
@@ -2290,7 +2283,7 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Alias, body.Role, body.Descr)
+	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Role, body.Descr)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return

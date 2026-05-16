@@ -327,7 +327,7 @@ func runGroupsLinkRm(p *groupsLinkRmParams, stdout, stderr io.Writer) int {
 // --- groups why-can-i-message ---
 
 type whyCanMessageParams struct {
-	Target string `pos:"true" help:"Target conv-id, alias, or display title"`
+	Target string `pos:"true" help:"Target conv-id or display title"`
 	From   string `long:"from" optional:"true" help:"Override the sender; defaults to caller's conv-id"`
 	JSON   bool   `long:"json" help:"Output JSON"`
 }

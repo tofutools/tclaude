@@ -25,7 +25,7 @@ func TestClone_CwdOverrideSpawnsThere(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, "spwn-clonecwd-1", "tclaude-spwn-clonecwd-1", "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	// World.HomeDir is a real temp dir, so it passes the daemon's
 	// exists-and-is-a-directory check.
@@ -52,7 +52,7 @@ func TestClone_InvalidCwdOverrideReportsError(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, "spwn-badclonecwd-1", "tclaude-spwn-badclonecwd-1", "/tmp/work")
 	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv, "worker")
+	f.HaveMember("alpha", oldConv)
 
 	c := f.AsHuman().CloneWith(oldConv, map[string]any{
 		"no_copy_conv": true,

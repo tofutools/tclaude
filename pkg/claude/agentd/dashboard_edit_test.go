@@ -47,10 +47,10 @@ func TestDashboardEdit_RemoveMember(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"})
 
 	w := httptest.NewRecorder()
-	r := dashboardRequest(http.MethodDelete, "/api/groups/team/members/w", "")
+	r := dashboardRequest(http.MethodDelete, "/api/groups/team/members/worker", "")
 	handleDashboardGroupsAPI(w, r)
 	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	members, _ := db.ListAgentGroupMembers(gID)
@@ -62,10 +62,10 @@ func TestDashboardEdit_GrantOwner(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"})
 
 	w := httptest.NewRecorder()
-	r := dashboardRequest(http.MethodPost, "/api/groups/team/owners", `{"conv":"w"}`)
+	r := dashboardRequest(http.MethodPost, "/api/groups/team/owners", `{"conv":"worker"}`)
 	handleDashboardGroupsAPI(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	owners, _ := db.ListAgentGroupOwners(gID)
@@ -80,11 +80,11 @@ func TestDashboardEdit_RevokeOwner(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"})
 	_ = db.AddAgentGroupOwner(gID, "worker", "<test>")
 
 	w := httptest.NewRecorder()
-	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/w", "")
+	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/worker", "")
 	handleDashboardGroupsAPI(w, r)
 	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	owners, _ := db.ListAgentGroupOwners(gID)
@@ -96,11 +96,11 @@ func TestDashboardEdit_RevokeOwner_NotAnOwner(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"})
 	// no owner row
 
 	w := httptest.NewRecorder()
-	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/w", "")
+	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/worker", "")
 	handleDashboardGroupsAPI(w, r)
 	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
@@ -110,7 +110,7 @@ func TestDashboardEdit_DeleteGroup(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"})
 	_ = db.AddAgentGroupOwner(gID, "worker", "<test>")
 
 	w := httptest.NewRecorder()
@@ -122,28 +122,27 @@ func TestDashboardEdit_DeleteGroup(t *testing.T) {
 }
 
 // PATCH /api/groups/{name}/members/{conv} with one or more of
-// alias/role/descr updates the row. Verifies the dashboard mirror
-// of the /v1 PATCH that the CLI's `groups update-member` already
-// uses — ensures edits initiated from the dashboard land in the
-// same agent_group_members row the CLI would touch.
+// role/descr updates the row. Verifies the dashboard mirror of the
+// /v1 PATCH that the CLI's `groups update-member` already uses —
+// ensures edits initiated from the dashboard land in the same
+// agent_group_members row the CLI would touch.
 func TestDashboardEdit_UpdateMember(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker", Alias: "old-alias", Role: "old-role", Descr: "old descr",
+		GroupID: gID, ConvID: "worker", Role: "old-role", Descr: "old descr",
 	})
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker",
-		`{"alias":"new-alias","role":"new-role","descr":"new descr"}`)
+		`{"role":"new-role","descr":"new descr"}`)
 	handleDashboardGroupsAPI(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	members, _ := db.ListAgentGroupMembers(gID)
 	require.Len(t, members, 1, "expected 1 member")
 	got := members[0]
-	assert.Equal(t, "new-alias", got.Alias, "alias")
 	assert.Equal(t, "new-role", got.Role, "role")
 	assert.Equal(t, "new descr", got.Descr, "descr")
 }
@@ -158,7 +157,7 @@ func TestDashboardEdit_UpdateMember_PartialFields(t *testing.T) {
 
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker", Alias: "stay-alias", Role: "stay-role", Descr: "stay-descr",
+		GroupID: gID, ConvID: "worker", Role: "stay-role", Descr: "stay-descr",
 	})
 
 	w := httptest.NewRecorder()
@@ -169,7 +168,6 @@ func TestDashboardEdit_UpdateMember_PartialFields(t *testing.T) {
 	members, _ := db.ListAgentGroupMembers(gID)
 	got := members[0]
 	assert.Equal(t, "only-role-changed", got.Role, "role should be updated")
-	assert.Equal(t, "stay-alias", got.Alias, "alias untouched")
 	assert.Equal(t, "stay-descr", got.Descr, "descr untouched")
 }
 
@@ -181,7 +179,7 @@ func TestDashboardEdit_UpdateMember_EmptyBodyIs400(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "a"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"})
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker", `{}`)
@@ -199,7 +197,7 @@ func TestDashboardEdit_UpdateMember_MissingIs404(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/no-such-conv",
-		`{"alias":"x"}`)
+		`{"role":"x"}`)
 	handleDashboardGroupsAPI(w, r)
 	assert.Equal(t, http.StatusNotFound, w.Code, "missing member")
 }
@@ -209,7 +207,7 @@ func TestDashboardEdit_RenameGroup(t *testing.T) {
 	withDashboardAuth(t)
 
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker", Alias: "w"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"})
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", `{"new_name":"team-renamed"}`)
@@ -289,7 +287,7 @@ func TestDashboardEdit_DeleteAgent_OrphanCleanup(t *testing.T) {
 	// (it's already gone), and drop the orphan rows.
 	const orphanConv = "ab887fe0-3816-4a8f-a2f4-1c2607405f9e"
 	gID, _ := db.CreateAgentGroup("team", "")
-	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: orphanConv, Alias: "ghost"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: orphanConv})
 	_ = db.AddAgentGroupOwner(gID, orphanConv, "<test>")
 	_ = db.GrantAgentPermission(orphanConv, "self.clone", "<test>")
 

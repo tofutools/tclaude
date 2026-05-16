@@ -51,8 +51,8 @@ func TestDashboardBranchLinks_SurfacedInSnapshot(t *testing.T) {
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(aliceConv, "spwn-alice", "tmux-alice", "/tmp/wt/login", "feature-login")
 	f.HaveAliveSessionOnBranch(bobConv, "spwn-bob", "tmux-bob", "/tmp/wt/crash", "bugfix-crash")
-	f.HaveMember("squad", aliceConv, "alice")
-	f.HaveMember("squad", bobConv, "bob")
+	f.HaveMember("squad", aliceConv)
+	f.HaveMember("squad", bobConv)
 
 	// Stand in for the watch model: scan each conv's .jsonl into
 	// conv_index so ResolveLocation reads the branch off the cached row.

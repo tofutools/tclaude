@@ -22,7 +22,7 @@ func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 	gID, err := db.CreateAgentGroup("team", "")
 	require.NoError(t, err, "CreateAgentGroup")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker-1", Alias: "w",
+		GroupID: gID, ConvID: "worker-1",
 	})
 
 	// Archive (human path — empty caller bypasses permission gate).
@@ -57,7 +57,7 @@ func TestHandleGroupUnarchive_ClearsAndAllows(t *testing.T) {
 	setupTestDB(t)
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: gID, ConvID: "worker-1", Alias: "w",
+		GroupID: gID, ConvID: "worker-1",
 	})
 	require.NoError(t, db.ArchiveAgentGroup("team"), "ArchiveAgentGroup")
 

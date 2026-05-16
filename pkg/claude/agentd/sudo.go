@@ -86,7 +86,7 @@ type resolvedSudo struct {
 }
 
 // resolveSudoConfig builds the effective sudo policy for a caller
-// (convID / alias / title). Order of precedence: per-conv override
+// (convID / title). Order of precedence: per-conv override
 // (Sudo.Overrides[matching key]) → global Sudo block → hardcoded
 // fallbacks. Each layer fills in only the fields it sets — unset
 // fields fall through.
@@ -96,7 +96,7 @@ type resolvedSudo struct {
 // logs nothing (the human edited the file; surface the error in CI
 // or via a dedicated config-lint subcommand later if it becomes a
 // support burden).
-func resolveSudoConfig(cfg *config.Config, convID, alias, title string) resolvedSudo {
+func resolveSudoConfig(cfg *config.Config, convID, title string) resolvedSudo {
 	out := resolvedSudo{
 		MaxDuration:     sudoDefaultMaxDuration,
 		DefaultDuration: sudoDefaultDefaultDuration,
@@ -108,7 +108,7 @@ func resolveSudoConfig(cfg *config.Config, convID, alias, title string) resolved
 	}
 	applySudoLayer(&out, cfg.Agent.Sudo.MaxDuration, cfg.Agent.Sudo.DefaultDuration,
 		cfg.Agent.Sudo.PopupTimeout, cfg.Agent.Sudo.Blocklist)
-	if ov := cfg.MatchSudoOverride(convID, alias, title); ov != nil {
+	if ov := cfg.MatchSudoOverride(convID, title); ov != nil {
 		applySudoLayer(&out, ov.MaxDuration, ov.DefaultDuration, ov.PopupTimeout, ov.Blocklist)
 	}
 	return out
@@ -271,7 +271,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		title = agent.DisplayTitle(row)
 	}
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, p.ConvID, "", title)
+	policy := resolveSudoConfig(cfg, p.ConvID, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		writeError(w, http.StatusForbidden, "blocked",
@@ -353,7 +353,7 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 		title = agent.DisplayTitle(row)
 	}
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, targetConv, "", title)
+	policy := resolveSudoConfig(cfg, targetConv, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		writeError(w, http.StatusForbidden, "blocked",
