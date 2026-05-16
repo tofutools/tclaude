@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,17 +31,28 @@ import (
 //
 // Endpoints:
 //
-//	GET  /v1/groups/{name}/export   — download a group as a .zip (CLI)
-//	POST /v1/groups/import          — import a .zip (CLI)
-//	GET  /api/groups/{name}/export  — download a group as a .zip (dashboard)
+//	GET  /v1/groups/{name}/export    — download a group as a .zip (CLI)
+//	POST /v1/groups/import           — import a .zip (CLI)
+//	POST /v1/groups/import/inspect   — dry-run analyse a .zip (CLI)
+//	GET  /api/groups/{name}/export   — download a group as a .zip (dashboard)
+//	POST /api/groups/import          — import an uploaded .zip (dashboard)
+//	POST /api/groups/import/inspect  — dry-run analyse an upload (dashboard)
 //
-// A dashboard IMPORT control is intentionally not part of phase 1 — see
-// docs/plans/DONE/group-export-import.md.
+// The /v1 surfaces take the raw .zip as the request body; the dashboard
+// surfaces take a multipart/form-data upload (a browser cannot stream a
+// raw body with query params). Both shapes funnel through the same
+// permission-checked handlers — see readImportUpload.
 
 // maxImportArchiveBytes caps an uploaded import archive. Conversations
 // can be large, but a per-group export is not unbounded; the cap is a
 // guard against a runaway upload, not a real-world limit.
 const maxImportArchiveBytes = 512 << 20 // 512 MiB
+
+// multipartParseMemoryBytes bounds how much of a multipart upload the
+// stdlib parser keeps in RAM before spilling parts to temp files. The
+// archive is read fully into memory afterwards regardless; this only
+// caps the parser's transient buffer.
+const multipartParseMemoryBytes = 32 << 20 // 32 MiB
 
 // --- export ---
 
@@ -163,11 +175,78 @@ type importResponse struct {
 	FileWarnings   []string          `json:"file_warnings,omitempty"`
 }
 
-// handleGroupImport serves POST /v1/groups/import. The request body is
-// the raw .zip archive; the target directory and optional new name come
-// from the query string:
+// readImportUpload extracts the .zip archive and the into / as
+// parameters from an import request, transparently handling both request
+// shapes the import endpoints accept:
 //
-//	POST /v1/groups/import?into=<path>&as=<name>
+//   - multipart/form-data — the dashboard upload: an "archive" file part
+//     plus "into" / "as" form fields. A browser cannot stream a raw body
+//     with query params the way the CLI does, so it posts a form.
+//   - any other content type — the CLI path: the raw .zip IS the request
+//     body and into / as ride in the query string.
+//
+// The archive is capped at maxImportArchiveBytes either way. On any read
+// failure it writes the error response itself and returns ok=false; the
+// caller just returns.
+func readImportUpload(w http.ResponseWriter, r *http.Request) (archive []byte, into, as string, ok bool) {
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType == "multipart/form-data" {
+		// Cap the whole request body before the multipart parser reads it.
+		r.Body = http.MaxBytesReader(w, r.Body, maxImportArchiveBytes)
+		if err := r.ParseMultipartForm(multipartParseMemoryBytes); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"import: read multipart upload: "+err.Error())
+			return nil, "", "", false
+		}
+		// Parts large enough to spill to temp files are no longer needed
+		// once the archive is in memory — drop them before returning.
+		defer func() {
+			if r.MultipartForm != nil {
+				_ = r.MultipartForm.RemoveAll()
+			}
+		}()
+		into = strings.TrimSpace(r.FormValue("into"))
+		as = strings.TrimSpace(r.FormValue("as"))
+		file, _, err := r.FormFile("archive")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"import: multipart upload has no 'archive' file part: "+err.Error())
+			return nil, "", "", false
+		}
+		defer func() { _ = file.Close() }()
+		archive, err = io.ReadAll(file)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"import: read uploaded archive: "+err.Error())
+			return nil, "", "", false
+		}
+		return archive, into, as, true
+	}
+
+	// CLI path: the raw .zip is the request body verbatim.
+	into = strings.TrimSpace(r.URL.Query().Get("into"))
+	as = strings.TrimSpace(r.URL.Query().Get("as"))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxImportArchiveBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "import: read archive: "+err.Error())
+		return nil, "", "", false
+	}
+	return body, into, as, true
+}
+
+// handleGroupImport imports a group from a .zip archive. It is the
+// single permission-checked handler behind BOTH surfaces:
+//
+//   - POST /v1/groups/import?into=<path>&as=<name> — the CLI path; the
+//     raw .zip is the request body. requirePermission gates an agent on
+//     groups.import and lets a human straight through.
+//   - POST /api/groups/import — the dashboard upload; a multipart form
+//     carrying the .zip plus into / as fields. The dashboard route wraps
+//     the request with asDashboardHumanPeer first, so requirePermission
+//     sees a permission-bypassing human.
+//
+// Routing both surfaces through this one handler keeps groups.import
+// structurally enforced on every path and mirrors handleGroupExport.
 //
 // Permission slug: groups.import (default human-only).
 func handleGroupImport(w http.ResponseWriter, r *http.Request) {
@@ -176,21 +255,17 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	into := strings.TrimSpace(r.URL.Query().Get("into"))
-	asName := strings.TrimSpace(r.URL.Query().Get("as"))
+	archive, into, asName, ok := readImportUpload(w, r)
+	if !ok {
+		return
+	}
 	if into == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"import: 'into' query parameter (target directory) is required")
+			"import: target directory is required (the 'into' query parameter, or the 'into' form field on an upload)")
 		return
 	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxImportArchiveBytes))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "import: read archive: "+err.Error())
-		return
-	}
-
-	resp, status, err := runGroupImport(body, into, asName, caller)
+	resp, status, err := runGroupImport(archive, into, asName, caller)
 	if err != nil {
 		code := "io"
 		switch status {
@@ -203,6 +278,149 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// --- import: dry-run inspection ---
+
+// importInspection is the dry-run analysis of an import archive: the
+// manifest summary plus a local-collision report. The dashboard preview
+// panel renders it the moment a .zip is picked — so an import is never a
+// blind action — and `tclaude agent groups import --dry-run` prints it.
+// Producing it writes nothing.
+type importInspection struct {
+	// Manifest summary — what the archive declares it holds.
+	SourceGroup   string `json:"source_group"`
+	FormatVersion int    `json:"format_version"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	SourceHome    string `json:"source_home,omitempty"`
+	SourceOS      string `json:"source_os,omitempty"`
+	ExportedAt    string `json:"exported_at,omitempty"`
+	AgentCount    int    `json:"agent_count"`
+	MessageCount  int    `json:"message_count"`
+	ConvCount     int    `json:"conv_count"`
+	MissingConvs  int    `json:"missing_convs"`
+
+	// Target + collision analysis against THIS machine.
+	TargetName      string          `json:"target_name"`
+	TargetNameValid bool            `json:"target_name_valid"`
+	TargetNameError string          `json:"target_name_error,omitempty"`
+	GroupNameTaken  bool            `json:"group_name_taken"`
+	ConvCollisions  []convCollision `json:"conv_collisions"`
+}
+
+// convCollision is one imported conversation whose conv-id already
+// exists locally — on import it is remapped to a fresh id and its agent
+// retitled "-i-N" (see uniqueImportTitle).
+type convCollision struct {
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+}
+
+// inspectGroupImport unmarshals an archive and analyses it against the
+// local machine WITHOUT importing anything. It returns:
+//
+//   - (inspection, 200, nil) — the archive is a well-formed export. The
+//     inspection carries the manifest summary and the collision report.
+//     A group-name clash or an invalid --as is reported as a FIELD on
+//     the inspection, not an error, so the preview can still show the
+//     human what the archive holds while flagging the name to fix.
+//   - (nil, 400, err) — the archive itself is unusable: not a zip, no
+//     manifest, malformed, or a format version this tclaude predates.
+//     There is nothing safe to preview; the caller blocks the import.
+func inspectGroupImport(archive []byte, asName string) (*importInspection, int, error) {
+	exp, err := groupexport.Unmarshal(archive)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
+
+	insp := &importInspection{
+		SourceGroup:    exp.SourceGroup,
+		FormatVersion:  exp.FormatVersion,
+		SchemaVersion:  exp.SchemaVersion,
+		SourceHome:     exp.SourceHome,
+		SourceOS:       exp.SourceOS,
+		ExportedAt:     exp.ExportedAt,
+		AgentCount:     len(exp.Members),
+		MessageCount:   len(exp.Messages),
+		ConvCount:      len(exp.Convs),
+		ConvCollisions: []convCollision{},
+	}
+
+	// The effective target name: --as when given, else the exported name.
+	targetName := asName
+	if targetName == "" {
+		targetName = exp.SourceGroup
+	}
+	insp.TargetName = targetName
+	if err := validateGroupName(targetName); err != nil {
+		insp.TargetNameError = err.Error()
+	} else {
+		insp.TargetNameValid = true
+		// A group-name collision is not auto-resolved on import — the
+		// human must pass --as. Surface it so the preview can say so.
+		if g, err := db.GetAgentGroupByName(targetName); err != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("import: check group name: %w", err)
+		} else if g != nil {
+			insp.GroupNameTaken = true
+		}
+	}
+
+	// Conv-id collisions: the same per-conv check runGroupImport applies
+	// when it builds convRemap. Walk Convs (not Members) so a conv with
+	// no membership row is still surfaced — identical iteration to the
+	// importer's remap loop.
+	for i := range exp.Convs {
+		c := &exp.Convs[i]
+		if c.Missing {
+			insp.MissingConvs++
+		}
+		if convExistsLocally(c.ConvID) {
+			title := c.Title
+			if title == "" {
+				title = agent.FreshTitle(c.ConvID)
+			}
+			insp.ConvCollisions = append(insp.ConvCollisions, convCollision{
+				ConvID: c.ConvID,
+				Title:  title,
+			})
+		}
+	}
+	return insp, http.StatusOK, nil
+}
+
+// handleGroupImportInspect serves the import dry-run. It is the single
+// permission-checked handler behind BOTH surfaces, mirroring
+// handleGroupImport / handleGroupExport:
+//
+//   - POST /v1/groups/import/inspect — the CLI path (groups import
+//     --dry-run); the raw .zip is the request body.
+//   - POST /api/groups/import/inspect — the dashboard preview; a
+//     multipart upload. The dashboard route wraps the request with
+//     asDashboardHumanPeer first.
+//
+// It accepts the same upload shapes as handleGroupImport and writes
+// nothing — the dashboard calls it as soon as a .zip is picked so the
+// human sees the manifest summary + collision report before committing.
+// Gated on groups.import: inspecting an archive reveals its full
+// manifest, so the same slug that gates the import gates the preview.
+func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
+		return
+	}
+	archive, _, asName, ok := readImportUpload(w, r)
+	if !ok {
+		return
+	}
+	insp, status, err := inspectGroupImport(archive, asName)
+	if err != nil {
+		code := "io"
+		if status == http.StatusBadRequest {
+			code = "invalid_arg"
+		}
+		writeError(w, status, code, err.Error())
+		return
+	}
+	writeJSON(w, status, insp)
 }
 
 // runGroupImport performs the whole import. It returns (response, 200,

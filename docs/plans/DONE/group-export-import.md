@@ -8,32 +8,71 @@ control, moving it to another worker machine, and backups. Per-group
 (not whole-DB) is deliberate: the DB holds many groups and some data is
 sensitive, so the human transfers one group at a time.
 
+Follow-up shipped after phase 1: the dashboard import surface — the
+**⤒ import** button, an upload modal, and a dry-run preview that shows
+the manifest summary + collision report before anything is written.
+Import is no longer CLI-only. See the Dashboard section.
+
 ## CLI surface
 
 - `tclaude agent groups export <name> [-o <file>]` — download the group
   as a `.zip`. Default filename `group-<name>-<timestamp>.zip` in the
   cwd; `-o -` streams to stdout.
-- `tclaude agent groups import <file> --into <dir> [--as <name>]` —
-  recreate the group from an archive. `--into` (required) is the local
-  working directory the imported agents are bound to. `--as` imports
-  under a different group name.
+- `tclaude agent groups import <file> --into <dir> [--as <name>]
+  [--dry-run]` — recreate the group from an archive. `--into` (required
+  unless `--dry-run`) is the local working directory the imported agents
+  are bound to. `--as` imports under a different group name. `--dry-run`
+  inspects the archive and prints what *would* be imported — manifest
+  summary plus group-name and conv-id collisions — without writing
+  anything.
 - `tclaude agent groups transfers [--limit N] [--json]` — the
   export/import audit log.
 
 ## Dashboard
 
-Each group's controls grew an **⤓ export** button (`GET
-/api/groups/{name}/export`, cookie-authed) that downloads the `.zip`. A
-dashboard *import* control is **deferred** — the dashboard has no upload
-mechanism today and import is fully covered by the CLI; see Deferred.
+The Groups page carries two top-bar controls and a per-group button:
+
+- Per group: an **⤓ export** button (`GET /api/groups/{name}/export`,
+  cookie-authed) downloads the `.zip`.
+- Top-right, next to **🧹 clean up**: an **⤒ import** button opens the
+  import modal — a `<input type="file">` picker for the `.zip`, an
+  "Into dir" text field (the `--into` value; a browser cannot browse the
+  server filesystem) and an optional "Import as" field (`--as`).
+- The moment a `.zip` is picked the modal POSTs it to the dry-run
+  endpoint and renders a **preview panel**: manifest summary (source
+  group, agent/message counts, source machine, format version) plus a
+  collision report — whether the group name is already taken here, and
+  which conv-ids will be remapped to `-i-N` copies. The **Import** button
+  stays disabled until the preview is clean; a malformed / corrupt /
+  unsupported-version archive shows its error in the preview and blocks
+  the confirm outright. On a failed commit the modal surfaces that the
+  transactional import wrote nothing.
 
 ## Daemon endpoints
 
 - `GET  /v1/groups/{name}/export` — slug `groups.export` (human-only).
 - `POST /v1/groups/import?into=<path>&as=<name>` — slug `groups.import`
   (human-only). Request body is the raw `.zip`.
+- `POST /v1/groups/import/inspect?as=<name>` — slug `groups.import`. Raw
+  `.zip` body; returns the dry-run analysis (manifest summary + collision
+  report) and writes nothing.
 - `GET  /v1/groups/transfers` — read-only, open to any caller.
-- `GET  /api/groups/{name}/export` — dashboard equivalent.
+- `GET  /api/groups/{name}/export` — dashboard export.
+- `POST /api/groups/import` — dashboard import; a `multipart/form-data`
+  upload (an `archive` file part + `into` / `as` form fields), since a
+  browser cannot stream a raw body with query params.
+- `POST /api/groups/import/inspect` — dashboard dry-run; same multipart
+  upload shape.
+
+The dashboard import / inspect routes wrap the cookie-authed request
+with `asDashboardHumanPeer` and call the **same** permission-checked
+`handleGroupImport` / `handleGroupImportInspect` the `/v1` routes use, so
+the `groups.import` slug is structurally enforced on every path (the
+fix-pattern established for the export route in commit `6a1ade5`). A
+single `readImportUpload` helper transparently handles both the raw-body
+(CLI) and multipart (dashboard) request shapes; uploads are capped at
+512 MiB so a realistically large conversation-bearing archive is
+accepted.
 
 ## On-disk format — a zip archive
 
@@ -142,12 +181,25 @@ rolled-back import logs nothing. Surfaced via `groups transfers`.
   `ImportGroup` (the transaction).
 - `pkg/claude/common/db/transfer_log.go` + `migrate.go` (v40).
 - `pkg/claude/agentd/groups_export.go` — handlers, `.jsonl` I/O,
-  conv-id remap, path rewrite, staging.
-- `pkg/claude/agent/groups_export.go` — the CLI subcommands.
+  conv-id remap, path rewrite, staging. `readImportUpload`
+  (raw-body / multipart), `inspectGroupImport` (dry-run analysis),
+  `handleGroupImport` / `handleGroupImportInspect` (shared,
+  permission-checked, behind both `/v1` and `/api`).
+- `pkg/claude/agentd/dashboard_edit.go` — `handleDashboardGroupImport`
+  / `handleDashboardGroupImportInspect` and their `/api/groups/import`
+  route registration.
+- `pkg/claude/agentd/dashboard.html` — the **⤒ import** button, the
+  import modal (file picker + into / as fields), the dry-run preview
+  panel + collision report, and the confirm flow.
+- `pkg/claude/agent/groups_export.go` — the CLI subcommands, including
+  `import --dry-run`.
 - Tests: `groupexport/container_test.go`, `db/migrate_v40_test.go`,
   `agentd/groups_export_flow_test.go` (round-trip, same-machine re-import
   remap, name-collision refusal, malformed/unsupported-version
-  rejection, cross-home path rewrite, failed-import-leaves-nothing).
+  rejection, cross-home path rewrite, failed-import-leaves-nothing),
+  `agentd/dashboard_group_import_flow_test.go` (dashboard upload
+  recreates the group; dry-run reports group-name + conv-id collisions
+  without writing; malformed upload rejected at preview and commit).
 
 ## Deferred — explicit follow-ups
 
@@ -163,7 +215,5 @@ Out of scope for phase 1; recorded here, not built:
 - **Selective / partial export** within a group.
 - **Encryption of the export file.** The archive holds full conversation
   content and is sensitive; phase 1 does not encrypt it.
-- **Dashboard import control** (file picker + target-path field). Cheap
-  to add later; import is CLI-only for now.
 - **Windows↔POSIX `.jsonl`-internal path rewriting** (see Known
   limitation above).
