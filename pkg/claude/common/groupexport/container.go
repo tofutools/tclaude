@@ -85,7 +85,11 @@ func Marshal(exp *Export) ([]byte, error) {
 	convs := append([]Conv(nil), exp.Convs...)
 	sort.Slice(convs, func(i, j int) bool { return convs[i].ConvID < convs[j].ConvID })
 	for _, c := range convs {
-		if c.Missing || len(c.Content) == 0 {
+		// A non-Missing conv always gets a file entry — even one with
+		// empty content (a valid, if degenerate, empty conversation).
+		// Unmarshal requires a file for every non-Missing conv, so
+		// skipping an empty one here would make the archive un-importable.
+		if c.Missing {
 			continue
 		}
 		name := convDirPrefix + c.ConvID + ".jsonl"

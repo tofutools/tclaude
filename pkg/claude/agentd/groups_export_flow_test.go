@@ -428,9 +428,11 @@ func TestGroupImport_FailedImportLeavesNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, entries, "a failed import must not log a transfer")
 
-	// No staging directory left behind under ~/.claude.
+	// No staging directory left behind under ~/.claude. The directory
+	// must be readable — a skipped loop would let this check pass falsely.
 	claudeDir := filepath.Join(home, ".claude")
-	dirEntries, _ := os.ReadDir(claudeDir)
+	dirEntries, err := os.ReadDir(claudeDir)
+	require.NoError(t, err, "~/.claude should be readable")
 	for _, e := range dirEntries {
 		assert.False(t, strings.HasPrefix(e.Name(), ".tclaude-import-staging-"),
 			"staging dir %q must have been wiped", e.Name())

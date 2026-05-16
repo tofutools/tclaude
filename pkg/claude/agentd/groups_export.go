@@ -276,7 +276,11 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 	for i := range exp.Convs {
 		c := &exp.Convs[i]
 		finalID := convRemap[c.ConvID]
-		if c.Missing || len(c.Content) == 0 {
+		// A Missing conv had no .jsonl at export time — its DB rows still
+		// import, but there is no file to stage. An empty-but-present
+		// conv is staged normally (a 0-byte .jsonl is a valid, if
+		// degenerate, conversation).
+		if c.Missing {
 			fileWarnings = append(fileWarnings,
 				fmt.Sprintf("%s: no conversation .jsonl in archive", finalID))
 			continue
@@ -547,16 +551,20 @@ func transformConvJSONL(content []byte, srcHome, dstHome, srcCwd, dstCwd string,
 }
 
 // rewritePathPrefix replaces every occurrence of oldPrefix with
-// newPrefix, but only where oldPrefix ends on a path boundary — the
-// character after it is not a path-name character. That boundary check
-// is what stops `/home/A` from corrupting `/home/Alice`: the `l` after
-// `/home/A` is a name character, so that occurrence is left alone, while
-// `/home/A/`, `/home/A"` and a bare trailing `/home/A` are all rewritten.
+// newPrefix, but only where the match is a discrete path token — the
+// characters on BOTH sides of it are not path-name characters. The
+// right-boundary check stops `/home/A` from corrupting `/home/Alice`
+// (the `l` after `/home/A` is a name char); the left-boundary check
+// stops a match buried mid-token, e.g. the `/home/A` inside
+// `keep/home/A`, from being rewritten into a broken `keep<newPrefix>`.
+// `/home/A/`, `/home/A"` and a bare trailing `/home/A` still rewrite.
 func rewritePathPrefix(s, oldPrefix, newPrefix string) string {
 	if oldPrefix == "" || oldPrefix == newPrefix {
 		return s
 	}
 	var b strings.Builder
+	atStart := true   // still at the very start of the original input?
+	var prevByte byte // last original byte consumed so far
 	for {
 		i := strings.Index(s, oldPrefix)
 		if i < 0 {
@@ -565,11 +573,24 @@ func rewritePathPrefix(s, oldPrefix, newPrefix string) string {
 		}
 		b.WriteString(s[:i])
 		end := i + len(oldPrefix)
-		if end >= len(s) || !isPathNameByte(s[end]) {
+		// Left boundary: the byte immediately before the match in the
+		// ORIGINAL input. When the match is mid-slice it is s[i-1]; when
+		// it is at the slice start it is the last byte of the previous
+		// chunk (prevByte), or "start of input" on the first iteration.
+		var leftOK bool
+		if i > 0 {
+			leftOK = !isPathNameByte(s[i-1])
+		} else {
+			leftOK = atStart || !isPathNameByte(prevByte)
+		}
+		rightOK := end >= len(s) || !isPathNameByte(s[end])
+		if leftOK && rightOK {
 			b.WriteString(newPrefix)
 		} else {
 			b.WriteString(oldPrefix)
 		}
+		prevByte = s[end-1]
+		atStart = false
 		s = s[end:]
 	}
 	return b.String()

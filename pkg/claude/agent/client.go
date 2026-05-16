@@ -271,7 +271,10 @@ func DaemonGetRaw(path string) ([]byte, http.Header, error) {
 		return nil, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, nil, fmt.Errorf("read response body: %w", readErr)
+	}
 	if resp.StatusCode >= 400 {
 		return nil, nil, decodeDaemonError(resp.StatusCode, raw)
 	}
@@ -292,7 +295,10 @@ func DaemonPostRaw(path, contentType string, body []byte, out any) error {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("read response body: %w", readErr)
+	}
 	if resp.StatusCode >= 400 {
 		return decodeDaemonError(resp.StatusCode, raw)
 	}
