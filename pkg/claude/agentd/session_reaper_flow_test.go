@@ -40,6 +40,29 @@ func TestSessionReaper_MarksDeadSessionExited(t *testing.T) {
 		"reaper must persist status=exited for the dead session")
 }
 
+// Scenario: a live session's pane dies with no SessionEnd hook — an
+// unclean death. The reaper must not only mark it exited but stamp
+// exit_reason='unexpected', the signal the dashboard renders as
+// "crashed". A graceful /exit would have recorded its own reason via
+// the SessionEnd hook and the reaper would have skipped the row.
+func TestSessionReaper_StampsUnexpectedExitReason(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "uxrs-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "crashed-worker")
+	f.HaveAliveSession(conv, "spwn-uxrs", "tmux-uxrs", "/tmp/uxrs")
+	f.MarkOffline("tmux-uxrs")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead session should be reaped")
+	assert.Equal(t, "exited", statusOf(t, "spwn-uxrs"))
+
+	reason, err := db.GetSessionExitReason("spwn-uxrs")
+	require.NoError(t, err)
+	assert.Equal(t, "unexpected", reason,
+		"a session reaped with no recorded SessionEnd reason is stamped unexpected")
+}
+
 // Scenario: the reaper witnesses a session alive on one tick and dead
 // on the next — a genuine alive→dead transition — and notifies.
 func TestSessionReaper_NotifiesOnWitnessedTransition(t *testing.T) {

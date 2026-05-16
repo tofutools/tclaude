@@ -82,6 +82,11 @@ table tr:hover { background: #161b22; }
 .state-error     { background: #3a0a0a; color: #ff9492; border-color: #8b1a1a; }
 .state-exited    { background: #21262d; color: #7d8590; border-color: #2a3340; }
 .state-offline   { background: #161b22; color: #484f58; border-color: #2a3340; }
+/* crashed: an offline agent whose process died without a clean exit —
+   no SessionEnd hook fired (crash, kill, or reboot). Amber, so it
+   reads as "needs a look": louder than the calm grey of a clean
+   offline, but not the red of a live error. */
+.state-crashed   { background: #3a2a05; color: #e3b341; border-color: #5c4611; }
 .state-detail { color: #7d8590; font-size: 11px; margin-left: 6px; }
 /* The STATE column cell. The context meter leads the cell (fixed
    horizontal position, independent of how long the state string is),
@@ -1913,15 +1918,23 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // statePill renders a colored pill for an agent's state. For an
   // online agent it combines status + status_detail (e.g. "working:
-  // Bash"). For an offline agent we render a literal "offline" pill and
-  // ignore state.status entirely: the hook-recorded status is frozen at
-  // whatever it was when the process exited (usually "idle" from the
-  // final Stop hook, since no SessionEnd-style hook fires on exit), so
-  // echoing it would mislabel a dead agent as "idle". The last-active
-  // time, when known, goes in the tooltip.
+  // Bash"). For an offline agent we ignore state.status entirely (the
+  // hook-recorded status is frozen at whatever it was when the process
+  // exited, so echoing it would mislabel a dead agent) and render from
+  // exit_reason instead: a process that died without a clean exit —
+  // exit_reason 'unexpected', reaper-stamped because no SessionEnd hook
+  // fired — shows as "crashed"; every other case (a clean exit, or an
+  // unknown/blank reason such as a pre-exit_reason corpse) stays a
+  // plain grey "offline". An unknown reason is never a crash. The
+  // last-active time, when known, goes in the tooltip.
   function statePill(state, online) {
     if (!online) {
       const lh = relTime(state && state.last_hook);
+      if (((state && state.exit_reason) || '') === 'unexpected') {
+        const tip = 'process ended without a clean exit — crash, kill, or reboot'
+          + (lh ? ` · last active ${lh}` : '');
+        return `<span class="state-pill state-crashed" title="${esc(tip)}">crashed</span>`;
+      }
       const tip = lh ? `offline — last active ${lh}` : 'offline';
       return `<span class="state-pill state-offline" title="${esc(tip)}">offline</span>`;
     }

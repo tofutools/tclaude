@@ -102,6 +102,72 @@ func TestRunHookCallback_SessionEndClearKeepsStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StatusIdle, got.Status,
 		"SessionEnd(clear) keeps the process alive — status must not flip to exited")
+	reason, err := db.GetSessionExitReason("clear-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "", reason,
+		"a /clear is not a real exit — it must not record an exit reason")
+}
+
+// A SessionEnd hook with a real exit reason records that reason so the
+// dashboard can tell this clean exit from an unexpected death.
+func TestRunHookCallback_SessionEndRecordsExitReason(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "end-sess",
+		ConvID: "conv-end",
+		Status: StatusIdle,
+	}))
+
+	feedHook(t, "end-sess", map[string]any{
+		"session_id":      "conv-end",
+		"hook_event_name": "SessionEnd",
+		"reason":          "logout",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("end-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusExited, got.Status, "SessionEnd(logout) marks the session exited")
+
+	reason, err := db.GetSessionExitReason("end-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "logout", reason,
+		"a graceful SessionEnd records its reason")
+}
+
+// SessionStart clears any stale exit_reason: a resumed session is alive
+// again, so a reason left over from a previous exit (or a reaper
+// 'unexpected' stamp) must not linger to mislabel a later death.
+func TestRunHookCallback_SessionStartClearsExitReason(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "start-sess",
+		ConvID: "conv-start",
+		Status: StatusExited,
+	}))
+	// The row carries a stale reason from a previous death.
+	require.NoError(t, db.SetSessionExitReason("start-sess", "unexpected"))
+
+	feedHook(t, "start-sess", map[string]any{
+		"session_id":      "conv-start",
+		"hook_event_name": "SessionStart",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("start-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusIdle, got.Status, "SessionStart sets the session idle")
+
+	reason, err := db.GetSessionExitReason("start-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "", reason,
+		"SessionStart must clear the stale exit_reason — the session is alive again")
 }
 
 // A StopFailure hook (turn ended in an API/auth/billing error) flips the

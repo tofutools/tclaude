@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 42
+const currentVersion = 43
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -275,6 +275,12 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 43 {
+		if err := migrateV42toV43(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -321,6 +327,34 @@ func migrateV41toV42(db *sql.DB) error {
 		UPDATE schema_version SET version = 42;
 	`); err != nil {
 		return fmt.Errorf("migrate v41→v42 (add group templates): %w", err)
+	}
+	return nil
+}
+
+// migrateV42toV43 adds sessions.exit_reason — the nullable column that
+// lets the dashboard tell a clean exit from an unexpected death.
+//
+// When Claude Code shuts down gracefully it fires a SessionEnd hook
+// carrying a `reason` (clear / logout / prompt_input_exit / resume /
+// bypass_permissions_disabled / other); the hook callback records that
+// reason here. A process that dies WITHOUT a graceful shutdown — a
+// crash, an OOM kill, `tclaude session kill`, a reboot — fires no
+// SessionEnd, so the session reaper finds a dead row carrying no
+// recorded reason and stamps exit_reason='unexpected' when it marks
+// the row exited (see MarkSessionExitedIfUnchanged).
+//
+// The column is nullable on purpose: NULL means "no reason recorded" —
+// a live session, or a row that exited before this migration existed.
+// The dashboard treats NULL as a plain offline/exited, never as a
+// crash, so pre-migration corpses are not retroactively mislabelled.
+// Only an explicit 'unexpected' renders as crashed.
+func migrateV42toV43(db *sql.DB) error {
+	if _, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN exit_reason TEXT;
+
+		UPDATE schema_version SET version = 43;
+	`); err != nil {
+		return fmt.Errorf("migrate v42→v43 (add sessions.exit_reason): %w", err)
 	}
 	return nil
 }
