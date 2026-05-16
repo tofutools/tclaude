@@ -190,10 +190,12 @@ The "link" path is created with the already-shipped `groups.link.add` slug;
 the "admin-style" path is group ownership. So Tier 2 adds exactly **one**
 slug.
 
-Considered alternative names: `message.cross-group` (more literal but
-verbose), `message.any`, `agent.message`. `message.direct` reads cleanly in
-CLI grants (`tclaude agent permissions grant <conv> message.direct`) and
-establishes a `message.*` namespace. Flagged as an open question below.
+Name **confirmed: `message.direct`** (PO, msg #71). Chosen over
+`message.cross-group` — which is inaccurate, since either party may be
+ungrouped and so nothing is strictly "crossed" — and over `message.any` /
+`agent.message`. It reads cleanly in CLI grants
+(`tclaude agent permissions grant <conv> message.direct`) and establishes a
+`message.*` namespace.
 
 ### (d) How the default intra-group policy folds into `CanSenderReachTarget`
 
@@ -387,15 +389,24 @@ with `GroupID: 0` succeeds (would have failed the FK pre-migration).
   `agent_messages` row. Natural fast-follow; not bundled here to keep the
   PR scoped.
 
-## Open questions for PO
+## Open questions
 
-1. **`DeleteAgentGroup` on group delete:** preserve message history by
-   `SET group_id = 0` (recommended), or keep the current hard
-   `DELETE FROM agent_messages`? Preserving means a deleted group's
-   conversations survive as direct messages.
-2. **Slug name:** `message.direct` (recommended) vs `message.cross-group`
-   vs `message.any`.
-3. **Solo handoff UX:** confirm it is acceptable that a solo
-   clone/reincarnate follow-up becomes an inbox message (`[system: …]`
-   nudge + `inbox read N`) rather than raw text typed into the pane —
-   i.e. solo handoffs become identical to grouped handoffs.
+### Resolved (PO, msg #71)
+
+- **Slug name → `message.direct`.** Confirmed. Chosen over
+  `message.cross-group` (inaccurate — either party may be ungrouped, so
+  nothing is strictly "crossed"), `message.any`, and `agent.message`.
+- **Solo handoff via inbox → yes.** Confirmed. A solo clone/reincarnate
+  follow-up becoming an `agent_messages` row (`[system: …]` nudge +
+  `inbox read N`) instead of raw pane text is the intended outcome: solo
+  handoffs become identical to grouped handoffs, gaining persistence +
+  inbox visibility. Proceed — delete `injectFollowUpDirect`.
+
+### Pending — human decision (arrives with the Phase 3 green light)
+
+- **`DeleteAgentGroup` on group delete:** preserve message history by
+  `SET group_id = 0` (recommended by this doc; PO leans the same way), or
+  keep the current hard `DELETE FROM agent_messages`? Preserving means a
+  deleted group's conversations survive as direct messages — a user-facing
+  data-retention change, so PO is taking it to the human. Final answer
+  lands with the Phase 3 green light.
