@@ -42,6 +42,11 @@ type HookCallbackInput struct {
 	AgentType            string          `json:"agent_type,omitempty"`
 	AgentID              string          `json:"agent_id,omitempty"`
 	LastAssistantMessage string          `json:"last_assistant_message,omitempty"`
+	// StopFailure: error_type is one of rate_limit, authentication_failed,
+	// oauth_org_not_allowed, billing_error, invalid_request, server_error,
+	// max_output_tokens, unknown; error_message is the human-readable string.
+	ErrorType    string `json:"error_type,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 func HookCallbackCmd() *cobra.Command {
@@ -205,6 +210,38 @@ func runHookCallback() error {
 			state.Status = StatusMainAgentIdle
 			state.StatusDetail = fmt.Sprintf("%d subagents running", state.SubagentCount)
 		}
+
+	case "StopFailure":
+		// The turn ended because of an API/auth/billing error rather
+		// than completing normally (CC fires StopFailure instead of
+		// Stop). Mark the agent "error" with error_type as the detail
+		// so the dashboard can surface it (e.g. "error: rate_limit").
+		//
+		// This status is TRANSIENT, not sticky: every other hook case
+		// here sets state.Status unconditionally, so the next normal
+		// event (UserPromptSubmit, a tool event, a later Stop) clears
+		// it back to working/idle. A retried agent leaves the error
+		// state on its own — nothing else has to reset it.
+		//
+		// Deliberately NOT setting stopped=true (unlike the Stop case):
+		// the stopped branch drives auto-compact, the context nudge and
+		// the task-runner signal — all of which would "act on" the
+		// error (typing /compact or a nudge into a broken pane, or
+		// reporting a half-finished task as done). Acting on an error
+		// is explicitly out of scope here. The status transition and
+		// the desktop notification (notify.OnStateTransition below)
+		// both fire regardless of the stopped flag.
+		state.Status = StatusError
+		state.StatusDetail = input.ErrorType
+		if state.StatusDetail == "" {
+			state.StatusDetail = "unknown"
+		}
+		slog.Warn("agent turn ended in error",
+			"conv_id", input.ConvID,
+			"error_type", input.ErrorType,
+			"error_message", input.ErrorMessage,
+			"module", "hooks",
+		)
 
 	case "SessionStart":
 		// Session started or resumed - update ConvID and set to idle

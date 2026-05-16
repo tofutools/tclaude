@@ -22,6 +22,7 @@ func setTestHookCommand(t *testing.T) {
 	RequiredHooks = map[string][]HookMatcher{
 		"UserPromptSubmit":   {newMatcher()},
 		"Stop":               {newMatcher()},
+		"StopFailure":        {newMatcher()},
 		"PermissionRequest":  {newMatcher()},
 		"PreToolUse":         {newMatcher()},
 		"PostToolUse":        {newMatcher()},
@@ -54,6 +55,17 @@ func TestIsOurHook(t *testing.T) {
 	for _, tt := range tests {
 		got := isOurHook(tt.command)
 		assert.Equalf(t, tt.want, got, "isOurHook(%q)", tt.command)
+	}
+}
+
+// The production RequiredHooks map (populated by init()) must include
+// "StopFailure" — without it Claude Code never invokes the callback on
+// a turn-ending error and the agent's dashboard status would stay
+// frozen on its last value. Reads the real map, not the test override.
+func TestRequiredHooks_RegistersStopFailure(t *testing.T) {
+	for _, event := range []string{"Stop", "StopFailure", "UserPromptSubmit"} {
+		_, ok := RequiredHooks[event]
+		assert.Truef(t, ok, "RequiredHooks must register %q", event)
 	}
 }
 

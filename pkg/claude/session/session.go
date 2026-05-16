@@ -74,7 +74,7 @@ func SortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirec
 // Red (needs attention) = 0, Yellow (idle) = 1, Green (working) = 2, Gray (exited) = 3
 func statusPriority(status string) int {
 	switch status {
-	case StatusAwaitingPermission, StatusAwaitingInput:
+	case StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		return 0 // Red - needs attention, show first
 	case StatusIdle:
 		return 1 // Yellow

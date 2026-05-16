@@ -25,6 +25,11 @@ const (
 	StatusIdle               = "idle"
 	StatusAwaitingPermission = "awaiting_permission"
 	StatusAwaitingInput      = "awaiting_input"
+	// StatusError marks a turn that ended in an API/auth/billing error
+	// (Claude Code's StopFailure hook). It is transient: the next
+	// normal hook event overwrites it, so a retried agent leaves the
+	// error state on its own. See the StopFailure case in hook_callback.go.
+	StatusError = "error"
 )
 
 func StatusCallbackCmd() *cobra.Command {

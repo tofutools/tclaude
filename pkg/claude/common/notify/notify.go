@@ -67,6 +67,8 @@ func formatStatus(status string) string {
 		return "Awaiting permission"
 	case "awaiting_input":
 		return "Awaiting input"
+	case "error":
+		return "Error"
 	case "exited":
 		return "Exited"
 	default:

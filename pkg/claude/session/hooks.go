@@ -52,6 +52,7 @@ func initHookCommands() {
 	RequiredHooks = map[string][]HookMatcher{
 		"UserPromptSubmit":   {newMatcher()},
 		"Stop":               {newMatcher()},
+		"StopFailure":        {newMatcher()}, // turn ended in an API/auth/billing error
 		"PermissionRequest":  {newMatcher()},
 		"PreToolUse":         {newMatcher()},
 		"PostToolUse":        {newMatcher()},

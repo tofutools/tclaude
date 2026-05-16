@@ -22,8 +22,8 @@ type ListParams struct {
 	Sort  string   `short:"s" long:"sort" optional:"true" help:"Sort by column" alts:"id,directory,status,age,updated"`
 	Asc   bool     `long:"asc" help:"Sort ascending (default for id/directory/status)"`
 	Desc  bool     `long:"desc" help:"Sort descending (default for updated)"`
-	Show  []string `long:"show" optional:"true" help:"Only show these statuses" alts:"all,idle,working,awaiting_permission,awaiting_input,exited"`
-	Hide  []string `long:"hide" optional:"true" help:"Hide these statuses" alts:"idle,working,awaiting_permission,awaiting_input,exited"`
+	Show  []string `long:"show" optional:"true" help:"Only show these statuses" alts:"all,idle,working,awaiting_permission,awaiting_input,error,exited"`
+	Hide  []string `long:"hide" optional:"true" help:"Hide these statuses" alts:"idle,working,awaiting_permission,awaiting_input,error,exited"`
 }
 
 func ListCmd() *cobra.Command {
@@ -168,7 +168,7 @@ func getStatusColorFunc(status string) func(a ...interface{}) string {
 		return text.FgGreen.Sprint
 	case StatusWorking:
 		return text.FgGreen.Sprint
-	case StatusAwaitingPermission, StatusAwaitingInput:
+	case StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		return text.FgHiRed.Sprint
 	case StatusExited:
 		return text.FgHiBlack.Sprint
@@ -230,8 +230,10 @@ func normalizeStatusFilter(show []string) []string {
 			result = append(result, StatusAwaitingPermission)
 		case "awaiting_input", "input":
 			result = append(result, StatusAwaitingInput)
+		case "error":
+			result = append(result, StatusError)
 		case "attention":
-			result = append(result, StatusAwaitingPermission, StatusAwaitingInput)
+			result = append(result, StatusAwaitingPermission, StatusAwaitingInput, StatusError)
 		case "exited":
 			result = append(result, StatusExited)
 		default:

@@ -165,6 +165,8 @@ func NotificationTitle(status string) string {
 		display = "Awaiting permission"
 	case "awaiting_input":
 		display = "Awaiting input"
+	case "error":
+		display = "Error"
 	case "exited":
 		display = "Exited"
 	}

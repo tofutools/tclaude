@@ -58,6 +58,9 @@ table tr:hover { background: #161b22; }
 }
 .status-dot-online { color: #3fb950; }
 .status-dot-offline { color: #484f58; }
+/* An online agent whose last turn ended in an error (CC StopFailure):
+   a louder red than the offline grey so a broken agent stands out. */
+.status-dot-error { color: #f85149; }
 .status-dot:hover { background: #1f2937; }
 .status-dot:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .state-pill {
@@ -68,6 +71,10 @@ table tr:hover { background: #161b22; }
 .state-working   { background: #0a3622; color: #3fb950; border-color: #1d4d2c; }
 .state-idle      { background: #36280a; color: #d29922; border-color: #4d3a1d; }
 .state-awaiting  { background: #3a1010; color: #ff7b72; border-color: #4d1d1d; }
+/* error: a turn ended in an API/auth/billing error (CC StopFailure).
+   A bolder red than .state-awaiting — brighter text + a louder border
+   — so a broken agent reads as more urgent than one merely waiting. */
+.state-error     { background: #3a0a0a; color: #ff9492; border-color: #8b1a1a; }
 .state-exited    { background: #21262d; color: #7d8590; border-color: #2a3340; }
 .state-offline   { background: #161b22; color: #484f58; border-color: #2a3340; }
 .state-detail { color: #7d8590; font-size: 11px; margin-left: 6px; }
@@ -1694,10 +1701,25 @@ details.group-virtual .group-name { color: #8aa0b8; }
   function agentStatusDot(m) {
     const label = m.title || m.conv_id;
     const online = !!m.online;
-    const tip = online
-      ? `online — click to turn off (asks first, then soft-stops ${label})`
-      : `offline — click to turn on (wake ${label})`;
-    const cls = online ? 'status-dot status-dot-online' : 'status-dot status-dot-offline';
+    // An online agent whose last turn ended in an error (CC StopFailure
+    // hook → state.status === 'error') gets a red dot. Its CC process is
+    // still alive — the dot still toggles it off — but the colour flags
+    // that it needs attention. Offline always wins: a dead agent has no
+    // process to flag, so it stays grey regardless of its last status.
+    const errored = online && m.state && m.state.status === 'error';
+    const errDetail = errored ? ((m.state && m.state.status_detail) || 'error') : '';
+    let tip;
+    if (errored) {
+      tip = `errored (${errDetail}) — click to turn off (asks first, then soft-stops ${label})`;
+    } else if (online) {
+      tip = `online — click to turn off (asks first, then soft-stops ${label})`;
+    } else {
+      tip = `offline — click to turn on (wake ${label})`;
+    }
+    let cls;
+    if (errored) cls = 'status-dot status-dot-error';
+    else if (online) cls = 'status-dot status-dot-online';
+    else cls = 'status-dot status-dot-offline';
     const glyph = online ? '●' : '○';
     return `<button type="button" class="${cls}" data-act="dot-toggle"` +
       ` data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"` +
@@ -1713,6 +1735,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     if (status === 'main_agent_idle') return 'state-working';
     if (status === 'idle') return 'state-idle';
     if (status === 'awaiting_permission' || status === 'awaiting_input') return 'state-awaiting';
+    if (status === 'error') return 'state-error';
     if (status === 'exited') return 'state-exited';
     return 'state-idle';
   }
