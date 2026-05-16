@@ -350,7 +350,12 @@ func Normalize(c *Config) {
 	}
 }
 
-// Save saves the config to ~/.tclaude/config.json.
+// Save writes the config to ~/.tclaude/config.json atomically: the
+// bytes go to a sibling temp file which is then renamed over the
+// target. A crash, power loss or disk-full partway through must never
+// leave a truncated config.json — the next Load would silently degrade
+// to DefaultConfig and revert every persisted setting. Rename within a
+// directory is atomic on POSIX and replace-existing on Windows.
 func Save(config *Config) error {
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -362,7 +367,31 @@ func Save(config *Config) error {
 		return err
 	}
 
-	return os.WriteFile(ConfigPath(), data, 0644)
+	tmp, err := os.CreateTemp(dir, "config-*.json.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// Removes the temp file on every error path; a no-op once the
+	// rename below has consumed it.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// CreateTemp makes the file 0600; match the historical 0644.
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, ConfigPath())
 }
 
 // Validate checks a Config for problems that would make it unsafe or
@@ -423,12 +452,21 @@ func Validate(c *Config) []string {
 		if a.SpawnMaxPerHour != nil && *a.SpawnMaxPerHour < 0 {
 			errs = append(errs, "agent.spawn_max_per_hour must not be negative (0 = unlimited)")
 		}
-		if a.ContextNudge != nil {
-			if p := a.ContextNudge.MinPct; p < 0 || p > 100 {
-				errs = append(errs, fmt.Sprintf("agent.context_nudge.min_pct %d is out of range (0–100)", p))
+		if cn := a.ContextNudge; cn != nil {
+			// When the nudge is enabled, 0 is a footgun: Resolved()
+			// silently rewrites a non-positive ladder value to its
+			// built-in default, so the human's "0" never takes effect.
+			// Require a real 1–100 value while enabled; tolerate 0 (the
+			// inert zero value) when the nudge is off.
+			lo := 0
+			if cn.Enabled {
+				lo = 1
 			}
-			if p := a.ContextNudge.IntervalPct; p < 0 || p > 100 {
-				errs = append(errs, fmt.Sprintf("agent.context_nudge.interval_pct %d is out of range (0–100)", p))
+			if cn.MinPct < lo || cn.MinPct > 100 {
+				errs = append(errs, fmt.Sprintf("agent.context_nudge.min_pct %d is out of range (%d–100)", cn.MinPct, lo))
+			}
+			if cn.IntervalPct < lo || cn.IntervalPct > 100 {
+				errs = append(errs, fmt.Sprintf("agent.context_nudge.interval_pct %d is out of range (%d–100)", cn.IntervalPct, lo))
 			}
 		}
 		errs = append(errs, validateSudo(a.Sudo)...)

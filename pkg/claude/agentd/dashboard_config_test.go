@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,44 +23,65 @@ func serveDashboardConfig(w http.ResponseWriter, r *http.Request) {
 	mux.ServeHTTP(w, r)
 }
 
-// configResp is the GET / save / dry-run response shape.
+// configResp is the GET / save / dry-run / error response shape.
 type configResp struct {
-	Raw    string   `json:"raw"`
-	Path   string   `json:"path"`
-	Errors []string `json:"errors"`
+	Raw         string   `json:"raw"`
+	Path        string   `json:"path"`
+	Warning     string   `json:"warning"`
+	UnknownKeys []string `json:"unknown_keys"`
+	Errors      []string `json:"errors"`
+	Error       string   `json:"error"`
+	Code        string   `json:"code"`
 }
 
-func getConfigResp(t *testing.T, path, body string) (*httptest.ResponseRecorder, configResp) {
+// wrapBody builds the POST wire shape: the edited config plus the
+// canonical baseline the drift guard checks. base "" opts out of the
+// guard (the dashboard always sends a real baseline).
+func wrapBody(configJSON, base string) string {
+	return `{"config":` + configJSON + `,"base":` + strconv.Quote(base) + `}`
+}
+
+// getConfig issues a GET and decodes the response.
+func getConfig(t *testing.T) (*httptest.ResponseRecorder, configResp) {
 	t.Helper()
-	method := http.MethodGet
-	if body != "" {
-		method = http.MethodPost
-	}
 	w := httptest.NewRecorder()
-	serveDashboardConfig(w, dashboardRequest(method, path, body))
+	serveDashboardConfig(w, dashboardRequest(http.MethodGet, "/api/config", ""))
+	return w, decodeConfigResp(w)
+}
+
+// postConfig issues a POST with the given wrapper body.
+func postConfig(t *testing.T, path, body string) (*httptest.ResponseRecorder, configResp) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	serveDashboardConfig(w, dashboardRequest(http.MethodPost, path, body))
+	return w, decodeConfigResp(w)
+}
+
+func decodeConfigResp(w *httptest.ResponseRecorder) configResp {
 	var resp configResp
 	if w.Body.Len() > 0 {
 		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	}
-	return w, resp
+	return resp
 }
 
 func TestDashboardConfig_GetReturnsDefaults(t *testing.T) {
 	setupTestDB(t) // HOME → temp dir, so no config file exists yet
 	withDashboardAuth(t)
 
-	w, resp := getConfigResp(t, "/api/config", "")
+	w, resp := getConfig(t)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	assert.Contains(t, resp.Raw, `"log_level": "info"`, "defaults must be surfaced")
 	assert.NotEmpty(t, resp.Path, "config file path must be reported")
+	assert.Empty(t, resp.UnknownKeys, "a fresh config has no unknown keys")
 }
 
 func TestDashboardConfig_PostWritesFile(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	body := `{"log_level":"debug","notifications":{"enabled":true},"agent":{"clone_cooldown":"2m"}}`
-	w, resp := getConfigResp(t, "/api/config", body)
+	body := wrapBody(`{"log_level":"debug","notifications":{"enabled":true},"agent":{"clone_cooldown":"2m"}}`, "")
+	w, resp := postConfig(t, "/api/config", body)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
 	cfg, err := config.Load()
@@ -72,7 +94,7 @@ func TestDashboardConfig_PostWritesFile(t *testing.T) {
 
 	// The response "raw" must equal what a fresh GET re-derives — that
 	// is the diff baseline the editor re-syncs to after a save.
-	gw, getResp := getConfigResp(t, "/api/config", "")
+	gw, getResp := getConfig(t)
 	require.Equal(t, http.StatusOK, gw.Code)
 	assert.Equal(t, getResp.Raw, resp.Raw, "post-save raw must match a fresh GET")
 }
@@ -81,7 +103,7 @@ func TestDashboardConfig_DryRunDoesNotWrite(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	w, resp := getConfigResp(t, "/api/config?dry_run=1", `{"log_level":"warn"}`)
+	w, resp := postConfig(t, "/api/config?dry_run=1", wrapBody(`{"log_level":"warn"}`, ""))
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	assert.Contains(t, resp.Raw, `"log_level": "warn"`, "dry-run still previews the change")
 
@@ -93,7 +115,7 @@ func TestDashboardConfig_PostInvalidReturns400(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	w, resp := getConfigResp(t, "/api/config", `{"log_level":"loud"}`)
+	w, resp := postConfig(t, "/api/config", wrapBody(`{"log_level":"loud"}`, ""))
 	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
 	require.NotEmpty(t, resp.Errors, "validation errors must be listed")
 	assert.Contains(t, resp.Errors[0], "log_level")
@@ -102,12 +124,26 @@ func TestDashboardConfig_PostInvalidReturns400(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "an invalid POST must not write the file")
 }
 
+// A malformed body must use the same {"errors":[...]} 400 contract as
+// a validation failure — not a plain-text http.Error.
 func TestDashboardConfig_MalformedJSONReturns400(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	w, _ := getConfigResp(t, "/api/config", `{not json`)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w, resp := postConfig(t, "/api/config", `{not json`)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.NotEmpty(t, resp.Errors, "malformed body must report via the errors array")
+	assert.Contains(t, resp.Errors[0], "valid JSON")
+}
+
+func TestDashboardConfig_MissingConfigReturns400(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, resp := postConfig(t, "/api/config", `{"base":""}`)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.NotEmpty(t, resp.Errors)
+	assert.Contains(t, resp.Errors[0], "config")
 }
 
 // The GET baseline must round-trip through a dry-run unchanged —
@@ -117,14 +153,58 @@ func TestDashboardConfig_RoundTripStable(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	gw, getResp := getConfigResp(t, "/api/config", "")
+	gw, getResp := getConfig(t)
 	require.Equal(t, http.StatusOK, gw.Code)
 	require.NotEmpty(t, getResp.Raw)
 
-	pw, preview := getConfigResp(t, "/api/config?dry_run=1", getResp.Raw)
+	pw, preview := postConfig(t, "/api/config?dry_run=1", wrapBody(getResp.Raw, getResp.Raw))
 	require.Equal(t, http.StatusOK, pw.Code, "body=%s", pw.Body.String())
 	assert.Equal(t, getResp.Raw, preview.Raw,
 		"the GET baseline must dry-run back to itself unchanged")
+}
+
+// When the file changed since the editor loaded it, a save carrying
+// the stale baseline must be refused with 409 — not blindly overwrite
+// the newer config.
+func TestDashboardConfig_StaleBaselineReturns409(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	// Write an initial config, then capture its canonical baseline.
+	w, _ := postConfig(t, "/api/config", wrapBody(`{"log_level":"info"}`, ""))
+	require.Equal(t, http.StatusOK, w.Code)
+	gw, baseline := getConfig(t)
+	require.Equal(t, http.StatusOK, gw.Code)
+
+	// A second writer changes the file out from under the editor.
+	w2, _ := postConfig(t, "/api/config", wrapBody(`{"log_level":"error"}`, ""))
+	require.Equal(t, http.StatusOK, w2.Code)
+
+	// A save carrying the now-stale baseline is refused.
+	w3, resp := postConfig(t, "/api/config", wrapBody(`{"log_level":"debug"}`, baseline.Raw))
+	require.Equal(t, http.StatusConflict, w3.Code, "body=%s", w3.Body.String())
+	assert.Equal(t, "config_drift", resp.Code)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "error", cfg.LogLevel, "the stale save must not have overwritten the file")
+}
+
+// A matching baseline must pass the drift guard and write.
+func TestDashboardConfig_FreshBaselineSaves(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, _ := postConfig(t, "/api/config", wrapBody(`{"log_level":"info"}`, ""))
+	require.Equal(t, http.StatusOK, w.Code)
+	_, baseline := getConfig(t)
+
+	w2, _ := postConfig(t, "/api/config", wrapBody(`{"log_level":"warn"}`, baseline.Raw))
+	require.Equal(t, http.StatusOK, w2.Code, "body=%s", w2.Body.String())
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "warn", cfg.LogLevel)
 }
 
 func TestDashboardConfig_MethodNotAllowed(t *testing.T) {
@@ -141,8 +221,8 @@ func TestDashboardConfig_PersistsSudoBlock(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	body := `{"log_level":"info","agent":{"sudo":{"max_duration":"2h","default_duration":"30m"}}}`
-	w, _ := getConfigResp(t, "/api/config", body)
+	body := wrapBody(`{"log_level":"info","agent":{"sudo":{"max_duration":"2h","default_duration":"30m"}}}`, "")
+	w, _ := postConfig(t, "/api/config", body)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
 	cfg, err := config.Load()
@@ -157,9 +237,25 @@ func TestDashboardConfig_RejectsBadSudoDuration(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	body := `{"log_level":"info","agent":{"sudo":{"max_duration":"forever"}}}`
-	w, resp := getConfigResp(t, "/api/config", body)
+	body := wrapBody(`{"log_level":"info","agent":{"sudo":{"max_duration":"forever"}}}`, "")
+	w, resp := postConfig(t, "/api/config", body)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.NotEmpty(t, resp.Errors)
 	assert.Contains(t, resp.Errors[0], "max_duration")
+}
+
+// A config file with a key tclaude's schema does not model must be
+// reported as an unknown key so the human is warned a save drops it.
+func TestDashboardConfig_GetReportsUnknownKeys(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.WriteFile(config.ConfigPath(),
+		[]byte(`{"log_level":"info","human_notify":{"channel":"telegram"},"zzz_future":1}`), 0o644))
+
+	w, resp := getConfig(t)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.Equal(t, []string{"human_notify", "zzz_future"}, resp.UnknownKeys,
+		"unknown top-level keys must be listed (sorted)")
 }

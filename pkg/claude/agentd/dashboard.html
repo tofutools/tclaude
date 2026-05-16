@@ -1036,6 +1036,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .cfg-errors strong { color: #ff7b72; }
 .cfg-errors ul { margin: 5px 0 0; padding-left: 18px; }
+.cfg-notice {
+  border: 1px solid #9e6a03; background: #2b2007; border-radius: 6px;
+  color: #e3b341; font-size: 12px; padding: 8px 12px; margin: 0 0 14px;
+}
+.cfg-notice strong { color: #f0b849; }
+.cfg-notice ul { margin: 5px 0 0; padding-left: 18px; }
 /* config diff-confirmation modal */
 .config-diff-modal {
   background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
@@ -1164,12 +1170,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
   <section id="tab-slugs"></section>
   <section id="tab-config">
     <p class="cfg-intro">
-      Visual editor for <code id="cfg-path">~/.tclaude/config.json</code>. Edits stay in this
-      form until you press <strong>Save changes</strong> — which shows a diff to confirm before
-      anything is written. Most settings apply on next use; a few resolved when
-      <code>agentd</code> starts (spawn rate-limit, clone cooldown) take effect after an
-      agentd restart.
+      Visual editor for <code id="cfg-path">~/.tclaude/config.json</code>. It covers the
+      settings this version of tclaude recognizes. Edits stay in this form until you press
+      <strong>Save changes</strong> — which shows a diff to confirm before anything is
+      written. Most settings apply on next use; a few resolved when <code>agentd</code>
+      starts (spawn rate-limit, clone cooldown) take effect after an agentd restart.
     </p>
+    <div id="cfg-notice" class="cfg-notice" style="display:none"></div>
     <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
 
     <div class="cfg-section">
@@ -8978,12 +8985,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // ===================================================================
   // Config tab — visual editor for ~/.tclaude/config.json
   //
-  // The form binds to a deep clone of the loaded config object, so any
-  // field the form does not surface (a future config key) rides along
-  // untouched. Save is two-phase: a dry-run POST validates server-side
-  // and returns the canonical "after" JSON, which is diffed against the
-  // on-disk baseline and shown in a confirmation modal before the real
-  // write.
+  // The form binds to a deep clone of the loaded config, so a Config
+  // field with no dedicated widget still round-trips. A JSON key absent
+  // from tclaude's config schema is dropped by the server's typed
+  // decode (pre-existing config.Load behaviour) — the server reports
+  // such keys and the tab shows a warning on load. Save is two-phase: a
+  // dry-run POST validates server-side and returns the canonical
+  // "after" JSON, diffed against the on-disk baseline and shown in a
+  // confirmation modal before the real write. The POST carries that
+  // baseline so the server can 409 if the file drifted underneath.
   // ===================================================================
   let configObj = null;     // last loaded full config object (clone source)
   let configBaseRaw = '';   // canonical JSON of the config currently on disk
@@ -9150,9 +9160,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   // assembleConfig builds the config object to submit. It starts from a
-  // deep clone of the loaded config so unknown keys survive, then the
-  // form widgets overwrite the paths they own. Throws on unparseable
-  // advanced sudo JSON — the caller surfaces that as a save error.
+  // deep clone of the loaded config so Config fields with no dedicated
+  // widget still round-trip, then the form widgets overwrite the paths
+  // they own. Throws on unparseable advanced sudo JSON — the caller
+  // surfaces that as a save error.
   function assembleConfig() {
     const cfg = JSON.parse(JSON.stringify(configObj || {}));
 
@@ -9258,6 +9269,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
     el.scrollIntoView({ block: 'nearest' });
   }
 
+  // The notice box (amber) carries load-time facts about the file the
+  // form cannot represent: a malformed file shown as defaults, or
+  // keys the running tclaude does not model and a save would drop.
+  function renderConfigNotice(messages) {
+    const el = $('#cfg-notice');
+    if (!messages.length) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = '<strong>Heads up:</strong><ul>' +
+      messages.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>';
+    el.style.display = 'block';
+  }
+
   async function loadConfigTab() {
     // Refresh the slug / group datalists from the latest snapshot.
     const snap = lastSnapshot || {};
@@ -9267,6 +9293,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       .map(g => `<option value="${esc(g.name)}"></option>`).join('');
     $('#cfg-status').textContent = 'loading…';
     clearConfigErrors();
+    renderConfigNotice([]);
     try {
       const r = await fetch('/api/config', { credentials: 'same-origin' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -9276,12 +9303,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (data.path) $('#cfg-path').textContent = data.path;
       populateConfigForm(configObj);
       configLoaded = true;
-      if (data.warning) {
-        $('#cfg-status').textContent = 'loaded with a warning';
-        toast(data.warning, true);
-      } else {
-        $('#cfg-status').textContent = 'loaded — edits stay in this form until you Save';
+      const notices = [];
+      if (data.warning) notices.push(data.warning);
+      if (data.unknown_keys && data.unknown_keys.length) {
+        notices.push('config.json also contains key(s) this version of tclaude does not ' +
+          'model: ' + data.unknown_keys.join(', ') + '. They are not shown here, and ' +
+          'saving from this tab will remove them.');
       }
+      renderConfigNotice(notices);
+      $('#cfg-status').textContent = notices.length
+        ? 'loaded with a notice — see above'
+        : 'loaded — edits stay in this form until you Save';
     } catch (e) {
       configLoaded = false;
       $('#cfg-status').textContent = 'failed to load';
@@ -9349,6 +9381,29 @@ details.group-virtual .group-name { color: #8aa0b8; }
     });
   }
 
+  // reportConfigHTTPError surfaces a non-OK /api/config response and
+  // returns true when it handled one — the caller then aborts. 400 is
+  // the structured validation contract; 409 is the drift guard (the
+  // file changed under the editor).
+  async function reportConfigHTTPError(resp) {
+    if (resp.status === 400) {
+      const d = await resp.json().catch(() => ({}));
+      showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
+      return true;
+    }
+    if (resp.status === 409) {
+      const d = await resp.json().catch(() => ({}));
+      showConfigErrors([(d.error || 'config.json changed on disk') +
+        ' — press Reload to pick up the current file, then re-apply your edits.']);
+      return true;
+    }
+    if (!resp.ok) {
+      showConfigErrors(['Server error: HTTP ' + resp.status]);
+      return true;
+    }
+    return false;
+  }
+
   async function saveConfig() {
     if (!configLoaded) { toast('Config not loaded yet', true); return; }
     clearConfigErrors();
@@ -9359,22 +9414,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
       showConfigErrors([e.message || String(e)]);
       return;
     }
-    const body = JSON.stringify(edited);
+    // The body carries the edited config plus the canonical baseline
+    // the form loaded — the server 409s if the file drifted since.
+    const body = JSON.stringify({ config: edited, base: configBaseRaw });
+    const post = (query) => fetch('/api/config' + query, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body,
+    });
     const saveBtn = $('#cfg-save');
     saveBtn.disabled = true;
     try {
       // Phase 1: dry-run — server validates and returns the canonical
       // "after" without writing anything.
-      const dry = await fetch('/api/config?dry_run=1', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, body,
-      });
-      if (dry.status === 400) {
-        const d = await dry.json().catch(() => ({}));
-        showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
-        return;
-      }
-      if (!dry.ok) { showConfigErrors(['Server error: HTTP ' + dry.status]); return; }
+      const dry = await post('?dry_run=1');
+      if (await reportConfigHTTPError(dry)) return;
       const after = (await dry.json()).raw || '';
       if (after === configBaseRaw) { toast('No changes to save'); return; }
 
@@ -9382,16 +9435,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const ok = await configDiffModal(configBaseRaw, after);
       if (!ok) { toast('Save cancelled'); return; }
 
-      const res = await fetch('/api/config', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, body,
-      });
-      if (res.status === 400) {
-        const d = await res.json().catch(() => ({}));
-        showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
-        return;
-      }
-      if (!res.ok) { showConfigErrors(['Save failed: HTTP ' + res.status]); return; }
+      const res = await post('');
+      if (await reportConfigHTTPError(res)) return;
       const data = await res.json();
       configBaseRaw = data.raw || configBaseRaw;
       configObj = JSON.parse(configBaseRaw);
