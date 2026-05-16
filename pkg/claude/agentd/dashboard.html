@@ -40,6 +40,12 @@ nav button:hover { color: #d4d4d4; }
   font-size: 11px; line-height: 16px; text-align: center;
   background: #f85149; color: #fff; border-radius: 8px; font-weight: 600;
 }
+/* renderMessagesBadge() sets the `hidden` attribute at 0 unread. The
+   `display: inline-block` above is a class rule, so it outranks the UA
+   `[hidden] { display: none }` rule — without this the badge would
+   never hide and a bright-red `0` would always show. This restores
+   hide-at-0; the red badge then appears only when unread > 0. */
+.tab-badge[hidden] { display: none; }
 .msg-card {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 10px 14px; margin-bottom: 8px;
@@ -9102,11 +9108,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
             });
             if (jr.ok) toast(`focused: ${label}`);
             else toast(`Focus failed: ${await jr.text()}`, true);
-            await fetch('/api/human-messages/read', {
+            const rr = await fetch('/api/human-messages/read', {
               method: 'POST', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ id: parseInt(id, 10) }),
             });
+            // Surface a read failure rather than swallow it (parity with
+            // msg-mark-read); the jump already happened, so still refresh.
+            if (!rr.ok) toast(`Mark read failed: ${await rr.text()}`, true);
             refresh();
             return;
           }

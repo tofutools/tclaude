@@ -230,3 +230,109 @@ func TestHumanMessages_DashboardClear(t *testing.T) {
 	require.Len(t, msgs, 1, "only the unread message should remain")
 	assert.Equal(t, "still unread", msgs[0].Body)
 }
+
+// Scenario: the server stores an agent-supplied subject/body VERBATIM —
+// it does NOT escape on the way in. This pins the XSS contract for the
+// Messages tab: the dashboard JS `esc()` helper is the SINGLE source of
+// truth for escaping, applied once at render time. The server stores
+// raw on purpose — a server-side escape here would double-escape, so
+// the human would see literal `&lt;script&gt;` in the tab. A future
+// well-meaning "sanitize on insert" change must fail this test.
+//
+// (The actual XSS defense — esc() producing no live <script> sink — is
+// JS and lives in the browser; this test guards the server half of the
+// contract: raw in, raw out.)
+func TestNotifyHuman_StoresPayloadVerbatim(t *testing.T) {
+	f := newFlow(t)
+
+	const poConv = "po00-1111-2222-3333-4444"
+	f.HaveConvWithTitle(poConv, "tclaude-PO")
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermHumanNotify, "test"))
+
+	const xssBody = `<script>alert("xss")</script> & <img src=x onerror=alert(1)> 'quoted' "dq"`
+	const xssSubject = `</title><script>steal()</script> & <b>`
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": xssBody, "subject": xssSubject})
+	r = agentd.AsAgentPeer(r, poConv)
+	require.Equal(t, http.StatusOK, testharness.Serve(f.Mux, r).Code)
+
+	// DB surface: stored exactly as sent — no pre-escaping, no stripping.
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, xssBody, msgs[0].Body,
+		"body must be stored raw — the JS esc() escapes at render, not the server")
+	assert.Equal(t, xssSubject, msgs[0].Subject, "subject must be stored raw")
+
+	// Dashboard snapshot surface: the Messages tab renders from here.
+	// JSON transport may \u-escape angle brackets on the wire, but that
+	// is transport encoding — it round-trips back to the raw string on
+	// decode. What the browser's JSON.parse hands the tab JS is raw, so
+	// esc() genuinely is the only escaping in the pipeline.
+	dash := dashHandlerForTest(t)
+	snap := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, snap.Code, "body=%s", snap.Body.String())
+	var payload struct {
+		Messages []struct {
+			Body    string `json:"body"`
+			Subject string `json:"subject"`
+		} `json:"messages"`
+	}
+	testharness.DecodeJSON(t, snap, &payload)
+	require.Len(t, payload.Messages, 1)
+	assert.Equal(t, xssBody, payload.Messages[0].Body, "snapshot carries the body verbatim")
+	assert.Equal(t, xssSubject, payload.Messages[0].Subject, "snapshot carries the subject verbatim")
+}
+
+// Scenario: a group owner passes the notify-human gate even when the
+// group they own is entirely unrelated to the human-notify channel —
+// and even when they own it WITHOUT being a member of it or of any
+// other group, and hold no human.notify slug.
+//
+// notify-human is a global channel with no group to scope against, so
+// the owner check in requireNotifyHumanPermission is deliberately
+// UNSCOPED: owning *any* group is enough. This test pins that as
+// intentional. A future refactor that "tightens" the bypass to a
+// scoped check (owner of some notify-related group only) must fail
+// here — the broad bypass is a choice, not an oversight.
+func TestNotifyHuman_UnrelatedGroupOwnerPasses(t *testing.T) {
+	f := newFlow(t)
+
+	const ownerConv = "ownr-9999-8888-7777-6666"
+	// One group, named so its irrelevance to notify-human is obvious.
+	// No HaveMember: ownership alone — AddAgentGroupOwner enrolls the
+	// conv as an agent — is the entire basis for the bypass.
+	g := f.HaveGroup("weather-bot")
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, ownerConv, "test"))
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "owner of an unrelated group still reaches the human"})
+	r = agentd.AsAgentPeer(r, ownerConv)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code,
+		"owning any group — related or not — passes the gate; body=%s", rec.Body.String())
+
+	msgs, _ := db.ListHumanMessages()
+	require.Len(t, msgs, 1, "the owner's message is persisted")
+}
+
+// Scenario: a request body larger than maxNotifyHumanRequestBytes is
+// rejected at the http.MaxBytesReader, before the JSON decoder buffers
+// it all into daemon memory — the DoS guard the size cap implies.
+// (TestNotifyHuman_BodyTooLongRejected covers the smaller, post-decode
+// decoded-length cap; this covers the pre-decode wire cap.)
+func TestNotifyHuman_OversizedRequestRejected(t *testing.T) {
+	f := newFlow(t)
+
+	// Far past the ~98 KiB wire cap — MaxBytesReader trips mid-decode.
+	huge := strings.Repeat("x", 512*1024)
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": huge})
+	r = agentd.AsHumanPeer(r)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+
+	msgs, _ := db.ListHumanMessages()
+	assert.Empty(t, msgs, "an oversized request must not be persisted")
+}

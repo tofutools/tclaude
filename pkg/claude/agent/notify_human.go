@@ -29,7 +29,7 @@ func notifyHumanCmd() *cobra.Command {
 		Use:   "notify-human",
 		Short: "Send the human a notification (shown in the dashboard Messages tab)",
 		Long: "Sends a message to the human — it lands in the agentd dashboard's Messages tab, letting a coordinating agent reach the human off the busy terminal.\n\n" +
-			"Sending is gated on the `human.notify` permission, which the human grants to a trusted coordinating agent (the PO); a group owner may always send. Workers without either are refused — so the channel cannot be spammed.\n\n" +
+			"Sending is gated: it passes for the human, for holders of the `human.notify` permission (which the human grants to a trusted coordinating agent such as the PO), and for any group owner (owning a group is a trusted coordinating role, so an owner may send slug or not). Agents with none of these are refused.\n\n" +
 			"Give the body inline or with --file (--file - reads stdin). Each message shows the human who sent it and offers a button to focus that agent's terminal window.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *notifyHumanParams, _ *cobra.Command) error {
