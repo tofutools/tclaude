@@ -146,6 +146,10 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermAgentRetire,
 		Description: "Retire (soft-delete) an agent: revokes its group memberships and permission grants so it stops being an agent, while leaving its conversation intact and reinstatable (tclaude agent retire). Group owners can retire members of groups they own without this slug.",
 	},
+	{
+		Slug:        PermMessageDirect,
+		Description: "Send a 1:1 message to ANY agent regardless of shared-group membership — the off-group escape hatch (tclaude agent message). Intra-group messaging, owner-of-group, and via-link reach need no slug; this covers everything else. Not default-granted.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

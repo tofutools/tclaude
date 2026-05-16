@@ -165,6 +165,7 @@ const (
 	PermGroupsLinkRm      = "groups.link.rm"
 	PermAgentPromote      = "agent.promote"
 	PermAgentRetire       = "agent.retire"
+	PermMessageDirect     = "message.direct"
 )
 
 // requirePermission gates an endpoint behind a named agent permission.
