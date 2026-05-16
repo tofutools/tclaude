@@ -53,9 +53,9 @@ type GroupTemplateAgent struct {
 	// its inbox at spawn time. The per-instantiation task text is folded
 	// into the group context separately, not here.
 	InitialMessage string
-	// IsOwner marks the agent that becomes the instantiated group's
-	// owner. A template should have at most one; the instantiator grants
-	// ownership to the first IsOwner agent it spawns.
+	// IsOwner marks an agent that becomes an owner of the instantiated
+	// group. A group can have several owners, so a template may mark
+	// several; each IsOwner agent is granted ownership after it spawns.
 	IsOwner bool
 	// Permissions is the list of permission slugs granted to the agent
 	// (per-conv grant overrides) right after it spawns.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -118,7 +119,10 @@ func collectTemplatesSnapshot() []templateJSON {
 //     and unique within the template
 //   - each agent's initial_message clears the inbox charset/length rule
 //   - each permission slug is registered (catches typos early)
-//   - at most one agent is marked owner
+//
+// Multiple agents may be marked owner — a group can have several
+// owners, and a from-group snapshot of a multi-owner group must
+// round-trip — so there is no owner-count cap.
 func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure) {
 	name := strings.TrimSpace(body.Name)
 	if err := validateGroupName(name); err != nil {
@@ -135,7 +139,6 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		Agents:         []db.GroupTemplateAgent{},
 	}
 	seenNames := map[string]bool{}
-	owners := 0
 	for i, a := range body.Agents {
 		an := strings.TrimSpace(a.Name)
 		if an == "" {
@@ -178,9 +181,6 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			}
 			perms = append(perms, slug)
 		}
-		if a.IsOwner {
-			owners++
-		}
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{
 			Ordinal:        i,
 			Name:           an,
@@ -190,10 +190,6 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			IsOwner:        a.IsOwner,
 			Permissions:    perms,
 		})
-	}
-	if owners > 1 {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
-			"at most one agent may be marked owner"}
 	}
 	return t, nil
 }
@@ -395,7 +391,14 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "exists", "a group named "+body.GroupName+" already exists")
 		return
 	}
-	cwd, err := resolveGroupDefaultCwd(body.Cwd)
+	// Existence-check the cwd with resolveSpawnCwd — the same validator
+	// handleGroupSpawn uses — not resolveGroupDefaultCwd (which skips the
+	// dir-exists check). executeSpawn passes cwd straight to the spawn
+	// subprocess; a non-existent path there would only fail INSIDE each
+	// `tclaude session new`, turning a typo into an N×30s conv-id-poll
+	// timeout and an orphaned empty group. An empty cwd stays empty
+	// (agents inherit the daemon's cwd, as for a plain spawn).
+	cwd, err := resolveSpawnCwd(body.Cwd)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
 		return
@@ -570,11 +573,18 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		addAgent(m.ConvID, m.Role, m.Descr, ownerSet[m.ConvID])
 	}
 	// Pure owners — owners that aren't members — still belong in the
-	// snapshot so the template's owner isn't silently dropped.
+	// snapshot so the template's owner isn't silently dropped. Collect
+	// and sort them so the resulting ordinals are reproducible across
+	// two snapshots of the same group (a bare map range is unordered).
+	pureOwners := []string{}
 	for ownerConv := range ownerSet {
 		if !memberSet[ownerConv] {
-			addAgent(ownerConv, "owner", "", true)
+			pureOwners = append(pureOwners, ownerConv)
 		}
+	}
+	sort.Strings(pureOwners)
+	for _, ownerConv := range pureOwners {
+		addAgent(ownerConv, "owner", "", true)
 	}
 
 	id, err := db.CreateGroupTemplate(t)

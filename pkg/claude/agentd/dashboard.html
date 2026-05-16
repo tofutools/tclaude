@@ -4697,7 +4697,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return `<div class="template-agent-row" data-idx="${idx}">
       <div class="template-agent-row-head">
         <span class="template-agent-num">Agent ${idx + 1}</span>
-        <label class="template-agent-owner" title="Mark this agent as the instantiated group's owner (at most one per template)">
+        <label class="template-agent-owner" title="Mark this agent as an owner of the instantiated group — a group can have several owners">
           <input type="checkbox" class="ta-owner"${a.is_owner ? ' checked' : ''} /> owner
         </label>
         <button type="button" class="tool ta-remove" title="Remove this agent">✕</button>
@@ -4954,15 +4954,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
       templateEditorAgents.splice(parseInt(row.dataset.idx, 10), 1);
       renderEditorAgents();
     });
+    // Keep each agent row's permission count in sync as boxes toggle.
+    // Owner is a plain per-agent checkbox — a group can have several
+    // owners, so there is no single-select enforcement.
     $('#template-editor-agents').addEventListener('change', e => {
-      if (e.target.classList.contains('ta-owner')) {
-        // At most one owner — untick the others when one is ticked.
-        if (e.target.checked) {
-          $$('.ta-owner', $('#template-editor-agents')).forEach(cb => {
-            if (cb !== e.target) cb.checked = false;
-          });
-        }
-      } else if (e.target.classList.contains('ta-perm')) {
+      if (e.target.classList.contains('ta-perm')) {
         const row = e.target.closest('.template-agent-row');
         $('.ta-perms-count', row).textContent =
           $$('.ta-perm', row).filter(c => c.checked).length;
