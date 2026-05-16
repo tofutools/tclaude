@@ -150,29 +150,6 @@ func NotificationBody(sessionID, projectName, convTitle string) string {
 	return fmt.Sprintf("%s | %s", shortID, projectName)
 }
 
-// NotificationTitle builds the notification title.
-func NotificationTitle(status string) string {
-	// Map internal status to display format
-	display := status
-	switch status {
-	case "idle":
-		display = "Idle"
-	case "main_agent_idle":
-		display = "Subagents working"
-	case "working":
-		display = "Working"
-	case "awaiting_permission":
-		display = "Awaiting permission"
-	case "awaiting_input":
-		display = "Awaiting input"
-	case "error":
-		display = "Error"
-	case "exited":
-		display = "Exited"
-	}
-	return fmt.Sprintf("Claude: %s", display)
-}
-
 // FocusCommandString builds the shell command string for focusing a session.
 func FocusCommandString(clPath, tmuxDir, sessionID string) string {
 	if clPath == "" {
