@@ -25,12 +25,14 @@ func registerDashboardMessageRoutes(mux *http.ServeMux) {
 }
 
 // handleDashboardMessageCreate sends one immediate message from the
-// dashboard. Body: {from, to, subject, body, role}. `to` is a solo
-// selector or a "group:NAME" multicast token — exactly the grammar
-// POST /v1/messages accepts, so a group send fans out to every
-// member. `from` is the sender the message is attributed to (and
-// replied to); the human picks it, mirroring the cron form's Owner
-// field.
+// dashboard. Body: {from, to, subject, body, role, members}. `to` is a
+// solo selector or a "group:NAME" multicast token — exactly the
+// grammar POST /v1/messages accepts, so a group send fans out to every
+// member. `members`, set only when the group-scoped modal sent to a
+// ticked subset, narrows that fan-out to the listed conv-ids (it can
+// only shrink reach — see fanOutToGroup). `from` is the sender the
+// message is attributed to (and replied to); the human picks it,
+// mirroring the cron form's Owner field.
 //
 // The cookie + Origin pin in checkDashboardAuth is the human-consent
 // layer. dispatchSend then enforces the From conv's own group
@@ -43,11 +45,12 @@ func handleDashboardMessageCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		From    string `json:"from"`
-		To      string `json:"to"`
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
-		Role    string `json:"role"`
+		From    string   `json:"from"`
+		To      string   `json:"to"`
+		Subject string   `json:"subject"`
+		Body    string   `json:"body"`
+		Role    string   `json:"role"`
+		Members []string `json:"members"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -84,5 +87,6 @@ func handleDashboardMessageCreate(w http.ResponseWriter, r *http.Request) {
 		Subject: body.Subject,
 		Body:    body.Body,
 		Role:    body.Role,
+		Members: body.Members,
 	})
 }
