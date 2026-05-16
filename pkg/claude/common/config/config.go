@@ -54,11 +54,19 @@ type Config struct {
 // --auto-launch-dashboard serve flag. The flag and this field OR
 // together: either one turns it on, so an autostart/service launch can
 // opt in without carrying the flag.
+//
+// SpawnRateLimit is the minimum cooldown between two clones of the same
+// source agent — a Go duration string ("1m", "30s"). It is the
+// persistent twin of the `tclaude agentd serve --agent-spawn-rate-limit`
+// flag, which overrides it when set; the built-in default is 1m. "0"
+// disables the cooldown. An unparseable value is warned about and
+// ignored, falling through to the flag/default.
 type AgentConfig struct {
 	DefaultPermissions  []string            `json:"default_permissions,omitempty"`
 	Sudo                *SudoConfig         `json:"sudo,omitempty"`
 	ContextNudge        *ContextNudgeConfig `json:"context_nudge,omitempty"`
 	AutoLaunchDashboard bool                `json:"auto_launch_dashboard,omitempty"`
+	SpawnRateLimit      string              `json:"spawn_rate_limit,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

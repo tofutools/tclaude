@@ -107,19 +107,26 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, 
 	return newConv, newTmux, label, nil
 }
 
+// defaultCloneCooldown is the built-in fallback for CloneCooldown when
+// neither the `--agent-spawn-rate-limit` serve flag nor the
+// agent.spawn_rate_limit config field is set. resolveSpawnRateLimit
+// returns it as the lowest-priority tier.
+const defaultCloneCooldown = time.Minute
+
 // CloneCooldown is the minimum time between two clones of the same
 // source conv. The clone handler does an atomic INSERT-WHERE-NOT-
 // EXISTS against agent_clone_history to enforce this — see
-// db.ClaimCloneSlot. Default 1 minute; flow tests shrink it via
-// t.Cleanup-restored assignment to drive the locked/unlocked branches
-// without sleeping.
+// db.ClaimCloneSlot. Defaults to defaultCloneCooldown; `tclaude agentd
+// serve` overwrites it at startup from resolveSpawnRateLimit (flag >
+// config > default), and flow tests shrink it via t.Cleanup-restored
+// assignment to drive the locked/unlocked branches without sleeping.
 //
 // Per source conv, not per caller: the runaway scenario the TODO
 // flagged is "the same conv being cloned in a tight loop", regardless
 // of which agent triggered it. A manager that wants to fan out clones
 // of *different* sources hits the limit only if it tries to fan out
 // the *same* source twice within cooldown.
-var CloneCooldown = time.Minute
+var CloneCooldown = defaultCloneCooldown
 
 // `tclaude agent clone` — fork the calling agent into a sibling that
 // inherits its identity (groups, permissions, ownerships) but

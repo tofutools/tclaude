@@ -27,6 +27,7 @@ type serveParams struct {
 	NoTray              bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts."`
 	AutoLaunchDashboard bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Terminal            string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, iterm2, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
+	AgentSpawnRateLimit string `long:"agent-spawn-rate-limit" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.spawn_rate_limit in config.json. Default 1m."`
 }
 
 func serveCmd() *cobra.Command {
@@ -118,6 +119,13 @@ func runServe(p *serveParams) error {
 	if shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
 		autoLaunchDashboard()
 	}
+
+	// Agent-spawn rate limit — the clone cooldown (see CloneCooldown).
+	// Resolved once here at startup, tier order flag > config >
+	// default; the clone handler reads CloneCooldown per request.
+	cooldown, source := resolveSpawnRateLimit(p.AgentSpawnRateLimit, cfg)
+	CloneCooldown = cooldown
+	slog.Info("agent-spawn rate limit", "cooldown", cooldown, "source", source)
 
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
@@ -251,6 +259,51 @@ func resolveTerminalPreference(flagValue string) {
 		return
 	}
 	fmt.Printf("selected terminal: %s/%s\n", runtime.GOOS, terminal.ResolvedTerminal())
+}
+
+// resolveSpawnRateLimit resolves the agent-spawn rate limit — the
+// minimum cooldown between two clones of the same source conv (see
+// CloneCooldown). Priority, highest first:
+//
+//  1. the --agent-spawn-rate-limit serve flag
+//  2. the agent.spawn_rate_limit config.json field
+//  3. the built-in defaultCloneCooldown (1m)
+//
+// The value is a Go duration string; "0" disables the cooldown. A
+// missing value at a tier is skipped silently; a present-but-invalid
+// (unparseable or negative) value is warned about and skipped. Either
+// way the next tier is consulted. Returns the resolved duration and
+// the tier it came from, for the startup log line.
+func resolveSpawnRateLimit(flagValue string, cfg *config.Config) (time.Duration, string) {
+	if d, ok := parseSpawnRateLimit(flagValue, "--agent-spawn-rate-limit"); ok {
+		return d, "flag"
+	}
+	if cfg != nil && cfg.Agent != nil {
+		if d, ok := parseSpawnRateLimit(cfg.Agent.SpawnRateLimit, "agent.spawn_rate_limit"); ok {
+			return d, "config"
+		}
+	}
+	return defaultCloneCooldown, "default"
+}
+
+// parseSpawnRateLimit parses one tier's raw value. An empty string
+// means "tier not set" — returns ok=false with no warning. A non-empty
+// but unparseable or negative value is warned about (source names the
+// tier) and also returns ok=false so the caller falls through.
+func parseSpawnRateLimit(value, source string) (time.Duration, bool) {
+	if value == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		slog.Warn("invalid "+source+"; ignoring", "value", value, "error", err)
+		return 0, false
+	}
+	if d < 0 {
+		slog.Warn("negative "+source+"; ignoring", "value", value)
+		return 0, false
+	}
+	return d, true
 }
 
 func buildMux() http.Handler {

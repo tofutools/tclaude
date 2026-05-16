@@ -15,6 +15,14 @@ per source conv. `agentd.CloneCooldown` exported (default 1m); flow
 tests shrink it. Atomic INSERT-WHERE-NOT-EXISTS via
 `db.ClaimCloneSlot`.
 
+The cooldown is configurable as of 2026-05: `tclaude agentd serve
+--agent-spawn-rate-limit <duration>` (tier 1) or the
+`agent.spawn_rate_limit` config.json field (tier 2) overwrite
+`CloneCooldown` at daemon startup; the 1m `defaultCloneCooldown` const
+is tier 3. `0` disables the cooldown; an unparseable/negative value at
+a tier is warned and skipped. `agentd.resolveSpawnRateLimit` does the
+resolution — unit-tested in `spawn_rate_limit_test.go`.
+
 ## Open
 
 - **--no-copy-conv polish.** Today the no-copy path uses the same
@@ -24,5 +32,7 @@ tests shrink it. Atomic INSERT-WHERE-NOT-EXISTS via
   `sessions` so identity copy can happen synchronously.
 
 ## Files
-- `pkg/claude/agentd/clone.go` — orchestration + rate limit
+- `pkg/claude/agentd/clone.go` — orchestration + rate limit; `CloneCooldown` / `defaultCloneCooldown`
+- `pkg/claude/agentd/serve.go` — `--agent-spawn-rate-limit` flag + `resolveSpawnRateLimit`
+- `pkg/claude/common/config/config.go` — `AgentConfig.SpawnRateLimit` field
 - `pkg/claude/common/db/agent_clone_history.go` — rate-limit storage
