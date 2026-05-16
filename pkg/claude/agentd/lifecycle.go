@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
@@ -328,7 +329,12 @@ func pickAliveSession(convID string) *db.SessionRow {
 // run arbitrary CC instances on the human's machine, blast radius
 // matches `agent.spawn` in the design doc).
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsSpawn); !ok {
+	// requirePermission also hands back the caller's conv-id: a real
+	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
+	// the human resolves to "". It is the default reply-to target for
+	// the startup briefing assembled further down.
+	spawnerConvID, ok := requirePermission(w, r, PermGroupsSpawn)
+	if !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -372,6 +378,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// default_cwd. The dashboard sends false explicitly when the human
 		// unticks the "include group default context" checkbox.
 		IncludeGroupContext *bool `json:"include_group_context,omitempty"`
+
+		// ReplyTo optionally names whom the spawned agent's `reply` to
+		// its startup briefing should reach — any selector
+		// agent.ResolveSelector accepts (conv-id / prefix / title /
+		// group alias). Omitted: the briefing's sender defaults to the
+		// spawn requester (spawnerConvID — empty for a human-initiated
+		// spawn). Set it to hand a worker off to a coordinator other
+		// than the spawner.
+		ReplyTo string `json:"reply_to,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -392,6 +407,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				"are allowed (it is delivered to the agent's inbox, not typed into "+
 				"its pane), but other control characters are not")
 		return
+	}
+
+	// Resolve the startup briefing's sender. Default: the spawn
+	// requester (an agent → its conv-id; a human → ""). An explicit
+	// reply_to selector overrides it — the knob a coordinator uses to
+	// route a worker's replies to a third agent rather than itself.
+	replyToConv := spawnerConvID
+	if rt := strings.TrimSpace(body.ReplyTo); rt != "" {
+		res, _, rtErr := agent.ResolveSelector(rt)
+		if rtErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_reply_to",
+				fmt.Sprintf("reply_to %q: %v", rt, rtErr))
+			return
+		}
+		replyToConv = res.ConvID
 	}
 
 	timeout := 30 * time.Second
@@ -527,6 +557,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if spawnContext != "" {
 		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
 			GroupID:      g.ID,
+			FromConv:     replyToConv,
 			ToConv:       convID,
 			Subject:      "Startup context",
 			Body:         spawnContext,
