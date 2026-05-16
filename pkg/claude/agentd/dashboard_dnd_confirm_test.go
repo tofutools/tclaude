@@ -127,6 +127,19 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 	if confirm > splice {
 		t.Errorf("runDndMove: optimistic .splice() (at %d) must not run before the confirm (at %d)", splice, confirm)
 	}
+	// The cancel guard must precede the splice too — not just the
+	// confirm. A refactor that moved `if (!confirmed)` to between the
+	// splice and the first fetch would still pass the confirm-before-
+	// splice check above (confirmModal stays first), yet a cancelled
+	// move would run the optimistic splice and flicker the UI before
+	// bailing.
+	cancel := strings.Index(move, "if (!confirmed) { await refresh(); return; }")
+	if cancel < 0 {
+		t.Fatalf("runDndMove: cancel guard `if (!confirmed) { await refresh(); return; }` not found")
+	}
+	if cancel > splice {
+		t.Errorf("runDndMove: cancel guard (at %d) must precede the optimistic .splice() (at %d) — a cancelled move must not run the splice", cancel, splice)
+	}
 
 	// runDndRetire keeps its richer retireConfirm modal (shutdown
 	// checkbox and all) so a retire-by-drag asks the identical question
