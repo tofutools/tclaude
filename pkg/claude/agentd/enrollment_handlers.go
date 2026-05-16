@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -76,7 +77,30 @@ func enrollmentActor(callerConv string) string {
 	return callerConv
 }
 
+// retireShouldShutdown reports whether a retire request should also
+// soft-stop the agent's running tmux session. Shutdown is the default
+// across every retire surface — a human retiring an agent almost
+// always wants the idle process gone, not left occupying a pane. The
+// caller opts OUT with ?shutdown=0 (or =false); an absent or
+// unparseable param keeps the default ON, so a forgetful caller fails
+// safe to the documented behaviour.
+func retireShouldShutdown(r *http.Request) bool {
+	v := strings.TrimSpace(r.URL.Query().Get("shutdown"))
+	if v == "" {
+		return true
+	}
+	on, err := strconv.ParseBool(v)
+	return err != nil || on
+}
+
 // handleAgentRetire serves POST /v1/agent/{selector}/retire.
+//
+// Unless ?shutdown=0 is passed, a successful retire also soft-exits
+// the agent's running tmux session (stopOneConv with force=false —
+// injects /exit, never a kill). Retire semantics are unchanged: the
+// conversation stays on disk and is reinstatable; shutdown only ends
+// the live process. A retired agent whose session is already dead is
+// a no-op (stopOneConv reports skipped:already_offline).
 func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -102,10 +126,17 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"conv_id": convID,
 		"outcome": outcome,
-	})
+	}
+	// Shutdown after the demotion: the agent is already a plain
+	// conversation by the time it processes /exit. Soft only — a
+	// retired agent's pane should close gracefully, not be killed.
+	if retireShouldShutdown(r) {
+		resp["shutdown"] = stopOneConv(convID, false /* soft exit */)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleAgentPromote serves POST /v1/agent/{selector}/promote — turns a
