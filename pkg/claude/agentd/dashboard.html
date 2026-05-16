@@ -1050,6 +1050,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .config-diff-modal h3 { margin: 0 0 4px; font-size: 14px; color: #d4d4d4; }
 .config-diff-modal .cfg-diff-sub { font-size: 12px; color: #7d8590; margin: 0 0 10px; }
+.config-diff-warn {
+  border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
+  color: #ffa198; font-size: 12px; padding: 8px 12px; margin: 4px 0 10px;
+  line-height: 1.5;
+}
 .config-diff {
   flex: 1; overflow: auto; background: #010409; border: 1px solid #21262d;
   border-radius: 6px; padding: 8px 0; margin-bottom: 4px;
@@ -1937,6 +1942,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 <div class="modal-overlay" id="config-diff-modal">
   <div class="config-diff-modal" role="dialog" aria-modal="true" aria-labelledby="config-diff-title">
     <h3 id="config-diff-title">Confirm config changes</h3>
+    <div class="config-diff-warn" id="config-diff-warn" style="display:none"></div>
     <p class="cfg-diff-sub" id="config-diff-sub"></p>
     <div class="config-diff" id="config-diff-body"></div>
     <div class="modal-buttons">
@@ -8998,6 +9004,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   let configObj = null;     // last loaded full config object (clone source)
   let configBaseRaw = '';   // canonical JSON of the config currently on disk
   let configLoaded = false;
+  let configFileMalformed = false; // on-disk file is corrupt → form shows defaults
 
   function cfgInt(id, fallback) {
     const v = parseInt($('#' + id).value, 10);
@@ -9307,6 +9314,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const data = await r.json();
       configBaseRaw = data.raw || '{}';
       configObj = JSON.parse(configBaseRaw);
+      configFileMalformed = !!data.malformed;
       if (data.path) $('#cfg-path').textContent = data.path;
       populateConfigForm(configObj);
       configLoaded = true;
@@ -9353,13 +9361,27 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
 
   // configDiffModal renders the before/after diff and resolves true on
-  // confirm, false on cancel / outside-click / Escape.
-  function configDiffModal(beforeRaw, afterRaw) {
+  // confirm, false on cancel / outside-click / Escape. When malformed
+  // is set the on-disk file is corrupt: a red banner spells out that
+  // the whole file is being replaced and the diff is only against
+  // defaults, so the human cannot wipe a corrupt config unawares.
+  function configDiffModal(beforeRaw, afterRaw, malformed) {
     return new Promise(resolve => {
       const overlay = $('#config-diff-modal');
       const diff = cfgLineDiff(beforeRaw, afterRaw);
       const adds = diff.filter(d => d.t === 'add').length;
       const dels = diff.filter(d => d.t === 'del').length;
+      const warnEl = $('#config-diff-warn');
+      if (malformed) {
+        warnEl.textContent = '⚠ config.json on disk is corrupt and could not be parsed. ' +
+          'The form shows DEFAULT values, not your previous settings. Saving replaces the ' +
+          'corrupt file entirely — anything it contained is lost. The diff below is against defaults.';
+        warnEl.style.display = 'block';
+      } else {
+        warnEl.style.display = 'none';
+      }
+      $('#config-diff-confirm').textContent = malformed
+        ? 'Replace corrupt config.json' : 'Save to config.json';
       $('#config-diff-sub').textContent =
         `${adds} line(s) added, ${dels} removed — writing to ${$('#cfg-path').textContent}`;
       const sign = { add: '+', del: '-', ctx: ' ' };
@@ -9436,17 +9458,22 @@ details.group-virtual .group-name { color: #8aa0b8; }
       const dry = await post('?dry_run=1');
       if (await reportConfigHTTPError(dry)) return;
       const after = (await dry.json()).raw || '';
-      if (after === configBaseRaw) { toast('No changes to save'); return; }
+      // When the on-disk file is corrupt the diff baseline is "defaults",
+      // so after===base can hold even though the save still meaningfully
+      // replaces the corrupt file — don't skip it then.
+      if (after === configBaseRaw && !configFileMalformed) { toast('No changes to save'); return; }
 
       // Phase 2: human confirms the diff before the real write.
-      const ok = await configDiffModal(configBaseRaw, after);
+      const ok = await configDiffModal(configBaseRaw, after, configFileMalformed);
       if (!ok) { toast('Save cancelled'); return; }
 
-      const res = await post('');
+      // replace_malformed acknowledges wiping a corrupt on-disk file.
+      const res = await post(configFileMalformed ? '?replace_malformed=1' : '');
       if (await reportConfigHTTPError(res)) return;
       const data = await res.json();
       configBaseRaw = data.raw || configBaseRaw;
       configObj = JSON.parse(configBaseRaw);
+      configFileMalformed = false; // the file is canonical after a save
       populateConfigForm(configObj);
       // The saved file is canonical now — any load-time notice (a
       // malformed file, or unknown keys that this save dropped) is

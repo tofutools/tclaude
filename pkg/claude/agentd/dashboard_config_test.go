@@ -41,6 +41,7 @@ type configResp struct {
 	Raw         string   `json:"raw"`
 	Path        string   `json:"path"`
 	Warning     string   `json:"warning"`
+	Malformed   bool     `json:"malformed"`
 	UnknownKeys []string `json:"unknown_keys"`
 	Errors      []string `json:"errors"`
 	Error       string   `json:"error"`
@@ -244,6 +245,44 @@ func TestDashboardConfig_PersistsSudoBlock(t *testing.T) {
 	require.NotNil(t, cfg.Agent.Sudo)
 	assert.Equal(t, "2h", cfg.Agent.Sudo.MaxDuration)
 	assert.Equal(t, "30m", cfg.Agent.Sudo.DefaultDuration)
+}
+
+// A corrupt config file on disk must block a save: the editor shows
+// defaults, so an unacknowledged save would silently discard whatever
+// the unparseable file held. A dry-run is still allowed (no write);
+// the real write needs replace_malformed=1.
+func TestDashboardConfig_MalformedFileGuardsSave(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	const corrupt = `{ broken json `
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(corrupt), 0o644))
+
+	gw, getResp := getConfig(t)
+	require.Equal(t, http.StatusOK, gw.Code)
+	assert.True(t, getResp.Malformed, "a corrupt file must be flagged malformed")
+	assert.NotEmpty(t, getResp.Warning)
+
+	body := wrapBody(`{"log_level":"debug"}`, getResp.Raw)
+
+	// A dry-run only previews — allowed even against a corrupt target.
+	dw, _ := postConfig(t, "/api/config?dry_run=1", body)
+	require.Equal(t, http.StatusOK, dw.Code, "dry-run must be allowed; body=%s", dw.Body.String())
+
+	// A real save without acknowledgement is refused; the file stays put.
+	w, resp := postConfig(t, "/api/config", body)
+	require.Equal(t, http.StatusConflict, w.Code, "body=%s", w.Body.String())
+	assert.Equal(t, "malformed_target", resp.Code)
+	onDisk, _ := os.ReadFile(config.ConfigPath())
+	assert.Equal(t, corrupt, string(onDisk), "the corrupt file must be left intact")
+
+	// With the explicit acknowledgement the save goes through.
+	w2, _ := postConfig(t, "/api/config?replace_malformed=1", body)
+	require.Equal(t, http.StatusOK, w2.Code, "body=%s", w2.Body.String())
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "debug", cfg.LogLevel)
 }
 
 func TestDashboardConfig_RejectsBadSudoDuration(t *testing.T) {

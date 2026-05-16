@@ -91,8 +91,9 @@ func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 		"path": config.ConfigPath(),
 	}
 	if loadErr != nil {
+		resp["malformed"] = true
 		resp["warning"] = "the config file could not be parsed (" + loadErr.Error() +
-			") — showing defaults; saving will replace the file with a clean config"
+			") — the form shows defaults, NOT your current settings; saving will replace the corrupt file entirely"
 	}
 	if unknown := unknownConfigKeys(); len(unknown) > 0 {
 		resp["unknown_keys"] = unknown
@@ -109,6 +110,12 @@ func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 // the request is refused with 409 so a blind overwrite with a stale
 // baseline cannot happen. Base is empty only for callers that opted
 // out; the dashboard always sends it.
+//
+// Malformed-target guard: if the file on disk is corrupt, the editor is
+// showing defaults (not the file's unparseable real contents), so a
+// save would silently discard whatever the corrupt file held. A real
+// write is refused with 409 unless replace_malformed=1 explicitly
+// acknowledges the wipe — the dashboard asks the human first.
 func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	dryRun := r.URL.Query().Get("dry_run") == "1"
 
@@ -123,8 +130,17 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := body.Config
 
-	if body.Base != "" {
-		current, _ := config.Load()
+	current, loadErr := config.Load()
+	if loadErr != nil {
+		// The file on disk is corrupt. A dry-run only previews, so let it
+		// through to validate the form; a real write must be acknowledged.
+		if !dryRun && r.URL.Query().Get("replace_malformed") != "1" {
+			writeError(w, http.StatusConflict, "malformed_target",
+				"config.json on disk is corrupt and cannot be parsed — the editor is showing defaults, not your current settings. Saving will replace the corrupt file entirely; re-send with replace_malformed=1 to do that deliberately.")
+			return
+		}
+	} else if body.Base != "" {
+		// Drift guard only applies to a parseable baseline.
 		if curRaw, err := json.MarshalIndent(current, "", "  "); err == nil && string(curRaw) != body.Base {
 			writeError(w, http.StatusConflict, "config_drift",
 				"config.json changed on disk since the Config tab loaded it — reload the tab and re-apply your edits")
