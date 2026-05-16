@@ -195,18 +195,26 @@ func run() error {
 	}
 
 	// Store context-window snapshot in DB for auto-compact + the agent
-	// context-info CLI. We persist whatever fields the statusline JSON
-	// gave us; absent fields land as 0 (DB default).
-	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+	// context-info CLI + the dashboard meter. Only write when the
+	// statusline actually carried context data: Claude Code emits
+	// renders whose context_window block is empty (e.g. before a
+	// turn's first API response), and writing those all-zero values
+	// would clobber a good snapshot — the dashboard-meter flicker bug.
+	// db.UpdateContextSnapshot also guards against an all-zero write as
+	// a backstop; this skip just avoids the pointless DB round-trip.
+	cw := input.ContextWindow
+	hasContextData := cw.UsedPercentage != nil || cw.TotalInputTokens != nil ||
+		cw.TotalOutputTokens != nil || cw.ContextWindowSize != nil
+	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" && hasContextData {
 		var tokIn, tokOut, winSize int64
-		if input.ContextWindow.TotalInputTokens != nil {
-			tokIn = *input.ContextWindow.TotalInputTokens
+		if cw.TotalInputTokens != nil {
+			tokIn = *cw.TotalInputTokens
 		}
-		if input.ContextWindow.TotalOutputTokens != nil {
-			tokOut = *input.ContextWindow.TotalOutputTokens
+		if cw.TotalOutputTokens != nil {
+			tokOut = *cw.TotalOutputTokens
 		}
-		if input.ContextWindow.ContextWindowSize != nil {
-			winSize = *input.ContextWindow.ContextWindowSize
+		if cw.ContextWindowSize != nil {
+			winSize = *cw.ContextWindowSize
 		}
 		if err := db.UpdateContextSnapshot(sessionID, float64(ctxPct), tokIn, tokOut, winSize); err != nil {
 			slog.Warn("status-bar: failed to update context snapshot", "error", err, "module", "hooks")

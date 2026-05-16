@@ -161,6 +161,37 @@ func TestContextSnapshotRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(180_000), got.TokensInput, "after pct-only update: TokensInput (preserved)")
 }
 
+// TestUpdateContextSnapshotEmptyDoesNotClobber locks down the guard
+// that fixes the dashboard context-meter flicker: Claude Code emits
+// statusline renders with an empty context_window block, which the
+// hook turns into an all-zero UpdateContextSnapshot call. That call
+// must be skipped — never allowed to overwrite a good snapshot back to
+// zero.
+func TestUpdateContextSnapshotEmptyDoesNotClobber(t *testing.T) {
+	setupTestDB(t)
+
+	s := &SessionRow{ID: "clob-001", CreatedAt: time.Now()}
+	require.NoError(t, SaveSession(s), "SaveSession")
+
+	// A populated statusline render writes a good snapshot.
+	require.NoError(t, UpdateContextSnapshot("clob-001", 15.0, 146_000, 2_000, 1_000_000), "good snapshot")
+
+	// An empty render — all-zero — must be a no-op, not a clobber.
+	require.NoError(t, UpdateContextSnapshot("clob-001", 0, 0, 0, 0), "empty snapshot")
+
+	got, err := GetContextSnapshot("clob-001")
+	require.NoError(t, err, "GetContextSnapshot")
+	assert.Equal(t, 15.0, got.ContextPct, "ContextPct preserved through an empty write")
+	assert.Equal(t, int64(146_000), got.TokensInput, "TokensInput preserved")
+	assert.Equal(t, int64(2_000), got.TokensOutput, "TokensOutput preserved")
+	assert.Equal(t, int64(1_000_000), got.ContextWindowSize, "ContextWindowSize preserved")
+
+	// A populated render after the empty one still updates normally.
+	require.NoError(t, UpdateContextSnapshot("clob-001", 22.0, 200_000, 5_000, 1_000_000), "next good snapshot")
+	got, _ = GetContextSnapshot("clob-001")
+	assert.Equal(t, 22.0, got.ContextPct, "ContextPct updates on the next populated render")
+}
+
 func TestCompactStateRoundTrip(t *testing.T) {
 	setupTestDB(t)
 
