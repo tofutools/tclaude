@@ -33,6 +33,7 @@ type dashConversation struct {
 type dashRetired struct {
 	ConvID       string `json:"conv_id"`
 	Title        string `json:"title"`
+	Online       bool   `json:"online"`
 	RetiredBy    string `json:"retired_by,omitempty"`
 	RetireReason string `json:"retire_reason,omitempty"`
 }

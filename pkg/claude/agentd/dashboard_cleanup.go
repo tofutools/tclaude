@@ -204,7 +204,8 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 //	  "mode":             "unjoin",           // unjoin | retire | delete | reinstate
 //	  "include_owners":   false,              // (unjoin) strip owner rows?
 //	  "include_online":   false,              // act on still-running sessions too?
-//	  "delete_worktrees": false               // (delete) also remove git worktrees?
+//	  "delete_worktrees": false,              // (delete) also remove git worktrees?
+//	  "shutdown":         true                // (retire) also soft-stop the session?
 //	}
 //
 // Four tiers:
@@ -216,7 +217,8 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 //     retireAgentConv unjoins all groups, revokes every permission and
 //     sudo grant, and flips the enrollment bit. The .jsonl is left
 //     intact and the agent can be reinstated. The non-destructive
-//     soft-delete.
+//     soft-delete. Unless shutdown is false, a retired agent whose
+//     tmux session is still alive is also soft-exited (force=false).
 //   - delete — a full purge via conv.DeleteConvByID (the per-agent
 //     delete button's path), which unlinks the .jsonl and cascades
 //     every group/owner/perm/enrollment row. Irreversible. Works on
@@ -237,7 +239,10 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 // else → "unjoin") so an older dashboard build keeps working.
 // delete_worktrees (delete mode only) also removes each purged agent's
 // git worktree — skipping the repo's main worktree and any worktree a
-// surviving agent still works in.
+// surviving agent still works in. shutdown (retire mode only) is a
+// *bool defaulting to true: an omitted field keeps the shutdown-ON
+// default, so an older dashboard build that never sends it still
+// soft-stops retired agents' sessions.
 func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Agents          []string `json:"agents"`
@@ -246,6 +251,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		IncludeOwners   bool     `json:"include_owners"`
 		IncludeOnline   bool     `json:"include_online"`
 		DeleteWorktrees bool     `json:"delete_worktrees"`
+		Shutdown        *bool    `json:"shutdown"` // (retire) nil → default ON
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -300,6 +306,11 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	if mode == "delete" && body.DeleteWorktrees {
 		survivorRoots = otherAgentWorktreeRoots(willDelete)
 	}
+
+	// retireShutdown (retire tier only): whether a successfully-retired
+	// agent's still-live session should also be soft-stopped. nil → ON,
+	// the documented default — an older dashboard build omits the field.
+	retireShutdown := body.Shutdown == nil || *body.Shutdown
 
 	resp := cleanupResponse{Mode: "agents", Outcomes: []cleanupOutcome{}}
 	// Group IDs whose owner roster this pass may have emptied — swept
@@ -358,6 +369,18 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				resp.Retired++
 				for _, gid := range ownerGroups {
 					ownerless[gid] = true
+				}
+				// Optionally soft-stop the now-retired agent's session.
+				// stopOneConv is idempotent — an already-dead session
+				// (the common case for an offline target) is a no-op, so
+				// the detail note only appears when a pane was running.
+				if retireShutdown {
+					switch st := stopOneConv(tg.convID, false /* soft exit */); st.Action {
+					case "soft_stopped":
+						out.Detail += " · session soft-stopped"
+					case "error":
+						out.Detail += " · session shutdown failed: " + st.Detail
+					}
 				}
 			}
 		case mode == "delete":

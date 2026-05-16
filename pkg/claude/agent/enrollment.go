@@ -87,8 +87,9 @@ func runPromote(p *promoteParams, stdout, stderr io.Writer) int {
 }
 
 type retireParams struct {
-	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
-	Reason   string `long:"reason" short:"r" help:"Why the agent is being retired (recorded in the audit trail)"`
+	Selector   string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
+	Reason     string `long:"reason" short:"r" help:"Why the agent is being retired (recorded in the audit trail)"`
+	NoShutdown bool   `long:"no-shutdown" help:"Leave the agent's running session alive. By default retire also soft-exits the running tmux session (sends /exit); pass this to keep the process running."`
 }
 
 func retireCmd() *cobra.Command {
@@ -99,6 +100,13 @@ func retireCmd() *cobra.Command {
 			"revokes every permission and sudo grant, so it stops being an " +
 			"agent — but the conversation itself (.jsonl, history) is left " +
 			"completely intact and the agent can be reinstated later. " +
+			"\n\n" +
+			"By default retire also shuts the agent's running session down — " +
+			"it soft-exits the tmux pane (sends /exit), since a retired " +
+			"agent's idle process is almost never wanted. The conversation " +
+			"is untouched and still reinstatable; only the live process " +
+			"ends. Pass --no-shutdown to leave the session running. A " +
+			"retired agent with no live session is a no-op either way. " +
 			"\n\n" +
 			"This is the non-destructive alternative to `tclaude agent " +
 			"delete`, which permanently wipes the conversation. " +
@@ -125,10 +133,19 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	path := "/v1/agent/" + url.PathEscape(selector) + "/retire"
+	// Always send shutdown explicitly so the request is unambiguous —
+	// the daemon defaults an absent param to ON, but spelling it out
+	// keeps the CLI behaviour independent of that server-side default.
+	q := url.Values{}
 	if reason := strings.TrimSpace(p.Reason); reason != "" {
-		path += "?reason=" + url.QueryEscape(reason)
+		q.Set("reason", reason)
 	}
+	if p.NoShutdown {
+		q.Set("shutdown", "0")
+	} else {
+		q.Set("shutdown", "1")
+	}
+	path := "/v1/agent/" + url.PathEscape(selector) + "/retire?" + q.Encode()
 	var resp struct {
 		ConvID  string `json:"conv_id"`
 		Outcome struct {
@@ -137,6 +154,13 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 			SudoRevoked  int64    `json:"sudo_revoked"`
 			Retired      bool     `json:"retired"`
 		} `json:"outcome"`
+		// Shutdown is present only when shutdown was requested. Action
+		// mirrors stopOneConv: soft_stopped | skipped:already_offline |
+		// error.
+		Shutdown *struct {
+			Action string `json:"action"`
+			Detail string `json:"detail"`
+		} `json:"shutdown"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -149,6 +173,16 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 	if resp.Outcome.PermsRevoked > 0 || resp.Outcome.SudoRevoked > 0 {
 		fmt.Fprintf(stdout, "  revoked: %d permission grant(s), %d sudo grant(s)\n",
 			resp.Outcome.PermsRevoked, resp.Outcome.SudoRevoked)
+	}
+	if resp.Shutdown != nil {
+		switch {
+		case resp.Shutdown.Action == "soft_stopped":
+			fmt.Fprintln(stdout, "  session: sent /exit — the running session is shutting down")
+		case strings.HasPrefix(resp.Shutdown.Action, "skipped"):
+			fmt.Fprintln(stdout, "  session: no running session to stop")
+		case resp.Shutdown.Action == "error":
+			fmt.Fprintf(stdout, "  session: shutdown failed: %s\n", resp.Shutdown.Detail)
+		}
 	}
 	return rcOK
 }

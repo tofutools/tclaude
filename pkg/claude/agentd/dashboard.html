@@ -841,6 +841,24 @@ details.group-virtual .group-name { color: #8aa0b8; }
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="retire-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="retire-title">
+    <h3 id="retire-title">Retire this agent?</h3>
+    <p>Demotes the agent to a plain conversation: revokes its group memberships and
+      permission grants so it stops being an agent. The conversation itself stays on
+      disk and can be reinstated later — this is the non-destructive soft-delete.</p>
+    <div class="modal-meta" id="retire-meta"></div>
+    <label class="delete-agent-wt" id="retire-shutdown-row">
+      <input type="checkbox" id="retire-shutdown" checked />
+      <span>Also shut down the running session
+        <span class="wt-note">soft-exits the tmux pane (/exit) — the conversation is kept either way</span></span>
+    </label>
+    <div class="modal-buttons">
+      <button id="retire-cancel">Cancel</button>
+      <button id="retire-ok" class="confirm-danger">Retire</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="shutdown-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shutdown-title">
     <h3 id="shutdown-title">Shut down agent?</h3>
@@ -4526,6 +4544,42 @@ details.group-virtual .group-name { color: #8aa0b8; }
     });
   }
 
+  // retireConfirm pops the retire confirmation: the same explanatory
+  // copy as the old confirmModal-based prompt, plus an "also shut down
+  // the running session" checkbox (checked by default). Resolves to
+  // {shutdown: bool} on Retire, null on Cancel / outside-click /
+  // Escape. Shared by the per-row retire button and the drag-onto-
+  // Retired gesture so both ask the same question.
+  function retireConfirm({label}) {
+    return new Promise(resolve => {
+      const overlay = $('#retire-modal');
+      const okBtn = $('#retire-ok');
+      const cancelBtn = $('#retire-cancel');
+      const shutdownCb = $('#retire-shutdown');
+      $('#retire-meta').textContent = label || '';
+      $('#retire-meta').style.display = label ? 'block' : 'none';
+      shutdownCb.checked = true; // default ON on every open
+      const cleanup = (result) => {
+        overlay.classList.remove('show');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onOk = () => cleanup({ shutdown: shutdownCb.checked });
+      const onCancel = () => cleanup(null);
+      const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKey);
+      overlay.classList.add('show');
+      okBtn.focus();
+    });
+  }
+
   // shutdownConfirm pops a 3-button confirm: Soft exit (default),
   // Force kill (destructive), Cancel. Resolves to "soft" / "force" /
   // null. Mirrors the existing confirmModal but with two distinct
@@ -5180,14 +5234,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
         'Delete associated git worktrees <span class="opt-note">— removes the worktree directory; ' +
         'the branch and its commits are kept. The main repo and worktrees shared with another ' +
         'agent are always skipped.</span></label>';
+      const shutdownOpt =
+        '<label id="cleanup-opt-shutdown-row"><input type="checkbox" id="cleanup-opt-shutdown" checked /> ' +
+        'Also shut down running sessions <span class="opt-note">— retire tier only; soft-exits ' +
+        '(/exit) the tmux pane of each retired agent that is still running. The conversation is ' +
+        'kept and reinstatable either way.</span></label>';
       optsEl.innerHTML =
         '<div class="cleanup-tier">' + radios + '</div>' +
-        ownersOpt + onlineOpt + wtOpt;
+        ownersOpt + onlineOpt + shutdownOpt + wtOpt;
       syncTierLocks();
     }
     // syncTierLocks enables each sub-option only for the tier it
-    // applies to: owners → unjoin, worktrees → delete, include-online
-    // → every tier except reinstate (which ignores liveness).
+    // applies to: owners → unjoin, worktrees → delete, shutdown →
+    // retire, include-online → every tier except reinstate (which
+    // ignores liveness).
     function syncTierLocks() {
       if (mode === 'group') return;
       const tr = cleanupTier();
@@ -5199,6 +5259,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       };
       lock('#cleanup-opt-owners', '#cleanup-opt-owners-row', tr === 'unjoin');
       lock('#cleanup-opt-wt', '#cleanup-opt-wt-row', tr === 'delete');
+      lock('#cleanup-opt-shutdown', '#cleanup-opt-shutdown-row', tr === 'retire');
       lock('#cleanup-opt-online', '#cleanup-opt-online-row', tr !== 'reinstate');
     }
     function optInclOwners() {
@@ -5211,6 +5272,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
     }
     function optIncludeOnline() {
       const cb = $('#cleanup-opt-online');
+      return !!(cb && cb.checked && !cb.disabled);
+    }
+    function optShutdown() {
+      const cb = $('#cleanup-opt-shutdown');
       return !!(cb && cb.checked && !cb.disabled);
     }
 
@@ -5367,7 +5432,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
         hintEl.className = 'cleanup-hint';
         hintEl.textContent = 'Retires the selected agents: revokes their group memberships and '
           + 'permission grants so they stop being agents — the conversations stay on disk and can '
-          + 'be reinstated later. The non-destructive soft-delete.';
+          + 'be reinstated later. The non-destructive soft-delete. Running sessions are also '
+          + 'soft-stopped unless you untick the option below.';
       } else if (tr === 'reinstate') {
         hintEl.className = 'cleanup-hint';
         hintEl.textContent = 'Reinstates the selected retired agents — returns them to the active '
@@ -5396,6 +5462,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           include_owners: optInclOwners(),
           include_online: optIncludeOnline(),
           delete_worktrees: optDeleteWorktrees(),
+          shutdown: optShutdown(),
         };
       }
       try {
@@ -5699,21 +5766,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
             break;
           }
           case 'retire-agent': {
-            const confirmed = await confirmModal({
-              title: 'Retire this agent?',
-              body: 'Demotes the agent to a plain conversation: revokes its group memberships and '
-                + 'permission grants so it stops being an agent. The conversation itself stays on '
-                + 'disk and can be reinstated later — this is the non-destructive soft-delete.',
-              meta: label,
-              okLabel: 'Retire',
-            });
-            if (!confirmed) return;
-            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire`, {
+            const choice = await retireConfirm({ label });
+            if (!choice) return;
+            const q = choice.shutdown ? '?shutdown=1' : '?shutdown=0';
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
               method: 'POST', credentials: 'same-origin',
             });
             ok = r.ok;
             if (!ok) { toast(`Retire failed: ${await r.text()}`, true); break; }
-            toast(`retired: ${label}`);
+            toast(choice.shutdown ? `retired + session stopped: ${label}` : `retired: ${label}`);
             break;
           }
           case 'reinstate-agent': {
@@ -6603,31 +6664,28 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // runDndRetire handles a drag of an AGENT row (a real-group member or
   // a virtual-Ungrouped row) ONTO the virtual Retired group — the agent
   // is retired, demoting it back to a plain conversation. Retire
-  // revokes group memberships + grants, so it gets the same confirm
-  // modal as the per-row retire button.
+  // revokes group memberships + grants, so it gets the same
+  // retireConfirm modal — checkbox and all — as the per-row retire
+  // button.
   async function runDndRetire(payload) {
     const {conv, label} = payload;
-    const confirmed = await confirmModal({
-      title: 'Retire this agent?',
-      body: 'Demotes the agent to a plain conversation: revokes its group memberships and '
-        + 'permission grants so it stops being an agent. The conversation itself stays on '
-        + 'disk and can be reinstated later — this is the non-destructive soft-delete.',
-      meta: label,
-      okLabel: 'Retire',
-    });
-    if (!confirmed) {
+    const choice = await retireConfirm({ label });
+    if (!choice) {
       await refresh(); // undo the optimistic dragend state
       return;
     }
     try {
-      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire`, {
+      const q = choice.shutdown ? '?shutdown=1' : '?shutdown=0';
+      const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
         method: 'POST', credentials: 'same-origin',
       });
       if (!r.ok) {
         toast(`retire ${label} failed: ${await r.text()}`, true);
         return;
       }
-      toast(`retired ${label} — demoted to a conversation`);
+      toast(choice.shutdown
+        ? `retired ${label} — demoted + session stopped`
+        : `retired ${label} — demoted to a conversation`);
     } catch (err) {
       toast(`retire failed: ${err && err.message || err}`, true);
     } finally {
