@@ -189,14 +189,21 @@ func (f *Flow) HaveGroup(name string) *db.AgentGroup {
 // conversation title.
 func (f *Flow) HaveMember(group, convID string) {
 	f.T.Helper()
+	f.HaveMemberWithRole(group, convID, "")
+}
+
+// HaveMemberWithRole inserts a (group, conv) row carrying a role —
+// used by tests that exercise role-filtered multicast.
+func (f *Flow) HaveMemberWithRole(group, convID, role string) {
+	f.T.Helper()
 	g, err := db.GetAgentGroupByName(group)
 	if err != nil || g == nil {
-		f.T.Fatalf("HaveMember: group %q not found", group)
+		f.T.Fatalf("HaveMemberWithRole: group %q not found", group)
 	}
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g.ID, ConvID: convID,
+		GroupID: g.ID, ConvID: convID, Role: role,
 	}); err != nil {
-		f.T.Fatalf("HaveMember: %v", err)
+		f.T.Fatalf("HaveMemberWithRole: %v", err)
 	}
 }
 

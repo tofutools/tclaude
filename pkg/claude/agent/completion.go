@@ -104,6 +104,34 @@ func completeConvSelectors(_ *cobra.Command, _ []string, toComplete string) []st
 	return out
 }
 
+// completeRoles returns the distinct non-empty role values across all
+// group memberships, prefix-filtered. Used by `agent message --role`.
+// The membership table is small (humans curate it), so the per-group
+// scan is cheap enough for a completion path.
+func completeRoles(_ *cobra.Command, _ []string, toComplete string) []string {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, g := range groups {
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			continue
+		}
+		for _, m := range members {
+			role := strings.TrimSpace(m.Role)
+			if role == "" || seen[role] || !strings.HasPrefix(role, toComplete) {
+				continue
+			}
+			seen[role] = true
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
 // completeMessageTargets is `completeConvSelectors` plus the
 // `group:<name>` multicast prefix. Used for `agent message <peer>`.
 func completeMessageTargets(cmd *cobra.Command, args []string, toComplete string) []string {
