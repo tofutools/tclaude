@@ -27,6 +27,22 @@ const (
 	maxNotifyHumanSubjectLen = 256
 )
 
+// maxNotifyHumanRequestBytes bounds the raw POST body the daemon will
+// buffer for /v1/notify-human, enforced by http.MaxBytesReader *before*
+// the JSON decode. maxNotifyHumanBodyLen / maxNotifyHumanSubjectLen cap
+// the *decoded* strings; this caps the *wire* bytes — so a malicious
+// local agent cannot stream a multi-GB body into daemon memory before
+// the decoded-length check ever runs (the actual DoS the size caps
+// imply they address).
+//
+// JSON escaping inflates content — `"` and `\` double, and control or
+// HTML-significant chars expand to a 6-byte \uXXXX — so the wire cap is
+// the decoded caps times 6 plus headroom for the JSON envelope. That is
+// loose enough that no legitimate body (even a maximally-escaped one) is
+// rejected pre-decode, yet still orders of magnitude below the multi-GB
+// range that is the real concern.
+const maxNotifyHumanRequestBytes = 6*(maxNotifyHumanBodyLen+maxNotifyHumanSubjectLen) + 1024
+
 // handleNotifyHuman serves POST /v1/notify-human — the daemon side of
 // `tclaude agent notify-human`. It gates via requireNotifyHumanPermission,
 // then persists the message to the human_messages table, where the
@@ -44,6 +60,11 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Cap the buffered request body before decoding — see
+	// maxNotifyHumanRequestBytes. An over-cap body fails the Decode below
+	// with http.MaxBytesReader's error, handled as a 400 like any other
+	// malformed request.
+	r.Body = http.MaxBytesReader(w, r.Body, maxNotifyHumanRequestBytes)
 	var body notifyHumanRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -188,6 +209,9 @@ func handleDashboardHumanMessagesRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	// The body is a tiny {"id":N} / {"all":true} envelope; cap it well
+	// below anything legitimate so a stray huge POST cannot be buffered.
+	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)
 	var body struct {
 		ID  int64 `json:"id"`
 		All bool  `json:"all"`

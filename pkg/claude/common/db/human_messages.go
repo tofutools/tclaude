@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -82,10 +83,19 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		}
 		if t, err := time.Parse(time.RFC3339Nano, created); err == nil {
 			m.CreatedAt = t
+		} else {
+			// A corrupt timestamp leaves the field zero rather than
+			// failing the whole list — but log it so the corruption is
+			// diagnosable instead of silently swallowed.
+			slog.Warn("human_messages: unparseable created_at, leaving zero",
+				"id", m.ID, "value", created, "error", err)
 		}
 		if readAt != "" {
 			if t, err := time.Parse(time.RFC3339Nano, readAt); err == nil {
 				m.ReadAt = t
+			} else {
+				slog.Warn("human_messages: unparseable read_at, leaving zero",
+					"id", m.ID, "value", readAt, "error", err)
 			}
 		}
 		out = append(out, &m)
