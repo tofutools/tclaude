@@ -3452,11 +3452,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
       populateTargetPickerGroups(prefix);
       const sel = $('#' + prefix + '-group');
       const want = (p && p.groupName) || '';
-      let found = false;
-      Array.from(sel.options).forEach(o => {
-        if (o.value === want) { o.selected = true; found = true; }
-      });
-      if (!found && sel.options.length) sel.selectedIndex = 0;
+      // Preserve a target group that is no longer in the snapshot
+      // (archived / deleted since the job was created) as an explicit
+      // "(missing)" option — silently falling back to the first group
+      // would, on a cron edit-save, reroute the job to the wrong group.
+      const found = Array.from(sel.options).some(o => o.value === want);
+      if (want && !found) {
+        const opt = document.createElement('option');
+        opt.value = want;
+        opt.textContent = `${want} (missing)`;
+        sel.prepend(opt);
+      }
+      if (want) sel.value = want;
+      else if (sel.options.length) sel.selectedIndex = 0;
     }
   }
 
@@ -3721,7 +3729,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (conv) $('#cron-create-owner').value = conv;
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && $('#cron-create-modal').classList.contains('show')) {
+      // Skip when the shared agent-picker overlay is open — its own Esc
+      // handler closes it; closing the modal too would drop the draft.
+      if (e.key === 'Escape'
+          && $('#cron-create-modal').classList.contains('show')
+          && !$('#cron-pick-target-modal').classList.contains('show')) {
         closeCronCreateModal();
       }
     });
@@ -3828,7 +3840,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
       if (conv) $('#message-create-from').value = conv;
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && $('#message-create-modal').classList.contains('show')) {
+      // Skip when the shared agent-picker overlay is open — its own Esc
+      // handler closes it; closing the modal too would drop the draft.
+      if (e.key === 'Escape'
+          && $('#message-create-modal').classList.contains('show')
+          && !$('#cron-pick-target-modal').classList.contains('show')) {
         closeMessageCreateModal();
       }
     });

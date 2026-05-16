@@ -62,7 +62,7 @@ whether the recipient was nudged live or the row just queued.
 | Agents tab — per-row `✉` | Solo target = that conv-id |
 | Groups tab — group header `✉ message` | Group mode = `group:<name>` |
 
-Both serialise their pre-fill into a `data-prefill` JSON blob; the
+Both serialise their prefill into a `data-prefill` JSON blob; the
 `message-new` action handler decodes it and calls
 `openMessageCreateModal(prefill)`. From is left blank for the human
 to pick, mirroring how the cron entry points leave Owner blank.

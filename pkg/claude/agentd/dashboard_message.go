@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -62,7 +63,18 @@ func handleDashboardMessageCreate(w http.ResponseWriter, r *http.Request) {
 			"to is required (a solo target or a 'group:NAME' multicast)")
 		return
 	}
-	res, _, err := agent.ResolveSelector(body.From)
+	res, matches, err := agent.ResolveSelector(body.From)
+	if errors.Is(err, agent.ErrAmbiguous) {
+		// Mirror handleMessages' handling of an ambiguous To: return the
+		// candidate set so the dashboard can disambiguate rather than
+		// flattening it into a misleading 404.
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":      "from matches multiple conversations",
+			"code":       "ambiguous",
+			"candidates": peerEntriesFromResolved(matches),
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "resolve from: "+err.Error())
 		return
