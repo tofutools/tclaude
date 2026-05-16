@@ -20,6 +20,7 @@ type dashSnapshot struct {
 	Ungrouped     []dashAgent        `json:"ungrouped"`
 	Conversations []dashConversation `json:"conversations"`
 	Retired       []dashRetired      `json:"retired"`
+	Usage         dashUsage          `json:"usage"`
 }
 
 // dashConversation mirrors agentd.dashboardConversation.

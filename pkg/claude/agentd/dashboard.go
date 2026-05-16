@@ -264,8 +264,12 @@ type snapshotPayload struct {
 	// renders these in a dedicated panel (read-only in v1) and uses them
 	// to annotate group rows with outbound/inbound counts. Empty slice
 	// (not nil) so JS .length / .map() are safe.
-	Links     []dashboardLink `json:"links"`
-	PopupBase string          `json:"popup_base"` // for tray-shareable display
+	Links []dashboardLink `json:"links"`
+	// Usage is the account-wide subscription usage readout (5h + 7d
+	// rolling windows) rendered in the dashboard's top bar. Always
+	// present — Available=false carries the graceful "n/a" state.
+	Usage     dashboardUsage `json:"usage"`
+	PopupBase string         `json:"popup_base"` // for tray-shareable display
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -756,6 +760,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Retired = collectRetiredSnapshot(retiredAgents)
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
+	out.Usage = collectUsageSnapshot()
 
 	writeJSON(w, http.StatusOK, out)
 }
