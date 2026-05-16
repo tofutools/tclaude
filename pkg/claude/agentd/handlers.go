@@ -236,6 +236,10 @@ type sendReq struct {
 	Cc      []string `json:"cc,omitempty"`
 	Subject string   `json:"subject,omitempty"`
 	Body    string   `json:"body"`
+	// Role, when non-empty, restricts a multicast (To prefixed with
+	// "group:") to members whose agent_group_members.role matches it
+	// case-insensitively. It is an error on a 1:1 (non-group:) target.
+	Role string `json:"role,omitempty"`
 }
 
 // sendResp carries the result of either a direct send or a group
@@ -350,6 +354,14 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
+		return
+	}
+	// --role only filters a group: multicast's recipient set. On a 1:1
+	// target there is no member set to filter, so the flag is
+	// meaningless and almost certainly a mistake — reject it loudly.
+	if strings.TrimSpace(req.Role) != "" && !strings.HasPrefix(req.To, multicastPrefix) {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"--role is only valid with a 'group:' multicast target")
 		return
 	}
 	if strings.HasPrefix(req.To, multicastPrefix) {
@@ -596,31 +608,113 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleMulticast fans out req.Body to every member of the named group
-// except the sender. Auth: the sender must be a member of the target
-// group (we don't allow strangers to broadcast in). Each recipient
-// gets its own agent_messages row + tmux nudge if online; replies
-// from any recipient go back to the sender as a normal direct
-// message via the original group.
+// resolveMulticastGroup resolves the token after the "group:" prefix
+// to a concrete group. The grammar:
 //
-// Returns 200 with recipients=[] and via_group set (idempotent
-// success) when the group is empty save for the sender.
-func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
-	groupName := strings.TrimPrefix(req.To, multicastPrefix)
-	groupName = strings.TrimSpace(groupName)
-	if groupName == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"multicast target is empty; expected 'group:<name>'")
-		return
+//   - empty token        → the sender's own group (resolveOwnGroup).
+//   - matches a name     → that group (the long-standing behaviour).
+//   - all-digits, no name match → the group with that numeric id.
+//   - otherwise          → 404.
+//
+// Name lookup is tried first, so a group a human chose to *name* "42"
+// stays reachable; the numeric-id path is a strict fallback for tokens
+// that match no name. On any failure the error response is already
+// written and ok is false.
+func resolveMulticastGroup(w http.ResponseWriter, fromID, token string) (g *db.AgentGroup, ok bool) {
+	if token == "" {
+		return resolveOwnGroup(w, fromID)
 	}
-	g, err := db.GetAgentGroupByName(groupName)
+	g, err := db.GetAgentGroupByName(token)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
+		return nil, false
 	}
-	if g == nil {
-		writeError(w, http.StatusNotFound, "not_found",
-			fmt.Sprintf("no group named %q", groupName))
+	if g != nil {
+		return g, true
+	}
+	// No name match — fall back to a numeric group id, but only for an
+	// all-digit token: strconv.ParseInt would otherwise accept signed
+	// forms ("+7", "-7") that the documented grammar excludes.
+	allDigits := token != ""
+	for _, r := range token {
+		if r < '0' || r > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		if id, perr := strconv.ParseInt(token, 10, 64); perr == nil {
+			g, err = db.GetAgentGroupByID(id)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return nil, false
+			}
+			if g != nil {
+				return g, true
+			}
+		}
+	}
+	writeError(w, http.StatusNotFound, "not_found",
+		fmt.Sprintf("no group named or numbered %q", token))
+	return nil, false
+}
+
+// resolveOwnGroup resolves an empty "group:" target to the sender's
+// single group. "My own group" is only unambiguous when there is
+// exactly one: it is a 400 when the sender is a member of 0 or >1
+// active (non-archived) groups. Membership — not ownership — is what
+// counts; a manager that owns groups but is a member of none should
+// name the team explicitly.
+func resolveOwnGroup(w http.ResponseWriter, fromID string) (*db.AgentGroup, bool) {
+	groups, err := db.ListGroupsForConv(fromID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return nil, false
+	}
+	var active []*db.AgentGroup
+	for _, g := range groups {
+		if !g.IsArchived() {
+			active = append(active, g)
+		}
+	}
+	switch len(active) {
+	case 1:
+		return active[0], true
+	case 0:
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"'group:' with no name resolves to your own group, but you are not a "+
+				"member of any group; name a group explicitly, e.g. group:<name>")
+		return nil, false
+	default:
+		names := make([]string, len(active))
+		for i, g := range active {
+			names[i] = g.Name
+		}
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("'group:' is ambiguous — you are a member of %d groups (%s); "+
+				"name one explicitly, e.g. group:%s",
+				len(active), strings.Join(names, ", "), names[0]))
+		return nil, false
+	}
+}
+
+// handleMulticast fans out req.Body to every member of the target group
+// except the sender. The target group is resolved by name, numeric id,
+// or — for an empty "group:" — the sender's own group (see
+// resolveMulticastGroup). Auth: the sender must be a member or owner of
+// the group (we don't allow strangers to broadcast in). When req.Role
+// is set, only members whose role matches (case-insensitively) receive
+// the message — the filter narrows the recipient set *after* the auth
+// gate, so it can never widen reach. Each recipient gets its own
+// agent_messages row + tmux nudge if online; replies from any recipient
+// go back to the sender as a normal direct message via the group.
+//
+// Returns 200 with recipients=[] and via_group set (idempotent
+// success) when no member other than the sender matched.
+func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
+	token := strings.TrimSpace(strings.TrimPrefix(req.To, multicastPrefix))
+	g, ok := resolveMulticastGroup(w, fromID, token)
+	if !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -642,7 +736,7 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 	}
 	if senderMember == nil && !isOwner {
 		writeError(w, http.StatusForbidden, "auth",
-			fmt.Sprintf("you are not a member or owner of group %q", groupName))
+			fmt.Sprintf("you are not a member or owner of group %q", g.Name))
 		return
 	}
 	members, err := db.ListAgentGroupMembers(g.ID)
@@ -650,9 +744,15 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	roleFilter := strings.TrimSpace(req.Role)
 	out := sendResp{ViaGroup: g.Name, Recipients: []recipient{}}
 	for _, m := range members {
 		if m.ConvID == fromID {
+			continue
+		}
+		// Role filter: skip members whose role does not match. Roles are
+		// free-form human-set strings, so the match is case-insensitive.
+		if roleFilter != "" && !strings.EqualFold(strings.TrimSpace(m.Role), roleFilter) {
 			continue
 		}
 		// Defensive: membership migrations on reincarnate are atomic

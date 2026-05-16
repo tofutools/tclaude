@@ -36,25 +36,28 @@ type messageDeps struct {
 }
 
 type messageParams struct {
-	Target  string   `pos:"true" help:"Target conv (UUID/prefix/title) OR 'group:<name>' to broadcast to every member"`
+	Target  string   `pos:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, or bare 'group:' for your own group"`
 	Body    string   `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
 	Subject string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
 	Stdin   bool     `long:"stdin" help:"Read body from stdin"`
 	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file"`
 	Cc      []string `long:"cc" optional:"true" help:"CC recipient (title / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
+	Role    string   `long:"role" optional:"true" help:"With a 'group:' target, broadcast only to members holding this role (case-insensitive). Error on a 1:1 target."`
 }
 
 func messageCmd() *cobra.Command {
 	return boa.CmdT[messageParams]{
 		Use:     "message",
 		Aliases: []string{"msg", "send"},
-		Short:   "Send a message to another agent (or 'group:<name>' to broadcast)",
+		Short:   "Send a message to another agent (or 'group:<name|id>' to broadcast)",
 		Long: "Persists the message in SQLite and, if the target has a live tmux session, injects a `[system: …]` nudge so the receiving agent sees it on its next turn. " +
-			"Targets prefixed with 'group:' fan out: one row per non-sender member, nudge each one online. The sender must be a member of the group to broadcast.",
+			"A target prefixed with 'group:' fans out: one row per non-sender member, nudging each one online. The group can be named ('group:reviewers'), given by numeric id ('group:7'), or left empty ('group:') to mean your own group — the latter is an error unless you are a member of exactly one group. " +
+			"The sender must be a member or owner of the group to broadcast. Add --role to broadcast only to members holding a given role.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *messageParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeMessageTargets)
 			boa.GetParamT(ctx, &p.Cc).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.Role).SetAlternativesFunc(completeRoles)
 			return nil
 		},
 		RunFunc: func(p *messageParams, _ *cobra.Command, _ []string) {
@@ -64,6 +67,13 @@ func messageCmd() *cobra.Command {
 }
 
 func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdin io.Reader) int {
+	// --role only narrows a group: multicast. On a 1:1 target there is
+	// no member set to filter — fail fast with a clear message before
+	// the daemon round-trip (the daemon enforces the same rule).
+	if p.Role != "" && !strings.HasPrefix(p.Target, "group:") {
+		fmt.Fprintf(stderr, "Error: --role is only valid with a 'group:' multicast target\n")
+		return rcInvalidArg
+	}
 	body, status := readBody(p, stdin, stderr)
 	if status != rcOK {
 		return status
@@ -102,6 +112,9 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	if len(p.Cc) > 0 {
 		payload["cc"] = p.Cc
 	}
+	if p.Role != "" {
+		payload["role"] = p.Role
+	}
 	err := DaemonPost("/v1/messages", payload, &resp)
 	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
 		fmt.Fprintf(stderr, "%s\n", de.Msg)
@@ -122,7 +135,13 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	hasCC := len(p.Cc) > 0
 	if isMulticast || hasCC {
 		if len(resp.Recipients) == 0 {
-			fmt.Fprintf(stdout, "No recipients in group %q (you're the only member); nothing sent.\n", resp.ViaGroup)
+			// Always state the resolved count so a typo'd --role reads
+			// as a visible no-op rather than a silent one.
+			if p.Role != "" {
+				fmt.Fprintf(stdout, "0 recipients: no other members with role %q in group %q; nothing sent.\n", p.Role, resp.ViaGroup)
+			} else {
+				fmt.Fprintf(stdout, "0 recipients in group %q (you're the only member); nothing sent.\n", resp.ViaGroup)
+			}
 			return rcOK
 		}
 		delivered := 0

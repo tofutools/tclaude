@@ -109,20 +109,45 @@ If the target has a live tmux session, they get a system nudge on their
 next turn. If they're offline, the message stays queued in their inbox
 and they'll see it on resume.
 
-## Broadcasting to a whole group
+## Broadcasting to a group
 
-Prefix the target with `group:` to fan out to every member of that
-group except yourself:
+Prefix the target with `group:` to fan out to every member of a group
+except yourself:
 
 ```bash
 tclaude agent message group:reviewer-team "Heads up: PR #42 ready"
 tclaude agent message group:reviewer-team --subject "review" --file plan.md
 ```
 
-You must be a member of the group to broadcast. The CLI prints a
-per-recipient summary (delivered vs queued) so you can see who got
-the nudge. Replies come back as normal direct messages — there's
-no automatic "reply-all".
+The group can be addressed three ways:
+
+- **By name** — `group:reviewer-team`.
+- **By numeric id** — `group:7` (a fallback for when no group is *named*
+  `7`; a matching name always wins over the id).
+- **Your own group** — a bare `group:` with nothing after the colon
+  resolves to the single group you belong to. It is an error if you are
+  in zero or more than one group; name the group explicitly then.
+
+```bash
+tclaude agent message group: "status update for my team"
+```
+
+### Role-filtered broadcast
+
+Add `--role <role>` to reach only the members holding that role (matched
+case-insensitively). `--role` is only valid with a `group:` target —
+it is an error on a 1:1 message:
+
+```bash
+tclaude agent message group:team-A --role reviewer "please review PR #42"
+tclaude agent message group: --role PO "blocker — need a decision"
+```
+
+You must be a member or owner of the group to broadcast. The CLI prints
+the resolved recipient count plus a per-recipient summary (delivered vs
+queued); a `--role` that matches nobody is a visible `0 recipients`
+no-op, not an error. Replies come back as normal direct messages —
+there's no automatic "reply-all".
 
 **Use sparingly.** Each member's tmux pane gets the same nudge, so
 broadcasting is the load-bearing equivalent of a chat-wide mention.
