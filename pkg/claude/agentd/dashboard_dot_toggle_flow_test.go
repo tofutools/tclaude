@@ -12,15 +12,15 @@ import (
 )
 
 // Flow coverage for the clickable status-dot on/off toggle. The dot is
-// a frontend control, so the confirm-vs-immediate branch (idle vs
-// working) lives in dashboard.html and is not observable here. What IS
-// observable — and what these scenarios pin — is the backend effect a
-// dot click produces: clicking an online dot reaches
-// POST /api/agents/{conv}/stop (soft /exit) and clicking an offline dot
-// reaches POST /api/agents/{conv}/resume. Those are the very endpoints
-// the existing "shut down" / "wake" row buttons hit; the dot toggle
-// adds no parallel endpoint, so testing the endpoints IS testing the
-// toggle's reachable surface.
+// a frontend control, so its confirm dialog — every online (green-dot)
+// click pops one before stopping — lives in dashboard.html and is not
+// observable here. What IS observable — and what these scenarios pin —
+// is the backend effect a dot click produces: clicking an online dot
+// reaches POST /api/agents/{conv}/stop (soft /exit) and clicking an
+// offline dot reaches POST /api/agents/{conv}/resume. Those are the
+// very endpoints the existing "shut down" / "wake" row buttons hit;
+// the dot toggle adds no parallel endpoint, so testing the endpoints
+// IS testing the toggle's reachable surface.
 
 // dotOpResp decodes the per-conv result both /stop and /resume return.
 type dotOpResp struct {

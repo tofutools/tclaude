@@ -1477,16 +1477,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
       : '<span class="offline" title="offline">○</span>';
   }
 
-  // isIdleState reports whether an agent's recorded status is the
-  // plain "idle" state — the one case the status-dot toggle stops
-  // without a confirm. Everything else an online agent can be in
-  // (working, main_agent_idle, awaiting_permission, awaiting_input,
-  // or an unreported status) counts as non-idle: a click there pops
-  // a confirm first. Mirrors session/status_callback.go's StatusIdle.
-  function isIdleState(state) {
-    return ((state && state.status) || '') === 'idle';
-  }
-
   // agentStatusDot renders an agent's status light as an interactive
   // on/off toggle. It replaces the plain onlineDot on every row that
   // represents a real agent (group members, the Agents tab). Online =
@@ -1495,23 +1485,20 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // <button> so it is keyboard-reachable (Tab + Enter/Space); the
   // delegated data-act="dot-toggle" handler reuses the very same
   // /api/agents/{conv}/{stop,resume} endpoints the "shut down" / "wake"
-  // row buttons hit — no parallel endpoint. The confirm-vs-immediate
-  // branch for an online click is decided in the handler from
-  // data-idle (see isIdleState).
+  // row buttons hit — no parallel endpoint. An online click always
+  // pops a confirm dialog first (see the dot-toggle handler); an
+  // offline click wakes immediately.
   function agentStatusDot(m) {
     const label = m.title || m.conv_id;
     const online = !!m.online;
-    const idle = isIdleState(m.state);
     const tip = online
-      ? (idle
-          ? `online — click to turn off (soft-stop ${label})`
-          : `online & working — click to turn off (asks first, then soft-stops ${label})`)
+      ? `online — click to turn off (asks first, then soft-stops ${label})`
       : `offline — click to turn on (wake ${label})`;
     const cls = online ? 'status-dot status-dot-online' : 'status-dot status-dot-offline';
     const glyph = online ? '●' : '○';
     return `<button type="button" class="${cls}" data-act="dot-toggle"` +
       ` data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"` +
-      ` data-online="${online ? '1' : '0'}" data-idle="${idle ? '1' : '0'}"` +
+      ` data-online="${online ? '1' : '0'}"` +
       ` title="${esc(tip)}" aria-label="${esc(tip)}">${glyph}</button>`;
   }
 
@@ -6457,25 +6444,27 @@ details.group-virtual .group-name { color: #8aa0b8; }
             // "shut down" row buttons hit — no parallel endpoint.
             //   - offline dot → wake (resume). Non-destructive; starting
             //     a session never needs a confirm.
-            //   - online + idle dot → soft-stop straight away. A misclick
-            //     only halts a non-busy, resumable session — low harm.
-            //   - online + working dot → confirm first, then soft-stop.
-            // online / idle are read from data-* set by agentStatusDot.
+            //   - online dot → confirm first, then soft-stop. The
+            //     confirm fires for EVERY online click, idle or busy.
+            //     The dot's rendered state can be stale by click time
+            //     (the snapshot refreshes asynchronously), so a dot
+            //     that looks idle may front an agent that has since
+            //     started working — skipping the confirm there would
+            //     silently interrupt it. Always asking closes that race
+            //     and keeps every green-dot click behaving identically.
+            // online is read from data-* set by agentStatusDot.
             const online = btn.getAttribute('data-online') === '1';
             if (!online) {
               await resumeAgentReq(conv, label);
               return;
             }
-            const idle = btn.getAttribute('data-idle') === '1';
-            if (!idle) {
-              const confirmed = await confirmModal({
-                title: 'Turn off a working agent?',
-                body: 'This agent is currently working. Turning it off injects /exit into its pane — in-flight tool calls are interrupted, but the conversation is preserved and the agent can be turned back on (resumed) later. This does not delete or retire anything.',
-                meta: label,
-                okLabel: 'Turn off',
-              });
-              if (!confirmed) return;
-            }
+            const confirmed = await confirmModal({
+              title: 'Turn off this agent?',
+              body: 'Turning this agent off injects /exit into its pane. If it is mid-task, any in-flight tool call is interrupted. The conversation is preserved and the agent can be turned back on (resumed) later — nothing is deleted or retired.',
+              meta: label,
+              okLabel: 'Turn off',
+            });
+            if (!confirmed) return;
             await stopAgentReq(conv, label, false);
             return;
           }
