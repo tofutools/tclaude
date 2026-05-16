@@ -10,22 +10,26 @@ import (
 // The gates live entirely in dashboard.html's embedded JS — each
 // runDnd* function awaits a modal as its first step — so there is no
 // server code path a flow test can exercise, and the repo has no JS
-// test runner. Following the established pattern of the other
-// dashboard_*_test.go structural guards (refresh-guard, context-meter,
-// sort, wtsync), this pins the shape of the confirmation gates so a
-// future refactor of the file cannot silently drop one. The seven
-// operations were also exercised by hand in a browser (confirm AND
-// cancel) — see the PR.
+// test runner.
 //
-// dndFuncBody returns the source span of a single runDnd* function:
-// from its `async function` keyword up to the next runDnd* definition
-// (or bindTabs() for the last one). The trailing slice may include the
-// next function's doc comment, which is harmless — none of the needles
-// below appear in those comments.
+// Following the established pattern of the other dashboard_*_test.go
+// structural guards (refresh-guard, context-meter, sort, wtsync), this
+// is a STRUCTURAL guard: it pins the *shape* of the confirmation gates
+// — gate present, gate before the first daemon call, optimistic
+// mutation after the gate, and a finally-resync on every exit path —
+// so a future refactor cannot silently drop one. It is not a
+// behavioural test; the seven operations were exercised by hand in a
+// browser (confirm AND cancel) — see the PR.
+
+// dndFuncBody returns the source span of a single runDnd* function: the
+// text from its `async function` keyword to its closing brace. The
+// span is bounded by the next runDnd* definition (or bindTabs() for the
+// last one) and then trimmed back to the function's own closing brace,
+// so the next function's doc comment is excluded.
 func dndFuncBody(t *testing.T, name string) string {
 	t.Helper()
-	// Source order in dashboard.html; the marker after each function
-	// is the start of the next span.
+	// Source order in dashboard.html; the definition after each
+	// function bounds its span.
 	order := []string{
 		"runDndClone", "runDndMove", "runDndAddToGroup",
 		"runDndRemoveFromGroup", "runDndRetire", "runDndPromoteToUngrouped",
@@ -35,47 +39,79 @@ func dndFuncBody(t *testing.T, name string) string {
 	if start < 0 {
 		t.Fatalf("dashboard.html: %s not found", name)
 	}
-	end := strings.Index(dashboardHTML, "bindTabs();")
+	// Search the end marker strictly AFTER `start` so an identical
+	// token earlier in the file can never truncate the slice.
+	rest := dashboardHTML[start+1:]
+	endRel := strings.Index(rest, "bindTabs();")
 	for i, n := range order {
 		if n == name && i+1 < len(order) {
-			next := strings.Index(dashboardHTML, "async function "+order[i+1]+"(")
-			if next > start {
-				end = next
+			if next := strings.Index(rest, "async function "+order[i+1]+"("); next >= 0 {
+				endRel = next
 			}
 			break
 		}
 	}
-	if end <= start {
+	if endRel < 0 {
 		t.Fatalf("dashboard.html: could not bound %s", name)
 	}
-	return dashboardHTML[start:end]
+	body := dashboardHTML[start : start+1+endRel]
+	// Trim the trailing whitespace + next function's doc comment back
+	// to this function's own closing brace ("\n  }" — 2-space indent;
+	// every deeper brace is indented further, doc comments never are).
+	if i := strings.LastIndex(body, "\n  }"); i >= 0 {
+		body = body[:i+len("\n  }")]
+	}
+	return body
 }
 
 // TestDashboardHTML_DndOperationsConfirm asserts each of the six
-// non-retire drag operations is gated behind confirmModal(), and that
-// the gate precedes any daemon call or optimistic snapshot mutation.
+// non-retire drag operations is gated behind confirmModal(), that the
+// gate (and its cancel guard) precede any daemon call or optimistic
+// snapshot mutation, and that every exit path re-syncs the dashboard.
 func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 	// The six runDnd* functions that gate on the shared confirmModal.
 	// runDndRetire is deliberately excluded — it predates this change
 	// and uses the richer retireConfirm modal (asserted separately
 	// below).
-	for _, name := range []string{
+	gated := []string{
 		"runDndClone", "runDndMove", "runDndAddToGroup",
 		"runDndRemoveFromGroup", "runDndPromoteToUngrouped", "runDndReinstate",
-	} {
+	}
+	for _, name := range gated {
 		body := dndFuncBody(t, name)
+
 		confirm := strings.Index(body, "await confirmModal({")
 		if confirm < 0 {
 			t.Errorf("%s: missing `await confirmModal({` — operation is not gated", name)
 			continue
 		}
-		// The cancel path must bail without proceeding.
-		if !strings.Contains(body, "if (!confirmed) { await refresh(); return; }") {
+		// The cancel path must bail (refresh + return) without running
+		// the op.
+		cancel := strings.Index(body, "if (!confirmed) { await refresh(); return; }")
+		if cancel < 0 {
 			t.Errorf("%s: cancel path must `await refresh(); return;` without running the op", name)
+			continue
 		}
-		// The confirm must come before the first daemon round-trip.
-		if fetch := strings.Index(body, "await fetch("); fetch >= 0 && confirm > fetch {
-			t.Errorf("%s: confirmModal must precede the first fetch() — found fetch at %d, confirm at %d", name, fetch, confirm)
+		// Both the confirm AND its cancel guard must precede the first
+		// daemon round-trip — checking only confirmModal's position
+		// would still pass a refactor that fetched, then checked
+		// !confirmed.
+		if fetch := strings.Index(body, "await fetch("); fetch >= 0 {
+			if confirm > fetch {
+				t.Errorf("%s: confirmModal (at %d) must precede the first fetch() (at %d)", name, confirm, fetch)
+			}
+			if cancel > fetch {
+				t.Errorf("%s: cancel guard (at %d) must precede the first fetch() (at %d)", name, cancel, fetch)
+			}
+		}
+		// Every gated function must re-sync on completion. The confirm
+		// modal suspends auto-refresh while open, and the dragend-fired
+		// refresh() bails for the same reason — so a `finally { await
+		// refresh() }` is what guarantees the dashboard is not left
+		// showing stale state on ANY exit path (including a confirmed-
+		// then-aborted op that hits an early return).
+		if !strings.Contains(body, "} finally {") {
+			t.Errorf("%s: must re-sync via a `finally { await refresh() }` block on every exit path", name)
 		}
 	}
 

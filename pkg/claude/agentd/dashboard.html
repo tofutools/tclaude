@@ -8329,61 +8329,74 @@ details.group-virtual .group-name { color: #8aa0b8; }
       okLabel: 'Move',
     });
     if (!confirmed) { await refresh(); return; }
-    if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) return;
-    // Snapshot the source row so we can restore it on rollback +
-    // append it to the target so the optimistic render is correct.
-    const source = lastSnapshot.groups.find(g => g.name === sourceGroup);
-    const target = lastSnapshot.groups.find(g => g.name === targetGroup);
-    if (!source || !target) {
-      toast(`move: group not found in snapshot`, true);
-      return;
-    }
-    const idx = (source.members || []).findIndex(m => m.conv_id === conv);
-    if (idx < 0) {
-      toast(`move: member not found in source group`, true);
-      return;
-    }
-    const memberSnapshot = source.members[idx];
-    // Optimistic mutation: pull from source, push onto target.
-    source.members.splice(idx, 1);
-    target.members = target.members || [];
-    target.members.push(memberSnapshot);
-    renderGroupsTab();
-
-    const rollback = () => {
-      // Re-insert at the original position so the visible ordering
-      // doesn't drift mid-failure.
-      source.members.splice(idx, 0, memberSnapshot);
-      target.members = (target.members || []).filter(m => m.conv_id !== conv);
-      renderGroupsTab();
-    };
-
+    // Every post-confirm exit — a guard-clause return, the partial-
+    // failure return, success, or an error — funnels through the
+    // finally so the dashboard re-syncs. The dragend-fired refresh()
+    // bailed while the confirm modal was open (refreshSuspended() saw
+    // it), so without this a confirmed-then-aborted move would leave
+    // the dashboard showing stale state until the next 5s tick.
     try {
-      const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({conv}),
-      });
-      if (!addRes.ok) {
-        toast(`move add failed: ${await addRes.text()}`, true);
+      if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) {
+        toast(`move: dashboard snapshot not loaded`, true);
+        return;
+      }
+      // Snapshot the source row so we can restore it on rollback +
+      // append it to the target so the optimistic render is correct.
+      const source = lastSnapshot.groups.find(g => g.name === sourceGroup);
+      const target = lastSnapshot.groups.find(g => g.name === targetGroup);
+      if (!source || !target) {
+        toast(`move: group not found in snapshot`, true);
+        return;
+      }
+      const idx = (source.members || []).findIndex(m => m.conv_id === conv);
+      if (idx < 0) {
+        toast(`move: member not found in source group`, true);
+        return;
+      }
+      const memberSnapshot = source.members[idx];
+      // Optimistic mutation: pull from source, push onto target.
+      source.members.splice(idx, 1);
+      target.members = target.members || [];
+      target.members.push(memberSnapshot);
+      renderGroupsTab();
+
+      const rollback = () => {
+        // Re-insert at the original position so the visible ordering
+        // doesn't drift mid-failure.
+        source.members.splice(idx, 0, memberSnapshot);
+        target.members = (target.members || []).filter(m => m.conv_id !== conv);
+        renderGroupsTab();
+      };
+
+      try {
+        const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({conv}),
+        });
+        if (!addRes.ok) {
+          toast(`move add failed: ${await addRes.text()}`, true);
+          rollback();
+          return;
+        }
+        const delRes = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
+          method: 'DELETE', credentials: 'same-origin',
+        });
+        if (!delRes.ok) {
+          // Add succeeded but remove failed: the conv is now in BOTH
+          // groups. Report it so the human can manually clean up; do
+          // NOT roll the optimistic mutation back, because the daemon
+          // really did add it to the target.
+          toast(`move partial: added to ${targetGroup} but failed to remove from ${sourceGroup}: ${await delRes.text()}`, true);
+          return;
+        }
+        toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
+      } catch (err) {
+        toast(`move failed: ${err && err.message || err}`, true);
         rollback();
-        return;
       }
-      const delRes = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
-        method: 'DELETE', credentials: 'same-origin',
-      });
-      if (!delRes.ok) {
-        // Add succeeded but remove failed: the conv is now in BOTH
-        // groups. Report it so the human can manually clean up; do
-        // NOT roll the optimistic mutation back, because the daemon
-        // really did add it to the target.
-        toast(`move partial: added to ${targetGroup} but failed to remove from ${sourceGroup}: ${await delRes.text()}`, true);
-        return;
-      }
-      toast(`moved ${label}: ${sourceGroup} → ${targetGroup}`);
-    } catch (err) {
-      toast(`move failed: ${err && err.message || err}`, true);
-      rollback();
+    } finally {
+      await refresh();
     }
   }
 
