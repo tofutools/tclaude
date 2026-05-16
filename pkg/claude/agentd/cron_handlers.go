@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,16 +15,26 @@ import (
 
 // `tclaude agent cron` HTTP surface — recurring scheduled jobs.
 //
+// A job's target is either a single conv or a whole group. A group
+// target uses the `group:<name>` / `group:<id>` selector grammar shared
+// with `tclaude agent message`; the scheduler resolves the group's
+// membership at fire time and fans the body out to every member.
+//
 // Permissions model:
-//   - GET  /v1/cron          → list jobs visible to caller (own + jobs
-//                              targeting any conv in a group caller owns)
+//   - GET  /v1/cron          → list jobs visible to caller (own + conv
+//                              jobs targeting a group caller owns +
+//                              group jobs whose group caller belongs to)
 //   - POST /v1/cron          → create a job. Auth depends on the target:
-//                              - target == caller → self.schedule
-//                              - target != caller → agent.schedule, OR
-//                                caller owns a group containing target
-//   - DELETE /v1/cron/{id}   → delete a job. Auth: caller is the job's
-//                              owner_conv, OR has agent.schedule, OR owns
-//                              a group containing the job's target_conv
+//   - conv target == caller → self.schedule
+//   - conv target != caller → agent.schedule, OR caller owns a
+//     group containing target
+//   - group target          → caller is a member or owner of the
+//     target group (mirrors the `group:` multicast gate)
+//   - DELETE /v1/cron/{id}   → delete a job (and the by-id enable /
+//     disable / run-now / patch routes). Auth: caller is the job's
+//     owner_conv, OR — for a conv job — has agent.schedule / owns a
+//     group containing target_conv, OR — for a group job — is a member
+//     or owner of the target group.
 //
 // Humans (no Claude ancestor) bypass all permission checks — same
 // convention as the rest of the v1 surface.
@@ -35,8 +46,10 @@ type jobJSON struct {
 	ID              int64  `json:"id"`
 	Name            string `json:"name,omitempty"`
 	OwnerConv       string `json:"owner_conv"`
+	TargetKind      string `json:"target_kind"`
 	TargetConv      string `json:"target_conv"`
 	GroupID         int64  `json:"group_id,omitempty"`
+	GroupName       string `json:"group_name,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
@@ -51,6 +64,7 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		ID:              j.ID,
 		Name:            j.Name,
 		OwnerConv:       j.OwnerConv,
+		TargetKind:      j.TargetKind,
 		TargetConv:      j.TargetConv,
 		GroupID:         j.GroupID,
 		IntervalSeconds: j.IntervalSeconds,
@@ -58,6 +72,16 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		Body:            j.Body,
 		Enabled:         j.Enabled,
 		LastRunStatus:   j.LastRunStatus,
+	}
+	// For a group-target job, resolve the group's display name so the
+	// CLI and dashboard can render "group:<name>" without a second
+	// fetch. Only group-kind jobs carry a name — a conv-target job
+	// routed through a group leaves group_name empty so the discriminator
+	// stays unambiguous.
+	if j.IsGroupTarget() && j.GroupID > 0 {
+		if g, err := db.GetAgentGroupByID(j.GroupID); err == nil && g != nil {
+			out.GroupName = g.Name
+		}
 	}
 	if !j.CreatedAt.IsZero() {
 		out.CreatedAt = j.CreatedAt.Format(time.RFC3339)
@@ -137,7 +161,7 @@ func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enab
 		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
-	if _, ok := authCronWrite(w, r, job.TargetConv); !ok {
+	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
 	if err := db.SetAgentCronJobEnabled(id, enabled); err != nil {
@@ -161,7 +185,7 @@ func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
-	if _, ok := authCronWrite(w, r, job.TargetConv); !ok {
+	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
 	now := time.Now()
@@ -258,7 +282,19 @@ func jobVisibleTo(j *db.AgentCronJob, callerConv string) bool {
 	if callerConv == "" {
 		return false
 	}
-	if j.OwnerConv == callerConv || j.TargetConv == callerConv {
+	if j.OwnerConv == callerConv {
+		return true
+	}
+	if j.IsGroupTarget() {
+		// Group-target job: visible to every member and owner of the
+		// target group — the same set that may schedule or receive it.
+		if m, err := db.FindMemberInGroup(j.GroupID, callerConv); err == nil && m != nil {
+			return true
+		}
+		owner, err := db.IsAgentGroupOwner(j.GroupID, callerConv)
+		return err == nil && owner
+	}
+	if j.TargetConv == callerConv {
 		return true
 	}
 	return ownerOfGroupContaining(callerConv, j.TargetConv)
@@ -307,62 +343,86 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, _, err := agent.ResolveSelector(body.Target)
+	ct, err := resolveCronTarget(body.Target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
 		return
-	}
-	targetConv := res.ConvID
-
-	// Auth: who is the caller?
-	caller, ok := authCronWrite(w, r, targetConv)
-	if !ok {
-		return
-	}
-	owner := caller
-	if owner == "" {
-		// Human caller — record the target as owner so the job is
-		// self-managed by the target if the human goes away. Reasonable
-		// default; humans can override via the explicit `owner` field
-		// (resolved through agent.ResolveSelector, same as target).
-		owner = targetConv
-		if strings.TrimSpace(body.Owner) != "" {
-			ownerRes, _, ownerErr := agent.ResolveSelector(body.Owner)
-			if ownerErr != nil {
-				writeError(w, http.StatusNotFound, "not_found",
-					"resolve owner: "+ownerErr.Error())
-				return
-			}
-			owner = ownerRes.ConvID
-		}
-	}
-
-	// Group routing: pick the first shared group between owner and
-	// target if the caller didn't override. Falls through to solo
-	// (group_id=0) when there's no shared group — scheduler will
-	// then send-keys directly.
-	groupID := body.GroupID
-	if groupID == 0 && owner != targetConv {
-		shared, _ := db.SharedGroupsForConvs(owner, targetConv)
-		if len(shared) > 0 {
-			groupID = shared[0].ID
-		}
 	}
 
 	enabled := true
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
-	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+	job := &db.AgentCronJob{
 		Name:            body.Name,
-		OwnerConv:       owner,
-		TargetConv:      targetConv,
-		GroupID:         groupID,
 		IntervalSeconds: int64(d.Seconds()),
 		Subject:         body.Subject,
 		Body:            body.Body,
 		Enabled:         enabled,
-	})
+	}
+
+	if ct.Kind == db.CronTargetGroup {
+		// Group-target job: the scheduler fans the body out to the
+		// group's live membership at fire time. Auth mirrors a `group:`
+		// multicast — the caller must be a member or owner of the
+		// target group.
+		caller, ok := authCronWriteGroup(w, r, ct.Group.ID)
+		if !ok {
+			return
+		}
+		job.TargetKind = db.CronTargetGroup
+		job.GroupID = ct.Group.ID
+		// OwnerConv is the message sender at fire time. An agent caller
+		// owns the job it scheduled; a human caller may attribute it to
+		// a specific conv via `owner`, else it stays "" — the dashboard
+		// human, no agent owner. target_conv is unused for group jobs;
+		// body.GroupID (the conv-routing override) is irrelevant here.
+		job.OwnerConv = caller
+		if caller == "" && strings.TrimSpace(body.Owner) != "" {
+			ownerConv, ok := resolveCronOwner(w, body.Owner)
+			if !ok {
+				return
+			}
+			job.OwnerConv = ownerConv
+		}
+	} else {
+		targetConv := ct.Conv
+		caller, ok := authCronWrite(w, r, targetConv)
+		if !ok {
+			return
+		}
+		owner := caller
+		if owner == "" {
+			// Human caller — record the target as owner so the job is
+			// self-managed by the target if the human goes away.
+			// Reasonable default; humans can override via `owner`.
+			owner = targetConv
+			if strings.TrimSpace(body.Owner) != "" {
+				ownerConv, ok := resolveCronOwner(w, body.Owner)
+				if !ok {
+					return
+				}
+				owner = ownerConv
+			}
+		}
+		// Group routing: pick the first shared group between owner and
+		// target if the caller didn't override. Falls through to solo
+		// (group_id=0) when there's no shared group — the scheduler then
+		// send-keys directly.
+		groupID := body.GroupID
+		if groupID == 0 && owner != targetConv {
+			shared, _ := db.SharedGroupsForConvs(owner, targetConv)
+			if len(shared) > 0 {
+				groupID = shared[0].ID
+			}
+		}
+		job.TargetKind = db.CronTargetConv
+		job.TargetConv = targetConv
+		job.GroupID = groupID
+		job.OwnerConv = owner
+	}
+
+	id, err := db.InsertAgentCronJob(job)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "insert: "+err.Error())
 		return
@@ -373,6 +433,90 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toJobJSON(row))
+}
+
+// resolveCronTarget turns a cron `target` selector into a concrete
+// target. A "group:" prefix — the multicast grammar shared with
+// `tclaude agent message` — resolves to a group; anything else resolves
+// to a single conv via agent.ResolveSelector.
+func resolveCronTarget(selector string) (cronTarget, error) {
+	if strings.HasPrefix(selector, multicastPrefix) {
+		token := strings.TrimPrefix(selector, multicastPrefix)
+		g, err := resolveGroupToken(token)
+		if err != nil {
+			return cronTarget{}, err
+		}
+		return cronTarget{Kind: db.CronTargetGroup, Group: g}, nil
+	}
+	res, _, err := agent.ResolveSelector(selector)
+	if err != nil {
+		return cronTarget{}, err
+	}
+	return cronTarget{Kind: db.CronTargetConv, Conv: res.ConvID}, nil
+}
+
+// cronTarget is the resolved target of a cron `target` selector —
+// either a single conv or a whole group.
+type cronTarget struct {
+	Kind  string         // db.CronTargetConv | db.CronTargetGroup
+	Conv  string         // set when Kind == db.CronTargetConv
+	Group *db.AgentGroup // set when Kind == db.CronTargetGroup
+}
+
+// resolveGroupToken resolves the token after a "group:" prefix to a
+// concrete group: by name first, then — for an all-digit token with no
+// name match — by numeric id. The non-HTTP, error-returning twin of
+// resolveMulticastGroup; the cron create/patch paths need a group
+// without resolveMulticastGroup's response-writing and own-group
+// ("group:" with an empty token) behaviour. A cron job is recurring and
+// has no sender at fire time, so an empty token has no well-defined
+// "own group" and is rejected here.
+func resolveGroupToken(token string) (*db.AgentGroup, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, errors.New(
+			"a group: cron target needs a group name or id, e.g. group:my-team")
+	}
+	g, err := db.GetAgentGroupByName(token)
+	if err != nil {
+		return nil, err
+	}
+	if g != nil {
+		return g, nil
+	}
+	// No name match — fall back to a numeric group id, all-digits only
+	// (the documented grammar excludes signed forms like "+7").
+	allDigits := true
+	for _, r := range token {
+		if r < '0' || r > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		if id, perr := strconv.ParseInt(token, 10, 64); perr == nil {
+			g, err = db.GetAgentGroupByID(id)
+			if err != nil {
+				return nil, err
+			}
+			if g != nil {
+				return g, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no group named or numbered %q", token)
+}
+
+// resolveCronOwner resolves a human-supplied `owner` selector to a conv
+// id. On a resolution failure the 404 response is already written and
+// ok is false.
+func resolveCronOwner(w http.ResponseWriter, selector string) (string, bool) {
+	res, _, err := agent.ResolveSelector(selector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+err.Error())
+		return "", false
+	}
+	return res.ConvID, true
 }
 
 // validateCronName enforces the spec's name charset: alphanumeric +
@@ -408,7 +552,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
-	if _, ok := authCronWrite(w, r, job.TargetConv); !ok {
+	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
 	patch, ok := decodeCronPatchBody(w, r)
@@ -496,21 +640,32 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		patch.IntervalSeconds = &secs
 	}
 	if body.Target != nil {
-		res, _, err := agent.ResolveSelector(*body.Target)
+		ct, err := resolveCronTarget(*body.Target)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
 			return db.UpdateCronPatch{}, false
 		}
-		t := res.ConvID
-		patch.TargetConv = &t
+		if ct.Kind == db.CronTargetGroup {
+			// Switch the job to a group target: group_id becomes the
+			// target group and target_conv is cleared. This overrides any
+			// group_id the body also carried.
+			kind := db.CronTargetGroup
+			gid := ct.Group.ID
+			empty := ""
+			patch.TargetKind = &kind
+			patch.GroupID = &gid
+			patch.TargetConv = &empty
+		} else {
+			kind := db.CronTargetConv
+			patch.TargetKind = &kind
+			patch.TargetConv = &ct.Conv
+		}
 	}
 	if body.Owner != nil {
-		res, _, err := agent.ResolveSelector(*body.Owner)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+err.Error())
+		o, ok := resolveCronOwner(w, *body.Owner)
+		if !ok {
 			return db.UpdateCronPatch{}, false
 		}
-		o := res.ConvID
 		patch.OwnerConv = &o
 	}
 	return patch, true
@@ -526,7 +681,7 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
-	if _, ok := authCronWrite(w, r, job.TargetConv); !ok {
+	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
 	if err := db.DeleteAgentCronJob(id); err != nil {
@@ -572,4 +727,64 @@ func authCronWrite(w http.ResponseWriter, r *http.Request, targetConv string) (s
 		return "", false
 	}
 	return caller, true
+}
+
+// authCronWriteGroup gates create / patch / delete of a GROUP-target
+// cron job. It mirrors handleMulticast's broadcast gate: you may
+// schedule (or manage) a recurring multicast into a group only if you
+// belong to it or own it. Caller passes if any of:
+//
+//   - human (no Claude ancestor)
+//   - caller is a member of the target group
+//   - caller owns the target group
+//
+// Returns (callerConvID, ok); callerConvID is "" for humans.
+func authCronWriteGroup(w http.ResponseWriter, r *http.Request, groupID int64) (string, bool) {
+	p := peerFromContext(r.Context())
+	if p.PID == 0 {
+		writeError(w, http.StatusUnauthorized, "auth",
+			"could not determine peer PID; refusing to evaluate permission")
+		return "", false
+	}
+	if !p.HasClaudeAncestor {
+		return "", true
+	}
+	if p.ConvID == "" {
+		writeError(w, http.StatusForbidden, "auth",
+			"caller has a Claude Code ancestor but no resolvable conv-id")
+		return "", false
+	}
+	caller := p.ConvID
+	member, err := db.FindMemberInGroup(groupID, caller)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return "", false
+	}
+	if member != nil {
+		return caller, true
+	}
+	owner, err := db.IsAgentGroupOwner(groupID, caller)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return "", false
+	}
+	if owner {
+		return caller, true
+	}
+	writeError(w, http.StatusForbidden, "auth",
+		"scheduling or managing a recurring multicast into a group requires "+
+			"you to be a member or owner of that group")
+	return "", false
+}
+
+// authCronJob gates the by-id mutations (enable / disable / run-now /
+// patch / delete) on an existing job. It dispatches to the conv- or
+// group-target gate so a group-target job — whose target_conv is empty
+// — is authorised against its target group rather than against "".
+// Returns (callerConvID, ok); callerConvID is "" for humans.
+func authCronJob(w http.ResponseWriter, r *http.Request, job *db.AgentCronJob) (string, bool) {
+	if job.IsGroupTarget() {
+		return authCronWriteGroup(w, r, job.GroupID)
+	}
+	return authCronWrite(w, r, job.TargetConv)
 }

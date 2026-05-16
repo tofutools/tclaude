@@ -7,14 +7,29 @@ import (
 	"time"
 )
 
+// Cron job target kinds — the value stored in agent_cron_jobs.target_kind
+// (schema v41+). A job either targets a single conversation or fans out
+// to every member of a group.
+const (
+	// CronTargetConv — target_conv is the recipient; group_id (when >0)
+	// is the routing group a conv-targeted message is sent through, or 0
+	// for a direct tmux send-keys. The long-standing job shape.
+	CronTargetConv = "conv"
+	// CronTargetGroup — group_id IS the target group; the scheduler
+	// resolves that group's membership at fire time and delivers the
+	// body to every current member. target_conv is unused.
+	CronTargetGroup = "group"
+)
+
 // AgentCronJob is a row in agent_cron_jobs. Recurring scheduled
 // task that the agentd scheduler fires on a wall-clock interval.
 type AgentCronJob struct {
 	ID              int64
 	Name            string
 	OwnerConv       string
-	TargetConv      string
-	GroupID         int64 // 0 → solo (direct send-keys), >0 → enqueue agent_messages
+	TargetKind      string // CronTargetConv | CronTargetGroup
+	TargetConv      string // recipient when TargetKind == CronTargetConv
+	GroupID         int64  // conv-kind: routing group (0 → solo send-keys). group-kind: the target group.
 	IntervalSeconds int64
 	Subject         string
 	Body            string
@@ -22,6 +37,14 @@ type AgentCronJob struct {
 	CreatedAt       time.Time
 	LastRunAt       time.Time // zero value → "never run, due immediately"
 	LastRunStatus   string
+}
+
+// IsGroupTarget reports whether the job fans out to a group rather than
+// delivering to a single conv. Callers MUST use this (not GroupID > 0)
+// as the discriminator — a conv-targeted job routed through a shared
+// group also carries a non-zero GroupID.
+func (j *AgentCronJob) IsGroupTarget() bool {
+	return j.TargetKind == CronTargetGroup
 }
 
 // InsertAgentCronJob writes a new job row. Returns the new ID.
@@ -32,11 +55,15 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 		return 0, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	kind := j.TargetKind
+	if kind == "" {
+		kind = CronTargetConv
+	}
 	res, err := d.Exec(`INSERT INTO agent_cron_jobs
-		(name, owner_conv, target_conv, group_id, interval_seconds,
+		(name, owner_conv, target_kind, target_conv, group_id, interval_seconds,
 		 subject, body, enabled, created_at, last_run_at, last_run_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
-		j.Name, j.OwnerConv, j.TargetConv, j.GroupID, j.IntervalSeconds,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
+		j.Name, j.OwnerConv, kind, j.TargetConv, j.GroupID, j.IntervalSeconds,
 		j.Subject, j.Body, boolToInt(j.Enabled), now)
 	if err != nil {
 		return 0, err
@@ -50,7 +77,7 @@ func GetAgentCronJob(id int64) (*AgentCronJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(`SELECT id, name, owner_conv, target_conv, group_id,
+	row := d.QueryRow(`SELECT id, name, owner_conv, target_kind, target_conv, group_id,
 		interval_seconds, subject, body, enabled, created_at,
 		last_run_at, last_run_status
 		FROM agent_cron_jobs WHERE id = ?`, id)
@@ -67,7 +94,7 @@ func ListAgentCronJobs() ([]*AgentCronJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, name, owner_conv, target_conv, group_id,
+	rows, err := d.Query(`SELECT id, name, owner_conv, target_kind, target_conv, group_id,
 		interval_seconds, subject, body, enabled, created_at,
 		last_run_at, last_run_status
 		FROM agent_cron_jobs ORDER BY id`)
@@ -152,6 +179,7 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 type UpdateCronPatch struct {
 	Name            *string
 	OwnerConv       *string
+	TargetKind      *string
 	TargetConv      *string
 	GroupID         *int64
 	IntervalSeconds *int64
@@ -172,8 +200,8 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	sets := make([]string, 0, 8)
-	args := make([]any, 0, 9)
+	sets := make([]string, 0, 9)
+	args := make([]any, 0, 10)
 	if p.Name != nil {
 		sets = append(sets, "name = ?")
 		args = append(args, *p.Name)
@@ -181,6 +209,10 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.OwnerConv != nil {
 		sets = append(sets, "owner_conv = ?")
 		args = append(args, *p.OwnerConv)
+	}
+	if p.TargetKind != nil {
+		sets = append(sets, "target_kind = ?")
+		args = append(args, *p.TargetKind)
 	}
 	if p.TargetConv != nil {
 		sets = append(sets, "target_conv = ?")
@@ -283,11 +315,14 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var j AgentCronJob
 	var enabled int
 	var created, lastRun string
-	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetConv, &j.GroupID,
+	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
 		&lastRun, &j.LastRunStatus)
 	if err != nil {
 		return nil, err
+	}
+	if j.TargetKind == "" {
+		j.TargetKind = CronTargetConv
 	}
 	j.Enabled = enabled != 0
 	j.CreatedAt = parseTimeOrZero(created)

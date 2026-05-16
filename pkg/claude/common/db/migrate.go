@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 40
+const currentVersion = 41
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -263,6 +263,45 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 41 {
+		if err := migrateV40toV41(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV40toV41 adds agent_cron_jobs.target_kind — the discriminator
+// that lets a cron job target a whole GROUP, not just a single conv.
+//
+// Before this, a cron job had target_conv (the recipient) and group_id
+// (the routing group through which a conv-targeted message is sent, or
+// 0 for a direct send-keys). There was no way to say "fan this out to
+// every member of group X" — the dashboard's Group (multicast) radio
+// was dead UI.
+//
+// target_kind carries 'conv' or 'group':
+//   - 'conv'  → target_conv is the recipient; group_id (when >0) is the
+//     routing group. The long-standing behaviour.
+//   - 'group' → group_id IS the target group; the scheduler resolves
+//     that group's membership AT FIRE TIME and fans the body out to
+//     every current member. target_conv is unused.
+//
+// Existing rows backfill to 'conv' — every cron job written before this
+// migration was, by construction, conv-targeted. The CHECK constraint
+// pins the column to the two legal values so a stray write can't leave
+// a job the scheduler cannot classify.
+func migrateV40toV41(db *sql.DB) error {
+	if _, err := db.Exec(`
+		ALTER TABLE agent_cron_jobs
+			ADD COLUMN target_kind TEXT NOT NULL DEFAULT 'conv'
+			CHECK (target_kind IN ('conv', 'group'));
+
+		UPDATE schema_version SET version = 41;
+	`); err != nil {
+		return fmt.Errorf("migrate v40→v41 (add agent_cron_jobs.target_kind): %w", err)
+	}
 	return nil
 }
 

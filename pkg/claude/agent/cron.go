@@ -25,7 +25,7 @@ func cronCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "cron",
 		Short:       "Manage recurring scheduled jobs (the agentd cron scheduler)",
-		Long:        "List, add, and remove agent_cron_jobs. The daemon's scheduler ticks every 30s and fires due jobs by inserting agent_messages rows (or direct send-keys for solo targets).",
+		Long:        "List, add, and remove agent_cron_jobs. The daemon's scheduler ticks every 30s and fires due jobs by inserting agent_messages rows (or direct send-keys for solo targets). A job may target a single conv or, via --target group:NAME, multicast to every current member of a group.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			cronLsCmd(),
@@ -43,8 +43,10 @@ type cronJobJSON struct {
 	ID              int64  `json:"id"`
 	Name            string `json:"name,omitempty"`
 	OwnerConv       string `json:"owner_conv"`
+	TargetKind      string `json:"target_kind"`
 	TargetConv      string `json:"target_conv"`
 	GroupID         int64  `json:"group_id,omitempty"`
+	GroupName       string `json:"group_name,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
@@ -106,15 +108,28 @@ func runCronLs(stdout, stderr io.Writer) int {
 			desc = truncate(j.Body, 40)
 		}
 		fmt.Fprintf(stdout, "%-4d  %-10s  %-9s  %-16s  %-9s  %s\n",
-			j.ID, interval, enabled, short(j.TargetConv), last, desc)
+			j.ID, interval, enabled, cronTargetLabel(j), last, desc)
 	}
 	return rcOK
+}
+
+// cronTargetLabel renders a job's target for the ls TARGET column:
+// "group:<name>" (falling back to "group:#<id>") for a group-target
+// job, else the short conv id.
+func cronTargetLabel(j cronJobJSON) string {
+	if j.TargetKind == "group" {
+		if j.GroupName != "" {
+			return "group:" + j.GroupName
+		}
+		return "group:#" + strconv.FormatInt(j.GroupID, 10)
+	}
+	return short(j.TargetConv)
 }
 
 // ---- add ----
 
 type cronAddParams struct {
-	Target   string `long:"target" optional:"true" help:"Selector for the conv that receives the cron message. Defaults to self when omitted."`
+	Target   string `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
 	Interval string `long:"interval" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick)."`
 	Body     string `long:"body" optional:"true" help:"Message body the cron job sends each tick. Required unless --file is given."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
@@ -126,7 +141,7 @@ func cronAddCmd() *cobra.Command {
 	return boa.CmdT[cronAddParams]{
 		Use:         "add",
 		Short:       "Schedule a new recurring cron job",
-		Long:        "Creates a job that fires every --interval and delivers a message body to --target. Defaults to self-targeted when --target is omitted. Give the body inline with --body, or with --file <path> (or --file - to read stdin) — the file form sidesteps shell quoting, including backticks the shell would otherwise eat from an inline string.",
+		Long:        "Creates a job that fires every --interval and delivers a message body to --target. Defaults to self-targeted when --target is omitted. Give the body inline with --body, or with --file <path> (or --file - to read stdin) — the file form sidesteps shell quoting, including backticks the shell would otherwise eat from an inline string. Pass --target group:NAME to multicast each tick to every current member of a group (membership is resolved at fire time).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *cronAddParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
@@ -176,11 +191,15 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	interval := (time.Duration(resp.IntervalSeconds) * time.Second).String()
 	fmt.Fprintf(stdout, "Scheduled job #%d every %s → %s\n",
-		resp.ID, (time.Duration(resp.IntervalSeconds) * time.Second).String(), short(resp.TargetConv))
-	if resp.GroupID > 0 {
+		resp.ID, interval, cronTargetLabel(resp))
+	switch {
+	case resp.TargetKind == "group":
+		fmt.Fprintln(stdout, "  Group multicast — each tick fans out to every current member of the group (resolved at fire time).")
+	case resp.GroupID > 0:
 		fmt.Fprintf(stdout, "  Routed via group %d (will use agent_messages + flush nudge).\n", resp.GroupID)
-	} else {
+	default:
 		fmt.Fprintln(stdout, "  Solo target — scheduler will send-keys directly when target's pane is alive.")
 	}
 	return rcOK

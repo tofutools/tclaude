@@ -293,6 +293,7 @@ type dashboardCronJob struct {
 	Name            string `json:"name"`
 	OwnerConv       string `json:"owner_conv"`
 	OwnerLabel      string `json:"owner_label"`
+	TargetKind      string `json:"target_kind"`
 	TargetConv      string `json:"target_conv,omitempty"`
 	TargetLabel     string `json:"target_label,omitempty"`
 	GroupID         int64  `json:"group_id"`
@@ -910,6 +911,7 @@ func collectCronSnapshot() []dashboardCronJob {
 			Name:            j.Name,
 			OwnerConv:       j.OwnerConv,
 			OwnerLabel:      labelForConv(j.OwnerConv),
+			TargetKind:      j.TargetKind,
 			TargetConv:      j.TargetConv,
 			GroupID:         j.GroupID,
 			IntervalSeconds: j.IntervalSeconds,
@@ -921,7 +923,12 @@ func collectCronSnapshot() []dashboardCronJob {
 		if j.TargetConv != "" {
 			row.TargetLabel = labelForConv(j.TargetConv)
 		}
-		if j.GroupID > 0 {
+		// Resolve group_name ONLY for a group-target job. A conv-target
+		// job routed through a shared group also carries a non-zero
+		// group_id, but it is not a multicast — leaving group_name empty
+		// keeps target_kind the sole, unambiguous discriminator the
+		// dashboard renders off.
+		if j.IsGroupTarget() && j.GroupID > 0 {
 			name, ok := groupNames[j.GroupID]
 			if !ok {
 				if g, gerr := db.GetAgentGroupByID(j.GroupID); gerr == nil && g != nil {
