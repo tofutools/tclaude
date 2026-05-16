@@ -8188,6 +8188,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
       // source (that path reinstates).
       const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetRetired && !sourceRetired;
 
+      // Confirmation gate. Each runDnd* function below opens its own
+      // tailored confirmation modal as its first step, BEFORE any
+      // daemon call or optimistic snapshot mutation. The no-op short-
+      // circuits above have already returned, so a modal is only ever
+      // shown for a gesture that would really change something — an
+      // inert drop never reaches a runDnd* function and never prompts.
+      // On Cancel / Escape / outside-click the runDnd* function calls
+      // refresh() (the modal suspended auto-refresh while it was open)
+      // and returns without touching the daemon or lastSnapshot.
+      // runDndRetire uses the richer retireConfirm modal — shutdown
+      // checkbox and all — so a retire-by-drag and the per-row retire
+      // button ask the identical question.
+
       // Target = the virtual Retired group → retire the agent,
       // demoting it back to a plain conversation.
       if (targetRetired) {
@@ -8251,6 +8264,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // both calls and refresh.
   async function runDndClone(payload, targetGroup) {
     const {conv, label} = payload;
+    const confirmed = await confirmModal({
+      title: 'Clone agent into group?',
+      body: `Fork a new sibling agent from "${label}" and add the clone to `
+        + `group "${targetGroup}". The original keeps running; the clone is a `
+        + `fresh conversation that inherits the original's identity.`,
+      meta: label,
+      okLabel: 'Clone',
+    });
+    if (!confirmed) { await refresh(); return; }
     try {
       const cloneRes = await fetch(`/api/agents/${encodeURIComponent(conv)}/clone`, {
         method: 'POST', credentials: 'same-origin',
@@ -8282,6 +8304,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
       toast(`cloned ${label} → ${targetGroup} (new ${newConv.slice(0,8)})`);
     } catch (err) {
       toast(`clone failed: ${err && err.message || err}`, true);
+    } finally {
+      // The confirm modal suspended auto-refresh while it was open, and
+      // the dragend-fired refresh() bailed for the same reason — so the
+      // dashboard has not re-rendered since before the drag. Sync now.
+      await refresh();
     }
   }
 
@@ -8290,6 +8317,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // the local mutation and surfaces a toast.
   async function runDndMove(payload, targetGroup) {
     const {conv, sourceGroup, label} = payload;
+    // Confirm BEFORE the lastSnapshot read + optimistic splice below,
+    // so a cancelled move leaves the snapshot — and the render —
+    // completely untouched.
+    const confirmed = await confirmModal({
+      title: 'Move agent to another group?',
+      body: `Move "${label}" out of group "${sourceGroup}" and into group `
+        + `"${targetGroup}". Its membership of "${sourceGroup}" is removed and a `
+        + `membership of "${targetGroup}" is added.`,
+      meta: label,
+      okLabel: 'Move',
+    });
+    if (!confirmed) { await refresh(); return; }
     if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) return;
     // Snapshot the source row so we can restore it on rollback +
     // append it to the target so the optimistic render is correct.
@@ -8360,6 +8399,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // keeps the code simple and the failure mode obvious.
   async function runDndAddToGroup(payload, targetGroup) {
     const {conv, label} = payload;
+    // The source is either an ungrouped agent or a plain conversation;
+    // for a conversation the membership write also promotes it to an
+    // agent, so the modal says so.
+    const isConv = !!payload.sourceConversation;
+    const confirmed = await confirmModal({
+      title: isConv ? 'Promote conversation into group?' : 'Add agent to group?',
+      body: isConv
+        ? `Promote the conversation "${label}" to an agent and add it to group `
+          + `"${targetGroup}".`
+        : `Add the agent "${label}" to group "${targetGroup}". It keeps every `
+          + `other group it already belongs to.`,
+      meta: label,
+      okLabel: isConv ? 'Promote' : 'Add',
+    });
+    if (!confirmed) { await refresh(); return; }
     try {
       const r = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
         method: 'POST', credentials: 'same-origin',
@@ -8391,6 +8445,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
   async function runDndRemoveFromGroup(payload) {
     const {conv, sourceGroup, label} = payload;
     if (!sourceGroup) return; // not a real-group member — nothing to do
+    const confirmed = await confirmModal({
+      title: 'Remove agent from group?',
+      body: `Remove "${label}" from group "${sourceGroup}". If this is its only `
+        + `group it becomes an ungrouped agent; otherwise it stays in its other `
+        + `groups.`,
+      meta: label,
+      okLabel: 'Remove',
+    });
+    if (!confirmed) { await refresh(); return; }
     try {
       const r = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
         method: 'DELETE', credentials: 'same-origin',
@@ -8445,6 +8508,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // virtual group on the next snapshot.
   async function runDndPromoteToUngrouped(payload) {
     const {conv, label} = payload;
+    const confirmed = await confirmModal({
+      title: 'Promote conversation to an agent?',
+      body: `Promote the conversation "${label}" to an agent. It joins no group `
+        + `and appears under Ungrouped.`,
+      meta: label,
+      okLabel: 'Promote',
+    });
+    if (!confirmed) { await refresh(); return; }
     try {
       const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/promote`, {
         method: 'POST', credentials: 'same-origin',
@@ -8471,6 +8542,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // Ungrouped virtual group on the next snapshot.
   async function runDndReinstate(payload, targetGroup) {
     const {conv, label} = payload;
+    const confirmed = await confirmModal({
+      title: 'Reinstate retired agent?',
+      body: targetGroup
+        ? `Reinstate the retired agent "${label}" and add it to group `
+          + `"${targetGroup}". Group memberships and permission grants stripped `
+          + `when it was retired are NOT restored — it starts fresh.`
+        : `Reinstate the retired agent "${label}" as an active, ungrouped agent. `
+          + `Group memberships and permission grants stripped when it was retired `
+          + `are NOT restored — it starts fresh.`,
+      meta: label,
+      okLabel: 'Reinstate',
+    });
+    if (!confirmed) { await refresh(); return; }
     try {
       const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reinstate`, {
         method: 'POST', credentials: 'same-origin',
