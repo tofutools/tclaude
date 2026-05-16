@@ -741,6 +741,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.">
         <input id="filter-groups-ungrouped" type="checkbox" checked /> show ungrouped
       </label>
+      <label class="filter-toggle" title="Show the virtual &quot;Retired&quot; group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back.">
+        <input id="filter-groups-retired" type="checkbox" checked /> show retired
+      </label>
       <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.">
         <input id="filter-groups-conversations" type="checkbox" /> show conversations
       </label>
@@ -1825,6 +1828,38 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return el ? el.checked : false;
   }
 
+  // The virtual "Retired" group — agents that were demoted back to
+  // plain conversations (retire). Surfaced in the Groups tab so a
+  // retired agent doesn't silently vanish off the tab: it lands here,
+  // mirroring the Agents tab's "Retired" section, and can be
+  // reinstated in place.
+  const RETIRED_LABEL = 'Retired';
+  const RETIRED_VKEY = ' retired-virtual';
+
+  // virtualRetiredGroup builds the synthetic group from the snapshot's
+  // retired[] rows. The `retired` flag is the discriminator renderGroups
+  // keys off to pick the retired-row renderer.
+  function virtualRetiredGroup(retired) {
+    const rows = (retired || []).slice();
+    return {
+      name: RETIRED_LABEL,
+      key: RETIRED_VKEY,
+      virtual: true,
+      retired: true,
+      descr: 'agents demoted back to plain conversations',
+      members: rows,
+      online: rows.filter(r => r.online).length,
+    };
+  }
+
+  // retiredVisible reports the "show retired" checkbox state. Defaults
+  // to true when the checkbox isn't in the DOM yet — a retired agent
+  // must not silently disappear from the Groups tab.
+  function retiredVisible() {
+    const el = $('#filter-groups-retired');
+    return el ? el.checked : true;
+  }
+
   // memberRowHTML renders one draggable member <tr>. `ctx` selects the
   // drag wiring + action set:
   //   - {group: <groupObj>}  — a real group member: the source group
@@ -1954,12 +1989,42 @@ details.group-virtual .group-name { color: #8aa0b8; }
     `;
   }
 
+  // renderVirtualRetiredGroup renders the synthetic "Retired" group —
+  // agents demoted back to plain conversations. Like the other virtual
+  // groups it is inert AS A GROUP; unlike Ungrouped / Conversations it
+  // is neither a drag source nor a drag target — retire still happens
+  // by dragging an agent onto "Conversations". This group is purely
+  // the landing surface so a just-retired agent stays visible on the
+  // tab (the Agents-tab "Retired" section does the same). Its only
+  // action is the per-row "reinstate" button, reusing renderRetired so
+  // the row shape stays identical to that section.
+  function renderVirtualRetiredGroup(g) {
+    const members = g.members || [];
+    const key = g.key || g.name;
+    const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+    return `
+      <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
+        <summary>
+          <strong class="group-name">${esc(g.name)}</strong>
+          <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Click reinstate to bring one back as an active agent.">virtual</span>
+          <span class="muted">— ${members.length} retired agent${members.length === 1 ? '' : 's'}</span>
+          <span class="muted group-virtual-hint">retired agents land here instead of vanishing · click reinstate to restore one</span>
+        </summary>
+        <div class="subtable">
+          ${renderRetired(members)}
+        </div>
+      </details>
+    `;
+  }
+
   function renderGroups(groups) {
     if (!groups || !groups.length) {
       return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
     }
     return groups.map(g => {
-      if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g) : renderVirtualGroup(g);
+      if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)
+        : g.retired ? renderVirtualRetiredGroup(g)
+        : renderVirtualGroup(g);
       const members = g.members || [];
       // Offline visibility: per-group override falls back to the
       // tab-wide checkbox. Hidden members still count toward the
@@ -2285,6 +2350,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const list = realGroups.slice();
     if (ungroupedVisible()) {
       list.push(virtualUngroupedGroup(lastSnapshot.ungrouped || []));
+    }
+    // The virtual "Retired" group sits above Conversations: a retired
+    // agent is one step further along (it WAS an agent), so it lands
+    // somewhere visible on the tab instead of vanishing the moment it
+    // leaves its last group. On by default for the same reason.
+    if (retiredVisible()) {
+      list.push(virtualRetiredGroup(lastSnapshot.retired || []));
     }
     // The virtual "Conversations" group sorts below even Ungrouped —
     // it's the rawest bucket (not even agents yet). Opt-in via its
@@ -4254,6 +4326,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
       conversations.checked = saved === '1';
       conversations.addEventListener('change', () => {
         localStorage.setItem(ckey, conversations.checked ? '1' : '0');
+        rerender();
+      });
+    }
+    // Optional "show retired" checkbox (groups tab only) — toggles the
+    // virtual Retired group. Defaults ON: a retired agent must stay
+    // visible somewhere on the tab rather than silently disappearing.
+    const retired = $(`#filter-${tab}-retired`);
+    if (retired) {
+      const rkey = `tclaude.dash.retired.${tab}`;
+      const saved = localStorage.getItem(rkey);
+      retired.checked = saved === null ? true : saved === '1';
+      retired.addEventListener('change', () => {
+        localStorage.setItem(rkey, retired.checked ? '1' : '0');
         rerender();
       });
     }
