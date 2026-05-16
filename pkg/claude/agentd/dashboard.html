@@ -34,6 +34,26 @@ nav button {
 }
 nav button.active { color: #d4d4d4; border-bottom-color: #58a6ff; }
 nav button:hover { color: #d4d4d4; }
+/* Messages tab — unread badge on the nav button + message cards. */
+.tab-badge {
+  display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px;
+  font-size: 11px; line-height: 16px; text-align: center;
+  background: #f85149; color: #fff; border-radius: 8px; font-weight: 600;
+}
+.msg-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 8px;
+}
+.msg-card.msg-unread { border-left: 3px solid #58a6ff; }
+.msg-head { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.msg-dot { color: #58a6ff; font-size: 10px; }
+.msg-from { font-weight: 600; color: #d4d4d4; }
+.msg-group { color: #7d8590; }
+.msg-id { color: #7d8590; font-family: ui-monospace, monospace; font-size: 11px; }
+.msg-time { color: #7d8590; font-size: 12px; }
+.msg-subject { font-weight: 600; color: #d4d4d4; margin-top: 6px; }
+.msg-body { color: #c9d1d9; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.msg-actions { margin-top: 8px; display: flex; gap: 6px; }
 main { padding: 16px 24px; }
 section { display: none; }
 section.active { display: block; }
@@ -1064,6 +1084,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   <button data-tab="links">Links</button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
+  <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
 </nav>
 <main>
   <section id="tab-groups" class="active">
@@ -1164,6 +1185,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
   </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
+  <section id="tab-messages">
+    <div class="filter-bar">
+      <input id="filter-messages" type="text" placeholder="Filter (sender / group / subject / body)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-messages-count"></span>
+      <button class="clear-filter" id="filter-messages-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button class="tool" data-act="msg-mark-all-read" title="Mark every message read">✓ mark all read</button>
+      <button class="tool" data-act="msg-clear" title="Delete every message that has been marked read">🧹 clear read</button>
+    </div>
+    <div id="messages-list"></div>
+  </section>
 </main>
 <div class="modal-overlay" id="confirm-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
@@ -2996,6 +3028,69 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const el = $('#status');
     el.textContent = text;
     el.classList.toggle('error', !!isError);
+  }
+
+  // === Messages tab — human-facing notifications from agents ===
+  // The unread count drives a badge on the Messages nav button, so the
+  // human sees there's something to read from whatever tab they're on.
+  function renderMessagesBadge(unread) {
+    const badge = $('#messages-badge');
+    if (!badge) return;
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    badge.hidden = unread === 0;
+  }
+
+  function renderMessagesTab() {
+    if (!lastSnapshot) return;
+    const all = lastSnapshot.messages || [];
+    // Conv-ids with a live tmux window — focus is only meaningful for
+    // those. Cross-referenced from the agent lists already in the
+    // snapshot, so no extra round-trip.
+    const onlineConvs = new Set();
+    (lastSnapshot.agents || []).concat(lastSnapshot.ungrouped || [])
+      .forEach(a => { if (a && a.online) onlineConvs.add(a.conv_id); });
+    const q = ($('#filter-messages').value || '').toLowerCase();
+    const filtered = q
+      ? all.filter(m => [m.from_title, m.group, m.subject, m.body]
+          .some(s => (s || '').toLowerCase().includes(q)))
+      : all;
+    $('#messages-list').innerHTML = renderMessages(filtered, onlineConvs);
+    const total = all.length;
+    $('#filter-messages-count').textContent = q
+      ? `${filtered.length} / ${total}`
+      : `${total} message${total === 1 ? '' : 's'}`;
+  }
+
+  function renderMessages(msgs, onlineConvs) {
+    if (!msgs || !msgs.length) return '<div class="empty">No messages.</div>';
+    return msgs.map(m => {
+      const unread = !m.read;
+      const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
+      const grp = m.group ? `<span class="msg-group">· ${esc(m.group)}</span>` : '';
+      const subj = m.subject ? `<div class="msg-subject">${esc(m.subject)}</div>` : '';
+      // Focus raises the sending agent's terminal window. Only offered
+      // when the agent is online — disabled otherwise, never an error.
+      const focusable = m.from_conv && onlineConvs.has(m.from_conv);
+      const focusBtn = m.from_conv
+        ? `<button data-act="msg-focus" data-conv="${esc(m.from_conv)}" data-id="${m.id}" data-label="${esc(m.from_title || m.from_conv)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`
+        : '';
+      const readBtn = unread
+        ? `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`
+        : '';
+      return `<div class="msg-card${unread ? ' msg-unread' : ''}">
+        <div class="msg-head">
+          ${unread ? '<span class="msg-dot" title="unread">●</span>' : ''}
+          <span class="msg-from">${esc(m.from_title || '(unknown sender)')}</span>
+          ${grp}
+          <span class="msg-id">#${m.id}</span>
+          <span class="spacer"></span>
+          <span class="msg-time">${esc(when)}</span>
+        </div>
+        ${subj}
+        <div class="msg-body">${esc(m.body)}</div>
+        <div class="msg-actions">${focusBtn}${readBtn}</div>
+      </div>`;
+    }).join('');
   }
 
   // === Subscription-usage readout (top bar, left of the live dot) ===
@@ -6382,6 +6477,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       else if (tab === 'cron') renderCronTab();
       else if (tab === 'sudo') renderSudoTab();
       else if (tab === 'links') renderLinksTab();
+      else if (tab === 'messages') renderMessagesTab();
     };
     const onChange = () => {
       const v = input.value;
@@ -6489,6 +6585,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       renderLinksTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
+      renderMessagesTab();
+      renderMessagesBadge(data.messages_unread || 0);
       renderUsage(data.usage);
       showStatus('● live', false);
     } catch (e) {
@@ -8711,6 +8809,64 @@ details.group-virtual .group-name { color: #8aa0b8; }
             if (!ok) toast(`Remove link failed: ${await r.text()}`, true);
             break;
           }
+          case 'msg-focus': {
+            // Raise the sending agent's window AND mark the message
+            // read — the human is acting on it. Both are non-destructive;
+            // toast each, then refresh so the read state + badge update.
+            const id = btn.getAttribute('data-id');
+            const jr = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            if (jr.ok) toast(`focused: ${label}`);
+            else toast(`Focus failed: ${await jr.text()}`, true);
+            await fetch('/api/human-messages/read', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10) }),
+            });
+            refresh();
+            return;
+          }
+          case 'msg-mark-read': {
+            const id = btn.getAttribute('data-id');
+            const r = await fetch('/api/human-messages/read', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10) }),
+            });
+            if (!r.ok) { toast(`Mark read failed: ${await r.text()}`, true); return; }
+            toast('message marked read');
+            refresh();
+            return;
+          }
+          case 'msg-mark-all-read': {
+            const r = await fetch('/api/human-messages/read', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ all: true }),
+            });
+            if (!r.ok) { toast(`Mark all read failed: ${await r.text()}`, true); return; }
+            const res = await r.json().catch(() => ({}));
+            toast(`marked ${res.marked || 0} message(s) read`);
+            refresh();
+            return;
+          }
+          case 'msg-clear': {
+            const confirmed = await confirmModal({
+              title: 'Clear read messages?',
+              body: 'Permanently deletes every message that has been marked read. Unread messages are kept.',
+              okLabel: 'Clear read',
+            });
+            if (!confirmed) return;
+            const r = await fetch('/api/human-messages/clear', {
+              method: 'POST', credentials: 'same-origin',
+            });
+            if (!r.ok) { toast(`Clear failed: ${await r.text()}`, true); return; }
+            const res = await r.json().catch(() => ({}));
+            toast(`cleared ${res.deleted || 0} read message(s)`);
+            refresh();
+            return;
+          }
           default:
             return;
         }
@@ -9318,6 +9474,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   bindFilter('cron');
   bindFilter('sudo');
   bindFilter('links');
+  bindFilter('messages');
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();

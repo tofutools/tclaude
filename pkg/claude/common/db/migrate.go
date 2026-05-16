@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 43
+const currentVersion = 44
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -281,6 +281,42 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 44 {
+		if err := migrateV43toV44(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV43toV44 adds human_messages — the store behind the dashboard
+// Messages tab, where a coordinating agent's notifications to the human
+// land (POST /v1/notify-human).
+//
+// from_title and group_name are snapshots taken at insert time, not
+// foreign keys: a later rename or deletion of the sending agent must
+// not blank an old message. read_at is empty for an unread message and
+// an RFC3339 timestamp once the human marks it read.
+func migrateV43toV44(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS human_messages (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			from_conv   TEXT NOT NULL,
+			from_title  TEXT NOT NULL DEFAULT '',
+			group_name  TEXT NOT NULL DEFAULT '',
+			subject     TEXT NOT NULL DEFAULT '',
+			body        TEXT NOT NULL,
+			created_at  TEXT NOT NULL,
+			read_at     TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_human_messages_created
+			ON human_messages(created_at);
+
+		UPDATE schema_version SET version = 44;
+	`); err != nil {
+		return fmt.Errorf("migrate v43→v44 (add human_messages): %w", err)
+	}
 	return nil
 }
 

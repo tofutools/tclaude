@@ -170,6 +170,7 @@ const (
 	PermGroupsImport      = "groups.import"
 	PermTemplatesManage   = "templates.manage"
 	PermTemplatesUse      = "templates.instantiate"
+	PermHumanNotify       = "human.notify"
 )
 
 // permResolution is the verdict of the non-interactive permission

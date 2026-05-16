@@ -272,7 +272,12 @@ type snapshotPayload struct {
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
-	PopupBase string         `json:"popup_base"` // for tray-shareable display
+	// Messages are the human-facing notifications agents have sent via
+	// `tclaude agent notify-human`, newest first — the Messages tab.
+	// MessagesUnread is the count of unread ones, driving the tab badge.
+	Messages       []dashboardHumanMessage `json:"messages"`
+	MessagesUnread int                     `json:"messages_unread"`
+	PopupBase      string                  `json:"popup_base"` // for tray-shareable display
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -814,6 +819,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
 	out.Templates = collectTemplatesSnapshot()
+	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 
 	writeJSON(w, http.StatusOK, out)
 }

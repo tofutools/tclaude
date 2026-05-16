@@ -166,6 +166,10 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermTemplatesUse,
 		Description: "Instantiate a working group from a template — creates the group and spawns its whole agent team in one shot. Strictly more powerful than groups.spawn (a whole team at once), so not default-granted (effectively human-only).",
 	},
+	{
+		Slug:        PermHumanNotify,
+		Description: "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Not default-granted: the human grants it to the PO so workers cannot spam the channel.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.
