@@ -346,7 +346,13 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	if len(m.CcRecipients) > 0 {
 		fmt.Fprintf(stdout, "  CC:         %s\n", formatRecipientList(m.CcRecipients))
 	}
-	fmt.Fprintf(stdout, "  Group:      %s\n", m.Group)
+	group := m.Group
+	if group == "" {
+		// A direct message (the universal-inbox transport) has no
+		// routing group; say so rather than printing a blank.
+		group = "(direct)"
+	}
+	fmt.Fprintf(stdout, "  Group:      %s\n", group)
 	if m.Subject != "" {
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
 	}
@@ -385,7 +391,7 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		return rcAuth
 	}
 
-	groupName := ""
+	groupName := "(direct)"
 	if g, _ := groupByID(m.GroupID); g != nil {
 		groupName = g.Name
 	}

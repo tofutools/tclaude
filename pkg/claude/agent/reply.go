@@ -81,7 +81,12 @@ func runReplyDaemon(id int64, subject, body string, stdout, stderr io.Writer) in
 	if resp.Delivered {
 		state = "delivered"
 	}
-	fmt.Fprintf(stdout, "Sent reply #%d via group %q (%s)\n", resp.ID, resp.ViaGroup, state)
+	// A reply to a direct (off-group) message has no routing group.
+	via := "directly"
+	if resp.ViaGroup != "" {
+		via = fmt.Sprintf("via group %q", resp.ViaGroup)
+	}
+	fmt.Fprintf(stdout, "Sent reply #%d %s (%s)\n", resp.ID, via, state)
 	return rcOK
 }
 

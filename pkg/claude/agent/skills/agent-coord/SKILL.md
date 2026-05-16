@@ -12,8 +12,10 @@ resolved from the connecting socket peer's PID — no tokens to manage,
 and `/fork` keeps working because the daemon re-reads your current
 conv-id on every call.
 
-The human controls who can talk to whom by maintaining named **groups**;
-you can only message peers who are in a group with you.
+The human controls who can talk to whom by maintaining named **groups**.
+Messaging a peer you share a group with always works. Messaging an agent
+*outside* your group — including an ungrouped solo agent — additionally
+requires the `message.direct` permission; without it the send is refused.
 
 ## When to invoke
 
@@ -97,9 +99,11 @@ EOF
 tclaude agent message <peer> --file plan.md
 ```
 
-`<peer>` is the peer's display name, conv-id, or short ID. The send fails
-loudly if you do not share a group with the target — that's intentional;
-only the human controls allow-listing.
+`<peer>` is the peer's display name, conv-id, or short ID. A peer in one
+of your groups always works. Messaging an agent outside your group needs
+the `message.direct` permission — without it the send fails loudly,
+naming the slug; ask the human to grant it (or get a time-bounded grant
+via `tclaude agent sudo`).
 
 If the target has a live tmux session, they get a system nudge on their
 next turn. If they're offline, the message stays queued in their inbox
