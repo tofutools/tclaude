@@ -1270,6 +1270,21 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 	// (immutable audit trail). Walk the chain so the reply lands on
 	// the live successor instead of the archived inbox.
 	replyTarget, replyOriginalTo := walkSuccession(orig.FromConv)
+	if replyTarget == "" {
+		// The original message has no sender to reply to — it was
+		// injected by the system or a human-initiated spawn (the
+		// "Startup context" brief is the canonical case: a human
+		// spawner has no conv-id). Without this guard the reply would
+		// be inserted with to_conv="" — an orphan row no inbox query
+		// ever matches — and the CLI would still print "queued", a
+		// status that never resolves. Reject observably so the caller
+		// sends a fresh message instead.
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("cannot reply to message #%d: it has no sender (injected by the "+
+				"system or a human-initiated spawn); send a fresh message with "+
+				"`tclaude agent message <target> ...` instead", id))
+		return
+	}
 	if replyTarget == myID {
 		// The chain-walk has identified the recipient (us) as the
 		// live successor of the original sender — i.e. we received
