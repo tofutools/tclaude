@@ -159,7 +159,7 @@ func TestLoad_NormalizesFromFile(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			isolateConfigHome(t)
 			require.NoError(t, os.MkdirAll(ConfigDir(), 0o755))
 			require.NoError(t, os.WriteFile(ConfigPath(), []byte(tc.file), 0o644))
 			c, err := Load()
@@ -169,10 +169,22 @@ func TestLoad_NormalizesFromFile(t *testing.T) {
 	}
 }
 
+// isolateConfigHome points the config directory at a fresh temp dir
+// for the duration of the test. It sets both HOME and USERPROFILE
+// because os.UserHomeDir() — which ConfigDir() relies on — reads
+// USERPROFILE on Windows and HOME elsewhere; setting only HOME would
+// let a Windows test run touch the real user config.
+func isolateConfigHome(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 // Save must write atomically and leave no temp file behind, and a
 // second Save over an existing config must succeed (rename-replace).
 func TestSave_AtomicAndRepeatable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateConfigHome(t)
 
 	c := DefaultConfig()
 	c.LogLevel = "debug"

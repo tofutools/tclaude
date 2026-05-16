@@ -1183,7 +1183,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <h3>General</h3>
       <div class="cfg-field">
         <span class="cfg-label">Log level</span>
-        <select id="cfg-log-level">
+        <select id="cfg-log-level" aria-label="Log level">
           <option value="debug">debug</option>
           <option value="info">info</option>
           <option value="warn">warn</option>
@@ -1192,7 +1192,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Terminal</span>
-        <input type="text" id="cfg-terminal" list="cfg-terminal-list" placeholder="(auto-detect)" autocomplete="off" spellcheck="false" />
+        <input type="text" id="cfg-terminal" list="cfg-terminal-list" placeholder="(auto-detect)" aria-label="Terminal emulator" autocomplete="off" spellcheck="false" />
         <datalist id="cfg-terminal-list">
           <option value="ghostty"></option><option value="kitty"></option>
           <option value="wezterm"></option><option value="alacritty"></option>
@@ -1203,7 +1203,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <div class="cfg-field">
         <span class="cfg-label">Auto-compact</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-autocompact-enabled" /> enabled</label>
-        <input type="number" id="cfg-autocompact-pct" min="1" max="100" placeholder="80" />
+        <input type="number" id="cfg-autocompact-pct" min="1" max="100" placeholder="80" aria-label="Auto-compact percent" />
         <span>% context</span>
         <span class="cfg-hint">Auto-run <code>/compact</code> once context usage reaches this percent. Off = no auto-compact.</span>
       </div>
@@ -1222,7 +1222,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Cooldown</span>
-        <input type="number" id="cfg-notif-cooldown" min="0" placeholder="5" />
+        <input type="number" id="cfg-notif-cooldown" min="0" placeholder="5" aria-label="Notification cooldown seconds" />
         <span>seconds between notifications</span>
       </div>
       <div class="cfg-field">
@@ -1246,12 +1246,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
       </div>
       <div class="cfg-field">
         <span class="cfg-label">5-hour window</span>
-        <input type="number" id="cfg-ratelimit-5h" min="0" max="100" step="0.1" placeholder="99" />
+        <input type="number" id="cfg-ratelimit-5h" min="0" max="100" step="0.1" placeholder="99" aria-label="Rate limit 5-hour window percent" />
         <span>% max used</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">7-day window</span>
-        <input type="number" id="cfg-ratelimit-7d" min="0" max="100" step="0.1" placeholder="99.9" />
+        <input type="number" id="cfg-ratelimit-7d" min="0" max="100" step="0.1" placeholder="99.9" aria-label="Rate limit 7-day window percent" />
         <span>% max used</span>
       </div>
     </div>
@@ -1264,7 +1264,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Clone cooldown</span>
-        <input type="text" id="cfg-agent-clonecooldown" placeholder="1m" autocomplete="off" spellcheck="false" style="min-width:120px" />
+        <input type="text" id="cfg-agent-clonecooldown" placeholder="1m" aria-label="Clone cooldown" autocomplete="off" spellcheck="false" style="min-width:120px" />
         <span class="cfg-hint">Minimum gap between two agent-initiated clones of the same agent (Go duration: <code>1m</code>, <code>30s</code>, <code>0</code> to disable). Empty = built-in default.</span>
       </div>
       <div class="cfg-field">
@@ -1275,7 +1275,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <div class="cfg-field">
         <span class="cfg-label">Spawn rate limit</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-agent-spawnmax-enabled" /> cap</label>
-        <input type="number" id="cfg-agent-spawnmax" min="0" placeholder="10" />
+        <input type="number" id="cfg-agent-spawnmax" min="0" placeholder="10" aria-label="Spawn rate limit per hour" />
         <span>spawns / agent / hour</span>
         <span class="cfg-hint">0 = unlimited. Off = built-in default (10).</span>
       </div>
@@ -1283,9 +1283,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
         <span class="cfg-label">Context nudge</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-nudge-enabled" /> enabled</label>
         <span>start</span>
-        <input type="number" id="cfg-nudge-min" min="0" max="100" placeholder="30" />
+        <input type="number" id="cfg-nudge-min" min="0" max="100" placeholder="30" aria-label="Context nudge start percent" />
         <span>%, every</span>
-        <input type="number" id="cfg-nudge-interval" min="1" max="100" placeholder="10" />
+        <input type="number" id="cfg-nudge-interval" min="1" max="100" placeholder="10" aria-label="Context nudge interval percent" />
         <span>%</span>
         <span class="cfg-hint">"Consider reincarnating" nudge as a long-running agent's context fills.</span>
       </div>
@@ -1318,7 +1318,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
           per-conversation overrides) is edited as raw JSON — it is the one nested-map structure
           without a dedicated form. Leave blank for none. Validated on save.
         </p>
-        <textarea id="cfg-sudo-json" spellcheck="false" placeholder='{
+        <textarea id="cfg-sudo-json" spellcheck="false" aria-label="Advanced sudo configuration JSON" placeholder='{
   "max_duration": "2h",
   "default_duration": "30m"
 }'></textarea>
@@ -9018,6 +9018,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     inp.type = 'text';
     inp.value = value || '';
     inp.placeholder = placeholder || '';
+    if (placeholder) inp.setAttribute('aria-label', placeholder);
     inp.autocomplete = 'off';
     inp.spellcheck = false;
     if (datalistId) inp.setAttribute('list', datalistId);
@@ -9039,6 +9040,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
       i.type = 'text';
       i.value = val || '';
       i.placeholder = ph;
+      i.setAttribute('aria-label', ph);
       i.autocomplete = 'off';
       i.spellcheck = false;
       i.dataset.role = role;
@@ -9150,8 +9152,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
     $('#cfg-agent-spawnmax').value = smph != null ? smph : '';
     const cn = a.context_nudge || {};
     $('#cfg-nudge-enabled').checked = !!cn.enabled;
-    $('#cfg-nudge-min').value = cn.min_pct || '';
-    $('#cfg-nudge-interval').value = cn.interval_pct || '';
+    // != null (not ||) so a stored 0 shows as 0, not blank — a 0 ladder
+    // value while the nudge is enabled is a config Validate flags.
+    $('#cfg-nudge-min').value = cn.min_pct != null ? cn.min_pct : '';
+    $('#cfg-nudge-interval').value = cn.interval_pct != null ? cn.interval_pct : '';
     renderCfgStringList('cfg-agent-permissions', a.default_permissions || [], 'cfg-slug-list', 'permission slug');
     renderCfgStringList('cfg-agent-allowedgroups', a.spawn_allowed_groups || [], 'cfg-group-list', 'group name');
 
@@ -9444,6 +9448,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
       configBaseRaw = data.raw || configBaseRaw;
       configObj = JSON.parse(configBaseRaw);
       populateConfigForm(configObj);
+      // The saved file is canonical now — any load-time notice (a
+      // malformed file, or unknown keys that this save dropped) is
+      // stale, so clear it.
+      renderConfigNotice([]);
       $('#cfg-status').textContent = 'saved · ' + new Date().toLocaleTimeString();
       toast('Config saved to ' + $('#cfg-path').textContent);
     } catch (e) {

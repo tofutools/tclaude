@@ -6,12 +6,25 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
+
+// assertErrorContains asserts at least one error mentions want, so a
+// test never depends on the order Validate appends its findings.
+func assertErrorContains(t *testing.T, errs []string, want string) {
+	t.Helper()
+	for _, e := range errs {
+		if strings.Contains(e, want) {
+			return
+		}
+	}
+	assert.Failf(t, "no matching error", "no error contains %q; got %v", want, errs)
+}
 
 // serveDashboardConfig routes r through a fresh mux carrying only the
 // /api/config route — the same dispatch a real browser request takes.
@@ -118,7 +131,7 @@ func TestDashboardConfig_PostInvalidReturns400(t *testing.T) {
 	w, resp := postConfig(t, "/api/config", wrapBody(`{"log_level":"loud"}`, ""))
 	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
 	require.NotEmpty(t, resp.Errors, "validation errors must be listed")
-	assert.Contains(t, resp.Errors[0], "log_level")
+	assertErrorContains(t, resp.Errors, "log_level")
 
 	_, statErr := os.Stat(config.ConfigPath())
 	assert.True(t, os.IsNotExist(statErr), "an invalid POST must not write the file")
@@ -133,7 +146,7 @@ func TestDashboardConfig_MalformedJSONReturns400(t *testing.T) {
 	w, resp := postConfig(t, "/api/config", `{not json`)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.NotEmpty(t, resp.Errors, "malformed body must report via the errors array")
-	assert.Contains(t, resp.Errors[0], "valid JSON")
+	assertErrorContains(t, resp.Errors, "valid JSON")
 }
 
 func TestDashboardConfig_MissingConfigReturns400(t *testing.T) {
@@ -143,7 +156,7 @@ func TestDashboardConfig_MissingConfigReturns400(t *testing.T) {
 	w, resp := postConfig(t, "/api/config", `{"base":""}`)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.NotEmpty(t, resp.Errors)
-	assert.Contains(t, resp.Errors[0], "config")
+	assertErrorContains(t, resp.Errors, "config")
 }
 
 // The GET baseline must round-trip through a dry-run unchanged —
@@ -241,21 +254,34 @@ func TestDashboardConfig_RejectsBadSudoDuration(t *testing.T) {
 	w, resp := postConfig(t, "/api/config", body)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.NotEmpty(t, resp.Errors)
-	assert.Contains(t, resp.Errors[0], "max_duration")
+	assertErrorContains(t, resp.Errors, "max_duration")
 }
 
-// A config file with a key tclaude's schema does not model must be
-// reported as an unknown key so the human is warned a save drops it.
+// Keys tclaude's schema does not model must be reported as unknown so
+// the human is warned a save drops them — at every nesting depth, with
+// arbitrary map keys (agent.sudo.overrides.<id>) correctly exempted.
 func TestDashboardConfig_GetReportsUnknownKeys(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
 	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
-	require.NoError(t, os.WriteFile(config.ConfigPath(),
-		[]byte(`{"log_level":"info","human_notify":{"channel":"telegram"},"zzz_future":1}`), 0o644))
+	// Top-level unknowns (human_notify, zzz_future); a nested unknown
+	// (agent.future_flag); and a sudo override whose map key is
+	// arbitrary-by-design (alice — must NOT be flagged) but which
+	// carries an unknown field of its own (bogus — must be flagged).
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{
+		"log_level":"info",
+		"human_notify":{"channel":"telegram"},
+		"zzz_future":1,
+		"agent":{"future_flag":true,"sudo":{"overrides":{"alice":{"max_duration":"1h","bogus":2}}}}
+	}`), 0o644))
 
 	w, resp := getConfig(t)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
-	assert.Equal(t, []string{"human_notify", "zzz_future"}, resp.UnknownKeys,
-		"unknown top-level keys must be listed (sorted)")
+	assert.Equal(t, []string{
+		"agent.future_flag",
+		"agent.sudo.overrides.alice.bogus",
+		"human_notify",
+		"zzz_future",
+	}, resp.UnknownKeys, "unknown keys at every depth listed (sorted); arbitrary map keys exempt")
 }

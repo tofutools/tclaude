@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"reflect"
@@ -75,9 +76,9 @@ func configErrors(w http.ResponseWriter, msgs ...string) {
 // still gets a fully-populated form to edit.
 //
 // "warning" appears when the file on disk is malformed (Load fell back
-// to defaults). "unknown_keys" lists top-level keys present in the file
-// but absent from the config.Config schema — a save would drop them, so
-// the human is told up front.
+// to defaults). "unknown_keys" lists keys present in the file but
+// absent from the config.Config schema — at any nesting depth, as
+// dotted paths — that a save would drop, so the human is told up front.
 func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 	cfg, loadErr := config.Load()
 	raw, err := json.MarshalIndent(cfg, "", "  ")
@@ -164,40 +165,74 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// unknownConfigKeys returns the top-level keys present in the config
-// file on disk but absent from the config.Config schema — keys a save
-// through the typed decode would drop. Empty when the file is missing,
-// unparseable, or fully schema-conformant.
+// unknownConfigKeys walks the on-disk config file and returns the
+// dotted paths of every key absent from the config.Config schema, at
+// any nesting depth — keys a save through the typed decode would drop.
+// Empty when the file is missing, unparseable, or fully conformant.
 func unknownConfigKeys() []string {
 	data, err := os.ReadFile(config.ConfigPath())
 	if err != nil {
 		return nil
 	}
-	var fileMap map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fileMap); err != nil {
+	var tree map[string]any
+	if err := json.Unmarshal(data, &tree); err != nil {
 		return nil
 	}
-	known := configSchemaKeys()
 	var unknown []string
-	for k := range fileMap {
-		if !known[k] {
-			unknown = append(unknown, k)
-		}
-	}
+	collectUnknownKeys("", tree, reflect.TypeOf(config.Config{}), &unknown)
 	sort.Strings(unknown)
 	return unknown
 }
 
-// configSchemaKeys is the set of top-level JSON keys config.Config
-// models, derived by reflection so it never drifts from the struct.
-func configSchemaKeys() map[string]bool {
-	keys := map[string]bool{}
-	t := reflect.TypeOf(config.Config{})
+// collectUnknownKeys walks one JSON object against the struct type that
+// models it: every key with no matching struct field is appended (as a
+// dotted path), and the value of every known key is descended into.
+func collectUnknownKeys(prefix string, node map[string]any, t reflect.Type, out *[]string) {
+	fieldType := map[string]reflect.Type{}
 	for i := 0; i < t.NumField(); i++ {
 		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		if name != "" && name != "-" {
-			keys[name] = true
+			fieldType[name] = t.Field(i).Type
 		}
 	}
-	return keys
+	for key, val := range node {
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		ft, ok := fieldType[key]
+		if !ok {
+			*out = append(*out, path)
+			continue
+		}
+		descendUnknownKeys(path, val, ft, out)
+	}
+}
+
+// descendUnknownKeys recurses into a known field's value: into a nested
+// struct's keys, into each element of a slice, into each value of a map
+// (whose own keys are arbitrary by design, e.g. agent.sudo.overrides).
+// Scalars and type mismatches bottom out.
+func descendUnknownKeys(path string, val any, ft reflect.Type, out *[]string) {
+	for ft.Kind() == reflect.Pointer {
+		ft = ft.Elem()
+	}
+	switch ft.Kind() {
+	case reflect.Struct:
+		if obj, ok := val.(map[string]any); ok {
+			collectUnknownKeys(path, obj, ft, out)
+		}
+	case reflect.Map:
+		if obj, ok := val.(map[string]any); ok {
+			for mk, mv := range obj {
+				descendUnknownKeys(path+"."+mk, mv, ft.Elem(), out)
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if arr, ok := val.([]any); ok {
+			for i, item := range arr {
+				descendUnknownKeys(fmt.Sprintf("%s[%d]", path, i), item, ft.Elem(), out)
+			}
+		}
+	}
 }
