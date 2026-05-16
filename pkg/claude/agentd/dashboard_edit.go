@@ -743,10 +743,10 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 	// handleAgentReincarnate re-decodes r.Body itself, so we buffer the
 	// raw bytes and hand them back verbatim. force-mode stays the
 	// unchanged direct path — its decoder simply ignores the extra
-	// `mode` / `focus_hint` fields. The body is bounded: it only ever
-	// carries a `follow_up` / `focus_hint` text field, which the inbox
-	// charset rule already caps at agent.MaxInitialMessageBytes — 64 KiB
-	// leaves generous JSON slack while refusing an abusive payload.
+	// `mode` / `focus_hint` fields. The 64 KiB MaxBytesReader bounds the
+	// raw JSON request so an abusive payload can't be slurped whole; the
+	// real per-field caps (follow_up / focus_hint length + charset) live
+	// downstream in decodeReincarnateFollowUp / isValidInitialMessage.
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
