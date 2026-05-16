@@ -61,4 +61,10 @@ func TestDashboardHTML_CronGroupScopedTargetPicker(t *testing.T) {
 		"the group header cron button must pass scopeGroup")
 	must("setTargetPickerScope('cron-create', p.scopeGroup)",
 		"populateCronForm must arm/clear the scope from the prefill")
+
+	// Closing the modal must clear the scope — otherwise a group scope
+	// armed by one open would leak into the next (e.g. a global "+ new
+	// cron job" opened right after a group multicast).
+	must("setTargetPickerScope('cron-create', null)",
+		"closeCronCreateModal must clear the picker scope on close")
 }

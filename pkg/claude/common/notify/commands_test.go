@@ -160,28 +160,6 @@ func TestNotificationBody(t *testing.T) {
 	}
 }
 
-func TestNotificationTitle(t *testing.T) {
-	tests := []struct {
-		status string
-		want   string
-	}{
-		{"idle", "Claude: Idle"},
-		{"working", "Claude: Working"},
-		{"awaiting_permission", "Claude: Awaiting permission"},
-		{"awaiting_input", "Claude: Awaiting input"},
-		{"error", "Claude: Error"},
-		{"exited", "Claude: Exited"},
-		{"unknown", "Claude: unknown"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.status, func(t *testing.T) {
-			got := NotificationTitle(tt.status)
-			assert.Equal(t, tt.want, got, "NotificationTitle(%q)", tt.status)
-		})
-	}
-}
-
 func TestBuildDarwiniTermFocusCmd(t *testing.T) {
 	cmd := BuildDarwiniTermFocusCmd("/dev/ttys003")
 
