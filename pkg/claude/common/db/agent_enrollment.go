@@ -27,6 +27,13 @@ type AgentEnrollment struct {
 	RetiredAt    time.Time // zero ⇒ active
 	RetiredBy    string
 	RetireReason string
+	// PendingName is the agent's intended display name, recorded at
+	// spawn time from `tclaude agent spawn --name`. It is a fallback the
+	// title-resolution path (agent.FreshTitle) uses to show a meaningful
+	// name on the dashboard before the agent's own /rename has landed —
+	// instead of "(unknown)". Once a real custom title exists it is
+	// never consulted again. Empty for agents not spawned with a name.
+	PendingName string
 }
 
 // Active reports whether the enrollment is a live agent (a row that
@@ -53,6 +60,26 @@ func EnrollAgent(convID, via string) error {
 	_, err = d.Exec(`INSERT OR IGNORE INTO agent_enrollment
 		(conv_id, enrolled_at, enrolled_via) VALUES (?, ?, ?)`,
 		convID, time.Now().Format(time.RFC3339Nano), via)
+	return err
+}
+
+// SetEnrollmentPendingName records convID's intended display name — the
+// `tclaude agent spawn --name` value. The caller must have enrolled the
+// conv first (spawn does, via AddAgentGroupMember → EnrollAgent); this
+// is a plain UPDATE, a no-op if the row is absent. The pending name is a
+// display fallback only: agent.FreshTitle returns it until a real custom
+// title exists, then never again — so it is never cleared, just outvoted.
+func SetEnrollmentPendingName(convID, name string) error {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return errors.New("SetEnrollmentPendingName: conv_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE agent_enrollment SET pending_name = ? WHERE conv_id = ?`,
+		strings.TrimSpace(name), convID)
 	return err
 }
 
@@ -169,7 +196,7 @@ func GetEnrollment(convID string) (*AgentEnrollment, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`SELECT conv_id, enrolled_at, enrolled_via,
-		retired_at, retired_by, retire_reason
+		retired_at, retired_by, retire_reason, pending_name
 		FROM agent_enrollment WHERE conv_id = ?`, convID)
 	e, err := scanEnrollment(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -197,7 +224,7 @@ func listEnrollments(where string) ([]*AgentEnrollment, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`SELECT conv_id, enrolled_at, enrolled_via,
-		retired_at, retired_by, retire_reason
+		retired_at, retired_by, retire_reason, pending_name
 		FROM agent_enrollment WHERE ` + where + ` ORDER BY enrolled_at`)
 	if err != nil {
 		return nil, err
@@ -237,7 +264,7 @@ func scanEnrollment(s rowScanner) (*AgentEnrollment, error) {
 	var e AgentEnrollment
 	var enrolledAt, retiredAt string
 	if err := s.Scan(&e.ConvID, &enrolledAt, &e.EnrolledVia,
-		&retiredAt, &e.RetiredBy, &e.RetireReason); err != nil {
+		&retiredAt, &e.RetiredBy, &e.RetireReason, &e.PendingName); err != nil {
 		return nil, err
 	}
 	e.EnrolledAt = parseTimeOrZero(enrolledAt)

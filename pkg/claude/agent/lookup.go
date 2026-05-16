@@ -312,18 +312,53 @@ const UnknownTitle = "(unknown)"
 // the conv_index row from the underlying .jsonl first via
 // FreshConvRowResolved, so a conv that was renamed or freshly spawned
 // since the last index pass shows its real name rather than a stale
-// title or "(unknown)".
+// title.
+//
+// Resolution priority: custom title > pending name > summary > first
+// prompt > "(unknown)".
+//
+//   - A custom title (the agent's own /rename, or the /rename the
+//     daemon injects just after spawn) is the authoritative name.
+//   - When none exists yet — a freshly-spawned agent in the gap before
+//     its /rename lands — the pending name recorded at spawn time
+//     (agent_enrollment.pending_name, the `--name` argument) stands in,
+//     so the dashboard shows the intended name rather than "(unknown)".
+//     It deliberately outranks summary / first-prompt: the human-given
+//     --name is a stronger identity signal than an auto-summary or an
+//     uncleaned first prompt (often the spawn welcome line).
 //
 // This is the common "name an agent for display" helper — prefer it
 // over a bare db.GetConvIndex in any handler that renders agent names,
 // so every surface picks up source changes uniformly.
 func FreshTitle(convID string) string {
-	if row := FreshConvRowResolved(convID); row != nil {
+	row := FreshConvRowResolved(convID)
+	if row != nil && row.CustomTitle != "" {
+		return row.CustomTitle
+	}
+	// No custom title yet. Fall back to the pending name the spawn
+	// recorded. Pure fallback: the moment a custom title lands the
+	// branch above supersedes it — no flicker, nothing to clear.
+	if pn := pendingName(convID); pn != "" {
+		return pn
+	}
+	if row != nil {
 		if t := displayTitle(row); t != "" {
 			return t
 		}
 	}
 	return UnknownTitle
+}
+
+// pendingName returns the intended display name recorded for convID at
+// spawn time (agent_enrollment.pending_name), or "" when the conv was
+// not spawned with a name or is not an agent. Errors are swallowed — a
+// pending name is a best-effort display fallback, never load-bearing.
+func pendingName(convID string) string {
+	e, err := db.GetEnrollment(convID)
+	if err != nil || e == nil {
+		return ""
+	}
+	return e.PendingName
 }
 
 // FreshConvTitle resolves convID to the canonical "[title]: prompt"

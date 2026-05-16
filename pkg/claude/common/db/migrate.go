@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 36
+const currentVersion = 37
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -239,6 +239,39 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 37 {
+		if err := migrateV36toV37(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV36toV37 adds agent_enrollment.pending_name — the agent's
+// intended display name, recorded at spawn time from the `tclaude agent
+// spawn --name` argument.
+//
+// Why a dedicated column rather than reusing conv_index.custom_title:
+// conv_index is a cache rebuilt from the conversation .jsonl on every
+// mtime change, so a name written there would be clobbered back to ""
+// by the first rescan (the fresh .jsonl has no custom-title turn until
+// the agent's /rename lands). agent_enrollment is never touched by the
+// .jsonl scan, so a pending name written here is stable — it survives
+// every snapshot refresh until the real /rename supersedes it.
+//
+// Existing rows backfill to '' (no pending name) — they are agents that
+// have long since been named, so the read path resolves their title
+// from conv_index as before.
+func migrateV36toV37(db *sql.DB) error {
+	if _, err := db.Exec(`
+		ALTER TABLE agent_enrollment
+			ADD COLUMN pending_name TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 37;
+	`); err != nil {
+		return fmt.Errorf("migrate v36→v37 (add agent_enrollment.pending_name): %w", err)
+	}
 	return nil
 }
 
