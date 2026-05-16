@@ -115,6 +115,16 @@ func runNew(params *NewParams) error {
 		return cmd.Run()
 	}
 
+	// Self-guard: a Claude Code instance must not directly launch
+	// another Claude Code session. Placed after the --join-group and
+	// pass-through branches on purpose: --join-group delegates to the
+	// agentd daemon (gated there by the `groups.spawn` permission), and
+	// pass-through only prints `claude --help`/`--version`. Daemon-forked
+	// spawns are unaffected — see GuardAgainstNestedSpawn.
+	if err := GuardAgainstNestedSpawn(); err != nil {
+		return err
+	}
+
 	// Check tmux is installed
 	if err := CheckTmuxInstalled(); err != nil {
 		return err
