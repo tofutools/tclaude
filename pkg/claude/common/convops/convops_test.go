@@ -549,3 +549,97 @@ func TestCopyConversationFile(t *testing.T) {
 		assert.Equal(t, newID, msg.SessionID, "ConvID not replaced correctly")
 	}
 }
+
+// backfillProjectPaths fills an empty ProjectPath from a sibling in the
+// SAME Claude project directory, and only that directory — it must not
+// borrow a cwd across dirs, and a dir with no sibling-with-a-cwd is
+// left untouched.
+func TestBackfillProjectPaths(t *testing.T) {
+	entries := []SessionEntry{
+		{SessionID: "a", FullPath: "/proj/dirA/a.jsonl", ProjectPath: "/real/repo-a"},
+		{SessionID: "b", FullPath: "/proj/dirA/b.jsonl", ProjectPath: ""},
+		{SessionID: "d", FullPath: "/proj/dirB/d.jsonl", ProjectPath: "/real/repo-b"},
+		{SessionID: "e", FullPath: "/proj/dirB/e.jsonl", ProjectPath: ""},
+		{SessionID: "lonely", FullPath: "/proj/dirC/lonely.jsonl", ProjectPath: ""},
+	}
+	backfillProjectPaths(entries)
+
+	assert.Equal(t, "/real/repo-a", entries[0].ProjectPath, "entry with a cwd is untouched")
+	assert.Equal(t, "/real/repo-a", entries[1].ProjectPath, "empty cwd filled from a sibling in dirA")
+	assert.Equal(t, "/real/repo-b", entries[2].ProjectPath, "entry with a cwd is untouched")
+	assert.Equal(t, "/real/repo-b", entries[3].ProjectPath, "empty cwd filled from the sibling in dirB")
+	assert.Equal(t, "", entries[4].ProjectPath, "a dir with no sibling-with-a-cwd stays empty")
+}
+
+// Regression: a conversation named before its first turn records no
+// cwd, so its ProjectPath is empty. `conv ls` must still show its
+// project — backfilled from a sibling conversation in the same Claude
+// project directory.
+func TestLoadSessionsIndex_BackfillsTurnlessConvProjectPath(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+
+	// A normal conversation that recorded its cwd on a turn.
+	realID := "11111111-2222-3333-4444-555555555555"
+	real := `{"type":"user","cwd":"/home/gigur/git/myrepo","message":{"role":"user","content":"hello"},"timestamp":"2026-03-01T10:00:00Z"}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, realID+".jsonl"), []byte(real), 0o600), "write real jsonl")
+
+	// A conversation named before its first turn — no turn, no cwd.
+	turnlessID := "228afb8c-4d20-4465-be63-754375a2e58a"
+	turnless := `{"type":"custom-title","customTitle":"billy-r-1","sessionId":"` + turnlessID + `"}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, turnlessID+".jsonl"), []byte(turnless), 0o600), "write turnless jsonl")
+
+	idx, err := LoadSessionsIndex(tmpDir)
+	require.NoError(t, err, "LoadSessionsIndex")
+
+	byID := map[string]SessionEntry{}
+	for _, e := range idx.Entries {
+		byID[e.SessionID] = e
+	}
+	require.Contains(t, byID, turnlessID, "named-but-turnless conv must be indexed")
+	assert.Equal(t, "/home/gigur/git/myrepo", byID[turnlessID].ProjectPath,
+		"turnless conv must inherit its project from a sibling in the same dir")
+	assert.Equal(t, "/home/gigur/git/myrepo", byID[realID].ProjectPath, "sanity: sibling keeps its own cwd")
+}
+
+// The watch-mode fast path (LoadEntriesFromDB) backfills too — even
+// though the persisted conv_index row keeps its empty project_path
+// (the backfill is display-time enrichment, not a DB write).
+func TestLoadEntriesFromDB_BackfillsTurnlessConvProjectPath(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+
+	realID := "11111111-2222-3333-4444-555555555555"
+	real := `{"type":"user","cwd":"/home/gigur/git/myrepo","message":{"role":"user","content":"hello"},"timestamp":"2026-03-01T10:00:00Z"}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, realID+".jsonl"), []byte(real), 0o600), "write real jsonl")
+
+	turnlessID := "228afb8c-4d20-4465-be63-754375a2e58a"
+	turnless := `{"type":"custom-title","customTitle":"billy-r-1","sessionId":"` + turnlessID + `"}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, turnlessID+".jsonl"), []byte(turnless), 0o600), "write turnless jsonl")
+
+	// Populate the conv_index cache.
+	_, err := LoadSessionsIndex(tmpDir)
+	require.NoError(t, err, "LoadSessionsIndex")
+
+	// The persisted row keeps its empty project_path — the backfill is
+	// not written back to the DB.
+	row, err := db.GetConvIndex(turnlessID)
+	require.NoError(t, err, "GetConvIndex")
+	require.NotNil(t, row, "row")
+	assert.Equal(t, "", row.ProjectPath, "conv_index row stays a faithful mirror of the .jsonl")
+
+	// But the watch-mode read path still backfills it for display.
+	entries, err := LoadEntriesFromDB(tmpDir)
+	require.NoError(t, err, "LoadEntriesFromDB")
+	byID := map[string]SessionEntry{}
+	for _, e := range entries {
+		byID[e.SessionID] = e
+	}
+	require.Contains(t, byID, turnlessID, "turnless conv must be present")
+	assert.Equal(t, "/home/gigur/git/myrepo", byID[turnlessID].ProjectPath,
+		"watch-mode path must backfill the project from a sibling")
+}

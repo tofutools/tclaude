@@ -267,6 +267,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			filepath.Base(projectPath), len(entries), scannedCount, len(entries)-scannedCount, time.Since(start))
 	}
 
+	backfillProjectPaths(entries)
 	return &SessionsIndex{Version: 1, Entries: entries}, nil
 }
 
@@ -528,7 +529,48 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 		}
 		entries = append(entries, dbRowToEntry(r, r.FileSize))
 	}
+	backfillProjectPaths(entries)
 	return entries, nil
+}
+
+// backfillProjectPaths fills in a missing ProjectPath from a sibling
+// conversation in the same Claude project directory.
+//
+// Claude Code stamps the working directory onto every conversation
+// *turn*; a conversation that was named but never took a turn (see
+// parseJSONLSession) records no cwd at all. But every .jsonl filed
+// under the same ~/.claude/projects/<dir> was launched from the same
+// cwd — so any sibling that did take a turn is an authoritative
+// source. The key is the .jsonl's parent directory (filepath.Dir of
+// FullPath): that IS the per-cwd Claude project directory.
+//
+// This is display-time enrichment only — the conv_index row stays a
+// faithful mirror of the .jsonl, which genuinely carries no cwd. The
+// listing surfaces (`conv ls`, `conv ls -w`) call this so a
+// named-but-turnless conversation still shows its project.
+func backfillProjectPaths(entries []SessionEntry) {
+	pathByDir := make(map[string]string)
+	for i := range entries {
+		e := &entries[i]
+		if e.ProjectPath == "" || e.FullPath == "" {
+			continue
+		}
+		if dir := filepath.Dir(e.FullPath); pathByDir[dir] == "" {
+			pathByDir[dir] = e.ProjectPath
+		}
+	}
+	if len(pathByDir) == 0 {
+		return
+	}
+	for i := range entries {
+		e := &entries[i]
+		if e.ProjectPath != "" || e.FullPath == "" {
+			continue
+		}
+		if p := pathByDir[filepath.Dir(e.FullPath)]; p != "" {
+			e.ProjectPath = p
+		}
+	}
 }
 
 // isStubRow reports whether a conv_index row is a stub — the
