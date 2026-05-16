@@ -1,8 +1,11 @@
 package agentd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -696,21 +699,196 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 	runCloneOrchestration(w, res.ConvID, dashboardGranter, "", followUp, noCopyConv, cwd)
 }
 
-// dashboardReincarnateAgent is the cookie-auth twin of POST
-// /v1/agent/{conv}/reincarnate. Spawns a fresh CC instance that inherits
-// the target's identity (groups / perms / ownerships migrate onto the
-// new conv-id), renames it `<prev>-r-<N>`, and soft-exits the original
-// pane. Body: `{follow_up}` — REQUIRED (the new pane comes up with
-// clean context and would otherwise sit idle). Cookie auth ≈ human, so
-// requireCrossAgentPermission short-circuits via the !HasClaudeAncestor
-// branch and the audit trail records the dashboard granter.
+// reincarnateMode* are the two modes the dashboard reincarnate button
+// offers, selected by the POST body's `mode` field.
+//
+//   - "self" is the DEFAULT. The daemon does NOT reincarnate the
+//     agent; it delivers an inbox message asking the agent to
+//     reincarnate ITSELF. The agent writes its own handoff at a clean
+//     point, so the successor inherits a context-aware summary the
+//     agent chose — something a daemon-forced reincarnation cannot
+//     produce, since it knows nothing of the agent's working state.
+//   - "force" is the unchanged direct path: the daemon spawns the
+//     successor and soft-exits the original immediately. For an agent
+//     that is stuck / unresponsive and cannot self-reincarnate.
+const (
+	reincarnateModeSelf  = "self"
+	reincarnateModeForce = "force"
+)
+
+// dashboardReincarnateAgent handles POST /api/agents/{conv}/reincarnate.
+// It dispatches on the body's `mode` field (default "self"):
+//
+//   - "self": delegate to dashboardAskSelfReincarnate — deliver an
+//     inbox message asking the agent to reincarnate itself, with an
+//     optional `focus_hint` folded in as guidance. The target's tmux
+//     session is left running; nothing is force-killed.
+//   - "force": the cookie-auth twin of POST /v1/agent/{conv}/reincarnate.
+//     Spawns a fresh CC instance that inherits the target's identity
+//     (groups / perms / ownerships migrate onto the new conv-id),
+//     renames it `<prev>-r-<N>`, and soft-exits the original pane.
+//     Body: `{follow_up}` — REQUIRED.
+//
+// Cookie auth ≈ human (checkDashboardAuth is the consent layer), so the
+// force path's requireCrossAgentPermission short-circuits via the
+// !HasClaudeAncestor branch and the audit trail records the dashboard
+// granter.
 func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
 	res, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
+	// Peek at `mode` without consuming the body for the force path:
+	// handleAgentReincarnate re-decodes r.Body itself, so we buffer the
+	// raw bytes and hand them back verbatim. force-mode stays the
+	// unchanged direct path — its decoder simply ignores the extra
+	// `mode` / `focus_hint` fields. The body is bounded: it only ever
+	// carries a `follow_up` / `focus_hint` text field, which the inbox
+	// charset rule already caps at agent.MaxInitialMessageBytes — 64 KiB
+	// leaves generous JSON slack while refusing an abusive payload.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
+		return
+	}
+	var body struct {
+		Mode      string `json:"mode"`
+		FocusHint string `json:"focus_hint"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if mode == "" {
+		mode = reincarnateModeSelf
+	}
+	switch mode {
+	case reincarnateModeSelf:
+		dashboardAskSelfReincarnate(w, res.ConvID, body.FocusHint)
+	case reincarnateModeForce:
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		r.ContentLength = int64(len(raw))
+		handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("unknown reincarnate mode %q (want %q or %q)",
+				mode, reincarnateModeSelf, reincarnateModeForce))
+	}
+}
+
+// dashboardAskSelfReincarnate is the "self" reincarnate mode — the
+// dashboard default. Rather than the daemon reincarnating the agent, it
+// delivers an inbox message asking the agent to reincarnate itself:
+// write a handoff for its successor capturing the context that matters,
+// then run `tclaude agent reincarnate` with that handoff as the
+// follow-up. The agent acts on it at its next clean point — and because
+// it does the work itself, the successor inherits a context-aware
+// summary the agent chose, not a daemon-forced reincarnation blind to
+// the agent's working state.
+//
+// focusHint is OPTIONAL free text — a hint from the human about what to
+// concentrate on while gathering context for the handoff. When
+// non-empty it is folded into the message as guidance (NOT a command).
+// When blank, the agent just writes a general handoff.
+//
+// The request rides the universal inbox (db.InsertAgentMessage +
+// nudgeIfAlive) — the same transport reincarnate's own handoff uses. A
+// live target is nudged immediately; an offline / busy one picks the
+// message up from its inbox when it next comes online (the daemon
+// flushes undelivered messages on the agent's next request). The
+// target's tmux session is left running — nothing is force-killed.
+//
+// Unlike the force path, this does NOT go through requireCrossAgentPermission:
+// self-mode only delivers an inbox message, which is an ungated
+// capability (the cookie-auth human could equally send it via
+// /api/message). The reincarnation itself stays gated — when the agent
+// runs `tclaude agent reincarnate` it still needs self.reincarnate.
+func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string) {
+	subject, instruction := buildSelfReincarnateInstruction(focusHint)
+	// The instruction rides the inbox like any agent_messages row, so it
+	// must clear the same charset/length rule. A blank focus hint always
+	// passes; this only ever fires on a hint carrying control characters
+	// or one long enough to push the composed body past the cap.
+	if !isValidInitialMessage(instruction) {
+		writeError(w, http.StatusBadRequest, "invalid_focus_hint",
+			fmt.Sprintf("the composed reincarnate instruction is invalid — the focus hint most "+
+				"likely contains control characters, or it is long enough to push the message past "+
+				"%d bytes. Shorten or clean up the focus hint.", agent.MaxInitialMessageBytes))
+		return
+	}
+	// FromConv is empty: this is a daemon-originated system instruction,
+	// not a peer-to-peer send — the same shape reincarnate's own handoff
+	// uses when triggered from the dashboard. group_id 0 is a direct
+	// message, the universal-inbox transport.
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:      0,
+		FromConv:     "",
+		ToConv:       target,
+		Subject:      subject,
+		Body:         instruction,
+		ToRecipients: []string{target},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"queue self-reincarnate request: "+err.Error())
+		return
+	}
+	delivered := nudgeIfAlive(id, target)
+	note := fmt.Sprintf("asked %s to reincarnate itself; instruction delivered to its inbox as "+
+		"message #%d — it will write its own handoff and reincarnate at a clean point",
+		short8(target), id)
+	if !delivered {
+		note = fmt.Sprintf("asked %s to reincarnate itself; instruction queued in its inbox as "+
+			"message #%d (target offline or busy) — it will pick the request up when it next "+
+			"comes online", short8(target), id)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":       reincarnateModeSelf,
+		"conv_id":    target,
+		"message_id": id,
+		"delivered":  delivered,
+		"note":       note,
+	})
+}
+
+// buildSelfReincarnateInstruction composes the subject + body of the
+// "please reincarnate yourself" inbox message. focusHint, when
+// non-empty, is appended as guidance on what to emphasise — phrased so
+// the agent treats it as a hint, not a command and not the whole task.
+//
+// No backticks: the body is read by the agent and may be echoed into
+// shells / forwarded messages downstream, where backticks would be
+// eaten by shell command substitution. Plain text keeps it paste-safe.
+func buildSelfReincarnateInstruction(focusHint string) (subject, body string) {
+	subject = "Please reincarnate yourself (dashboard request)"
+	var b strings.Builder
+	b.WriteString("The human has asked you, from the dashboard, to reincarnate yourself.\n\n")
+	b.WriteString("Reincarnation replaces you with a fresh Claude Code instance that inherits your ")
+	b.WriteString("identity (group memberships, permissions, ownerships) but starts with a clean ")
+	b.WriteString("context window. Doing it yourself — rather than having the daemon force it — lets ")
+	b.WriteString("you collect your own relevant context first, so your successor starts from a ")
+	b.WriteString("handoff you wrote.\n\n")
+	b.WriteString("At a clean point (finish your current turn or sub-task first — there is no need to ")
+	b.WriteString("interrupt yourself mid-thought), please:\n")
+	b.WriteString("  1. Persist any work-in-progress to disk.\n")
+	b.WriteString("  2. Write a handoff for your successor: a concise but self-contained summary of ")
+	b.WriteString("what you were working on, where the relevant files are, what is done, what is ")
+	b.WriteString("next, and any open questions.\n")
+	b.WriteString("  3. Run: tclaude agent reincarnate \"<your handoff text>\"\n")
+	b.WriteString("     The handoff is the REQUIRED follow-up — it becomes your successor's first ")
+	b.WriteString("turn, so make it stand on its own.\n\n")
+	b.WriteString("See the agent-lifecycle skill for the full details of reincarnate.")
+	if hint := strings.TrimSpace(focusHint); hint != "" {
+		b.WriteString("\n\nFocus hint from the human — guidance on what to emphasise while gathering ")
+		b.WriteString("context for your handoff. Treat it as a hint, not a command and not the whole ")
+		b.WriteString("task:\n")
+		b.WriteString(hint)
+	}
+	return subject, b.String()
 }
 
 // dashboardRenameAgent is the cookie-auth twin of POST
