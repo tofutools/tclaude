@@ -226,6 +226,32 @@ func TestDashboardReincarnate_SelfMode_RejectsControlCharFocusHint(t *testing.T)
 		"focus_hint": "bad\x01hint",
 	})
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	// Pin that the focus-hint validation specifically fired — not some
+	// other 400 — so the test can't pass for the wrong reason.
+	assert.Contains(t, rec.Body.String(), "invalid_focus_hint")
+
+	rows, err := db.ListAgentMessagesForConv(conv, 100)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a rejected request writes no inbox row")
+	assert.True(t, f.World.Tmux.IsAlive(tmux), "a rejected request never touches the session")
+}
+
+// Scenario: an unknown `mode` value is rejected with 400 — the
+// endpoint's default branch — and writes no inbox row.
+func TestDashboardReincarnate_UnknownMode_BadRequest(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "reig-aaaa-bbbb-cccc-000000000001"
+	const tmux = "tclaude-spwn-reig"
+	f.HaveConvWithTitle(conv, "worker-badmode")
+	f.HaveAliveSession(conv, "spwn-reig", tmux, "/tmp/work")
+	f.HaveGroup("team")
+	f.HaveMember("team", conv)
+
+	mux := reincDashMux(t)
+	rec := postReincarnate(t, mux, conv, map[string]any{"mode": "bogus"})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "unknown reincarnate mode")
 
 	rows, err := db.ListAgentMessagesForConv(conv, 100)
 	require.NoError(t, err)
@@ -249,9 +275,12 @@ func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 	f.HaveMember("alpha", oldConv)
 
 	mux := reincDashMux(t)
+	// focus_hint is a self-mode field; force-mode's decoder must simply
+	// ignore it (extra JSON fields are dropped) and proceed normally.
 	rec := postReincarnate(t, mux, oldConv, map[string]any{
-		"mode":      "force",
-		"follow_up": "fresh start",
+		"mode":       "force",
+		"follow_up":  "fresh start",
+		"focus_hint": "ignored in force mode",
 	})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 

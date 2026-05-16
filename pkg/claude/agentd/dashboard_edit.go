@@ -743,8 +743,11 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 	// handleAgentReincarnate re-decodes r.Body itself, so we buffer the
 	// raw bytes and hand them back verbatim. force-mode stays the
 	// unchanged direct path — its decoder simply ignores the extra
-	// `mode` / `focus_hint` fields.
-	raw, err := io.ReadAll(r.Body)
+	// `mode` / `focus_hint` fields. The body is bounded: it only ever
+	// carries a `follow_up` / `focus_hint` text field, which the inbox
+	// charset rule already caps at agent.MaxInitialMessageBytes — 64 KiB
+	// leaves generous JSON slack while refusing an abusive payload.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
 		return
@@ -798,6 +801,12 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 // message up from its inbox when it next comes online (the daemon
 // flushes undelivered messages on the agent's next request). The
 // target's tmux session is left running — nothing is force-killed.
+//
+// Unlike the force path, this does NOT go through requireCrossAgentPermission:
+// self-mode only delivers an inbox message, which is an ungated
+// capability (the cookie-auth human could equally send it via
+// /api/message). The reincarnation itself stays gated — when the agent
+// runs `tclaude agent reincarnate` it still needs self.reincarnate.
 func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string) {
 	subject, instruction := buildSelfReincarnateInstruction(focusHint)
 	// The instruction rides the inbox like any agent_messages row, so it
