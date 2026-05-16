@@ -3,9 +3,11 @@
 Even with graduated permissions, sometimes an agent needs to ask the
 human "may I do X right now?" out-of-band.
 
-X-Tclaude-Ask-Human header is shipped on self-path endpoints (see
-`identity.go`) but not on cross-agent endpoints (see
-`cross-agent-lifecycle.md`).
+The X-Tclaude-Ask-Human header is shipped on both self-path
+endpoints (see `identity.go`) and cross-agent endpoints (see
+[`DONE/cross-agent-manager-pattern.md`](../../DONE/cross-agent-manager-pattern.md)
+— `requireCrossAgentPermission` honors it as a last-chance escape
+hatch).
 
 This file covers the **richer agent-side ask** beyond the existing
 header.
