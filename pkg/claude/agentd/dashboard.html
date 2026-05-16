@@ -2372,6 +2372,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
             <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring multicast to every member of ${esc(g.name)}">⏰ multicast</button>
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
+            <button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>
             <button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>
             <button class="warn" data-act="emergency-shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Emergency shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 emergency shutdown</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
@@ -6715,6 +6716,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
               if (renameEditing) restore();
             });
             return; // Skip the default refresh; commit() / restore() handle it.
+          }
+          case 'export-group': {
+            // Export is a file download, not a mutation. Trigger it via
+            // a transient anchor so the browser saves the .zip (the
+            // endpoint sets Content-Disposition); the cookie rides along
+            // on the same-origin GET. Return so the default toast +
+            // refresh do not fire — nothing changed.
+            const a = document.createElement('a');
+            a.href = `/api/groups/${encodeURIComponent(group)}/export`;
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            toast(`Exporting group "${group}"…`);
+            return;
           }
           case 'cleanup-group': {
             // Open the bulk-cleanup overlay scoped to this group. The

@@ -150,6 +150,14 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermMessageDirect,
 		Description: "Send a 1:1 message to ANY agent regardless of shared-group membership — the off-group escape hatch (tclaude agent message). Intra-group messaging, owner-of-group, and via-link reach need no slug; this covers everything else. Not default-granted.",
 	},
+	{
+		Slug:        PermGroupsExport,
+		Description: "Export a whole group to a portable .zip archive — DB rows plus every member's conversation .jsonl (tclaude agent groups export). The archive holds full conversation content; not default-granted (effectively human-only).",
+	},
+	{
+		Slug:        PermGroupsImport,
+		Description: "Import a group from a .zip archive, recreating the group, its agents, permissions and conversations on this machine (tclaude agent groups import). Not default-granted (effectively human-only).",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.

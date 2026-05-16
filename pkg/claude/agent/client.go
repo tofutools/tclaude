@@ -250,6 +250,75 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 	return nil
 }
 
+// daemonRawTimeout is the per-request timeout for the raw binary
+// transfers (group export download / import upload). Generous: building
+// an export or applying an import touches many .jsonl files and runs a
+// multi-table transaction, well beyond the default JSON-call budget.
+const daemonRawTimeout = 10 * time.Minute
+
+// DaemonGetRaw performs a GET against the daemon and returns the raw
+// response body plus its headers — used for binary downloads such as a
+// group-export .zip, where the body is not JSON. A >= 400 status is
+// returned as a *DaemonError, its message decoded from the JSON error
+// envelope the daemon writes on failure.
+func DaemonGetRaw(path string) ([]byte, http.Header, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://_"+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := httpClientWithTimeout(daemonRawTimeout).Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, nil, fmt.Errorf("read response body: %w", readErr)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, nil, decodeDaemonError(resp.StatusCode, raw)
+	}
+	return raw, resp.Header, nil
+}
+
+// DaemonPostRaw performs a POST with a raw (non-JSON) request body —
+// used to upload a group-export .zip — and decodes the JSON response
+// into out (pass nil to ignore the response body).
+func DaemonPostRaw(path, contentType string, body []byte, out any) error {
+	req, err := http.NewRequest(http.MethodPost, "http://_"+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := httpClientWithTimeout(daemonRawTimeout).Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("read response body: %w", readErr)
+	}
+	if resp.StatusCode >= 400 {
+		return decodeDaemonError(resp.StatusCode, raw)
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// decodeDaemonError builds a *DaemonError from a failed response,
+// pulling the message + code out of the daemon's JSON error envelope.
+func decodeDaemonError(status int, raw []byte) error {
+	var e struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	_ = json.Unmarshal(raw, &e)
+	return &DaemonError{Status: status, Code: e.Code, Msg: e.Error, Raw: raw}
+}
+
 // MapDaemonErrorToRC converts a DaemonError's code into the CLI's rc*
 // exit codes. Unknown codes fall back to rcIOFailure so the user always
 // sees a non-zero exit on failure.

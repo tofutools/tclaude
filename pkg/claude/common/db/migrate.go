@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 39
+const currentVersion = 40
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -257,6 +257,57 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 40 {
+		if err := migrateV39toV40(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV39toV40 adds agent_transfer_log — the persistent audit trail
+// for per-group export / import (tclaude agent groups export|import).
+//
+// Each row records one transfer: kind 'export' or 'import', when it
+// happened, the export's format_version, and — for imports — the source
+// machine bases the export was taken against (source_home / source_os),
+// the resulting group name + target dir, the conv-id remaps that were
+// applied (a JSON object of collided source-id → freshly minted id), and
+// agent / message counts. The import handler writes its row INSIDE the
+// import transaction, so a rolled-back import logs nothing — the log can
+// never claim an import that did not land. Exports log a lighter row
+// best-effort after the fact.
+//
+// A dedicated table rather than an extension of agent_group_audit:
+// agent_group_audit is rename-specific (old_name/new_name/by_conv/at),
+// whereas a transfer entry carries a different, richer shape. Keeping
+// them separate keeps each table's columns meaningful.
+func migrateV39toV40(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_transfer_log (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			kind           TEXT NOT NULL,
+			at             TEXT NOT NULL,
+			format_version INTEGER NOT NULL DEFAULT 0,
+			source_group   TEXT NOT NULL DEFAULT '',
+			source_home    TEXT NOT NULL DEFAULT '',
+			source_os      TEXT NOT NULL DEFAULT '',
+			result_group   TEXT NOT NULL DEFAULT '',
+			target_dir     TEXT NOT NULL DEFAULT '',
+			conv_remaps    TEXT NOT NULL DEFAULT '',
+			agent_count    INTEGER NOT NULL DEFAULT 0,
+			message_count  INTEGER NOT NULL DEFAULT 0,
+			by_conv        TEXT NOT NULL DEFAULT '',
+			note           TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_transfer_log_at
+			ON agent_transfer_log(at);
+
+		UPDATE schema_version SET version = 40;
+	`); err != nil {
+		return fmt.Errorf("migrate v39→v40 (add agent_transfer_log): %w", err)
+	}
 	return nil
 }
 

@@ -166,6 +166,8 @@ const (
 	PermAgentPromote      = "agent.promote"
 	PermAgentRetire       = "agent.retire"
 	PermMessageDirect     = "message.direct"
+	PermGroupsExport      = "groups.export"
+	PermGroupsImport      = "groups.import"
 )
 
 // permResolution is the verdict of the non-interactive permission
