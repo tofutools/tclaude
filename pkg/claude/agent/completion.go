@@ -113,6 +113,9 @@ func completeRoles(_ *cobra.Command, _ []string, toComplete string) []string {
 	if err != nil {
 		return nil
 	}
+	// Match the case-insensitive delivery semantics — a lowercase
+	// `--role po` must still complete a stored role `PO`.
+	needle := strings.ToLower(strings.TrimSpace(toComplete))
 	seen := map[string]bool{}
 	out := []string{}
 	for _, g := range groups {
@@ -122,10 +125,11 @@ func completeRoles(_ *cobra.Command, _ []string, toComplete string) []string {
 		}
 		for _, m := range members {
 			role := strings.TrimSpace(m.Role)
-			if role == "" || seen[role] || !strings.HasPrefix(role, toComplete) {
+			key := strings.ToLower(role)
+			if role == "" || seen[key] || !strings.HasPrefix(key, needle) {
 				continue
 			}
-			seen[role] = true
+			seen[key] = true
 			out = append(out, role)
 		}
 	}

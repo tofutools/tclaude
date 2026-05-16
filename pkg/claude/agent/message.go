@@ -138,7 +138,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			// Always state the resolved count so a typo'd --role reads
 			// as a visible no-op rather than a silent one.
 			if p.Role != "" {
-				fmt.Fprintf(stdout, "0 recipients: no members with role %q in group %q; nothing sent.\n", p.Role, resp.ViaGroup)
+				fmt.Fprintf(stdout, "0 recipients: no other members with role %q in group %q; nothing sent.\n", p.Role, resp.ViaGroup)
 			} else {
 				fmt.Fprintf(stdout, "0 recipients in group %q (you're the only member); nothing sent.\n", resp.ViaGroup)
 			}

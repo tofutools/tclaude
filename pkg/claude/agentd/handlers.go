@@ -632,15 +632,26 @@ func resolveMulticastGroup(w http.ResponseWriter, fromID, token string) (g *db.A
 	if g != nil {
 		return g, true
 	}
-	// No name match — fall back to a numeric group id.
-	if id, perr := strconv.ParseInt(token, 10, 64); perr == nil {
-		g, err = db.GetAgentGroupByID(id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return nil, false
+	// No name match — fall back to a numeric group id, but only for an
+	// all-digit token: strconv.ParseInt would otherwise accept signed
+	// forms ("+7", "-7") that the documented grammar excludes.
+	allDigits := token != ""
+	for _, r := range token {
+		if r < '0' || r > '9' {
+			allDigits = false
+			break
 		}
-		if g != nil {
-			return g, true
+	}
+	if allDigits {
+		if id, perr := strconv.ParseInt(token, 10, 64); perr == nil {
+			g, err = db.GetAgentGroupByID(id)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return nil, false
+			}
+			if g != nil {
+				return g, true
+			}
 		}
 	}
 	writeError(w, http.StatusNotFound, "not_found",

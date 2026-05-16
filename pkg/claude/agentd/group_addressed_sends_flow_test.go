@@ -111,6 +111,12 @@ func TestMulticast_ByNumericID(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, g.ID, rows[0].GroupID, "row carries the resolved group's id")
+
+	// A signed token is not all-digits — the numeric-id fallback is
+	// skipped (the documented grammar is all-digits only), so it
+	// resolves to no group rather than to the same id.
+	signed := postMessage(t, f, sender, map[string]any{"to": "group:+" + itoa64(g.ID), "body": "x"})
+	require.Equal(t, http.StatusNotFound, signed.Code, "body=%s", signed.Body.String())
 }
 
 // Scenario 3: bare group: with the sender in exactly one group resolves
