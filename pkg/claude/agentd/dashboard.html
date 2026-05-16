@@ -749,6 +749,80 @@ details.group-virtual .group-name { color: #8aa0b8; }
   margin: 2px 0 0; padding-left: 18px; color: #c9d1d9;
 }
 .group-import-preview .gi-collide-list li { word-break: break-word; }
+/* Group templates — the Templates tab list + the editor / instantiate
+   / from-group modals. The modals reuse .cron-create-modal for the
+   shell + rows; these rules add the template-specific surfaces. */
+.template-editor-modal { min-width: 620px; max-width: 760px; max-height: 90vh; overflow-y: auto; }
+.template-agents-head {
+  display: flex; align-items: center; gap: 10px;
+  color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: 10px; margin-top: 4px;
+}
+.template-agents-head .tool { margin-left: auto; }
+#template-editor-agents { display: flex; flex-direction: column; gap: 10px; }
+.template-agent-row {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 6px;
+}
+.template-agent-row-head { display: flex; align-items: center; gap: 10px; }
+.template-agent-num { color: #58a6ff; font-size: 11px; font-weight: 600; }
+.template-agent-owner {
+  display: flex; align-items: center; gap: 4px; font-size: 11px;
+  color: #c9d1d9; cursor: pointer; user-select: none;
+}
+.template-agent-owner input { margin: 0; }
+.template-agent-row-head .ta-remove { margin-left: auto; padding: 1px 7px; }
+.template-agent-grid { display: flex; gap: 6px; }
+.template-agent-row input[type=text],
+.template-agent-row textarea {
+  flex: 1; background: #161b22; color: #c9d1d9; font-family: inherit;
+  font-size: 12px; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 8px; box-sizing: border-box; width: 100%;
+}
+.template-agent-row textarea { resize: vertical; }
+.template-agent-row input:focus,
+.template-agent-row textarea:focus { outline: none; border-color: #58a6ff; }
+.ta-perms-details { font-size: 11px; }
+.ta-perms-details summary { cursor: pointer; color: #7d8590; user-select: none; }
+.ta-perms-details summary:hover { color: #c9d1d9; }
+.ta-perms-list {
+  display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 6px;
+  max-height: 150px; overflow-y: auto;
+}
+.ta-perms-list label {
+  display: flex; align-items: center; gap: 4px; color: #c9d1d9;
+  cursor: pointer; flex: 0 0 calc(50% - 6px);
+}
+.ta-perms-list label input { margin: 0; }
+.template-preview {
+  flex: 1; font-size: 12px; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 7px 10px; display: flex;
+  flex-direction: column; gap: 3px; min-height: 24px;
+}
+.template-preview .tp-row { display: flex; gap: 8px; align-items: baseline; }
+.template-preview .tp-name { color: #c9d1d9; font-weight: 600; }
+.template-preview .tp-meta { color: #7d8590; }
+.template-preview .tp-owner { color: #d29922; }
+.template-preview .tp-empty { color: #6e7681; }
+/* Templates tab list — one card per template. */
+.template-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 10px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.template-card .tc-head { display: flex; align-items: baseline; gap: 10px; }
+.template-card .tc-name { font-size: 14px; font-weight: 600; color: #d4d4d4; }
+.template-card .tc-descr { color: #7d8590; font-size: 12px; }
+.template-card .tc-count { color: #6e7681; font-size: 11px; }
+.template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
+.template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
+.template-card .tc-agent {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
+}
+.template-card .tc-agent .tc-owner { color: #d29922; }
+.template-card .tc-agent .tc-role { color: #7d8590; }
+.template-empty { color: #6e7681; padding: 14px; font-size: 13px; }
 /* Cleanup modal — the 🧹 bulk-cleanup overlay. Reuses the
    cron-create-modal outer shape and the add-member list look for the
    editable candidate rows. */
@@ -966,6 +1040,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 </header>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
+  <button data-tab="templates">Templates</button>
   <button data-tab="agents">Agents</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
@@ -994,9 +1069,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <span class="spacer"></span>
       <button id="group-import-open" class="tool" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
       <button id="cleanup-all-open" class="tool" title="Clean up offline agents across every group (optionally delete them)">🧹 clean up</button>
+      <button id="group-from-template-open" class="tool" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
     </div>
     <div id="groups-list"></div>
+  </section>
+  <section id="tab-templates">
+    <div class="filter-bar">
+      <input id="filter-templates" type="text" placeholder="Filter (template name / descr / agent name / role)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-templates-count"></span>
+      <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template">⤓ from a group</button>
+      <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
+    </div>
+    <div id="templates-list"></div>
   </section>
   <section id="tab-agents">
     <div class="filter-bar">
@@ -1372,6 +1459,85 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <button id="group-create-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="group-create-submit" class="primary" type="button">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-editor-modal">
+  <div class="cron-create-modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="template-editor-title">
+    <h3 id="template-editor-title">New group template</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Name</span>
+      <input id="template-editor-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Descr</span>
+      <input id="template-editor-descr" type="text" placeholder="optional one-line description" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Default context</span>
+      <textarea id="template-editor-context" class="modal-context-textarea" rows="4" placeholder="optional — reusable group-wide boilerplate; the per-instantiation task is appended to this and delivered to every spawned agent's inbox" spellcheck="false"></textarea>
+    </label>
+    <div class="template-agents-head">
+      <span>Agents</span>
+      <button type="button" id="template-editor-add-agent" class="tool">+ add agent</button>
+    </div>
+    <div id="template-editor-agents"></div>
+    <div class="cron-create-error" id="template-editor-error"></div>
+    <div class="modal-buttons">
+      <button id="template-editor-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-editor-submit" class="primary" type="button">Save template</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-instantiate-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-instantiate-title">
+    <h3 id="template-instantiate-title">New group from template</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Template</span>
+      <select id="template-instantiate-template"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Group name</span>
+      <input id="template-instantiate-group" type="text" placeholder="kebab-or-snake-case — also the name prefix for every spawned agent" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Task / project</span>
+      <textarea id="template-instantiate-task" class="modal-context-textarea" rows="5" placeholder="the assignment for this group — multi-line OK; folded into the group context every spawned agent sees" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Default cwd</span>
+      <input id="template-instantiate-cwd" type="text" placeholder="optional — absolute path (~ OK) the agents spawn in" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="cron-create-row">
+      <span class="cron-create-label">Preview</span>
+      <div id="template-instantiate-preview" class="template-preview"></div>
+    </div>
+    <div class="cron-create-error" id="template-instantiate-error"></div>
+    <div class="modal-buttons">
+      <button id="template-instantiate-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-instantiate-submit" class="primary" type="button">Create &amp; spawn</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-from-group-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-from-group-title">
+    <h3 id="template-from-group-title">Save a group as a template</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Group</span>
+      <select id="template-from-group-group"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Template name</span>
+      <input id="template-from-group-name" type="text" placeholder="kebab-or-snake-case label for the new template" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="modal-meta">Captures the group's roles, owner, per-agent permission grants and shared context. Per-agent task briefs come through blank — fill them in the editor that opens next.</div>
+    <div class="cron-create-error" id="template-from-group-error"></div>
+    <div class="modal-buttons">
+      <button id="template-from-group-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-from-group-submit" class="primary" type="button">Save as template</button>
     </div>
   </div>
 </div>
@@ -4415,6 +4581,424 @@ details.group-virtual .group-name { color: #8aa0b8; }
     });
   }
 
+  // ---- Group templates --------------------------------------------------
+  //
+  // A template is a reusable blueprint for a working group: a name, a
+  // shared default context, and an ordered list of agent specs (name,
+  // role, descr, task brief, owner flag, permission slugs).
+  // Instantiating one creates a fresh group and spawns its whole team.
+  //
+  // templateEditorEditing holds the original name while editing an
+  // existing template (the PATCH target); null while creating.
+  // templateEditorAgents mirrors the editor's agent rows so add/remove
+  // can re-render the container without losing typed values.
+  let templateEditorEditing = null;
+  let templateEditorAgents = [];
+
+  function filterTemplates(list, q) {
+    if (!q) return list;
+    const n = q.toLowerCase();
+    return list.filter(t =>
+      (t.name || '').toLowerCase().includes(n) ||
+      (t.descr || '').toLowerCase().includes(n) ||
+      (t.agents || []).some(a =>
+        (a.name || '').toLowerCase().includes(n) ||
+        (a.role || '').toLowerCase().includes(n)));
+  }
+
+  function renderTemplatesTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-templates').value;
+    const all = lastSnapshot.templates || [];
+    const list = filterTemplates(all, q);
+    const countEl = $('#filter-templates-count');
+    if (countEl) countEl.textContent = q ? `${list.length} / ${all.length}` : `${all.length}`;
+    const host = $('#templates-list');
+    if (!list.length) {
+      host.innerHTML = `<div class="template-empty">${all.length
+        ? 'No templates match the filter.'
+        : 'No templates yet — press <b>+ new template</b> to define one, or <b>⤓ from a group</b> to snapshot an existing group.'}</div>`;
+      return;
+    }
+    host.innerHTML = list.map(templateCardHTML).join('');
+  }
+
+  function templateCardHTML(t) {
+    const agents = (t.agents || []).map(a => {
+      const owner = a.is_owner ? '<span class="tc-owner" title="group owner">★</span> ' : '';
+      const role = a.role ? ` <span class="tc-role">${esc(a.role)}</span>` : '';
+      const np = (a.permissions || []).length;
+      const perms = np
+        ? ` <span class="tc-role" title="${esc((a.permissions || []).join(', '))}">+${np}🔑</span>`
+        : '';
+      return `<span class="tc-agent">${owner}${esc(a.name)}${role}${perms}</span>`;
+    }).join('');
+    const n = (t.agents || []).length;
+    return `<div class="template-card" data-template="${esc(t.name)}">
+      <div class="tc-head">
+        <span class="tc-name">${esc(t.name)}</span>
+        ${t.descr ? `<span class="tc-descr">${esc(t.descr)}</span>` : ''}
+        <span class="tc-count">${n} agent${n === 1 ? '' : 's'}</span>
+        <span class="tc-actions">
+          <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="Create a group from this template">⎘ instantiate</button>
+          <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
+          <button class="tool" data-tact="delete" data-template="${esc(t.name)}">delete</button>
+        </span>
+      </div>
+      ${agents ? `<div class="tc-agents">${agents}</div>` : ''}
+    </div>`;
+  }
+
+  function templatesByName() {
+    const m = {};
+    for (const t of (lastSnapshot && lastSnapshot.templates) || []) m[t.name] = t;
+    return m;
+  }
+
+  function blankTemplateAgent() {
+    return { name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [] };
+  }
+
+  // ---- Template editor modal --------------------------------------------
+
+  function openTemplateEditor(tmpl) {
+    templateEditorEditing = tmpl ? tmpl.name : null;
+    $('#template-editor-title').textContent =
+      tmpl ? `Edit template: ${tmpl.name}` : 'New group template';
+    $('#template-editor-name').value = tmpl ? tmpl.name : '';
+    $('#template-editor-descr').value = tmpl ? (tmpl.descr || '') : '';
+    $('#template-editor-context').value = tmpl ? (tmpl.default_context || '') : '';
+    $('#template-editor-error').textContent = '';
+    templateEditorAgents = tmpl
+      ? (tmpl.agents || []).map(a => ({
+          name: a.name || '', role: a.role || '', descr: a.descr || '',
+          initial_message: a.initial_message || '', is_owner: !!a.is_owner,
+          permissions: (a.permissions || []).slice(),
+        }))
+      : [blankTemplateAgent()];
+    renderEditorAgents();
+    $('#template-editor-modal').classList.add('show');
+    setTimeout(() => $('#template-editor-name').focus(), 0);
+  }
+
+  function closeTemplateEditor() { $('#template-editor-modal').classList.remove('show'); }
+
+  function renderEditorAgents() {
+    const slugs = (lastSnapshot && lastSnapshot.slugs) || [];
+    $('#template-editor-agents').innerHTML =
+      templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i, slugs)).join('');
+  }
+
+  function editorAgentRowHTML(a, idx, slugs) {
+    const perms = new Set(a.permissions || []);
+    const checks = slugs.map(s =>
+      `<label title="${esc(s.description || '')}"><input type="checkbox" class="ta-perm" data-slug="${esc(s.slug)}"${perms.has(s.slug) ? ' checked' : ''} /> ${esc(s.slug)}</label>`
+    ).join('');
+    return `<div class="template-agent-row" data-idx="${idx}">
+      <div class="template-agent-row-head">
+        <span class="template-agent-num">Agent ${idx + 1}</span>
+        <label class="template-agent-owner" title="Mark this agent as the instantiated group's owner (at most one per template)">
+          <input type="checkbox" class="ta-owner"${a.is_owner ? ' checked' : ''} /> owner
+        </label>
+        <button type="button" class="tool ta-remove" title="Remove this agent">✕</button>
+      </div>
+      <div class="template-agent-grid">
+        <input type="text" class="ta-name" placeholder="name (e.g. PO, dev1)" value="${esc(a.name)}" />
+        <input type="text" class="ta-role" placeholder="role (e.g. product-owner)" value="${esc(a.role)}" />
+      </div>
+      <input type="text" class="ta-descr" placeholder="one-line description (dashboard column)" value="${esc(a.descr)}" />
+      <textarea class="ta-initmsg" rows="3" placeholder="task brief for this agent — delivered to its inbox at spawn (newlines OK)">${esc(a.initial_message)}</textarea>
+      <details class="ta-perms-details">
+        <summary>Permissions (<span class="ta-perms-count">${perms.size}</span>)</summary>
+        <div class="ta-perms-list">${checks}</div>
+      </details>
+    </div>`;
+  }
+
+  // scrapeEditorAgents reads the agent rows back into templateEditorAgents
+  // — called before any add/remove (which re-renders the container) and
+  // before submit, so typed-but-uncommitted values are never lost.
+  function scrapeEditorAgents() {
+    templateEditorAgents = $$('#template-editor-agents .template-agent-row').map(row => ({
+      name: $('.ta-name', row).value.trim(),
+      role: $('.ta-role', row).value.trim(),
+      descr: $('.ta-descr', row).value.trim(),
+      initial_message: $('.ta-initmsg', row).value,
+      is_owner: $('.ta-owner', row).checked,
+      permissions: $$('.ta-perm', row).filter(c => c.checked).map(c => c.dataset.slug),
+    }));
+  }
+
+  async function submitTemplateEditor() {
+    scrapeEditorAgents();
+    const name = $('#template-editor-name').value.trim();
+    const errEl = $('#template-editor-error');
+    errEl.textContent = '';
+    if (!name) { errEl.textContent = 'template name is required'; return; }
+    const payload = {
+      name,
+      descr: $('#template-editor-descr').value.trim(),
+      default_context: $('#template-editor-context').value,
+      agents: templateEditorAgents,
+    };
+    const editing = templateEditorEditing;
+    const url = editing ? `/api/templates/${encodeURIComponent(editing)}` : '/api/templates';
+    const btn = $('#template-editor-submit');
+    btn.disabled = true;
+    try {
+      const r = await fetch(url, {
+        method: editing ? 'PATCH' : 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) { errEl.textContent = (await r.text()) || `HTTP ${r.status}`; return; }
+      closeTemplateEditor();
+      toast(editing ? `template updated: ${name}` : `template created: ${name}`);
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function deleteTemplate(name) {
+    const ok = await confirmModal({
+      title: 'Delete template?',
+      body: `Delete the template "${name}"? This removes the blueprint only — any groups already instantiated from it are left untouched.`,
+      meta: name,
+      okLabel: 'Delete template',
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/templates/${encodeURIComponent(name)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      if (!r.ok && r.status !== 204) { toast((await r.text()) || `HTTP ${r.status}`, true); return; }
+      toast(`template deleted: ${name}`);
+      refresh();
+    } catch (err) {
+      toast((err && err.message) || String(err), true);
+    }
+  }
+
+  // ---- Instantiate-from-template modal ----------------------------------
+
+  function openInstantiateModal(presetName) {
+    const templates = (lastSnapshot && lastSnapshot.templates) || [];
+    if (!templates.length) {
+      toast('no templates yet — define one in the Templates tab first', true);
+      return;
+    }
+    const sel = $('#template-instantiate-template');
+    sel.innerHTML = templates.map(t =>
+      `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+    if (presetName && templates.some(t => t.name === presetName)) sel.value = presetName;
+    $('#template-instantiate-group').value = '';
+    $('#template-instantiate-task').value = '';
+    $('#template-instantiate-cwd').value = '';
+    $('#template-instantiate-error').textContent = '';
+    renderInstantiatePreview();
+    $('#template-instantiate-modal').classList.add('show');
+    setTimeout(() => $('#template-instantiate-group').focus(), 0);
+  }
+
+  function closeInstantiateModal() { $('#template-instantiate-modal').classList.remove('show'); }
+
+  // renderInstantiatePreview paints the live "final agent names" list as
+  // the human types the group name — agent "PO" shows as "<group>-PO".
+  function renderInstantiatePreview() {
+    const t = templatesByName()[$('#template-instantiate-template').value];
+    const prefix = $('#template-instantiate-group').value.trim();
+    const host = $('#template-instantiate-preview');
+    const agents = (t && t.agents) || [];
+    if (!agents.length) {
+      host.innerHTML = '<span class="tp-empty">this template has no agents</span>';
+      return;
+    }
+    const shown = prefix || '‹group›';
+    host.innerHTML = agents.map(a => {
+      const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
+      const np = (a.permissions || []).length;
+      const meta = [a.role ? esc(a.role) : '', np ? `+${np}🔑` : '', owner]
+        .filter(Boolean).join(' · ');
+      return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
+        + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
+    }).join('');
+  }
+
+  async function submitInstantiate() {
+    const tmplName = $('#template-instantiate-template').value;
+    const groupName = $('#template-instantiate-group').value.trim();
+    const errEl = $('#template-instantiate-error');
+    errEl.textContent = '';
+    if (!tmplName) { errEl.textContent = 'pick a template'; return; }
+    if (!groupName) { errEl.textContent = 'group name is required'; return; }
+    const payload = {
+      group_name: groupName,
+      task: $('#template-instantiate-task').value,
+      cwd: $('#template-instantiate-cwd').value.trim(),
+    };
+    const btn = $('#template-instantiate-submit');
+    btn.disabled = true;
+    btn.textContent = 'Spawning…';
+    try {
+      const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const txt = await r.text();
+      if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+      let resp = {};
+      try { resp = JSON.parse(txt); } catch (_) {}
+      closeInstantiateModal();
+      const failed = resp.failed || 0;
+      toast(failed
+        ? `group ${groupName}: spawned ${resp.spawned || 0}, ${failed} failed — check the group`
+        : `group ${groupName}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
+        failed > 0);
+      try { localStorage.setItem('tclaude.dash.group.' + groupName, '1'); } catch (_) {}
+      // Jump to the Groups tab so the freshly-spawned group is visible.
+      const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+      if (gbtn) gbtn.click();
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create & spawn';
+    }
+  }
+
+  // ---- Save-group-as-template modal -------------------------------------
+
+  function openFromGroupModal() {
+    const groups = ((lastSnapshot && lastSnapshot.groups) || []).map(g => g.name);
+    if (!groups.length) { toast('no groups to snapshot', true); return; }
+    const sel = $('#template-from-group-group');
+    sel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    $('#template-from-group-name').value = '';
+    $('#template-from-group-error').textContent = '';
+    $('#template-from-group-modal').classList.add('show');
+    setTimeout(() => $('#template-from-group-name').focus(), 0);
+  }
+
+  function closeFromGroupModal() { $('#template-from-group-modal').classList.remove('show'); }
+
+  async function submitFromGroup() {
+    const group = $('#template-from-group-group').value;
+    const name = $('#template-from-group-name').value.trim();
+    const errEl = $('#template-from-group-error');
+    errEl.textContent = '';
+    if (!group) { errEl.textContent = 'pick a group'; return; }
+    if (!name) { errEl.textContent = 'template name is required'; return; }
+    const btn = $('#template-from-group-submit');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/templates/from-group', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group, template_name: name }),
+      });
+      const txt = await r.text();
+      if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+      let tmpl = null;
+      try { tmpl = JSON.parse(txt); } catch (_) {}
+      closeFromGroupModal();
+      toast(`template created from ${group}: ${name}`);
+      refresh();
+      // Open the editor on the fresh template so the human can fill in
+      // per-agent task briefs (from-group leaves those blank).
+      if (tmpl) openTemplateEditor(tmpl);
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function bindTemplatesUI() {
+    // Entry points: Templates tab + the Groups tab's "⎘ from template".
+    $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
+    $('#template-from-group-open').addEventListener('click', openFromGroupModal);
+    $('#group-from-template-open').addEventListener('click', () => openInstantiateModal(null));
+
+    // Template-card actions (delegated — the list re-renders every poll).
+    // data-tact (not data-act) keeps these off the global row-action bus.
+    $('#templates-list').addEventListener('click', e => {
+      const btn = e.target.closest('[data-tact]');
+      if (!btn) return;
+      const name = btn.dataset.template;
+      if (btn.dataset.tact === 'instantiate') openInstantiateModal(name);
+      else if (btn.dataset.tact === 'edit') {
+        const t = templatesByName()[name];
+        if (t) openTemplateEditor(t);
+      } else if (btn.dataset.tact === 'delete') deleteTemplate(name);
+    });
+
+    // Editor modal.
+    $('#template-editor-cancel').addEventListener('click', closeTemplateEditor);
+    $('#template-editor-submit').addEventListener('click', submitTemplateEditor);
+    $('#template-editor-add-agent').addEventListener('click', () => {
+      scrapeEditorAgents();
+      templateEditorAgents.push(blankTemplateAgent());
+      renderEditorAgents();
+    });
+    // Delegated handlers on the (re-rendered) agent container.
+    $('#template-editor-agents').addEventListener('click', e => {
+      const rm = e.target.closest('.ta-remove');
+      if (!rm) return;
+      const row = rm.closest('.template-agent-row');
+      scrapeEditorAgents();
+      templateEditorAgents.splice(parseInt(row.dataset.idx, 10), 1);
+      renderEditorAgents();
+    });
+    $('#template-editor-agents').addEventListener('change', e => {
+      if (e.target.classList.contains('ta-owner')) {
+        // At most one owner — untick the others when one is ticked.
+        if (e.target.checked) {
+          $$('.ta-owner', $('#template-editor-agents')).forEach(cb => {
+            if (cb !== e.target) cb.checked = false;
+          });
+        }
+      } else if (e.target.classList.contains('ta-perm')) {
+        const row = e.target.closest('.template-agent-row');
+        $('.ta-perms-count', row).textContent =
+          $$('.ta-perm', row).filter(c => c.checked).length;
+      }
+    });
+    $('#template-editor-modal').addEventListener('click', e => {
+      if (e.target.id === 'template-editor-modal') closeTemplateEditor();
+    });
+
+    // Instantiate modal.
+    $('#template-instantiate-cancel').addEventListener('click', closeInstantiateModal);
+    $('#template-instantiate-submit').addEventListener('click', submitInstantiate);
+    $('#template-instantiate-template').addEventListener('change', renderInstantiatePreview);
+    $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
+    $('#template-instantiate-modal').addEventListener('click', e => {
+      if (e.target.id === 'template-instantiate-modal') closeInstantiateModal();
+    });
+
+    // From-group modal.
+    $('#template-from-group-cancel').addEventListener('click', closeFromGroupModal);
+    $('#template-from-group-submit').addEventListener('click', submitFromGroup);
+    $('#template-from-group-modal').addEventListener('click', e => {
+      if (e.target.id === 'template-from-group-modal') closeFromGroupModal();
+    });
+
+    // Escape closes whichever template modal is showing.
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      ['template-editor-modal', 'template-instantiate-modal', 'template-from-group-modal']
+        .forEach(id => {
+          const m = $('#' + id);
+          if (m && m.classList.contains('show')) m.classList.remove('show');
+        });
+    });
+  }
+
   // ---- Import-group modal ------------------------------------------------
   //
   // The ⤒ import button uploads a .zip produced by ⤓ export and
@@ -5671,6 +6255,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     input.value = localStorage.getItem(key) || '';
     const rerender = () => {
       if (tab === 'groups') renderGroupsTab();
+      else if (tab === 'templates') renderTemplatesTab();
       else if (tab === 'agents') renderAgentsTab();
       else if (tab === 'cron') renderCronTab();
       else if (tab === 'sudo') renderSudoTab();
@@ -5775,6 +6360,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
         sudoByConv[g.conv_id].push(g);
       });
       renderGroupsTab();
+      renderTemplatesTab();
       renderAgentsTab();
       renderCronTab();
       renderSudoTab();
@@ -8507,6 +9093,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   bindRowActions();
   bindDnd();
   bindFilter('groups');
+  bindFilter('templates');
   bindFilter('agents');
   bindFilter('cron');
   bindFilter('sudo');
@@ -8516,6 +9103,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   bindCronModal();
   bindMessageModal();
   bindGroupCreateModal();
+  bindTemplatesUI();
   bindGroupImportModal();
   bindGroupContextModal();
   bindLinkModal();

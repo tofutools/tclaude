@@ -61,6 +61,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-windows", handleAgentWindows)
 	registerDashboardCronRoutes(mux)
 	registerDashboardMessageRoutes(mux)
+	registerDashboardTemplateRoutes(mux)
 }
 
 // handleDashboardGroupsCreate is the cookie-auth twin of POST /v1/groups.

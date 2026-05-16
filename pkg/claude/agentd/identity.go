@@ -168,6 +168,8 @@ const (
 	PermMessageDirect     = "message.direct"
 	PermGroupsExport      = "groups.export"
 	PermGroupsImport      = "groups.import"
+	PermTemplatesManage   = "templates.manage"
+	PermTemplatesUse      = "templates.instantiate"
 )
 
 // permResolution is the verdict of the non-interactive permission

@@ -484,16 +484,117 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	worktreeBranch := strings.TrimSpace(body.WorktreeBranch)
 
+	// Hand the validated request to the shared spawn core. executeSpawn
+	// owns the label → subprocess → conv-id poll → membership →
+	// post-init sequence; the group-template instantiator drives the
+	// same function in a loop. handleGroupSpawn keeps only the HTTP
+	// shape — decode + validate above, error/JSON mapping below.
+	p := spawnParams{
+		Name:           body.Name,
+		Role:           body.Role,
+		Descr:          body.Descr,
+		InitialMessage: body.InitialMessage,
+		Cwd:            cwd,
+		WorktreePath:   worktreePath,
+		WorktreeBranch: worktreeBranch,
+		AutoFocus:      body.AutoFocus,
+		ReplyToConv:    replyToConv,
+		Timeout:        timeout,
+	}
+	// An omitted include_group_context flag means opt-in — every spawn
+	// path inherits the group context by default, the same way it
+	// inherits default_cwd; the dashboard sends false explicitly to opt
+	// out.
+	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
+		p.GroupContext = g.DefaultContext
+	}
+
+	outcome, fail := executeSpawn(g, p)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"group":        g.Name,
+		"conv_id":      outcome.ConvID,
+		"label":        outcome.Label,
+		"tmux_session": outcome.TmuxSession,
+		"attach_cmd":   "tclaude session attach " + outcome.Label,
+	})
+}
+
+// spawnParams is the fully-resolved, validated input to executeSpawn.
+// handleGroupSpawn builds one from the decoded HTTP body; the
+// group-template instantiator builds one per template agent spec.
+// Every field is already validated by the time it reaches executeSpawn
+// — cwd absolute and existing, worktree path resolved, initial_message
+// length/charset-checked, reply-to resolved to a conv-id — so the
+// shared core does no HTTP-shaped validation of its own.
+type spawnParams struct {
+	Name           string
+	Role           string
+	Descr          string
+	InitialMessage string
+	Cwd            string // resolved absolute directory
+	WorktreePath   string // resolved absolute directory, or ""
+	WorktreeBranch string
+	AutoFocus      bool
+	// GroupContext is the shared startup context to fold into the
+	// briefing, or "" to omit it. The caller has already applied any
+	// opt-out, so executeSpawn injects it verbatim.
+	GroupContext string
+	// ReplyToConv is the resolved sender of the startup briefing —
+	// "" for a human-initiated spawn.
+	ReplyToConv string
+	// Timeout bounds the conv-id poll; <= 0 falls back to 30s.
+	Timeout time.Duration
+}
+
+// spawnOutcome is the success result of executeSpawn.
+type spawnOutcome struct {
+	ConvID      string
+	Label       string
+	TmuxSession string
+}
+
+// spawnFailure is a typed failure from executeSpawn. The HTTP handler
+// maps Status/Kind/Msg straight onto writeError; the template
+// instantiator ignores the HTTP-specific fields and reports Msg in its
+// per-agent result.
+type spawnFailure struct {
+	Status int
+	Kind   string
+	Msg    string
+}
+
+// executeSpawn runs the validated spawn sequence: it forks a detached
+// `tclaude session new`, polls the sessions table for the conv-id,
+// joins the conv to the group, records the pending display name,
+// optionally opens a terminal, drops the startup briefing into the new
+// agent's inbox, and kicks off the post-init /rename + welcome
+// injection. It is the single code path behind both the
+// /v1/groups/{name}/spawn endpoint and the group-template instantiator.
+//
+// Returns either an outcome or a typed failure — never both. The agent
+// is fully spawned and group-joined on success; on a post-membership
+// best-effort failure (pending name, auto-focus, inbox insert) it still
+// succeeds, those steps only log.
+func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure) {
+	timeout := p.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
 	// random hex; we mirror that with a "spwn-" prefix so these
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
-		writeError(w, http.StatusInternalServerError, "spawn",
-			"failed to launch tclaude session new: "+err.Error())
-		return
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
+			"failed to launch tclaude session new: " + err.Error()}
 	}
 
 	// Poll the sessions table for the conv-id. The hook callback
@@ -512,23 +613,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		time.Sleep(250 * time.Millisecond)
 	}
 	if convID == "" {
-		writeError(w, http.StatusGatewayTimeout, "timeout",
-			"spawned session "+label+" but conv-id never materialised within "+timeout.String()+
-				" — the session may still come up; check `tclaude session attach "+label+"`")
-		return
+		return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
+			"spawned session " + label + " but conv-id never materialised within " + timeout.String() +
+				" — the session may still come up; check `tclaude session attach " + label + "`"}
 	}
 
-	// Membership add. Permission gating already happened above; this
-	// is just the DB write.
+	// Membership add. Permission gating already happened in the caller;
+	// this is just the DB write.
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: g.ID,
 		ConvID:  convID,
-		Role:    body.Role,
-		Descr:   body.Descr,
+		Role:    p.Role,
+		Descr:   p.Descr,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"spawned conv "+convID+" but failed to add to group: "+err.Error())
-		return
+		return nil, &spawnFailure{http.StatusInternalServerError, "io",
+			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 	}
 
 	// Record the requested name as the agent's pending display name. The
@@ -542,7 +641,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// logged, never bubbled. Stored even when the name is not a valid
 	// rename title (the /rename is then skipped): the dashboard can still
 	// show the intended name.
-	if name := strings.TrimSpace(body.Name); name != "" {
+	if name := strings.TrimSpace(p.Name); name != "" {
 		if err := db.SetEnrollmentPendingName(convID, name); err != nil {
 			slog.Warn("spawn: failed to record pending name",
 				"conv", convID, "name", name, "error", err)
@@ -556,10 +655,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// raw tmux, so the reattached session keeps its tclaude features.
 	//
 	// Best-effort: the agent spawned fine regardless, so a failure to
-	// pop a window is logged, never bubbled. No extra permission gate —
-	// opening a window is strictly less than the groups.spawn this
-	// handler already required.
-	if body.AutoFocus {
+	// pop a window is logged, never bubbled.
+	if p.AutoFocus {
 		if err := openTerminal(openAttachCmd(label)); err != nil {
 			slog.Warn("spawn: auto-focus terminal failed to open",
 				"conv", convID, "label", label, "error", err)
@@ -567,30 +664,20 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 
 	// Spawn context: assemble the new agent's startup briefing and drop
-	// it in its inbox as a single agent_messages row. Two pieces feed in:
-	//
-	//   - the group's default_context — optional shared guidance the
-	//     human attached to the group, included unless this spawn opted
-	//     out (IncludeGroupContext == false; an omitted flag means
-	//     opt-in, the same way default_cwd is inherited).
-	//   - the per-spawn initial_message — this agent's specific task
-	//     brief.
-	//
-	// They go to the inbox rather than the pane: a large briefing
-	// bracketed-pasted into CC's input box risks overflowing its
-	// input-size limit, and the inbox keeps newlines verbatim
-	// regardless. The welcome line points the agent at the message;
-	// runSpawnPostInit marks it delivered once the welcome lands.
-	groupContext := ""
-	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
-		groupContext = g.DefaultContext
-	}
-	spawnContext := buildSpawnContextBody(g.Name, groupContext, body.InitialMessage)
+	// it in its inbox as a single agent_messages row. Two pieces feed in
+	// — the (already opt-out-applied) group context and the per-spawn
+	// initial_message. They go to the inbox rather than the pane: a
+	// large briefing bracketed-pasted into CC's input box risks
+	// overflowing its input-size limit, and the inbox keeps newlines
+	// verbatim regardless. The welcome line points the agent at the
+	// message; runSpawnPostInit marks it delivered once the welcome
+	// lands.
+	spawnContext := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
 	var spawnContextMsgID int64
 	if spawnContext != "" {
 		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
 			GroupID:      g.ID,
-			FromConv:     replyToConv,
+			FromConv:     p.ReplyToConv,
 			ToConv:       convID,
 			Subject:      "Startup context",
 			Body:         spawnContext,
@@ -607,37 +694,18 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 
-	// Post-spawn injection: rename the new pane to the agent's name
-	// and drop a [system: ...] welcome that describes the agent's
-	// identity. Two purposes:
-	//
-	//   1. Materialise the .jsonl. CC only writes the conversation
-	//      file once it has content; a freshly-spawned but never-used
-	//      conv leaves an orphan group_members row with no .jsonl,
-	//      and `agent resume` then silently fails because
-	//      `tclaude session new -r <conv>` has nothing to resume.
-	//      The /rename + welcome guarantee at least two writes hit
-	//      the file before anyone closes the pane.
-	//
-	//   2. Give the new agent its name + context up front. The agent
-	//      sees its title in tmux/dashboard immediately, the welcome
-	//      describes its role/descr/group, and — when a startup
-	//      briefing was queued above — points it at the inbox message.
-	//
-	// Runs in a goroutine so the spawn response returns promptly; the
-	// goroutine waits for the pane to come alive before injecting.
+	// Post-spawn injection: rename the new pane to the agent's name and
+	// drop a [system: ...] welcome describing the agent's identity. It
+	// also materialises the .jsonl (CC only writes the file once it has
+	// content), so `agent resume` has something to resume. Runs in a
+	// goroutine so the caller returns promptly; the goroutine waits for
+	// the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, body.Name, body.Role, body.Descr, g.Name,
-			spawnContextMsgID, body.InitialMessage != "", worktreePath, worktreeBranch)
+		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, g.Name,
+			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch)
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"group":        g.Name,
-		"conv_id":      convID,
-		"label":        label,
-		"tmux_session": tmuxSession,
-		"attach_cmd":   "tclaude session attach " + label,
-	})
+	return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession}, nil
 }
 
 // runSpawnPostInit fires asynchronously after a successful spawn. It
