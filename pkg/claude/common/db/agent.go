@@ -41,44 +41,83 @@ type AgentGroupMember struct {
 	JoinedAt time.Time
 }
 
-// AgentPermission is a row in agent_permissions — a per-conv grant of
-// a permission slug. Lives in SQLite (rather than ~/.tclaude/config.json)
-// so the daemon can grant/revoke without JSON-file rewrites.
-// DefaultPermissions for *all* agents still live in config.json, since
-// those describe baseline trust the human curates explicitly.
+// Permission-override effects — the value stored in
+// agent_permissions.effect (schema v38+). A row with effect=grant ADDS
+// the slug on top of the config.json defaults; effect=deny SUBTRACTS
+// it, overriding a default grant for that one conv. The absence of a
+// row is the third, neutral state: "inherit the default."
+const (
+	PermEffectGrant = "grant"
+	PermEffectDeny  = "deny"
+)
+
+// AgentPermission is a row in agent_permissions — a per-conv permission
+// override. Lives in SQLite (rather than ~/.tclaude/config.json) so the
+// daemon can grant/revoke without JSON-file rewrites. DefaultPermissions
+// for *all* agents still live in config.json, since those describe
+// baseline trust the human curates explicitly.
+//
+// Effect is "grant" or "deny" (see PermEffectGrant / PermEffectDeny).
 type AgentPermission struct {
 	ConvID    string
 	Slug      string
+	Effect    string
 	GrantedAt time.Time
 	GrantedBy string
 }
 
-// HasAgentPermissionRow checks whether (convID, slug) is granted in the
-// agent_permissions table. Used by the daemon's per-agent override
-// lookup. Errors propagate so the caller can refuse rather than silently
-// allow.
+// HasAgentPermissionRow reports whether (convID, slug) is GRANTED in the
+// agent_permissions table. A deny-effect row reads as false here — the
+// daemon's per-agent override lookup wants "does an additive grant
+// exist," and a deny is the opposite. Errors propagate so the caller can
+// refuse rather than silently allow. Callers needing the full tri-state
+// should use AgentPermissionOverride instead.
 func HasAgentPermissionRow(convID, slug string) (bool, error) {
 	db, err := Open()
 	if err != nil {
 		return false, err
 	}
 	var n int
-	err = db.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE conv_id = ? AND slug = ?`,
-		convID, slug).Scan(&n)
+	err = db.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE conv_id = ? AND slug = ? AND effect = ?`,
+		convID, slug, PermEffectGrant).Scan(&n)
 	if err != nil {
 		return false, err
 	}
 	return n > 0, nil
 }
 
-// ListAgentPermissionsForConv returns every slug granted to this conv,
-// alphabetised. Returns an empty slice (not nil) for a conv with no grants.
+// AgentPermissionOverride returns the tri-state per-conv override for
+// (convID, slug): effect is "grant" or "deny" with ok=true when a row
+// exists, or ("", false) when there is no override and the slug falls
+// through to the config defaults.
+func AgentPermissionOverride(convID, slug string) (effect string, ok bool, err error) {
+	db, err := Open()
+	if err != nil {
+		return "", false, err
+	}
+	err = db.QueryRow(`SELECT effect FROM agent_permissions WHERE conv_id = ? AND slug = ?`,
+		convID, slug).Scan(&effect)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return effect, true, nil
+}
+
+// ListAgentPermissionsForConv returns every GRANTED slug for this conv,
+// alphabetised. Deny-effect rows are excluded — this preserves the
+// historical "additive grants" semantics the CLI / dashboard grants
+// view relies on. Returns an empty slice (not nil) for a conv with no
+// grants.
 func ListAgentPermissionsForConv(convID string) ([]string, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT slug FROM agent_permissions WHERE conv_id = ? ORDER BY slug`, convID)
+	rows, err := db.Query(`SELECT slug FROM agent_permissions WHERE conv_id = ? AND effect = ? ORDER BY slug`,
+		convID, PermEffectGrant)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +133,33 @@ func ListAgentPermissionsForConv(convID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ListAllAgentPermissions returns the full grant table, grouped by conv-id.
+// ListAgentPermissionOverridesForConv returns the full tri-state
+// override map for this conv — slug → "grant" | "deny". Convs with no
+// overrides return an empty (non-nil) map. Used by the dashboard's
+// permanent-permission editor to pre-populate the modal.
+func ListAgentPermissionOverridesForConv(convID string) (map[string]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT slug, effect FROM agent_permissions WHERE conv_id = ? ORDER BY slug`, convID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var slug, effect string
+		if err := rows.Scan(&slug, &effect); err != nil {
+			return nil, err
+		}
+		out[slug] = effect
+	}
+	return out, rows.Err()
+}
+
+// ListAllAgentPermissions returns the full GRANT table, grouped by
+// conv-id. Deny-effect rows are excluded — see ListAgentPermissionsForConv.
 // Convs with no grants are absent from the map. Used by the dashboard /
 // permissions ls view.
 func ListAllAgentPermissions() (map[string][]string, error) {
@@ -102,7 +167,8 @@ func ListAllAgentPermissions() (map[string][]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT conv_id, slug FROM agent_permissions ORDER BY conv_id, slug`)
+	rows, err := db.Query(`SELECT conv_id, slug FROM agent_permissions WHERE effect = ? ORDER BY conv_id, slug`,
+		PermEffectGrant)
 	if err != nil {
 		return nil, err
 	}
@@ -118,22 +184,67 @@ func ListAllAgentPermissions() (map[string][]string, error) {
 	return out, rows.Err()
 }
 
-// GrantAgentPermission inserts (convID, slug). Idempotent — running
-// twice is a no-op. grantedBy is informational ("<human>" or a
-// granter's conv-id); empty is fine.
+// ListAllAgentPermissionOverrides returns every per-conv override
+// (grant AND deny), nested conv-id → slug → effect. Convs with no
+// overrides are absent. Used by the dashboard snapshot so the per-agent
+// editor can render the current state without a round-trip per agent.
+func ListAllAgentPermissionOverrides() (map[string]map[string]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT conv_id, slug, effect FROM agent_permissions ORDER BY conv_id, slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]map[string]string{}
+	for rows.Next() {
+		var c, s, e string
+		if err := rows.Scan(&c, &s, &e); err != nil {
+			return nil, err
+		}
+		if out[c] == nil {
+			out[c] = map[string]string{}
+		}
+		out[c][s] = e
+	}
+	return out, rows.Err()
+}
+
+// GrantAgentPermission writes a grant-effect override for (convID, slug).
+// Idempotent, and an UPSERT — granting a slug that currently carries a
+// deny override flips it back to grant. grantedBy is informational
+// ("<human>" or a granter's conv-id); empty is fine.
 func GrantAgentPermission(convID, slug, grantedBy string) error {
+	return SetAgentPermissionOverride(convID, slug, PermEffectGrant, grantedBy)
+}
+
+// SetAgentPermissionOverride writes the tri-state override row for
+// (convID, slug) with the given effect ("grant" or "deny"). UPSERT:
+// re-running with a different effect flips the row. To return the slug
+// to its default, use RevokeAgentPermission (which deletes the row).
+func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
+	if effect != PermEffectGrant && effect != PermEffectDeny {
+		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
+	}
 	db, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT OR IGNORE INTO agent_permissions
-		(conv_id, slug, granted_at, granted_by)
-		VALUES (?, ?, ?, ?)`,
-		convID, slug, time.Now().Format(time.RFC3339Nano), grantedBy)
+	_, err = db.Exec(`INSERT INTO agent_permissions
+		(conv_id, slug, effect, granted_at, granted_by)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(conv_id, slug) DO UPDATE SET
+			effect     = excluded.effect,
+			granted_at = excluded.granted_at,
+			granted_by = excluded.granted_by`,
+		convID, slug, effect, time.Now().Format(time.RFC3339Nano), grantedBy)
 	if err != nil {
 		return err
 	}
-	// Holding a permission grant makes the conv an agent.
+	// Holding a permission override (grant or deny) makes the conv an
+	// agent — a deny is still per-agent permission config.
 	return EnrollAgent(convID, "grant")
 }
 

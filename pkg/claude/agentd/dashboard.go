@@ -306,6 +306,11 @@ type dashboardCronJob struct {
 type snapshotPermissionsView struct {
 	Defaults []string            `json:"defaults"`
 	Grants   map[string][]string `json:"grants"`
+	// Overrides is the full tri-state per-conv view — conv-id → slug →
+	// "grant" | "deny" — that the permanent-permission editor reads to
+	// pre-populate its modal. Grants (above) is the grant-only
+	// projection, kept for the read-only Permissions tab.
+	Overrides map[string]map[string]string `json:"overrides"`
 }
 
 type dashboardGroup struct {
@@ -469,6 +474,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	groups, _ := db.ListAgentGroups()
 	allGrants, _ := db.ListAllAgentPermissions()
+	allOverrides, _ := db.ListAllAgentPermissionOverrides()
 	cfg, _ := config.Load()
 	defaults := []string{}
 	if cfg != nil && cfg.Agent != nil {
@@ -506,8 +512,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		GeneratedAt: time.Now().Format(time.RFC3339),
 		PopupBase:   popupBaseURL,
 		Permissions: snapshotPermissionsView{
-			Defaults: defaults,
-			Grants:   map[string][]string{},
+			Defaults:  defaults,
+			Grants:    map[string][]string{},
+			Overrides: map[string]map[string]string{},
 		},
 		Slugs: append([]PermSlug{}, permissionRegistry...),
 	}
@@ -587,6 +594,16 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		copySlice := append([]string{}, slugs...)
 		sort.Strings(copySlice)
 		out.Permissions.Grants[convID] = copySlice
+	}
+	// Full tri-state overrides (grant AND deny) for the editor modal.
+	// A conv with only a deny override is still an agent — surface it.
+	for convID, slugEffects := range allOverrides {
+		addAgent(convID)
+		copyMap := make(map[string]string, len(slugEffects))
+		for slug, effect := range slugEffects {
+			copyMap[slug] = effect
+		}
+		out.Permissions.Overrides[convID] = copyMap
 	}
 
 	// Every active enrolled agent — the canonical roster. Unlike the
@@ -678,23 +695,30 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if supersededSet[a.ConvID] {
 			continue
 		}
-		// Effective = defaults ∪ grants. Defaults come from config;
-		// grants from agent_permissions for that conv.
-		seen := map[string]bool{}
-		merged := []string{}
-		for _, s := range defaults {
-			if !seen[s] {
-				seen[s] = true
-				merged = append(merged, s)
+		// Effective = (defaults ∪ grant-overrides) − deny-overrides.
+		// Defaults come from config; per-conv grant/deny overrides from
+		// agent_permissions. A deny override subtracts a slug the
+		// defaults would otherwise grant — mirroring resolvePermission.
+		denied := map[string]bool{}
+		for slug, effect := range out.Permissions.Overrides[a.ConvID] {
+			if effect == db.PermEffectDeny {
+				denied[slug] = true
 			}
 		}
-		if extras, ok := out.Permissions.Grants[a.ConvID]; ok {
-			for _, s := range extras {
-				if !seen[s] {
-					seen[s] = true
-					merged = append(merged, s)
-				}
+		seen := map[string]bool{}
+		merged := []string{}
+		addEffective := func(s string) {
+			if seen[s] || denied[s] {
+				return
 			}
+			seen[s] = true
+			merged = append(merged, s)
+		}
+		for _, s := range defaults {
+			addEffective(s)
+		}
+		for _, s := range out.Permissions.Grants[a.ConvID] {
+			addEffective(s)
 		}
 		sort.Strings(merged)
 		a.Effective = merged

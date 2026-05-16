@@ -12,7 +12,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -278,26 +277,13 @@ type recipient struct {
 const multicastPrefix = "group:"
 
 // holdsPermission reports whether an agent conv holds permission slug
-// through any non-interactive source: the config default-permissions
-// list, a per-conv agent_permissions grant, or an active
-// agent_sudo_grants row. It mirrors the allow-sources of
+// through any non-interactive source: an active sudo grant, a per-conv
+// grant override, or the config default-permissions list. A per-conv
+// deny override reads as false. It is the boolean twin of
 // requirePermission minus the X-Tclaude-Ask-Human popup — callers that
-// only need the boolean (not the interactive escalation) use this.
+// only need the verdict (not the interactive escalation) use this.
 func holdsPermission(convID, slug string) bool {
-	if convID == "" {
-		return false
-	}
-	cfg, _ := config.Load()
-	if cfg.HasDefaultPermission(slug) {
-		return true
-	}
-	if ok, err := db.HasAgentPermissionRow(convID, slug); err == nil && ok {
-		return true
-	}
-	if ok, err := db.HasActiveSudoGrant(convID, slug); err == nil && ok {
-		return true
-	}
-	return false
+	return resolvePermission(convID, slug) == permAllow
 }
 
 // resolveMessageRouting authorises a 1:1 send fromID→targetID and

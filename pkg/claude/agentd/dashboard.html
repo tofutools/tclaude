@@ -113,6 +113,7 @@ details[open] > summary::before { content: "▼ "; }
   border-radius: 12px; font-size: 11px; font-family: ui-monospace, monospace;
 }
 .tag.default { border-color: #1f6feb; color: #58a6ff; }
+.tag.slug.deny { border-color: #da3633; color: #ff7b72; }
 .owner-badge {
   display: inline-block; padding: 1px 6px; margin-left: 4px;
   background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;
@@ -472,6 +473,84 @@ details.group-virtual .group-name { color: #8aa0b8; }
   background: #1f6feb; border-color: #1f6feb; color: white;
 }
 .sudo-grant-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
+/* Permanent-permission editor — the per-agent tri-state modal. Reuses
+   the .sudo-grant-modal dialog/buttons shape but is taller (one row per
+   registry slug, so it scrolls) and its banner deliberately contrasts
+   with the orange "+ sudo" affordance: these overrides are PERMANENT. */
+.perm-edit-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 560px; max-width: 680px;
+  width: calc(100% - 32px);
+  display: flex; flex-direction: column; gap: 10px;
+  color: #c9d1d9; max-height: 88vh;
+}
+.perm-edit-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
+.perm-edit-banner {
+  font-size: 11px; line-height: 1.5; color: #d2a8ff;
+  background: #1d1b2e; border: 1px solid #3a2d5c;
+  border-left: 3px solid #a371f7; border-radius: 4px; padding: 7px 10px;
+}
+.perm-edit-banner strong { color: #e9d8ff; }
+.perm-edit-subtitle { margin: 0; font-size: 11px; color: #7d8590; }
+.perm-edit-toolbar { display: flex; gap: 8px; align-items: center; }
+.perm-edit-toolbar input[type=text] {
+  flex: 1; background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 9px; font-size: 12px; color: #c9d1d9; font-family: inherit;
+}
+.perm-edit-toolbar input[type=text]:focus { outline: none; border-color: #58a6ff; }
+.perm-edit-toolbar button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 4px 10px; font-size: 11px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.perm-edit-toolbar button:hover { background: #2d333b; }
+.perm-edit-list {
+  display: flex; flex-direction: column;
+  border: 1px solid #2a3340; border-radius: 4px;
+  overflow-y: auto; max-height: 52vh;
+}
+.perm-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; border-bottom: 1px solid #21262d;
+}
+.perm-row:last-child { border-bottom: none; }
+.perm-row.hidden { display: none; }
+.perm-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.perm-row-slug { font-size: 12px; color: #c9d1d9; }
+.perm-row-desc {
+  font-size: 10px; color: #7d8590; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
+.perm-row-eff.granted { color: #3fb950; }
+.perm-row-eff.denied { color: #f85149; }
+.perm-tristate {
+  flex: 0 0 auto; display: inline-flex;
+  border: 1px solid #2a3340; border-radius: 4px; overflow: hidden;
+}
+.perm-tristate button {
+  background: #0d1117; border: none; border-right: 1px solid #2a3340;
+  padding: 3px 9px; font-size: 11px; color: #7d8590;
+  font-family: inherit; cursor: pointer;
+}
+.perm-tristate button:last-child { border-right: none; }
+.perm-tristate button:hover { background: #21262d; }
+.perm-tristate button.active[data-effect=default] { background: #30363d; color: #c9d1d9; }
+.perm-tristate button.active[data-effect=grant] { background: #238636; color: #fff; }
+.perm-tristate button.active[data-effect=deny] { background: #da3633; color: #fff; }
+.perm-edit-modal .modal-buttons {
+  display: flex; justify-content: flex-end; gap: 8px;
+  border-top: 1px solid #2a3340; padding-top: 10px;
+}
+.perm-edit-modal .modal-buttons button {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 14px; color: #c9d1d9; font-family: inherit; cursor: pointer;
+}
+.perm-edit-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: white;
+}
+.perm-edit-modal .modal-buttons button.primary:disabled {
   background: #6e7681; border-color: #6e7681; cursor: default;
 }
 /* Cron-create modal — reuses .sudo-grant-modal CSS shape for the
@@ -966,6 +1045,29 @@ details.group-virtual .group-name { color: #8aa0b8; }
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="perm-edit-modal">
+  <div class="perm-edit-modal" role="dialog" aria-modal="true" aria-labelledby="perm-edit-title">
+    <h3 id="perm-edit-title">Edit permanent permissions</h3>
+    <div class="perm-edit-banner">
+      <strong>PERMANENT</strong> — these per-agent overrides persist until you change
+      them again. They are <em>not</em> the time-bounded “+ sudo” elevation: a sudo grant
+      expires on its own, an override here does not. <strong>Grant</strong> adds a slug,
+      <strong>Deny</strong> blocks one the global defaults would otherwise give, and
+      <strong>Default</strong> inherits the global default.
+    </div>
+    <p class="perm-edit-subtitle" id="perm-edit-subtitle"></p>
+    <div class="perm-edit-toolbar">
+      <input id="perm-edit-filter" type="text" placeholder="Filter slugs…" autocomplete="off" spellcheck="false" />
+      <button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)">all default</button>
+    </div>
+    <div id="perm-edit-list" class="perm-edit-list"></div>
+    <div class="sudo-grant-error" id="perm-edit-error"></div>
+    <div class="modal-buttons">
+      <button id="perm-edit-cancel">Cancel</button>
+      <button id="perm-edit-submit" class="primary">Save</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="cron-pick-target-modal">
   <div class="add-member-modal" role="dialog" aria-modal="true" aria-labelledby="cron-pick-target-title">
     <h3 id="cron-pick-target-title">Pick target <span class="muted">— agent</span></h3>
@@ -1381,7 +1483,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // delegated click handler reads them and dispatches to the
   // confirm modal + the right /api endpoint.
   function memberActions(g, m) {
-    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
   }
   // cloneAgentButton renders a "clone" button for any row that
   // represents a single agent. Clone forks a sibling that inherits the
@@ -1411,6 +1513,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
   }
   function sudoMemberButton(m) {
     return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
+  }
+  // permMemberButton renders the per-row "permissions" affordance —
+  // opens the permanent-permission editor (grant / deny / default per
+  // slug). The permanent twin of "+ sudo" right beside it.
+  function permMemberButton(m) {
+    return `<button data-act="perm-edit" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Edit this agent's permanent permissions (grant / deny / inherit-default)">permissions</button>`;
   }
   // cronMemberButton renders the ⏰ "schedule a nudge for this member"
   // button. Opens the cron-create modal prefilled with Solo target =
@@ -1474,7 +1582,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   // clone, reincarnate, rename, sudo, self-nudge cron, delete. To put
   // an ungrouped agent INTO a group, drag its row onto a group header.
   function ungroupedMemberActions(m) {
-    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${sudoMemberButton(m)}${cronMemberButton(m)}<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button></div>`;
+    return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button></div>`;
   }
 
   // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
@@ -2204,7 +2312,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
               <td>${branchCell(a)}</td>
               <td>${groupTagsCell(a)}</td>
               <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, title: a.title})}${renameAgentButton({conv_id: a.conv_id, title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
+              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, title: a.title})}${renameAgentButton({conv_id: a.conv_id, title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="perm-edit" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Edit this agent's permanent permissions (grant / deny / inherit-default)">permissions</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -2261,24 +2369,36 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   function renderPermissions(perm, agents) {
     const titleByConv = Object.fromEntries((agents || []).map(a => [a.conv_id, a.title]));
-    const grants = perm.grants || {};
+    const overrides = perm.overrides || {};
     const defaults = perm.defaults || [];
+    // Split each conv's tri-state override map into granted / denied
+    // slug lists for display. The per-agent "permissions" button on the
+    // Groups / Agents tabs is the write path; this tab is the roster.
+    const rows = Object.entries(overrides).map(([k, slugEffects]) => {
+      const granted = [], denied = [];
+      for (const [slug, effect] of Object.entries(slugEffects || {})) {
+        (effect === 'deny' ? denied : granted).push(slug);
+      }
+      granted.sort(); denied.sort();
+      return { k, granted, denied };
+    }).sort((a, b) => a.k < b.k ? -1 : 1);
     return `
       <h3 style="margin-top:0">Defaults <span class="muted" style="font-size:11px">— granted to every agent (config.json)</span></h3>
       ${defaults.length === 0
         ? '<div class="empty">No defaults set. Grant with: <code>tclaude agent permissions grant default &lt;slug&gt;</code></div>'
         : `<div>${defaults.map(s => `<span class="tag default slug">${esc(s)}</span>`).join(' ')}</div>`}
-      <h3>Per-agent grants <span class="muted" style="font-size:11px">— additive on top of defaults (SQLite agent_permissions)</span></h3>
-      ${Object.keys(grants).length === 0
-        ? '<div class="empty">No per-agent grants yet. Grant with: <code>tclaude agent permissions grant &lt;conv&gt; &lt;slug&gt;</code></div>'
+      <h3>Per-agent overrides <span class="muted" style="font-size:11px">— permanent grant / deny on top of defaults (SQLite agent_permissions). Edit via the per-agent “permissions” button.</span></h3>
+      ${rows.length === 0
+        ? '<div class="empty">No per-agent overrides yet. Use the per-agent “permissions” button, or <code>tclaude agent permissions grant|deny &lt;conv&gt; &lt;slug&gt;</code></div>'
         : `<table>
-            <thead><tr><th>ID</th><th>Title</th><th>Granted slugs</th></tr></thead>
+            <thead><tr><th>ID</th><th>Title</th><th>Granted</th><th>Denied</th></tr></thead>
             <tbody>
-              ${Object.entries(grants).map(([k, slugs]) => `
+              ${rows.map(r => `
                 <tr>
-                  <td class="id">${esc(shortId(k))}</td>
-                  <td class="rowname">${esc(titleByConv[k] || '(unknown)')}</td>
-                  <td>${slugs.map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ')}</td>
+                  <td class="id">${esc(shortId(r.k))}</td>
+                  <td class="rowname">${esc(titleByConv[r.k] || '(unknown)')}</td>
+                  <td>${r.granted.map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>
+                  <td>${r.denied.map(s => `<span class="tag slug deny">${esc(s)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -3285,6 +3405,143 @@ details.group-virtual .group-name { color: #8aa0b8; }
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#sudo-grant-modal').classList.contains('show')) {
         closeSudoGrantModal();
+      }
+    });
+  }
+
+  // ---- Permanent-permission editor ----------------------------------------
+  //
+  // openPermEditModal builds one tri-state row (Default / Grant / Deny)
+  // per registry slug, pre-selected from the agent's current per-conv
+  // overrides in the snapshot. Save POSTs the full selection to
+  // /api/permissions, which diffs it against what's persisted. This is
+  // the PERMANENT analog of the "+ sudo" elevation — the banner in the
+  // modal spells out the difference.
+  let permEditConv = '';
+
+  // permRowEffective recomputes the "✓ granted / ✗ denied" indicator on
+  // one row from its selected effect plus whether the slug is a global
+  // default — mirroring resolvePermission's defaults∪grants−denies.
+  function permRowEffective(row) {
+    const active = row.querySelector('.perm-tristate button.active');
+    const effect = active ? active.dataset.effect : 'default';
+    const inDefault = row.dataset.indefault === '1';
+    const granted = effect === 'grant' || (effect === 'default' && inDefault);
+    const el = row.querySelector('.perm-row-eff');
+    el.textContent = granted ? '✓ granted' : '✗ denied';
+    el.className = 'perm-row-eff ' + (granted ? 'granted' : 'denied');
+  }
+
+  function openPermEditModal(conv, label) {
+    const snap = lastSnapshot || {};
+    const perms = snap.permissions || {};
+    const slugs = (snap.slugs || []).slice().sort((a, b) => a.slug < b.slug ? -1 : 1);
+    const defaultSet = new Set(perms.defaults || []);
+    const overrides = (perms.overrides || {})[conv] || {};
+    permEditConv = conv;
+    $('#perm-edit-subtitle').textContent =
+      `Agent: ${label || shortId(conv)} · ${shortId(conv)}`;
+    $('#perm-edit-error').textContent = '';
+    $('#perm-edit-filter').value = '';
+    const list = $('#perm-edit-list');
+    if (!slugs.length) {
+      list.innerHTML = '<div class="empty" style="padding:10px">No permission slugs registered.</div>';
+    } else {
+      list.innerHTML = slugs.map(s => {
+        const cur = overrides[s.slug] || 'default'; // grant | deny | default
+        const inDefault = defaultSet.has(s.slug);
+        const mk = (eff, txt) =>
+          `<button type="button" data-effect="${eff}"${cur === eff ? ' class="active"' : ''}>${txt}</button>`;
+        return `<div class="perm-row" data-slug="${esc(s.slug)}" data-indefault="${inDefault ? '1' : '0'}">
+          <div class="perm-row-info">
+            <span class="perm-row-slug">${esc(s.slug)}</span>
+            <span class="perm-row-desc" title="${esc(s.description || '')}">${esc(s.description || '')}</span>
+          </div>
+          <div class="perm-tristate">${mk('default', 'Default')}${mk('grant', 'Grant')}${mk('deny', 'Deny')}</div>
+          <span class="perm-row-eff"></span>
+        </div>`;
+      }).join('');
+      list.querySelectorAll('.perm-row').forEach(permRowEffective);
+    }
+    list.scrollTop = 0;
+    $('#perm-edit-modal').classList.add('show');
+    modalEditing = true;
+    setTimeout(() => $('#perm-edit-filter').focus(), 0);
+  }
+
+  function closePermEditModal() {
+    $('#perm-edit-modal').classList.remove('show');
+    modalEditing = false;
+  }
+
+  async function submitPermEdit() {
+    const errEl = $('#perm-edit-error');
+    errEl.textContent = '';
+    if (!permEditConv) { errEl.textContent = 'No agent selected.'; return; }
+    const overrides = {};
+    $$('#perm-edit-list .perm-row').forEach(row => {
+      const active = row.querySelector('.perm-tristate button.active');
+      overrides[row.dataset.slug] = active ? active.dataset.effect : 'default';
+    });
+    if (!Object.keys(overrides).length) { errEl.textContent = 'Nothing to save.'; return; }
+    const btn = $('#perm-edit-submit');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/permissions', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conv: permEditConv, overrides }),
+      });
+      if (!r.ok) {
+        errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
+        return;
+      }
+      const resp = await r.json().catch(() => ({}));
+      const n = resp.changed || 0;
+      toast(`Permissions saved — ${n} change${n === 1 ? '' : 's'}`);
+      closePermEditModal();
+      await refresh();
+    } catch (e) {
+      errEl.textContent = 'Network error: ' + (e.message || e);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function bindPermEditModal() {
+    $('#perm-edit-cancel').addEventListener('click', closePermEditModal);
+    $('#perm-edit-submit').addEventListener('click', submitPermEdit);
+    // Tri-state clicks are delegated: pick the clicked effect, drop the
+    // active class from its siblings, refresh the row's effective hint.
+    $('#perm-edit-list').addEventListener('click', (e) => {
+      const b = e.target.closest('.perm-tristate button');
+      if (!b) return;
+      b.parentElement.querySelectorAll('button')
+        .forEach(x => x.classList.toggle('active', x === b));
+      permRowEffective(b.closest('.perm-row'));
+    });
+    $('#perm-edit-filter').addEventListener('input', () => {
+      const q = $('#perm-edit-filter').value.trim().toLowerCase();
+      $$('#perm-edit-list .perm-row').forEach(row => {
+        const slug = row.dataset.slug.toLowerCase();
+        const desc = (row.querySelector('.perm-row-desc').textContent || '').toLowerCase();
+        row.classList.toggle('hidden', q !== '' && !slug.includes(q) && !desc.includes(q));
+      });
+    });
+    $('#perm-edit-reset').addEventListener('click', () => {
+      $$('#perm-edit-list .perm-row').forEach(row => {
+        row.querySelectorAll('.perm-tristate button')
+          .forEach(x => x.classList.toggle('active', x.dataset.effect === 'default'));
+        permRowEffective(row);
+      });
+    });
+    $('#perm-edit-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'perm-edit-modal') closePermEditModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('#perm-edit-modal').classList.contains('show')) {
+        closePermEditModal();
       }
     });
   }
@@ -5724,6 +5981,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
             openSudoGrantModal(conv);
             return;
           }
+          case 'perm-edit': {
+            // Per-row affordance: open the permanent-permission editor
+            // for this agent. Distinct from sudo-grant — that elevation
+            // is time-bounded, these overrides persist.
+            openPermEditModal(conv, label);
+            return;
+          }
           case 'sudo-manage': {
             // Click on the 🔓 badge: switch to the Sudo tab pre-
             // filtered to this agent so the human can revoke specific
@@ -6766,6 +7030,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   bindFilter('sudo');
   bindFilter('links');
   bindSudoModal();
+  bindPermEditModal();
   bindCronModal();
   bindGroupCreateModal();
   bindGroupContextModal();

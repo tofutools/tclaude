@@ -149,12 +149,13 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// .jsonl — same post-init the per-conv clone path runs.
 		srcConv := m.ConvID
 		goBackground(func() { runClonePostInit(newConv, newTitle, srcConv, caller) })
-		// Per-conv perms — best-effort, mirror runCloneOrchestration.
-		if perms, err := db.ListAgentPermissionsForConv(m.ConvID); err == nil {
-			for _, slug := range perms {
-				if err := db.GrantAgentPermission(newConv, slug, granter); err != nil {
-					slog.Warn("groups clone: grant perm failed",
-						"group", newName, "conv", newConv, "slug", slug, "error", err)
+		// Per-conv perms — grant AND deny overrides, best-effort, mirror
+		// runCloneOrchestration.
+		if perms, err := db.ListAgentPermissionOverridesForConv(m.ConvID); err == nil {
+			for slug, effect := range perms {
+				if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
+					slog.Warn("groups clone: copy perm failed",
+						"group", newName, "conv", newConv, "slug", slug, "effect", effect, "error", err)
 				}
 			}
 		}

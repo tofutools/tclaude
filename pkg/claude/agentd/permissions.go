@@ -176,9 +176,14 @@ func IsKnownPermSlug(slug string) bool {
 // view. Defaults come from config.json (granted to all agents); grants
 // come from SQLite (table agent_permissions), keyed by full conv-id,
 // and ADD to defaults rather than replace them.
+//
+// Overrides is the full tri-state per-conv view — conv-id → slug →
+// "grant" | "deny". Grants (above) is the grant-only projection of the
+// same table, kept for back-compat with readers that predate deny.
 type permissionsState struct {
-	Defaults []string            `json:"defaults"`
-	Grants   map[string][]string `json:"grants"`
+	Defaults  []string                     `json:"defaults"`
+	Grants    map[string][]string          `json:"grants"`
+	Overrides map[string]map[string]string `json:"overrides"`
 }
 
 // targetSentinelDefault is the magic target string that means "modify
@@ -219,7 +224,10 @@ func resolveTarget(target string) (*resolvedTarget, error) {
 // config defaults with the SQLite overrides table.
 func snapshotPermissions() (permissionsState, error) {
 	cfg, _ := config.Load()
-	out := permissionsState{Grants: map[string][]string{}}
+	out := permissionsState{
+		Grants:    map[string][]string{},
+		Overrides: map[string]map[string]string{},
+	}
 	if cfg != nil && cfg.Agent != nil {
 		out.Defaults = append(out.Defaults, cfg.Agent.DefaultPermissions...)
 	}
@@ -227,9 +235,15 @@ func snapshotPermissions() (permissionsState, error) {
 	if err != nil {
 		return out, err
 	}
-	out.Grants = grants
-	if out.Grants == nil {
-		out.Grants = map[string][]string{}
+	if grants != nil {
+		out.Grants = grants
+	}
+	overrides, err := db.ListAllAgentPermissionOverrides()
+	if err != nil {
+		return out, err
+	}
+	if overrides != nil {
+		out.Overrides = overrides
 	}
 	return out, nil
 }
@@ -314,7 +328,8 @@ type permissionsMutateResp struct {
 	TargetKey string   `json:"target_key,omitempty"` // resolved conv-id when target != "default"
 	Title     string   `json:"title,omitempty"`      // display title of the resolved conv, when known
 	Slug      string   `json:"slug"`
-	Effective []string `json:"effective"` // post-mutation slug list for that target
+	Effect    string   `json:"effect,omitempty"`     // post-mutation override effect: "grant", "deny", or "default" (cleared)
+	Effective []string `json:"effective"`            // post-mutation GRANTED slug list for that target
 }
 
 func decodeMutateReq(w http.ResponseWriter, r *http.Request) (*permissionsMutateReq, bool) {
@@ -364,8 +379,12 @@ func granterLabel(granterConvID string) string {
 //     post-incident query like "what did agent X do during grant
 //     42's window?" is a single LIKE.
 //   - "<conv>" otherwise — the agent had a non-sudo source for the
-//     permission (default-permissions list or agent_permissions row).
-//     Annotating those with via-sudo would be misleading.
+//     permission (a per-conv grant override or the default-permissions
+//     list). Annotating those with via-sudo would be misleading.
+//
+// A per-conv deny override is treated like the no-non-sudo-source case:
+// if the call passed at all, sudo is the only thing that could have
+// allowed it, so the via-sudo annotation applies.
 //
 // Only used at the audit-write layer, not in the hot read path —
 // re-checking config + DB here is fine.
@@ -373,13 +392,18 @@ func auditedCaller(callerConvID, perm string) string {
 	if callerConvID == "" {
 		return ""
 	}
-	cfg, _ := config.Load()
-	if cfg.HasDefaultPermission(perm) {
+	effect, hasOverride, _ := db.AgentPermissionOverride(callerConvID, perm)
+	if hasOverride && effect == db.PermEffectGrant {
 		return callerConvID
 	}
-	if ok, err := db.HasAgentPermissionRow(callerConvID, perm); err == nil && ok {
-		return callerConvID
+	if !hasOverride {
+		cfg, _ := config.Load()
+		if cfg.HasDefaultPermission(perm) {
+			return callerConvID
+		}
 	}
+	// Either an explicit deny override, or no non-sudo source at all —
+	// the call could only have passed via an active sudo grant.
 	grantID, err := db.LookupActiveSudoGrantID(callerConvID, perm)
 	if err != nil || grantID == 0 {
 		return callerConvID
@@ -417,7 +441,7 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug}
+	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: db.PermEffectGrant}
 	if target.Sentinel {
 		if err := addDefaultPermission(body.Slug); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -438,8 +462,65 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handlePermissionsDeny writes a per-conv DENY override into
+// agent_permissions(conv_id, slug, effect='deny'). A deny suppresses an
+// otherwise default-granted slug for one specific agent — the
+// subtractive half of the override model that the additive grant path
+// alone could not express.
+//
+// Unlike grant, deny rejects the "default" sentinel target: there is
+// nothing below the defaults list to deny. To remove a slug for every
+// agent, revoke it from the defaults list instead.
+//
+// Gated on permissions.grant — writing a permission override (grant or
+// deny) is the same management capability; permissions.revoke only
+// covers clearing an override back to the inherited default. Humans
+// (and the cookie-authed dashboard) bypass.
+func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
+	granter, ok := requirePermission(w, r, PermPermissionsGrant)
+	if !ok {
+		return
+	}
+	body, ok := decodeMutateReq(w, r)
+	if !ok {
+		return
+	}
+	if !IsKnownPermSlug(body.Slug) {
+		writeError(w, http.StatusBadRequest, "unknown_slug",
+			fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
+				body.Slug, strings.Join(knownSlugs(), ", ")))
+		return
+	}
+	if body.Target == targetSentinelDefault {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"cannot deny on the \"default\" target — deny is a per-conv override. "+
+				"To remove a slug for every agent, revoke it from the defaults list instead.")
+		return
+	}
+	target, err := resolveTarget(body.Target)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	if err := db.SetAgentPermissionOverride(target.Key, body.Slug, db.PermEffectDeny, granterLabel(granter)); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	slugs, _ := db.ListAgentPermissionsForConv(target.Key)
+	writeJSON(w, http.StatusOK, permissionsMutateResp{
+		Target:    body.Target,
+		TargetKey: target.Key,
+		Title:     target.ConvTitle,
+		Slug:      body.Slug,
+		Effect:    db.PermEffectDeny,
+		Effective: slugs,
+	})
+}
+
 // handlePermissionsRevoke removes slug from either DefaultPermissions
-// (config.json) or agent_permissions for the resolved conv. Idempotent.
+// (config.json) or agent_permissions for the resolved conv. For a
+// per-conv target it clears whichever override (grant or deny) is
+// present, returning the slug to its inherited default. Idempotent.
 func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermPermissionsRevoke); !ok {
 		return
@@ -453,7 +534,7 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug}
+	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: "default"}
 	if target.Sentinel {
 		if err := removeDefaultPermission(body.Slug); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())

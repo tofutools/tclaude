@@ -168,13 +168,67 @@ const (
 	PermMessageDirect     = "message.direct"
 )
 
+// permResolution is the verdict of the non-interactive permission
+// sources — everything the daemon consults before the human-approval
+// popup. requirePermission and its cross-agent / boolean siblings all
+// route through resolvePermission so the precedence is defined once.
+type permResolution int
+
+const (
+	// permUndecided: no source spoke for this (conv, slug). The caller
+	// falls through to its own extra checks (e.g. group-owner bypass)
+	// and finally the popup / 403.
+	permUndecided permResolution = iota
+	// permAllow: an allow-source granted it — an active sudo grant, a
+	// per-conv grant override, or the config default-permissions list.
+	permAllow
+	// permDeny: an explicit per-conv deny override. Authoritative below
+	// sudo: it suppresses the config default and any structural bypass.
+	// The caller still offers the human-approval popup as the one-off
+	// escape hatch.
+	permDeny
+)
+
+// resolvePermission evaluates the non-interactive permission sources
+// for (convID, slug) in precedence order:
+//
+//  1. Active sudo grant — a fresh, time-bounded, explicit human
+//     elevation (`tclaude agent sudo`). Wins over everything,
+//     including a permanent deny.
+//  2. Per-conv override (agent_permissions.effect, written by the
+//     dashboard permanent-permission editor / `permissions` CLI) —
+//     grant => allow, deny => authoritative deny.
+//  3. Config default-permissions list (~/.tclaude/config.json) — allow.
+//
+// Nothing matched => permUndecided.
+func resolvePermission(convID, slug string) permResolution {
+	if convID == "" {
+		return permUndecided
+	}
+	if ok, err := db.HasActiveSudoGrant(convID, slug); err == nil && ok {
+		return permAllow
+	}
+	if effect, ok, err := db.AgentPermissionOverride(convID, slug); err == nil && ok {
+		if effect == db.PermEffectDeny {
+			return permDeny
+		}
+		return permAllow
+	}
+	cfg, _ := config.Load()
+	if cfg.HasDefaultPermission(slug) {
+		return permAllow
+	}
+	return permUndecided
+}
+
 // requirePermission gates an endpoint behind a named agent permission.
 //
-// Humans (no claude ancestor) always pass. Agents pass only when the
-// active config grants them perm via DefaultPermissions or
-// PermissionOverrides[<conv-id|prefix|title>]. On denial the response
-// is 403 with the permission slug in the message body so the caller
-// can explain to its user what to grant.
+// Humans (no claude ancestor) always pass. Agents pass only when
+// resolvePermission returns permAllow — an active sudo grant, a
+// per-conv grant override, or the config default-permissions list. A
+// per-conv deny override (or simply no granting source) leaves the
+// caller to the X-Tclaude-Ask-Human popup, then a 403 with the
+// permission slug in the message body.
 //
 // Returns (convID, true) on success — convID is "" for the human path,
 // the resolved conv-id for an agent. On failure the response is
@@ -195,7 +249,6 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate permission")
 		return "", false
 	}
-	cfg, _ := config.Load()
 	title := ""
 	row := agent.FreshConvRow(p.ConvID)
 	if row != nil {
@@ -203,24 +256,10 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 	}
 	slog.Debug("requirePermission: resolved caller",
 		"conv", p.ConvID, "row_present", row != nil, "title", title, "perm", perm)
-	// Per-agent grants live in SQLite (table agent_permissions);
-	// cfg only carries the global defaults list. Check the DB first,
-	// then fall back to defaults.
-	allowed := cfg.HasDefaultPermission(perm)
-	if !allowed {
-		if ok, err := db.HasAgentPermissionRow(p.ConvID, perm); err == nil && ok {
-			allowed = true
-		}
-	}
-	// Third source: time-bounded sudo grants (`tclaude agent sudo`).
-	// Active rows = expires_at > now() AND revoked_at IS empty.
-	// Filtered server-side by indexed lookup; safe to call on every
-	// permission check.
-	if !allowed {
-		if ok, err := db.HasActiveSudoGrant(p.ConvID, perm); err == nil && ok {
-			allowed = true
-		}
-	}
+	// Defaults, per-conv grant/deny overrides, and sudo grants all
+	// resolve in resolvePermission. permDeny and permUndecided both
+	// fall through to the popup-or-403 path below.
+	allowed := resolvePermission(p.ConvID, perm) == permAllow
 	if !allowed {
 		// Permission denied. If the caller asked for a human-override
 		// popup (via X-Tclaude-Ask-Human: <duration>), open one and

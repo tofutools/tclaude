@@ -395,7 +395,9 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		}
 	}
 
-	oldPerms, err := db.ListAgentPermissionsForConv(target)
+	// Copy the full permission posture — grant AND deny overrides — so
+	// the clone inherits the source's lockdown, not just its grants.
+	oldPerms, err := db.ListAgentPermissionOverridesForConv(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot perms: "+err.Error())
@@ -467,9 +469,9 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		copied = append(copied, fmt.Sprintf("group:%d", m.GroupID))
 	}
 
-	for _, slug := range oldPerms {
-		if err := db.GrantAgentPermission(newConv, slug, granter); err != nil {
-			slog.Warn("clone: grant new perm failed", "slug", slug, "error", err)
+	for slug, effect := range oldPerms {
+		if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
+			slog.Warn("clone: copy new perm failed", "slug", slug, "effect", effect, "error", err)
 			continue
 		}
 		copied = append(copied, "perm:"+slug)

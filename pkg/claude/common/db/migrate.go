@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 38
+const currentVersion = 39
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -251,6 +251,37 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 39 {
+		if err := migrateV38toV39(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV38toV39 adds agent_permissions.effect — the grant/deny knob
+// behind the dashboard's permanent-permission editor.
+//
+// Before this, agent_permissions held grants only: a row meant "this
+// conv holds this slug," ADDED on top of the config.json defaults.
+// There was no way to DENY a default-granted slug for one specific
+// agent. The tri-state editor (Grant / Deny / Default) needs that, so
+// the column carries 'grant' or 'deny'; the absence of a row is the
+// third state, "inherit the default."
+//
+// Existing rows backfill to 'grant' — every per-conv row written
+// before this migration was, by construction, an additive grant.
+func migrateV38toV39(db *sql.DB) error {
+	if _, err := db.Exec(`
+		ALTER TABLE agent_permissions
+			ADD COLUMN effect TEXT NOT NULL DEFAULT 'grant'
+			CHECK (effect IN ('grant', 'deny'));
+
+		UPDATE schema_version SET version = 39;
+	`); err != nil {
+		return fmt.Errorf("migrate v38→v39 (add agent_permissions.effect): %w", err)
+	}
 	return nil
 }
 
