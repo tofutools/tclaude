@@ -555,6 +555,7 @@ func TestCopyConversationFile(t *testing.T) {
 // borrow a cwd across dirs, and a dir with no sibling-with-a-cwd is
 // left untouched.
 func TestBackfillProjectPaths(t *testing.T) {
+	setupTestDB(t) // backfillProjectPaths persists; isolate the DB (fake IDs no-op)
 	entries := []SessionEntry{
 		{SessionID: "a", FullPath: "/proj/dirA/a.jsonl", ProjectPath: "/real/repo-a"},
 		{SessionID: "b", FullPath: "/proj/dirA/b.jsonl", ProjectPath: ""},
@@ -602,38 +603,42 @@ func TestLoadSessionsIndex_BackfillsTurnlessConvProjectPath(t *testing.T) {
 	assert.Equal(t, "/home/gigur/git/myrepo", byID[turnlessID].ProjectPath,
 		"turnless conv must inherit its project from a sibling in the same dir")
 	assert.Equal(t, "/home/gigur/git/myrepo", byID[realID].ProjectPath, "sanity: sibling keeps its own cwd")
-}
 
-// The watch-mode fast path (LoadEntriesFromDB) backfills too — even
-// though the persisted conv_index row keeps its empty project_path
-// (the backfill is display-time enrichment, not a DB write).
-func TestLoadEntriesFromDB_BackfillsTurnlessConvProjectPath(t *testing.T) {
-	setupTestDB(t)
-	tmpDir := t.TempDir()
-
-	realID := "11111111-2222-3333-4444-555555555555"
-	real := `{"type":"user","cwd":"/home/gigur/git/myrepo","message":{"role":"user","content":"hello"},"timestamp":"2026-03-01T10:00:00Z"}
-`
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, realID+".jsonl"), []byte(real), 0o600), "write real jsonl")
-
-	turnlessID := "228afb8c-4d20-4465-be63-754375a2e58a"
-	turnless := `{"type":"custom-title","customTitle":"billy-r-1","sessionId":"` + turnlessID + `"}
-`
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, turnlessID+".jsonl"), []byte(turnless), 0o600), "write turnless jsonl")
-
-	// Populate the conv_index cache.
-	_, err := LoadSessionsIndex(tmpDir)
-	require.NoError(t, err, "LoadSessionsIndex")
-
-	// The persisted row keeps its empty project_path — the backfill is
-	// not written back to the DB.
+	// The derived cwd is persisted onto the conv_index row, so every
+	// later reader sees it without re-deriving.
 	row, err := db.GetConvIndex(turnlessID)
 	require.NoError(t, err, "GetConvIndex")
 	require.NotNil(t, row, "row")
-	assert.Equal(t, "", row.ProjectPath, "conv_index row stays a faithful mirror of the .jsonl")
+	assert.Equal(t, "/home/gigur/git/myrepo", row.ProjectPath,
+		"backfilled cwd must be written back onto the conv_index row")
+}
 
-	// But the watch-mode read path still backfills it for display.
-	entries, err := LoadEntriesFromDB(tmpDir)
+// The watch-mode fast path (LoadEntriesFromDB) backfills too, and — like
+// LoadSessionsIndex — persists the derived cwd onto the conv_index row.
+func TestLoadEntriesFromDB_BackfillsAndPersistsProjectPath(t *testing.T) {
+	setupTestDB(t)
+	dir := "/home/gigur/.claude/projects/-home-gigur-git-myrepo"
+	realID := "11111111-2222-3333-4444-555555555555"
+	turnlessID := "228afb8c-4d20-4465-be63-754375a2e58a"
+
+	// A normal conversation with a recorded cwd.
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      realID,
+		ProjectDir:  dir,
+		FullPath:    filepath.Join(dir, realID+".jsonl"),
+		ProjectPath: "/home/gigur/git/myrepo",
+		Created:     "2026-03-01T10:00:00Z",
+	}), "seed real row")
+	// A named-but-turnless conversation: no cwd of its own.
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      turnlessID,
+		ProjectDir:  dir,
+		FullPath:    filepath.Join(dir, turnlessID+".jsonl"),
+		CustomTitle: "billy-r-1",
+		Created:     "2026-03-01T11:00:00Z",
+	}), "seed turnless row")
+
+	entries, err := LoadEntriesFromDB(dir)
 	require.NoError(t, err, "LoadEntriesFromDB")
 	byID := map[string]SessionEntry{}
 	for _, e := range entries {
@@ -642,4 +647,11 @@ func TestLoadEntriesFromDB_BackfillsTurnlessConvProjectPath(t *testing.T) {
 	require.Contains(t, byID, turnlessID, "turnless conv must be present")
 	assert.Equal(t, "/home/gigur/git/myrepo", byID[turnlessID].ProjectPath,
 		"watch-mode path must backfill the project from a sibling")
+
+	// Persisted, not just returned for display.
+	row, err := db.GetConvIndex(turnlessID)
+	require.NoError(t, err, "GetConvIndex")
+	require.NotNil(t, row, "row")
+	assert.Equal(t, "/home/gigur/git/myrepo", row.ProjectPath,
+		"backfilled cwd must be persisted onto the conv_index row")
 }

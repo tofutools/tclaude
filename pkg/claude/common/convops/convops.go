@@ -534,7 +534,7 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 }
 
 // backfillProjectPaths fills in a missing ProjectPath from a sibling
-// conversation in the same Claude project directory.
+// conversation in the same Claude project directory, and persists it.
 //
 // Claude Code stamps the working directory onto every conversation
 // *turn*; a conversation that was named but never took a turn (see
@@ -544,10 +544,11 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 // source. The key is the .jsonl's parent directory (filepath.Dir of
 // FullPath): that IS the per-cwd Claude project directory.
 //
-// This is display-time enrichment only — the conv_index row stays a
-// faithful mirror of the .jsonl, which genuinely carries no cwd. The
-// listing surfaces (`conv ls`, `conv ls -w`) call this so a
-// named-but-turnless conversation still shows its project.
+// The derived cwd is written back onto the conv_index row, so it is
+// resolved once and then served from the cache like any other field.
+// LoadSessionsIndex and LoadEntriesFromDB call this, so the first
+// `conv ls` / watch refresh after a named-but-turnless conversation
+// appears heals its row for every reader.
 func backfillProjectPaths(entries []SessionEntry) {
 	pathByDir := make(map[string]string)
 	for i := range entries {
@@ -567,8 +568,18 @@ func backfillProjectPaths(entries []SessionEntry) {
 		if e.ProjectPath != "" || e.FullPath == "" {
 			continue
 		}
-		if p := pathByDir[filepath.Dir(e.FullPath)]; p != "" {
-			e.ProjectPath = p
+		p := pathByDir[filepath.Dir(e.FullPath)]
+		if p == "" {
+			continue
+		}
+		e.ProjectPath = p
+		// Persist the derived cwd so every reader — the next watch
+		// refresh, the dashboard, `agent` lookups — sees it without
+		// re-deriving. Best-effort: a failed write only costs the
+		// re-derivation on the next listing.
+		if err := db.SetConvIndexProjectPath(e.SessionID, p); err != nil {
+			slog.Warn("conv_index: project-path backfill write failed",
+				"conv_id", e.SessionID, "error", err)
 		}
 	}
 }
