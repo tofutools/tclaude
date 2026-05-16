@@ -42,6 +42,17 @@ func withDashboardAuth(t *testing.T) {
 	})
 }
 
+// serveDashboardGroups routes r through a fresh mux carrying the
+// /api/groups routes — the same dispatch a real browser request takes
+// after the move to Go 1.22 method+pattern routing. The cookie/Origin
+// auth check still runs inside groupRoute, so dashboardRequest's
+// injected cookie is what authorises the call.
+func serveDashboardGroups(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	registerDashboardGroupRoutes(mux)
+	mux.ServeHTTP(w, r)
+}
+
 func TestDashboardEdit_RemoveMember(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
@@ -51,7 +62,7 @@ func TestDashboardEdit_RemoveMember(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team/members/worker", "")
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	members, _ := db.ListAgentGroupMembers(gID)
 	assert.Empty(t, members, "expected member removed")
@@ -66,7 +77,7 @@ func TestDashboardEdit_GrantOwner(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team/owners", `{"conv":"worker"}`)
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	owners, _ := db.ListAgentGroupOwners(gID)
 	if assert.Len(t, owners, 1, "expected one owner") {
@@ -85,7 +96,7 @@ func TestDashboardEdit_RevokeOwner(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/worker", "")
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	owners, _ := db.ListAgentGroupOwners(gID)
 	assert.Empty(t, owners, "expected owner revoked")
@@ -101,7 +112,7 @@ func TestDashboardEdit_RevokeOwner_NotAnOwner(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team/owners/worker", "")
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
@@ -115,7 +126,7 @@ func TestDashboardEdit_DeleteGroup(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/team", "")
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	require.Equal(t, http.StatusNoContent, w.Code, "body=%s", w.Body.String())
 	g, _ := db.GetAgentGroupByName("team")
 	assert.Nil(t, g, "expected group deleted; still exists: %+v", g)
@@ -138,7 +149,7 @@ func TestDashboardEdit_UpdateMember(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker",
 		`{"role":"new-role","descr":"new descr"}`)
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	members, _ := db.ListAgentGroupMembers(gID)
 	require.Len(t, members, 1, "expected 1 member")
@@ -163,7 +174,7 @@ func TestDashboardEdit_UpdateMember_PartialFields(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker",
 		`{"role":"only-role-changed"}`)
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "status")
 	members, _ := db.ListAgentGroupMembers(gID)
 	got := members[0]
@@ -183,7 +194,7 @@ func TestDashboardEdit_UpdateMember_EmptyBodyIs400(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/worker", `{}`)
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code, "empty body")
 }
 
@@ -198,7 +209,7 @@ func TestDashboardEdit_UpdateMember_MissingIs404(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPatch, "/api/groups/team/members/no-such-conv",
 		`{"role":"x"}`)
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusNotFound, w.Code, "missing member")
 }
 
@@ -211,7 +222,7 @@ func TestDashboardEdit_RenameGroup(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", `{"new_name":"team-renamed"}`)
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	oldGroup, _ := db.GetAgentGroupByName("team")
 	assert.Nil(t, oldGroup, "old name should 404 after rename")
@@ -233,7 +244,7 @@ func TestDashboardEdit_RenameGroup_Collision(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", `{"new_name":"team-renamed"}`)
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusConflict, w.Code, "status")
 }
 
@@ -245,7 +256,7 @@ func TestDashboardEdit_RenameGroup_BadName(t *testing.T) {
 	for _, bad := range []string{`{"new_name":""}`, `{"new_name":"has/slash"}`, "{\"new_name\":\"\x01ctrl\"}"} {
 		w := httptest.NewRecorder()
 		r := dashboardRequest(http.MethodPost, "/api/groups/team/rename", bad)
-		handleDashboardGroupsAPI(w, r)
+		serveDashboardGroups(w, r)
 		assert.Equal(t, http.StatusBadRequest, w.Code, "body %q", bad)
 		// team untouched.
 		got, _ := db.GetAgentGroupByName("team")
@@ -259,7 +270,7 @@ func TestDashboardEdit_DeleteGroup_NotFound(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodDelete, "/api/groups/nope", "")
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusNotFound, w.Code, "status")
 }
 
@@ -271,7 +282,7 @@ func TestDashboardEdit_DeleteGroup_WrongMethod(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/groups/team", "")
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "status")
 }
 
@@ -435,7 +446,7 @@ func TestDashboardEdit_NoCookieRefused(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/api/groups/team/members/w", nil)
 	r.Header.Set("Origin", popupBaseURL)
 	// no cookie added
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusForbidden, w.Code, "missing cookie should 403")
 }
 
@@ -447,6 +458,6 @@ func TestDashboardEdit_BadOriginRefused(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/api/groups/team/members/w", nil)
 	r.Header.Set("Origin", "http://evil.example.com")
 	r.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: dashboardSessionToken})
-	handleDashboardGroupsAPI(w, r)
+	serveDashboardGroups(w, r)
 	assert.Equal(t, http.StatusForbidden, w.Code, "bad Origin should 403")
 }

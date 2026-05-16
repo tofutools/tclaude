@@ -14,6 +14,13 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+// serveV1 routes r through the production /v1 mux — the same dispatch a
+// real daemon request takes after the move to Go 1.22 method+pattern
+// routing for the /v1/groups/{name} endpoints.
+func serveV1(w http.ResponseWriter, r *http.Request) {
+	BuildHandlerForTest().ServeHTTP(w, r)
+}
+
 // Archiving an active group flips the row's archived_at column,
 // returns 200 + an "archived" action, and makes subsequent
 // member-add attempts return 409.
@@ -29,7 +36,7 @@ func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/groups/team/archive", nil)
 	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1}))
-	handleGroupByName(w, r) // dispatcher entry point with selector
+	serveV1(w, r) // dispatcher entry point with selector
 	require.Equal(t, http.StatusOK, w.Code, "archive body=%s", w.Body.String())
 
 	// Re-fetch the group via the daemon helper (NOT the cached pointer)
@@ -46,7 +53,7 @@ func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 	r2 := httptest.NewRequest(http.MethodPost, "/v1/groups/team/members",
 		bytes.NewReader(memberBody))
 	r2 = r2.WithContext(context.WithValue(r2.Context(), peerKey{}, &peer{PID: 1}))
-	handleGroupByName(w2, r2)
+	serveV1(w2, r2)
 	assert.Equal(t, http.StatusConflict, w2.Code,
 		"add-member on archived group: body=%s", w2.Body.String())
 }
@@ -64,7 +71,7 @@ func TestHandleGroupUnarchive_ClearsAndAllows(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/groups/team/unarchive", nil)
 	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1}))
-	handleGroupByName(w, r)
+	serveV1(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "unarchive body=%s", w.Body.String())
 
 	g, _ := db.GetAgentGroupByName("team")
