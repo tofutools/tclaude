@@ -318,18 +318,19 @@ func TestLoadSessionsIndex_ScansJsonlOnDisk(t *testing.T) {
 	assert.Equal(t, "my-agent", got.CustomTitle, "CustomTitle")
 }
 
-// Regression: agent-spawn artifacts — .jsonl files that only carry
-// preamble metadata (`last-prompt`, `custom-title`, `agent-name`,
-// `permission-mode`) with no timestamps — used to surface as ghost
-// rows in `conv ls` after the first scan stored them as stubs in
-// conv_index. Stubs must stay in the DB (so we don't pointlessly
-// re-scan them on every startup) but never reach listing surfaces.
-func TestLoadSessionsIndex_HidesStubFromAgentSpawnArtifact(t *testing.T) {
+// Regression: a conversation /rename'd before its first turn — a
+// spawned/reincarnated agent whose .jsonl carries only preamble
+// metadata (`last-prompt`, `custom-title`, `agent-name`,
+// `permission-mode`, none of them timestamped) — must NOT be discarded.
+// It has a real custom title; it is a genuine conversation and has to
+// surface in `conv ls` and the dashboard alike. It used to be dropped
+// as a stub purely because no line carried a timestamp.
+func TestLoadSessionsIndex_IndexesNamedTurnlessConv(t *testing.T) {
 	setupTestDB(t)
 	tmpDir := t.TempDir()
 	sessionID := "128786c2-79dc-4366-8fed-6250a0d184c7"
 
-	// Faithful reproduction of one of the real-world stub files.
+	// Faithful reproduction of one of the real-world metadata-only files.
 	content := `{"type":"last-prompt","leafUuid":"83c7a0bc-42d3-4728-9804-c7bdf78f8019","sessionId":"` + sessionID + `"}
 {"type":"custom-title","customTitle":"dev-c-1","sessionId":"` + sessionID + `"}
 {"type":"agent-name","agentName":"dev-c-1","sessionId":"` + sessionID + `"}
@@ -337,27 +338,137 @@ func TestLoadSessionsIndex_HidesStubFromAgentSpawnArtifact(t *testing.T) {
 `
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600), "write jsonl")
 
-	// First call: stub gets written to the DB.
+	// First call: scans the file.
 	idx, err := LoadSessionsIndex(tmpDir)
 	require.NoError(t, err, "LoadSessionsIndex (first)")
-	require.Len(t, idx.Entries, 0, "first call: expected 0 entries (stub should not surface), got %+v", idx.Entries)
+	require.Len(t, idx.Entries, 1, "named-but-turnless conv must be indexed, not dropped")
+	assert.Equal(t, "dev-c-1", idx.Entries[0].CustomTitle, "CustomTitle")
+	assert.NotEmpty(t, idx.Entries[0].Created, "Created must fall back to file mtime so the row is not a stub")
 
-	// Stub should be persisted so we don't re-scan on startup.
+	// Persisted as a real row, not a stub.
+	row, err := db.GetConvIndex(sessionID)
+	require.NoError(t, err, "row should be persisted in DB")
+	require.NotNil(t, row, "row should be persisted in DB")
+	assert.NotEmpty(t, row.Created, "persisted row Created must be non-empty")
+	assert.Equal(t, "dev-c-1", row.CustomTitle, "persisted CustomTitle")
+
+	// Second call hits the freshness-cache branch — still surfaces.
+	idx2, err := LoadSessionsIndex(tmpDir)
+	require.NoError(t, err, "LoadSessionsIndex (second)")
+	require.Len(t, idx2.Entries, 1, "cached path must still surface the conv")
+
+	// LoadEntriesFromDB (the watch-mode fast path) too.
+	dbEntries, err := LoadEntriesFromDB(tmpDir)
+	require.NoError(t, err, "LoadEntriesFromDB")
+	require.Len(t, dbEntries, 1, "watch-mode path must surface the conv")
+}
+
+// A .jsonl with genuinely nothing indexable — no timestamped turn, no
+// custom title, no summary — IS still a stub: hidden from listings and
+// persisted with an empty Created so it is recognised as a stub again.
+func TestLoadSessionsIndex_HidesGenuinelyEmptyStub(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "00000000-1111-2222-3333-444444444444"
+
+	// Only un-timestamped state markers — crucially, no custom-title.
+	content := `{"type":"last-prompt","leafUuid":"83c7a0bc-42d3-4728-9804-c7bdf78f8019","sessionId":"` + sessionID + `"}
+{"type":"permission-mode","permissionMode":"auto","sessionId":"` + sessionID + `"}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, sessionID+".jsonl"), []byte(content), 0o600), "write jsonl")
+
+	idx, err := LoadSessionsIndex(tmpDir)
+	require.NoError(t, err, "LoadSessionsIndex")
+	require.Len(t, idx.Entries, 0, "a genuinely empty .jsonl must stay hidden")
+
 	row, err := db.GetConvIndex(sessionID)
 	require.NoError(t, err, "stub row should be persisted in DB")
 	require.NotNil(t, row, "stub row should be persisted in DB")
-	assert.Equal(t, "", row.Created, "stub row Created should be empty")
+	assert.Equal(t, "", row.Created, "stub row Created stays empty")
+}
 
-	// Second call: hits the freshness-passes-cache branch. Stub must
-	// still be filtered out.
-	idx2, err := LoadSessionsIndex(tmpDir)
-	require.NoError(t, err, "LoadSessionsIndex (second)")
-	require.Len(t, idx2.Entries, 0, "second call: expected 0 entries, got %+v", idx2.Entries)
+// parseJSONLSession returns a real entry — not nil — for a conversation
+// named before its first turn, with Created falling back to file mtime.
+func TestParseJSONLSession_NamedTurnlessConv(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
-	// LoadEntriesFromDB (the watch-mode fast path) must also filter.
-	dbEntries, err := LoadEntriesFromDB(tmpDir)
-	require.NoError(t, err, "LoadEntriesFromDB")
-	require.Len(t, dbEntries, 0, "LoadEntriesFromDB: expected 0 entries, got %+v", dbEntries)
+	content := `{"type":"custom-title","customTitle":"billy-r-1","sessionId":"` + sessionID + `"}
+{"type":"agent-name","agentName":"billy-r-1","sessionId":"` + sessionID + `"}
+`
+	path := filepath.Join(tmpDir, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write jsonl")
+
+	entry := ParseJSONLSessionPublic(path, sessionID)
+	require.NotNil(t, entry, "a named conversation must not be discarded")
+	assert.Equal(t, "billy-r-1", entry.CustomTitle, "CustomTitle")
+	assert.NotEmpty(t, entry.Created, "Created falls back to file mtime")
+}
+
+// Regression: a stub row left in the DB by older scanning logic (which
+// discarded named-but-turnless convs) must self-heal. A stub is never
+// trusted as fresh, so the next LoadSessionsIndex re-scans it and — the
+// conv now being indexable — replaces it with a real row.
+func TestLoadSessionsIndex_RescansStaleStub(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "deadbeef-0000-1111-2222-333333333333"
+
+	content := `{"type":"custom-title","customTitle":"stale-agent","sessionId":"` + sessionID + `"}
+`
+	path := filepath.Join(tmpDir, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write jsonl")
+	info, err := os.Stat(path)
+	require.NoError(t, err, "stat jsonl")
+
+	// Seed a stub row that looks fresh — its FileMtime/FileSize match
+	// the file on disk, exactly what older logic left behind.
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:     sessionID,
+		ProjectDir: tmpDir,
+		FullPath:   path,
+		FileMtime:  info.ModTime().Unix(),
+		FileSize:   info.Size(),
+	}), "seed stub row")
+
+	idx, err := LoadSessionsIndex(tmpDir)
+	require.NoError(t, err, "LoadSessionsIndex")
+	require.Len(t, idx.Entries, 1, "a stale stub must be re-scanned and healed, not skipped as fresh")
+	assert.Equal(t, "stale-agent", idx.Entries[0].CustomTitle, "healed CustomTitle")
+
+	row, err := db.GetConvIndex(sessionID)
+	require.NoError(t, err, "row lookup")
+	require.NotNil(t, row, "row")
+	assert.NotEmpty(t, row.Created, "healed row Created must be non-empty")
+}
+
+// Regression: RefreshConvIndexEntry — the per-conv path the dashboard
+// resolves titles through — also re-scans a stale stub instead of
+// trusting it, so the dashboard heals the same way `conv ls` does.
+func TestRefreshConvIndexEntry_RescansStaleStub(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "feedface-0000-1111-2222-333333333333"
+
+	content := `{"type":"custom-title","customTitle":"dash-agent","sessionId":"` + sessionID + `"}
+`
+	path := filepath.Join(tmpDir, sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write jsonl")
+	info, err := os.Stat(path)
+	require.NoError(t, err, "stat jsonl")
+
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:     sessionID,
+		ProjectDir: tmpDir,
+		FullPath:   path,
+		FileMtime:  info.ModTime().Unix(),
+		FileSize:   info.Size(),
+	}), "seed stub row")
+
+	got := RefreshConvIndexEntry(sessionID)
+	require.NotNil(t, got, "RefreshConvIndexEntry must return the healed row")
+	assert.Equal(t, "dash-agent", got.CustomTitle, "healed CustomTitle")
+	assert.NotEmpty(t, got.Created, "healed Created must be non-empty")
 }
 
 // Regression: a conversation's git branch can change mid-session — the

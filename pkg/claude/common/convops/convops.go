@@ -204,22 +204,17 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 		fileMtime := info.ModTime().Unix()
 		fileSize := info.Size()
 
-		// Check if DB entry is fresh
-		if cached, ok := dbByID[convID]; ok && !opts.ForceRescan && cached.FileMtime >= fileMtime {
-			// DB is fresh — but skip stub rows. Stubs are placeholder
-			// entries written when `parseJSONLSession` finds nothing
-			// useful in the .jsonl (e.g. agent-spawn artifacts that
-			// only carry `custom-title`/`agent-name` metadata lines
-			// with no timestamps or user messages). They have nothing
-			// meaningful to display — empty title, empty project,
-			// empty mtime — and resuming them just errors. We keep
-			// the stub row in the DB so we don't re-scan on every
-			// startup, but hide it from listings. `tclaude conv
-			// prune-empty` is the cleanup path for the underlying
-			// .jsonl files.
-			if isStubRow(cached) {
-				continue
-			}
+		// Serve a fresh, non-stub cache hit without re-scanning.
+		//
+		// A stub row is deliberately NOT trusted as fresh. A stub only
+		// records that the LAST scan found nothing indexable — but the
+		// scanner improves over time (it used to discard conversations
+		// that were named before their first turn), and a file can gain
+		// content after a stub was written. Stub files are tiny, so we
+		// always re-scan them: a stub left by older logic then
+		// self-heals into a real row. `tclaude conv prune-empty` is the
+		// cleanup path for the underlying genuinely-empty .jsonl files.
+		if cached, ok := dbByID[convID]; ok && !opts.ForceRescan && cached.FileMtime >= fileMtime && !isStubRow(cached) {
 			entries = append(entries, dbRowToEntry(cached, fileSize))
 			continue
 		}
@@ -458,11 +453,23 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	}
 
 	if firstTimestamp == "" {
-		// No valid data found
-		return nil
+		// No timestamped line anywhere in the file. Usually that's a
+		// genuinely empty .jsonl with nothing to index — but a
+		// conversation can be NAMED before it ever takes a turn: a
+		// spawned/reincarnated agent is /rename'd at startup, so its
+		// .jsonl holds a `custom-title` line (Claude Code's state-marker
+		// lines are not timestamped) yet no user/assistant turn. That
+		// named conversation is real and must be indexed — only a file
+		// with no title, no summary AND no prompt is a true empty stub.
+		if entry.CustomTitle == "" && entry.Summary == "" && entry.FirstPrompt == "" {
+			return nil
+		}
+		// Named-but-turnless: fall back to the file mtime so Created is
+		// non-empty (an empty Created marks a stub — see isStubRow).
+		entry.Created = info.ModTime().UTC().Format(time.RFC3339)
+	} else {
+		entry.Created = firstTimestamp
 	}
-
-	entry.Created = firstTimestamp
 	entry.Modified = info.ModTime().UTC().Format(time.RFC3339)
 	entry.MessageCount = 0
 
@@ -524,15 +531,19 @@ func LoadEntriesFromDB(projectPath string) ([]SessionEntry, error) {
 	return entries, nil
 }
 
-// isStubRow reports whether a conv_index row is a stub — a placeholder
-// written when parseJSONLSession found no usable session data (no
-// message carried a timestamp). Stubs sit in the DB to skip pointless
-// re-scans on every startup but are hidden from listing surfaces.
+// isStubRow reports whether a conv_index row is a stub — the
+// placeholder written when parseJSONLSession finds nothing indexable
+// in a .jsonl (no first prompt, no summary, no custom title). Stubs
+// sit in the DB and are hidden from listing surfaces.
 //
-// `Created` is the load-bearing signal: parseJSONLSession only returns
-// a non-nil entry when it observed at least one timestamped message,
-// and that timestamp is stored as Created. An empty Created therefore
-// uniquely identifies the stub path.
+// `Created` is the load-bearing signal: parseJSONLSession always sets
+// Created on a non-nil entry — to the first turn's timestamp, or, for
+// a conversation named before its first turn, to the file mtime. Only
+// the nothing-indexable path leaves Created empty, so an empty Created
+// uniquely identifies a stub.
+//
+// Stubs are re-scanned (not trusted as fresh) by LoadSessionsIndex and
+// RefreshConvIndexEntry, so a stub written by older logic self-heals.
 func isStubRow(r *db.ConvIndexRow) bool {
 	return r != nil && r.Created == ""
 }
@@ -571,7 +582,11 @@ func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 	// unchanged. The size check catches those (every JSONL append
 	// grows the file), and is essentially free since os.Stat already
 	// returned both.
-	if info.ModTime().Unix() <= row.FileMtime && info.Size() == row.FileSize {
+	//
+	// A stub row is never trusted as fresh — it only records that the
+	// last scan found nothing indexable. Re-scan it (cheap; stub files
+	// are tiny) so a stub written by older scanning logic self-heals.
+	if info.ModTime().Unix() <= row.FileMtime && info.Size() == row.FileSize && !isStubRow(row) {
 		return row
 	}
 	if ScanAndUpsertFile(row.FullPath) == nil {
