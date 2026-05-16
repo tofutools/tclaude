@@ -15,7 +15,7 @@ import (
 )
 
 type StatusCallbackParams struct {
-	Status string `pos:"true" help:"New status (working, idle, awaiting_permission, awaiting_input)"`
+	Status string `pos:"true" help:"New status (working, idle, awaiting_permission, awaiting_input, error)"`
 }
 
 // Valid status values for callbacks
@@ -60,7 +60,7 @@ type HookInput struct {
 func runStatusCallback(params *StatusCallbackParams) error {
 	// Validate status first
 	switch params.Status {
-	case StatusWorking, StatusIdle, StatusAwaitingPermission, StatusAwaitingInput:
+	case StatusWorking, StatusIdle, StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		// Valid
 	default:
 		return fmt.Errorf("invalid status: %s", params.Status)
