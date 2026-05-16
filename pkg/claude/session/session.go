@@ -241,16 +241,21 @@ func IsTmuxSessionAttached(sessionName string) bool {
 	return GetTmuxSessionAttachedCount(sessionName) > 0
 }
 
-// DetachSessionClients detaches all clients from a tmux session
-func DetachSessionClients(sessionName string) error {
+// DetachSessionClients detaches all clients from a tmux session and
+// returns how many were detached. The tmux session — and the process
+// running inside it — keeps running untouched; only the attached
+// clients (the terminal windows) go away. A count of 0 means the
+// session had no window open: a clean no-op.
+func DetachSessionClients(sessionName string) (int, error) {
 	// Get list of clients attached to this session
 	cmd := clcommon.TmuxCommand("list-clients", "-t", sessionName, "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Detach each client
+	detached := 0
 	clients := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, client := range clients {
 		if client == "" {
@@ -258,8 +263,9 @@ func DetachSessionClients(sessionName string) error {
 		}
 		// Detach this specific client
 		_ = clcommon.TmuxCommand("detach-client", "-t", client).Run()
+		detached++
 	}
-	return nil
+	return detached, nil
 }
 
 // CheckTmuxInstalled verifies tmux is available

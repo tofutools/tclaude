@@ -276,7 +276,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Quit
 					case confirmDetach:
 						state := m.sessions[m.cursor]
-						_ = DetachSessionClients(state.TmuxSession)
+						_, _ = DetachSessionClients(state.TmuxSession)
 						m.confirmMode = confirmNone
 						m = m.refreshSessions()
 					}

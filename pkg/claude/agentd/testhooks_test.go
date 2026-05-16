@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -121,6 +122,28 @@ func SetOpenTerminalForTest(fn func(string) error) func() {
 	prev := openTerminal
 	openTerminal = fn
 	return func() { openTerminal = prev }
+}
+
+// SetFocusAgentWindowForTest swaps the per-agent focus seam behind
+// the bulk /api/agent-windows endpoint so flow tests can assert which
+// agents the focus path was dispatched for without popping a real OS
+// window. Returns a restore function for t.Cleanup. Mirrors the
+// openTerminal seam.
+func SetFocusAgentWindowForTest(fn func(*db.SessionRow)) func() {
+	prev := focusAgentWindow
+	focusAgentWindow = fn
+	return func() { focusAgentWindow = prev }
+}
+
+// SetDetachAgentWindowsForTest swaps the per-agent unfocus/detach seam
+// behind the bulk /api/agent-windows endpoint. The fake returns the
+// detached-client count the real session.DetachSessionClients would
+// have, so a flow test can drive the no_window / detached / failed
+// outcomes. Returns a restore function for t.Cleanup.
+func SetDetachAgentWindowsForTest(fn func(*db.SessionRow) (int, error)) func() {
+	prev := detachAgentWindows
+	detachAgentWindows = fn
+	return func() { detachAgentWindows = prev }
 }
 
 // SetGitInfoResolverForTest swaps the git/gh resolver behind the

@@ -866,6 +866,43 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .delete-agent-wt input[type=checkbox] { cursor: pointer; flex: 0 0 auto; }
 .delete-agent-wt.disabled input[type=checkbox] { cursor: default; }
 .delete-agent-wt .wt-note { color: #7d8590; font-size: 11px; }
+/* Bulk window focus/unfocus selection modal. Reuses the cleanup-modal
+   shell (toolbar / list / rows / buttons); the rules below are
+   specific to this modal: the focus-vs-unfocus direction picker and
+   the by-role quick-select chips. */
+.window-direction {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22;
+}
+.window-direction label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-size: 12px; color: #c9d1d9;
+}
+.window-direction input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+.window-direction .opt-note { font-size: 11px; color: #7d8590; }
+.window-roles {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: #7d8590; min-height: 18px;
+}
+.window-roles .roles-label { text-transform: uppercase; letter-spacing: 0.04em; }
+.window-role-chip {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 10px;
+  padding: 1px 9px; font-size: 11px; color: #c9d1d9;
+  font-family: inherit; cursor: pointer;
+}
+.window-role-chip:hover { border-color: #58a6ff; }
+.window-role-chip.on { background: #1f3a5a; border-color: #58a6ff; color: #d4d4d4; }
+.window-role-chip.partial { border-color: #58a6ff; color: #d4d4d4; }
+/* Whole-dashboard window focus/unfocus trigger — sits in the top bar,
+   left of the emergency-shutdown button. Compact, neutral styling: it
+   is non-destructive (window-only), so it must not shout. */
+#window-all-btn {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
+  font-family: inherit; white-space: nowrap;
+}
+#window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
 </style>
 </head>
 <body>
@@ -874,6 +911,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   <span class="meta" id="meta">loading…</span>
   <span class="meta" style="margin-left:auto" id="usage"></span>
   <span class="meta" id="status"></span>
+  <button id="window-all-btn" data-act="window-modal-all" aria-label="Focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way.">🪟 windows…</button>
   <button id="emergency-all-btn" data-act="emergency-shutdown-all" title="Emergency shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">⏻ shut down all</button>
 </header>
 <nav>
@@ -1264,6 +1302,34 @@ details.group-virtual .group-name { color: #8aa0b8; }
     <div class="modal-buttons">
       <button id="cleanup-cancel" type="button">Cancel</button>
       <button id="cleanup-submit" class="primary" type="button">Clean up</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="window-modal">
+  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="window-title">
+    <h3 id="window-title">Agent windows</h3>
+    <p class="cleanup-hint" id="window-hint"></p>
+    <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
+      <label><input type="radio" name="window-direction" value="focus" checked />
+        <span>Focus</span>
+        <span class="opt-note">— open or raise a terminal window for each selected agent</span></label>
+      <label><input type="radio" name="window-direction" value="unfocus" />
+        <span>Unfocus</span>
+        <span class="opt-note">— detach the terminal windows so the desktop is decluttered. The agents keep running — only the windows are dismissed, never the agent process.</span></label>
+    </div>
+    <div class="cleanup-toolbar">
+      <button type="button" id="window-select-all">select all</button>
+      <button type="button" id="window-select-none">select none</button>
+      <input type="search" id="window-search" placeholder="filter title / id…" aria-label="Filter agents" />
+      <span class="spacer"></span>
+      <span class="cleanup-count" id="window-count"></span>
+    </div>
+    <div class="window-roles" id="window-roles"></div>
+    <div class="cleanup-list" id="window-list"></div>
+    <div class="cleanup-error" id="window-error"></div>
+    <div class="modal-buttons">
+      <button id="window-cancel" type="button">Cancel</button>
+      <button id="window-submit" class="primary" type="button">Focus</button>
     </div>
   </div>
 </div>
@@ -2361,6 +2427,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
             <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
             <button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>
             <button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>
+            <button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Focus or unfocus this group's agent windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.">🪟 windows…</button>
             <button class="warn" data-act="emergency-shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Emergency shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 emergency shutdown</button>
             <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
           </span>
@@ -5081,6 +5148,236 @@ details.group-virtual .group-name { color: #8aa0b8; }
     refresh();
   }
 
+  // openWindowModal drives the bulk window focus/unfocus feature. One
+  // trigger per scope — a group-level button and the top-bar button —
+  // opens this modal. Inside it the human picks the DIRECTION (focus
+  // vs unfocus) and the agent SELECTION: every running agent in scope
+  // is listed and ticked by default, and can be narrowed by role chip,
+  // by individual checkbox, or by the text filter. Submit POSTs the
+  // explicit conv-id list to /api/agent-windows.
+  //
+  // It is window-only: focus opens/raises terminal windows, unfocus
+  // detaches them. Neither touches an agent process — the agents keep
+  // running. scope is "group" (groupName set) or "all".
+  function openWindowModal(scope, groupName) {
+    const snap = lastSnapshot || {};
+    const where = scope === 'group' ? `group "${groupName}"` : 'the dashboard';
+    const NO_ROLE = '(no role)';
+
+    // An agent's roles come from its group memberships — a top-level
+    // agent row carries no role of its own, so the all-scope modal
+    // collects them across every group.
+    const rolesByConv = {};
+    for (const g of (snap.groups || [])) {
+      for (const m of (g.members || [])) {
+        if (!m.role) continue;
+        const rs = rolesByConv[m.conv_id] || (rolesByConv[m.conv_id] = []);
+        if (!rs.includes(m.role)) rs.push(m.role);
+      }
+    }
+    // Candidates — RUNNING agents only: an offline agent has no window
+    // to focus or detach. Each carries its own `checked` flag so the
+    // text filter can re-render the list without losing the selection.
+    const candidates = [];
+    if (scope === 'group') {
+      const g = (snap.groups || []).find(x => x.name === groupName);
+      for (const m of (g && g.members || [])) {
+        if (!m.online) continue;
+        candidates.push({ conv_id: m.conv_id, title: m.title || '',
+          roles: m.role ? [m.role] : [], checked: true });
+      }
+    } else {
+      for (const a of (snap.agents || [])) {
+        if (!a.online) continue;
+        candidates.push({ conv_id: a.conv_id, title: a.title || '',
+          roles: rolesByConv[a.conv_id] || [], checked: true });
+      }
+    }
+    if (candidates.length === 0) {
+      toast(`agent windows: no running agents in ${where}`);
+      return;
+    }
+    // roleKeys(c) — the role buckets a candidate belongs to (for the
+    // chips). An agent with no role lands in the synthetic NO_ROLE
+    // bucket so it stays reachable by a chip.
+    const roleKeys = (c) => c.roles.length ? c.roles : [NO_ROLE];
+    const allRoleKeys = [];
+    for (const c of candidates) {
+      for (const k of roleKeys(c)) {
+        if (!allRoleKeys.includes(k)) allRoleKeys.push(k);
+      }
+    }
+    allRoleKeys.sort((a, b) => (a === NO_ROLE) - (b === NO_ROLE) || a.localeCompare(b));
+
+    const overlay = $('#window-modal');
+    const hintEl = $('#window-hint');
+    const rolesEl = $('#window-roles');
+    const listEl = $('#window-list');
+    const countEl = $('#window-count');
+    const errEl = $('#window-error');
+    const searchEl = $('#window-search');
+    const submitBtn = $('#window-submit');
+    const cancelBtn = $('#window-cancel');
+    const selAllBtn = $('#window-select-all');
+    const selNoneBtn = $('#window-select-none');
+    const dirRadios = overlay.querySelectorAll('input[name=window-direction]');
+
+    // Reset transient state on every open.
+    errEl.textContent = '';
+    searchEl.value = '';
+    for (const r of dirRadios) r.checked = (r.value === 'focus');
+    for (const c of candidates) c.checked = true;
+
+    const direction = () => {
+      for (const r of dirRadios) if (r.checked) return r.value;
+      return 'focus';
+    };
+    const checkedCount = () => candidates.filter(c => c.checked).length;
+    const matchesFilter = (c) => {
+      const q = searchEl.value.trim().toLowerCase();
+      if (!q) return true;
+      return c.title.toLowerCase().includes(q) || c.conv_id.toLowerCase().includes(q);
+    };
+
+    function renderHint() {
+      hintEl.textContent = direction() === 'focus'
+        ? `Open or raise a terminal window for each selected running agent in ${where}.`
+        : `Detach the terminal windows of the selected running agents in ${where} so the `
+          + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
+    }
+    function renderRoles() {
+      // Chips only earn their space when there is more than one bucket.
+      if (allRoleKeys.length < 2) { rolesEl.innerHTML = ''; return; }
+      let html = '<span class="roles-label">roles</span>';
+      for (const k of allRoleKeys) {
+        const inK = candidates.filter(c => roleKeys(c).includes(k));
+        const on = inK.filter(c => c.checked).length;
+        const cls = on === 0 ? '' : (on === inK.length ? ' on' : ' partial');
+        html += `<button type="button" class="window-role-chip${cls}" data-role="${esc(k)}">`
+          + `${esc(k)} (${on}/${inK.length})</button>`;
+      }
+      rolesEl.innerHTML = html;
+    }
+    function renderList() {
+      const rows = candidates.filter(matchesFilter);
+      if (rows.length === 0) {
+        listEl.innerHTML = '<div class="cleanup-empty">no agents match the filter</div>';
+        return;
+      }
+      listEl.innerHTML = rows.map(c => {
+        const badges = c.roles.map(r => `<span class="cleanup-badge">${esc(r)}</span>`).join('');
+        return `<div class="cleanup-row"><label>`
+          + `<input type="checkbox" data-conv="${esc(c.conv_id)}"${c.checked ? ' checked' : ''} />`
+          + `<span class="title">${esc(c.title || '(untitled)')}</span>`
+          + `<span class="id">${esc(c.conv_id.slice(0, 8))}</span>`
+          + `${badges}</label></div>`;
+      }).join('');
+    }
+    function renderFooter() {
+      const n = checkedCount();
+      countEl.textContent = `${n} of ${candidates.length} selected`;
+      const verb = direction() === 'focus' ? 'Focus' : 'Unfocus';
+      submitBtn.textContent = n === 1 ? `${verb} 1 agent` : `${verb} ${n} agents`;
+      submitBtn.disabled = n === 0;
+    }
+    function render() { renderHint(); renderRoles(); renderList(); renderFooter(); }
+
+    const findCandidate = (conv) => candidates.find(c => c.conv_id === conv);
+
+    const onListChange = (e) => {
+      const cb = e.target.closest('input[type=checkbox]');
+      if (!cb) return;
+      const c = findCandidate(cb.getAttribute('data-conv'));
+      if (c) c.checked = cb.checked;
+      renderRoles(); renderFooter();
+    };
+    const onRolesClick = (e) => {
+      const chip = e.target.closest('.window-role-chip');
+      if (!chip) return;
+      const k = chip.getAttribute('data-role');
+      const inK = candidates.filter(c => roleKeys(c).includes(k));
+      // Toggle: if every agent in this role is already selected, clear
+      // them; otherwise select them all.
+      const allOn = inK.every(c => c.checked);
+      for (const c of inK) c.checked = !allOn;
+      render();
+    };
+    const onDirChange = () => { renderHint(); renderFooter(); };
+    const onSearch = () => renderList();
+    const onSelectAll = () => { for (const c of candidates) c.checked = true; render(); };
+    const onSelectNone = () => { for (const c of candidates) c.checked = false; render(); };
+
+    const cleanup = () => {
+      overlay.classList.remove('show');
+      listEl.removeEventListener('change', onListChange);
+      rolesEl.removeEventListener('click', onRolesClick);
+      for (const r of dirRadios) r.removeEventListener('change', onDirChange);
+      searchEl.removeEventListener('input', onSearch);
+      selAllBtn.removeEventListener('click', onSelectAll);
+      selNoneBtn.removeEventListener('click', onSelectNone);
+      submitBtn.removeEventListener('click', onSubmit);
+      cancelBtn.removeEventListener('click', cleanup);
+      overlay.removeEventListener('click', onOverlay);
+      document.removeEventListener('keydown', onKey);
+    };
+    const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
+    const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+
+    async function onSubmit() {
+      const convs = candidates.filter(c => c.checked).map(c => c.conv_id);
+      if (convs.length === 0) return;
+      const dir = direction();
+      const payload = { direction: dir, scope, convs };
+      if (scope === 'group') payload.group = groupName;
+      submitBtn.disabled = true;
+      errEl.textContent = '';
+      let r;
+      try {
+        r = await fetch('/api/agent-windows', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) {
+        errEl.textContent = `request failed: ${e && e.message || e}`;
+        renderFooter();
+        return;
+      }
+      if (!r.ok) {
+        errEl.textContent = await r.text();
+        renderFooter();
+        return;
+      }
+      const out = await r.json().catch(() => null);
+      cleanup();
+      if (!out) { toast('agent windows: done'); return; }
+      if (dir === 'focus') {
+        const extra = out.failed ? `, ${out.failed} failed` : '';
+        toast(`focus windows (${out.targeted} targeted): ${out.focused} focused${extra}`, out.failed > 0);
+      } else {
+        const parts = [`${out.detached} detached`];
+        if (out.no_window) parts.push(`${out.no_window} had no window`);
+        if (out.failed) parts.push(`${out.failed} failed`);
+        toast(`unfocus windows (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
+      }
+    }
+
+    listEl.addEventListener('change', onListChange);
+    rolesEl.addEventListener('click', onRolesClick);
+    for (const r of dirRadios) r.addEventListener('change', onDirChange);
+    searchEl.addEventListener('input', onSearch);
+    selAllBtn.addEventListener('click', onSelectAll);
+    selNoneBtn.addEventListener('click', onSelectNone);
+    submitBtn.addEventListener('click', onSubmit);
+    cancelBtn.addEventListener('click', cleanup);
+    overlay.addEventListener('click', onOverlay);
+    document.addEventListener('keydown', onKey);
+
+    render();
+    overlay.classList.add('show');
+    setTimeout(() => submitBtn.focus(), 0);
+  }
+
   // retireConfirm pops the retire confirmation: the same explanatory
   // copy as the old confirmModal-based prompt, plus an "also shut down
   // the running session" checkbox (checked by default). Resolves to
@@ -6737,6 +7034,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
             // The top-bar button: shut down every running agent the
             // dashboard shows. No group context.
             await emergencyShutdown('all', null);
+            return;
+          }
+          case 'window-modal-group': {
+            // openWindowModal owns its modal, POST and toast — return
+            // so the default toast/refresh doesn't fire.
+            openWindowModal('group', group);
+            return;
+          }
+          case 'window-modal-all': {
+            // The top-bar button: focus/unfocus windows across every
+            // agent on the dashboard. No group context.
+            openWindowModal('all', null);
             return;
           }
           case 'set-group-context': {
