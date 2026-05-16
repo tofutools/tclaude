@@ -138,6 +138,34 @@ func TestRunTemplatesShow_NotFoundMapsToRC(t *testing.T) {
 	assert.Equal(t, rcNotFound, rc, "a 404 not_found maps to rcNotFound")
 }
 
+// validateGroupName (which template names reuse) permits spaces and
+// other URL-significant characters, so a name must be percent-escaped
+// before it goes into the request path — otherwise a space breaks the
+// HTTP request-line and a '?' silently truncates the target.
+func TestRunTemplatesShow_EscapesNameInPath(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"my template","agents":[]}`))
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesShow(&templatesShowParams{Name: "my template"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	require.Len(t, calls, 1)
+	assert.Equal(t, "/v1/templates/my%20template", calls[0].path,
+		"a name with a space must be percent-escaped in the URL path")
+}
+
+func TestRunTemplatesInstantiate_EscapesNameInPath(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"group":"g","template":"odd name","spawned":0,"failed":0,"agents":[]}`))
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesInstantiate(&templatesInstantiateParams{
+		Name: "odd name", Group: "g",
+	}, nil, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	require.Len(t, calls, 1)
+	assert.Equal(t, "/v1/templates/odd%20name/instantiate", calls[0].path,
+		"the name segment is escaped, the literal /instantiate suffix is not")
+}
+
 func TestRunTemplatesCreate_SendsParsedTemplate(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "tmpl.json")

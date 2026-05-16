@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -150,7 +151,7 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	var t templateJSON
-	if err := DaemonRequest(http.MethodGet, "/v1/templates/"+name, nil, &t, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodGet, "/v1/templates/"+url.PathEscape(name), nil, &t, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -282,7 +283,7 @@ func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := DaemonRequest(http.MethodPatch, "/v1/templates/"+name, tmpl, &resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPatch, "/v1/templates/"+url.PathEscape(name), tmpl, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -341,7 +342,7 @@ func runTemplatesRm(p *templatesRmParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	if err := DaemonRequest(http.MethodDelete, "/v1/templates/"+name, nil, nil, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodDelete, "/v1/templates/"+url.PathEscape(name), nil, nil, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -429,7 +430,7 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 	var resp instantiateResponse
 	// Instantiation spawns the whole team sequentially — each spawn polls
 	// for a conv-id — so it can run well past the default 10s budget.
-	if err := DaemonRequest(http.MethodPost, "/v1/templates/"+name+"/instantiate",
+	if err := DaemonRequest(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/instantiate",
 		body, &resp, DaemonOpts{Timeout: 5 * time.Minute}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
