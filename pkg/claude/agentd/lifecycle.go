@@ -531,6 +531,24 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Record the requested name as the agent's pending display name. The
+	// /rename injection in runSpawnPostInit only lands a couple seconds
+	// later, and until it does the conversation has no custom title — so
+	// without this the dashboard would show "(unknown)" for that whole
+	// window. agent.FreshTitle reads pending_name as a fallback; a real
+	// /rename supersedes it. AddAgentGroupMember just enrolled the conv,
+	// so this UPDATE has a row to hit. Best-effort: a failed write only
+	// costs the "(unknown)" window — the pre-feature behaviour — so it is
+	// logged, never bubbled. Stored even when the name is not a valid
+	// rename title (the /rename is then skipped): the dashboard can still
+	// show the intended name.
+	if name := strings.TrimSpace(body.Name); name != "" {
+		if err := db.SetEnrollmentPendingName(convID, name); err != nil {
+			slog.Warn("spawn: failed to record pending name",
+				"conv", convID, "name", name, "error", err)
+		}
+	}
+
 	// Auto-focus: when the caller asked for it, open a terminal window
 	// attached to the freshly-spawned agent. A detached spawn has no
 	// window of its own, so this is what lets the human watch and talk
