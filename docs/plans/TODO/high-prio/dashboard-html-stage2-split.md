@@ -178,6 +178,14 @@ resolves against `/static/js/`.)
   the `SameSite=Strict` cookie is set; every subsequent module fetch is a
   same-origin subresource request and carries that cookie automatically. A
   module URL hit cold (no cookie) gets rejected — same protection as today.
+- **Cache invalidation — decide in PR 1.** `embed.FS` files carry a zero
+  modtime, so `http.FileServerFS` emits no `Last-Modified`/`ETag` validators.
+  Without them a browser may heuristically cache a module and, after an agentd
+  upgrade, run *stale* module JS — worse with a module graph, where versions
+  can mismatch across files. Fix: set `Cache-Control: no-store` (or
+  `no-cache`) on the static responses — for a localhost tool the cost is nil
+  and it is robust. Versioned URLs (`?v=<build id>`) are the alternative if
+  caching is ever wanted.
 - `assembleDashboardHTML()`, `dashboardShellHTML`/`dashboardCSS`/`dashboardJS`
   string vars, and the splice are deleted.
 
