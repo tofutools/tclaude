@@ -60,7 +60,9 @@ type Config struct {
 // persistent twin of the `tclaude agentd serve --agent-spawn-rate-limit`
 // flag, which overrides it when set; the built-in default is 1m. "0"
 // disables the cooldown. An unparseable value is warned about and
-// ignored, falling through to the flag/default.
+// ignored, falling through to the flag/default. The cooldown applies
+// only to agent-initiated clones — human-initiated clones (CLI or
+// dashboard) are never rate-limited.
 type AgentConfig struct {
 	DefaultPermissions  []string            `json:"default_permissions,omitempty"`
 	Sudo                *SudoConfig         `json:"sudo,omitempty"`

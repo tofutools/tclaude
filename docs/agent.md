@@ -78,7 +78,9 @@ config) to open the dashboard on startup.
 minimum cooldown between two clones of the same agent (a Go duration,
 e.g. `1m`, `30s`; `0` disables it). It overrides the persistent
 `agent.spawn_rate_limit` config.json field; the built-in default is
-`1m`. Resolution order is flag > config > default.
+`1m`. Resolution order is flag > config > default. The cooldown bounds
+a runaway *agent* loop, so it applies only to agent-initiated clones —
+clones you trigger yourself (CLI or dashboard) are never rate-limited.
 
 ## Quick start
 

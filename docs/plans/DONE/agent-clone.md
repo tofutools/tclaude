@@ -23,6 +23,15 @@ is tier 3. `0` disables the cooldown; an unparseable/negative value at
 a tier is warned and skipped. `agentd.resolveSpawnRateLimit` does the
 resolution — unit-tested in `spawn_rate_limit_test.go`.
 
+The cooldown applies only to **agent-initiated** clones (`caller != ""`
+in `runCloneOrchestration`) — the threat model is a runaway agent loop.
+Human-initiated clones (CLI / dashboard, `caller == ""`) skip
+`db.ClaimCloneSlot` entirely and never touch `agent_clone_history`.
+Manager *agents* cloning peers via `agent.clone` keep a non-empty
+caller and stay limited. Flow coverage in `clone_rate_limit_flow_test.go`
+(agent paths use the manager-pattern caller; `TestClone_RateLimitExemptsHuman`
+pins the human bypass).
+
 ## Open
 
 - **--no-copy-conv polish.** Today the no-copy path uses the same
