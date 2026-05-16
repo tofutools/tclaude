@@ -55,9 +55,9 @@ type Config struct {
 // together: either one turns it on, so an autostart/service launch can
 // opt in without carrying the flag.
 //
-// SpawnRateLimit is the minimum cooldown between two clones of the same
+// CloneCooldown is the minimum cooldown between two clones of the same
 // source agent — a Go duration string ("1m", "30s"). It is the
-// persistent twin of the `tclaude agentd serve --agent-spawn-rate-limit`
+// persistent twin of the `tclaude agentd serve --agent-clone-cooldown`
 // flag, which overrides it when set; the built-in default is 1m. "0"
 // disables the cooldown. An unparseable value is warned about and
 // ignored, falling through to the flag/default. The cooldown applies
@@ -68,7 +68,7 @@ type AgentConfig struct {
 	Sudo                *SudoConfig         `json:"sudo,omitempty"`
 	ContextNudge        *ContextNudgeConfig `json:"context_nudge,omitempty"`
 	AutoLaunchDashboard bool                `json:"auto_launch_dashboard,omitempty"`
-	SpawnRateLimit      string              `json:"spawn_rate_limit,omitempty"`
+	CloneCooldown       string              `json:"clone_cooldown,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

@@ -7,14 +7,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
-// TestResolveSpawnRateLimit pins the three-tier resolution of the
-// agent-spawn (clone) cooldown: the --agent-spawn-rate-limit flag wins
-// over the agent.spawn_rate_limit config field, which wins over the
-// built-in default. A present-but-invalid value at any tier is skipped
-// so resolution falls through to the next tier.
-func TestResolveSpawnRateLimit(t *testing.T) {
+// TestResolveCloneCooldown pins the three-tier resolution of the clone
+// cooldown: the --agent-clone-cooldown flag wins over the
+// agent.clone_cooldown config field, which wins over the built-in
+// default. A present-but-invalid value at any tier is skipped so
+// resolution falls through to the next tier.
+func TestResolveCloneCooldown(t *testing.T) {
 	cfgWith := func(v string) *config.Config {
-		return &config.Config{Agent: &config.AgentConfig{SpawnRateLimit: v}}
+		return &config.Config{Agent: &config.AgentConfig{CloneCooldown: v}}
 	}
 
 	cases := []struct {
@@ -40,9 +40,9 @@ func TestResolveSpawnRateLimit(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotDur, gotSource := resolveSpawnRateLimit(tc.flag, tc.cfg)
+			gotDur, gotSource := resolveCloneCooldown(tc.flag, tc.cfg)
 			if gotDur != tc.wantDur || gotSource != tc.wantSource {
-				t.Fatalf("resolveSpawnRateLimit(%q, %+v) = (%v, %q), want (%v, %q)",
+				t.Fatalf("resolveCloneCooldown(%q, %+v) = (%v, %q), want (%v, %q)",
 					tc.flag, tc.cfg, gotDur, gotSource, tc.wantDur, tc.wantSource)
 			}
 		})

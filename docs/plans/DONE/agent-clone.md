@@ -16,12 +16,12 @@ tests shrink it. Atomic INSERT-WHERE-NOT-EXISTS via
 `db.ClaimCloneSlot`.
 
 The cooldown is configurable as of 2026-05: `tclaude agentd serve
---agent-spawn-rate-limit <duration>` (tier 1) or the
-`agent.spawn_rate_limit` config.json field (tier 2) overwrite
+--agent-clone-cooldown <duration>` (tier 1) or the
+`agent.clone_cooldown` config.json field (tier 2) overwrite
 `CloneCooldown` at daemon startup; the 1m `defaultCloneCooldown` const
 is tier 3. `0` disables the cooldown; an unparseable/negative value at
-a tier is warned and skipped. `agentd.resolveSpawnRateLimit` does the
-resolution — unit-tested in `spawn_rate_limit_test.go`.
+a tier is warned and skipped. `agentd.resolveCloneCooldown` does the
+resolution — unit-tested in `clone_cooldown_test.go`.
 
 The cooldown applies only to **agent-initiated** clones (`caller != ""`
 in `runCloneOrchestration`) — the threat model is a runaway agent loop.
@@ -42,6 +42,6 @@ pins the human bypass).
 
 ## Files
 - `pkg/claude/agentd/clone.go` — orchestration + rate limit; `CloneCooldown` / `defaultCloneCooldown`
-- `pkg/claude/agentd/serve.go` — `--agent-spawn-rate-limit` flag + `resolveSpawnRateLimit`
-- `pkg/claude/common/config/config.go` — `AgentConfig.SpawnRateLimit` field
+- `pkg/claude/agentd/serve.go` — `--agent-clone-cooldown` flag + `resolveCloneCooldown`
+- `pkg/claude/common/config/config.go` — `AgentConfig.CloneCooldown` field
 - `pkg/claude/common/db/agent_clone_history.go` — rate-limit storage
