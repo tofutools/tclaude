@@ -36,6 +36,7 @@ func Cmd() *cobra.Command {
 			lsCmd(),
 			messageCmd(),
 			replyCmd(),
+			notifyHumanCmd(),
 			groupsCmd(),
 			aliasCmd(),
 			spawnCmd(),
@@ -43,6 +44,7 @@ func Cmd() *cobra.Command {
 			permissionsCmd(),
 			sudoCmd(),
 			cronCmd(),
+			templatesCmd(),
 			dashboardCmd(),
 		},
 	}.ToCobra()

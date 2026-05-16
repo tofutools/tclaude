@@ -43,6 +43,23 @@ func completeGroupNames(_ *cobra.Command, _ []string, toComplete string) []strin
 	return out
 }
 
+// completeTemplateNames returns every group-template name,
+// prefix-filtered — for the template-name argument of
+// `templates instantiate` (and a model for other template verbs).
+func completeTemplateNames(_ *cobra.Command, _ []string, toComplete string) []string {
+	templates, err := db.ListGroupTemplates()
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, t := range templates {
+		if strings.HasPrefix(t.Name, toComplete) {
+			out = append(out, t.Name)
+		}
+	}
+	return out
+}
+
 // completeArchivedGroupNames returns ONLY archived group names —
 // useful for `groups unarchive` where active groups are no-ops and
 // shouldn't be tab-suggested.

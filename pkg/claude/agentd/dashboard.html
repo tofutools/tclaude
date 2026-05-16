@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <title>tclaude agent dashboard</title>
+<!-- Favicon: the 🤝 emoji drawn straight into an inline SVG data URI.
+     No extra route or embedded asset — it rides along in this page,
+     which is already served behind the dashboard auth cookie. The
+     handshake mirrors tclaude's agent-coordination theme. -->
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🤝</text></svg>'>
 <style>
 * { box-sizing: border-box; }
 body {
@@ -29,6 +34,26 @@ nav button {
 }
 nav button.active { color: #d4d4d4; border-bottom-color: #58a6ff; }
 nav button:hover { color: #d4d4d4; }
+/* Messages tab — unread badge on the nav button + message cards. */
+.tab-badge {
+  display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px;
+  font-size: 11px; line-height: 16px; text-align: center;
+  background: #f85149; color: #fff; border-radius: 8px; font-weight: 600;
+}
+.msg-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 8px;
+}
+.msg-card.msg-unread { border-left: 3px solid #58a6ff; }
+.msg-head { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.msg-dot { color: #58a6ff; font-size: 10px; }
+.msg-from { font-weight: 600; color: #d4d4d4; }
+.msg-group { color: #7d8590; }
+.msg-id { color: #7d8590; font-family: ui-monospace, monospace; font-size: 11px; }
+.msg-time { color: #7d8590; font-size: 12px; }
+.msg-subject { font-weight: 600; color: #d4d4d4; margin-top: 6px; }
+.msg-body { color: #c9d1d9; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.msg-actions { margin-top: 8px; display: flex; gap: 6px; }
 main { padding: 16px 24px; }
 section { display: none; }
 section.active { display: block; }
@@ -77,6 +102,11 @@ table tr:hover { background: #161b22; }
 .state-error     { background: #3a0a0a; color: #ff9492; border-color: #8b1a1a; }
 .state-exited    { background: #21262d; color: #7d8590; border-color: #2a3340; }
 .state-offline   { background: #161b22; color: #484f58; border-color: #2a3340; }
+/* crashed: an offline agent whose process died without a clean exit —
+   no SessionEnd hook fired (crash, kill, or reboot). Amber, so it
+   reads as "needs a look": louder than the calm grey of a clean
+   offline, but not the red of a live error. */
+.state-crashed   { background: #3a2a05; color: #e3b341; border-color: #5c4611; }
 .state-detail { color: #7d8590; font-size: 11px; margin-left: 6px; }
 /* The STATE column cell. The context meter leads the cell (fixed
    horizontal position, independent of how long the state string is),
@@ -756,6 +786,80 @@ details.group-virtual .group-name { color: #8aa0b8; }
   margin: 2px 0 0; padding-left: 18px; color: #c9d1d9;
 }
 .group-import-preview .gi-collide-list li { word-break: break-word; }
+/* Group templates — the Templates tab list + the editor / instantiate
+   / from-group modals. The modals reuse .cron-create-modal for the
+   shell + rows; these rules add the template-specific surfaces. */
+.template-editor-modal { min-width: 620px; max-width: 760px; max-height: 90vh; overflow-y: auto; }
+.template-agents-head {
+  display: flex; align-items: center; gap: 10px;
+  color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: 10px; margin-top: 4px;
+}
+.template-agents-head .tool { margin-left: auto; }
+#template-editor-agents { display: flex; flex-direction: column; gap: 10px; }
+.template-agent-row {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 6px;
+}
+.template-agent-row-head { display: flex; align-items: center; gap: 10px; }
+.template-agent-num { color: #58a6ff; font-size: 11px; font-weight: 600; }
+.template-agent-owner {
+  display: flex; align-items: center; gap: 4px; font-size: 11px;
+  color: #c9d1d9; cursor: pointer; user-select: none;
+}
+.template-agent-owner input { margin: 0; }
+.template-agent-row-head .ta-remove { margin-left: auto; padding: 1px 7px; }
+.template-agent-grid { display: flex; gap: 6px; }
+.template-agent-row input[type=text],
+.template-agent-row textarea {
+  flex: 1; background: #161b22; color: #c9d1d9; font-family: inherit;
+  font-size: 12px; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 8px; box-sizing: border-box; width: 100%;
+}
+.template-agent-row textarea { resize: vertical; }
+.template-agent-row input:focus,
+.template-agent-row textarea:focus { outline: none; border-color: #58a6ff; }
+.ta-perms-details { font-size: 11px; }
+.ta-perms-details summary { cursor: pointer; color: #7d8590; user-select: none; }
+.ta-perms-details summary:hover { color: #c9d1d9; }
+.ta-perms-list {
+  display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 6px;
+  max-height: 150px; overflow-y: auto;
+}
+.ta-perms-list label {
+  display: flex; align-items: center; gap: 4px; color: #c9d1d9;
+  cursor: pointer; flex: 0 0 calc(50% - 6px);
+}
+.ta-perms-list label input { margin: 0; }
+.template-preview {
+  flex: 1; font-size: 12px; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 7px 10px; display: flex;
+  flex-direction: column; gap: 3px; min-height: 24px;
+}
+.template-preview .tp-row { display: flex; gap: 8px; align-items: baseline; }
+.template-preview .tp-name { color: #c9d1d9; font-weight: 600; }
+.template-preview .tp-meta { color: #7d8590; }
+.template-preview .tp-owner { color: #d29922; }
+.template-preview .tp-empty { color: #6e7681; }
+/* Templates tab list — one card per template. */
+.template-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 10px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.template-card .tc-head { display: flex; align-items: baseline; gap: 10px; }
+.template-card .tc-name { font-size: 14px; font-weight: 600; color: #d4d4d4; }
+.template-card .tc-descr { color: #7d8590; font-size: 12px; }
+.template-card .tc-count { color: #6e7681; font-size: 11px; }
+.template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
+.template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
+.template-card .tc-agent {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 2px 8px; font-size: 11px; color: #c9d1d9;
+}
+.template-card .tc-agent .tc-owner { color: #d29922; }
+.template-card .tc-agent .tc-role { color: #7d8590; }
+.template-empty { color: #6e7681; padding: 14px; font-size: 13px; }
 /* Cleanup modal — the 🧹 bulk-cleanup overlay. Reuses the
    cron-create-modal outer shape and the add-member list look for the
    editable candidate rows. */
@@ -1078,12 +1182,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
 </header>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
+  <button data-tab="templates">Templates</button>
   <button data-tab="agents">Agents</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
   <button data-tab="links">Links</button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
+  <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
   <button data-tab="config">Config</button>
 </nav>
 <main>
@@ -1107,9 +1213,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <span class="spacer"></span>
       <button id="group-import-open" class="tool" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
       <button id="cleanup-all-open" class="tool" title="Clean up offline agents across every group (optionally delete them)">🧹 clean up</button>
+      <button id="group-from-template-open" class="tool" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
     </div>
     <div id="groups-list"></div>
+  </section>
+  <section id="tab-templates">
+    <div class="filter-bar">
+      <input id="filter-templates" type="text" placeholder="Filter (template name / descr / agent name / role)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-templates-count"></span>
+      <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template">⤓ from a group</button>
+      <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
+    </div>
+    <div id="templates-list"></div>
   </section>
   <section id="tab-agents">
     <div class="filter-bar">
@@ -1336,6 +1454,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <button type="button" id="cfg-reload">Reload</button>
       <button type="button" id="cfg-save" class="primary">Save changes…</button>
     </div>
+  </section>
+  <section id="tab-messages">
+    <div class="filter-bar">
+      <input id="filter-messages" type="text" placeholder="Filter (sender / group / subject / body)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-messages-count"></span>
+      <button class="clear-filter" id="filter-messages-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button class="tool" data-act="msg-mark-all-read" title="Mark every message read">✓ mark all read</button>
+      <button class="tool" data-act="msg-clear" title="Delete every message that has been marked read">🧹 clear read</button>
+    </div>
+    <div id="messages-list"></div>
   </section>
 </main>
 <div class="modal-overlay" id="confirm-modal">
@@ -1649,6 +1778,85 @@ details.group-virtual .group-name { color: #8aa0b8; }
       <button id="group-create-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="group-create-submit" class="primary" type="button">Create</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-editor-modal">
+  <div class="cron-create-modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="template-editor-title">
+    <h3 id="template-editor-title">New group template</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Name</span>
+      <input id="template-editor-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Descr</span>
+      <input id="template-editor-descr" type="text" placeholder="optional one-line description" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Default context</span>
+      <textarea id="template-editor-context" class="modal-context-textarea" rows="4" placeholder="optional — reusable group-wide boilerplate; the per-instantiation task is appended to this and delivered to every spawned agent's inbox" spellcheck="false"></textarea>
+    </label>
+    <div class="template-agents-head">
+      <span>Agents</span>
+      <button type="button" id="template-editor-add-agent" class="tool">+ add agent</button>
+    </div>
+    <div id="template-editor-agents"></div>
+    <div class="cron-create-error" id="template-editor-error"></div>
+    <div class="modal-buttons">
+      <button id="template-editor-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-editor-submit" class="primary" type="button">Save template</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-instantiate-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-instantiate-title">
+    <h3 id="template-instantiate-title">New group from template</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Template</span>
+      <select id="template-instantiate-template"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Group name</span>
+      <input id="template-instantiate-group" type="text" placeholder="kebab-or-snake-case — also the name prefix for every spawned agent" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Task / project</span>
+      <textarea id="template-instantiate-task" class="modal-context-textarea" rows="5" placeholder="the assignment for this group — multi-line OK; folded into the group context every spawned agent sees" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Default cwd</span>
+      <input id="template-instantiate-cwd" type="text" placeholder="optional — absolute path (~ OK) the agents spawn in" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="cron-create-row">
+      <span class="cron-create-label">Preview</span>
+      <div id="template-instantiate-preview" class="template-preview"></div>
+    </div>
+    <div class="cron-create-error" id="template-instantiate-error"></div>
+    <div class="modal-buttons">
+      <button id="template-instantiate-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-instantiate-submit" class="primary" type="button">Create &amp; spawn</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-from-group-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-from-group-title">
+    <h3 id="template-from-group-title">Save a group as a template</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Group</span>
+      <select id="template-from-group-group"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Template name</span>
+      <input id="template-from-group-name" type="text" placeholder="kebab-or-snake-case label for the new template" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="modal-meta">Captures the group's roles, owner, per-agent permission grants and shared context. Per-agent task briefs come through blank — fill them in the editor that opens next.</div>
+    <div class="cron-create-error" id="template-from-group-error"></div>
+    <div class="modal-buttons">
+      <button id="template-from-group-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-from-group-submit" class="primary" type="button">Save as template</button>
     </div>
   </div>
 </div>
@@ -2025,15 +2233,23 @@ details.group-virtual .group-name { color: #8aa0b8; }
 
   // statePill renders a colored pill for an agent's state. For an
   // online agent it combines status + status_detail (e.g. "working:
-  // Bash"). For an offline agent we render a literal "offline" pill and
-  // ignore state.status entirely: the hook-recorded status is frozen at
-  // whatever it was when the process exited (usually "idle" from the
-  // final Stop hook, since no SessionEnd-style hook fires on exit), so
-  // echoing it would mislabel a dead agent as "idle". The last-active
-  // time, when known, goes in the tooltip.
+  // Bash"). For an offline agent we ignore state.status entirely (the
+  // hook-recorded status is frozen at whatever it was when the process
+  // exited, so echoing it would mislabel a dead agent) and render from
+  // exit_reason instead: a process that died without a clean exit —
+  // exit_reason 'unexpected', reaper-stamped because no SessionEnd hook
+  // fired — shows as "crashed"; every other case (a clean exit, or an
+  // unknown/blank reason such as a pre-exit_reason corpse) stays a
+  // plain grey "offline". An unknown reason is never a crash. The
+  // last-active time, when known, goes in the tooltip.
   function statePill(state, online) {
     if (!online) {
       const lh = relTime(state && state.last_hook);
+      if (((state && state.exit_reason) || '') === 'unexpected') {
+        const tip = 'process ended without a clean exit — crash, kill, or reboot'
+          + (lh ? ` · last active ${lh}` : '');
+        return `<span class="state-pill state-crashed" title="${esc(tip)}">crashed</span>`;
+      }
       const tip = lh ? `offline — last active ${lh}` : 'offline';
       return `<span class="state-pill state-offline" title="${esc(tip)}">offline</span>`;
     }
@@ -3095,6 +3311,69 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const el = $('#status');
     el.textContent = text;
     el.classList.toggle('error', !!isError);
+  }
+
+  // === Messages tab — human-facing notifications from agents ===
+  // The unread count drives a badge on the Messages nav button, so the
+  // human sees there's something to read from whatever tab they're on.
+  function renderMessagesBadge(unread) {
+    const badge = $('#messages-badge');
+    if (!badge) return;
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    badge.hidden = unread === 0;
+  }
+
+  function renderMessagesTab() {
+    if (!lastSnapshot) return;
+    const all = lastSnapshot.messages || [];
+    // Conv-ids with a live tmux window — focus is only meaningful for
+    // those. Cross-referenced from the agent lists already in the
+    // snapshot, so no extra round-trip.
+    const onlineConvs = new Set();
+    (lastSnapshot.agents || []).concat(lastSnapshot.ungrouped || [])
+      .forEach(a => { if (a && a.online) onlineConvs.add(a.conv_id); });
+    const q = ($('#filter-messages').value || '').toLowerCase();
+    const filtered = q
+      ? all.filter(m => [m.from_title, m.group, m.subject, m.body]
+          .some(s => (s || '').toLowerCase().includes(q)))
+      : all;
+    $('#messages-list').innerHTML = renderMessages(filtered, onlineConvs);
+    const total = all.length;
+    $('#filter-messages-count').textContent = q
+      ? `${filtered.length} / ${total}`
+      : `${total} message${total === 1 ? '' : 's'}`;
+  }
+
+  function renderMessages(msgs, onlineConvs) {
+    if (!msgs || !msgs.length) return '<div class="empty">No messages.</div>';
+    return msgs.map(m => {
+      const unread = !m.read;
+      const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
+      const grp = m.group ? `<span class="msg-group">· ${esc(m.group)}</span>` : '';
+      const subj = m.subject ? `<div class="msg-subject">${esc(m.subject)}</div>` : '';
+      // Focus raises the sending agent's terminal window. Only offered
+      // when the agent is online — disabled otherwise, never an error.
+      const focusable = m.from_conv && onlineConvs.has(m.from_conv);
+      const focusBtn = m.from_conv
+        ? `<button data-act="msg-focus" data-conv="${esc(m.from_conv)}" data-id="${m.id}" data-label="${esc(m.from_title || m.from_conv)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`
+        : '';
+      const readBtn = unread
+        ? `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`
+        : '';
+      return `<div class="msg-card${unread ? ' msg-unread' : ''}">
+        <div class="msg-head">
+          ${unread ? '<span class="msg-dot" title="unread">●</span>' : ''}
+          <span class="msg-from">${esc(m.from_title || '(unknown sender)')}</span>
+          ${grp}
+          <span class="msg-id">#${m.id}</span>
+          <span class="spacer"></span>
+          <span class="msg-time">${esc(when)}</span>
+        </div>
+        ${subj}
+        <div class="msg-body">${esc(m.body)}</div>
+        <div class="msg-actions">${focusBtn}${readBtn}</div>
+      </div>`;
+    }).join('');
   }
 
   // === Subscription-usage readout (top bar, left of the live dot) ===
@@ -4806,6 +5085,420 @@ details.group-virtual .group-name { color: #8aa0b8; }
     });
   }
 
+  // ---- Group templates --------------------------------------------------
+  //
+  // A template is a reusable blueprint for a working group: a name, a
+  // shared default context, and an ordered list of agent specs (name,
+  // role, descr, task brief, owner flag, permission slugs).
+  // Instantiating one creates a fresh group and spawns its whole team.
+  //
+  // templateEditorEditing holds the original name while editing an
+  // existing template (the PATCH target); null while creating.
+  // templateEditorAgents mirrors the editor's agent rows so add/remove
+  // can re-render the container without losing typed values.
+  let templateEditorEditing = null;
+  let templateEditorAgents = [];
+
+  function filterTemplates(list, q) {
+    if (!q) return list;
+    const n = q.toLowerCase();
+    return list.filter(t =>
+      (t.name || '').toLowerCase().includes(n) ||
+      (t.descr || '').toLowerCase().includes(n) ||
+      (t.agents || []).some(a =>
+        (a.name || '').toLowerCase().includes(n) ||
+        (a.role || '').toLowerCase().includes(n)));
+  }
+
+  function renderTemplatesTab() {
+    if (!lastSnapshot) return;
+    const q = $('#filter-templates').value;
+    const all = lastSnapshot.templates || [];
+    const list = filterTemplates(all, q);
+    const countEl = $('#filter-templates-count');
+    if (countEl) countEl.textContent = q ? `${list.length} / ${all.length}` : `${all.length}`;
+    const host = $('#templates-list');
+    if (!list.length) {
+      host.innerHTML = `<div class="template-empty">${all.length
+        ? 'No templates match the filter.'
+        : 'No templates yet — press <b>+ new template</b> to define one, or <b>⤓ from a group</b> to snapshot an existing group.'}</div>`;
+      return;
+    }
+    host.innerHTML = list.map(templateCardHTML).join('');
+  }
+
+  function templateCardHTML(t) {
+    const agents = (t.agents || []).map(a => {
+      const owner = a.is_owner ? '<span class="tc-owner" title="group owner">★</span> ' : '';
+      const role = a.role ? ` <span class="tc-role">${esc(a.role)}</span>` : '';
+      const np = (a.permissions || []).length;
+      const perms = np
+        ? ` <span class="tc-role" title="${esc((a.permissions || []).join(', '))}">+${np}🔑</span>`
+        : '';
+      return `<span class="tc-agent">${owner}${esc(a.name)}${role}${perms}</span>`;
+    }).join('');
+    const n = (t.agents || []).length;
+    return `<div class="template-card" data-template="${esc(t.name)}">
+      <div class="tc-head">
+        <span class="tc-name">${esc(t.name)}</span>
+        ${t.descr ? `<span class="tc-descr">${esc(t.descr)}</span>` : ''}
+        <span class="tc-count">${n} agent${n === 1 ? '' : 's'}</span>
+        <span class="tc-actions">
+          <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="Create a group from this template">⎘ instantiate</button>
+          <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
+          <button class="tool" data-tact="delete" data-template="${esc(t.name)}">delete</button>
+        </span>
+      </div>
+      ${agents ? `<div class="tc-agents">${agents}</div>` : ''}
+    </div>`;
+  }
+
+  function templatesByName() {
+    const m = {};
+    for (const t of (lastSnapshot && lastSnapshot.templates) || []) m[t.name] = t;
+    return m;
+  }
+
+  function blankTemplateAgent() {
+    return { name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [] };
+  }
+
+  // ---- Template editor modal --------------------------------------------
+
+  function openTemplateEditor(tmpl) {
+    templateEditorEditing = tmpl ? tmpl.name : null;
+    $('#template-editor-title').textContent =
+      tmpl ? `Edit template: ${tmpl.name}` : 'New group template';
+    $('#template-editor-name').value = tmpl ? tmpl.name : '';
+    $('#template-editor-descr').value = tmpl ? (tmpl.descr || '') : '';
+    $('#template-editor-context').value = tmpl ? (tmpl.default_context || '') : '';
+    $('#template-editor-error').textContent = '';
+    templateEditorAgents = tmpl
+      ? (tmpl.agents || []).map(a => ({
+          name: a.name || '', role: a.role || '', descr: a.descr || '',
+          initial_message: a.initial_message || '', is_owner: !!a.is_owner,
+          permissions: (a.permissions || []).slice(),
+        }))
+      : [blankTemplateAgent()];
+    renderEditorAgents();
+    $('#template-editor-modal').classList.add('show');
+    setTimeout(() => $('#template-editor-name').focus(), 0);
+  }
+
+  function closeTemplateEditor() { $('#template-editor-modal').classList.remove('show'); }
+
+  function renderEditorAgents() {
+    const slugs = (lastSnapshot && lastSnapshot.slugs) || [];
+    $('#template-editor-agents').innerHTML =
+      templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i, slugs)).join('');
+  }
+
+  function editorAgentRowHTML(a, idx, slugs) {
+    const perms = new Set(a.permissions || []);
+    const checks = slugs.map(s =>
+      `<label title="${esc(s.description || '')}"><input type="checkbox" class="ta-perm" data-slug="${esc(s.slug)}"${perms.has(s.slug) ? ' checked' : ''} /> ${esc(s.slug)}</label>`
+    ).join('');
+    return `<div class="template-agent-row" data-idx="${idx}">
+      <div class="template-agent-row-head">
+        <span class="template-agent-num">Agent ${idx + 1}</span>
+        <label class="template-agent-owner" title="Mark this agent as an owner of the instantiated group — a group can have several owners">
+          <input type="checkbox" class="ta-owner"${a.is_owner ? ' checked' : ''} /> owner
+        </label>
+        <button type="button" class="tool ta-remove" title="Remove this agent">✕</button>
+      </div>
+      <div class="template-agent-grid">
+        <input type="text" class="ta-name" placeholder="name (e.g. PO, dev1)" value="${esc(a.name)}" />
+        <input type="text" class="ta-role" placeholder="role (e.g. product-owner)" value="${esc(a.role)}" />
+      </div>
+      <input type="text" class="ta-descr" placeholder="one-line description (dashboard column)" value="${esc(a.descr)}" />
+      <textarea class="ta-initmsg" rows="3" placeholder="task brief for this agent — delivered to its inbox at spawn (newlines OK)">${esc(a.initial_message)}</textarea>
+      <details class="ta-perms-details">
+        <summary>Permissions (<span class="ta-perms-count">${perms.size}</span>)</summary>
+        <div class="ta-perms-list">${checks}</div>
+      </details>
+    </div>`;
+  }
+
+  // scrapeEditorAgents reads the agent rows back into templateEditorAgents
+  // — called before any add/remove (which re-renders the container) and
+  // before submit, so typed-but-uncommitted values are never lost.
+  function scrapeEditorAgents() {
+    templateEditorAgents = $$('#template-editor-agents .template-agent-row').map(row => ({
+      name: $('.ta-name', row).value.trim(),
+      role: $('.ta-role', row).value.trim(),
+      descr: $('.ta-descr', row).value.trim(),
+      initial_message: $('.ta-initmsg', row).value,
+      is_owner: $('.ta-owner', row).checked,
+      permissions: $$('.ta-perm', row).filter(c => c.checked).map(c => c.dataset.slug),
+    }));
+  }
+
+  async function submitTemplateEditor() {
+    scrapeEditorAgents();
+    const name = $('#template-editor-name').value.trim();
+    const errEl = $('#template-editor-error');
+    errEl.textContent = '';
+    if (!name) { errEl.textContent = 'template name is required'; return; }
+    const payload = {
+      name,
+      descr: $('#template-editor-descr').value.trim(),
+      default_context: $('#template-editor-context').value,
+      agents: templateEditorAgents,
+    };
+    const editing = templateEditorEditing;
+    const url = editing ? `/api/templates/${encodeURIComponent(editing)}` : '/api/templates';
+    const btn = $('#template-editor-submit');
+    btn.disabled = true;
+    try {
+      const r = await fetch(url, {
+        method: editing ? 'PATCH' : 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) { errEl.textContent = (await r.text()) || `HTTP ${r.status}`; return; }
+      closeTemplateEditor();
+      toast(editing ? `template updated: ${name}` : `template created: ${name}`);
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function deleteTemplate(name) {
+    const ok = await confirmModal({
+      title: 'Delete template?',
+      body: `Delete the template "${name}"? This removes the blueprint only — any groups already instantiated from it are left untouched.`,
+      meta: name,
+      okLabel: 'Delete template',
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/templates/${encodeURIComponent(name)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      if (!r.ok && r.status !== 204) { toast((await r.text()) || `HTTP ${r.status}`, true); return; }
+      toast(`template deleted: ${name}`);
+      refresh();
+    } catch (err) {
+      toast((err && err.message) || String(err), true);
+    }
+  }
+
+  // ---- Instantiate-from-template modal ----------------------------------
+
+  function openInstantiateModal(presetName) {
+    const templates = (lastSnapshot && lastSnapshot.templates) || [];
+    if (!templates.length) {
+      toast('no templates yet — define one in the Templates tab first', true);
+      return;
+    }
+    const sel = $('#template-instantiate-template');
+    sel.innerHTML = templates.map(t =>
+      `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+    if (presetName && templates.some(t => t.name === presetName)) sel.value = presetName;
+    $('#template-instantiate-group').value = '';
+    $('#template-instantiate-task').value = '';
+    $('#template-instantiate-cwd').value = '';
+    $('#template-instantiate-error').textContent = '';
+    renderInstantiatePreview();
+    $('#template-instantiate-modal').classList.add('show');
+    setTimeout(() => $('#template-instantiate-group').focus(), 0);
+  }
+
+  function closeInstantiateModal() { $('#template-instantiate-modal').classList.remove('show'); }
+
+  // renderInstantiatePreview paints the live "final agent names" list as
+  // the human types the group name — agent "PO" shows as "<group>-PO".
+  function renderInstantiatePreview() {
+    const t = templatesByName()[$('#template-instantiate-template').value];
+    const prefix = $('#template-instantiate-group').value.trim();
+    const host = $('#template-instantiate-preview');
+    const agents = (t && t.agents) || [];
+    if (!agents.length) {
+      host.innerHTML = '<span class="tp-empty">this template has no agents</span>';
+      return;
+    }
+    const shown = prefix || '‹group›';
+    host.innerHTML = agents.map(a => {
+      const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
+      const np = (a.permissions || []).length;
+      const meta = [a.role ? esc(a.role) : '', np ? `+${np}🔑` : '', owner]
+        .filter(Boolean).join(' · ');
+      return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
+        + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
+    }).join('');
+  }
+
+  async function submitInstantiate() {
+    const tmplName = $('#template-instantiate-template').value;
+    const groupName = $('#template-instantiate-group').value.trim();
+    const errEl = $('#template-instantiate-error');
+    errEl.textContent = '';
+    if (!tmplName) { errEl.textContent = 'pick a template'; return; }
+    if (!groupName) { errEl.textContent = 'group name is required'; return; }
+    const payload = {
+      group_name: groupName,
+      task: $('#template-instantiate-task').value,
+      cwd: $('#template-instantiate-cwd').value.trim(),
+    };
+    const btn = $('#template-instantiate-submit');
+    btn.disabled = true;
+    btn.textContent = 'Spawning…';
+    try {
+      const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const txt = await r.text();
+      if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+      let resp = {};
+      try { resp = JSON.parse(txt); } catch (_) {}
+      closeInstantiateModal();
+      const failed = resp.failed || 0;
+      toast(failed
+        ? `group ${groupName}: spawned ${resp.spawned || 0}, ${failed} failed — check the group`
+        : `group ${groupName}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
+        failed > 0);
+      try { localStorage.setItem('tclaude.dash.group.' + groupName, '1'); } catch (_) {}
+      // Jump to the Groups tab so the freshly-spawned group is visible.
+      const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+      if (gbtn) gbtn.click();
+      refresh();
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create & spawn';
+    }
+  }
+
+  // ---- Save-group-as-template modal -------------------------------------
+
+  function openFromGroupModal() {
+    const groups = ((lastSnapshot && lastSnapshot.groups) || []).map(g => g.name);
+    if (!groups.length) { toast('no groups to snapshot', true); return; }
+    const sel = $('#template-from-group-group');
+    sel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    $('#template-from-group-name').value = '';
+    $('#template-from-group-error').textContent = '';
+    $('#template-from-group-modal').classList.add('show');
+    setTimeout(() => $('#template-from-group-name').focus(), 0);
+  }
+
+  function closeFromGroupModal() { $('#template-from-group-modal').classList.remove('show'); }
+
+  async function submitFromGroup() {
+    const group = $('#template-from-group-group').value;
+    const name = $('#template-from-group-name').value.trim();
+    const errEl = $('#template-from-group-error');
+    errEl.textContent = '';
+    if (!group) { errEl.textContent = 'pick a group'; return; }
+    if (!name) { errEl.textContent = 'template name is required'; return; }
+    const btn = $('#template-from-group-submit');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/templates/from-group', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group, template_name: name }),
+      });
+      const txt = await r.text();
+      if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+      let tmpl = null;
+      try { tmpl = JSON.parse(txt); } catch (_) {}
+      closeFromGroupModal();
+      toast(`template created from ${group}: ${name}`);
+      refresh();
+      // Open the editor on the fresh template so the human can fill in
+      // per-agent task briefs (from-group leaves those blank).
+      if (tmpl) openTemplateEditor(tmpl);
+    } catch (err) {
+      errEl.textContent = (err && err.message) || String(err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function bindTemplatesUI() {
+    // Entry points: Templates tab + the Groups tab's "⎘ from template".
+    $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
+    $('#template-from-group-open').addEventListener('click', openFromGroupModal);
+    $('#group-from-template-open').addEventListener('click', () => openInstantiateModal(null));
+
+    // Template-card actions (delegated — the list re-renders every poll).
+    // data-tact (not data-act) keeps these off the global row-action bus.
+    $('#templates-list').addEventListener('click', e => {
+      const btn = e.target.closest('[data-tact]');
+      if (!btn) return;
+      const name = btn.dataset.template;
+      if (btn.dataset.tact === 'instantiate') openInstantiateModal(name);
+      else if (btn.dataset.tact === 'edit') {
+        const t = templatesByName()[name];
+        if (t) openTemplateEditor(t);
+      } else if (btn.dataset.tact === 'delete') deleteTemplate(name);
+    });
+
+    // Editor modal.
+    $('#template-editor-cancel').addEventListener('click', closeTemplateEditor);
+    $('#template-editor-submit').addEventListener('click', submitTemplateEditor);
+    $('#template-editor-add-agent').addEventListener('click', () => {
+      scrapeEditorAgents();
+      templateEditorAgents.push(blankTemplateAgent());
+      renderEditorAgents();
+    });
+    // Delegated handlers on the (re-rendered) agent container.
+    $('#template-editor-agents').addEventListener('click', e => {
+      const rm = e.target.closest('.ta-remove');
+      if (!rm) return;
+      const row = rm.closest('.template-agent-row');
+      scrapeEditorAgents();
+      templateEditorAgents.splice(parseInt(row.dataset.idx, 10), 1);
+      renderEditorAgents();
+    });
+    // Keep each agent row's permission count in sync as boxes toggle.
+    // Owner is a plain per-agent checkbox — a group can have several
+    // owners, so there is no single-select enforcement.
+    $('#template-editor-agents').addEventListener('change', e => {
+      if (e.target.classList.contains('ta-perm')) {
+        const row = e.target.closest('.template-agent-row');
+        $('.ta-perms-count', row).textContent =
+          $$('.ta-perm', row).filter(c => c.checked).length;
+      }
+    });
+    $('#template-editor-modal').addEventListener('click', e => {
+      if (e.target.id === 'template-editor-modal') closeTemplateEditor();
+    });
+
+    // Instantiate modal.
+    $('#template-instantiate-cancel').addEventListener('click', closeInstantiateModal);
+    $('#template-instantiate-submit').addEventListener('click', submitInstantiate);
+    $('#template-instantiate-template').addEventListener('change', renderInstantiatePreview);
+    $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
+    $('#template-instantiate-modal').addEventListener('click', e => {
+      if (e.target.id === 'template-instantiate-modal') closeInstantiateModal();
+    });
+
+    // From-group modal.
+    $('#template-from-group-cancel').addEventListener('click', closeFromGroupModal);
+    $('#template-from-group-submit').addEventListener('click', submitFromGroup);
+    $('#template-from-group-modal').addEventListener('click', e => {
+      if (e.target.id === 'template-from-group-modal') closeFromGroupModal();
+    });
+
+    // Escape closes whichever template modal is showing.
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      ['template-editor-modal', 'template-instantiate-modal', 'template-from-group-modal']
+        .forEach(id => {
+          const m = $('#' + id);
+          if (m && m.classList.contains('show')) m.classList.remove('show');
+        });
+    });
+  }
+
   // ---- Import-group modal ------------------------------------------------
   //
   // The ⤒ import button uploads a .zip produced by ⤓ export and
@@ -6062,10 +6755,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
     input.value = localStorage.getItem(key) || '';
     const rerender = () => {
       if (tab === 'groups') renderGroupsTab();
+      else if (tab === 'templates') renderTemplatesTab();
       else if (tab === 'agents') renderAgentsTab();
       else if (tab === 'cron') renderCronTab();
       else if (tab === 'sudo') renderSudoTab();
       else if (tab === 'links') renderLinksTab();
+      else if (tab === 'messages') renderMessagesTab();
     };
     const onChange = () => {
       const v = input.value;
@@ -6166,12 +6861,15 @@ details.group-virtual .group-name { color: #8aa0b8; }
         sudoByConv[g.conv_id].push(g);
       });
       renderGroupsTab();
+      renderTemplatesTab();
       renderAgentsTab();
       renderCronTab();
       renderSudoTab();
       renderLinksTab();
       $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
       $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
+      renderMessagesTab();
+      renderMessagesBadge(data.messages_unread || 0);
       renderUsage(data.usage);
       showStatus('● live', false);
     } catch (e) {
@@ -8394,6 +9092,64 @@ details.group-virtual .group-name { color: #8aa0b8; }
             if (!ok) toast(`Remove link failed: ${await r.text()}`, true);
             break;
           }
+          case 'msg-focus': {
+            // Raise the sending agent's window AND mark the message
+            // read — the human is acting on it. Both are non-destructive;
+            // toast each, then refresh so the read state + badge update.
+            const id = btn.getAttribute('data-id');
+            const jr = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
+              method: 'POST', credentials: 'same-origin',
+            });
+            if (jr.ok) toast(`focused: ${label}`);
+            else toast(`Focus failed: ${await jr.text()}`, true);
+            await fetch('/api/human-messages/read', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10) }),
+            });
+            refresh();
+            return;
+          }
+          case 'msg-mark-read': {
+            const id = btn.getAttribute('data-id');
+            const r = await fetch('/api/human-messages/read', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10) }),
+            });
+            if (!r.ok) { toast(`Mark read failed: ${await r.text()}`, true); return; }
+            toast('message marked read');
+            refresh();
+            return;
+          }
+          case 'msg-mark-all-read': {
+            const r = await fetch('/api/human-messages/read', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ all: true }),
+            });
+            if (!r.ok) { toast(`Mark all read failed: ${await r.text()}`, true); return; }
+            const res = await r.json().catch(() => ({}));
+            toast(`marked ${res.marked || 0} message(s) read`);
+            refresh();
+            return;
+          }
+          case 'msg-clear': {
+            const confirmed = await confirmModal({
+              title: 'Clear read messages?',
+              body: 'Permanently deletes every message that has been marked read. Unread messages are kept.',
+              okLabel: 'Clear read',
+            });
+            if (!confirmed) return;
+            const r = await fetch('/api/human-messages/clear', {
+              method: 'POST', credentials: 'same-origin',
+            });
+            if (!r.ok) { toast(`Clear failed: ${await r.text()}`, true); return; }
+            const res = await r.json().catch(() => ({}));
+            toast(`cleared ${res.deleted || 0} read message(s)`);
+            refresh();
+            return;
+          }
           default:
             return;
         }
@@ -8659,7 +9415,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       title: 'Clone agent into group?',
       body: `Fork a new sibling agent from "${label}" and add the clone to `
         + `group "${targetGroup}". The original keeps running; the clone is a `
-        + `fresh conversation that inherits the original's identity.`,
+        + `sibling conversation that inherits the original's identity and a `
+        + `copy of its conversation history.`,
       meta: label,
       okLabel: 'Clone',
     });
@@ -9509,15 +10266,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   bindRowActions();
   bindDnd();
   bindFilter('groups');
+  bindFilter('templates');
   bindFilter('agents');
   bindFilter('cron');
   bindFilter('sudo');
   bindFilter('links');
+  bindFilter('messages');
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();
   bindMessageModal();
   bindGroupCreateModal();
+  bindTemplatesUI();
   bindGroupImportModal();
   bindGroupContextModal();
   bindLinkModal();

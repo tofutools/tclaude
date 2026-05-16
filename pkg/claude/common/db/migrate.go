@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 41
+const currentVersion = 44
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -269,6 +269,129 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 42 {
+		if err := migrateV41toV42(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 43 {
+		if err := migrateV42toV43(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 44 {
+		if err := migrateV43toV44(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV43toV44 adds human_messages — the store behind the dashboard
+// Messages tab, where a coordinating agent's notifications to the human
+// land (POST /v1/notify-human).
+//
+// from_title and group_name are snapshots taken at insert time, not
+// foreign keys: a later rename or deletion of the sending agent must
+// not blank an old message. read_at is empty for an unread message and
+// an RFC3339 timestamp once the human marks it read.
+func migrateV43toV44(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS human_messages (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			from_conv   TEXT NOT NULL,
+			from_title  TEXT NOT NULL DEFAULT '',
+			group_name  TEXT NOT NULL DEFAULT '',
+			subject     TEXT NOT NULL DEFAULT '',
+			body        TEXT NOT NULL,
+			created_at  TEXT NOT NULL,
+			read_at     TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_human_messages_created
+			ON human_messages(created_at);
+
+		UPDATE schema_version SET version = 44;
+	`); err != nil {
+		return fmt.Errorf("migrate v43→v44 (add human_messages): %w", err)
+	}
+	return nil
+}
+
+// migrateV41toV42 adds group_templates + group_template_agents — the
+// storage behind the dashboard's group-template feature.
+//
+// A template is a reusable BLUEPRINT for a working group: a name, an
+// optional shared startup context, and an ordered list of agent specs
+// (name / role / descr / per-role task brief / owner flag / permission
+// slugs). It is deliberately distinct from a group EXPORT (agent_*
+// rows + .jsonl, a conv-bound snapshot of a live group): a template has
+// no conv-ids — instantiating one creates a fresh group and spawns one
+// new agent per spec.
+//
+// group_template_agents.permissions is a JSON array of permission
+// slugs, granted to the agent as per-conv overrides right after it
+// spawns. The agent rows cascade-delete with their template.
+func migrateV41toV42(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS group_templates (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			name            TEXT NOT NULL UNIQUE,
+			descr           TEXT NOT NULL DEFAULT '',
+			default_context TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL,
+			updated_at      TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS group_template_agents (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			template_id     INTEGER NOT NULL
+			                  REFERENCES group_templates(id) ON DELETE CASCADE,
+			ordinal         INTEGER NOT NULL DEFAULT 0,
+			name            TEXT NOT NULL,
+			role            TEXT NOT NULL DEFAULT '',
+			descr           TEXT NOT NULL DEFAULT '',
+			initial_message TEXT NOT NULL DEFAULT '',
+			is_owner        INTEGER NOT NULL DEFAULT 0,
+			permissions     TEXT NOT NULL DEFAULT '[]'
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_template_agents_template
+			ON group_template_agents(template_id);
+
+		UPDATE schema_version SET version = 42;
+	`); err != nil {
+		return fmt.Errorf("migrate v41→v42 (add group templates): %w", err)
+	}
+	return nil
+}
+
+// migrateV42toV43 adds sessions.exit_reason — the nullable column that
+// lets the dashboard tell a clean exit from an unexpected death.
+//
+// When Claude Code shuts down gracefully it fires a SessionEnd hook
+// carrying a `reason` (clear / logout / prompt_input_exit / resume /
+// bypass_permissions_disabled / other); the hook callback records that
+// reason here. A process that dies WITHOUT a graceful shutdown — a
+// crash, an OOM kill, `tclaude session kill`, a reboot — fires no
+// SessionEnd, so the session reaper finds a dead row carrying no
+// recorded reason and stamps exit_reason='unexpected' when it marks
+// the row exited (see MarkSessionExitedIfUnchanged).
+//
+// The column is nullable on purpose: NULL means "no reason recorded" —
+// a live session, or a row that exited before this migration existed.
+// The dashboard treats NULL as a plain offline/exited, never as a
+// crash, so pre-migration corpses are not retroactively mislabelled.
+// Only an explicit 'unexpected' renders as crashed.
+func migrateV42toV43(db *sql.DB) error {
+	if _, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN exit_reason TEXT;
+
+		UPDATE schema_version SET version = 43;
+	`); err != nil {
+		return fmt.Errorf("migrate v42→v43 (add sessions.exit_reason): %w", err)
+	}
 	return nil
 }
 

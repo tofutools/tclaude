@@ -268,8 +268,16 @@ type snapshotPayload struct {
 	// Usage is the account-wide subscription usage readout (5h + 7d
 	// rolling windows) rendered in the dashboard's top bar. Always
 	// present — Available=false carries the graceful "n/a" state.
-	Usage     dashboardUsage `json:"usage"`
-	PopupBase string         `json:"popup_base"` // for tray-shareable display
+	Usage dashboardUsage `json:"usage"`
+	// Templates are the group-template blueprints rendered in the
+	// Templates tab. Empty slice (not nil) so JS .map() is safe.
+	Templates []templateJSON `json:"templates"`
+	// Messages are the human-facing notifications agents have sent via
+	// `tclaude agent notify-human`, newest first — the Messages tab.
+	// MessagesUnread is the count of unread ones, driving the tab badge.
+	Messages       []dashboardHumanMessage `json:"messages"`
+	MessagesUnread int                     `json:"messages_unread"`
+	PopupBase      string                  `json:"popup_base"` // for tray-shareable display
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -431,6 +439,13 @@ type agentState struct {
 	TokensInput       int64   `json:"tokens_input,omitempty"`
 	TokensOutput      int64   `json:"tokens_output,omitempty"`
 	ContextWindowSize int64   `json:"context_window_size,omitempty"`
+	// ExitReason is why a now-offline agent's session ended: a graceful
+	// SessionEnd `reason`, or 'unexpected' when the process died with no
+	// clean shutdown (reaper-stamped). Only populated for an offline
+	// agent; empty for a live one, or for a row that exited before the
+	// exit_reason column existed. The dashboard renders 'unexpected' as
+	// "crashed" and everything else (incl. empty) as a plain exit.
+	ExitReason string `json:"exit_reason,omitempty"`
 }
 
 // stateForConv looks up the most-recent live tmux session row for this
@@ -489,6 +504,19 @@ func stateForConv(convID string) agentState {
 	if !alive {
 		out.Status = session.StatusExited
 		out.StatusDetail = ""
+		// Surface WHY it ended so the dashboard can tell a clean exit
+		// from an unexpected death. pick is the most-recently-updated
+		// row — the SessionEnd hook and the reaper both bump the row
+		// they touch, so the latest row carries the authoritative
+		// reason. An empty result (NULL exit_reason — a pre-migration
+		// corpse, or a death the reaper has not swept yet) renders as a
+		// plain exit, never as a crash.
+		if reason, err := db.GetSessionExitReason(pick.ID); err == nil {
+			out.ExitReason = reason
+		} else {
+			slog.Warn("dashboard: read exit_reason failed",
+				"session", pick.ID, "error", err)
+		}
 	}
 	return out
 }
@@ -790,6 +818,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
+	out.Templates = collectTemplatesSnapshot()
+	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 
 	writeJSON(w, http.StatusOK, out)
 }

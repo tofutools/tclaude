@@ -247,6 +247,17 @@ func runHookCallback() error {
 		// Session started or resumed - update ConvID and set to idle
 		state.Status = StatusIdle
 		state.StatusDetail = ""
+		// The conversation is alive again — drop any exit_reason a
+		// previous exit (or the reaper) recorded. Cleared conv-wide, not
+		// just for this row: a conv can own several session rows and the
+		// dashboard reads exit_reason off whichever is most recent, so a
+		// stale reason left on a sibling row could later be misread as a
+		// crash.
+		if state.ConvID != "" {
+			if err := db.ClearSessionExitReasonByConv(state.ConvID); err != nil {
+				slog.Warn("failed to clear exit reason", "error", err, "module", "hooks")
+			}
+		}
 
 	case "SessionEnd":
 		// Claude Code is shutting down this conversation. The `reason`
@@ -263,6 +274,13 @@ func runHookCallback() error {
 		}
 		state.Status = StatusExited
 		state.StatusDetail = ""
+		// Record the graceful-exit reason (logout / prompt_input_exit /
+		// resume / bypass_permissions_disabled / other) so the dashboard
+		// can tell this clean exit from an unexpected death — for which
+		// no SessionEnd fires and the session reaper stamps 'unexpected'.
+		if err := db.SetSessionExitReason(state.ID, input.Reason); err != nil {
+			slog.Warn("failed to record exit reason", "error", err, "module", "hooks")
+		}
 
 	case "PermissionRequest":
 		state.Status = StatusAwaitingPermission

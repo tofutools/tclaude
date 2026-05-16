@@ -346,6 +346,14 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
 	mux.HandleFunc("GET /v1/groups/transfers", handleGroupTransfers)
 	registerV1GroupRoutes(mux)
+	// Group templates. The bare /v1/templates and /v1/templates/{name}
+	// patterns dispatch their own methods; the two POST-specific routes
+	// carry a literal segment ("from-group" / "instantiate") so the mux
+	// picks them over the {name} wildcard without ambiguity.
+	mux.HandleFunc("/v1/templates", handleTemplates)
+	mux.HandleFunc("POST /v1/templates/from-group", handleTemplateFromGroup)
+	mux.HandleFunc("POST /v1/templates/{name}/instantiate", handleTemplateInstantiate)
+	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
 	mux.HandleFunc("/v1/links", handleLinksAll)
 	mux.HandleFunc("/v1/can-message", handleCanMessage)
 	mux.HandleFunc("/v1/permissions", handlePermissions)
@@ -360,6 +368,7 @@ func buildMux() http.Handler {
 	// against the collection.
 	mux.HandleFunc("/v1/sudo", handleSudo)
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
+	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	return logRequest(mux)
 }
 
