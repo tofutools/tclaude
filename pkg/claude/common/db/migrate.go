@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 37
+const currentVersion = 38
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -245,6 +245,95 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 38 {
+		if err := migrateV37toV38(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV37toV38 sanitizes legacy group names containing a slash or
+// backslash. Group create historically skipped validateGroupName, so a
+// name like "team/sub" could be stored — and once stored, every
+// /v1/groups/{name}/... and /api/groups/{name}/... route on that group
+// became unroutable: the path dispatcher splits on "/", so the embedded
+// slash re-split the name into bogus path segments. Create now rejects
+// such names up front; this migration repairs any that already slipped
+// through so the affected groups become operable (renameable, even)
+// again on the next daemon start.
+//
+// Each offending name has its slashes (forward and back) folded to "-".
+// agent_groups.name is UNIQUE, so a sanitized name that collides with an
+// existing group gets a numeric "-2", "-3", … suffix. Group references
+// are integer foreign keys (group_id), so each repair is a single-row
+// UPDATE with no cascade across members, owners, messages, or cron jobs.
+func migrateV37toV38(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v37→v38: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Snapshot every existing name first so collision resolution sees
+	// both the rows still to be migrated and the names already taken.
+	// ORDER BY id makes the suffixing deterministic — when two slashed
+	// names fold to the same base, the lower (older) id keeps the bare
+	// sanitized name and later ones take the numeric suffix.
+	rows, err := tx.Query(`SELECT id, name FROM agent_groups ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("migrate v37→v38: scan groups: %w", err)
+	}
+	type groupRow struct {
+		id   int64
+		name string
+	}
+	var all []groupRow
+	taken := map[string]bool{}
+	for rows.Next() {
+		var g groupRow
+		if err := rows.Scan(&g.id, &g.name); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("migrate v37→v38: scan row: %w", err)
+		}
+		all = append(all, g)
+		taken[g.name] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("migrate v37→v38: rows: %w", err)
+	}
+	_ = rows.Close()
+
+	folder := strings.NewReplacer("/", "-", `\`, "-")
+	for _, g := range all {
+		if !strings.ContainsAny(g.name, `/\`) {
+			continue
+		}
+		base := folder.Replace(g.name)
+		if base == "" {
+			base = "group"
+		}
+		candidate := base
+		for n := 2; taken[candidate]; n++ {
+			candidate = fmt.Sprintf("%s-%d", base, n)
+		}
+		if _, err := tx.Exec(`UPDATE agent_groups SET name = ? WHERE id = ?`, candidate, g.id); err != nil {
+			return fmt.Errorf("migrate v37→v38: rename group %d: %w", g.id, err)
+		}
+		delete(taken, g.name)
+		taken[candidate] = true
+		slog.Info("migrate v37→v38: sanitized group name with slash",
+			"old", g.name, "new", candidate)
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 38;`); err != nil {
+		return fmt.Errorf("migrate v37→v38: version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v37→v38: commit: %w", err)
+	}
 	return nil
 }
 

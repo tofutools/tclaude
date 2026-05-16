@@ -1837,8 +1837,15 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
-		if body.Name == "" {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "name is required")
+		// validateGroupName is the same guard rename and clone already
+		// apply — it rejects empty names, embedded slashes (which would
+		// break the /v1/groups/{name}/... and /api/groups/{name}/...
+		// route dispatch), control characters, and stray whitespace.
+		// Create historically skipped it, which let a slash-named group
+		// through and made every later sub-route on that group
+		// unroutable.
+		if err := validateGroupName(body.Name); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
 		// Validate the optional default cwd + startup context up front,
@@ -1903,156 +1910,110 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- /v1/groups/{name}* dispatcher ---
+// --- /v1/groups/{name}* routes ---
 
-func handleGroupByName(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/v1/groups/")
-	parts := strings.SplitN(rest, "/", 3)
-	name := parts[0]
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "missing group name")
-		return
-	}
-	g, err := db.GetAgentGroupByName(name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if g == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no such group")
-		return
-	}
+// registerV1GroupRoutes wires the SO_PEERCRED-authed /v1/groups/{name}
+// endpoints onto the daemon mux as Go 1.22 method+pattern routes:
+//
+//	POST   /v1/groups/{name}/stop            → stop every member
+//	POST   /v1/groups/{name}/resume          → resume every member
+//	POST   /v1/groups/{name}/spawn           → spawn a session into the group
+//	POST   /v1/groups/{name}/archive         → soft-delete (archive)
+//	POST   /v1/groups/{name}/unarchive       → restore an archived group
+//	POST   /v1/groups/{name}/rename          → rename (body: {new_name})
+//	POST   /v1/groups/{name}/clone           → clone the group
+//	GET    /v1/groups/{name}/owners          → list owners
+//	POST   /v1/groups/{name}/owners          → grant owner
+//	DELETE /v1/groups/{name}/owners/{conv}   → revoke owner
+//	GET    /v1/groups/{name}/members         → list members
+//	POST   /v1/groups/{name}/members         → add member
+//	PATCH  /v1/groups/{name}/members/{conv}  → update role/descr
+//	DELETE /v1/groups/{name}/members/{conv}  → remove member
+//	       /v1/groups/{name}/links[/{id}]    → link CRUD (own method dispatch)
+//	PATCH  /v1/groups/{name}                 → update settings
+//	DELETE /v1/groups/{name}                 → delete group
+//
+// The {name} / {conv} / {id} wildcards are matched and percent-decoded
+// by the mux (read via r.PathValue), replacing the old hand-rolled
+// TrimPrefix + SplitN dispatch. That manual parse split on r.URL.Path
+// — already percent-decoded — so a group name with an embedded slash
+// was re-split into bogus path segments and the route was lost. A
+// {name} wildcard matches one segment of the *escaped* path, so the
+// slash survives intact.
+func registerV1GroupRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/groups/{name}/stop", v1GroupRoute(handleGroupStop))
+	mux.HandleFunc("POST /v1/groups/{name}/resume", v1GroupRoute(handleGroupResume))
+	mux.HandleFunc("POST /v1/groups/{name}/spawn", v1GroupRoute(handleGroupSpawn))
+	mux.HandleFunc("POST /v1/groups/{name}/archive", v1GroupRoute(handleGroupArchive))
+	mux.HandleFunc("POST /v1/groups/{name}/unarchive", v1GroupRoute(handleGroupUnarchive))
+	mux.HandleFunc("POST /v1/groups/{name}/rename", v1GroupRoute(handleGroupRename))
+	mux.HandleFunc("POST /v1/groups/{name}/clone", v1GroupRoute(handleGroupClone))
 
-	// /v1/groups/{name}/stop and /resume — bulk lifecycle ops over
-	// the group's members. Both are POST-only since they have side
-	// effects (tmux send-keys / kill-session / spawning subprocesses).
-	if len(parts) >= 2 && parts[1] == "stop" {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-			return
-		}
-		handleGroupStop(w, r, g)
-		return
-	}
-	if len(parts) >= 2 && parts[1] == "resume" {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-			return
-		}
-		handleGroupResume(w, r, g)
-		return
-	}
-	if len(parts) >= 2 && parts[1] == "spawn" {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-			return
-		}
-		handleGroupSpawn(w, r, g)
-		return
-	}
-	if len(parts) >= 2 && parts[1] == "archive" {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-			return
-		}
-		handleGroupArchive(w, r, g)
-		return
-	}
-	if len(parts) >= 2 && parts[1] == "unarchive" {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-			return
-		}
-		handleGroupUnarchive(w, r, g)
-		return
-	}
-	if len(parts) >= 2 && parts[1] == "rename" {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-			return
-		}
-		handleGroupRename(w, r, g)
-		return
-	}
-	if len(parts) >= 2 && parts[1] == "clone" {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-			return
-		}
-		handleGroupClone(w, r, g)
-		return
-	}
+	mux.HandleFunc("GET /v1/groups/{name}/owners", v1GroupRoute(handleGroupOwnersList))
+	mux.HandleFunc("POST /v1/groups/{name}/owners", v1GroupRoute(handleGroupOwnersAdd))
+	mux.HandleFunc("DELETE /v1/groups/{name}/owners/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupOwnersRemove(w, r, g, r.PathValue("conv"))
+	}))
 
-	// /v1/groups/{name}/owners[*]
-	if len(parts) >= 2 && parts[1] == "owners" {
-		switch r.Method {
-		case http.MethodGet:
-			handleGroupOwnersList(w, r, g)
-		case http.MethodPost:
-			handleGroupOwnersAdd(w, r, g)
-		case http.MethodDelete:
-			if len(parts) < 3 || parts[2] == "" {
-				writeError(w, http.StatusBadRequest, "invalid_arg", "missing owner conv-id")
-				return
-			}
-			handleGroupOwnersRemove(w, r, g, parts[2])
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, or DELETE")
-		}
-		return
-	}
+	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))
+	mux.HandleFunc("POST /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersAdd))
+	mux.HandleFunc("PATCH /v1/groups/{name}/members/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupMembersUpdate(w, r, g, r.PathValue("conv"))
+	}))
+	mux.HandleFunc("DELETE /v1/groups/{name}/members/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupMembersRemove(w, r, g, r.PathValue("conv"))
+	}))
 
-	// /v1/groups/{name}/links[/{id}]
-	if len(parts) >= 2 && parts[1] == "links" {
-		var rest []string
-		if len(parts) >= 3 && parts[2] != "" {
-			rest = []string{parts[2]}
-		}
-		handleGroupLinks(w, r, g, rest)
-		return
-	}
+	// handleGroupLinks dispatches its own methods, so the two link
+	// patterns are registered without a method in the pattern.
+	mux.HandleFunc("/v1/groups/{name}/links", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupLinks(w, r, g, nil)
+	}))
+	mux.HandleFunc("/v1/groups/{name}/links/{id}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupLinks(w, r, g, []string{r.PathValue("id")})
+	}))
 
-	// /v1/groups/{name}/members[*]
-	if len(parts) >= 2 && parts[1] == "members" {
-		switch r.Method {
-		case http.MethodGet:
-			handleGroupMembersList(w, r, g)
-		case http.MethodPost:
-			handleGroupMembersAdd(w, r, g)
-		case http.MethodPatch:
-			if len(parts) < 3 || parts[2] == "" {
-				writeError(w, http.StatusBadRequest, "invalid_arg", "missing member id")
-				return
-			}
-			handleGroupMembersUpdate(w, r, g, parts[2])
-		case http.MethodDelete:
-			if len(parts) < 3 || parts[2] == "" {
-				writeError(w, http.StatusBadRequest, "invalid_arg", "missing member id")
-				return
-			}
-			handleGroupMembersRemove(w, r, g, parts[2])
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method", "GET, POST, PATCH, or DELETE")
-		}
-		return
-	}
+	mux.HandleFunc("PATCH /v1/groups/{name}", v1GroupRoute(handleGroupUpdate))
+	mux.HandleFunc("DELETE /v1/groups/{name}", v1GroupRoute(handleGroupDelete))
+}
 
-	// /v1/groups/{name}
-	switch r.Method {
-	case http.MethodPatch:
-		handleGroupUpdate(w, r, g)
-	case http.MethodDelete:
-		if _, ok := requirePermission(w, r, PermGroupsRm); !ok {
+// v1GroupRoute adapts a group-scoped /v1 handler into an
+// http.HandlerFunc. It resolves the {name} path wildcard to a group row
+// and replies with a 404 error envelope when the group is missing; the
+// per-handler permission gate (SO_PEERCRED identity → requirePermission)
+// still runs inside fn, exactly as before.
+func v1GroupRoute(fn func(http.ResponseWriter, *http.Request, *db.AgentGroup)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "missing group name")
 			return
 		}
-		if err := db.DeleteAgentGroup(name); err != nil {
-			writeError(w, http.StatusConflict, "constraint", err.Error())
+		g, err := db.GetAgentGroupByName(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method", "PATCH or DELETE")
+		if g == nil {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		fn(w, r, g)
 	}
+}
+
+// handleGroupDelete deletes a group. Permission slug: groups.rm
+// (default human-only). db.DeleteAgentGroup fails with a constraint
+// error if the group still has blocking references.
+func handleGroupDelete(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if _, ok := requirePermission(w, r, PermGroupsRm); !ok {
+		return
+	}
+	if err := db.DeleteAgentGroup(g.Name); err != nil {
+		writeError(w, http.StatusConflict, "constraint", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // maxGroupContextBytes caps a group's startup context. The context is

@@ -335,7 +335,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/agent/aliases/", handleHeadAliasByHandle)
 	mux.HandleFunc("/v1/agent/", handleAgentByConv)
 	mux.HandleFunc("/v1/groups", handleGroups)
-	mux.HandleFunc("/v1/groups/", handleGroupByName)
+	registerV1GroupRoutes(mux)
 	mux.HandleFunc("/v1/links", handleLinksAll)
 	mux.HandleFunc("/v1/can-message", handleCanMessage)
 	mux.HandleFunc("/v1/permissions", handlePermissions)

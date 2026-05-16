@@ -45,8 +45,7 @@ const dashboardSudoGranter = "<human-dashboard>:proactive"
 // registerDashboardEditRoutes wires the mutation endpoints onto the
 // loopback mux. Called from registerDashboardRoutes.
 func registerDashboardEditRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/groups", handleDashboardGroupsCreate)
-	mux.HandleFunc("/api/groups/", handleDashboardGroupsAPI)
+	registerDashboardGroupRoutes(mux)
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
 	mux.HandleFunc("/api/worktrees", handleDashboardWorktreesAPI)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
@@ -61,12 +60,9 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 // Delegates to handleGroups after stamping a synthetic human peer — the
 // cookie+Origin pin is the human-consent layer; requirePermission then
 // short-circuits the slug check via the !HasClaudeAncestor branch.
+// Registered as `POST /api/groups`, so the mux rejects other methods.
 func handleDashboardGroupsCreate(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
 	handleGroups(w, asDashboardHumanPeer(r))
@@ -296,8 +292,10 @@ func looksLikeConvID(s string) bool {
 	return true
 }
 
-// handleDashboardGroupsAPI dispatches:
+// registerDashboardGroupRoutes wires the cookie-authed /api/groups
+// endpoints onto the loopback mux as Go 1.22 method+pattern routes:
 //
+//	POST   /api/groups                          → create a group
 //	DELETE /api/groups/{name}                   → delete group
 //	PATCH  /api/groups/{name}                   → update settings (body: {default_cwd})
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
@@ -307,122 +305,69 @@ func looksLikeConvID(s string) bool {
 //	PATCH  /api/groups/{name}/members/{conv}    → update role/descr
 //	POST   /api/groups/{name}/owners            → grant owner (body: {conv})
 //	DELETE /api/groups/{name}/owners/{conv}     → revoke owner
+//	POST   /api/groups/{name}/links             → add link (body: {to, mode?, bidir?})
+//	PATCH  /api/groups/{name}/links/{id}        → update link mode
+//	DELETE /api/groups/{name}/links/{id}        → remove link
 //
-// Anything else returns 404.
-func handleDashboardGroupsAPI(w http.ResponseWriter, r *http.Request) {
-	if !checkDashboardAuth(w, r) {
-		return
-	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/groups/")
-	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) == 0 || parts[0] == "" {
-		http.Error(w, "expected /api/groups/{name}[/{members|owners}[/{conv}]]", http.StatusNotFound)
-		return
-	}
-	groupName := parts[0]
-	if u, err := url.PathUnescape(groupName); err == nil {
-		groupName = u
-	}
-	g, err := db.GetAgentGroupByName(groupName)
-	if err != nil {
-		http.Error(w, "group lookup: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if g == nil {
-		http.Error(w, "no such group "+groupName, http.StatusNotFound)
-		return
-	}
-	if len(parts) == 1 {
-		switch r.Method {
-		case http.MethodDelete:
-			dashboardDeleteGroup(w, groupName)
-		case http.MethodPatch:
-			handleGroupUpdate(w, asDashboardHumanPeer(r), g)
-		default:
-			http.Error(w, "DELETE or PATCH", http.StatusMethodNotAllowed)
-		}
-		return
-	}
-	switch parts[1] {
-	case "rename":
-		if len(parts) >= 3 && parts[2] != "" {
-			http.Error(w, "POST /api/groups/{name}/rename takes new_name in the body, not the URL", http.StatusBadRequest)
+// The {name} / {conv} / {id} wildcards are matched and percent-decoded
+// by the mux itself (read via r.PathValue), which replaces the old
+// hand-rolled TrimPrefix + SplitN dispatch. That manual parse split on
+// r.URL.Path — already percent-decoded — so a group name containing a
+// slash (e.g. sent as "team%2Fsub" by the browser) was re-split into
+// bogus path segments and the route was lost. A {name} wildcard matches
+// one segment of the *escaped* path, so the embedded slash survives.
+func registerDashboardGroupRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/groups", handleDashboardGroupsCreate)
+
+	mux.HandleFunc("DELETE /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardDeleteGroup(w, g.Name)
+	}))
+	mux.HandleFunc("PATCH /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupUpdate(w, asDashboardHumanPeer(r), g)
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(dashboardRenameGroup))
+	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))
+	mux.HandleFunc("POST /api/groups/{name}/members", groupRoute(dashboardAddMember))
+	mux.HandleFunc("DELETE /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardRemoveMember(w, g, r.PathValue("conv"))
+	}))
+	mux.HandleFunc("PATCH /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardUpdateMember(w, r, g, r.PathValue("conv"))
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/owners", groupRoute(dashboardAddOwner))
+	mux.HandleFunc("DELETE /api/groups/{name}/owners/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardRemoveOwner(w, g, r.PathValue("conv"))
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/links", groupRoute(dashboardAddLink))
+	mux.HandleFunc("PATCH /api/groups/{name}/links/{id}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardUpdateLink(w, r, g, r.PathValue("id"))
+	}))
+	mux.HandleFunc("DELETE /api/groups/{name}/links/{id}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		dashboardRemoveLink(w, g, r.PathValue("id"))
+	}))
+}
+
+// groupRoute adapts a group-scoped dashboard handler into an
+// http.HandlerFunc: it runs the dashboard cookie/Origin auth, resolves
+// the {name} path wildcard to a group row, replies 404 when no such
+// group exists, and otherwise hands the resolved group to fn. Hoisting
+// auth + lookup here keeps each route registration a single line.
+func groupRoute(fn func(http.ResponseWriter, *http.Request, *db.AgentGroup)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !checkDashboardAuth(w, r) {
 			return
 		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		name := r.PathValue("name")
+		g, err := db.GetAgentGroupByName(name)
+		if err != nil {
+			http.Error(w, "group lookup: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		dashboardRenameGroup(w, r, g)
-	case "spawn":
-		if len(parts) >= 3 && parts[2] != "" {
-			http.Error(w, "unknown subpath /api/groups/{name}/spawn/"+parts[2], http.StatusNotFound)
+		if g == nil {
+			http.Error(w, "no such group "+name, http.StatusNotFound)
 			return
 		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST only", http.StatusMethodNotAllowed)
-			return
-		}
-		dashboardSpawnInGroup(w, r, g)
-	case "members":
-		// /api/groups/{name}/members          — POST adds a new member.
-		// /api/groups/{name}/members/{conv}   — DELETE removes; PATCH
-		//                                       updates role/descr.
-		if len(parts) < 3 || parts[2] == "" {
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST /api/groups/{name}/members or DELETE/PATCH /api/groups/{name}/members/{conv}", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardAddMember(w, r, g)
-			return
-		}
-		switch r.Method {
-		case http.MethodDelete:
-			dashboardRemoveMember(w, g, parts[2])
-		case http.MethodPatch:
-			dashboardUpdateMember(w, r, g, parts[2])
-		default:
-			http.Error(w, "DELETE or PATCH", http.StatusMethodNotAllowed)
-		}
-	case "owners":
-		switch r.Method {
-		case http.MethodPost:
-			// Body: {"conv": "<selector>"}
-			if len(parts) >= 3 && parts[2] != "" {
-				http.Error(w, "POST takes the conv in the request body, not the URL", http.StatusBadRequest)
-				return
-			}
-			dashboardAddOwner(w, r, g)
-		case http.MethodDelete:
-			if len(parts) < 3 || parts[2] == "" {
-				http.Error(w, "expected /api/groups/{name}/owners/{conv}", http.StatusNotFound)
-				return
-			}
-			dashboardRemoveOwner(w, g, parts[2])
-		default:
-			http.Error(w, "POST or DELETE", http.StatusMethodNotAllowed)
-		}
-	case "links":
-		// /api/groups/{name}/links         — POST: add link (body {to, mode?, bidir?})
-		// /api/groups/{name}/links/{id}    — PATCH (body {mode}) | DELETE
-		if len(parts) < 3 || parts[2] == "" {
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST /api/groups/{name}/links or PATCH/DELETE /api/groups/{name}/links/{id}", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardAddLink(w, r, g)
-			return
-		}
-		switch r.Method {
-		case http.MethodPatch:
-			dashboardUpdateLink(w, r, g, parts[2])
-		case http.MethodDelete:
-			dashboardRemoveLink(w, g, parts[2])
-		default:
-			http.Error(w, "PATCH or DELETE", http.StatusMethodNotAllowed)
-		}
-	default:
-		http.Error(w, "unknown endpoint /api/groups/{name}/"+parts[1], http.StatusNotFound)
+		fn(w, r, g)
 	}
 }
 
