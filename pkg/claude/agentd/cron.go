@@ -142,6 +142,10 @@ func runSudoGrantsCleanup(now time.Time) {
 //   - conv target, GroupID == 0 → direct tmux send-keys into the
 //     target's pane. Requires the target to be alive RIGHT NOW;
 //     "no_target" status when no live pane is found.
+//
+// For a conv target the stored conv is walked to its live successor
+// before delivery (walkSuccession), so a job whose target has since
+// reincarnated still reaches the live agent.
 func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	subject := j.Subject
 	if subject == "" {
@@ -159,13 +163,23 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		return fireCronGroupJob(j, subject)
 	}
 
+	// Conv target: resolve the live successor of the stored conv before
+	// delivering. MigrateCronJobConvRef re-points target_conv at
+	// reincarnate time, but that is best-effort with no retry — walking
+	// the succession chain here makes delivery succession-safe
+	// regardless, matching the fan-out path (fanOutToGroup) and the
+	// one-shot message path (which redirects via agent.ResolveSelector).
+	// originalTo is non-empty only when a redirect actually happened.
+	targetConv, originalTo := walkSuccession(j.TargetConv)
+
 	if j.GroupID > 0 {
 		_, err := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:  j.GroupID,
-			FromConv: j.OwnerConv,
-			ToConv:   j.TargetConv,
-			Subject:  subject,
-			Body:     j.Body,
+			GroupID:        j.GroupID,
+			FromConv:       j.OwnerConv,
+			ToConv:         targetConv,
+			OriginalToConv: originalTo,
+			Subject:        subject,
+			Body:           j.Body,
 		})
 		if err != nil {
 			slog.Warn("cron: insert message failed", "job", j.ID, "error", err)
@@ -174,13 +188,13 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		// Best-effort nudge — flush only fires if the target is alive
 		// right now. Otherwise the message sits in the inbox until the
 		// next agent_messages-aware request from the target.
-		go flush(j.TargetConv, realFlushSender)
+		go flush(targetConv, realFlushSender)
 		return "ok"
 	}
 
 	// Solo path: send the body directly via tmux. Subject is dropped
 	// since there's no message envelope.
-	sess := pickAliveSession(j.TargetConv)
+	sess := pickAliveSession(targetConv)
 	if sess == nil {
 		return "no_target"
 	}
