@@ -103,3 +103,97 @@ func TestRunHookCallback_SessionEndClearKeepsStatus(t *testing.T) {
 	assert.Equal(t, StatusIdle, got.Status,
 		"SessionEnd(clear) keeps the process alive — status must not flip to exited")
 }
+
+// A StopFailure hook (turn ended in an API/auth/billing error) flips the
+// session row to Status="error" with the error_type in status_detail.
+func TestRunHookCallback_StopFailureMarksError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "err-sess",
+		ConvID: "conv-err",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "err-sess", map[string]any{
+		"session_id":      "conv-err",
+		"hook_event_name": "StopFailure",
+		"error_type":      "rate_limit",
+		"error_message":   "Rate limit exceeded. Retry in 60s.",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("err-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusError, got.Status,
+		"StopFailure must mark the session errored")
+	assert.Equal(t, "rate_limit", got.StatusDetail,
+		"error_type must land in status_detail")
+}
+
+// A StopFailure with no error_type (CC always sends one, but be
+// defensive) falls back to a non-empty "unknown" detail.
+func TestRunHookCallback_StopFailureMissingTypeDefaultsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "err-sess2",
+		ConvID: "conv-err2",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "err-sess2", map[string]any{
+		"session_id":      "conv-err2",
+		"hook_event_name": "StopFailure",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("err-sess2")
+	require.NoError(t, err)
+	assert.Equal(t, StatusError, got.Status)
+	assert.Equal(t, "unknown", got.StatusDetail,
+		"a StopFailure with no error_type falls back to 'unknown'")
+}
+
+// The error status is transient, not sticky: the next normal hook event
+// after a StopFailure overwrites it. A rate-limited agent that is later
+// nudged/retried leaves the error state on its own — nothing else has
+// to reset it.
+func TestRunHookCallback_ErrorClearedByNextEvent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "err-sess3",
+		ConvID: "conv-err3",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "err-sess3", map[string]any{
+		"session_id":      "conv-err3",
+		"hook_event_name": "StopFailure",
+		"error_type":      "server_error",
+		"cwd":             dir,
+	})
+	got, err := LoadSessionState("err-sess3")
+	require.NoError(t, err)
+	require.Equal(t, StatusError, got.Status, "precondition: session is errored")
+
+	// The retry: CC fires UserPromptSubmit for the new turn.
+	feedHook(t, "err-sess3", map[string]any{
+		"session_id":      "conv-err3",
+		"hook_event_name": "UserPromptSubmit",
+		"cwd":             dir,
+	})
+	got, err = LoadSessionState("err-sess3")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, got.Status,
+		"the next normal hook event must clear the error status back to working")
+	assert.NotEqual(t, "server_error", got.StatusDetail,
+		"the stale error_type must not linger in status_detail")
+}

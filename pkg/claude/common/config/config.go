@@ -263,6 +263,7 @@ func DefaultConfig() *Config {
 				{From: "*", To: "idle"},
 				{From: "*", To: "awaiting_permission"},
 				{From: "*", To: "awaiting_input"},
+				{From: "*", To: "error"},
 				{From: "*", To: "exited"},
 			},
 			CooldownSeconds: 5,

@@ -168,7 +168,7 @@ func getStatusColorFunc(status string) func(a ...interface{}) string {
 		return text.FgGreen.Sprint
 	case StatusWorking:
 		return text.FgGreen.Sprint
-	case StatusAwaitingPermission, StatusAwaitingInput:
+	case StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		return text.FgHiRed.Sprint
 	case StatusExited:
 		return text.FgHiBlack.Sprint
@@ -230,8 +230,10 @@ func normalizeStatusFilter(show []string) []string {
 			result = append(result, StatusAwaitingPermission)
 		case "awaiting_input", "input":
 			result = append(result, StatusAwaitingInput)
+		case "error":
+			result = append(result, StatusError)
 		case "attention":
-			result = append(result, StatusAwaitingPermission, StatusAwaitingInput)
+			result = append(result, StatusAwaitingPermission, StatusAwaitingInput, StatusError)
 		case "exited":
 			result = append(result, StatusExited)
 		default:

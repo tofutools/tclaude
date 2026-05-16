@@ -50,6 +50,7 @@ var filterOptions = []struct {
 	{StatusWorking, "Working", StatusWorking},
 	{StatusAwaitingPermission, "Awaiting permission", StatusAwaitingPermission},
 	{StatusAwaitingInput, "Awaiting input", StatusAwaitingInput},
+	{StatusError, "Error", StatusError},
 	{StatusExited, "Exited", StatusExited},
 }
 
@@ -731,7 +732,7 @@ func getRowStyle(status string) lipgloss.Style {
 		return workingStyle
 	case StatusWorking:
 		return workingStyle
-	case StatusAwaitingPermission, StatusAwaitingInput:
+	case StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		return needsInput
 	case StatusExited:
 		return exitedStyle

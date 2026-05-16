@@ -442,6 +442,12 @@ type agentState struct {
 // otherwise a dead agent masquerades as "idle" on the dashboard.
 // LastHook is preserved either way so the UI can show when the agent
 // was last active.
+//
+// For a LIVE agent the hook status flows through verbatim — including
+// StatusError from a StopFailure hook. The exited override below is
+// keyed on tmux liveness, not on the status string, so an errored but
+// still-running agent keeps its "error" status (its CC process is
+// alive; only its last turn failed).
 func stateForConv(convID string) agentState {
 	rows, err := db.FindSessionsByConvID(convID)
 	if err != nil || len(rows) == 0 {
