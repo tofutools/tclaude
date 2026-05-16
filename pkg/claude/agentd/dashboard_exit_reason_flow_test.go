@@ -99,3 +99,40 @@ func TestDashboardSnapshot_ExitReasonSurfacesCrashedVsClean(t *testing.T) {
 	assert.Equal(t, "", live.State.ExitReason,
 		"a live agent must not carry an exit_reason")
 }
+
+// End-to-end: a live agent's pane dies with no SessionEnd hook; a reaper
+// sweep stamps exit_reason='unexpected'; the dashboard snapshot then
+// surfaces it as a crash. The reaper→db and db→dashboard halves are
+// each covered separately — this pins the seam between them, which a
+// regression in stateForConv's row selection could slip past.
+func TestDashboardSnapshot_ReapedAgentSurfacesAsCrashed(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	const conv = "reap-aaaa-bbbb-cccc-dddddddddddd"
+	f.HaveConvWithTitle(conv, "reaped-worker")
+	f.HaveAliveSession(conv, "spwn-reap", "tmux-reap", "/tmp/reap")
+	f.HaveGroup("crew")
+	f.HaveMember("crew", conv)
+
+	// The pane dies with no SessionEnd; a reaper sweep marks it exited
+	// and — finding no recorded reason — stamps it 'unexpected'.
+	f.MarkOffline("tmux-reap")
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead session is reaped")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	var member *dashMember
+	for _, g := range snap.Groups {
+		for i := range g.Members {
+			if g.Members[i].ConvID == conv {
+				member = &g.Members[i]
+			}
+		}
+	}
+	require.NotNil(t, member, "reaped conv should still be a crew member")
+	assert.False(t, member.Online, "a reaped agent is offline")
+	assert.Equal(t, "unexpected", member.State.ExitReason,
+		"a reaper-stamped death must surface on the dashboard as a crash")
+}

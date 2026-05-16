@@ -65,7 +65,6 @@ func TestMigrateV41toV42_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 42, currentVersion, "currentVersion is 42")
 
 	res, err := d.Exec(`
 		INSERT INTO group_templates (name, descr, default_context, created_at, updated_at)

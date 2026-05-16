@@ -500,11 +500,17 @@ func stateForConv(convID string) agentState {
 		out.Status = session.StatusExited
 		out.StatusDetail = ""
 		// Surface WHY it ended so the dashboard can tell a clean exit
-		// from an unexpected death. An empty result (NULL exit_reason —
-		// a pre-migration corpse, or a death the reaper has not swept
-		// yet) renders as a plain exit, never as a crash.
+		// from an unexpected death. pick is the most-recently-updated
+		// row — the SessionEnd hook and the reaper both bump the row
+		// they touch, so the latest row carries the authoritative
+		// reason. An empty result (NULL exit_reason — a pre-migration
+		// corpse, or a death the reaper has not swept yet) renders as a
+		// plain exit, never as a crash.
 		if reason, err := db.GetSessionExitReason(pick.ID); err == nil {
 			out.ExitReason = reason
+		} else {
+			slog.Warn("dashboard: read exit_reason failed",
+				"session", pick.ID, "error", err)
 		}
 	}
 	return out

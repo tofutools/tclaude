@@ -277,10 +277,12 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 
 // SetSessionExitReason records why a session ended — the `reason` from
 // a graceful SessionEnd hook (logout / prompt_input_exit / resume /
-// bypass_permissions_disabled / other). It is authoritative: a real
-// SessionEnd overrides any 'unexpected' a reaper sweep stamped in a
-// narrow race. Cleared by ClearSessionExitReason when the session comes
-// back alive.
+// bypass_permissions_disabled / other). It is row-scoped: the SessionEnd
+// hook resolves the exact row whose process exited, and SaveSession
+// bumps that row's updated_at so stateForConv picks it. It is also
+// authoritative — a real SessionEnd overrides any 'unexpected' a reaper
+// sweep stamped in a narrow race. Cleared by ClearSessionExitReasonByConv
+// when the conversation comes back alive.
 func SetSessionExitReason(id, reason string) error {
 	d, err := Open()
 	if err != nil {
@@ -290,16 +292,21 @@ func SetSessionExitReason(id, reason string) error {
 	return err
 }
 
-// ClearSessionExitReason drops a session's exit_reason back to NULL.
-// Called on SessionStart: a fresh or resumed session is alive again, so
-// a stale reason from a previous exit must not linger — otherwise a
-// later unexpected death could be misread as that old clean exit.
-func ClearSessionExitReason(id string) error {
+// ClearSessionExitReasonByConv drops exit_reason back to NULL for EVERY
+// session row of a conversation. Called on SessionStart: the conv is
+// alive again, so no row of it may keep a stale reason from a previous
+// exit. It is conv-scoped, not row-scoped, on purpose — a conv can own
+// several session rows (an auto-registered row alongside an older one,
+// see FindSessionByConvID), and stateForConv reads exit_reason off
+// whichever row is most recent. Clearing only the row the SessionStart
+// hook resolved to would strand a stale 'unexpected' on a sibling row
+// that a later dashboard read could pick up and misreport as a crash.
+func ClearSessionExitReasonByConv(convID string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE sessions SET exit_reason = NULL WHERE id = ?`, id)
+	_, err = d.Exec(`UPDATE sessions SET exit_reason = NULL WHERE conv_id = ?`, convID)
 	return err
 }
 

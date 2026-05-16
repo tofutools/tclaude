@@ -247,11 +247,16 @@ func runHookCallback() error {
 		// Session started or resumed - update ConvID and set to idle
 		state.Status = StatusIdle
 		state.StatusDetail = ""
-		// The session is alive again — drop any exit_reason a previous
-		// exit (or the reaper) recorded, so a later unexpected death is
-		// not misread as that stale clean exit.
-		if err := db.ClearSessionExitReason(state.ID); err != nil {
-			slog.Warn("failed to clear exit reason", "error", err, "module", "hooks")
+		// The conversation is alive again — drop any exit_reason a
+		// previous exit (or the reaper) recorded. Cleared conv-wide, not
+		// just for this row: a conv can own several session rows and the
+		// dashboard reads exit_reason off whichever is most recent, so a
+		// stale reason left on a sibling row could later be misread as a
+		// crash.
+		if state.ConvID != "" {
+			if err := db.ClearSessionExitReasonByConv(state.ConvID); err != nil {
+				slog.Warn("failed to clear exit reason", "error", err, "module", "hooks")
+			}
 		}
 
 	case "SessionEnd":

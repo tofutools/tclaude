@@ -19,11 +19,11 @@ func seedExitReasonSession(t *testing.T, id, status string) {
 }
 
 // SetSessionExitReason records a reason; GetSessionExitReason reads it
-// back; ClearSessionExitReason returns the row to no-reason. A session
+// back; ClearSessionExitReasonByConv returns it to no-reason. A session
 // that never had one recorded reads as "".
 func TestSessionExitReason_SetGetClear(t *testing.T) {
 	setupTestDB(t)
-	seedExitReasonSession(t, "s1", "exited")
+	seedExitReasonSession(t, "s1", "exited") // ConvID "conv-s1"
 
 	// No reason recorded yet — NULL reads back as "".
 	got, err := GetSessionExitReason("s1")
@@ -36,11 +36,34 @@ func TestSessionExitReason_SetGetClear(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "logout", got)
 
-	// Clearing it drops back to NULL → "".
-	require.NoError(t, ClearSessionExitReason("s1"))
+	// Clearing the conv drops it back to NULL → "".
+	require.NoError(t, ClearSessionExitReasonByConv("conv-s1"))
 	got, err = GetSessionExitReason("s1")
 	require.NoError(t, err)
-	assert.Equal(t, "", got, "ClearSessionExitReason returns the row to no-reason")
+	assert.Equal(t, "", got, "ClearSessionExitReasonByConv returns the row to no-reason")
+}
+
+// ClearSessionExitReasonByConv wipes exit_reason from EVERY row of a
+// conv, not just one. A conv can own several session rows (an
+// auto-registered row alongside an older one); a stale reason left on a
+// sibling could be picked up by a later dashboard read and misreported
+// as a crash. Pins the conv-scoped clear.
+func TestClearSessionExitReasonByConv_ClearsEveryRow(t *testing.T) {
+	setupTestDB(t)
+	// Two rows, same conv_id — the multi-row shape an auto-registered
+	// session leaves alongside an older row.
+	require.NoError(t, SaveSession(&SessionRow{ID: "row-old", ConvID: "conv-x", Status: "exited"}))
+	require.NoError(t, SaveSession(&SessionRow{ID: "row-new", ConvID: "conv-x", Status: "idle"}))
+	require.NoError(t, SetSessionExitReason("row-old", "unexpected"))
+	require.NoError(t, SetSessionExitReason("row-new", "logout"))
+
+	require.NoError(t, ClearSessionExitReasonByConv("conv-x"))
+
+	for _, id := range []string{"row-old", "row-new"} {
+		got, err := GetSessionExitReason(id)
+		require.NoError(t, err)
+		assert.Equalf(t, "", got, "every row of the conv must be cleared (%s)", id)
+	}
 }
 
 // GetSessionExitReason on an unknown id is not an error — it returns ""
