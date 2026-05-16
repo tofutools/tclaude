@@ -52,9 +52,10 @@ same daemon endpoints the CLI uses.
 ### Direct-manipulation interactions in the Groups view
 
 - **Drag-and-drop members between groups + per-group `+ add member`
-  button.** → **shipped.** See
+  button.** → **shipped.** Every drag operation is confirm-gated. See
   [`DONE/dashboard-dnd-move.md`](../../DONE/dashboard-dnd-move.md),
   [`DONE/dashboard-dnd-clone.md`](../../DONE/dashboard-dnd-clone.md),
+  [`DONE/dashboard-dnd-confirm.md`](../../DONE/dashboard-dnd-confirm.md),
   [`DONE/dashboard-add-member-overlay.md`](../../DONE/dashboard-add-member-overlay.md).
 
 - **Per-member action buttons.** Far-right cell on each member row

@@ -8976,7 +8976,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
       title: 'Clone agent into group?',
       body: `Fork a new sibling agent from "${label}" and add the clone to `
         + `group "${targetGroup}". The original keeps running; the clone is a `
-        + `fresh conversation that inherits the original's identity.`,
+        + `sibling conversation that inherits the original's identity and a `
+        + `copy of its conversation history.`,
       meta: label,
       okLabel: 'Clone',
     });
