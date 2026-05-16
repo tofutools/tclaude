@@ -245,11 +245,18 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 				"something to start from.")
 		return "", false
 	}
-	if !isValidFollowUp(body.FollowUp) {
+	// Charset/length: validate against the LENIENT inbox rule here. A
+	// grouped successor receives the handoff as an inbox message, so it
+	// tolerates the same ≤16384-byte, newline-friendly charset as a
+	// spawn --initial-message. The stricter solo-pane rule is enforced
+	// later by soloFollowUpRejection, once the membership snapshot in
+	// runReincarnationOrchestration reveals which delivery path applies.
+	if !isValidInitialMessage(body.FollowUp) {
 		writeError(w, http.StatusBadRequest, "invalid_follow_up",
-			"REJECTED. Follow-up must be 1-4096 printable characters; tabs, newlines, "+
-				"and other control characters are not allowed (each newline would be "+
-				"treated as a submit by tmux send-keys, splitting the prompt).")
+			fmt.Sprintf("REJECTED. follow_up must be at most %d characters; newlines "+
+				"and tabs are allowed (a grouped successor receives the handoff in "+
+				"its inbox, like a spawn brief), but NUL / escape / other control "+
+				"characters are not.", agent.MaxInitialMessageBytes))
 		return "", false
 	}
 	return body.FollowUp, true
@@ -302,6 +309,16 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		if m != nil {
 			oldMembers = append(oldMembers, m)
 		}
+	}
+
+	// A solo (groupless) successor has no inbox — its handoff is typed
+	// into the new pane via send-keys. decodeReincarnateFollowUp only
+	// applied the lenient inbox charset; now that the membership
+	// snapshot is in, reject a follow-up the strict pane rule can't
+	// carry. Done before the spawn so a bad request wastes no session.
+	if reason := soloFollowUpRejection(followUp, len(oldMembers) > 0); reason != "" {
+		writeError(w, http.StatusBadRequest, "invalid_follow_up", reason)
+		return
 	}
 
 	oldPerms, err := db.ListAgentPermissionsForConv(target)

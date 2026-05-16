@@ -1032,6 +1032,37 @@ func isValidInitialMessage(s string) bool {
 	return true
 }
 
+// soloFollowUpRejection reports why a clone/reincarnate handoff cannot
+// reach a SOLO (groupless) successor, or "" when it can.
+//
+// The two delivery paths impose different charset rules:
+//
+//   - A GROUPED successor receives the handoff as an agent_messages
+//     inbox row — the same path a spawn --initial-message takes — so it
+//     tolerates the lenient isValidInitialMessage rules (≤16384 bytes,
+//     newlines and tabs allowed). decodeReincarnateFollowUp /
+//     decodeCloneBody already enforced that at decode time; nothing
+//     more to check for a grouped successor.
+//   - A SOLO successor has no group and therefore no inbox; its handoff
+//     is typed into the freshly-spawned pane via tmux send-keys, so it
+//     must clear the strict isValidFollowUp gate (≤4096 bytes, no
+//     control characters — each newline would submit as its own turn).
+//
+// The caller passes grouped = (len(oldMembers) > 0), known only after
+// the membership snapshot — which is why this check lives in the
+// orchestration rather than the decode step. An empty follow-up is
+// always fine (clone permits it; reincarnate rejects empty earlier).
+func soloFollowUpRejection(followUp string, grouped bool) string {
+	if grouped || followUp == "" || isValidFollowUp(followUp) {
+		return ""
+	}
+	return "this agent belongs to no group, so its handoff is typed into the " +
+		"successor's pane via tmux send-keys — the follow-up must be at most " +
+		"4096 characters with no newlines, tabs, or other control characters. " +
+		"(A grouped agent's handoff rides its inbox and may be longer and " +
+		"multi-line.)"
+}
+
 // handleWhoamiContext returns the caller's own context-window state.
 // Read-only and self-targeted, so no permission gate — any agent can
 // introspect its own session. Returns 0/0 if the row hasn't been
