@@ -854,11 +854,9 @@ func (m *watchModel) View() tea.View {
 
 		id := e.SessionID[:8]
 		modified := formatDate(e.Modified)
-		var titleStr string
-		if e.HasTitle() {
-			titleStr = e.DisplayTitle()
-		}
-		title := convindex.FormatTitleAndPrompt(titleStr, e.FirstPrompt)
+		// Canonical "[title]: prompt" rendering — shared with conv ls
+		// and the web dashboard via convindex.FormatConvTitle.
+		title := convindex.FormatConvTitle(e.CustomTitle, e.Summary, e.FirstPrompt)
 		size := formatFileSize(e.FileSize)
 
 		var cells []string

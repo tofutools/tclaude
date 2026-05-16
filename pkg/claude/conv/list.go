@@ -279,12 +279,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 
 	// Add rows
 	for i, e := range entries {
-		// Format: [title]: prompt, or just prompt if no title/summary
-		var titleStr string
-		if e.HasTitle() {
-			titleStr = e.DisplayTitle()
-		}
-		displayText := truncatePrompt(convindex.FormatTitleAndPrompt(titleStr, e.FirstPrompt), promptWidth)
+		// Canonical "[title]: prompt" rendering — shared with conv ls -w
+		// and the web dashboard via convindex.FormatConvTitle.
+		displayText := truncatePrompt(convindex.FormatConvTitle(e.CustomTitle, e.Summary, e.FirstPrompt), promptWidth)
 		modified := formatDate(e.Modified)
 
 		row := table.Row{e.SessionID[:8]}

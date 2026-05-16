@@ -773,9 +773,15 @@ func collectConversationsSnapshot(active, retired []*db.AgentEnrollment) []dashb
 		if row.ConvID == "" || enrolled[row.ConvID] {
 			continue
 		}
+		// Plain conversations are non-agents — never /rename'd — so
+		// their title is a summary or a raw first prompt. FreshConvTitle
+		// renders them through the same convindex.FormatConvTitle the
+		// CLI's `conv ls` uses, so the dashboard stops leaking uncleaned
+		// first-prompt text (system tags, newlines). Agent rows keep
+		// FreshTitle — their names already display as intended.
 		out = append(out, dashboardConversation{
 			ConvID:   row.ConvID,
-			Title:    agent.FreshTitle(row.ConvID),
+			Title:    agent.FreshConvTitle(row.ConvID),
 			Online:   isConvOnline(row.ConvID),
 			State:    stateForConv(row.ConvID),
 			Modified: row.Modified,

@@ -101,6 +101,32 @@ func FormatTitleAndPrompt(title, prompt string) string {
 	return cleanedPrompt
 }
 
+// FormatConvTitle is THE one canonical "Prompt/Title" display string for
+// a conversation. Every surface that shows a conversation title to a
+// human — `conv ls`, `conv ls -w`, the web dashboard's Groups/Agents
+// tabs — must go through here so the rendering never diverges between
+// them again (see issue #91).
+//
+// The title part is the custom title, else the summary; the first
+// prompt is always the prompt part. DisplayTitle's FirstPrompt fallback
+// is deliberately NOT folded into the title part — the first prompt is
+// already rendered as the prompt part, so reusing it as the title too
+// would print it twice. The whole thing is cleaned (system tags and
+// newlines stripped) and formatted as "[title]: prompt" / "[title]" /
+// "prompt" by FormatTitleAndPrompt.
+//
+// Note this is distinct from an agent's bare *name* (custom title, else
+// summary, else first prompt — used for identity, alias derivation and
+// reincarnate/clone name prefixes). That stays bare; this is the
+// browse-a-conversation rendering.
+func FormatConvTitle(customTitle, summary, firstPrompt string) string {
+	title := customTitle
+	if title == "" {
+		title = summary
+	}
+	return FormatTitleAndPrompt(title, firstPrompt)
+}
+
 // GetConvTitleAndPrompt returns both the title (CustomTitle or Summary) and the first prompt.
 // Returns formatted string like "[title]: prompt" or just "prompt" if no title.
 func GetConvTitleAndPrompt(convID, cwd string) string {

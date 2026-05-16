@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
@@ -238,7 +239,12 @@ func CurrentConvID() (string, error) {
 }
 
 // DisplayTitle is the exported alias of displayTitle so other packages
-// can render agent names consistently.
+// can render an agent's bare *name* consistently (custom title, else
+// summary, else first prompt). This is the agent-name concept — used
+// for identity, group rosters and reincarnate/clone name prefixes. For
+// the "[title]: prompt" rendering that conversation-listing surfaces
+// show (`conv ls`, the dashboard's plain-conversation list), use
+// FreshConvTitle instead.
 func DisplayTitle(r *db.ConvIndexRow) string {
 	return displayTitle(r)
 }
@@ -315,6 +321,25 @@ const UnknownTitle = "(unknown)"
 func FreshTitle(convID string) string {
 	if row := FreshConvRowResolved(convID); row != nil {
 		if t := displayTitle(row); t != "" {
+			return t
+		}
+	}
+	return UnknownTitle
+}
+
+// FreshConvTitle resolves convID to the canonical "[title]: prompt"
+// display string — the exact rendering `conv ls` / `conv ls -w` show,
+// via the single source of truth convindex.FormatConvTitle —
+// refreshing the conv_index row from the .jsonl first (like FreshTitle).
+//
+// Use this for *plain conversations* (non-agents): the web dashboard's
+// promotion list renders through it so a plain conv's title matches the
+// CLI instead of leaking a raw, uncleaned first prompt (issue #91).
+// FreshTitle (the bare agent name) stays in use for agents — identity,
+// group rosters, alias derivation, reincarnate/clone name prefixes.
+func FreshConvTitle(convID string) string {
+	if row := FreshConvRowResolved(convID); row != nil {
+		if t := convindex.FormatConvTitle(row.CustomTitle, row.Summary, row.FirstPrompt); t != "" {
 			return t
 		}
 	}
