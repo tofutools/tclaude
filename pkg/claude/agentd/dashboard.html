@@ -156,6 +156,12 @@ details[open] > summary::before { content: "▼ "; }
 #usage .uw { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 #usage .ulabel { color: #7d8590; }
 #usage .ubar { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -1px; }
+/* The bar's filled and empty cells use the SAME block glyph (█),
+   differing only in colour — so both segments render at an identical
+   height. (A shade glyph like ░ rendered taller than █ in the browser
+   monospace font, leaving the empty run too tall.) The fill colour is
+   set inline per threshold; the empty track is a dim grey. */
+#usage .ubar-empty { color: #30363d; }
 #usage .upct { color: #c9d1d9; }
 #usage .urem { color: #6e7681; }
 .empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
@@ -2533,12 +2539,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
     return '#3fb950';
   }
 
-  // usageBar renders a mini block-character progress bar like the
-  // statusbar's "█████░░░".
+  // usageBar renders a mini progress bar from a single block glyph (█)
+  // for BOTH the filled and the empty cells — they differ only in
+  // colour, never in glyph. Using one glyph guarantees the filled and
+  // empty segments render at an identical height: mixing in a shade
+  // glyph (░) for the empty run made it render taller than the █ fill
+  // in the browser's monospace font.
   function usageBar(pct) {
     const p = Math.max(0, Math.min(100, pct || 0));
     const filled = Math.round(p / 100 * USAGE_BAR_WIDTH);
-    return '█'.repeat(filled) + '░'.repeat(USAGE_BAR_WIDTH - filled);
+    const empty = USAGE_BAR_WIDTH - filled;
+    return '<span class="ubar-fill" style="color:' + usageBarColor(p) + '">'
+      + '█'.repeat(filled) + '</span>'
+      + '<span class="ubar-empty">' + '█'.repeat(empty) + '</span>';
   }
 
   // usageWindowHTML renders one rolling-limit window: label, coloured
@@ -2548,8 +2561,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
     const rem = win.remaining
       ? ' <span class="urem">(' + esc(win.remaining) + ')</span>' : '';
     return '<span class="uw"><span class="ulabel">' + label + '</span>'
-      + '<span class="ubar" style="color:' + usageBarColor(pct) + '">'
-      + usageBar(pct) + '</span>'
+      + '<span class="ubar">' + usageBar(pct) + '</span>'
       + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';
   }
 
