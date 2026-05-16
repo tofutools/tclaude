@@ -159,14 +159,18 @@ func TestAgentMessageInsertAndList(t *testing.T) {
 	assert.False(t, got.DeliveredAt.IsZero(), "delivered_at should be set")
 	assert.False(t, got.ReadAt.IsZero(), "read_at should be set")
 
-	// Deleting a group cascades through membership/ownership AND
-	// purges any lingering messages (the helper opens a transaction
-	// to bypass the agent_messages ON DELETE RESTRICT FK).
+	// Deleting a group cascades through membership/ownership but
+	// PRESERVES its message history: the rows survive, rewritten to
+	// group_id 0 (direct messages). agent_messages no longer has a
+	// foreign key to agent_groups — see the universal-inbox change and
+	// TestDeleteAgentGroup_PreservesMessagesAsDirect.
 	require.NoError(t, DeleteAgentGroup("alpha"), "DeleteAgentGroup with messages still present")
 	for _, mid := range []int64{id1, id2} {
 		got, err := GetAgentMessage(mid)
 		require.NoError(t, err, "GetAgentMessage(%d) after delete", mid)
-		assert.Nil(t, got, "expected message %d purged with the group; still present: %+v", mid, got)
+		require.NotNil(t, got, "message %d should survive its group's deletion", mid)
+		assert.Equal(t, int64(0), got.GroupID,
+			"a deleted group's messages become direct (group_id 0)")
 	}
 }
 
