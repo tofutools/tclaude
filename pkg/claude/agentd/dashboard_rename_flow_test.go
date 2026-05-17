@@ -139,12 +139,10 @@ func TestDashboardRename_AutoNudge(t *testing.T) {
 		"auto mode must not inject a /rename; sent=%+v", f.World.Tmux.Sent())
 
 	// The title is unchanged — the agent picks its own on a later turn.
-	for _, m := range f.ListGroupMembers(g.Name) {
-		if m.ConvID == conv {
-			assert.Equal(t, "worker-keepme", m.Title,
-				"auto mode must not change the title itself")
-		}
-	}
+	// dashMemberTitle fatals if the member is missing, so a vanished
+	// member can't let this assertion silently pass.
+	assert.Equal(t, "worker-keepme", dashMemberTitle(t, g.Name, conv),
+		"auto mode must not change the title itself")
 }
 
 // Scenario: a title that fails the rename charset gate is rejected with
@@ -173,11 +171,8 @@ func TestDashboardRename_InvalidTitleRejected(t *testing.T) {
 	assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
 		"a rejected rename must inject nothing; sent=%+v", f.World.Tmux.Sent())
 
-	// The title is left exactly as it was.
-	for _, m := range f.ListGroupMembers(g.Name) {
-		if m.ConvID == conv {
-			assert.Equal(t, "worker-safe", m.Title,
-				"a rejected rename must not touch the title")
-		}
-	}
+	// The title is left exactly as it was. dashMemberTitle fatals if
+	// the member is missing, so this can't silently pass.
+	assert.Equal(t, "worker-safe", dashMemberTitle(t, g.Name, conv),
+		"a rejected rename must not touch the title")
 }
