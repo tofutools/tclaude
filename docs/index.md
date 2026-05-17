@@ -2,10 +2,6 @@
 
 Powerful session and conversation management for [Claude Code](https://claude.ai/code).
 
-![Demo](demo.gif)
-
-*The demo shows `tofu claude` — tclaude was originally part of [GiGurra/tofu](https://github.com/GiGurra/tofu) and has since been extracted into its own repo. The commands are the same.*
-
 ## Supported Platforms
 
 | Platform                          | Status                |
@@ -117,17 +113,3 @@ Session watch also supports:
 - [Web Terminal](web-terminal.md) - Access sessions from your phone or browser (deprecated)
 - [Semantic Search](semantic-search.md) - Search conversations by meaning
 - [Task Management](tasks.md) - Run multiple tasks automatically
-
-## Recording a Demo
-
-The `demo.tape` file is a [VHS](https://github.com/charmbracelet/vhs) script:
-
-```bash
-# Install VHS and dependencies
-go install github.com/charmbracelet/vhs@latest
-sudo apt-get install -y ffmpeg ttyd
-
-# Record
-cd docs/claude
-vhs demo.tape  # Outputs demo.gif and demo.mp4
-```
