@@ -14,7 +14,7 @@ import { openGroupContextModal } from './modal-templates.js';
 import { openLinkModal } from './modal-link-wt.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
-  openReincarnateAgentModal, openRenameAgentModal,
+  openReincarnateAgentModal,
 } from './modal-spawn.js';
 // refresh()/toast() and the shared action modals live in refresh.js;
 // lastSnapshot is dashboard.js's shared state, written here (rename
@@ -30,6 +30,87 @@ import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 // True while an inline rename input is open; suspends the auto-
 // refresh so the 5s tick doesn't blow the input away mid-edit.
 let renameEditing = false;
+
+// inlineEdit turns a static element into a one-field click-to-edit:
+// it swaps `el` for a focused <input>, commits on Enter, and reverts
+// on Esc / blur. The 5s auto-refresh is suspended (renameEditing) for
+// the input's whole lifetime so a poll can't blow it away mid-edit;
+// if the host row is a drag source its draggable attr is parked too,
+// so selecting text in the input can't accidentally start a row drag.
+//
+// onSave(value) is the caller's commit, invoked with the input still
+// in the DOM. It returns one of:
+//   'saved'  — the daemon accepted the change; inlineEdit calls
+//              refresh(), whose re-render replaces the input.
+//   'revert' — nothing to persist (value unchanged) or the caller
+//              already toasted a failure; restore the original element.
+// A thrown error is caught, toasted, and treated as 'revert'.
+//
+// This is the canonical inline-edit primitive. The group-header chips
+// (rename-group, set-group-dir / -descr / -max-members) predate it and
+// still hand-roll the same pattern — migrating them is a deliberate
+// follow-up, kept out of this rename-focused change.
+function inlineEdit({ el, value, type = 'text', inputClass, placeholder, onSave }) {
+  const prevSnapshot = lastSnapshot;
+  renameEditing = true;
+  // Park the host row's drag source while the input is open — an
+  // <input> inside a draggable <tr> otherwise hands text-selection
+  // drags to the row-drag machinery. Restored on revert; the success
+  // path's refresh() rebuilds the row outright so no restore needed.
+  const dragRow = el.closest('[draggable="true"]');
+  if (dragRow) dragRow.setAttribute('draggable', 'false');
+  const origEl = el.cloneNode(true);
+  const input = document.createElement('input');
+  input.type = type;
+  if (inputClass) input.className = inputClass;
+  input.value = value;
+  if (placeholder) input.placeholder = placeholder;
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+  // phase: editing → committing (during the await) → done. Guards
+  // against a blur firing mid-commit and against a double Enter.
+  let phase = 'editing';
+  const teardownRestore = () => {
+    if (input.parentNode) input.replaceWith(origEl);
+    if (dragRow) dragRow.setAttribute('draggable', 'true');
+    renameEditing = false;
+    setLastSnapshot(prevSnapshot);
+  };
+  const revert = () => {
+    if (phase !== 'editing') return;
+    phase = 'done';
+    teardownRestore();
+  };
+  const commit = async () => {
+    if (phase !== 'editing') return;
+    phase = 'committing';
+    let outcome;
+    try {
+      outcome = await onSave(input.value);
+    } catch (err) {
+      toast(`save failed: ${(err && err.message) || err}`, true);
+      outcome = 'revert';
+    }
+    phase = 'done';
+    if (outcome === 'saved') {
+      renameEditing = false;
+      refresh();
+    } else {
+      teardownRestore();
+    }
+  };
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); revert(); }
+  });
+  // Blur cancels rather than commits — explicit Enter to save, same
+  // contract as the group-header chips.
+  input.addEventListener('blur', revert);
+}
+
 // bindRowActions delegates clicks on row-action buttons to the
 // appropriate /api/groups/... call. After a successful mutation we
 // re-fetch the snapshot so the badge / button state updates.
@@ -246,27 +327,57 @@ function bindRowActions() {
           return;
         }
         case 'edit-member': {
-          const cur = {
-            role: btn.getAttribute('data-role') || '',
-            descr: btn.getAttribute('data-descr') || '',
-          };
+          // The single per-agent edit panel: title (incl. the "auto"
+          // self-rename), group role, group description. The modal
+          // yields up to two independent edits — a rename (conv title,
+          // injected via tmux) and a membership PATCH (role / descr).
+          // They hit different endpoints, so apply each on its own:
+          // one failing must not silently swallow the other.
           const result = await editMemberModal({
             label: `${label} → ${group}`,
-            role: cur.role, descr: cur.descr,
+            title: btn.getAttribute('data-current') || '',
+            role: btn.getAttribute('data-role') || '',
+            descr: btn.getAttribute('data-descr') || '',
           });
           if (result === null) return; // cancelled
           if (result === 'noop') {
             toast('no changes');
             return;
           }
-          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(conv)}`, {
-            method: 'PATCH', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(result),
-          });
-          ok = r.ok;
-          if (!ok) toast(`edit failed: ${await r.text()}`, true);
-          break;
+          let anyOk = false;
+          if (result.rename) {
+            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/rename`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(result.rename),
+            });
+            if (r.ok) {
+              anyOk = true;
+              toast(result.rename.auto
+                ? `auto-rename nudge sent: ${label}`
+                : `renaming ${label} → ${result.rename.title}`);
+            } else {
+              toast(`rename failed: ${await r.text()}`, true);
+            }
+          }
+          if ('role' in result || 'descr' in result) {
+            const body = {};
+            if ('role' in result) body.role = result.role;
+            if ('descr' in result) body.descr = result.descr;
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(conv)}`, {
+              method: 'PATCH', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (r.ok) {
+              anyOk = true;
+              toast(`updated ${label}`);
+            } else {
+              toast(`edit failed: ${await r.text()}`, true);
+            }
+          }
+          if (anyOk) refresh();
+          return;
         }
         case 'wake-agent': {
           // Resume is non-destructive (only spawns a tmux session;
@@ -339,9 +450,34 @@ function bindRowActions() {
           openReincarnateAgentModal(conv, label);
           return;
         }
-        case 'rename-agent': {
-          const current = btn.getAttribute('data-current') || '';
-          openRenameAgentModal(conv, label, current);
+        case 'rename-name': {
+          // Inline click-to-edit of an agent's title: the .rowname-text
+          // span swaps to an <input>, Enter POSTs /api/agents/{conv}/
+          // rename {title}, Esc / blur cancels. Same endpoint the edit
+          // modal's Save uses for an explicit-title rename. data-act
+          // lives on the span itself, so btn IS the click target.
+          const oldTitle = btn.getAttribute('data-current') || '';
+          inlineEdit({
+            el: btn,
+            value: oldTitle,
+            inputClass: 'rowname-input',
+            placeholder: '1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels',
+            onSave: async (raw) => {
+              const title = raw.trim();
+              if (title === '' || title === oldTitle) return 'revert';
+              const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/rename`, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title }),
+              });
+              if (!r.ok) {
+                toast(`rename failed: ${await r.text()}`, true);
+                return 'revert';
+              }
+              toast(`renaming ${label} → ${title}`);
+              return 'saved';
+            },
+          });
           return;
         }
         case 'rename-group': {

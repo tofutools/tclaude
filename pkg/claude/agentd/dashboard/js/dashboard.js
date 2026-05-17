@@ -16,7 +16,7 @@ import {
 import { bindLinkModal } from './modal-link-wt.js';
 import {
   bindAgentSpawnModal, bindCloneAgentModal,
-  bindReincarnateAgentModal, bindRenameAgentModal,
+  bindReincarnateAgentModal,
 } from './modal-spawn.js';
 import { bindConfigTab } from './config.js';
 
@@ -69,7 +69,6 @@ bindLinkModal();
 bindAgentSpawnModal();
 bindCloneAgentModal();
 bindReincarnateAgentModal();
-bindRenameAgentModal();
 bindConfigTab();
 refresh();
 setInterval(refresh, 5000);

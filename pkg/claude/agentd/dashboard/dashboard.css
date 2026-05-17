@@ -161,6 +161,19 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .last-hook { color: #7d8590; font-size: 11px; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
 .rowname { font-weight: 600; }
+/* The agent name is click-to-edit: the .rowname-text span swaps for a
+   .rowname-input on click (the rename-name handler). The transparent
+   border keeps the row height stable as it lights up on hover. */
+.rowname-text {
+  cursor: pointer; padding: 0 4px; border-radius: 3px;
+  border: 1px solid transparent;
+}
+.rowname-text:hover { border-color: #58a6ff; }
+.rowname-input {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 0 4px; font: inherit; font-weight: 600;
+  min-width: 12em;
+}
 .title { color: #d4d4d4; }
 .slug { font-family: ui-monospace, monospace; font-size: 12px; }
 .muted { color: #7d8590; }
@@ -354,6 +367,15 @@ details[open] > summary .group-actions { opacity: 1; }
 .modal .field input:focus,
 .modal .field textarea:focus { border-color: #58a6ff; outline: none; }
 .modal .field textarea { resize: vertical; min-height: 60px; }
+/* The "auto" self-rename checkbox sits under the Title input in the
+   same .field — strip the text-input styling .modal .field input
+   would otherwise smear onto a checkbox. The selectors carry the
+   .modal .field prefix so they outrank that rule's specificity. */
+.modal .field .edit-member-auto-row { margin-top: 2px; cursor: pointer; }
+.modal .field .edit-member-auto-row input {
+  padding: 0; margin: 0 5px 0 0; vertical-align: middle;
+  background: none; border: none; border-radius: 0;
+}
 /* Drag-and-drop: move a member from group A onto group B's
    header to migrate. The member <tr> is draggable; the <summary>
    row is the drop target. While dragging, the source row dims so

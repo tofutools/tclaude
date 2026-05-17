@@ -1,4 +1,4 @@
-// modal-spawn.js — the spawn / clone / reincarnate / rename agent modals.
+// modal-spawn.js — the spawn / clone / reincarnate agent modals.
 //
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
@@ -527,104 +527,13 @@ function bindReincarnateAgentModal() {
   });
 }
 
-// ---- Rename-agent modal --------------------------------------------------
-//
-// Opens with `{conv, label, currentTitle}`. Two submit paths:
-//   - manual: type a title → POST /api/agents/{conv}/rename {title}
-//   - auto:   check the box → POST /api/agents/{conv}/rename {auto: true}
-//             daemon injects a [system: ...] nudge asking the agent to
-//             pick its own title via the agent-rename skill.
-// The title field is disabled when auto is checked so the two paths
-// can't be ambiguous.
-
-function openRenameAgentModal(conv, label, currentTitle) {
-  const meta = $('#rename-agent-meta');
-  meta.textContent = label ? `target: ${label}` : `target: ${shortId(conv)}`;
-  const titleInput = $('#rename-agent-title-input');
-  titleInput.value = currentTitle || '';
-  titleInput.disabled = false;
-  $('#rename-agent-auto').checked = false;
-  $('#rename-agent-error').textContent = '';
-  $('#rename-agent-submit').textContent = 'Rename';
-  $('#rename-agent-modal').dataset.conv = conv;
-  $('#rename-agent-modal').dataset.label = label || '';
-  $('#rename-agent-modal').classList.add('show');
-  setTimeout(() => titleInput.focus(), 0);
-}
-
-function closeRenameAgentModal() {
-  $('#rename-agent-modal').classList.remove('show');
-}
-
-async function submitRenameAgent() {
-  const modal = $('#rename-agent-modal');
-  const conv = modal.dataset.conv;
-  const label = modal.dataset.label || shortId(conv);
-  const auto = $('#rename-agent-auto').checked;
-  const title = $('#rename-agent-title-input').value.trim();
-  const errEl = $('#rename-agent-error');
-  errEl.textContent = '';
-  if (!auto && !title) {
-    errEl.textContent = 'title is required (or check "auto" to let the agent choose)';
-    return;
-  }
-  const submitBtn = $('#rename-agent-submit');
-  const origLabel = submitBtn.textContent;
-  submitBtn.disabled = true;
-  submitBtn.textContent = auto ? 'Sending nudge…' : 'Renaming…';
-  try {
-    const body = auto ? { auto: true } : { title };
-    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/rename`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
-      return;
-    }
-    closeRenameAgentModal();
-    if (auto) {
-      toast(`auto-rename nudge sent: ${label}`);
-    } else {
-      toast(`renaming ${label} → ${title}`);
-    }
-    refresh();
-  } catch (err) {
-    errEl.textContent = (err && err.message) || String(err);
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = origLabel;
-  }
-}
-
-function bindRenameAgentModal() {
-  $('#rename-agent-cancel').addEventListener('click', closeRenameAgentModal);
-  $('#rename-agent-submit').addEventListener('click', submitRenameAgent);
-  $('#rename-agent-auto').addEventListener('change', (e) => {
-    const auto = e.target.checked;
-    $('#rename-agent-title-input').disabled = auto;
-    $('#rename-agent-submit').textContent = auto ? 'Send auto-rename nudge' : 'Rename';
-  });
-  $('#rename-agent-title-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !$('#rename-agent-auto').checked) {
-      e.preventDefault();
-      submitRenameAgent();
-    }
-  });
-  $('#rename-agent-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'rename-agent-modal') closeRenameAgentModal();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#rename-agent-modal').classList.contains('show')) {
-      closeRenameAgentModal();
-    }
-  });
-}
+// Renaming an agent is no longer a modal of its own — it folded into
+// the per-agent edit panel (editMemberModal, refresh.js) and the
+// click-to-edit name cell (the rename-name handler, row-actions.js).
+// Both POST /api/agents/{conv}/rename, same as this modal once did.
 
 export {
   openAgentSpawnModal, bindAgentSpawnModal,
   openCloneAgentModal, bindCloneAgentModal,
   openReincarnateAgentModal, bindReincarnateAgentModal,
-  openRenameAgentModal, bindRenameAgentModal,
 };
