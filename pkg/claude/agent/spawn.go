@@ -24,6 +24,67 @@ type SpawnResponse struct {
 	AttachCmd   string `json:"attach_cmd"`
 }
 
+// SpawnRequest is the JSON body of POST /v1/groups/{name}/spawn — the
+// single shared request shape behind every spawn surface. The
+// `tclaude agent spawn` CLI, `tclaude --join-group`, and the agentd
+// dashboard's spawn modal all marshal one of these; agentd's
+// handleGroupSpawn decodes it. One type means the CLI and the
+// dashboard cannot drift in which fields the daemon understands.
+type SpawnRequest struct {
+	// Name, when set, becomes the new agent's conversation title:
+	// runSpawnPostInit injects `/rename <name>` into the fresh pane. An
+	// agent has exactly one name — its title — so there is no separate
+	// per-group handle.
+	Name string `json:"name,omitempty"`
+	Role string `json:"role,omitempty"`
+	// Descr is the short, one-line description shown on the dashboard
+	// (the group-member "Description" column). Keep it terse — the
+	// agent's actual task brief goes in InitialMessage instead.
+	Descr string `json:"descr,omitempty"`
+	// InitialMessage, when set, is delivered to the new agent as its
+	// first task brief — placed in its inbox as an agent_messages row,
+	// not typed into its pane, so newlines survive verbatim. Split from
+	// Descr so a long brief doesn't bloat the dashboard's description
+	// column.
+	InitialMessage string `json:"initial_message,omitempty"`
+	// Cwd is the working directory for the new CC session. Empty falls
+	// back to the group's default_cwd, then the daemon's own cwd.
+	Cwd string `json:"cwd,omitempty"`
+	// TimeoutSeconds bounds how long the daemon waits for the new
+	// conv-id to materialise. <= 0 falls back to 30s; capped at 300s.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+
+	// WorktreePath / WorktreeBranch describe a git worktree the agent
+	// should do its code work in, when Cwd is a parent "monorepo"
+	// directory rather than the repo itself. They are purely
+	// informational — the agent still launches in Cwd; the worktree
+	// path rides into the welcome message so the agent knows where to
+	// make edits. Empty for an ordinary spawn where Cwd already is the
+	// repo (or already is the worktree).
+	WorktreePath   string `json:"worktree_path,omitempty"`
+	WorktreeBranch string `json:"worktree_branch,omitempty"`
+
+	// AutoFocus, when true, opens a terminal window attached to the new
+	// agent once the spawn lands. Opt-in on the wire — the dashboard's
+	// spawn modal defaults its checkbox on; CLI / agent callers pass it
+	// explicitly.
+	AutoFocus bool `json:"auto_focus,omitempty"`
+
+	// IncludeGroupContext controls whether the group's default_context
+	// (when set) is folded into the new agent's startup briefing. A nil
+	// pointer means opt-in — every spawn path inherits the group
+	// context by default, the same way it inherits default_cwd. Set it
+	// to false explicitly to opt out.
+	IncludeGroupContext *bool `json:"include_group_context,omitempty"`
+
+	// ReplyTo optionally names whom the spawned agent's reply to its
+	// startup briefing should reach — any selector ResolveSelector
+	// accepts (conv-id / prefix / title). Omitted: the briefing's
+	// sender defaults to the spawn requester (the calling agent, or ""
+	// for a human-initiated spawn).
+	ReplyTo string `json:"reply_to,omitempty"`
+}
+
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does
 // the actual spawn + group-join; this struct just shapes the request.
 type SpawnParams struct {
@@ -37,7 +98,18 @@ type SpawnParams struct {
 	Cwd            string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
 	Timeout        string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
 
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
+	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
+	WorktreeRepo string `long:"worktree-repo" optional:"true" help:"Repo to create the --worktree in when it differs from --cwd (the monorepo sub-repo case): the agent still launches in --cwd and the worktree path/branch ride into its welcome. Default: the repo containing --cwd, with the agent launched inside the worktree"`
+
+	// AskHuman keeps its -a short pinned explicitly and is declared
+	// before --auto-focus: boa's short-flag enricher assigns the first
+	// free letter in field order, so without this --auto-focus would
+	// otherwise grab -a.
+	AskHuman string `long:"ask-human" short:"a" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+
+	AutoFocus      bool `long:"auto-focus" help:"Open a terminal window attached to the new agent once it spawns (default: off — CLI spawns are usually programmatic; the dashboard's modal defaults this on)"`
+	NoGroupContext bool `long:"no-group-context" help:"Do not deliver the group's shared startup context to the new agent (default: the group context is included, same as every other spawn path)"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -57,6 +129,15 @@ func spawnCmd() *cobra.Command {
 			"For a long or multi-line brief, prefer --file <path> (or --file - to read " +
 			"stdin) — it reads the brief from a file and so sidesteps shell quoting, " +
 			"including backticks the shell would otherwise eat from an inline string. " +
+			"\n\n" +
+			"--worktree <branch> creates (or reuses) a git worktree on that branch and " +
+			"spawns the agent into it — the CLI equivalent of the dashboard spawn modal's " +
+			"worktree picker. The worktree is created in the repo containing --cwd; pass " +
+			"--worktree-base to pick the branch it is cut from. For a monorepo launch dir " +
+			"whose code work belongs in a nested sub-repo, point --worktree-repo at the " +
+			"sub-repo: the agent then launches in --cwd and the worktree rides into its " +
+			"welcome message. " +
+			"\n\n" +
 			"Requires the `groups.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
@@ -80,6 +161,19 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if p.Group == "" {
 		fmt.Fprintln(stderr, "Error: group is required")
 		return nil, rcInvalidArg
+	}
+	// --worktree-base / --worktree-repo are modifiers of --worktree;
+	// rejecting them up front beats silently ignoring a flag the user
+	// expected to take effect.
+	if strings.TrimSpace(p.Worktree) == "" {
+		if strings.TrimSpace(p.WorktreeBase) != "" {
+			fmt.Fprintln(stderr, "Error: --worktree-base requires --worktree")
+			return nil, rcInvalidArg
+		}
+		if strings.TrimSpace(p.WorktreeRepo) != "" {
+			fmt.Fprintln(stderr, "Error: --worktree-repo requires --worktree")
+			return nil, rcInvalidArg
+		}
 	}
 	rawMessage, rc := resolveBodyInput(p.InitialMessage, p.File, "--initial-message", stdin, stderr)
 	if rc != rcOK {
@@ -120,22 +214,85 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			cwd = wd
 		}
 	}
-	body := map[string]any{
-		"name":            p.Name,
-		"role":            p.Role,
-		"descr":           p.Descr,
-		"initial_message": initialMessage,
-		"reply_to":        strings.TrimSpace(p.ReplyTo),
-		"cwd":             cwd,
-		"timeout_seconds": timeoutSeconds,
+
+	req := SpawnRequest{
+		Name:           p.Name,
+		Role:           p.Role,
+		Descr:          p.Descr,
+		InitialMessage: initialMessage,
+		ReplyTo:        strings.TrimSpace(p.ReplyTo),
+		Cwd:            cwd,
+		TimeoutSeconds: timeoutSeconds,
+		AutoFocus:      p.AutoFocus,
 	}
+	// --no-group-context maps to an explicit `false` on the wire; an
+	// omitted pointer means opt-in, so the default (no flag) lets the
+	// daemon include the group context as every other spawn path does.
+	if p.NoGroupContext {
+		no := false
+		req.IncludeGroupContext = &no
+	}
+
+	// Worktree handling. The CLI resolves the worktree itself — creating
+	// it in-process, the same git operation the dashboard's worktree
+	// picker performs server-side — then passes the resolved cwd /
+	// worktree_path / worktree_branch, the identical wire shape the
+	// dashboard sends. createdWorktree is non-empty only when a fresh
+	// worktree was made (vs an existing one reused), so a failed spawn
+	// can tear it back down rather than leaking an orphan.
+	createdWorktree := ""
+	if wt := strings.TrimSpace(p.Worktree); wt != "" {
+		worktreeRepo := strings.TrimSpace(p.WorktreeRepo)
+		if worktreeRepo == "" {
+			worktreeRepo = cwd
+		}
+		wtPath, createdNew, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase)
+		if wtErr != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
+			return nil, rcInvalidArg
+		}
+		if createdNew {
+			createdWorktree = wtPath
+		}
+		if worktreeRepo != cwd {
+			// Monorepo sub-repo case: the agent launches in --cwd (the
+			// parent) and the worktree path/branch ride into its welcome.
+			req.WorktreePath = wtPath
+			req.WorktreeBranch = wt
+		} else {
+			// Common case: the agent launches inside the worktree.
+			req.Cwd = wtPath
+		}
+	}
+
 	var resp SpawnResponse
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	path := "/v1/groups/" + p.Group + "/spawn"
-	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+	if err := DaemonRequest(http.MethodPost, path, req, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
+		// The spawn failed after we created a worktree for it. Remove the
+		// now-orphaned worktree so a retry starts clean — except on a 504
+		// conv-id-poll timeout: there the spawn subprocess DID launch and
+		// the new CC may still be coming up inside the worktree, so
+		// force-removing the dir would yank it out from under a
+		// recovering session. Every other failure (guardrail rejection,
+		// launch failure, bad arg) happens before any CC runs there, so
+		// the worktree is a guaranteed orphan. The branch is always kept
+		// (removeSpawnWorktree only drops the working dir), so a retry
+		// reuses it.
+		if createdWorktree != "" {
+			if de, ok := err.(*DaemonError); ok && de.Status == http.StatusGatewayTimeout {
+				fmt.Fprintf(stderr, "Note: kept the worktree %s — the session may still be coming up.\n",
+					createdWorktree)
+			} else if _, rmErr := removeSpawnWorktree(createdWorktree); rmErr != nil {
+				fmt.Fprintf(stderr, "Note: could not remove the worktree created for this spawn (%s): %v\n",
+					createdWorktree, rmErr)
+			} else {
+				fmt.Fprintf(stderr, "Note: removed the worktree created for this spawn (%s)\n", createdWorktree)
+			}
+		}
 		return nil, MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Spawned %s in group %q\n", short(resp.ConvID), resp.Group)
@@ -147,6 +304,15 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	if resp.AttachCmd != "" {
 		fmt.Fprintf(stdout, "  Attach:  %s\n", resp.AttachCmd)
+	}
+	// Surface the worktree so the user can see where the agent landed
+	// (or, in the monorepo case, where its code work belongs).
+	if wt := strings.TrimSpace(p.Worktree); wt != "" {
+		wtPath := req.WorktreePath
+		if wtPath == "" {
+			wtPath = req.Cwd
+		}
+		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
 	return &resp, rcOK
 }
