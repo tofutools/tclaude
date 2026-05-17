@@ -1950,11 +1950,15 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
+		// Fold newlines out of the description on the create path too,
+		// not just update — the one-line header invariant must hold
+		// however the descr first arrives (see normalizeGroupDescr).
+		groupDescr := normalizeGroupDescr(body.Descr)
 		if existing, _ := db.GetAgentGroupByName(body.Name); existing != nil {
 			writeError(w, http.StatusConflict, "exists", "group already exists")
 			return
 		}
-		id, err := db.CreateAgentGroup(body.Name, body.Descr)
+		id, err := db.CreateAgentGroup(body.Name, groupDescr)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -2129,8 +2133,11 @@ func normalizeGroupContext(s string) (string, error) {
 // descr is a one-line label rendered inline in the dashboard's group
 // header, so any embedded CR / LF is folded to a single space and the
 // result is trimmed — a raw API caller can no longer wedge a newline
-// into a header that has nowhere to put it. Empty stays empty (clears
-// the description).
+// into a header that has nowhere to put it. Empty stays empty.
+//
+// Applied on every write path — create, update, and clone — so the
+// one-line invariant holds regardless of how the descr was set, not
+// just when it was last edited.
 func normalizeGroupDescr(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")

@@ -161,3 +161,49 @@ func TestGroupDescr_UnknownGroup404(t *testing.T) {
 	assert.Equalf(t, http.StatusNotFound, rec.Code,
 		"PATCH on a missing group should 404; body=%s", rec.Body.String())
 }
+
+// Scenario: a group created (POST /v1/groups) with an embedded newline
+// in its description has that newline folded too — the one-line header
+// invariant holds on the create path, not only on edit. Regression
+// guard: the first cut folded newlines on update but passed the create
+// descr through raw.
+func TestGroupDescr_CreateFoldsNewlines(t *testing.T) {
+	f := newFlow(t)
+
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/groups",
+		map[string]any{"name": "alpha", "descr": "  line one\r\nline two\nline three  "}))
+	require.Equalf(t, http.StatusCreated, testharness.Serve(f.Mux, r).Code,
+		"create with a newline-laden descr should still succeed")
+
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Equal(t, "line one line two line three", g.Descr,
+		"create-path descr must be folded just like the update path")
+}
+
+// Scenario: a non-owner agent cannot edit a group's description. The
+// edit rides the existing groups.rename permission (default
+// human-only); an agent peer that is neither the human nor a group
+// owner is denied with 403, and the description is left untouched.
+func TestGroupDescr_NonOwnerAgentDenied(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDescr("alpha", "original description")
+	require.NoError(t, err)
+
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPatch, "/v1/groups/alpha",
+		map[string]any{"descr": "agent tried to change this"}),
+		"rand-1111-2222-3333-444444444444")
+	rec := testharness.Serve(f.Mux, r)
+	assert.Equalf(t, http.StatusForbidden, rec.Code,
+		"a non-owner agent must be denied; body=%s", rec.Body.String())
+
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Equal(t, "original description", g.Descr,
+		"a denied edit must not have touched the description")
+}

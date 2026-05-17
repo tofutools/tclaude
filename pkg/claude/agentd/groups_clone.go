@@ -74,7 +74,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		return
 	}
 
-	newGroupID, err := db.CreateAgentGroup(newName, src.Descr)
+	// normalizeGroupDescr again on the cloned-over descr: the source
+	// value was stored before this fold existed, so re-applying it
+	// keeps the one-line header invariant on the clone too.
+	newGroupID, err := db.CreateAgentGroup(newName, normalizeGroupDescr(src.Descr))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"create new group: "+err.Error())
