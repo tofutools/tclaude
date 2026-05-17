@@ -1,5 +1,3 @@
-
-(function() {
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
   function esc(s) {
@@ -7901,4 +7899,3 @@
   bindConfigTab();
   refresh();
   setInterval(refresh, 5000);
-})();

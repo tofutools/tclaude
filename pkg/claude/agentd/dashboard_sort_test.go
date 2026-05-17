@@ -14,7 +14,7 @@ import (
 func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardHTML, needle) {
+		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html missing %q (%s)", needle, why)
 		}
 	}

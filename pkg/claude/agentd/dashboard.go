@@ -2,9 +2,10 @@ package agentd
 
 import (
 	"crypto/rand"
-	_ "embed"
+	"embed"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -17,34 +18,38 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// The dashboard single-page UI. The CSS and JS were extracted out of
-// dashboard.html into sibling files purely for editor tooling (syntax
-// highlighting, linting, navigation) — the markup shell keeps an empty
-// <style></style> and <script></script> into which assembleDashboardHTML
-// splices them back. The reassembly is byte-for-byte the pre-split
-// single-file dashboard.html; see TestDashboardHTML_SplitIsByteIdentical.
+// The dashboard single-page UI lives under the embedded dashboard/
+// directory: dashboard.html, dashboard.css, and the ES-module JS set
+// under dashboard/js/. agentd serves dashboard.html at "/" and the CSS
+// and JS as static assets under /static/ (see registerDashboardRoutes).
+// The browser loads the JS as native ES modules — <script type="module">
+// — so there is no bundler and no build step.
 //
-//go:embed dashboard.html
-var dashboardShellHTML string
+//go:embed dashboard
+var dashboardFS embed.FS
 
-//go:embed dashboard.css
-var dashboardCSS string
+// dashboardAssetsFS is dashboardFS rooted at the dashboard/ directory,
+// so its files address as "dashboard.html", "dashboard.css", "js/...".
+var dashboardAssetsFS = mustSubFS(dashboardFS, "dashboard")
 
-//go:embed dashboard.js
-var dashboardJS string
+// dashboardIndexHTML is dashboard.html, read once at init — the page
+// handleDashboardRoot serves at "/".
+var dashboardIndexHTML = mustReadFS(dashboardAssetsFS, "dashboard.html")
 
-// dashboardHTML is the fully assembled page served verbatim to the
-// browser — the shell with the CSS and JS spliced back in.
-var dashboardHTML = assembleDashboardHTML()
+func mustSubFS(f embed.FS, dir string) fs.FS {
+	sub, err := fs.Sub(f, dir)
+	if err != nil {
+		panic("agentd: embedded dashboard/ subtree missing: " + err.Error())
+	}
+	return sub
+}
 
-// assembleDashboardHTML splices the extracted CSS and JS back into the
-// markup shell's empty <style></style> / <script></script> elements.
-// It is a pure concatenation: the result is byte-for-byte identical to
-// the pre-split single-file dashboard.html.
-func assembleDashboardHTML() string {
-	h := strings.Replace(dashboardShellHTML, "<style></style>", "<style>"+dashboardCSS+"</style>", 1)
-	h = strings.Replace(h, "<script></script>", "<script>"+dashboardJS+"</script>", 1)
-	return h
+func mustReadFS(fsys fs.FS, name string) []byte {
+	b, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		panic("agentd: embedded dashboard asset missing: " + name + ": " + err.Error())
+	}
+	return b
 }
 
 // dashboardSessionToken is generated once per agentd process and gates
@@ -81,7 +86,33 @@ func initDashboardToken() {
 func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
+	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardEditRoutes(mux)
+}
+
+// handleDashboardStatic serves the dashboard's static assets — the
+// stylesheet and the ES-module JS files — from the embedded dashboard/
+// directory, behind the same session-cookie gate as /api/*.
+//
+// The assets are versioned with the agentd binary (//go:embed) and an
+// embed.FS reports a zero modtime, so http.FileServerFS emits no
+// Last-Modified / ETag validators. Cache-Control: no-store keeps a
+// browser from running stale module JS after an agentd upgrade — on a
+// loopback-only tool the lack of caching costs nothing.
+func handleDashboardStatic() http.Handler {
+	files := http.StripPrefix("/static/", http.FileServerFS(dashboardAssetsFS))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !checkDashboardAuth(w, r) {
+			return
+		}
+		// No directory listings — only the named asset files are served.
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		files.ServeHTTP(w, r)
+	})
 }
 
 // handleDashboardRoot serves the dashboard HTML behind a token-
@@ -138,7 +169,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(dashboardCookieName); err == nil && c.Value == dashboardSessionToken {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(dashboardHTML))
+		_, _ = w.Write(dashboardIndexHTML)
 		return
 	}
 

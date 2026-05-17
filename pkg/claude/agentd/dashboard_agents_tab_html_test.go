@@ -19,13 +19,13 @@ import (
 func TestDashboardHTML_NoStandaloneAgentsTab(t *testing.T) {
 	absent := func(needle, why string) {
 		t.Helper()
-		if strings.Contains(dashboardHTML, needle) {
+		if strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html still contains %q (%s)", needle, why)
 		}
 	}
 	present := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardHTML, needle) {
+		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html missing %q (%s)", needle, why)
 		}
 	}

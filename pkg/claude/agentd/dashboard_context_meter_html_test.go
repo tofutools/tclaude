@@ -30,13 +30,13 @@ import (
 func TestDashboardHTML_ContextMeterHonestRounding(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardHTML, needle) {
+		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html missing %q (%s)", needle, why)
 		}
 	}
 	mustNot := func(needle, why string) {
 		t.Helper()
-		if strings.Contains(dashboardHTML, needle) {
+		if strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html still contains %q (%s)", needle, why)
 		}
 	}

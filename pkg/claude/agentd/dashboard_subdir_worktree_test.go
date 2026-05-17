@@ -12,7 +12,7 @@ import (
 func TestDashboardHTML_SubdirWorktreeWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardHTML, needle) {
+		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html missing %q (%s)", needle, why)
 		}
 	}
@@ -40,7 +40,7 @@ func TestDashboardHTML_SubdirWorktreeWired(t *testing.T) {
 func TestDashboardHTML_LocationCellsWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardHTML, needle) {
+		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html missing %q (%s)", needle, why)
 		}
 	}
