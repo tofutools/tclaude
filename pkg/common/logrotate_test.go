@@ -2,6 +2,8 @@ package common
 
 import (
 	"bytes"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -261,4 +263,94 @@ func TestRotatingWriter_PathStableAcrossRotation(t *testing.T) {
 	writeString(t, rw, "x")
 	require.NoError(t, rw.rotate())
 	assert.Equal(t, path, rw.Path(), "the active log path is fixed; only fds swap")
+}
+
+// When the reopen of a fresh active log fails, rotate must roll the
+// active file back to its path and keep the old fd usable — the daemon
+// must not lose its log over a failed rotation. This pins the
+// highest-risk branch in the writer.
+func TestRotatingWriter_ReopenFailureRollsBack(t *testing.T) {
+	rw, path := newTestWriter(t)
+	rw.Configure(1, 3)
+
+	// First rotation succeeds normally — .1 holds "first\n".
+	writeString(t, rw, "first\n")
+	require.NoError(t, rw.rotate())
+	writeString(t, rw, "active-before-fail\n")
+
+	// Inject a reopen failure for the next rotation.
+	prev := openLogFile
+	t.Cleanup(func() { openLogFile = prev })
+	openLogFile = func(string) (*os.File, error) {
+		return nil, errors.New("injected reopen failure")
+	}
+	err := rw.rotate()
+	openLogFile = prev // restore real opening before the filesystem assertions
+	require.Error(t, err, "rotate must surface the reopen failure")
+
+	// The active log is rolled back to its canonical path, and slot .1
+	// (renamed away during the failed rotate) is left empty.
+	require.FileExists(t, path, "active log must be rolled back to its path")
+	assertAbsent(t, rotatedPath(path, 1))
+	// The cascade ran before the failed reopen, so "first\n" shifted up
+	// to .2 — the documented slow-history-loss edge.
+	assert.Equal(t, "first\n", readFile(t, rotatedPath(path, 2)))
+
+	// The old fd is still valid: a Write succeeds and lands in the
+	// rolled-back active file — logging is not lost over a failed
+	// rotation. Reaching here without a panic also covers requirement
+	// (c) of the rollback contract.
+	writeString(t, rw, "after-fail\n")
+	assert.Equal(t, "active-before-fail\nafter-fail\n", readFile(t, path),
+		"the daemon keeps logging through the old fd after a failed rotation")
+}
+
+// Lowering keep between runs must not leak the now-excess rotated
+// files: rotate sweeps every slot beyond keep so history stays bounded.
+func TestRotatingWriter_SweepsOrphansWhenKeepLowered(t *testing.T) {
+	rw, path := newTestWriter(t)
+
+	// Accumulate 5 rotated files under keep=5.
+	rw.Configure(1, 5)
+	for _, m := range []string{"r1", "r2", "r3", "r4", "r5"} {
+		writeString(t, rw, m)
+		require.NoError(t, rw.rotate())
+	}
+	require.Equal(t, 5, countRotatedFiles(t, path))
+
+	// Lower keep to 2 and rotate once more.
+	rw.Configure(1, 2)
+	writeString(t, rw, "r6")
+	require.NoError(t, rw.rotate())
+
+	assert.Equal(t, 2, countRotatedFiles(t, path),
+		"files beyond a lowered keep must be swept, not leaked")
+	assertAbsent(t, rotatedPath(path, 3))
+}
+
+// SetupLogging runs more than once per process (main.go, then cobra's
+// PersistentPreRun). The second call must reuse the one RotatingWriter
+// rather than opening a fresh fd — so ActiveLogRotator never hands out
+// a stale or duplicated writer, and no log fd leaks per call.
+func TestSetupLogging_ReusesOneRotator(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)        // os.UserHomeDir on Linux/macOS
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+
+	prevSlog := slog.Default()
+	prevRotator := activeLogRotator
+	activeLogRotator = nil
+	t.Cleanup(func() {
+		slog.SetDefault(prevSlog)
+		activeLogRotator = prevRotator
+	})
+
+	SetupLogging(slog.LevelInfo)
+	first := ActiveLogRotator()
+	require.NotNil(t, first, "file logging should be set up under a valid home dir")
+
+	SetupLogging(slog.LevelDebug) // the second startup call, with the configured level
+	second := ActiveLogRotator()
+	assert.Same(t, first, second,
+		"a second SetupLogging must reuse the one writer, not open a fresh fd")
 }

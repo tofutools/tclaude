@@ -44,15 +44,19 @@ splits across it):
 
 1. Cascade — drop `output.log.<keep>`, then shift `.(keep-1)…1` up by
    one slot (`.i` → `.i+1`), oldest-first so nothing is clobbered.
-2. `os.Rename(output.log, output.log.1)`.
-3. Reopen a fresh `output.log` and swap the fd; close the old one.
+2. Sweep — remove any `output.log.N` for `N > keep`, so lowering `keep`
+   between runs does not leak the now-excess rotated files.
+3. `os.Rename(output.log, output.log.1)`.
+4. Reopen a fresh `output.log` and swap the fd; close the old one.
 
 Every rename is **within `~/.tclaude/`** — same directory, same
 filesystem — so each `os.Rename` is atomic on POSIX and replace-existing
 on Windows. If the reopen fails the old fd is left in place (the daemon
 keeps logging) and the active file is rolled back to its path so the
 next tick retries. Cascade-rename failures are collected and returned
-but do not abort the rotation.
+but do not abort the rotation. (Known edge, documented in `rotate()`: a
+*persistently* unwritable log dir re-runs the cascade each retry tick,
+slowly shifting history out — accepted as a broken-host case.)
 
 `MaybeRotate()` is the size policy: one `os.Stat`, rotate if over. It
 also reopens the file if it vanished out from under the daemon. A
@@ -106,9 +110,11 @@ agentd fd — straightforward to own directly.
 
 - `pkg/common/logrotate.go` — `RotatingWriter`, `OpenRotatingWriter`,
   the cascade + atomic-rename + fd-swap logic.
-- `pkg/common/logging.go` — `logFileHandler` now builds a
-  `RotatingWriter`; new `activeLogRotator` var + `ActiveLogRotator()`
-  accessor agentd fetches.
+- `pkg/common/logging.go` — `SetupLogging` now logs through a
+  `RotatingWriter` via `fileWriter()`, which opens the log once and
+  reuses it across the two startup calls (main.go + cobra
+  PersistentPreRun) — one fd for the process, no leak — and exposes it
+  through `ActiveLogRotator()` for agentd.
 - `pkg/common/common.go` — `ParseSize` regex accepts the IEC `i` infix.
 - `pkg/claude/common/config/config.go` — `LogRotationConfig`, the
   `Config.LogRotation` field, `ResolvedLogRotation()`, `Validate` rules.
@@ -122,7 +128,10 @@ agentd fd — straightforward to own directly.
   under it; cascade order; oldest dropped past keep-count; rotated files
   are in-dir siblings; pre-existing oversized file; writes reach the
   fresh fd after rotation; `max_size 0` disables; vanished-file reopen;
-  `keep 0` discard; concurrent writes + rotation (`-race`); path stable.
+  `keep 0` discard; concurrent writes + rotation (`-race`); path stable;
+  **reopen-failure rollback** (injected open failure — old fd stays
+  usable, active file rolled back); **orphan sweep** when `keep` is
+  lowered; `SetupLogging` reuses one rotator across startup calls.
 - `pkg/common/common_test.go` — `ParseSize` IEC `i`-infix cases + new
   invalid cases.
 - `pkg/claude/common/config/config_test.go` — `ResolvedLogRotation`

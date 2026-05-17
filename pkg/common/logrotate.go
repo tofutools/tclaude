@@ -45,6 +45,15 @@ type RotatingWriter struct {
 	keep    int   // number of rotated files (output.log.1 … .keep) to retain
 }
 
+// openLogFile opens (creating, append-mode) the log file at path. It is
+// a package var so a test can inject an open failure to exercise the
+// reopen-failure rollback in rotate() — the highest-risk branch, which
+// no filesystem-permission trick can isolate (a non-writable directory
+// fails the rename before the reopen is ever reached).
+var openLogFile = func(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+}
+
 // OpenRotatingWriter opens (creating parent dirs and the file as
 // needed, append mode) the log file at path and wraps it. Rotation
 // stays disabled until Configure sets a positive max size.
@@ -52,7 +61,7 @@ func OpenRotatingWriter(path string) (*RotatingWriter, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := openLogFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -125,16 +134,26 @@ func (rw *RotatingWriter) MaybeRotate() error {
 }
 
 // rotate performs one rotation: cascade the existing rotated files up a
-// slot (dropping any past keep), move the active log into slot 1, then
-// reopen a fresh active log and swap the write fd. All renames are
-// within the log's directory — same filesystem, so each os.Rename is
-// atomic on POSIX and replace-existing on Windows.
+// slot (dropping any past keep), sweep any files orphaned by a lowered
+// keep, move the active log into slot 1, then reopen a fresh active log
+// and swap the write fd. All renames are within the log's directory —
+// same filesystem, so each os.Rename is atomic on POSIX and
+// replace-existing on Windows.
 //
 // Best-effort: a failed cascade rename is collected and returned but
 // does not abort the rotation. If the final reopen fails the old fd is
 // left in place (the daemon keeps logging, into the rotated-away file)
 // and the active file is rolled back to its path so a later tick can
 // retry. rotate never leaves rw.file pointing at a closed/invalid fd.
+//
+// Known edge: if the reopen fails persistently (a permanently
+// unwritable log directory), every retry tick re-runs the cascade
+// before failing again — so the rotated files shift up a slot and the
+// oldest is dropped each tick, slowly losing history while no fresh
+// active file rotates in. Accepted: a persistently unwritable log dir
+// is a broken host, and the alternative (deferring the cascade until
+// the reopen is known to succeed) complicates the common path for a
+// pathological case.
 func (rw *RotatingWriter) rotate() error {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
@@ -152,6 +171,19 @@ func (rw *RotatingWriter) rotate() error {
 		src, dst := rotatedPath(rw.path, i), rotatedPath(rw.path, i+1)
 		if err := renameIfExists(src, dst); err != nil {
 			errs = append(errs, fmt.Errorf("cascade %s -> %s: %w", src, dst, err))
+		}
+	}
+	// Sweep rotated files orphaned by a lowered keep: rotate() only ever
+	// touches slots 1..keep, so files left by an earlier run with a
+	// larger keep would leak forever and defeat the bounded-history
+	// goal. Slots are contiguous, so stop at the first absent one.
+	for n := keep + 1; ; n++ {
+		p := rotatedPath(rw.path, n)
+		if _, err := os.Stat(p); err != nil {
+			break
+		}
+		if err := removeIfExists(p); err != nil {
+			errs = append(errs, fmt.Errorf("sweep orphaned %s: %w", p, err))
 		}
 	}
 
@@ -190,7 +222,7 @@ func (rw *RotatingWriter) reopen() error {
 // reopenLocked opens a fresh file at rw.path and swaps it in as the
 // write target, closing the previous fd. Caller must hold rw.mu.
 func (rw *RotatingWriter) reopenLocked() error {
-	f, err := os.OpenFile(rw.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := openLogFile(rw.path)
 	if err != nil {
 		return err
 	}
