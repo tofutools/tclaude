@@ -448,6 +448,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 			Cwd:            cwd,
 			GroupContext:   groupContext,
 			ReplyToConv:    caller,
+			SpawnedByConv:  caller,
 		})
 		if fail != nil {
 			res.Error = fail.Msg
