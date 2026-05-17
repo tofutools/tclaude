@@ -1184,6 +1184,7 @@ func (m *watchModel) handleFSChange(filePath string, removed bool) {
 
 	if removed {
 		_ = db.DeleteConvIndex(convID)
+		_ = db.DeleteConvBranchHistory(convID)
 		m.removeEntry(convID)
 		m.applySearchFilter()
 		return
@@ -1581,6 +1582,7 @@ func (m *watchModel) deleteConversation(conv *SessionEntry) error {
 	}
 
 	_ = db.DeleteConvIndex(conv.SessionID)
+	_ = db.DeleteConvBranchHistory(conv.SessionID)
 	m.removeEntry(conv.SessionID)
 
 	// Surgically drop the entry from legacy sessions-index.json for

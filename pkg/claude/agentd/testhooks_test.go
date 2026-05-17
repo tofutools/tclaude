@@ -149,15 +149,15 @@ func SetDetachAgentWindowsForTest(fn func(*db.SessionRow) (int, error)) func() {
 // SetGitInfoResolverForTest swaps the git/gh resolver behind the
 // dashboard's branch-link enrichment with a deterministic fake. The
 // fake is handed a (repoDir, branch) pair and returns the repo's
-// GitHub base URL, default branch, and PR info — or ok=false to model
-// a non-GitHub repo. Mirrors the clcommon.Default / agentd.Spawn /
-// openTerminal seams: the subprocess boundary is mocked, the cache +
-// snapshot read path under test runs unchanged. Returns a restore
-// closure for t.Cleanup.
-func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, defaultBranch string, prNumber int, prURL string, ok bool)) func() {
+// GitHub base URL, default branch, and PR info (number, URL and
+// lower-cased state) — or ok=false to model a non-GitHub repo. Mirrors
+// the clcommon.Default / agentd.Spawn / openTerminal seams: the
+// subprocess boundary is mocked, the cache + snapshot read path under
+// test runs unchanged. Returns a restore closure for t.Cleanup.
+func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, defaultBranch string, prNumber int, prURL, prState string, ok bool)) func() {
 	prev := gitInfoResolver
 	gitInfoResolver = func(repoDir, branch string) (repoBranchInfo, bool) {
-		repoURL, defaultBranch, prNumber, prURL, ok := fn(repoDir, branch)
+		repoURL, defaultBranch, prNumber, prURL, prState, ok := fn(repoDir, branch)
 		if !ok {
 			return repoBranchInfo{}, false
 		}
@@ -167,6 +167,7 @@ func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, default
 			Branch:        branch,
 			PRNumber:      prNumber,
 			PRURL:         prURL,
+			PRState:       prState,
 		}, true
 	}
 	return func() { gitInfoResolver = prev }

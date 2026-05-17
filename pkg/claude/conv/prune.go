@@ -182,6 +182,7 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 
 		// Evict the SQLite cache row so the next listing pass doesn't re-surface it.
 		_ = db.DeleteConvIndex(conv.SessionID)
+		_ = db.DeleteConvBranchHistory(conv.SessionID)
 
 		// Surgically drop the entry from legacy sessions-index.json for
 		// external tooling. No-op if the file doesn't exist.

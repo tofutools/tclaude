@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 44
+const currentVersion = 45
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -287,6 +287,50 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 45 {
+		if err := migrateV44toV45(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV44toV45 adds conv_branch_history — the per-conversation set
+// of git branches an agent has worked on, with an optional PR snapshot
+// per branch. It is the store behind the (future) dashboard "branch
+// history" affordance; this migration only lands the schema.
+//
+// Identity is (conv_id, branch): a branch is one entry whose PR is a
+// mutable attribute (none → open → merged), not part of the key. The
+// `source` column records which path wrote the row — 'scan' for the
+// idempotent .jsonl re-scan (the source of truth, which fully rebuilds
+// its own rows), 'hook' for the cheap PostToolUse append that also
+// catches branches in worktrees the launch-dir .jsonl never names.
+// pr_* columns are a best-effort snapshot refreshed by the dashboard's
+// existing branch-link resolver; an unresolved or PR-less branch keeps
+// them at their zero values.
+func migrateV44toV45(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS conv_branch_history (
+			conv_id    TEXT NOT NULL,
+			branch     TEXT NOT NULL,
+			repo_dir   TEXT NOT NULL DEFAULT '',
+			pr_number  INTEGER NOT NULL DEFAULT 0,
+			pr_url     TEXT NOT NULL DEFAULT '',
+			pr_state   TEXT NOT NULL DEFAULT '',
+			source     TEXT NOT NULL DEFAULT 'scan',
+			first_seen TEXT NOT NULL DEFAULT '',
+			last_seen  TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (conv_id, branch)
+		);
+		CREATE INDEX IF NOT EXISTS idx_conv_branch_history_conv
+			ON conv_branch_history(conv_id);
+
+		UPDATE schema_version SET version = 45;
+	`); err != nil {
+		return fmt.Errorf("migrate v44→v45 (add conv_branch_history): %w", err)
+	}
 	return nil
 }
 

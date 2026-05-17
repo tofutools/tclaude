@@ -53,6 +53,14 @@ type SessionEntry struct {
 	// `IsArchived()` checks this column first, with the `-x` title
 	// suffix as a fallback for legacy convs that pre-date the column.
 	ArchivedAt string `json:"-"`
+	// BranchHistory is the distinct set of git branches this .jsonl
+	// touched — every branch stamped onto a turn, with the dir + the
+	// timestamps bracketing where it appeared. Populated only by a
+	// fresh parseJSONLSession scan (empty on a DB cache hit, where the
+	// branch history already persisted from the prior scan), and never
+	// stored on the conv_index row; LoadSessionsIndexWithOptions feeds
+	// it to db.RebuildConvBranchHistoryScan.
+	BranchHistory []db.BranchObservation `json:"-"`
 }
 
 // DisplayTitle returns the best available title for display
@@ -250,6 +258,16 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			slog.Warn("conv_index: db upsert failed", "conv_id", convID[:8], "error", err)
 		}
 
+		// Rebuild this conv's branch history from the scan. The scan is
+		// the source of truth: re-running it with the same .jsonl
+		// converges to the same rows, so the history self-heals on
+		// every re-scan rather than depending on incremental state.
+		// Only the scan path reaches here — a DB cache hit keeps the
+		// branch history persisted from the prior scan.
+		if err := db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory); err != nil {
+			slog.Warn("conv_branch_history: rebuild failed", "conv_id", convID[:8], "error", err)
+		}
+
 		entries = append(entries, *scanned)
 	}
 
@@ -258,6 +276,11 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 		if !seenIDs[convID] {
 			if err := db.DeleteConvIndex(convID); err != nil {
 				slog.Warn("conv_index: db delete failed", "conv_id", convID[:8], "error", err)
+			}
+			// The branch history is keyed off the same conv — evict it
+			// alongside conv_index so the table tracks live convs only.
+			if err := db.DeleteConvBranchHistory(convID); err != nil {
+				slog.Warn("conv_branch_history: db delete failed", "conv_id", convID[:8], "error", err)
 			}
 		}
 	}
@@ -355,9 +378,24 @@ func ParseJSONLSessionPublic(filePath, sessionID string) *SessionEntry {
 	return parseJSONLSession(filePath, sessionID)
 }
 
+// parseJSONLTimestamp best-effort parses a .jsonl turn timestamp into a
+// time.Time. Claude Code writes RFC3339 with a fractional-second part;
+// an empty or unparseable value yields the zero time, which callers
+// treat as "no timestamp" rather than an error.
+func parseJSONLTimestamp(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
 // parseJSONLSession parses a .jsonl file and extracts session metadata.
-// Reads forward for prompt/title/summary, stops early when all fields
-// of interest are populated.
+// Reads forward for prompt/title/summary and accumulates the conv's
+// branch history; runs to EOF so the last-wins branch and the history
+// set are both complete.
 func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -380,6 +418,16 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var firstTimestamp string
+
+	// branchAccum gathers, per branch, the dir it was seen in and the
+	// timestamps bracketing its appearance — folded into
+	// entry.BranchHistory once the whole file is read.
+	type branchAccum struct {
+		repoDir   string
+		firstSeen time.Time
+		lastSeen  time.Time
+	}
+	branches := map[string]*branchAccum{}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -413,6 +461,26 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 				entry.GitBranchStartup = msg.GitBranch
 			}
 			entry.GitBranch = msg.GitBranch
+
+			// Accumulate the branch into the history set. Turns are
+			// chronological, so first/last seen fall out of min/max
+			// over their (best-effort parsed) timestamps.
+			acc := branches[msg.GitBranch]
+			if acc == nil {
+				acc = &branchAccum{}
+				branches[msg.GitBranch] = acc
+			}
+			if msg.Cwd != "" {
+				acc.repoDir = msg.Cwd
+			}
+			if ts := parseJSONLTimestamp(msg.Timestamp); !ts.IsZero() {
+				if acc.firstSeen.IsZero() || ts.Before(acc.firstSeen) {
+					acc.firstSeen = ts
+				}
+				if ts.After(acc.lastSeen) {
+					acc.lastSeen = ts
+				}
+			}
 		}
 
 		// Capture custom title (written by Claude Code after the first exchange)
@@ -439,18 +507,25 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 			}
 		}
 
-		// Stop early only if we have ALL the early-stable fields.
-		// GitBranch is deliberately NOT a gate here: it's last-wins
-		// (the branch can change mid-conversation) so it never reaches
-		// a "final" value before EOF. For a compacted conv whose other
-		// four fields are all populated, this break can cut the scan
-		// short and report the branch as of the early-exit point
-		// rather than the true last turn. Accepted: the common
-		// (non-compacted) conv has no summary turn, so this break is
-		// never reached and the branch read is exact.
-		if entry.CustomTitle != "" && entry.Summary != "" && entry.FirstPrompt != "" && entry.ProjectPath != "" {
-			break
-		}
+		// The scan deliberately runs to EOF. An earlier version broke
+		// out once CustomTitle/Summary/FirstPrompt/ProjectPath were all
+		// set, but that cut a compacted conv short and reported its
+		// branch as of the early-exit point — and would now miss every
+		// branch the agent moved onto after a summary turn. Reading the
+		// whole file keeps GitBranch (last-wins) exact and gives
+		// BranchHistory the complete set. This path only runs on a
+		// cache miss, so the extra reads are infrequent.
+	}
+
+	// Fold the accumulated branches into the history set. Map order is
+	// unstable, but RebuildConvBranchHistoryScan treats it as a set.
+	for branch, acc := range branches {
+		entry.BranchHistory = append(entry.BranchHistory, db.BranchObservation{
+			Branch:    branch,
+			RepoDir:   acc.repoDir,
+			FirstSeen: acc.firstSeen,
+			LastSeen:  acc.lastSeen,
+		})
 	}
 
 	if firstTimestamp == "" {
@@ -625,6 +700,7 @@ func RefreshConvIndexEntry(convID string) *db.ConvIndexRow {
 		// lookup doesn't resolve to a ghost conv.
 		if os.IsNotExist(err) {
 			_ = db.DeleteConvIndex(convID)
+			_ = db.DeleteConvBranchHistory(convID)
 			return nil
 		}
 		return row
@@ -666,6 +742,7 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 	if err != nil {
 		if os.IsNotExist(err) {
 			_ = db.DeleteConvIndex(convID)
+			_ = db.DeleteConvBranchHistory(convID)
 		}
 		return nil
 	}
@@ -687,6 +764,9 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 
 	row := entryToDBRow(scanned, projectDir)
 	_ = db.UpsertConvIndex(row)
+	// Rebuild branch history from the same scan — see the matching
+	// call in LoadSessionsIndexWithOptions.
+	_ = db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory)
 	return scanned
 }
 

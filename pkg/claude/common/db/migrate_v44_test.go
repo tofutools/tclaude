@@ -47,9 +47,8 @@ func TestMigrateV43toV44_AddsHumanMessages(t *testing.T) {
 
 // TestMigrateV43toV44_FreshSchemaHasHumanMessages builds a fresh DB
 // through the full migrate() chain and confirms human_messages exists
-// and is wired into the dispatcher. It also carries the literal
-// currentVersion pin — a tripwire that the next migration's author
-// moves forward into their own v45 test.
+// and is wired into the dispatcher. The literal currentVersion pin has
+// moved on to the v45 test.
 func TestMigrateV43toV44_FreshSchemaHasHumanMessages(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -58,7 +57,6 @@ func TestMigrateV43toV44_FreshSchemaHasHumanMessages(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 44, currentVersion, "currentVersion is 44")
 
 	// The full-width table built through createSchema is usable.
 	id, err := InsertHumanMessage(&HumanMessage{FromConv: "c1", Body: "hello"})

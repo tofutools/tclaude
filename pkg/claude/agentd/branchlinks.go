@@ -70,8 +70,9 @@ type repoBranchInfo struct {
 	RepoURL       string    `json:"repo_url"`       // https://github.com/owner/repo, or "" for non-GitHub
 	DefaultBranch string    `json:"default_branch"` // the repo's default branch (main/master/...)
 	Branch        string    `json:"branch"`         // the branch this entry resolved
-	PRNumber      int       `json:"pr_number"`      // open PR number for Branch; 0 = none
+	PRNumber      int       `json:"pr_number"`      // PR number for Branch; 0 = none
 	PRURL         string    `json:"pr_url"`         // web link to that PR
+	PRState       string    `json:"pr_state"`       // open|merged|closed; "" = no PR
 	FetchedAt     time.Time `json:"fetched_at"`     // resolution time — drives the TTL check
 }
 
@@ -159,6 +160,14 @@ func refreshBranchLink(repoDir, branch, key string) {
 		slog.Warn("branchlinks: failed to cache resolution",
 			"error", err, "repo", repoDir, "branch", branch, "module", "agentd")
 	}
+	// Mirror the PR snapshot onto the conv_branch_history rows for this
+	// (repoDir, branch). The history table rides the resolution the
+	// dashboard already pays for here — for an agent's active and
+	// startup branches — rather than shelling out to `gh` itself.
+	if err := db.SetConvBranchHistoryPR(repoDir, branch, info.PRNumber, info.PRURL, info.PRState); err != nil {
+		slog.Warn("branchlinks: failed to stamp branch-history PR",
+			"error", err, "repo", repoDir, "branch", branch, "module", "agentd")
+	}
 }
 
 // branchLinkCacheKey derives the git_cache primary key for a
@@ -208,7 +217,7 @@ func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 	// skips the slowest call (`gh` hits the network) for the common
 	// case of an agent sitting on main.
 	if info.DefaultBranch == "" || branch != info.DefaultBranch {
-		info.PRNumber, info.PRURL = ghPRForBranch(repoDir, branch)
+		info.PRNumber, info.PRURL, info.PRState = ghPRForBranch(repoDir, branch)
 	}
 	return info, true
 }
@@ -254,22 +263,24 @@ func gitDefaultBranch(dir string) string {
 	return ""
 }
 
-// ghPRForBranch returns the number + URL of the pull request whose
-// head is branch, via `gh pr view`. Returns (0, "") when there's no
-// PR, gh isn't installed, or gh isn't authenticated — all best-effort.
-func ghPRForBranch(dir, branch string) (int, string) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url")
+// ghPRForBranch returns the number, URL and state of the pull request
+// whose head is branch, via `gh pr view`. The state is lower-cased to
+// open|merged|closed. Returns (0, "", "") when there's no PR, gh isn't
+// installed, or gh isn't authenticated — all best-effort.
+func ghPRForBranch(dir, branch string) (number int, url, state string) {
+	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
 	if out == "" {
-		return 0, ""
+		return 0, "", ""
 	}
 	var pr struct {
 		Number int    `json:"number"`
 		URL    string `json:"url"`
+		State  string `json:"state"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
-		return 0, ""
+		return 0, "", ""
 	}
-	return pr.Number, pr.URL
+	return pr.Number, pr.URL, strings.ToLower(pr.State)
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web
