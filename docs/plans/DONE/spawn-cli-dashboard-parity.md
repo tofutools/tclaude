@@ -58,11 +58,14 @@ dashboard's worktree picker performs server-side through
 `worktree_branch`, the **identical wire shape** the dashboard already
 sends, so the daemon's spawn handler needed no behaviour change.
 
-- Common case (`--worktree` only, or `--worktree-repo` == `--cwd`): the
-  worktree becomes the spawn `cwd` — the agent launches inside it.
+- Common case (`--worktree` only, or `--worktree-repo` cleaned-equal to
+  `--cwd`): the worktree becomes the spawn `cwd` — the agent launches
+  inside it.
 - Monorepo case (`--worktree-repo` points at a different repo): the
   agent launches in `--cwd`; `worktree_path`/`worktree_branch` ride
-  along so the daemon's welcome tells it where to edit code.
+  along so the daemon's welcome tells it where to edit code. The
+  common-vs-monorepo split compares `filepath.Clean`'d paths so a
+  trailing slash on `--worktree-repo` doesn't mis-classify it.
 - An existing worktree already checked out on the branch is reused;
   otherwise a fresh one is created.
 - If the spawn request then fails, a freshly-created worktree is torn
@@ -95,15 +98,29 @@ three spawn surfaces share one contract.
   `SpawnRequest` instead of a `map[string]any`.
 - `pkg/claude/agentd/lifecycle.go` — `handleGroupSpawn` decodes
   `agent.SpawnRequest` instead of a private anonymous struct.
-- `pkg/claude/agentd/spawn_cli_worktree_flow_test.go` — new flow tests:
+- `pkg/claude/agentd/spawn_cli_worktree_flow_test.go` — flow tests:
   `TestSpawnCLI_WorktreeCreatesAndLaunchesInIt` (worktree created + the
   agent's cwd is the worktree),
   `TestSpawnCLI_WorktreeRepoMonorepoRidesAlong` (monorepo: agent
   launches in `--cwd`, welcome names the worktree),
   `TestSpawnCLI_NoGroupContextOptsOut` (flag toggles group-context
   delivery), `TestSpawnCLI_WorktreeModifiersRequireWorktree` (usage
-  errors for the modifier flags without `--worktree`).
+  errors for the modifier flags without `--worktree`),
+  `TestSpawnCLI_WorktreeTornDownWhenSpawnRejected` (a worktree created
+  for a spawn that the daemon then rejects is torn back down, branch
+  kept).
 - `docs/agent.md` — spawn section: synopsis + new-flag prose.
+
+## Follow-up (cold-review delta)
+
+The post-merge cold review of the initial PR flagged two items, shipped
+as a small follow-up PR off `main`:
+
+- **should-fix** — the orphan-worktree cleanup path in `RunSpawn` had no
+  test. Added `TestSpawnCLI_WorktreeTornDownWhenSpawnRejected`.
+- **nit** — the common-vs-monorepo branch compared raw unresolved flag
+  strings; now `filepath.Clean`s both sides so a trailing slash can't
+  mis-classify an in-place worktree.
 
 ## No daemon behaviour change
 
