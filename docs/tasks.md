@@ -126,7 +126,7 @@ If the review returns no output (i.e. nothing to address), the review passes and
 
 Set `review_diff: false` to run the review agent without passing a diff — useful for skills that read files or run commands directly rather than relying on the diff as input.
 
-To create a review skill, add a skill file under `.claude/skill/<skill-name>/SKILL.md`. For example:
+To create a review skill, add a skill file under `.claude/skills/<skill-name>/SKILL.md`. For example:
 
 ```markdown
 ---
@@ -194,11 +194,12 @@ tclaude task run -- --dangerously-skip-permissions
 
 **Flags:**
 
-| Flag               | Description                                                  |
-|--------------------|--------------------------------------------------------------|
-| `-d, --detached`   | Start detached (don't attach to session)                     |
-| `-C, --dir <path>` | Directory containing task files (defaults to current)        |
-| `-w, --watch`      | Watch for new tasks instead of exiting when TODO.md is empty |
+| Flag                  | Description                                                  |
+|-----------------------|--------------------------------------------------------------|
+| `-d, --detached`      | Start detached (don't attach to session)                     |
+| `-C, --dir <path>`    | Directory containing task files (defaults to current)        |
+| `-w, --watch`         | Watch for new tasks instead of exiting when TODO.md is empty |
+| `-c, --compact <pct>` | Auto-compact at this context usage percentage (overrides config) |
 
 > **Note:** The `-C, --dir` flag is available on all task subcommands (`add`, `list`, `run`) and the parent `task` command itself.
 
@@ -268,7 +269,7 @@ Add input validation to the user registration endpoint.
 Validate email format, password strength, and required fields.
 Return appropriate error messages.
 
-</details>                                                 k
+</details>
 
 <details>
 <summary>Report</summary>
