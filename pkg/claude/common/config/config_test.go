@@ -61,6 +61,12 @@ func TestValidate_RejectsBadValues(t *testing.T) {
 		{"ratelimit out of range", func(c *Config) {
 			c.RateLimit = &RateLimitConfig{FiveHourPercentMaxUsed: 0, SevenDayPercentMaxUsed: 50}
 		}, "five_hour_percent_max_used"},
+		{"bad log rotation size", func(c *Config) {
+			c.LogRotation = &LogRotationConfig{MaxSize: "ginormous"}
+		}, "log_rotation.max_size"},
+		{"negative log rotation keep", func(c *Config) {
+			c.LogRotation = &LogRotationConfig{Keep: -3}
+		}, "log_rotation.keep"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,4 +211,58 @@ func TestSave_AtomicAndRepeatable(t *testing.T) {
 	got, err = Load()
 	require.NoError(t, err)
 	assert.Equal(t, "warn", got.LogLevel)
+}
+
+// A config with no log_rotation block — or a nil config — resolves to
+// the built-in defaults (10 MiB, keep 5), so a hand-written config that
+// predates the feature keeps working unchanged.
+func TestResolvedLogRotation_Defaults(t *testing.T) {
+	for _, c := range []*Config{nil, {}, {LogRotation: &LogRotationConfig{}}} {
+		maxSize, keep := c.ResolvedLogRotation()
+		assert.EqualValues(t, 10*1024*1024, maxSize)
+		assert.Equal(t, 5, keep)
+	}
+}
+
+// Explicit values are parsed: a human-friendly size string via
+// common.ParseSize and a positive keep count verbatim.
+func TestResolvedLogRotation_ParsesExplicitValues(t *testing.T) {
+	c := &Config{LogRotation: &LogRotationConfig{MaxSize: "20MiB", Keep: 8}}
+	maxSize, keep := c.ResolvedLogRotation()
+	assert.EqualValues(t, 20*1024*1024, maxSize)
+	assert.Equal(t, 8, keep)
+}
+
+// An explicit max_size of "0" is a valid zero size and disables
+// rotation; keep still falls back to its default.
+func TestResolvedLogRotation_ExplicitZeroDisables(t *testing.T) {
+	c := &Config{LogRotation: &LogRotationConfig{MaxSize: "0"}}
+	maxSize, keep := c.ResolvedLogRotation()
+	assert.EqualValues(t, 0, maxSize, "max_size 0 disables rotation")
+	assert.Equal(t, 5, keep)
+}
+
+// An unparseable max_size or a non-positive keep falls back to the
+// defaults — Load must never break on a bad value; Validate reports it
+// separately for the dashboard editor.
+func TestResolvedLogRotation_BadValuesFallBack(t *testing.T) {
+	c := &Config{LogRotation: &LogRotationConfig{MaxSize: "not-a-size", Keep: 0}}
+	maxSize, keep := c.ResolvedLogRotation()
+	assert.EqualValues(t, 10*1024*1024, maxSize, "bad size falls back to the default")
+	assert.Equal(t, 5, keep, "keep 0 falls back to the default")
+}
+
+// A valid log_rotation block — including the "0" disable form — passes
+// validation cleanly.
+func TestValidate_AcceptsLogRotation(t *testing.T) {
+	for _, lr := range []*LogRotationConfig{
+		{MaxSize: "10MiB", Keep: 5},
+		{MaxSize: "0"},
+		{Keep: 0},
+		{},
+	} {
+		c := DefaultConfig()
+		c.LogRotation = lr
+		assert.Emptyf(t, Validate(c), "log_rotation %+v should validate", lr)
+	}
 }

@@ -54,7 +54,7 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 | `usageapi`  | Anthropic OAuth usage API client (used by `usage` command and `selftest`, no longer used by statusbar) |
 | `wsl`       | WSL detection and PowerShell path resolution                                          |
 
-**`pkg/common/`:** Shared utilities (dirs, file locking, size parsing).
+**`pkg/common/`:** Shared utilities (dirs, file locking, size parsing, slog setup + size-based log rotation).
 
 ## Key patterns
 

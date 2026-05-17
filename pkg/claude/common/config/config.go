@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // Config represents the tclaude configuration file structure.
@@ -28,6 +30,67 @@ type Config struct {
 	// terminal-selection priority: the `tclaude agentd serve
 	// --terminal` flag overrides it; auto-detect is the fallback.
 	Terminal string `json:"terminal,omitempty"`
+
+	// LogRotation configures size-based rotation of ~/.tclaude/output.log,
+	// performed by the agentd daemon. Absent block / absent keys fall
+	// back to the built-in defaults — see ResolvedLogRotation.
+	LogRotation *LogRotationConfig `json:"log_rotation,omitempty"`
+}
+
+// LogRotationConfig holds the agentd log-rotation knobs. agentd caps
+// the active log (~/.tclaude/output.log) at MaxSize and keeps Keep
+// rotated files (output.log.1 … output.log.<Keep>), dropping the
+// oldest. Every tclaude process appends to the log; only agentd
+// rotates. See pkg/common/logrotate.go and agentd/logrotate.go.
+//
+// The struct is nested (rather than two flat Config keys) so a future
+// time/date-based rotation mode can be added here — e.g. a "mode" or
+// "max_age" field — without reshaping config.json.
+type LogRotationConfig struct {
+	// MaxSize is the active-log size cap as a human-friendly string
+	// parsed by common.ParseSize, e.g. "10MiB", "50m", "500k". Empty
+	// means the built-in default (10 MiB). An explicit "0" is a valid
+	// zero size and disables rotation entirely.
+	MaxSize string `json:"max_size,omitempty"`
+
+	// Keep is how many rotated files to retain. <= 0 means the
+	// built-in default (5).
+	Keep int `json:"keep,omitempty"`
+}
+
+// Log-rotation defaults — used when config.json omits the keys or
+// gives an unparseable value. 10 MiB is large enough that rotation is
+// rare yet small enough that a rotated file stays openable; keeping 5
+// rotated files preserves roughly 50 MiB of recent history.
+const (
+	defaultLogMaxSize int64 = 10 * common.MB
+	defaultLogKeep          = 5
+)
+
+// ResolvedLogRotation returns the effective (maxSizeBytes, keep) for
+// agentd's log rotation. A nil config, an absent log_rotation block, or
+// an omitted/blank max_size all yield the built-in defaults. An
+// explicit max_size of "0" (a valid zero size) yields maxSizeBytes 0,
+// which the caller treats as "rotation disabled". An unparseable
+// max_size also falls back to the default — Validate surfaces it so a
+// human editing config through the dashboard is told.
+//
+// It is nil-safe on the receiver so callers need no guard.
+func (c *Config) ResolvedLogRotation() (maxSizeBytes int64, keep int) {
+	maxSizeBytes, keep = defaultLogMaxSize, defaultLogKeep
+	if c == nil || c.LogRotation == nil {
+		return maxSizeBytes, keep
+	}
+	lr := c.LogRotation
+	if lr.Keep > 0 {
+		keep = lr.Keep
+	}
+	if lr.MaxSize != "" {
+		if n, err := common.ParseSize(lr.MaxSize); err == nil {
+			maxSizeBytes = n
+		}
+	}
+	return maxSizeBytes, keep
 }
 
 // AgentConfig holds agent-coordination knobs (see agents_todo.md).
@@ -480,6 +543,17 @@ func Validate(c *Config) []string {
 			}
 		}
 		errs = append(errs, validateSudo(a.Sudo)...)
+	}
+
+	if lr := c.LogRotation; lr != nil {
+		if lr.MaxSize != "" {
+			if _, err := common.ParseSize(lr.MaxSize); err != nil {
+				errs = append(errs, fmt.Sprintf("log_rotation.max_size %q is not a valid size (e.g. \"10MiB\", \"50m\", or \"0\" to disable)", lr.MaxSize))
+			}
+		}
+		if lr.Keep < 0 {
+			errs = append(errs, fmt.Sprintf("log_rotation.keep %d must not be negative (0 = built-in default)", lr.Keep))
+		}
 	}
 
 	return errs

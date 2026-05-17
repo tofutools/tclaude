@@ -21,38 +21,69 @@ func OutputLogPath() string {
 
 // SetupLogging configures slog to write to ~/.tclaude/output.log (file only, not stderr).
 func SetupLogging(level slog.Level) {
-	handler := logFileHandler(level)
-	if handler == nil {
+	rw := fileWriter()
+	if rw == nil {
+		// File logging unavailable (e.g. no home directory). Leave any
+		// existing slog handler in place rather than blanking it.
 		return
 	}
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(slog.NewTextHandler(rw, &slog.HandlerOptions{Level: level})))
 }
 
 // SetupLoggingWithStderr configures slog to write to both ~/.tclaude/output.log and stderr.
 // Stderr output uses \r\n line endings for compatibility with raw terminal mode.
 func SetupLoggingWithStderr(level slog.Level) {
 	stderrHandler := slog.NewTextHandler(crlfWriter{w: os.Stderr}, &slog.HandlerOptions{Level: level})
-	fileHandler := logFileHandler(level)
-	if fileHandler == nil {
+	rw := fileWriter()
+	if rw == nil {
 		slog.SetDefault(slog.New(stderrHandler))
 		return
 	}
+	fileHandler := slog.NewTextHandler(rw, &slog.HandlerOptions{Level: level})
 	slog.SetDefault(slog.New(multiHandler{handlers: []slog.Handler{fileHandler, stderrHandler}}))
 }
 
-func logFileHandler(level slog.Level) slog.Handler {
+// activeLogRotator is the one RotatingWriter behind tclaude's log file —
+// opened lazily by the first fileWriter call and reused by every later
+// one. agentd fetches it via ActiveLogRotator to drive size-based
+// rotation of ~/.tclaude/output.log.
+//
+// SetupLogging runs more than once per process (main.go, then cobra's
+// PersistentPreRun with the configured level). Reusing one writer keeps
+// a single log fd for the process lifetime — not one leaked per call —
+// and keeps this var pointing at that single live writer, never a
+// stale one (it is set once, nil→writer, and never overwritten).
+//
+// It is written only during logging setup at process startup, on the
+// main goroutine before any concurrency starts, so no lock is needed.
+var activeLogRotator *RotatingWriter
+
+// ActiveLogRotator returns the RotatingWriter behind tclaude's log file,
+// or nil if file logging could not be set up (e.g. no home directory).
+// agentd uses it to size-rotate ~/.tclaude/output.log.
+func ActiveLogRotator() *RotatingWriter {
+	return activeLogRotator
+}
+
+// fileWriter returns the RotatingWriter to log through, opening it on
+// the first call and reusing it on every later one. It returns nil when
+// the log path cannot be resolved or the file cannot be opened — in
+// which case activeLogRotator is left untouched (nil on a first-call
+// failure; an already-open writer is never discarded).
+func fileWriter() *RotatingWriter {
+	if activeLogRotator != nil {
+		return activeLogRotator
+	}
 	logPath := OutputLogPath()
 	if logPath == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-		return nil
-	}
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	rw, err := OpenRotatingWriter(logPath)
 	if err != nil {
 		return nil
 	}
-	return slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: level})
+	activeLogRotator = rw
+	return rw
 }
 
 // multiHandler fans out log records to multiple handlers.
