@@ -234,7 +234,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			"project", filepath.Base(projectPath),
 			"reason", scanReason(dbByID[convID], opts.ForceRescan))
 
-		scanned := parseJSONLSession(filePath, convID)
+		scanned, scanComplete := parseJSONLSession(filePath, convID)
 		if scanned == nil {
 			// File has no useful data (e.g., only file-history-snapshot lines).
 			// Store a stub so we don't rescan on every startup.
@@ -251,9 +251,13 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			// A conv that once had branch-stamped turns and was later
 			// truncated to stub-only content must shed its stale scan
 			// rows — an empty rebuild drops them (hook rows survive),
-			// keeping the history a true mirror of the .jsonl.
-			if err := db.RebuildConvBranchHistoryScan(convID, nil); err != nil {
-				slog.Warn("conv_branch_history: stub rebuild failed", "conv_id", convID[:8], "error", err)
+			// keeping the history a true mirror of the .jsonl. Only when
+			// the scan reached EOF: a truncated scan is not evidence the
+			// branches are gone.
+			if scanComplete {
+				if err := db.RebuildConvBranchHistoryScan(convID, nil); err != nil {
+					slog.Warn("conv_branch_history: stub rebuild failed", "conv_id", convID[:8], "error", err)
+				}
 			}
 			continue
 		}
@@ -270,9 +274,13 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 		// converges to the same rows, so the history self-heals on
 		// every re-scan rather than depending on incremental state.
 		// Only the scan path reaches here — a DB cache hit keeps the
-		// branch history persisted from the prior scan.
-		if err := db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory); err != nil {
-			slog.Warn("conv_branch_history: rebuild failed", "conv_id", convID[:8], "error", err)
+		// branch history persisted from the prior scan. A truncated
+		// scan is skipped: its branch set is partial, and a rebuild
+		// would delete the branches past the truncation point.
+		if scanComplete {
+			if err := db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory); err != nil {
+				slog.Warn("conv_branch_history: rebuild failed", "conv_id", convID[:8], "error", err)
+			}
 		}
 
 		entries = append(entries, *scanned)
@@ -382,8 +390,17 @@ type jsonlMessage struct {
 
 // ParseJSONLSessionPublic is the exported version of parseJSONLSession for use by repair code.
 func ParseJSONLSessionPublic(filePath, sessionID string) *SessionEntry {
-	return parseJSONLSession(filePath, sessionID)
+	entry, _ := parseJSONLSession(filePath, sessionID)
+	return entry
 }
+
+// maxJSONLLineBytes caps a single .jsonl line in parseJSONLSession. A
+// turn carrying a big tool result can be large, so the default is
+// generous (10 MiB); a line past it makes bufio.Scanner stop with
+// bufio.ErrTooLong, which parseJSONLSession reports as an incomplete
+// scan. A var, not a const, so a test can shrink it to force that
+// path without writing a 10 MiB fixture.
+var maxJSONLLineBytes = 10 * 1024 * 1024
 
 // parseJSONLTimestamp best-effort parses a .jsonl turn timestamp into a
 // time.Time. Claude Code writes RFC3339 with a fractional-second part;
@@ -403,16 +420,24 @@ func parseJSONLTimestamp(s string) time.Time {
 // Reads forward for prompt/title/summary and accumulates the conv's
 // branch history; runs to EOF so the last-wins branch and the history
 // set are both complete.
-func parseJSONLSession(filePath, sessionID string) *SessionEntry {
+//
+// The second return value is the scan-complete flag: false when the
+// file couldn't be opened, or when the bufio.Scanner stopped on an
+// error (an I/O failure, or a line past maxJSONLLineBytes) rather than
+// at EOF. A caller must NOT treat the BranchHistory of an incomplete
+// scan as authoritative — RebuildConvBranchHistoryScan deletes
+// unobserved rows, so rebuilding from a truncated set would drop real
+// branches.
+func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	defer func() { _ = file.Close() }()
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 
 	var entry SessionEntry
@@ -422,19 +447,34 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	entry.FileSize = info.Size()
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	// bufio.Scanner's effective max-token size is the larger of the max
+	// arg and the initial buffer's cap, so the initial cap must not
+	// exceed maxJSONLLineBytes or a shrunk limit (tests) would have no
+	// effect. 64 KiB is the normal initial cap.
+	initCap := 64 * 1024
+	if maxJSONLLineBytes < initCap {
+		initCap = maxJSONLLineBytes
+	}
+	scanner.Buffer(make([]byte, 0, initCap), maxJSONLLineBytes)
 
 	var firstTimestamp string
 
-	// branchAccum gathers, per branch, the dir it was seen in and the
+	// branchAccum gathers, per (canonical repo dir, branch), the
 	// timestamps bracketing its appearance — folded into
-	// entry.BranchHistory once the whole file is read.
+	// entry.BranchHistory once the whole file is read. The repo dir is
+	// part of the key: one conversation can touch the same branch name
+	// in two different repos, and those are distinct history entries.
 	type branchAccum struct {
 		repoDir   string
+		branch    string
 		firstSeen time.Time
 		lastSeen  time.Time
 	}
 	branches := map[string]*branchAccum{}
+	// canonCwd memoises db.CanonicalizeRepoDir. Claude Code stamps a
+	// fixed cwd onto every turn, so this resolves to a single entry —
+	// the per-turn cost is a map hit, not a filesystem stat.
+	canonCwd := map[string]string{}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -469,16 +509,20 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 			}
 			entry.GitBranch = msg.GitBranch
 
-			// Accumulate the branch into the history set. Turns are
-			// chronological, so first/last seen fall out of min/max
-			// over their (best-effort parsed) timestamps.
-			acc := branches[msg.GitBranch]
-			if acc == nil {
-				acc = &branchAccum{}
-				branches[msg.GitBranch] = acc
+			// Accumulate the branch into the history set, keyed by the
+			// canonical repo dir + branch. Turns are chronological, so
+			// first/last seen fall out of min/max over their
+			// (best-effort parsed) timestamps.
+			repoDir, ok := canonCwd[msg.Cwd]
+			if !ok {
+				repoDir = db.CanonicalizeRepoDir(msg.Cwd)
+				canonCwd[msg.Cwd] = repoDir
 			}
-			if msg.Cwd != "" {
-				acc.repoDir = msg.Cwd
+			accKey := repoDir + "\x00" + msg.GitBranch
+			acc := branches[accKey]
+			if acc == nil {
+				acc = &branchAccum{repoDir: repoDir, branch: msg.GitBranch}
+				branches[accKey] = acc
 			}
 			if ts := parseJSONLTimestamp(msg.Timestamp); !ts.IsZero() {
 				if acc.firstSeen.IsZero() || ts.Before(acc.firstSeen) {
@@ -524,11 +568,23 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 		// cache miss, so the extra reads are infrequent.
 	}
 
+	// A scanner that stopped on an error rather than at EOF gives a
+	// TRUNCATED view: the BranchHistory below is a partial set, and
+	// rebuilding from it would let RebuildConvBranchHistoryScan delete
+	// real branches past the truncation point. Report it so the caller
+	// skips the rebuild and leaves the existing history intact.
+	scanComplete := true
+	if err := scanner.Err(); err != nil {
+		slog.Warn("conv_index: .jsonl scan stopped before EOF; branch history not rebuilt",
+			"conv_id", sessionID, "error", err)
+		scanComplete = false
+	}
+
 	// Fold the accumulated branches into the history set. Map order is
 	// unstable, but RebuildConvBranchHistoryScan treats it as a set.
-	for branch, acc := range branches {
+	for _, acc := range branches {
 		entry.BranchHistory = append(entry.BranchHistory, db.BranchObservation{
-			Branch:    branch,
+			Branch:    acc.branch,
 			RepoDir:   acc.repoDir,
 			FirstSeen: acc.firstSeen,
 			LastSeen:  acc.lastSeen,
@@ -545,7 +601,7 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 		// named conversation is real and must be indexed — only a file
 		// with no title, no summary AND no prompt is a true empty stub.
 		if entry.CustomTitle == "" && entry.Summary == "" && entry.FirstPrompt == "" {
-			return nil
+			return nil, scanComplete
 		}
 		// Named-but-turnless: fall back to the file mtime so Created is
 		// non-empty (an empty Created marks a stub — see isStubRow).
@@ -556,7 +612,7 @@ func parseJSONLSession(filePath, sessionID string) *SessionEntry {
 	entry.Modified = info.ModTime().UTC().Format(time.RFC3339)
 	entry.MessageCount = 0
 
-	return &entry
+	return &entry, scanComplete
 }
 
 // IsSystemInjectedMessage returns true if the text is a system-injected
@@ -754,7 +810,7 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 		return nil
 	}
 
-	scanned := parseJSONLSession(filePath, convID)
+	scanned, scanComplete := parseJSONLSession(filePath, convID)
 	if scanned == nil {
 		stub := &db.ConvIndexRow{
 			ConvID:     convID,
@@ -766,8 +822,11 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 		}
 		_ = db.UpsertConvIndex(stub)
 		// Shed any stale scan rows from a prior non-stub scan — see the
-		// matching empty rebuild in LoadSessionsIndexWithOptions.
-		_ = db.RebuildConvBranchHistoryScan(convID, nil)
+		// matching empty rebuild in LoadSessionsIndexWithOptions. Only
+		// when the scan reached EOF (a truncated scan proves nothing).
+		if scanComplete {
+			_ = db.RebuildConvBranchHistoryScan(convID, nil)
+		}
 		return nil
 	}
 	scanned.FileSize = info.Size()
@@ -775,8 +834,11 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 	row := entryToDBRow(scanned, projectDir)
 	_ = db.UpsertConvIndex(row)
 	// Rebuild branch history from the same scan — see the matching
-	// call in LoadSessionsIndexWithOptions.
-	_ = db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory)
+	// call in LoadSessionsIndexWithOptions. A truncated scan is skipped:
+	// its branch set is partial.
+	if scanComplete {
+		_ = db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory)
+	}
 	return scanned
 }
 

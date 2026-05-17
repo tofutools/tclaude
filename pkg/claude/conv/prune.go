@@ -205,6 +205,12 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		// either — drop it too just in case external tooling left a stub.
 		_ = RemoveSessionsIndexEntry(conv.ProjectPath, conv.SessionID)
 
+		// Defensive: a dangling dir has no .jsonl, so a scan rebuild
+		// can't reach it — but the PostToolUse hook keys conv_branch_history
+		// rows purely on conv-id, with no .jsonl dependency, so a stale
+		// hook-sourced row could outlive the conv. Drop any here too.
+		_ = db.DeleteConvBranchHistory(conv.SessionID)
+
 		danglingDeleted++
 	}
 

@@ -301,31 +301,38 @@ func migrate(db *sql.DB) error {
 // per branch. It is the store behind the (future) dashboard "branch
 // history" affordance; this migration only lands the schema.
 //
-// Identity is (conv_id, branch): a branch is one entry whose PR is a
-// mutable attribute (none → open → merged), not part of the key. The
-// `source` column records which path wrote the row — 'scan' for the
-// idempotent .jsonl re-scan (the source of truth, which fully rebuilds
-// its own rows), 'hook' for the cheap PostToolUse append that also
-// catches branches in worktrees the launch-dir .jsonl never names.
-// pr_* columns are a best-effort snapshot refreshed by the dashboard's
-// existing branch-link resolver; an unresolved or PR-less branch keeps
-// them at their zero values.
+// Identity is (conv_id, repo_dir, branch): a single conversation can
+// work across several repos, and a bare branch name collides between
+// them (two repos each have a `main`; same-named feature branches
+// happen too) — so the repo directory is part of the key. repo_dir is
+// canonicalised (see db.CanonicalizeRepoDir) before every write so the
+// scan path and the hook agree on one spelling. The PR is a mutable
+// attribute of a row (none → open → merged), not part of the key.
+//
+// The `source` column records which path wrote the row — 'scan' for
+// the idempotent .jsonl re-scan (the source of truth, which fully
+// rebuilds its own rows), 'hook' for the cheap PostToolUse append that
+// also catches branches in worktrees the launch-dir .jsonl never
+// names. pr_* columns are a best-effort snapshot refreshed by the
+// dashboard's branch-link resolver; an unresolved or PR-less branch
+// keeps them at their zero values.
+//
+// No separate conv_id index: the primary key is left-prefixed by
+// conv_id, so the by-conversation listing query already rides it.
 func migrateV44toV45(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS conv_branch_history (
 			conv_id    TEXT NOT NULL,
-			branch     TEXT NOT NULL,
 			repo_dir   TEXT NOT NULL DEFAULT '',
+			branch     TEXT NOT NULL,
 			pr_number  INTEGER NOT NULL DEFAULT 0,
 			pr_url     TEXT NOT NULL DEFAULT '',
 			pr_state   TEXT NOT NULL DEFAULT '',
 			source     TEXT NOT NULL DEFAULT 'scan',
 			first_seen TEXT NOT NULL DEFAULT '',
 			last_seen  TEXT NOT NULL DEFAULT '',
-			PRIMARY KEY (conv_id, branch)
+			PRIMARY KEY (conv_id, repo_dir, branch)
 		);
-		CREATE INDEX IF NOT EXISTS idx_conv_branch_history_conv
-			ON conv_branch_history(conv_id);
 
 		UPDATE schema_version SET version = 45;
 	`); err != nil {

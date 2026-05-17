@@ -190,19 +190,20 @@ func refreshBranchLink(repoDir, branch, key string) {
 	// A merged or closed PR still reports a non-zero number, so genuine
 	// state changes land.
 	//
-	// KNOWN MUST-FIX BEFORE ENABLING:
-	//   M1 — SetConvBranchHistoryPR matches rows on (repo_dir, branch),
-	//   but a scan row stores repo_dir = the launch cwd while this
-	//   resolver and the hook use the resolved git worktree root. For an
-	//   agent working in a worktree (the case the feature targets) those
-	//   differ, so the stamp can miss the scan row. Resolve repo_dir
-	//   consistently — to the git worktree root — on both the write and
-	//   match sides before this flag is turned on.
-	//   m4 — the PRNumber>0 guard means a genuinely *deleted* PR is
-	//   never cleared from a stale snapshot. Fixing this needs the
-	//   resolver to distinguish "gh ran, found no PR" from "gh failed"
-	//   (e.g. via `gh pr list` exit codes) so only the former clears.
-	// Both are harmless while the flag is off.
+	// KNOWN LIMITATIONS (harmless while the flag is off; worth a look
+	// before enabling it):
+	//   - repo_dir provenance: a scan row stores the launch cwd while
+	//     this resolver and the hook use the git worktree root. They
+	//     agree for an agent launched at a repo/worktree root (the
+	//     normal case) and CanonicalizeRepoDir collapses symlink/
+	//     trailing-slash spellings, but a subdir launch still records
+	//     two spellings — see CanonicalizeRepoDir's doc. The stamp then
+	//     reaches whichever row's repo_dir matches the resolved dir;
+	//     the other (cosmetic-dup) row keeps empty PR columns.
+	//   - m4: the PRNumber>0 guard means a genuinely *deleted* PR is
+	//     never cleared from a stale snapshot. Distinguishing "gh ran,
+	//     found no PR" from "gh failed" (e.g. via `gh pr list` exit
+	//     codes) would let only the former clear.
 	if branchHistoryPREnrichment && info.PRNumber > 0 {
 		if err := db.SetConvBranchHistoryPR(repoDir, branch, info.PRNumber, info.PRURL, info.PRState); err != nil {
 			slog.Warn("branchlinks: failed to stamp branch-history PR",

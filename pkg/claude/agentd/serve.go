@@ -136,7 +136,10 @@ func runServe(p *serveParams) error {
 	// Branch-history PR enrichment — off by default. When on, the
 	// dashboard's branch-link resolver also stamps resolved PRs onto
 	// the conv_branch_history table. The branch re-scan and hook append
-	// run regardless. See branchlinks.go.
+	// run regardless. See branchlinks.go. Reset before the conditional
+	// assignment so a config without an `agent` section can't leave a
+	// stale value from an earlier resolve.
+	branchHistoryPREnrichment = false
 	if cfg != nil && cfg.Agent != nil {
 		branchHistoryPREnrichment = cfg.Agent.BranchHistoryPREnrichment
 	}

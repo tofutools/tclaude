@@ -49,11 +49,17 @@ func TestMigrateV44toV45_AddsConvBranchHistory(t *testing.T) {
 	assert.Empty(t, prURL, "a PR-absent row defaults pr_url to ''")
 	assert.Empty(t, prState, "a PR-absent row defaults pr_state to ''")
 
-	// (conv_id, branch) is the primary key — the same branch twice in
-	// one conv is a constraint violation, not a duplicate row.
-	_, err = d.Exec(`INSERT INTO conv_branch_history (conv_id, branch)
-		VALUES ('c1', 'feature-x')`)
-	require.Error(t, err, "(conv_id, branch) is unique")
+	// (conv_id, repo_dir, branch) is the primary key — the same triple
+	// twice is a constraint violation, not a duplicate row.
+	_, err = d.Exec(`INSERT INTO conv_branch_history (conv_id, repo_dir, branch)
+		VALUES ('c1', '/repo', 'feature-x')`)
+	require.Error(t, err, "(conv_id, repo_dir, branch) is unique")
+
+	// The same branch in a DIFFERENT repo_dir is a distinct row — one
+	// conversation can work the same branch name across two repos.
+	_, err = d.Exec(`INSERT INTO conv_branch_history (conv_id, repo_dir, branch)
+		VALUES ('c1', '/other-repo', 'feature-x')`)
+	require.NoError(t, err, "same branch, different repo_dir is a distinct row")
 }
 
 // TestMigrateV44toV45_FreshSchemaHasConvBranchHistory builds a fresh DB

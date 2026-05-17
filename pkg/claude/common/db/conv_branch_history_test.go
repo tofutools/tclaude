@@ -143,67 +143,136 @@ func TestConvBranchHistory_RebuildPreservesPRSnapshot(t *testing.T) {
 	assert.Equal(t, "open", rows[0].PRState)
 }
 
+// rowFor finds the history row with the given (repoDir, branch), or
+// fails the test.
+func rowFor(t *testing.T, convID, repoDir, branch string) ConvBranchHistoryRow {
+	t.Helper()
+	for _, r := range mustList(t, convID) {
+		if r.RepoDir == repoDir && r.Branch == branch {
+			return r
+		}
+	}
+	t.Fatalf("no row for (%s, %s, %s)", convID, repoDir, branch)
+	return ConvBranchHistoryRow{}
+}
+
 // TestConvBranchHistory_HookAndScanCoexist covers the two writers: the
-// re-scan never deletes a 'hook' row, and a branch first seen by the
-// hook is upgraded to 'scan' (keeping its earlier first_seen) once the
-// .jsonl names it.
+// re-scan never deletes a 'hook' row, and a (repo_dir, branch) first
+// seen by the hook is upgraded to 'scan' (keeping its earlier
+// first_seen) once the .jsonl names that same pair.
 func TestConvBranchHistory_HookAndScanCoexist(t *testing.T) {
 	setupTestDB(t)
 
-	// The hook records two worktree branches before any re-scan.
+	// The hook records a worktree branch the re-scan will never see,
+	// and "shared" in the same repo the re-scan will later name.
 	require.NoError(t, AppendConvBranchHistoryHook("c1", "worktree-feat", "/wt"))
-	require.NoError(t, AppendConvBranchHistoryHook("c1", "shared-branch", "/wt"))
+	require.NoError(t, AppendConvBranchHistoryHook("c1", "shared", "/repo"))
 
-	hookRows, err := ListConvBranchHistory("c1")
-	require.NoError(t, err)
-	require.Len(t, hookRows, 2)
-	hookFirstSeen := branchByName(hookRows)["shared-branch"].FirstSeen
+	hookFirstSeen := rowFor(t, "c1", "/repo", "shared").FirstSeen
 	require.False(t, hookFirstSeen.IsZero(), "hook stamps first_seen")
 
-	// A re-scan names only "main" and "shared-branch".
+	// A re-scan names "main" and "shared", both in /repo.
 	t1 := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
 	require.NoError(t, RebuildConvBranchHistoryScan("c1", []BranchObservation{
 		{Branch: "main", RepoDir: "/repo", FirstSeen: t1, LastSeen: t1},
-		{Branch: "shared-branch", RepoDir: "/repo", FirstSeen: t1, LastSeen: t1},
+		{Branch: "shared", RepoDir: "/repo", FirstSeen: t1, LastSeen: t1},
 	}))
 
-	by := branchByName(mustList(t, "c1"))
-	require.Len(t, by, 3, "the hook-only worktree branch is not deleted by re-scan")
+	rows := mustList(t, "c1")
+	require.Len(t, rows, 3, "the hook-only worktree branch is not deleted by re-scan")
 
-	assert.Equal(t, BranchSourceHook, by["worktree-feat"].Source,
+	assert.Equal(t, BranchSourceHook, rowFor(t, "c1", "/wt", "worktree-feat").Source,
 		"a worktree branch the .jsonl never names stays a hook row")
-	assert.Equal(t, BranchSourceScan, by["main"].Source)
+	assert.Equal(t, BranchSourceScan, rowFor(t, "c1", "/repo", "main").Source)
 
-	upgraded := by["shared-branch"]
+	upgraded := rowFor(t, "c1", "/repo", "shared")
 	assert.Equal(t, BranchSourceScan, upgraded.Source,
-		"a hook branch the .jsonl later names is upgraded to scan")
+		"a hook pair the .jsonl later names is upgraded to scan")
 	assert.True(t, upgraded.FirstSeen.Equal(hookFirstSeen),
 		"the upgrade keeps the earlier hook first_seen")
 	assert.True(t, upgraded.LastSeen.Equal(t1),
 		"the upgrade adopts the later scan last_seen")
 }
 
-// TestConvBranchHistory_HookAppendBumpsLastSeen covers AppendConvBranchHistoryHook's
-// conflict path: a repeated sighting keeps first_seen but advances
-// last_seen and repo_dir.
-func TestConvBranchHistory_HookAppendBumpsLastSeen(t *testing.T) {
+// TestConvBranchHistory_HookAppendKeyedByRepoDir covers AppendConvBranchHistoryHook:
+// a repeated sighting of the same (repo_dir, branch) bumps last_seen in
+// place, while the same branch in a different repo_dir is a distinct
+// row — repo_dir is part of the key.
+func TestConvBranchHistory_HookAppendKeyedByRepoDir(t *testing.T) {
 	setupTestDB(t)
 
 	require.NoError(t, AppendConvBranchHistoryHook("c1", "feat", "/wt-a"))
-	before := mustList(t, "c1")[0]
+	before := rowFor(t, "c1", "/wt-a", "feat")
 
 	// A no-op for an empty branch or conv.
-	require.NoError(t, AppendConvBranchHistoryHook("c1", "", "/wt"))
-	require.NoError(t, AppendConvBranchHistoryHook("", "feat", "/wt"))
+	require.NoError(t, AppendConvBranchHistoryHook("c1", "", "/wt-a"))
+	require.NoError(t, AppendConvBranchHistoryHook("", "feat", "/wt-a"))
 	require.Len(t, mustList(t, "c1"), 1, "empty branch/conv appends nothing")
 
+	// A repeat of the same (repo_dir, branch) bumps last_seen in place.
 	time.Sleep(2 * time.Millisecond)
-	require.NoError(t, AppendConvBranchHistoryHook("c1", "feat", "/wt-b"))
-	after := mustList(t, "c1")[0]
-
+	require.NoError(t, AppendConvBranchHistoryHook("c1", "feat", "/wt-a"))
+	require.Len(t, mustList(t, "c1"), 1, "a same-pair repeat is one row")
+	after := rowFor(t, "c1", "/wt-a", "feat")
 	assert.True(t, after.FirstSeen.Equal(before.FirstSeen), "first_seen is pinned")
 	assert.False(t, after.LastSeen.Before(before.LastSeen), "last_seen advances")
-	assert.Equal(t, "/wt-b", after.RepoDir, "repo_dir follows the latest sighting")
+
+	// The same branch in a different repo is a distinct row.
+	require.NoError(t, AppendConvBranchHistoryHook("c1", "feat", "/wt-b"))
+	assert.Len(t, mustList(t, "c1"), 2, "same branch, different repo_dir is a new row")
+}
+
+// TestConvBranchHistory_MultiRepoSameBranch covers the key change: one
+// conversation working a branch of the same name in two repos keeps
+// two distinct rows, and a later observation of one of them merges
+// into its row rather than duplicating.
+func TestConvBranchHistory_MultiRepoSameBranch(t *testing.T) {
+	setupTestDB(t)
+
+	tA := time.Date(2026, 5, 17, 9, 0, 0, 0, time.UTC)
+	tB := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
+	require.NoError(t, RebuildConvBranchHistoryScan("c1", []BranchObservation{
+		{Branch: "main", RepoDir: "/repo-a", FirstSeen: tA, LastSeen: tA},
+		{Branch: "main", RepoDir: "/repo-b", FirstSeen: tB, LastSeen: tB},
+	}))
+
+	rows := mustList(t, "c1")
+	require.Len(t, rows, 2, "branch `main` in two repos is two rows, not one")
+	assert.Equal(t, "/repo-a", rowFor(t, "c1", "/repo-a", "main").RepoDir)
+	assert.Equal(t, "/repo-b", rowFor(t, "c1", "/repo-b", "main").RepoDir)
+
+	// A later re-scan re-observes repo-a's main further along — it
+	// merges into that row (last_seen advances), still two rows total.
+	tA2 := tA.Add(3 * time.Hour)
+	require.NoError(t, RebuildConvBranchHistoryScan("c1", []BranchObservation{
+		{Branch: "main", RepoDir: "/repo-a", FirstSeen: tA, LastSeen: tA2},
+		{Branch: "main", RepoDir: "/repo-b", FirstSeen: tB, LastSeen: tB},
+	}))
+	require.Len(t, mustList(t, "c1"), 2, "re-observation merges, not duplicates")
+	rowA := rowFor(t, "c1", "/repo-a", "main")
+	assert.True(t, rowA.FirstSeen.Equal(tA), "first_seen pinned to the earliest")
+	assert.True(t, rowA.LastSeen.Equal(tA2), "last_seen advanced to the latest")
+}
+
+// TestConvBranchHistory_RebuildMergesSameBatchDuplicates covers the
+// pre-merge inside RebuildConvBranchHistoryScan: two observations of
+// the same (repo_dir, branch) in ONE batch fold into a single row with
+// min/max timestamps — the INSERT...ON CONFLICT alone could not, as it
+// can't see a row inserted earlier in the same transaction.
+func TestConvBranchHistory_RebuildMergesSameBatchDuplicates(t *testing.T) {
+	setupTestDB(t)
+
+	early := time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 5, 17, 20, 0, 0, 0, time.UTC)
+	require.NoError(t, RebuildConvBranchHistoryScan("c1", []BranchObservation{
+		{Branch: "feat", RepoDir: "/repo", FirstSeen: late, LastSeen: late},
+		{Branch: "feat", RepoDir: "/repo", FirstSeen: early, LastSeen: early},
+	}))
+
+	rows := mustList(t, "c1")
+	require.Len(t, rows, 1, "same-batch dups fold into one row")
+	assert.True(t, rows[0].FirstSeen.Equal(early), "first_seen is the batch min")
+	assert.True(t, rows[0].LastSeen.Equal(late), "last_seen is the batch max")
 }
 
 // TestConvBranchHistory_SetPRMatchesByRepoDirAndBranch covers the PR

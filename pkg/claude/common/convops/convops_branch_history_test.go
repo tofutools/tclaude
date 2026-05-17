@@ -110,6 +110,36 @@ func TestLoadSessionsIndex_BranchHistoryClearedOnStubTransition(t *testing.T) {
 	assert.Empty(t, branchSet(t, sessionID), "stub transition sheds the scan rows")
 }
 
+// TestLoadSessionsIndex_TruncatedScanLeavesBranchHistoryIntact covers
+// CR#4: when a .jsonl line exceeds maxJSONLLineBytes the bufio.Scanner
+// stops on an error, not at EOF. parseJSONLSession reports the scan as
+// incomplete and the caller skips the branch-history rebuild — a
+// rebuild from a truncated (partial) branch set would delete the real
+// branches past the truncation point.
+func TestLoadSessionsIndex_TruncatedScanLeavesBranchHistoryIntact(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	jsonlPath := filepath.Join(tmpDir, sessionID+".jsonl")
+
+	// First scan: a healthy conv with three branches.
+	require.NoError(t, os.WriteFile(jsonlPath, []byte(jsonlWithBranchHops), 0o600))
+	_, err := LoadSessionsIndex(tmpDir)
+	require.NoError(t, err)
+	require.Len(t, branchSet(t, sessionID), 3, "history populated on the first scan")
+
+	// Shrink the line cap below every line so a forced re-scan stops
+	// on bufio.ErrTooLong instead of reaching EOF.
+	prev := maxJSONLLineBytes
+	maxJSONLLineBytes = 16
+	t.Cleanup(func() { maxJSONLLineBytes = prev })
+
+	_, err = LoadSessionsIndexWithOptions(tmpDir, LoadSessionsIndexOptions{ForceRescan: true})
+	require.NoError(t, err)
+	assert.Len(t, branchSet(t, sessionID), 3,
+		"a truncated scan must leave the existing branch history intact")
+}
+
 // TestLoadSessionsIndex_BranchHistoryEvictedWithConv covers the
 // self-healing eviction: when a .jsonl disappears, its branch history
 // is dropped alongside the conv_index row.
