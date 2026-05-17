@@ -115,7 +115,7 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 // "" for the human path. On failure the response is already written.
 func requireNotifyHumanPermission(w http.ResponseWriter, r *http.Request) (string, bool) {
 	p := peerFromContext(r.Context())
-	if p.HasClaudeAncestor && p.ConvID != "" {
+	if classify(p) == classAgent {
 		if owned, err := db.ListGroupsOwnedBy(p.ConvID); err == nil && len(owned) > 0 {
 			return p.ConvID, true
 		}

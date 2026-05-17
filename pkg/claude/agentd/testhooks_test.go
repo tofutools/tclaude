@@ -57,11 +57,19 @@ func SetWaitTimingsForTest(aliveTimeout, readyDelay time.Duration) func() {
 	}
 }
 
-// AsHumanPeer attaches a synthetic peer context that requirePermission
-// treats as the human (HasClaudeAncestor=false). All permission gates
-// pass.
+// AsHumanPeer attaches a synthetic peer context that classify() resolves
+// to the human operator (classHuman) — modelling a CLI caller holding a
+// valid operator token. All permission gates pass.
 func AsHumanPeer(r *http.Request) *http.Request {
-	p := &peer{PID: 99999, HasClaudeAncestor: false}
+	p := &peer{PID: 99999, HumanTokenValid: true}
+	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
+}
+
+// AsUnconfirmedPeer attaches a synthetic peer that classify() resolves
+// to classUnconfirmed — a caller with no Claude Code ancestor and no
+// operator token. Fail-closed: every human-vs-agent gate refuses it.
+func AsUnconfirmedPeer(r *http.Request) *http.Request {
+	p := &peer{PID: 99999}
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 

@@ -110,6 +110,13 @@ func runServe(p *serveParams) error {
 	popupSrv, popupURL := startPopupServer()
 	popupBaseURL = popupURL
 
+	// Operator token — positively authenticates the human operator on the
+	// CLI / Unix-socket path so the daemon can fail closed instead of
+	// assuming "no Claude Code ancestor => human". Minted fresh each
+	// daemon lifetime, held only in memory. Never written through slog
+	// (slog → output.log); the banner below prints it only to a TTY.
+	operatorTok := generateOperatorToken()
+
 	// Auto-launch the dashboard in the browser when the human opted in
 	// — either via --auto-launch-dashboard or the persistent
 	// agent.auto_launch_dashboard config field. Saves a separate
@@ -203,6 +210,7 @@ func runServe(p *serveParams) error {
 			fmt.Printf("  human-approval popup on %s/approve/<id>\n", popupBaseURL)
 			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (loopback %s)\n", popupBaseURL)
 		}
+		printOperatorTokenBanner(operatorTok)
 		serveErrCh <- srv.Serve(ln)
 	}()
 
@@ -340,6 +348,7 @@ func parseCloneCooldown(value, source string) (time.Duration, bool) {
 func buildMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/info", handleInfo)
+	mux.HandleFunc("GET /v1/auth/token", handleAuthToken)
 	mux.HandleFunc("/v1/dashboard/open", handleDashboardOpen)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)

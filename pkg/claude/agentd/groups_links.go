@@ -413,16 +413,11 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // owner, fall through to requirePermission which handles the slug /
 // popup / 403-with-helpful-message branches uniformly.
 func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, perm string) (string, bool) {
+	// The owner-of-g structural bypass applies only to a confirmed agent
+	// (it needs a conv-id). The human, and every fail-closed class, are
+	// handled uniformly by requirePermission below.
 	p := peerFromContext(r.Context())
-	if p.PID == 0 {
-		writeError(w, http.StatusUnauthorized, "auth",
-			"could not determine peer PID; refusing to evaluate permission")
-		return "", false
-	}
-	if !p.HasClaudeAncestor {
-		return "", true
-	}
-	if p.ConvID != "" {
+	if classify(p) == classAgent {
 		isOwner, err := db.IsAgentGroupOwner(g.ID, p.ConvID)
 		if err == nil && isOwner {
 			return p.ConvID, true
@@ -437,16 +432,11 @@ func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.Age
 // supplied link. Owners of the TO side must hold the slug — they can't
 // unilaterally manage links that point INTO their group.
 func requireScopedLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, link *db.AgentGroupLink, perm string) (string, bool) {
+	// Owner-of-g bypass: confirmed agent only, and only when g is the
+	// FROM side of the link. The human and every fail-closed class are
+	// handled uniformly by requirePermission below.
 	p := peerFromContext(r.Context())
-	if p.PID == 0 {
-		writeError(w, http.StatusUnauthorized, "auth",
-			"could not determine peer PID; refusing to evaluate permission")
-		return "", false
-	}
-	if !p.HasClaudeAncestor {
-		return "", true
-	}
-	if p.ConvID != "" && link != nil && link.FromGroupID == g.ID {
+	if classify(p) == classAgent && link != nil && link.FromGroupID == g.ID {
 		isOwner, err := db.IsAgentGroupOwner(g.ID, p.ConvID)
 		if err == nil && isOwner {
 			return p.ConvID, true

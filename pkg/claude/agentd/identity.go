@@ -25,22 +25,29 @@ import (
 // identity for the lifetime of a request.
 type peerKey struct{}
 
-// peer is the identity resolved from the connecting socket peer.
+// peer is the identity resolved from the connecting socket peer. It is
+// raw material: no handler reads these fields directly for an
+// authorization decision — every human-vs-agent decision routes through
+// classify().
 //
 //   - PID is the process that opened the socket. 0 if peerPID failed.
 //   - ConvID is the current conv-id of the nearest claude/node ancestor,
-//     read from ~/.claude/sessions/<pid>.json. Empty when the caller has
-//     no claude ancestor *or* when the ancestor's session file couldn't
-//     be read.
+//     read from ~/.claude/sessions/<pid>.json (or, as a fallback, from
+//     the sessions table by host pid). Empty when the caller has no
+//     claude ancestor *or* when the ancestor's conv-id couldn't be
+//     resolved.
 //   - HasClaudeAncestor is true iff a claude/node ancestor was observed
-//     anywhere in the pid tree, regardless of session-file readability.
-//     This is what `requirePermission` checks: humans (no CC ancestor)
-//     bypass permission checks; agents with a CC ancestor must hold
-//     the requested slug to pass.
+//     anywhere in the pid tree, regardless of conv-id resolvability.
+//   - HumanTokenValid is true iff the request carried a valid operator
+//     token (see humantoken.go).
+//   - DashboardHuman is true only for the synthetic peer stamped by
+//     asDashboardHumanPeer — a cookie-authenticated dashboard delegation.
 type peer struct {
 	PID               int
 	ConvID            string
 	HasClaudeAncestor bool
+	HumanTokenValid   bool
+	DashboardHuman    bool
 }
 
 // peerFromContext returns the peer attached by the identity middleware.
@@ -53,45 +60,132 @@ func peerFromContext(ctx context.Context) *peer {
 	return v
 }
 
+// callerClass is the single, centralised verdict on who a request's peer
+// is. EVERY human-vs-agent authorization decision in the daemon routes
+// through classify() — no handler re-derives identity from the raw peer
+// fields. The one deliberate exception is GET /v1/auth/token, which must
+// bootstrap the operator token before classify() can recognise a human
+// (see handleAuthToken).
+type callerClass int
+
+const (
+	// classUnidentified: the peer PID could not be read. Fail closed → 401.
+	classUnidentified callerClass = iota
+	// classAgent: a confirmed Claude Code caller with a resolved conv-id.
+	classAgent
+	// classAgentUnknown: a Claude Code ancestor is present but its conv-id
+	// could not be resolved. Fail closed → 403; never treated as the human.
+	classAgentUnknown
+	// classHuman: the human operator — either the cookie-authenticated
+	// dashboard, or a CLI caller presenting a valid operator token.
+	classHuman
+	// classUnconfirmed: no Claude Code ancestor and no valid operator
+	// token. Fail closed → 403. Before the fail-closed model this case was
+	// assumed to be the human (fail-open) — that assumption is now gone.
+	classUnconfirmed
+)
+
+// classify is THE policy chokepoint: it maps a resolved peer to one
+// callerClass. The precedence is deliberate and load-bearing:
+//
+//   - DashboardHuman first: a cookie-authenticated dashboard delegation
+//     (asDashboardHumanPeer) is the human regardless of process tree.
+//   - A Claude Code ancestor wins over any operator token. The human
+//     exports TCLAUDE_HUMAN_TOKEN into their shell, so a CC session
+//     launched from that shell inherits it; if the token could promote a
+//     caller, such an agent would escalate to human. An agent-family
+//     caller is therefore never offered the token branch.
+//   - Only a caller with no CC ancestor is eligible to be the human, and
+//     only with a valid token. Anything else is classUnconfirmed → 403.
+func classify(p *peer) callerClass {
+	if p.DashboardHuman {
+		return classHuman
+	}
+	if p.PID == 0 {
+		return classUnidentified
+	}
+	if p.HasClaudeAncestor {
+		if p.ConvID != "" {
+			return classAgent
+		}
+		return classAgentUnknown
+	}
+	if p.HumanTokenValid {
+		return classHuman
+	}
+	return classUnconfirmed
+}
+
+// writeUnconfirmed writes the standard fail-closed 403 for a caller the
+// daemon could neither confirm as an agent nor as the human. The body is
+// self-explanatory and points the human operator at the fix.
+func writeUnconfirmed(w http.ResponseWriter) {
+	writeError(w, http.StatusForbidden, "unconfirmed",
+		"unconfirmed caller: not a known agent, and no valid operator token. "+
+			"If you are the human operator, set the operator token: "+
+			`export TCLAUDE_HUMAN_TOKEN="$(tclaude agent token)"  then retry. `+
+			"See docs/plans/agentd.md.")
+}
+
+// writeUnidentified writes the fail-closed 401 for a peer whose PID could
+// not be read from the socket.
+func writeUnidentified(w http.ResponseWriter) {
+	writeError(w, http.StatusUnauthorized, "auth",
+		"could not determine peer PID; refusing the request")
+}
+
+// writeAgentUnknown writes the fail-closed 403 for a caller with a Claude
+// Code ancestor whose conv-id could not be resolved.
+func writeAgentUnknown(w http.ResponseWriter) {
+	writeError(w, http.StatusForbidden, "auth",
+		"caller has a Claude Code ancestor but no resolvable conv-id")
+}
+
+// authedCaller resolves a request to either the human operator or a
+// confirmed agent — the common shape for endpoints that admit both and
+// then scope behaviour by conv-id. ok is true for classHuman (convID "",
+// isHuman true) and classAgent (convID set, isHuman false). For
+// unidentified / unconfirmed / unidentifiable-agent callers it writes the
+// fail-closed response and returns ok=false; the caller just returns.
+func authedCaller(w http.ResponseWriter, r *http.Request) (convID string, isHuman, ok bool) {
+	p := peerFromContext(r.Context())
+	switch classify(p) {
+	case classHuman:
+		return "", true, true
+	case classAgent:
+		return p.ConvID, false, true
+	case classUnidentified:
+		writeUnidentified(w)
+	case classAgentUnknown:
+		writeAgentUnknown(w)
+	case classUnconfirmed:
+		writeUnconfirmed(w)
+	}
+	return "", false, false
+}
+
 // asDashboardHumanPeer stamps a synthetic "human via dashboard cookie"
 // peer onto the request, so a /v1 handler delegated-to from a
-// cookie-authenticated dashboard endpoint sees the caller as a
-// permission-bypassing human. The dashboard cookie + Origin pin in
-// checkDashboardAuth IS the human-consent layer; the inner handler
-// would otherwise fail on PID==0.
+// cookie-authenticated dashboard endpoint is classified as the human.
+// The dashboard cookie + Origin pin in checkDashboardAuth IS the
+// human-consent layer here — the dashboard human legitimately holds no
+// operator token, so DashboardHuman is set explicitly and classify()
+// returns classHuman for it. (Without this the synthetic peer would have
+// no CC ancestor and no token → classUnconfirmed → 403.)
 //
 // Used by handleDashboardCronCreate / dashboardCronPatch when they
 // delegate to handleCronCreate / handleCronPatch — same DB writes,
 // same validation, without duplicating either.
 func asDashboardHumanPeer(r *http.Request) *http.Request {
-	p := &peer{PID: 1, HasClaudeAncestor: false}
+	p := &peer{PID: 1, DashboardHuman: true}
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 
 // withIdentity is the per-request middleware that resolves the connecting
 // peer's PID, walks the process tree to a claude/node ancestor, reads its
-// per-pid session file, and attaches the result to the request context.
-//
-// SECURITY MODEL — read this before relying on the resolved identity.
-// The identity attached here is a COORDINATION GUARDRAIL, not a security
-// boundary. The real trust boundary is the Unix UID: the socket is mode
-// 0600, so SO_PEERCRED already bounds every caller to the same user. The
-// peer-PID process-tree walk on top of that exists to tell *which* agent
-// is calling and to separate agents from the human operator, so the
-// permission layer can shape agent behaviour and prevent accidents — it
-// is NOT, and cannot be, an attempt to authenticate a hostile caller.
-//
-// The model is deliberately fail-open toward "human": a caller with no
-// claude/node ancestor in its process tree is treated as the human
-// operator and bypasses all permission gating (see requirePermission).
-// An agent can reach that state on purpose — e.g. by double-forking so
-// its socket-opening process reparents away from its Claude Code
-// ancestor. That is an ACCEPTED residual, not a bug: a process running
-// as the same UID can already mutate ~/.tclaude state — the SQLite DB,
-// config.json — directly, with no daemon involved, so this gate was
-// never a boundary against a hostile same-UID process. Do not build a
-// feature that needs a real security boundary on top of this identity.
-// See docs/plans/agentd.md, "Security model — a guardrail, not a boundary".
+// per-pid session file, verifies any operator token the request carries,
+// and attaches the result to the request context. Handlers turn that
+// peer into an authorization decision via classify().
 //
 // Resolving a non-empty conv-id also opportunistically flushes any
 // nudges queued for this conv while it was offline. The flush is
@@ -106,6 +200,7 @@ func withIdentity(h http.Handler) http.Handler {
 				p.ConvID, p.HasClaudeAncestor = convIDForPID(pid)
 			}
 		}
+		p.HumanTokenValid = verifyHumanToken(r)
 		if p.ConvID != "" {
 			maybeFlushUndelivered(p.ConvID)
 			enrollCallerOnce(p.ConvID)
@@ -140,13 +235,15 @@ func enrollCallerOnce(convID string) {
 	}
 }
 
-// requireAgent enforces that the caller is an agent (i.e. has a resolved
-// conv-id). Returns the conv-id and true on success, or writes 401 and
-// returns false.
+// requireAgent enforces that the caller is a confirmed agent (classAgent:
+// a resolved Claude Code conv-id). Returns the conv-id and true on
+// success, or writes 401 and returns false. The human operator and
+// unconfirmed callers are refused — this endpoint has no human path.
 func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 	p := peerFromContext(r.Context())
-	if p.ConvID == "" {
-		writeError(w, http.StatusUnauthorized, "auth", "no claude ancestor in caller's process tree; this endpoint requires an agent identity")
+	if classify(p) != classAgent {
+		writeError(w, http.StatusUnauthorized, "auth",
+			"this endpoint requires an agent identity (a resolved Claude Code conv-id)")
 		return "", false
 	}
 	return p.ConvID, true
@@ -249,40 +346,36 @@ func resolvePermission(convID, slug string) permResolution {
 
 // requirePermission gates an endpoint behind a named agent permission.
 //
-// This is a guardrail, not a security boundary — see the SECURITY MODEL
-// note on withIdentity. The human bypass below is fail-open: any caller
-// without a resolvable claude/node ancestor is treated as the human and
-// passes unconditionally, and an agent can reach that state by detaching
-// from its Claude Code ancestor. Accepted: a same-UID process can mutate
-// ~/.tclaude state directly regardless of this check, so the gate exists
-// to prevent accidents and shape agent behaviour, not to contain a
-// hostile caller.
-//
-// Humans (no claude ancestor) always pass. Agents pass only when
+// The human operator (classHuman) always passes. Agents pass only when
 // resolvePermission returns permAllow — an active sudo grant, a
 // per-conv grant override, or the config default-permissions list. A
 // per-conv deny override (or simply no granting source) leaves the
 // caller to the X-Tclaude-Ask-Human popup, then a 403 with the
-// permission slug in the message body.
+// permission slug in the message body. Unidentified / unconfirmed /
+// unidentifiable-agent callers are refused fail-closed.
 //
 // Returns (convID, true) on success — convID is "" for the human path,
 // the resolved conv-id for an agent. On failure the response is
 // already written; the caller just returns.
 func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (string, bool) {
 	p := peerFromContext(r.Context())
-	if p.PID == 0 {
+	switch classify(p) {
+	case classUnidentified:
 		writeError(w, http.StatusUnauthorized, "auth",
 			"could not determine peer PID; refusing to evaluate permission")
 		return "", false
-	}
-	if !p.HasClaudeAncestor {
-		// The human is implicitly allowed everything.
+	case classHuman:
+		// The human operator is implicitly allowed everything.
 		return "", true
-	}
-	if p.ConvID == "" {
+	case classAgentUnknown:
 		writeError(w, http.StatusForbidden, "auth",
 			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate permission")
 		return "", false
+	case classUnconfirmed:
+		writeUnconfirmed(w)
+		return "", false
+	case classAgent:
+		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
 	title := ""
 	row := agent.FreshConvRow(p.ConvID)
@@ -415,17 +508,14 @@ func parseAskHumanHeader(r *http.Request) time.Duration {
 }
 
 // convIDForPID walks up from pid to the nearest claude/node ancestor.
-// Returns the ancestor's current `sessionId` if its per-pid session
-// file is readable, plus a flag indicating whether any claude/node was
-// observed at all. Callers use the flag to distinguish "really the
-// human" (no ancestor) from "agent we can't identify" (ancestor present
-// but session file unreadable).
-//
-// The claude/node match is a process-NAME (comm) test, and the absence
-// of a match is what classifies a caller as the human. A same-UID
-// process controls its own process tree and names, so this is a
-// coordination guardrail, not authentication — see the SECURITY MODEL
-// note on withIdentity for why that is an accepted residual.
+// Returns the ancestor's conv-id plus a flag indicating whether any
+// claude/node was observed at all. The conv-id comes from the ancestor's
+// per-pid ~/.claude/sessions/<pid>.json; if that file is missing or
+// unreadable, it falls back to agentd's own sessions table keyed by host
+// pid (so a freshly-started agent whose session file hasn't landed yet
+// is still identified, rather than mis-classified as unidentifiable).
+// Callers use hasAncestor to distinguish "really the human" (no ancestor)
+// from "agent we can't identify" (ancestor present, conv-id unresolved).
 func convIDForPID(pid int) (convID string, hasAncestor bool) {
 	cur := pid
 	for cur > 1 {
@@ -434,6 +524,12 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 			hasAncestor = true
 			if id := readSessionFile(cur); id != "" {
 				return id, true
+			}
+			// Fallback: agentd's sessions table maps host pid → conv-id
+			// (written by the hook callback). Accuracy fallback only — a
+			// sessions row is produced by agentd's own spawn/hook path.
+			if row, err := db.FindSessionByPID(cur); err == nil && row != nil && row.ConvID != "" {
+				return row.ConvID, true
 			}
 		}
 		cur = session.GetParentPID(cur)

@@ -106,18 +106,20 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 // can make an informed decision.
 func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string) (string, bool) {
 	p := peerFromContext(r.Context())
-	if p.PID == 0 {
-		writeError(w, http.StatusUnauthorized, "auth",
-			"could not determine peer PID; refusing to evaluate permission")
+	switch classify(p) {
+	case classUnidentified:
+		writeUnidentified(w)
 		return "", false
-	}
-	if !p.HasClaudeAncestor {
+	case classHuman:
 		return "", true
-	}
-	if p.ConvID == "" {
-		writeError(w, http.StatusForbidden, "auth",
-			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate permission")
+	case classAgentUnknown:
+		writeAgentUnknown(w)
 		return "", false
+	case classUnconfirmed:
+		writeUnconfirmed(w)
+		return "", false
+	case classAgent:
+		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
 	switch resolvePermission(p.ConvID, perm) {
 	case permAllow:

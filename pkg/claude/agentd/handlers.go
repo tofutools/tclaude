@@ -50,8 +50,17 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := peerFromContext(r.Context())
-	if p.ConvID == "" {
+	switch classify(p) {
+	case classHuman:
 		writeJSON(w, http.StatusOK, whoamiResp{IsHuman: true})
+		return
+	case classAgent:
+		// fall through and report the agent's conv-id
+	default:
+		// Neither a confirmed agent nor the human (unidentified /
+		// unconfirmed / unidentifiable-agent). Report honestly rather
+		// than the old fail-open is_human:true.
+		writeJSON(w, http.StatusOK, whoamiResp{})
 		return
 	}
 	row := agent.FreshConvRow(p.ConvID)
@@ -134,12 +143,16 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	p := peerFromContext(r.Context())
-	myID := p.ConvID
+	// The human operator sees every group; an agent is scoped to its
+	// own; unidentified / unconfirmed callers are refused fail-closed.
+	myID, isHuman, ok := authedCaller(w, r)
+	if !ok {
+		return
+	}
 
 	var groups []*db.AgentGroup
 	var err error
-	if myID == "" {
+	if isHuman {
 		groups, err = db.ListAgentGroups()
 	} else {
 		groups, err = db.ListGroupsForConv(myID)

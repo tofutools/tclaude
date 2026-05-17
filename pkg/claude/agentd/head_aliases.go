@@ -163,24 +163,24 @@ func headAliasRowToJSON(h *db.HeadAlias) headAliasJSON {
 	return out
 }
 
-// requireHuman gates a mutation on the caller being the human: a
-// resolvable peer PID and no Claude Code ancestor in its process
-// tree. Fails closed — an unidentifiable peer (PID 0) is refused, not
-// assumed human — mirroring the PID-0 guard + human-bypass in
-// requirePermission. Broken out here so human-only endpoints can fail
-// closed for agents in a single line. Writes the response on
-// rejection; returns true when the caller may proceed.
+// requireHuman gates a mutation on the caller being the human operator
+// (classHuman — the cookie-authenticated dashboard, or a CLI caller with
+// a valid operator token). Fails closed: an agent, an unidentified peer,
+// or an unconfirmed caller is refused. Broken out here so human-only
+// endpoints can gate in a single line. Writes the response on rejection;
+// returns true when the caller may proceed.
 func requireHuman(w http.ResponseWriter, r *http.Request, action string) bool {
-	p := peerFromContext(r.Context())
-	if p.PID == 0 {
+	switch classify(peerFromContext(r.Context())) {
+	case classHuman:
+		return true
+	case classUnidentified:
 		writeError(w, http.StatusUnauthorized, "auth",
 			"could not determine peer PID; refusing to "+action)
-		return false
-	}
-	if p.HasClaudeAncestor {
+	case classUnconfirmed:
+		writeUnconfirmed(w)
+	default: // classAgent, classAgentUnknown
 		writeError(w, http.StatusForbidden, "auth",
-			"only the human may "+action+"; this endpoint has no agent path")
-		return false
+			"only the human operator may "+action+"; this endpoint has no agent path")
 	}
-	return true
+	return false
 }

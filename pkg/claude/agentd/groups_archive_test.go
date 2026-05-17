@@ -32,10 +32,10 @@ func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 		GroupID: gID, ConvID: "worker-1",
 	})
 
-	// Archive (human path — empty caller bypasses permission gate).
+	// Archive (human path — operator-token caller passes the gate).
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/groups/team/archive", nil)
-	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1}))
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
 	serveV1(w, r) // dispatcher entry point with selector
 	require.Equal(t, http.StatusOK, w.Code, "archive body=%s", w.Body.String())
 
@@ -52,7 +52,7 @@ func TestHandleGroupArchive_FlipsAndBlocks(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	r2 := httptest.NewRequest(http.MethodPost, "/v1/groups/team/members",
 		bytes.NewReader(memberBody))
-	r2 = r2.WithContext(context.WithValue(r2.Context(), peerKey{}, &peer{PID: 1}))
+	r2 = r2.WithContext(context.WithValue(r2.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
 	serveV1(w2, r2)
 	assert.Equal(t, http.StatusConflict, w2.Code,
 		"add-member on archived group: body=%s", w2.Body.String())
@@ -70,7 +70,7 @@ func TestHandleGroupUnarchive_ClearsAndAllows(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/groups/team/unarchive", nil)
-	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1}))
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
 	serveV1(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "unarchive body=%s", w.Body.String())
 

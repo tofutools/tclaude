@@ -225,9 +225,13 @@ func handleCronLogs(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	// Read access: same visibility rules as ListCron (own / target /
-	// group-owner). Humans always pass.
-	p := peerFromContext(r.Context())
-	if p.HasClaudeAncestor && !jobVisibleTo(job, p.ConvID) {
+	// group-owner). The human operator sees all; agents are scoped;
+	// unidentified / unconfirmed callers are refused fail-closed.
+	callerConv, isHuman, ok := authedCaller(w, r)
+	if !ok {
+		return
+	}
+	if !isHuman && !jobVisibleTo(job, callerConv) {
 		writeError(w, http.StatusForbidden, "permission",
 			"caller cannot view logs for this job (not the owner, target, or owner of a group containing the target)")
 		return
@@ -260,18 +264,21 @@ func handleCronLogs(w http.ResponseWriter, r *http.Request, id int64) {
 }
 
 func handleCronList(w http.ResponseWriter, r *http.Request) {
-	p := peerFromContext(r.Context())
+	callerConv, isHuman, ok := authedCaller(w, r)
+	if !ok {
+		return
+	}
 	all, err := db.ListAgentCronJobs()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "list jobs: "+err.Error())
 		return
 	}
 
-	// Humans see everything; agents see jobs they own + jobs targeting
-	// any conv in a group they own (manager pattern).
+	// The human operator sees everything; agents see jobs they own +
+	// jobs targeting any conv in a group they own (manager pattern).
 	visible := make([]jobJSON, 0, len(all))
 	for _, j := range all {
-		if !p.HasClaudeAncestor || jobVisibleTo(j, p.ConvID) {
+		if isHuman || jobVisibleTo(j, callerConv) {
 			visible = append(visible, toJobJSON(j))
 		}
 	}
@@ -693,28 +700,20 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 
 // authCronWrite gates create/delete. Caller passes if any of:
 //
-//   - human (no Claude ancestor)
+//   - the human operator (classHuman)
 //   - target == caller AND caller has self.schedule
 //   - caller has agent.schedule
 //   - caller owns a group containing the target
 //
-// Returns (callerConvID, ok); callerConvID is "" for humans.
+// Returns (callerConvID, ok); callerConvID is "" for the human.
 func authCronWrite(w http.ResponseWriter, r *http.Request, targetConv string) (string, bool) {
-	p := peerFromContext(r.Context())
-	if p.PID == 0 {
-		writeError(w, http.StatusUnauthorized, "auth",
-			"could not determine peer PID; refusing to evaluate permission")
+	caller, isHuman, ok := authedCaller(w, r)
+	if !ok {
 		return "", false
 	}
-	if !p.HasClaudeAncestor {
+	if isHuman {
 		return "", true
 	}
-	if p.ConvID == "" {
-		writeError(w, http.StatusForbidden, "auth",
-			"caller has a Claude Code ancestor but no resolvable conv-id")
-		return "", false
-	}
-	caller := p.ConvID
 	if caller == targetConv {
 		// Self path → self.schedule.
 		if _, ok := requirePermission(w, r, PermSelfSchedule); !ok {
@@ -740,21 +739,13 @@ func authCronWrite(w http.ResponseWriter, r *http.Request, targetConv string) (s
 //
 // Returns (callerConvID, ok); callerConvID is "" for humans.
 func authCronWriteGroup(w http.ResponseWriter, r *http.Request, groupID int64) (string, bool) {
-	p := peerFromContext(r.Context())
-	if p.PID == 0 {
-		writeError(w, http.StatusUnauthorized, "auth",
-			"could not determine peer PID; refusing to evaluate permission")
+	caller, isHuman, ok := authedCaller(w, r)
+	if !ok {
 		return "", false
 	}
-	if !p.HasClaudeAncestor {
+	if isHuman {
 		return "", true
 	}
-	if p.ConvID == "" {
-		writeError(w, http.StatusForbidden, "auth",
-			"caller has a Claude Code ancestor but no resolvable conv-id")
-		return "", false
-	}
-	caller := p.ConvID
 	member, err := db.FindMemberInGroup(groupID, caller)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
