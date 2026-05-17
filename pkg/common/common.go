@@ -25,11 +25,16 @@ const (
 	TB int64 = 1024 * GB
 )
 
-var sizePattern = regexp.MustCompile(`(?i)^(\d+(?:\.\d+)?)\s*([kmgt]?b?)?$`)
+var sizePattern = regexp.MustCompile(`(?i)^(\d+(?:\.\d+)?)\s*([kmgt]?i?b?)?$`)
 
 // ParseSize parses a human-readable size string into bytes.
-// Supports formats like: "100", "10k", "10kb", "10K", "10KB", "1.5m", "1mb", "1g", "1gb", "1t", "1tb"
-// Case-insensitive. The "b" suffix is optional.
+// Supports formats like: "100", "10k", "10kb", "10K", "10KB", "1.5m", "1mb",
+// "1g", "1gb", "1t", "1tb", and the IEC "i" infix forms "10KiB", "10MiB",
+// "1.5GiB", "1TiB". Case-insensitive. The "b" suffix is optional.
+//
+// Note tclaude's units are binary throughout (KB = 1024 bytes), so "10m"
+// and "10MiB" parse to the same value — the "i" is accepted for the
+// convenience of writing the conventional spelling, not a separate scale.
 func ParseSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -171,6 +171,12 @@ func runServe(p *serveParams) error {
 	// channel.
 	startSessionReaper(cronStop)
 
+	// Size-based rotation of ~/.tclaude/output.log. agentd holds the
+	// log fd for its whole life, so rotation renames the file and
+	// reopens a fresh one in-process. Shares the daemon-wide stop
+	// channel. See logrotate.go.
+	startLogRotation(cronStop, common.ActiveLogRotator(), cfg)
+
 	// Subscription-usage poller. Keeps the SQLite usage_cache row fresh
 	// so the dashboard's top-bar 5h/7d readout stays current even when
 	// no Claude Code statusbar is running to populate it. Side-effect

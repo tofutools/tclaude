@@ -132,6 +132,54 @@ func TestParseSize_WithWhitespace(t *testing.T) {
 	}
 }
 
+// The IEC "i" infix ("KiB", "MiB", "GiB", "TiB") is accepted and parses
+// identically to the plain form — tclaude's units are binary throughout.
+func TestParseSize_IECInfix(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"10KiB", 10 * KB},
+		{"10kib", 10 * KB},
+		{"10MiB", 10 * MB},
+		{"10mib", 10 * MB},
+		{"1.5GiB", int64(1.5 * float64(GB))},
+		{"1TiB", TB},
+		{" 10 MiB ", 10 * MB},
+	}
+
+	for _, tt := range tests {
+		result, err := ParseSize(tt.input)
+		if !assert.NoErrorf(t, err, "ParseSize(%q) returned error", tt.input) {
+			continue
+		}
+		assert.Equalf(t, tt.expected, result, "ParseSize(%q)", tt.input)
+		// The plain and IEC spellings agree.
+		assert.Equalf(t, tt.expected, mustParseSize(t, plainForm(tt.input)),
+			"plain spelling of %q", tt.input)
+	}
+}
+
+// plainForm strips the IEC "i" so "10MiB" -> "10MB" for the
+// cross-check that both spellings yield the same value.
+func plainForm(s string) string {
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r == 'i' || r == 'I' {
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out)
+}
+
+func mustParseSize(t *testing.T, s string) int64 {
+	t.Helper()
+	n, err := ParseSize(s)
+	require.NoErrorf(t, err, "ParseSize(%q)", s)
+	return n
+}
+
 func TestParseSize_Invalid(t *testing.T) {
 	tests := []string{
 		"",
@@ -140,6 +188,9 @@ func TestParseSize_Invalid(t *testing.T) {
 		"10x",
 		"10 xyz",
 		"m10",
+		"10i",   // bare "i" is not a unit
+		"10ib",  // "ib" without a scale prefix is not a unit
+		"10mxb", // junk between number and unit
 	}
 
 	for _, tt := range tests {

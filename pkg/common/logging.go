@@ -40,19 +40,36 @@ func SetupLoggingWithStderr(level slog.Level) {
 	slog.SetDefault(slog.New(multiHandler{handlers: []slog.Handler{fileHandler, stderrHandler}}))
 }
 
+// activeLogRotator holds the RotatingWriter behind the most recent
+// SetupLogging / SetupLoggingWithStderr call. agentd fetches it via
+// ActiveLogRotator to drive size-based rotation of ~/.tclaude/output.log.
+//
+// It is written only during logging setup at process startup (main.go,
+// then cobra's PersistentPreRun) and read once by agentd in runServe —
+// all on the main goroutine before any concurrency starts, so no lock
+// is needed. The last setup call wins, which is what agentd wants: it
+// reads this after PersistentPreRun has installed the config-level
+// handler.
+var activeLogRotator *RotatingWriter
+
+// ActiveLogRotator returns the RotatingWriter behind the current slog
+// log file, or nil if file logging could not be set up (e.g. no home
+// directory). agentd uses it to size-rotate ~/.tclaude/output.log.
+func ActiveLogRotator() *RotatingWriter {
+	return activeLogRotator
+}
+
 func logFileHandler(level slog.Level) slog.Handler {
 	logPath := OutputLogPath()
 	if logPath == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-		return nil
-	}
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	rw, err := OpenRotatingWriter(logPath)
 	if err != nil {
 		return nil
 	}
-	return slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: level})
+	activeLogRotator = rw
+	return slog.NewTextHandler(rw, &slog.HandlerOptions{Level: level})
 }
 
 // multiHandler fans out log records to multiple handlers.
