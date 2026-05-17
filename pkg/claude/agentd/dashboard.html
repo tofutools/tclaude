@@ -22,7 +22,6 @@
 <nav>
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="templates">Templates</button>
-  <button data-tab="agents">Agents</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
   <button data-tab="links">Links</button>
@@ -51,7 +50,7 @@
       </label>
       <span class="spacer"></span>
       <button id="group-import-open" class="tool" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
-      <button id="cleanup-all-open" class="tool" title="Clean up offline agents across every group (optionally delete them)">🧹 clean up</button>
+      <button id="cleanup-all-open" class="tool" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
       <button id="group-from-template-open" class="tool" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
     </div>
@@ -67,36 +66,6 @@
       <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
     </div>
     <div id="templates-list"></div>
-  </section>
-  <section id="tab-agents">
-    <div class="filter-bar">
-      <input id="filter-agents" type="text" placeholder="Filter (title + conv-id + role/descr/cwd/branch + group tags)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-agents-count"></span>
-      <button class="clear-filter" id="filter-agents-clear" title="Clear filter">×</button>
-      <label class="filter-toggle" title="Show agents whose tmux pane is offline">
-        <input id="filter-agents-offline" type="checkbox" checked /> show offline
-      </label>
-      <span class="spacer"></span>
-      <button id="cleanup-agents-open" class="tool" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 cleanup</button>
-      <button id="agent-spawn-open" class="primary" title="Spawn a new tclaude session and add it to a group">+ new agent</button>
-    </div>
-    <div id="agents-list"></div>
-    <div id="retired-section">
-      <h3 class="sub-list-head collapsible" id="retired-toggle" title="Show / hide retired agents">
-        <span id="retired-caret">▸</span> Retired agents
-        <span class="muted" id="retired-count"></span>
-        <button type="button" id="cleanup-retired-open" class="tool sub-list-tool" title="Bulk-delete or reinstate retired agents">🧹 cleanup</button>
-      </h3>
-      <div id="retired-list" style="display:none"></div>
-    </div>
-    <div id="conversations-section">
-      <h3 class="sub-list-head collapsible" id="conversations-toggle" title="Show / hide recent non-agent conversations">
-        <span id="conversations-caret">▸</span> Conversations
-        <span class="muted" id="conversations-count"></span>
-        <span class="muted">— recent conversations that aren't agents; promote one to add it to the roster</span>
-      </h3>
-      <div id="conversations-list" style="display:none"></div>
-    </div>
   </section>
   <section id="tab-cron">
     <div class="filter-bar">

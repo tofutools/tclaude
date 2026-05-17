@@ -16,7 +16,7 @@
 
   // agentStatusDot renders an agent's status light as an interactive
   // on/off toggle. It replaces the plain onlineDot on every row that
-  // represents a real agent (group members, the Agents tab). Online =
+  // represents a real agent (every group member row). Online =
   // green dot whose click turns the agent off (soft /exit); offline =
   // grey dot whose click turns it back on (resume). It is a real
   // <button> so it is keyboard-reachable (Tab + Enter/Space); the
@@ -260,8 +260,8 @@
   // lifecycleAndFocusButtons renders the focus/term/wake/shutdown
   // cluster. focus + shutdown vs wake are mutually exclusive on online
   // state so the row stays visually stable as the agent toggles; term
-  // is always present. Used by both the Groups tab member rows and the
-  // Agents tab top-level rows so the surface is identical in both.
+  // is always present. Used by both real-group member rows and the
+  // virtual Ungrouped group's rows so the surface is identical in both.
   function lifecycleAndFocusButtons(m) {
     const label = m.title || m.conv_id;
     if (m.online) {
@@ -292,7 +292,7 @@
   // group-affecting button (edit role/descr, owner toggle,
   // remove-from-group) — the agent belongs to no group, so those are
   // meaningless here. What remains is the agent-level lifecycle set,
-  // identical to the Agents tab: focus / term / shut down / wake,
+  // identical to a grouped member's lifecycle set: focus / term / shut down / wake,
   // clone, reincarnate, rename, sudo, self-nudge cron, delete. To put
   // an ungrouped agent INTO a group, drag its row onto a group header.
   function ungroupedMemberActions(m) {
@@ -386,7 +386,7 @@
   }
 
   // offlineDefault returns the tab-wide "show offline" checkbox state
-  // for 'groups' or 'agents'. Defaults to true (show everything) when
+  // for the 'groups' tab. Defaults to true (show everything) when
   // the checkbox isn't in the DOM yet / the user hasn't touched it.
   function offlineDefault(tab) {
     const el = $(`#filter-${tab}-offline`);
@@ -428,7 +428,7 @@
   }
 
   // --- column sorting --------------------------------------------------
-  // Every primary table (group members, agents, cron, sudo, links) has
+  // Every primary table (group members, cron, sudo, links) has
   // clickable headers. The active sort — a {col, dir} pair keyed by a
   // stable table name — lives in sortState and is mirrored to
   // localStorage so it survives reloads and the 5s auto-refresh.
@@ -528,29 +528,6 @@
     branch: m => m.branch,
     role:   m => m.role,
     descr:  m => m.descr,
-  };
-
-  const AGENT_COLS = [
-    { label: '' },
-    { label: 'ID', col: 'id' },
-    { label: 'Name', col: 'name' },
-    { label: 'State', col: 'state' },
-    { label: 'Last activity', col: 'last' },
-    { label: 'CWD', col: 'cwd' },
-    { label: 'Branch', col: 'branch' },
-    { label: 'Groups', col: 'groups' },
-    { label: 'Effective permissions', col: 'perms' },
-    { label: '' },
-  ];
-  const AGENT_ACCESSORS = {
-    id:     a => a.conv_id,
-    name:   a => a.title,
-    state:  a => (a.state || {}).status,
-    last:   a => (a.state || {}).last_hook,
-    cwd:    a => a.current_dir || (a.state || {}).cwd,
-    branch: a => a.branch,
-    groups: a => (a.groups || []).join(', '),
-    perms:  a => (a.effective || []).length,
   };
 
   const CRON_COLS = [
@@ -684,9 +661,8 @@
 
   // The virtual "Retired" group — agents that were demoted back to
   // plain conversations (retire). Surfaced in the Groups tab so a
-  // retired agent doesn't silently vanish off the tab: it lands here,
-  // mirroring the Agents tab's "Retired" section, and can be
-  // reinstated in place.
+  // retired agent doesn't silently vanish off the tab: it lands here
+  // and can be reinstated in place.
   const RETIRED_LABEL = 'Retired';
   const RETIRED_VKEY = ' retired-virtual';
 
@@ -850,8 +826,7 @@
   //     reinstate + join, or onto the Ungrouped header → reinstate with
   //     no group.
   // It is the landing surface so a just-retired agent stays visible on
-  // the tab (the Agents-tab "Retired" section does the same). Each row
-  // also keeps the per-row "reinstate" button.
+  // the tab. Each row also keeps the per-row "reinstate" button.
   function renderVirtualRetiredGroup(g) {
     const members = g.members || [];
     const key = g.key || g.name;
@@ -1002,98 +977,13 @@
     `;
   }
 
-  function renderAgents(agents) {
-    if (!agents || !agents.length) {
-      return '<div class="empty">No agents in any group yet.</div>';
-    }
-    return `
-      <table>
-        ${sortHead('agents', AGENT_COLS)}
-        <tbody>
-          ${applySort('agents', agents, AGENT_ACCESSORS).map(a => {
-            const state = a.state || {};
-            const lh = relTime(state.last_hook);
-            const subagents = state.subagent_count || 0;
-            return `
-            <tr>
-              <td>${agentStatusDot({conv_id: a.conv_id, title: a.title, online: a.online, state: state})}</td>
-              <td class="id">${esc(shortId(a.conv_id))}</td>
-              <td>
-                <span class="rowname">${esc(a.title)}</span>
-                ${sudoBadge(a.active_sudo, a.conv_id)}
-              </td>
-              <td class="state-cell">
-                ${contextMeter(state)}
-                ${statePill(state, a.online)}
-                ${subagents > 0 ? `<span class="state-detail">+${subagents} subagent${subagents > 1 ? 's' : ''}</span>` : ''}
-              </td>
-              <td><span class="last-hook">${esc(lh)}</span></td>
-              <td>${cwdCell(a)}</td>
-              <td>${branchCell(a)}</td>
-              <td>${groupTagsCell(a)}</td>
-              <td>${(a.effective || []).map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">(none)</span>'}</td>
-              <td><div class="row-actions">${lifecycleAndFocusButtons({conv_id: a.conv_id, title: a.title, online: a.online})}${cloneAgentButton({conv_id: a.conv_id, title: a.title, cwd: (a.state || {}).cwd})}${reincarnateAgentButton({conv_id: a.conv_id, title: a.title})}${renameAgentButton({conv_id: a.conv_id, title: a.title})}<button data-act="sudo-grant" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button><button data-act="perm-edit" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Edit this agent's permanent permissions (grant / deny / inherit-default)">permissions</button><button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id, owner: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Schedule a recurring nudge for this agent (self-nudge by default)">⏰</button><button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'solo', target: a.conv_id}))}' data-label="${esc(a.title || a.conv_id)}" title="Send a one-shot message to this agent">✉</button><button class="warn" data-act="retire-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Retire this agent — demote to a plain conversation. Revokes groups + permissions; the conversation is kept and can be reinstated.">retire</button><button class="danger" data-act="delete-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Permanently delete this conversation">delete</button></div></td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    `;
-  }
-
-  // renderConversations builds the Agents-tab "Conversations" list —
-  // recent conversations that are NOT agents, each with a promote
-  // button. The promote button enrolls the conv as an agent.
-  function renderConversations(convs) {
-    if (!convs || !convs.length) {
-      return '<div class="empty">No recent non-agent conversations.</div>';
-    }
-    return `
-      <table>
-        <thead><tr><th></th><th>conv</th><th>title</th><th>last activity</th><th></th></tr></thead>
-        <tbody>
-          ${convs.map(c => `
-            <tr>
-              <td>${onlineDot(c.online)}</td>
-              <td class="id">${esc(shortId(c.conv_id))}</td>
-              <td><span class="rowname">${esc(c.title || '(untitled)')}</span></td>
-              <td><span class="last-hook">${esc(c.modified ? relTime(c.modified) : '')}</span></td>
-              <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="Promote this conversation into an agent — adds it to the roster">promote</button></div></td>
-            </tr>`).join('')}
-        </tbody>
-      </table>`;
-  }
-
-  // renderRetired builds the Agents-tab "Retired" list — agents that
-  // were demoted to plain conversations, each reinstatable.
-  function renderRetired(retired) {
-    if (!retired || !retired.length) {
-      return '<div class="empty">No retired agents.</div>';
-    }
-    return `
-      <table>
-        <thead><tr><th></th><th>conv</th><th>title</th><th>retired</th><th>by</th><th>reason</th><th></th></tr></thead>
-        <tbody>
-          ${retired.map(a => `
-            <tr>
-              <td>${onlineDot(a.online)}</td>
-              <td class="id">${esc(shortId(a.conv_id))}</td>
-              <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
-              <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
-              <td>${esc(a.retired_by || '')}</td>
-              <td>${esc(a.retire_reason || '')}</td>
-              <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
-            </tr>`).join('')}
-        </tbody>
-      </table>`;
-  }
-
   function renderPermissions(perm, agents) {
     const titleByConv = Object.fromEntries((agents || []).map(a => [a.conv_id, a.title]));
     const overrides = perm.overrides || {};
     const defaults = perm.defaults || [];
     // Split each conv's tri-state override map into granted / denied
     // slug lists for display. The per-agent "permissions" button on the
-    // Groups / Agents tabs is the write path; this tab is the roster.
+    // Groups tab is the write path; this tab is the roster.
     const rows = Object.entries(overrides).map(([k, slugEffects]) => {
       const granted = [], denied = [];
       for (const [slug, effect] of Object.entries(slugEffects || {})) {
@@ -1340,43 +1230,6 @@
     return out;
   }
 
-  // memberMetaForAgent pulls role / descr from any group
-  // membership the agent has. The Agents tab's snapshot rows don't
-  // dedupe these onto the top-level agent record (they belong to
-  // group_members rows); we look them up here so the Agents-tab
-  // search can match human-meaningful fields the agent object
-  // itself doesn't surface. A conv that's a member of two groups
-  // uses the first-seen row.
-  function memberMetaForAgent(convID) {
-    for (const g of (lastSnapshot?.groups || [])) {
-      for (const m of (g.members || [])) {
-        if (m.conv_id === convID) {
-          return {role: m.role || '', descr: m.descr || ''};
-        }
-      }
-    }
-    return {role: '', descr: ''};
-  }
-
-  function filterAgents(agents, q) {
-    if (!q) return agents;
-    const needle = q.toLowerCase();
-    return agents.filter(a => {
-      const state = a.state || {};
-      const meta = memberMetaForAgent(a.conv_id);
-      return ((a.title || '').toLowerCase().includes(needle)) ||
-             ((a.conv_id || '').toLowerCase().includes(needle)) ||
-             ((a.branch || '').toLowerCase().includes(needle)) ||
-             ((a.startup_branch || '').toLowerCase().includes(needle)) ||
-             ((meta.role  || '').toLowerCase().includes(needle)) ||
-             ((meta.descr || '').toLowerCase().includes(needle)) ||
-             ((state.cwd || '').toLowerCase().includes(needle)) ||
-             ((a.startup_dir || '').toLowerCase().includes(needle)) ||
-             ((a.current_dir || '').toLowerCase().includes(needle)) ||
-             (a.groups || []).some(g => g.toLowerCase().includes(needle));
-    });
-  }
-
   function renderGroupsTab() {
     if (!lastSnapshot) return;
     const q = $('#filter-groups').value;
@@ -1412,46 +1265,6 @@
     const shownReal = filtered.filter(g => !g.virtual).length;
     $('#filter-groups-count').textContent = q
       ? `${shownReal} / ${total}` : `${total} group${total === 1 ? '' : 's'}`;
-  }
-
-  // filterConvLike is a lightweight title / conv-id substring filter
-  // for the Agents-tab secondary lists (Conversations, Retired), which
-  // carry no group / member metadata to match against.
-  function filterConvLike(rows, q) {
-    if (!q) return rows;
-    const needle = q.toLowerCase();
-    return rows.filter(r =>
-      ((r.title || '').toLowerCase().includes(needle)) ||
-      ((r.conv_id || '').toLowerCase().includes(needle)));
-  }
-
-  function renderAgentsTab() {
-    if (!lastSnapshot) return;
-    const q = $('#filter-agents').value;
-    const showOffline = offlineDefault('agents');
-    let filtered = filterAgents(lastSnapshot.agents || [], q);
-    if (!showOffline) filtered = filtered.filter(a => a.online);
-    $('#agents-list').innerHTML = renderAgents(filtered);
-    const total = (lastSnapshot.agents || []).length;
-    // The count shows the filtered/total ratio whenever EITHER the
-    // text filter or the offline toggle is narrowing the list.
-    $('#filter-agents-count').textContent = (q || !showOffline)
-      ? `${filtered.length} / ${total}` : `${total} agent${total === 1 ? '' : 's'}`;
-
-    // Secondary lists: retired agents + promotion candidates. Both
-    // honour the same text filter as the agents table, and both are
-    // collapsible sections (collapsed by default) — the click handler
-    // in bindEvents toggles their display, this only fills content +
-    // the header count, so the fold state survives the 5s re-render.
-    const retired = filterConvLike(lastSnapshot.retired || [], q);
-    $('#retired-list').innerHTML = renderRetired(retired);
-    const retiredTotal = (lastSnapshot.retired || []).length;
-    $('#retired-count').textContent = retiredTotal ? `(${retiredTotal})` : '(none)';
-
-    const convs = filterConvLike(lastSnapshot.conversations || [], q);
-    $('#conversations-list').innerHTML = renderConversations(convs);
-    const convTotal = (lastSnapshot.conversations || []).length;
-    $('#conversations-count').textContent = convTotal ? `(${convTotal})` : '(none)';
   }
 
   // formatInterval renders an integer second count as a coarse human
@@ -2878,31 +2691,11 @@
 
   function bindGroupCreateModal() {
     $('#group-create-open').addEventListener('click', openGroupCreateModal);
-    // 🧹 cleanup buttons: Groups-tab "clean up" sweeps every group;
-    // Agents-tab "cleanup" spans all three conversation categories;
-    // the Retired-section button opens that modal pre-scoped to
-    // retired agents (stopPropagation so it doesn't toggle the
-    // collapsible header).
-    $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'all-groups' }));
-    $('#cleanup-agents-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
-    $('#cleanup-retired-open').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openCleanupModal({ mode: 'agents', categories: ['retired'], tier: 'delete' });
-    });
-    // The Agents-tab secondary sections (Retired agents, Conversations)
-    // are collapsed by default — clicking a header toggles it. Pure
-    // client-side view state; not persisted.
-    const bindSubListToggle = (toggleID, listID, caretID) => {
-      $(toggleID).addEventListener('click', () => {
-        const list = $(listID);
-        const caret = $(caretID);
-        const open = list.style.display === 'none';
-        list.style.display = open ? '' : 'none';
-        caret.textContent = open ? '▾' : '▸';
-      });
-    };
-    bindSubListToggle('#retired-toggle', '#retired-list', '#retired-caret');
-    bindSubListToggle('#conversations-toggle', '#conversations-list', '#conversations-caret');
+    // 🧹 cleanup: the Groups tab's "clean up" button opens the rich
+    // multi-category cleanup modal — bulk unjoin / retire / delete /
+    // reinstate spanning active agents, retired agents and plain
+    // conversations (openCleanupModal mode 'agents').
+    $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
     $('#group-create-cancel').addEventListener('click', closeGroupCreateModal);
     $('#group-create-submit').addEventListener('click', submitGroupCreate);
     $('#group-create-modal').addEventListener('click', (e) => {
@@ -3964,9 +3757,10 @@
 
   // ---- Agent spawn modal --------------------------------------------------
   //
-  // Opens with `{groupName}` pre-filled when invoked from a group header,
-  // or empty when invoked from the Agents tab (in which case the group
-  // <select> is shown and required). Either way, on submit it POSTs to
+  // Opens with `{groupName}` pre-filled from a group header's
+  // "+ spawn agent" button — the group is fixed and the <select> stays
+  // hidden. (The form still supports an empty open, showing the group
+  // <select>, for any future caller.) On submit it POSTs to
   // /api/groups/{name}/spawn, which forks `tclaude session new` and waits
   // for the conv-id before returning.
 
@@ -4205,11 +3999,12 @@
   }
 
   function bindAgentSpawnModal() {
-    $('#agent-spawn-open').addEventListener('click', () => openAgentSpawnModal({}));
-    // Agents-tab spawn: the group <select> is visible. Switching it
-    // re-prefills the cwd from the newly-chosen group's default,
-    // mirrors it into Worktree-repo (unless the human pinned that),
-    // and reloads the picker.
+    // The spawn modal is opened per-group from each group's
+    // "+ spawn agent" button (data-act="spawn-agent"); it has no
+    // global open button. Switching the group <select> re-prefills
+    // the cwd from the newly-chosen group's default, mirrors it into
+    // Worktree-repo (unless the human pinned that), and reloads the
+    // picker.
     $('#agent-spawn-group').addEventListener('change', (e) => {
       prefillSpawnCwd(e.target.value, false);
       updateSpawnGroupContextRow(e.target.value);
@@ -4576,10 +4371,9 @@
     if (!activeSudo || !activeSudo.length) return '';
     const lines = activeSudo.map(g => `${g.slug} (expires in ${fmtRemaining(g.remaining_seconds)})`);
     const title = `${activeSudo.length} active sudo grant${activeSudo.length === 1 ? '' : 's'} — click to manage:\n` + lines.join('\n');
-    // Per-agent rows on the Agents tab carry ConvID via the row
-    // itself (Agents[*].active_sudo[] omits it to save bytes); group
-    // member rows look up via sudoByConv[m.conv_id] where the entries
-    // DO carry ConvID. Accept a fallback so both shapes work.
+    // sudoByConv entries carry their own conv_id; the caller-supplied
+    // fallback (and finally '') just guarantees the badge always has a
+    // click target even on an unexpected entry shape.
     const convID = activeSudo[0].conv_id || fallbackConvID || '';
     return `<span class="sudo-badge" data-act="sudo-manage" data-conv="${esc(convID)}" title="${esc(title)}">🔓</span>`;
   }
@@ -4592,7 +4386,6 @@
     const rerender = () => {
       if (tab === 'groups') renderGroupsTab();
       else if (tab === 'templates') renderTemplatesTab();
-      else if (tab === 'agents') renderAgentsTab();
       else if (tab === 'cron') renderCronTab();
       else if (tab === 'sudo') renderSudoTab();
       else if (tab === 'links') renderLinksTab();
@@ -4605,7 +4398,7 @@
     };
     input.addEventListener('input', onChange);
     clear.addEventListener('click', () => { input.value = ''; onChange(); input.focus(); });
-    // Optional per-tab "show offline" checkbox (groups + agents only).
+    // Optional per-tab "show offline" checkbox (the 'groups' tab only).
     // Restore its persisted state — defaults to checked (show all)
     // when the user has never touched it.
     const offline = $(`#filter-${tab}-offline`);
@@ -4698,7 +4491,6 @@
       });
       renderGroupsTab();
       renderTemplatesTab();
-      renderAgentsTab();
       renderCronTab();
       renderSudoTab();
       renderLinksTab();
@@ -4767,7 +4559,6 @@
       const tableKey = th.dataset.sortTable;
       cycleSort(tableKey, th.dataset.sortCol);
       if (tableKey === 'members') renderGroupsTab();
-      else if (tableKey === 'agents') renderAgentsTab();
       else if (tableKey === 'cron') renderCronTab();
       else if (tableKey === 'sudo') renderSudoTab();
       else if (tableKey === 'links') renderLinksTab();
@@ -5588,7 +5379,7 @@
 
   // ---- 🧹 Cleanup modal ---------------------------------------------
   //
-  // CLEANUP_CATS — the three conversation categories the Agents-tab
+  // CLEANUP_CATS — the three conversation categories the 'agents'-mode
   // cleanup modal spans, in display order. Each maps to a disjoint
   // snapshot list (agents / retired / conversations).
   const CLEANUP_CATS = ['agent', 'retired', 'conversation'];
@@ -5598,10 +5389,7 @@
 
   // openCleanupModal drives the bulk-cleanup overlay. opts.mode:
   //   'group'      — remove confirmed-offline members from opts.group.
-  //   'all-groups' — remove offline agents from every group they
-  //                  belong to (Groups-tab "clean up" button); the
-  //                  "delete permanently" option escalates to a purge.
-  //   'agents'     — the rich Agents-tab tool: spans all three
+  //   'agents'     — the rich multi-category tool: spans all three
   //                  categories (active agents, retired agents, plain
   //                  conversations) with category / online / search
   //                  filters and four tiers (unjoin, retire, delete,
@@ -5632,17 +5420,17 @@
     const mode = opts.mode;
     const groupName = opts.group || '';
     let phase = 'select';
-    // multiCat — only the Agents-tab modal spans categories and gets
+    // multiCat — only 'agents' mode spans categories and gets
     // the category / search filters and the reinstate tier.
     const multiCat = mode === 'agents';
-    // The cleanup tier: unjoin | retire | delete | reinstate. The
-    // Agents tab defaults to delete so every category is visible on
-    // open (retire/reinstate would hide other categories); the Groups
-    // tab defaults to unjoin. group mode always unjoins.
+    // The cleanup tier: unjoin | retire | delete | reinstate.
+    // 'agents' mode defaults to delete so every category is visible on
+    // open (retire/reinstate would hide other categories); 'group'
+    // mode always unjoins.
     let tier = multiCat ? 'delete' : 'unjoin';
     if (opts.tier) tier = opts.tier;
-    // Category filter (Agents tab). opts.categories pre-scopes it — the
-    // Retired section's cleanup button opens straight onto ['retired'].
+    // Category filter for 'agents' mode. opts.categories, when
+    // supplied by a caller, pre-scopes which categories start ticked.
     const catOn = {};
     for (const k of CLEANUP_CATS) {
       catOn[k] = opts.categories ? opts.categories.includes(k) : true;
@@ -5668,17 +5456,6 @@
             online: false, lastActivity: (m.state || {}).last_hook || '',
             owner: !!m.owner, groups: [],
             checked: !m.owner, // owners excluded by default
-          });
-        }
-      } else if (mode === 'all-groups') {
-        for (const a of (lastSnapshot?.agents || [])) {
-          if (a.online) continue;
-          if (!(a.groups || []).length) continue;
-          out.push({
-            conv_id: a.conv_id, title: a.title || '', category: 'agent',
-            online: false, lastActivity: (a.state || {}).last_hook || '',
-            owner: !!(a.owned_groups || []).length,
-            groups: a.groups || [], checked: true,
           });
         }
       } else {
@@ -5736,7 +5513,7 @@
 
     // cleanupTier is the effective tier for the current mode: group
     // mode is hardwired to unjoin (it hits the single-group endpoint);
-    // agents / all-groups read the radio-backed `tier` variable.
+    // agents mode reads the radio-backed `tier` variable.
     function cleanupTier() {
       return mode === 'group' ? 'unjoin' : tier;
     }
@@ -5761,9 +5538,9 @@
           'Include offline owners <span class="opt-note">— also strips their owner status</span></label>';
         return;
       }
-      // agents / all-groups: the tier selector. The reinstate tier is
-      // Agents-tab only — it has no meaning for a group-membership
-      // cleanup.
+      // agents mode: the tier selector (group mode returned above).
+      // The reinstate tier has no meaning for a single-group
+      // membership cleanup, so it only appears here.
       let radios =
         tierRadio('unjoin', 'Unjoin from groups',
           'stays an agent — only its group memberships are dropped') +
@@ -5866,7 +5643,7 @@
       return candidates.filter(c => rowVisible(c) && rowEnabled(c) && c.checked);
     }
 
-    // renderCategories draws the category-filter row (Agents tab only).
+    // renderCategories draws the category-filter row ('agents' mode only).
     function renderCategories() {
       if (!multiCat) { catsEl.style.display = 'none'; return; }
       catsEl.style.display = '';
@@ -5909,7 +5686,7 @@
         listEl.innerHTML = vis.map(rowHTML).join('');
         return;
       }
-      // Agents tab: group the visible rows under category sub-headers.
+      // 'agents' mode: group the visible rows under category sub-headers.
       let html = '';
       for (const cat of CLEANUP_CATS) {
         const rows = vis.filter(c => c.category === cat);
@@ -5959,10 +5736,8 @@
       const titleEl = $('#cleanup-title');
       if (mode === 'group') {
         titleEl.textContent = '🧹 Clean up group: ' + groupName;
-      } else if (mode === 'all-groups') {
-        titleEl.textContent = '🧹 Clean up all groups';
       } else {
-        titleEl.textContent = '🧹 Clean up conversations';
+        titleEl.textContent = '🧹 Clean up agents and conversations';
       }
       applyHint();
     }
@@ -6123,7 +5898,7 @@
       if (e.target.id === 'cleanup-opt-online') {
         includeOnline = e.target.checked;
       }
-      // agents / all-groups: a tier radio changed — update the tier and
+      // agents mode: a tier radio changed — update the tier and
       // re-lock the dependent sub-options.
       if (e.target.name === 'cleanup-tier') {
         tier = e.target.value;
@@ -6865,8 +6640,8 @@
             return;
           }
           case 'cron-new': {
-            // Context-aware "+ new cron job" buttons from Agents /
-            // Groups tabs land here. data-prefill is a JSON blob
+            // Context-aware "+ new cron job" buttons from the Agents
+            // tab (per-agent + per-group) land here. data-prefill is a JSON blob
             // describing the prefill state (targetMode, target,
             // groupName, owner). Empty / missing → default form.
             let prefill = {};
@@ -8106,7 +7881,6 @@
   bindDnd();
   bindFilter('groups');
   bindFilter('templates');
-  bindFilter('agents');
   bindFilter('cron');
   bindFilter('sudo');
   bindFilter('links');
