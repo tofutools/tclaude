@@ -78,12 +78,13 @@ On every request the daemon:
 3. Reads `~/.claude/sessions/<pid>.json` for that ancestor's
    `sessionId` — the conv-id Claude Code is *currently* executing,
    which automatically tracks `/fork`/`/clear`/`/resume`.
-4. That conv-id is the request's authenticated identity.
+4. That conv-id is the request's resolved identity — a coordination
+   signal, not an authentication guarantee. See "Security model" below.
 
 If no `claude` ancestor exists, the caller is treated as the local
-human. The same UID check guards against other users on the host
-(macOS sockets default to 0600, so this is enforced by file
-permissions).
+human. The socket is mode 0600, so file permissions already bound
+every caller to the same UID; the peer-PID walk only sorts that
+same-UID population into agents vs. the human.
 
 Trade-off: unlike a token, this identity can't be passed around — a
 child of an agent that opens the socket on its own behalf is still
@@ -91,6 +92,40 @@ that agent's conv-id. That's the right semantic for our use case.
 
 No `agent_tokens` table is needed. No bootstrap secret. No env-var
 plumbing into tmux session env.
+
+## Security model — a guardrail, not a boundary
+
+The identity model above is a **coordination guardrail, not a security
+boundary**. This is the deliberate, accepted trust model — stated plainly
+so nobody later mistakes the guardrail for a boundary.
+
+- **The trust boundary is the Unix UID.** The socket is mode 0600, so
+  `SO_PEERCRED` already bounds every caller to the same user. Everything
+  the peer-PID walk adds on top — which agent is calling, agent vs.
+  human — exists to *shape agent behaviour and prevent accidents*, not to
+  withstand a hostile caller.
+- **It is deliberately fail-open toward "human".** A caller with no
+  `claude`/`node` ancestor in its process tree is treated as the human
+  operator and bypasses all permission gating. An agent can reach that
+  state on purpose — e.g. by double-forking so its socket-opening process
+  reparents away from its Claude Code ancestor.
+- **That is an accepted residual, not a deferred fix.** A process running
+  as the same UID can already mutate `~/.tclaude` state — the SQLite DB,
+  `config.json` — directly, with no daemon involved. The permission layer
+  was never a boundary against such a process and cannot be made into one
+  at this layer. Containing a hostile same-UID process is the OS sandbox's
+  job, not the daemon's.
+- **What the layer *does* buy:** it stops a well-behaved agent from doing
+  sensitive things by accident or through ordinary tool use, makes
+  human-in-the-loop the default for sensitive operations, and gives the
+  human one consistent place to grant or deny. That is its whole purpose,
+  and it serves it well.
+
+**Do not build a feature that needs a real security boundary on top of
+this identity.** If `agentd` ever needs one, it requires positively
+authenticating the human (a deliberately-rejected non-goal — see above)
+and failing the socket closed for unidentified callers. That is a
+separate, larger piece of work, not a tweak to the peer-cred walk.
 
 ## Endpoints
 
