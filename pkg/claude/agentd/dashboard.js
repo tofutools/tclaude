@@ -629,7 +629,7 @@
   }
 
   // The virtual "Conversations" group — non-agent conversations,
-  // surfaced in the Agents tab so a raw conversation can be dragged
+  // surfaced in the Groups tab so a raw conversation can be dragged
   // into a group (which promotes it) without leaving the tab.
   const CONVERSATIONS_LABEL = 'Conversations';
   const CONVERSATIONS_VKEY = ' conversations-virtual';
@@ -660,7 +660,7 @@
   }
 
   // The virtual "Retired" group — agents that were demoted back to
-  // plain conversations (retire). Surfaced in the Agents tab so a
+  // plain conversations (retire). Surfaced in the Groups tab so a
   // retired agent doesn't silently vanish off the tab: it lands here
   // and can be reinstated in place.
   const RETIRED_LABEL = 'Retired';
@@ -684,7 +684,7 @@
 
   // retiredVisible reports the "show retired" checkbox state. Defaults
   // to true when the checkbox isn't in the DOM yet — a retired agent
-  // must not silently disappear from the Agents tab.
+  // must not silently disappear from the Groups tab.
   function retiredVisible() {
     const el = $('#filter-groups-retired');
     return el ? el.checked : true;
@@ -983,7 +983,7 @@
     const defaults = perm.defaults || [];
     // Split each conv's tri-state override map into granted / denied
     // slug lists for display. The per-agent "permissions" button on the
-    // Agents tab is the write path; this tab is the roster.
+    // Groups tab is the write path; this tab is the roster.
     const rows = Object.entries(overrides).map(([k, slugEffects]) => {
       const granted = [], denied = [];
       for (const [slug, effect] of Object.entries(slugEffects || {})) {
@@ -1975,7 +1975,7 @@
       // is an empty group, so the instruction must not mention them.
       const scopedSolo = mode === 'solo' && !!targetPickerScopes['cron-create'];
       errEl.textContent = mode === 'group'
-        ? 'Pick a group from the dropdown (or create one first via the Agents tab).'
+        ? 'Pick a group from the dropdown (or create one first via the Groups tab).'
         : scopedSolo
           ? 'This group has no members to nudge — switch to Group (multicast), or add a member to the group first.'
           : 'Target is required — type a title / conv-id or use 🔍 to pick.';
@@ -2360,7 +2360,7 @@
       if (!to) {
         errEl.textContent = mode === 'solo'
           ? 'Target is required — type a title / conv-id or use 🔍 to pick.'
-          : 'Pick a group from the dropdown (or create one first via the Agents tab).';
+          : 'Pick a group from the dropdown (or create one first via the Groups tab).';
         return;
       }
     }
@@ -2691,7 +2691,7 @@
 
   function bindGroupCreateModal() {
     $('#group-create-open').addEventListener('click', openGroupCreateModal);
-    // 🧹 cleanup: the Agents tab's "clean up" button opens the rich
+    // 🧹 cleanup: the Groups tab's "clean up" button opens the rich
     // multi-category cleanup modal — bulk unjoin / retire / delete /
     // reinstate spanning active agents, retired agents and plain
     // conversations (openCleanupModal mode 'agents').
@@ -2992,7 +2992,7 @@
         : `group ${groupName}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
         failed > 0);
       try { localStorage.setItem('tclaude.dash.group.' + groupName, '1'); } catch (_) {}
-      // Jump to the Agents tab so the freshly-spawned group is visible.
+      // Jump to the Groups tab so the freshly-spawned group is visible.
       const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
       if (gbtn) gbtn.click();
       refresh();
@@ -3052,7 +3052,7 @@
   }
 
   function bindTemplatesUI() {
-    // Entry points: Templates tab + the Agents tab's "⎘ from template".
+    // Entry points: Templates tab + the Groups tab's "⎘ from template".
     $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
     $('#template-from-group-open').addEventListener('click', openFromGroupModal);
     $('#group-from-template-open').addEventListener('click', () => openInstantiateModal(null));
@@ -4411,7 +4411,7 @@
         rerender();
       });
     }
-    // Optional "show ungrouped" checkbox (Agents tab only) — toggles
+    // Optional "show ungrouped" checkbox (groups tab only) — toggles
     // the virtual Ungrouped group. Persisted like the offline toggle;
     // defaults to checked when the user has never touched it.
     const ungrouped = $(`#filter-${tab}-ungrouped`);
@@ -4424,7 +4424,7 @@
         rerender();
       });
     }
-    // Optional "show conversations" checkbox (Agents tab only) —
+    // Optional "show conversations" checkbox (groups tab only) —
     // toggles the virtual Conversations group. Defaults OFF (there can
     // be many conversations) when the user has never touched it.
     const conversations = $(`#filter-${tab}-conversations`);
@@ -4437,7 +4437,7 @@
         rerender();
       });
     }
-    // Optional "show retired" checkbox (Agents tab only) — toggles the
+    // Optional "show retired" checkbox (groups tab only) — toggles the
     // virtual Retired group. Defaults ON: a retired agent must stay
     // visible somewhere on the tab rather than silently disappearing.
     const retired = $(`#filter-${tab}-retired`);
@@ -5225,7 +5225,7 @@
           grp.members = grp.members || [];
           grp.members.push({conv_id: cand.conv_id, title: cand.title, online: cand.online});
         }
-        // Re-render the dashboard's Agents tab so the just-added row
+        // Re-render the dashboard groups tab so the just-added row
         // appears under the group header without a poll round-trip.
         renderGroupsTab();
         render();
@@ -5379,7 +5379,7 @@
 
   // ---- 🧹 Cleanup modal ---------------------------------------------
   //
-  // CLEANUP_CATS — the three conversation categories the Agents-tab
+  // CLEANUP_CATS — the three conversation categories the 'agents'-mode
   // cleanup modal spans, in display order. Each maps to a disjoint
   // snapshot list (agents / retired / conversations).
   const CLEANUP_CATS = ['agent', 'retired', 'conversation'];
@@ -5389,7 +5389,7 @@
 
   // openCleanupModal drives the bulk-cleanup overlay. opts.mode:
   //   'group'      — remove confirmed-offline members from opts.group.
-  //   'agents'     — the rich Agents-tab tool: spans all three
+  //   'agents'     — the rich multi-category tool: spans all three
   //                  categories (active agents, retired agents, plain
   //                  conversations) with category / online / search
   //                  filters and four tiers (unjoin, retire, delete,
@@ -5420,17 +5420,17 @@
     const mode = opts.mode;
     const groupName = opts.group || '';
     let phase = 'select';
-    // multiCat — only the Agents-tab modal spans categories and gets
+    // multiCat — only 'agents' mode spans categories and gets
     // the category / search filters and the reinstate tier.
     const multiCat = mode === 'agents';
-    // The cleanup tier: unjoin | retire | delete | reinstate. The
-    // Agents tab defaults to delete so every category is visible on
-    // open (retire/reinstate would hide other categories); the Groups
-    // tab defaults to unjoin. group mode always unjoins.
+    // The cleanup tier: unjoin | retire | delete | reinstate.
+    // 'agents' mode defaults to delete so every category is visible on
+    // open (retire/reinstate would hide other categories); 'group'
+    // mode always unjoins.
     let tier = multiCat ? 'delete' : 'unjoin';
     if (opts.tier) tier = opts.tier;
-    // Category filter (Agents tab). opts.categories pre-scopes it — the
-    // Retired section's cleanup button opens straight onto ['retired'].
+    // Category filter for 'agents' mode. opts.categories, when
+    // supplied by a caller, pre-scopes which categories start ticked.
     const catOn = {};
     for (const k of CLEANUP_CATS) {
       catOn[k] = opts.categories ? opts.categories.includes(k) : true;
@@ -5643,7 +5643,7 @@
       return candidates.filter(c => rowVisible(c) && rowEnabled(c) && c.checked);
     }
 
-    // renderCategories draws the category-filter row (Agents tab only).
+    // renderCategories draws the category-filter row ('agents' mode only).
     function renderCategories() {
       if (!multiCat) { catsEl.style.display = 'none'; return; }
       catsEl.style.display = '';
@@ -5686,7 +5686,7 @@
         listEl.innerHTML = vis.map(rowHTML).join('');
         return;
       }
-      // Agents tab: group the visible rows under category sub-headers.
+      // 'agents' mode: group the visible rows under category sub-headers.
       let html = '';
       for (const cat of CLEANUP_CATS) {
         const rows = vis.filter(c => c.category === cat);

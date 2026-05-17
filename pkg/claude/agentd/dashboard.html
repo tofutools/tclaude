@@ -20,11 +20,7 @@
   <button id="emergency-all-btn" data-act="emergency-shutdown-all" title="Emergency shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">⏻ shut down all</button>
 </header>
 <nav>
-  <!-- The "Agents" tab is internally keyed "groups" (data-tab / id="tab-groups" /
-       renderGroupsTab / #filter-groups). The standalone "Agents" tab was removed —
-       the groups view subsumed it — and this tab was relabelled. The rename is
-       label-only on purpose: every internal "groups" identifier is kept. -->
-  <button class="active" data-tab="groups">Agents</button>
+  <button class="active" data-tab="groups">Groups</button>
   <button data-tab="templates">Templates</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
