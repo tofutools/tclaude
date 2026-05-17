@@ -19,13 +19,13 @@ import (
 func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardHTML, needle) {
+		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html missing %q (%s)", needle, why)
 		}
 	}
 	mustNot := func(needle, why string) {
 		t.Helper()
-		if strings.Contains(dashboardHTML, needle) {
+		if strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html still contains %q (%s)", needle, why)
 		}
 	}
@@ -56,7 +56,7 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	// dragend is the one guaranteed reset for every drag-end outcome
 	// (drop, Escape-cancel, release-over-nothing). It must clear the
 	// drag flag, and must do so before any DOM cleanup that could throw.
-	dragend := dashboardHTML[strings.Index(dashboardHTML, "addEventListener('dragend'"):]
+	dragend := dashboardAssets[strings.Index(dashboardAssets, "addEventListener('dragend'"):]
 	dragend = dragend[:strings.Index(dragend, "});")]
 	if !strings.Contains(dragend, "dndDragActive = false;") {
 		t.Errorf("dragend handler must reset dndDragActive = false")

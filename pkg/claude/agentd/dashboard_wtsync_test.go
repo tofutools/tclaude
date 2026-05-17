@@ -14,7 +14,7 @@ import (
 func TestDashboardHTML_WorktreeNameSyncWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
-		if !strings.Contains(dashboardHTML, needle) {
+		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.html missing %q (%s)", needle, why)
 		}
 	}
@@ -48,7 +48,7 @@ func TestDashboardHTML_WorktreeNameSyncWired(t *testing.T) {
 	// Every spawn-side picker reload goes through spawnWtLoad so the
 	// checkbox state stays consistent — the only wtLoad('agent-spawn')
 	// left is the one inside spawnWtLoad itself.
-	if n := strings.Count(dashboardHTML, "wtLoad('agent-spawn'"); n != 1 {
+	if n := strings.Count(dashboardAssets, "wtLoad('agent-spawn'"); n != 1 {
 		t.Errorf("dashboard.html: want exactly 1 wtLoad('agent-spawn', ...) (inside spawnWtLoad); got %d — other spawn reloads must go through spawnWtLoad", n)
 	}
 }

@@ -35,13 +35,13 @@ func dndFuncBody(t *testing.T, name string) string {
 		"runDndRemoveFromGroup", "runDndRetire", "runDndPromoteToUngrouped",
 		"runDndReinstate",
 	}
-	start := strings.Index(dashboardHTML, "async function "+name+"(")
+	start := strings.Index(dashboardAssets, "async function "+name+"(")
 	if start < 0 {
 		t.Fatalf("dashboard.html: %s not found", name)
 	}
 	// Search the end marker strictly AFTER `start` so an identical
 	// token earlier in the file can never truncate the slice.
-	rest := dashboardHTML[start+1:]
+	rest := dashboardAssets[start+1:]
 	endRel := strings.Index(rest, "bindTabs();")
 	for i, n := range order {
 		if n == name && i+1 < len(order) {
@@ -54,7 +54,7 @@ func dndFuncBody(t *testing.T, name string) string {
 	if endRel < 0 {
 		t.Fatalf("dashboard.html: could not bound %s", name)
 	}
-	body := dashboardHTML[start : start+1+endRel]
+	body := dashboardAssets[start : start+1+endRel]
 	// Trim the trailing whitespace + next function's doc comment back
 	// to this function's own closing brace ("\n  }" — 2-space indent;
 	// every deeper brace is indented further, doc comments never are).
