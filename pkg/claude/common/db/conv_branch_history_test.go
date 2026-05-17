@@ -96,6 +96,27 @@ func TestConvBranchHistory_RebuildDropsStaleScanRows(t *testing.T) {
 	assert.Equal(t, "main", rows[0].Branch)
 }
 
+// TestConvBranchHistory_RebuildWithEmptyObsClearsScanKeepsHook covers
+// the degenerate rebuild: a re-scan that observes no branches at all
+// (a .jsonl with no branch-stamped turns) drops every 'scan' row yet
+// leaves 'hook' rows — re-scan owns only what it can see.
+func TestConvBranchHistory_RebuildWithEmptyObsClearsScanKeepsHook(t *testing.T) {
+	setupTestDB(t)
+
+	t0 := time.Date(2026, 5, 17, 9, 0, 0, 0, time.UTC)
+	require.NoError(t, RebuildConvBranchHistoryScan("c1", []BranchObservation{
+		{Branch: "main", RepoDir: "/repo", FirstSeen: t0, LastSeen: t0},
+	}))
+	require.NoError(t, AppendConvBranchHistoryHook("c1", "worktree-feat", "/wt"))
+
+	require.NoError(t, RebuildConvBranchHistoryScan("c1", nil))
+
+	rows := mustList(t, "c1")
+	require.Len(t, rows, 1, "the scan row is dropped, the hook row survives")
+	assert.Equal(t, "worktree-feat", rows[0].Branch)
+	assert.Equal(t, BranchSourceHook, rows[0].Source)
+}
+
 // TestConvBranchHistory_RebuildPreservesPRSnapshot asserts a PR stamped
 // by SetConvBranchHistoryPR survives a subsequent re-scan — the rebuild
 // owns the branch set, not the PR enrichment.

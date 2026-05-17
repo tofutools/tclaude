@@ -209,7 +209,11 @@ func AppendConvBranchHistoryHook(convID, branch, repoDir string) error {
 // Matching on (repo_dir, branch) rather than conv_id is deliberate:
 // the resolver knows a directory and a branch, not a conversation, and
 // two conversations sharing a worktree should both pick up the PR.
-// prNumber 0 / empty strings clear a stale snapshot (a deleted PR).
+//
+// This writes whatever it is handed — including zero values, which
+// would blank a row. The resolver therefore only calls it with a real
+// PR (PRNumber > 0); see refreshBranchLink for why a zero must not
+// overwrite a good snapshot.
 //
 // An empty repoDir or branch is a no-op.
 func SetConvBranchHistoryPR(repoDir, branch string, prNumber int, prURL, prState string) error {

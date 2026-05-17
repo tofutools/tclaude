@@ -164,9 +164,19 @@ func refreshBranchLink(repoDir, branch, key string) {
 	// (repoDir, branch). The history table rides the resolution the
 	// dashboard already pays for here — for an agent's active and
 	// startup branches — rather than shelling out to `gh` itself.
-	if err := db.SetConvBranchHistoryPR(repoDir, branch, info.PRNumber, info.PRURL, info.PRState); err != nil {
-		slog.Warn("branchlinks: failed to stamp branch-history PR",
-			"error", err, "repo", repoDir, "branch", branch, "module", "agentd")
+	//
+	// Only stamp when a PR was actually found. `gh` is best-effort and
+	// regularly rate-limited; a failed `gh pr view` is indistinguishable
+	// from "no PR" — both yield PRNumber 0. Stamping that zero would wipe
+	// a good snapshot off a branch the agent has since moved away from
+	// (it gets no further refresh). So a zero is treated as "no new
+	// info" and the prior snapshot is left intact. A merged or closed PR
+	// still reports a non-zero number, so genuine state changes land.
+	if info.PRNumber > 0 {
+		if err := db.SetConvBranchHistoryPR(repoDir, branch, info.PRNumber, info.PRURL, info.PRState); err != nil {
+			slog.Warn("branchlinks: failed to stamp branch-history PR",
+				"error", err, "repo", repoDir, "branch", branch, "module", "agentd")
+		}
 	}
 }
 
