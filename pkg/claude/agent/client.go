@@ -194,6 +194,24 @@ func DaemonPatch(path string, in, out any) error {
 	return daemonReq(http.MethodPatch, path, in, out, DaemonOpts{})
 }
 
+// HumanTokenHeader / HumanTokenEnvVar mirror agentd's humanTokenHeader /
+// humanTokenEnvVar — the `agent` package cannot import `agentd` (import
+// cycle), so the strings are duplicated here. Keep them in sync.
+const (
+	HumanTokenHeader = "X-Tclaude-Human-Token"
+	HumanTokenEnvVar = "TCLAUDE_HUMAN_TOKEN"
+)
+
+// attachHumanToken adds the operator-token header to a daemon request
+// when TCLAUDE_HUMAN_TOKEN is set in the environment. The human operator
+// exports it (see `tclaude agent token`); agents never have it set, and
+// agentd ignores it for agent-family callers anyway. No-op when unset.
+func attachHumanToken(req *http.Request) {
+	if tok := strings.TrimSpace(os.Getenv(HumanTokenEnvVar)); tok != "" {
+		req.Header.Set(HumanTokenHeader, tok)
+	}
+}
+
 // DaemonRequestImpl is the indirection point for DaemonRequest so CLI
 // flow-tests can capture the body a `tclaude agent <verb>` invocation
 // would have sent without standing up a real daemon. Production code
@@ -221,6 +239,7 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 	if err != nil {
 		return err
 	}
+	attachHumanToken(req)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -275,6 +294,7 @@ func DaemonGetRaw(path string) ([]byte, http.Header, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	attachHumanToken(req)
 	resp, err := httpClientWithTimeout(daemonRawTimeout).Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -298,6 +318,7 @@ func DaemonPostRaw(path, contentType string, body []byte, out any) error {
 	if err != nil {
 		return err
 	}
+	attachHumanToken(req)
 	req.Header.Set("Content-Type", contentType)
 	resp, err := httpClientWithTimeout(daemonRawTimeout).Do(req)
 	if err != nil {

@@ -20,6 +20,7 @@ func Cmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			whoamiCmd(),
+			tokenCmd(),
 			renameCmd(),
 			compactCmd(),
 			reincarnateCmd(),

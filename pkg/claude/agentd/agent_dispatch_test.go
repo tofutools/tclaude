@@ -22,7 +22,7 @@ func requestWithPeer(p *peer) *http.Request {
 func TestRequireCrossAgentPermission_HumanAlwaysPasses(t *testing.T) {
 	setupTestDB(t)
 	w := httptest.NewRecorder()
-	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: false})
+	r := requestWithPeer(&peer{PID: 999, HumanTokenValid: true})
 	caller, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "target-conv")
 	require.True(t, ok, "human caller should pass; body=%s", w.Body.String())
 	assert.Empty(t, caller, "human caller convID should be empty")
@@ -178,10 +178,10 @@ func TestHandlePeers_HumanSeesAllGroups(t *testing.T) {
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "agent-1"})
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "agent-2"})
 
-	// Human caller: PID set, but no claude ancestor and no conv-id.
+	// Human caller: operator token, no claude ancestor.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/peers", nil)
-	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HasClaudeAncestor: false}))
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
 	handlePeers(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	body := w.Body.String()

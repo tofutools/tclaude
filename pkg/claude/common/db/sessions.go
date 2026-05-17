@@ -125,6 +125,31 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 	return s, err
 }
 
+// FindSessionByPID finds a session by its (host) process PID — the PID
+// of the Claude Code process, as recorded by the hook callback. Used by
+// agentd's identity resolution as a fallback conv-id source when a
+// caller's per-pid ~/.claude/sessions/<pid>.json is missing or
+// transiently unreadable. Returns the most recently updated row for that
+// PID; nil (no error) when none match. pid 0 — the column default — never
+// matches.
+func FindSessionByPID(pid int) (*SessionRow, error) {
+	if pid <= 0 {
+		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
+		auto_registered, created_at, updated_at, last_hook FROM sessions WHERE pid = ?
+		ORDER BY updated_at DESC LIMIT 1`, pid)
+	s, err := scanSession(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return s, err
+}
+
 // FindSessionsByConvID returns every row for the given conv_id, most
 // recently updated first. Used by the agent daemon to find a row whose
 // tmux session is actually alive when several stale rows coexist.

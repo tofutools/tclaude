@@ -70,7 +70,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 // handleDashboardGroupsCreate is the cookie-auth twin of POST /v1/groups.
 // Delegates to handleGroups after stamping a synthetic human peer — the
 // cookie+Origin pin is the human-consent layer; requirePermission then
-// short-circuits the slug check via the !HasClaudeAncestor branch.
+// sees a classHuman caller (asDashboardHumanPeer sets DashboardHuman).
 // Registered as `POST /api/groups`, so the mux rejects other methods.
 func handleDashboardGroupsCreate(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
@@ -734,9 +734,9 @@ const (
 //     Body: `{follow_up}` — REQUIRED.
 //
 // Cookie auth ≈ human (checkDashboardAuth is the consent layer), so the
-// force path's requireCrossAgentPermission short-circuits via the
-// !HasClaudeAncestor branch and the audit trail records the dashboard
-// granter.
+// force path's requireCrossAgentPermission sees a classHuman caller
+// (asDashboardHumanPeer sets DashboardHuman) and the audit trail records
+// the dashboard granter.
 func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
 	res, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {
@@ -900,8 +900,8 @@ func buildSelfReincarnateInstruction(focusHint string) (subject, body string) {
 // `{title: "..."}` for an explicit rename, or `{auto: true}` to
 // inject a system nudge that asks the agent to pick its own title
 // via the agent-rename skill / CLI. Cookie auth ≈ human, so
-// requireCrossAgentPermission short-circuits via the
-// !HasClaudeAncestor branch.
+// requireCrossAgentPermission sees a classHuman caller
+// (asDashboardHumanPeer sets DashboardHuman).
 func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
 	res, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {

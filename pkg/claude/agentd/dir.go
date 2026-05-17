@@ -125,9 +125,14 @@ func handleAgentDir(w http.ResponseWriter, r *http.Request, convID string) {
 	case http.MethodPost:
 		// Opening a terminal lands a window on the human's desktop. An
 		// agent may do that for itself, but spawning windows targeting
-		// *other* agents is human-only. Humans (no claude ancestor)
-		// always pass; an agent passes only when it IS the target.
-		if p := peerFromContext(r.Context()); p.HasClaudeAncestor && p.ConvID != convID {
+		// *other* agents is human-only. The human operator always passes;
+		// an agent passes only when it IS the target; unidentified /
+		// unconfirmed callers are refused fail-closed.
+		callerConv, isHuman, ok := authedCaller(w, r)
+		if !ok {
+			return
+		}
+		if !isHuman && callerConv != convID {
 			writeError(w, http.StatusForbidden, "permission",
 				"an agent may open a terminal only for itself; cross-agent terminal spawn is human-only")
 			return

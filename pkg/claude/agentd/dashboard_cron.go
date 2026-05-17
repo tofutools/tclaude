@@ -122,8 +122,8 @@ func handleDashboardCronAPI(w http.ResponseWriter, r *http.Request) {
 // handleDashboardCronCreate is the cookie-auth twin of POST /v1/cron.
 // Delegates to handleCronCreate after stamping a synthetic human peer
 // on the request — the cookie+Origin pin is the human-consent layer,
-// and the inner handler's authCronWrite then short-circuits the slug
-// check via the !HasClaudeAncestor branch.
+// and the inner handler's authCronWrite then sees a classHuman caller
+// (asDashboardHumanPeer sets DashboardHuman).
 func handleDashboardCronCreate(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return

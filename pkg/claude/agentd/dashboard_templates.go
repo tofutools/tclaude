@@ -10,9 +10,9 @@ import "net/http"
 // after stamping a synthetic human peer with asDashboardHumanPeer: the
 // dashboard cookie + Origin pin is the human-consent layer, and routing
 // through the shared handler keeps the templates.* slug checks
-// structurally enforced on every path (requirePermission then
-// short-circuits via the !HasClaudeAncestor branch). Same wiring as the
-// /api/groups routes in dashboard_edit.go.
+// structurally enforced on every path (requirePermission sees a
+// classHuman caller — asDashboardHumanPeer sets DashboardHuman). Same
+// wiring as the /api/groups routes in dashboard_edit.go.
 
 // registerDashboardTemplateRoutes wires the cookie-authed /api/templates
 // endpoints onto the loopback mux:

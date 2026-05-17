@@ -959,6 +959,8 @@ func liveSpawnNew(label, cwd string) error {
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	// Spawned agents must not inherit the human's operator token.
+	cmd.Env = spawnEnvWithoutOperatorToken()
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
@@ -1004,6 +1006,8 @@ func liveSpawnResume(convID, cwd string) error {
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	// Spawned agents must not inherit the human's operator token.
+	cmd.Env = spawnEnvWithoutOperatorToken()
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
 		return err

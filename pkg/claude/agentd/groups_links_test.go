@@ -20,7 +20,7 @@ func TestRequireScopedLinkAuthority_HumanPasses(t *testing.T) {
 	groupA, _ := db.GetAgentGroupByID(a)
 
 	w := httptest.NewRecorder()
-	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: false})
+	r := requestWithPeer(&peer{PID: 999, HumanTokenValid: true})
 	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
 	require.True(t, ok, "human should pass; body=%s", w.Body.String())
 }

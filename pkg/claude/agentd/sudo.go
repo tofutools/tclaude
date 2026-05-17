@@ -175,12 +175,8 @@ func handleSudoByID(w http.ResponseWriter, r *http.Request) {
 	}
 	// Revoke is human-only: agents can't take elevations away from
 	// each other (would defeat the audit-log promise of "human
-	// approved + scoped"). Mirror requireHuman from the head-alias
-	// surface.
-	p := peerFromContext(r.Context())
-	if p.HasClaudeAncestor {
-		writeError(w, http.StatusForbidden, "auth",
-			"only humans may revoke sudo grants (no agent path)")
+	// approved + scoped").
+	if !requireHuman(w, r, "revoke sudo grants") {
 		return
 	}
 	n, err := db.RevokeSudoGrant(id)
@@ -251,15 +247,22 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Original agent-initiated, popup-gated path.
-	if !p.HasClaudeAncestor {
+	// Original agent-initiated, popup-gated path — confirmed agent only.
+	switch classify(p) {
+	case classAgent:
+		// proceed below
+	case classHuman:
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"sudo is only meaningful for agent callers without --target; humans seed proactive grants by setting body.target = <conv selector>")
 		return
-	}
-	if p.ConvID == "" {
-		writeError(w, http.StatusForbidden, "auth",
-			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate sudo request")
+	case classUnidentified:
+		writeUnidentified(w)
+		return
+	case classAgentUnknown:
+		writeAgentUnknown(w)
+		return
+	case classUnconfirmed:
+		writeUnconfirmed(w)
 		return
 	}
 
@@ -336,9 +339,9 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 // handleSudoRequest's dispatch). Returning 403 keeps the
 // manager-pattern-approval gap explicit.
 func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBody, granter string) {
-	if p.HasClaudeAncestor {
+	if classify(p) != classHuman {
 		writeError(w, http.StatusForbidden, "auth",
-			"agent callers cannot proactively grant sudo to other convs (manager-pattern approval is deferred; the human seeds proactive grants from the dashboard or `tclaude agent sudo request --target <conv>` from a non-agent shell)")
+			"only the human operator may proactively grant sudo to other convs (manager-pattern approval is deferred; seed proactive grants from the dashboard, or `tclaude agent sudo request --target <conv>` with the operator token set)")
 		return
 	}
 	res, _, err := agent.ResolveSelector(strings.TrimSpace(body.Target))
@@ -472,9 +475,7 @@ func handleSudoList(w http.ResponseWriter, r *http.Request) {
 	if all {
 		// Cross-conv listing is human-only: an agent shouldn't see
 		// what permissions another agent currently holds.
-		if p.HasClaudeAncestor {
-			writeError(w, http.StatusForbidden, "auth",
-				"sudo ls --all is human-only")
+		if !requireHuman(w, r, "list all sudo grants") {
 			return
 		}
 		rows, err := db.ListAllActiveSudoGrants()
@@ -488,13 +489,20 @@ func handleSudoList(w http.ResponseWriter, r *http.Request) {
 	// Self-listing — agent path uses the caller's resolved conv-id;
 	// human path returns an empty list (humans don't have sudo grants
 	// — they hold every permission implicitly).
-	if !p.HasClaudeAncestor {
+	switch classify(p) {
+	case classHuman:
 		writeJSON(w, http.StatusOK, []sudoGrantJSON{})
 		return
-	}
-	if p.ConvID == "" {
-		writeError(w, http.StatusForbidden, "auth",
-			"caller has a Claude Code ancestor but no resolvable conv-id")
+	case classAgent:
+		// proceed to self-listing below
+	case classUnidentified:
+		writeUnidentified(w)
+		return
+	case classAgentUnknown:
+		writeAgentUnknown(w)
+		return
+	case classUnconfirmed:
+		writeUnconfirmed(w)
 		return
 	}
 	rows, err := db.ListActiveSudoGrants(p.ConvID)
@@ -506,10 +514,7 @@ func handleSudoList(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSudoRevokeBulk(w http.ResponseWriter, r *http.Request) {
-	p := peerFromContext(r.Context())
-	if p.HasClaudeAncestor {
-		writeError(w, http.StatusForbidden, "auth",
-			"only humans may revoke sudo grants (no agent path)")
+	if !requireHuman(w, r, "revoke sudo grants") {
 		return
 	}
 	q := r.URL.Query()

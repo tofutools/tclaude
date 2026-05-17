@@ -40,9 +40,9 @@ session start instead of trusting environment variables.
 
 - launchd / systemd integration. Comes later.
 - Multi-host clustering.
-- Authenticated tokens for the human ("god" token). For now the human
-  is whoever can reach the loopback socket — same trust boundary as
-  the existing tclaude binary.
+- ~~Authenticated tokens for the human.~~ **Superseded.** The daemon now
+  fails closed and authenticates the human operator with an interim
+  operator token — see "Identity & classification" and "Security model".
 - Migrating away from the current agent CLI. The CLI keeps working
   and routes every call through the daemon over the well-known
   Unix socket; when the socket isn't reachable, the CLI exits with
@@ -66,66 +66,97 @@ session start instead of trusting environment variables.
 `~/.tclaude/agentd.sock` is the well-known location; clients don't
 need a discovery file.
 
-## Identity (no tokens)
+## Identity & classification (fail-closed)
+
+Every request is classified into exactly one of three caller classes —
+there is no fail-open "assume human" path. The single function
+`classify()` (`agentd/identity.go`) is the *only* place this decision is
+made; every auth helper routes through it.
 
 On every request the daemon:
 
-1. Reads the connecting peer's PID from the socket
-   (`getpeereid` on macOS/BSD via `LOCAL_PEERPID`, `SO_PEERCRED` on
-   Linux).
-2. Walks up the process tree (same logic as `session.FindClaudePID`)
-   to find the nearest `claude`/`node` ancestor.
-3. Reads `~/.claude/sessions/<pid>.json` for that ancestor's
-   `sessionId` — the conv-id Claude Code is *currently* executing,
-   which automatically tracks `/fork`/`/clear`/`/resume`.
-4. That conv-id is the request's resolved identity — a coordination
-   signal, not an authentication guarantee. See "Security model" below.
+1. Reads the connecting peer's PID from the socket (`SO_PEERCRED` on
+   Linux, `LOCAL_PEERPID` on macOS/BSD). agentd runs host-side, so the
+   kernel reports the caller's real *host* PID.
+2. Walks the host process tree to the nearest `claude`/`node` ancestor.
+3. Resolves that ancestor's conv-id — from `~/.claude/sessions/<pid>.json`
+   (the `sessionId` Claude Code is *currently* executing, which tracks
+   `/fork`/`/clear`/`/resume`), or, as a fallback, from the daemon's own
+   `sessions` table keyed by host pid.
+4. Verifies the `X-Tclaude-Human-Token` header against the operator
+   token, when present.
 
-If no `claude` ancestor exists, the caller is treated as the local
-human. The socket is mode 0600, so file permissions already bound
-every caller to the same UID; the peer-PID walk only sorts that
-same-UID population into agents vs. the human.
+The resulting class:
 
-Trade-off: unlike a token, this identity can't be passed around — a
-child of an agent that opens the socket on its own behalf is still
-that agent's conv-id. That's the right semantic for our use case.
+- **Agent** — a Claude Code ancestor with a resolved conv-id. That
+  conv-id is the request's identity.
+- **Human** — the human operator: a caller presenting a valid operator
+  token, or a request delegated from the cookie-authenticated dashboard.
+- **Unconfirmed** — neither. Refused `403` (`code: "unconfirmed"`). A
+  peer whose PID could not be read is refused `401`.
 
-No `agent_tokens` table is needed. No bootstrap secret. No env-var
-plumbing into tmux session env.
+**Precedence is load-bearing:** a Claude Code ancestor wins over any
+operator token. The human exports the token into their shell, so a CC
+session launched from that shell inherits it; if the token could promote
+a caller, such an agent would escalate to human. An agent-family caller
+is therefore never offered the token branch — and agentd additionally
+scrubs `TCLAUDE_HUMAN_TOKEN` from the environment of every CC session it
+spawns.
 
-## Security model — a guardrail, not a boundary
+### The operator token
 
-The identity model above is a **coordination guardrail, not a security
-boundary**. This is the deliberate, accepted trust model — stated plainly
-so nobody later mistakes the guardrail for a boundary.
+The operator token positively authenticates the human on the CLI /
+Unix-socket path. It is:
 
-- **The trust boundary is the Unix UID.** The socket is mode 0600, so
-  `SO_PEERCRED` already bounds every caller to the same user. Everything
-  the peer-PID walk adds on top — which agent is calling, agent vs.
-  human — exists to *shape agent behaviour and prevent accidents*, not to
-  withstand a hostile caller.
-- **It is deliberately fail-open toward "human".** A caller with no
-  `claude`/`node` ancestor in its process tree is treated as the human
-  operator and bypasses all permission gating. An agent can reach that
-  state on purpose — e.g. by double-forking so its socket-opening process
-  reparents away from its Claude Code ancestor.
-- **That is an accepted residual, not a deferred fix.** A process running
-  as the same UID can already mutate `~/.tclaude` state — the SQLite DB,
-  `config.json` — directly, with no daemon involved. The permission layer
-  was never a boundary against such a process and cannot be made into one
-  at this layer. Containing a hostile same-UID process is the OS sandbox's
-  job, not the daemon's.
-- **What the layer *does* buy:** it stops a well-behaved agent from doing
-  sensitive things by accident or through ordinary tool use, makes
-  human-in-the-loop the default for sensitive operations, and gives the
-  human one consistent place to grant or deny. That is its whole purpose,
-  and it serves it well.
+- minted fresh each daemon lifetime (`crypto/rand`, `tclo_` prefix),
+  held only in memory — never persisted, never written through `slog`
+  (slog → `~/.tclaude/output.log`);
+- printed to the startup banner **only when stdout is a TTY**; when
+  stdout is redirected (e.g. into the log) the banner prints only a
+  pointer, so the secret can never land in a file;
+- always retrievable with `tclaude agent token` (`GET /v1/auth/token`).
+  That endpoint is the *one* deliberate exception to "all auth routes
+  through `classify()`": it is gated on the legacy heuristic (caller has
+  no Claude Code ancestor), because it is how the human *obtains* the
+  token — routing it through `classify()` would be circular.
 
-**Do not build a feature that needs a real security boundary on top of
-this identity.** If `agentd` ever needs one, it requires positively
-authenticating the human (a deliberately-rejected non-goal — see above)
-and failing the socket closed for unidentified callers. That is a
-separate, larger piece of work, not a tweak to the peer-cred walk.
+The human sets it once per shell:
+
+```
+export TCLAUDE_HUMAN_TOKEN="$(tclaude agent token)"
+```
+
+A restart of agentd mints a new token; the human re-runs the export.
+Agents need no token and are unaffected. The cookie-authenticated
+dashboard continues to work with no token set.
+
+## Security model
+
+The fail-closed identity layer is a real boundary **only in composition
+with the OS sandbox** — stated plainly, no over-claim.
+
+- **vs a sandboxed agent** (bwrap PID-namespace): a real boundary. The
+  agent runs in its own PID namespace with a namespaced `/proc`; it
+  cannot see the human's process, cannot learn host PIDs, and cannot
+  read host files outside its sandbox mount, so it cannot obtain the
+  operator token — fail-closed then denies it every human-only
+  operation. It also cannot escape its Claude Code ancestry in agentd's
+  host-side process walk, so it is always classified as the agent it is.
+- **vs a non-sandboxed same-uid process**: *not* a boundary. Any
+  same-uid process can read `/proc/<human-pid>/environ` (hence the
+  token) and can mutate `~/.tclaude` state directly anyway. This is the
+  accepted same-uid residual.
+
+So: the OS sandbox confines the agent; the operator token gates the
+human path; neither is a standalone boundary.
+
+**Known edge — the stray-node caller.** A human running `tclaude agent`
+from a shell incidentally descended from a non-Claude `node` process is
+classified agent-family, and the operator token cannot promote it
+(agent-ness wins). It is refused fail-closed. Workaround: run operator
+commands from a clean terminal, or use the dashboard. This is accepted —
+tightening the classification to rescue it would reopen an agent-startup
+escalation window.
 
 ## Endpoints
 
@@ -275,8 +306,8 @@ target session's tmux pane.
 docs/plans/agentd.md           ← this doc
 docs/plans/agent-coord.md      ← v1 agent-coord design (still relevant)
 docs/plans/agents_todo.md      ← rolling TODO/DONE
-docs/sandbox-hardening.md      ← operator guide: sandboxing agents so
-                                 the guardrail above actually holds
+docs/sandbox-hardening.md      ← operator guide: sandboxing agents — what
+                                 the Security model above composes with
 pkg/claude/agentd/agentd.go    ← cobra wiring for `tclaude agentd`
 pkg/claude/agentd/serve.go     ← Unix socket setup + http.Server
 pkg/claude/agentd/discovery.go ← well-known socket path
