@@ -11,16 +11,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// Flow coverage for the clickable status-dot on/off toggle. The dot is
-// a frontend control, so its confirm dialog — every online (green-dot)
-// click pops one before stopping — lives in dashboard.html and is not
-// observable here. What IS observable — and what these scenarios pin —
-// is the backend effect a dot click produces: clicking an online dot
-// reaches POST /api/agents/{conv}/stop (soft /exit) and clicking an
-// offline dot reaches POST /api/agents/{conv}/resume. Those are the
-// very endpoints the existing "shut down" / "wake" row buttons hit;
-// the dot toggle adds no parallel endpoint, so testing the endpoints
-// IS testing the toggle's reachable surface.
+// Flow coverage for the clickable status-dot — the agent's SOLE
+// per-row power control (the dedicated wake/shutdown row buttons were
+// removed; the dot replaces them). The dot is a frontend control, so
+// its confirm dialog — an online click pops the 3-way Cancel / Soft
+// exit / Force kill confirm — lives in dashboard.html and is not
+// observable here. What IS observable — and what these scenarios pin
+// — is the backend effect a dot click produces: clicking an online
+// dot reaches POST /api/agents/{conv}/stop (soft /exit, or a
+// force-kill when the confirm's "Force kill" is picked) and clicking
+// an offline dot reaches POST /api/agents/{conv}/resume — so testing
+// the endpoints IS testing the dot's reachable surface.
 
 // dotOpResp decodes the per-conv result both /stop and /resume return.
 type dotOpResp struct {
@@ -50,9 +51,9 @@ func postDotVerb(t *testing.T, mux http.Handler, conv, verb, body string) (int, 
 	return rec.Code, resp
 }
 
-// Scenario: clicking a GREEN (online) status dot turns the agent off.
-// The handler POSTs /stop with force=false — the same soft /exit the
-// "shut down" row button's soft path uses. The live tmux session goes
+// Scenario: clicking a GREEN (online) status dot and picking "Soft
+// exit" in the confirm turns the agent off gently. The handler POSTs
+// /stop with force=false — a soft /exit. The live tmux session goes
 // away and the dashboard snapshot flips the agent to offline.
 func TestDotToggle_OnlineDotSoftStopsAgent(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
@@ -66,13 +67,12 @@ func TestDotToggle_OnlineDotSoftStopsAgent(t *testing.T) {
 	f.HaveEnrolledAgent(conv)
 	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
-	// A green-dot click always sends a SOFT stop — force is never set
-	// by the toggle, idle or not. Force-kill stays behind the explicit
-	// "shut down" button's confirm.
+	// The confirm's "Soft exit" choice sends {"force":false} — a soft
+	// /exit. (The "Force kill" choice is the next scenario.)
 	code, resp := postDotVerb(t, mux, conv, "stop", `{"force":false}`)
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "soft_stopped", resp.Action,
-		"a green-dot click must soft-exit, never force-kill; detail=%s", resp.Detail)
+		"a soft-exit choice must soft-stop, not force-kill; detail=%s", resp.Detail)
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
 
 	snap := fetchDashSnapshot(t, mux)
@@ -81,10 +81,42 @@ func TestDotToggle_OnlineDotSoftStopsAgent(t *testing.T) {
 	assert.False(t, a.Online, "after the toggle the agent's dot must read offline")
 }
 
+// Scenario: clicking a GREEN status dot and picking "Force kill" in
+// the 3-way confirm hard-stops the agent. The handler POSTs /stop
+// with force=true — a tmux kill-session, no /exit injection. This is
+// the per-agent force-kill path the dedicated "shut down" row button
+// used to own; folding it into the dot's confirm kept it reachable
+// after that button was removed.
+func TestDotToggle_OnlineDotCanForceKill(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "dtfk-1111-2222-3333-444444444444"
+	const tmuxSes = "tmux-dtfk"
+	f.HaveConvWithTitle(conv, "stuck-worker")
+	f.HaveAliveSession(conv, "spwn-dtfk", tmuxSes, "/tmp/dtfk")
+	f.HaveEnrolledAgent(conv)
+	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
+
+	// The confirm's "Force kill" choice sends {"force":true} — a tmux
+	// kill-session that needs no cooperation from the agent.
+	code, resp := postDotVerb(t, mux, conv, "stop", `{"force":true}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "killed", resp.Action,
+		"a force-kill choice must tmux kill-session; detail=%s", resp.Detail)
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
+
+	snap := fetchDashSnapshot(t, mux)
+	a := findDashAgent(snap, conv)
+	require.NotNil(t, a, "the agent stays on the roster after a force-kill")
+	assert.False(t, a.Online, "after the force-kill the agent's dot must read offline")
+}
+
 // Scenario: clicking a GREY (offline) status dot turns the agent back
-// on. The handler POSTs /resume — the same wake the "wake" row button
-// uses — and the dashboard snapshot flips the agent back to online.
-// The full off→on cycle proves the dot is a real toggle.
+// on. The handler POSTs /resume — no confirm, resume is
+// non-destructive — and the dashboard snapshot flips the agent back
+// to online. The full off→on cycle proves the dot is a real toggle.
 func TestDotToggle_OfflineDotWakesAgent(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)

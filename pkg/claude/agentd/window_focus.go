@@ -41,7 +41,7 @@ import (
 // close it: that would be the heavy-handed thing that closes a whole
 // multi-tab window.
 //
-// Two scopes, picked the same way as the emergency-shutdown buttons:
+// Two scopes, picked the same way as the shutdown / power-on buttons:
 //   - {"scope":"group","group":"<name>"} — the members of one group.
 //   - {"scope":"all"}                    — every active agent on the
 //     dashboard roster (db.ListActiveAgents): grouped and ungrouped
@@ -56,8 +56,8 @@ import (
 // agent outside its group.
 //
 // Permission: this endpoint follows the same gate as the per-agent
-// focus endpoint (handleDashboardJumpAPI) and the emergency-shutdown
-// endpoint — the dashboard cookie + Origin pin IS the human-consent
+// focus endpoint (handleDashboardJumpAPI) and the shutdown / power-on
+// endpoints — the dashboard cookie + Origin pin IS the human-consent
 // layer. Focusing a window is a human-desktop operation with no /v1
 // twin and no permission slug, so there is no shared permission-checked
 // handler to funnel through (the asDashboardHumanPeer pattern from
@@ -213,7 +213,7 @@ func handleAgentWindows(w http.ResponseWriter, r *http.Request) {
 	// Resolve each selected conv to its live tmux session. Offline
 	// agents have neither a session to focus nor a window to detach, so
 	// they drop out here with no outcome row — same collection rule as
-	// emergency-shutdown.
+	// the shutdown buttons.
 	type aliveTarget struct {
 		convID string
 		sess   *db.SessionRow
@@ -226,7 +226,7 @@ func handleAgentWindows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply the op to every agent in PARALLEL so one slow tmux call
-	// can't delay the rest — same shape as runEmergencyShutdown.
+	// can't delay the rest — same shape as runShutdown.
 	outcomes := make([]agentWindowOutcome, len(alive))
 	var wg sync.WaitGroup
 	for i := range alive {

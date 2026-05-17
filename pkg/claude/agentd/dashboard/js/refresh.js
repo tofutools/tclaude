@@ -282,13 +282,13 @@ export function confirmModal({title, body, meta, okLabel}) {
   });
 }
 
-// emergencyShutdown drives the group-level and whole-dashboard
-// emergency-shutdown buttons. It counts the running agents in scope
-// from the last snapshot, pops a confirm modal that states the
-// count and spells out that this is stop-only (no data deleted),
-// POSTs /api/emergency-shutdown, then toasts the outcome summary.
-// scope is "group" (groupName set) or "all" (groupName ignored).
-async function emergencyShutdown(scope, groupName) {
+// shutdownScope drives the group-level and whole-dashboard Shutdown
+// buttons. It counts the running agents in scope from the last
+// snapshot, pops a confirm modal that states the count and spells out
+// that this is stop-only (no data deleted), POSTs /api/shutdown, then
+// toasts the outcome summary. scope is "group" (groupName set) or
+// "all" (groupName ignored).
+async function shutdownScope(scope, groupName) {
   const snap = lastSnapshot || {};
   let running = 0;
   let where = '';
@@ -304,12 +304,12 @@ async function emergencyShutdown(scope, groupName) {
     metaLine = 'every group + ungrouped agents';
   }
   if (running === 0) {
-    toast(`emergency shutdown: no running agents in ${where}`);
+    toast(`shutdown: no running agents in ${where}`);
     return;
   }
   const n = running === 1 ? '1 running agent' : `${running} running agents`;
   const confirmed = await confirmModal({
-    title: 'Emergency shutdown?',
+    title: 'Shutdown?',
     body: `This stops ${n} in ${where}. Each agent is sent /exit, then `
       + `force-killed only if it has not exited within the grace period. `
       + `Stop only — no conversations, group memberships, enrollment or `
@@ -321,29 +321,93 @@ async function emergencyShutdown(scope, groupName) {
   const payload = scope === 'group' ? {scope: 'group', group: groupName} : {scope: 'all'};
   let r;
   try {
-    r = await fetch('/api/emergency-shutdown', {
+    r = await fetch('/api/shutdown', {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload),
     });
   } catch (e) {
-    toast(`emergency shutdown failed: ${e && e.message || e}`, true);
+    toast(`shutdown failed: ${e && e.message || e}`, true);
     return;
   }
   if (!r.ok) {
-    toast(`emergency shutdown failed: ${await r.text()}`, true);
+    toast(`shutdown failed: ${await r.text()}`, true);
     return;
   }
   const out = await r.json().catch(() => null);
   if (!out) {
-    toast('emergency shutdown: done');
+    toast('shutdown: done');
     refresh();
     return;
   }
   const parts = [`${out.exited_gracefully} exited gracefully`, `${out.force_killed} force-killed`];
   if (out.already_offline) parts.push(`${out.already_offline} already offline`);
   if (out.failed) parts.push(`${out.failed} failed`);
-  toast(`emergency shutdown (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
+  toast(`shutdown (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
+  refresh();
+}
+
+// powerOnScope is the inverse of shutdownScope — it drives the
+// group-level and whole-dashboard Power On buttons. It counts the
+// OFFLINE agents in scope from the last snapshot, pops a confirm modal,
+// POSTs /api/power-on, then toasts the outcome summary. scope is
+// "group" (groupName set) or "all" (groupName ignored).
+async function powerOnScope(scope, groupName) {
+  const snap = lastSnapshot || {};
+  let offline = 0;
+  let where = '';
+  let metaLine = '';
+  if (scope === 'group') {
+    const g = (snap.groups || []).find(x => x.name === groupName);
+    offline = g ? (g.members || []).filter(m => !m.online).length : 0;
+    where = `group "${groupName}"`;
+    metaLine = groupName;
+  } else {
+    offline = (snap.agents || []).filter(a => !a.online).length;
+    where = 'the whole dashboard';
+    metaLine = 'every group + ungrouped agents';
+  }
+  if (offline === 0) {
+    toast(`power on: no offline agents in ${where}`);
+    return;
+  }
+  const n = offline === 1 ? '1 offline agent' : `${offline} offline agents`;
+  const confirmed = await confirmModal({
+    title: 'Power on?',
+    body: `This resumes ${n} in ${where}. Each offline agent is restarted `
+      + `in a fresh tmux session, resumed onto its existing conversation. `
+      + `Agents already running are left alone. Resume only — nothing new `
+      + `is created.`,
+    meta: metaLine,
+    okLabel: `Power on ${offline === 1 ? '1 agent' : offline + ' agents'}`,
+  });
+  if (!confirmed) return;
+  const payload = scope === 'group' ? {scope: 'group', group: groupName} : {scope: 'all'};
+  let r;
+  try {
+    r = await fetch('/api/power-on', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    toast(`power on failed: ${e && e.message || e}`, true);
+    return;
+  }
+  if (!r.ok) {
+    toast(`power on failed: ${await r.text()}`, true);
+    return;
+  }
+  const out = await r.json().catch(() => null);
+  if (!out) {
+    toast('power on: done');
+    refresh();
+    return;
+  }
+  const parts = [`${out.resumed} resumed`];
+  if (out.already_online) parts.push(`${out.already_online} already online`);
+  if (out.failed) parts.push(`${out.failed} failed`);
+  toast(`power on (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
   refresh();
 }
 
@@ -1692,9 +1756,8 @@ export function openCleanupModal(opts) {
 }
 
 // resumeAgentReq POSTs the resume endpoint, toasts the per-conv
-// outcome, and refreshes on success. Shared by the "wake" row button
-// and the offline status-dot click — both wake an agent the exact
-// same way. Returns true on success.
+// outcome, and refreshes on success. Driven by the offline status-dot
+// click. Returns true on success.
 async function resumeAgentReq(conv, label) {
   let r;
   try {
@@ -1724,8 +1787,8 @@ async function resumeAgentReq(conv, label) {
 
 // stopAgentReq POSTs the stop endpoint with the given blast radius
 // (force=false → soft /exit, force=true → tmux kill), toasts the
-// outcome, and refreshes on success. Shared by the "shut down" row
-// button and the online status-dot click. Returns true on success.
+// outcome, and refreshes on success. Driven by the online status-dot
+// click (via the 3-way shutdown confirm). Returns true on success.
 async function stopAgentReq(conv, label, force) {
   let r;
   try {
@@ -1754,7 +1817,7 @@ async function stopAgentReq(conv, label, force) {
 
 export {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
-  emergencyShutdown, openWindowModal, retireConfirm, shutdownConfirm,
+  shutdownScope, powerOnScope, openWindowModal, retireConfirm, shutdownConfirm,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };

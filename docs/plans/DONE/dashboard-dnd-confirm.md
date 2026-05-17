@@ -88,7 +88,7 @@ cannot silently drop one.
 - `pkg/claude/agentd/dashboard.html` — the six `runDnd*` functions
   gain a leading `confirmModal` await, cancel guard, and `finally`
   resync. `confirmModal` itself is a pre-existing shared helper
-  (also used by `emergencyShutdown`); `retireConfirm` and
+  (also used by the bulk shutdown/power-on buttons); `retireConfirm` and
   `runDndRetire` were already in place.
 - `pkg/claude/agentd/dashboard_dnd_confirm_test.go` — the structural
   guard test.
