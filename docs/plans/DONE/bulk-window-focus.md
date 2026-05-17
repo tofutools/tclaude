@@ -50,7 +50,7 @@ always scoped to that group's agents, the dashboard modal to all.
 
 `POST /api/agent-windows` on the loopback dashboard mux — cookie +
 Origin pinned, human-only, the same gate as the per-agent focus
-endpoint (`/api/jump`) and `/api/emergency-shutdown`. Window focus has
+endpoint (`/api/jump`) and `/api/shutdown`. Window focus has
 no `/v1` twin and no permission slug (an agent never focuses another
 agent's desktop window), so there is no shared permission-checked
 handler to funnel through — `checkDashboardAuth` IS the gate, the

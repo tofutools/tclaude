@@ -21,15 +21,16 @@ function onlineDot(online) {
 }
 
 // agentStatusDot renders an agent's status light as an interactive
-// on/off toggle. It replaces the plain onlineDot on every row that
-// represents a real agent (every group member row). Online =
-// green dot whose click turns the agent off (soft /exit); offline =
-// grey dot whose click turns it back on (resume). It is a real
-// <button> so it is keyboard-reachable (Tab + Enter/Space); the
-// delegated data-act="dot-toggle" handler reuses the very same
-// /api/agents/{conv}/{stop,resume} endpoints the "shut down" / "wake"
-// row buttons hit — no parallel endpoint. An online click always
-// pops a confirm dialog first (see the dot-toggle handler); an
+// on/off toggle — the agent's SOLE per-row power control (the
+// dedicated wake/shutdown row buttons were removed; the dot replaces
+// them). It replaces the plain onlineDot on every row that
+// represents a real agent (every group member row). Online = green
+// dot whose click turns the agent off; offline = grey dot whose
+// click turns it back on (resume). It is a real <button> so it is
+// keyboard-reachable (Tab + Enter/Space); the delegated
+// data-act="dot-toggle" handler hits /api/agents/{conv}/{stop,resume}.
+// An online click always pops the 3-way shutdown confirm first
+// (Cancel / Soft exit / Force kill — see the dot-toggle handler); an
 // offline click wakes immediately.
 function agentStatusDot(m) {
   const label = m.title || m.conv_id;
@@ -43,9 +44,9 @@ function agentStatusDot(m) {
   const errDetail = errored ? ((m.state && m.state.status_detail) || 'error') : '';
   let tip;
   if (errored) {
-    tip = `errored (${errDetail}) — click to turn off (asks first, then soft-stops ${label})`;
+    tip = `errored (${errDetail}) — click to turn off ${label} (asks first: soft exit or force kill)`;
   } else if (online) {
-    tip = `online — click to turn off (asks first, then soft-stops ${label})`;
+    tip = `online — click to turn off ${label} (asks first: soft exit or force kill)`;
   } else {
     tip = `offline — click to turn on (wake ${label})`;
   }
@@ -240,14 +241,16 @@ function termButton(m) {
   return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
 }
 
-// lifecycleAndFocusButtons renders the focus/hide/term/wake/shutdown
-// cluster. focus + hide + shutdown vs wake are mutually exclusive on
-// online state so the row stays visually stable as the agent toggles;
-// term is always present. focus and hide are the window pair — focus
-// raises the agent's terminal window, hide detaches it (the per-agent
-// twin of the "windows" button's bulk unfocus). Used by both
-// real-group member rows and the virtual Ungrouped group's rows so the
-// surface is identical in both.
+// lifecycleAndFocusButtons renders the focus/hide/term cluster. focus
+// and hide are the window pair, online-only (an offline agent has no
+// window to raise or detach): focus raises the agent's terminal
+// window, hide detaches it (the per-agent twin of the "windows"
+// button's bulk unfocus). term is always present. Powering the agent
+// up/down has no button here — the far-left status dot
+// (agentStatusDot) is the agent's power control: an offline dot
+// resumes, an online dot opens the soft/force shutdown confirm. Used
+// by both real-group member rows and the virtual Ungrouped group's
+// rows so the surface is identical in both.
 function lifecycleAndFocusButtons(m) {
   const label = m.title || m.conv_id;
   if (m.online) {
@@ -255,11 +258,9 @@ function lifecycleAndFocusButtons(m) {
       `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`,
       `<button data-act="hide" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.">hide</button>`,
       termButton(m),
-      `<button data-act="shutdown-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Soft-exit this agent (force kill available in confirm)">shut down</button>`,
     ].join('');
   }
-  return termButton(m) +
-    `<button data-act="wake-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Wake this agent — spawns a tmux session resumed onto its conv">wake</button>`;
+  return termButton(m);
 }
 
 // editMemberButton renders the per-agent "edit" button — the single
@@ -283,8 +284,9 @@ function removeMemberButton(g, m) {
 // group-affecting button (the edit panel, owner toggle,
 // remove-from-group) — the agent belongs to no group, so those are
 // meaningless here. What remains is the agent-level lifecycle set,
-// identical to a grouped member's lifecycle set: focus / term / shut down / wake,
-// clone, reincarnate, sudo, self-nudge cron, delete. Renaming is the
+// identical to a grouped member's lifecycle set: focus / term,
+// clone, reincarnate, sudo, self-nudge cron, delete. Powering the
+// agent up/down is the status dot's job; renaming is the
 // click-to-edit name cell, available on every row. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m) {

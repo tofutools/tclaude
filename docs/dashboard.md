@@ -85,9 +85,15 @@ nine tabs. Common affordances across the data tabs:
 
 ### Groups
 
-Every group, expandable to its members. Each member row shows the online
-indicator, role / description, working directory, git branch or
+Every group, expandable to its members. Each member row shows the status
+dot, role / description, working directory, git branch or
 worktree, effective permissions, and an **owner** badge where applicable.
+
+The **status dot** is the agent's power control: click an online (green)
+dot to turn the agent off — a confirm offers **Soft exit** (inject
+`/exit`) or **Force kill** (`tmux kill-session`) — and click an offline
+(grey) dot to resume it. There are no separate per-row wake/shutdown
+buttons; the dot does both.
 
 The **working-directory** cell is clickable — clicking a path opens a terminal
 window there (the same out-of-sandbox spawn the **term** button does, minus the
@@ -96,20 +102,22 @@ when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
-Per-member actions: **wake** / **shut down** / **focus** the session, open
-a **terminal** in its working directory, **clone**, **reincarnate**,
-**rename**, edit **role/descr**, toggle ownership, grant a **sudo**
-elevation, edit **permissions**, schedule a **cron** job, and **remove** it
-from the group. (Permanently *deleting* an agent is offered on the virtual
-Ungrouped group's rows, not on grouped rows — see below.)
+Per-member actions: **focus** the session, open a **terminal** in its
+working directory, **clone**, **reincarnate**, **rename**, edit
+**role/descr**, toggle ownership, grant a **sudo** elevation, edit
+**permissions**, schedule a **cron** job, and **remove** it from the
+group. (Turning the agent on/off is the status dot's job — see above.
+Permanently *deleting* an agent is offered on the virtual Ungrouped
+group's rows, not on grouped rows — see below.)
 
 Per-group actions live in the group header: **+ spawn agent**, **+ add
 member** (a searchable keyboard-navigable overlay), **⏰ multicast** cron,
 **✉ message** (a one-shot message to the group or a ticked subset),
 **rename**, **⤓ export** (the whole group to a portable `.zip`), **🧹
 cleanup** (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)),
-**🪟 windows…** (bulk focus/unfocus the members' terminal windows), **🛑
-emergency shutdown** (stop every running member), and **delete group**. The
+**🪟 windows…** (bulk focus/unfocus the members' terminal windows), **🟢
+power on** (resume every offline member), **🛑 shutdown** (stop every
+running member), and **delete group**. The
 header also carries three click-to-edit chips: **📁 start-dir** (the default
 working directory for agents spawned into the group), **📋 startup-context**
 (shared guidance delivered to each spawned agent's inbox), and a **👥

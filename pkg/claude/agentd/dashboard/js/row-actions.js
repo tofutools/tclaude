@@ -22,7 +22,7 @@ import {
 // render.js); TDZ-safe.
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
-  editMemberModal, emergencyShutdown, openCleanupModal, openWindowModal,
+  editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   resumeAgentReq, retireConfirm, shutdownConfirm, stopAgentReq, termDirModal,
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
@@ -379,47 +379,30 @@ function bindRowActions() {
           if (anyOk) refresh();
           return;
         }
-        case 'wake-agent': {
-          // Resume is non-destructive (only spawns a tmux session;
-          // the conv jsonl is unchanged). No confirm modal — fire +
-          // toast + refresh on success. Idempotent server-side.
-          await resumeAgentReq(conv, label);
-          return; // Skip the default toast — resumeAgentReq toasted.
-        }
-        case 'shutdown-agent': {
-          const choice = await shutdownConfirm({label});
-          if (!choice) return;
-          await stopAgentReq(conv, label, choice === 'force');
-          return; // Skip the default toast — stopAgentReq toasted.
-        }
         case 'dot-toggle': {
-          // The per-agent status light doubles as an on/off toggle.
-          // It reuses the same resume / stop endpoints the "wake" and
-          // "shut down" row buttons hit — no parallel endpoint.
+          // The per-agent status light is the agent's sole power
+          // control — there are no separate per-agent wake/shutdown
+          // row buttons (the dot fully replaces them). It is
+          // context-aware:
           //   - offline dot → wake (resume). Non-destructive; starting
           //     a session never needs a confirm.
-          //   - online dot → confirm first, then soft-stop. The
-          //     confirm fires for EVERY online click, idle or busy.
-          //     The dot's rendered state can be stale by click time
-          //     (the snapshot refreshes asynchronously), so a dot
-          //     that looks idle may front an agent that has since
-          //     started working — skipping the confirm there would
-          //     silently interrupt it. Always asking closes that race
-          //     and keeps every green-dot click behaving identically.
+          //   - online dot → open the 3-way shutdownConfirm modal
+          //     (Cancel / Soft exit / Force kill), then stop with the
+          //     chosen force flag. The confirm fires for EVERY online
+          //     click, idle or busy: the dot's rendered state can be
+          //     stale by click time (the snapshot refreshes
+          //     asynchronously), so a dot that looks idle may front an
+          //     agent that has since started working — skipping the
+          //     confirm there would silently interrupt it.
           // online is read from data-* set by agentStatusDot.
           const online = btn.getAttribute('data-online') === '1';
           if (!online) {
             await resumeAgentReq(conv, label);
             return;
           }
-          const confirmed = await confirmModal({
-            title: 'Turn off this agent?',
-            body: 'Turning this agent off injects /exit into its pane. If it is mid-task, any in-flight tool call is interrupted. The conversation is preserved and the agent can be turned back on (resumed) later — nothing is deleted or retired.',
-            meta: label,
-            okLabel: 'Turn off',
-          });
-          if (!confirmed) return;
-          await stopAgentReq(conv, label, false);
+          const choice = await shutdownConfirm({label});
+          if (!choice) return;
+          await stopAgentReq(conv, label, choice === 'force');
           return;
         }
         case 'add-member': {
@@ -769,16 +752,28 @@ function bindRowActions() {
           openCleanupModal({ mode: 'group', group });
           return;
         }
-        case 'emergency-shutdown-group': {
-          // emergencyShutdown owns its confirm modal, POST, toast
+        case 'shutdown-group': {
+          // shutdownScope owns its confirm modal, POST, toast
           // and refresh — return so the default toast doesn't fire.
-          await emergencyShutdown('group', group);
+          await shutdownScope('group', group);
           return;
         }
-        case 'emergency-shutdown-all': {
+        case 'shutdown-all': {
           // The top-bar button: shut down every running agent the
           // dashboard shows. No group context.
-          await emergencyShutdown('all', null);
+          await shutdownScope('all', null);
+          return;
+        }
+        case 'power-on-group': {
+          // The inverse of shutdown-group: resume every offline agent
+          // in this group. powerOnScope owns its confirm + POST + toast.
+          await powerOnScope('group', group);
+          return;
+        }
+        case 'power-on-all': {
+          // The top-bar button: resume every offline agent the
+          // dashboard shows. No group context.
+          await powerOnScope('all', null);
           return;
         }
         case 'window-modal-group': {

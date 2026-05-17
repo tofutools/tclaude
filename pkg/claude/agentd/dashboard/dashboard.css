@@ -213,15 +213,24 @@ details[open] > summary::before { content: "▼ "; }
 .copy-cmd::before { content: "$ "; color: #7d8590; }
 #status { font-size: 11px; color: #7d8590; }
 #status.error { color: #f85149; }
-/* Whole-dashboard emergency-shutdown button — sits top-right, just to
-   the right of the live dot (#status). Danger-styled but compact so it
-   doesn't shout louder than the dashboard title. */
-#emergency-all-btn {
+/* Whole-dashboard Shutdown button — sits top-right, just to the right
+   of the live dot (#status). Danger-styled but compact so it doesn't
+   shout louder than the dashboard title. */
+#shutdown-all-btn {
   background: #4d1d1d; border: 1px solid #f85149; color: #f85149;
   border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
   font-family: inherit; white-space: nowrap;
 }
-#emergency-all-btn:hover { background: #f85149; color: #fff; }
+#shutdown-all-btn:hover { background: #f85149; color: #fff; }
+/* Whole-dashboard Power On button — the inverse of Shutdown, sits just
+   to its left. Resume is non-destructive, so it gets a calm green
+   accent rather than the danger styling. */
+#power-on-all-btn {
+  background: #122b1a; border: 1px solid #3fb950; color: #3fb950;
+  border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
+  font-family: inherit; white-space: nowrap;
+}
+#power-on-all-btn:hover { background: #3fb950; color: #fff; }
 /* Subscription-usage readout in the top bar, left of the live dot.
    Mirrors the statusbar's "5h [bar] 17% (2h16m)" format per window. */
 #usage { font-size: 11px; color: #7d8590; display: flex; align-items: center; gap: 12px; }
@@ -1070,7 +1079,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .window-role-chip.on { background: #1f3a5a; border-color: #58a6ff; color: #d4d4d4; }
 .window-role-chip.partial { border-color: #58a6ff; color: #d4d4d4; }
 /* Whole-dashboard window focus/unfocus trigger — sits in the top bar,
-   left of the emergency-shutdown button. Compact, neutral styling: it
+   left of the Power On / Shutdown buttons. Compact, neutral styling: it
    is non-destructive (window-only), so it must not shout. */
 #window-all-btn {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
