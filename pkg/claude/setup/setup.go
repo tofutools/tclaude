@@ -62,6 +62,7 @@ type Params struct {
 	InstallAll               bool `long:"install-all" help:"Install every optional extra (equivalent to passing all --install-* flags) on top of the baseline setup."`
 	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the self.* permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
+	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
 }
 
 func Cmd() *cobra.Command {
@@ -73,8 +74,8 @@ func Cmd() *cobra.Command {
 			"configures the status bar, and registers the tclaude:// protocol handler for " +
 			"clickable notifications.\n\n" +
 			"The --install-* flags add optional extras on top of the baseline (they do not " +
-			"replace it): --install-agent-skills, --install-default-agent-permissions. " +
-			"--install-all enables every extra.",
+			"replace it): --install-agent-skills, --install-default-agent-permissions, " +
+			"--install-sandbox-hardening. --install-all enables every extra.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runSetup(params); err != nil {
@@ -294,8 +295,9 @@ func runSetup(params *Params) error {
 }
 
 // installExtras runs the optional, flag-gated installs that layer on
-// top of the always-run baseline setup: the bundled agent-* skills and
-// their default agent permissions. Each --install-* flag selects one
+// top of the always-run baseline setup: the bundled agent-* skills,
+// their default agent permissions, and the agent-sandbox hardening
+// entries in ~/.claude/settings.json. Each --install-* flag selects one
 // extra; --install-all selects every extra. With no flags set this is
 // a no-op, so the baseline-only `tclaude setup` is unaffected.
 func installExtras(params *Params) error {
@@ -308,6 +310,12 @@ func installExtras(params *Params) error {
 	if params.InstallDefaultAgentPerms || params.InstallAll {
 		fmt.Println("\n=== Default Agent Permissions ===")
 		if err := installDefaultAgentPermissions(); err != nil {
+			return err
+		}
+	}
+	if params.InstallSandboxHardening || params.InstallAll {
+		fmt.Println("\n=== Sandbox Hardening ===")
+		if err := installSandboxHardening(); err != nil {
 			return err
 		}
 	}
