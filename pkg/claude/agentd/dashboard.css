@@ -962,23 +962,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 6px 8px; margin-bottom: 2px;
   border: 1px solid #30363d; border-radius: 6px; background: #161b22;
 }
-/* Agents-tab secondary lists — Conversations (promotion candidates)
-   and Retired (reinstatable demoted agents). */
-.sub-list-head {
-  margin: 20px 0 8px; font-size: 13px; color: #d4d4d4;
-  border-top: 1px solid #21262d; padding-top: 14px;
-}
-.sub-list-head .muted { font-weight: normal; font-size: 11px; }
-.sub-list-head.collapsible { cursor: pointer; user-select: none; }
-/* The 🧹 cleanup button parked in a sub-list header (Retired agents). */
-.sub-list-head button.sub-list-tool {
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
-  border-radius: 4px; padding: 2px 8px; font-size: 11px;
-  font-weight: normal; cursor: pointer; font-family: inherit;
-  margin-left: 10px; vertical-align: middle;
-}
-.sub-list-head button.sub-list-tool:hover { border-color: #58a6ff; color: #d4d4d4; }
-#retired-caret, #conversations-caret { display: inline-block; width: 12px; color: #7d8590; }
 .cleanup-error { color: #f85149; font-size: 12px; min-height: 14px; }
 .cleanup-warn { color: #f0883e; font-size: 12px; white-space: pre-line; }
 .cleanup-modal .modal-buttons {

@@ -7,37 +7,31 @@ import (
 	"testing"
 )
 
-// The dashboard UI used to be one file, dashboard.html, with the CSS
-// and JS inline. They were extracted into sibling files (dashboard.css,
-// dashboard.js) for editor tooling, and assembleDashboardHTML() splices
-// them back into the markup shell at package init. The extraction is a
-// purely mechanical relocation — the bytes served to the browser must
-// stay IDENTICAL to the pre-split single-file dashboard.html.
+// The dashboard UI is assembled from three sibling files —
+// dashboard.html (the markup shell), dashboard.css and dashboard.js —
+// which assembleDashboardHTML() splices together at package init.
 //
-// preSplitDashboardSHA256 is the SHA-256 of dashboard.html as it stood
-// at commit 31dfeaa, immediately before the split. Reproduce it:
-//
-//	git show 31dfeaa:pkg/claude/agentd/dashboard.html | sha256sum
-//
-// A future INTENTIONAL change to the dashboard UI updates this constant
-// deliberately (recompute it from the assembled bytes) — that small
-// friction is the point: it keeps any change to the served bytes a
-// conscious, reviewed act rather than an accident.
-const preSplitDashboardSHA256 = "6ec67179269bd47a3cd860f273efec6fd66313c062a74bf12ffef062a36f1917"
+// dashboardHTMLSHA256 pins the SHA-256 of those assembled bytes. It is
+// a deliberate-change tripwire: any edit to the served dashboard moves
+// the hash and fails the test below, so updating this constant is a
+// conscious, reviewed act rather than an accident. Recompute it from
+// the new assembled bytes whenever you change the dashboard UI on
+// purpose — the failure message prints the new value to paste in.
+const dashboardHTMLSHA256 = "83ed244cfc474a4bda01c21e4bdd77d3312116362b8ee2876e2f712db8a6a507"
 
-// TestDashboardHTML_SplitIsByteIdentical is the load-bearing guard for
-// the CSS/JS extraction: it pins that assembleDashboardHTML() produces
-// exactly the bytes the one-file dashboard.html used to hold.
-func TestDashboardHTML_SplitIsByteIdentical(t *testing.T) {
+// TestDashboardHTML_ServedBytesPinned guards the bytes
+// assembleDashboardHTML() serves to the browser: it fails on any
+// unreviewed change to the dashboard UI. An intentional change updates
+// dashboardHTMLSHA256.
+func TestDashboardHTML_ServedBytesPinned(t *testing.T) {
 	sum := sha256.Sum256([]byte(dashboardHTML))
 	got := hex.EncodeToString(sum[:])
-	if got != preSplitDashboardSHA256 {
+	if got != dashboardHTMLSHA256 {
 		t.Fatalf("assembled dashboardHTML SHA-256 = %s\n"+
 			"                            want = %s\n"+
-			"the CSS/JS extraction is not byte-identical to the pre-split "+
-			"dashboard.html — the split must be a pure mechanical relocation. "+
-			"If you changed the dashboard UI on purpose, recompute the "+
-			"constant from the new assembled bytes.", got, preSplitDashboardSHA256)
+			"the served dashboard bytes changed. If you changed the "+
+			"dashboard UI on purpose, recompute dashboardHTMLSHA256 from "+
+			"the new assembled bytes (the value above).", got, dashboardHTMLSHA256)
 	}
 }
 
@@ -46,8 +40,8 @@ func TestDashboardHTML_SplitIsByteIdentical(t *testing.T) {
 // document — both placeholders consumed, both halves present in full,
 // one <style> / <script> element each. Unlike the SHA-256 pin above it
 // survives future intentional content edits, so it stays a permanent
-// guard on the reassembly logic. Byte-identity itself is proven only
-// by TestDashboardHTML_SplitIsByteIdentical; this is its debuggable
+// guard on the reassembly logic. The exact served bytes are pinned by
+// TestDashboardHTML_ServedBytesPinned; this is its debuggable
 // companion — it says *where* a broken splice went wrong.
 func TestDashboardHTML_AssemblySpliceIsClean(t *testing.T) {
 	// The shell carries exactly one empty <style></style> and one empty
