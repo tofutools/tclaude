@@ -11,7 +11,7 @@ browser resolves the import graph itself.
 The three flat Stage-1 sibling files (`dashboard.html` / `dashboard.css`
 / `dashboard.js`) became a `pkg/claude/agentd/dashboard/` directory:
 
-```
+```text
 pkg/claude/agentd/dashboard/
 ├── dashboard.html         served at "/" verbatim (no assembly)
 ├── dashboard.css          served at /static/dashboard.css via <link>
