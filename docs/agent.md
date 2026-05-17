@@ -53,8 +53,8 @@ current conv-id on every request.
   skills installed, agents won't know to use these commands.
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
-  `self.compact`, `self.reincarnate`, `self.clone`) as agent defaults.
-  Idempotent; only adds missing slugs.
+  `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`) as
+  agent defaults. Idempotent; only adds missing slugs.
 - **`tclaude agentd serve`** — running in a non-sandboxed shell. The
   CLI refuses to fall back to direct DB access when the daemon is
   down — that's deliberate, so the auth model can't be bypassed by
@@ -190,11 +190,15 @@ tclaude agent groups grant-owner <group> <conv>
 tclaude agent groups revoke-owner <group> <conv>
 tclaude agent groups set-default-dir <group> [dir]        # default cwd for agents spawned into the group
 tclaude agent groups set-max-members <group> [max]        # cap member count; a spawn that would exceed it is refused (0 = unlimited)
+tclaude agent groups set-context <group> [text]           # shared startup context delivered to every spawned agent's inbox
 tclaude agent groups archive <group>                      # soft-delete: freeze, hide, keep history
 tclaude agent groups unarchive <group>                    # reverse an archive
 tclaude agent groups clone <source> [new-name]            # fork every member into a brand-new group
 tclaude agent groups stop <group> [--force]                # soft /exit (or hard kill-session) every member
 tclaude agent groups resume <group>                        # spawn a session for every offline member
+tclaude agent groups export <group> [--out FILE]           # export the group (DB rows + members' .jsonl) to a portable .zip
+tclaude agent groups import <file.zip> --into <dir>        # recreate an exported group on this machine
+tclaude agent groups transfers                             # the group export / import audit log
 tclaude agent groups why-can-i-message <target>            # explain which group/link authorises a send
 ```
 
@@ -406,15 +410,18 @@ An agent's effective permission set is
 
 Slugs are grouped by family. `self.*` acts on the calling agent;
 `agent.*` is the manager pattern (act on another agent); the rest
-gate group and permission administration.
+gate group, messaging, template, and permission administration.
 
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule` |
-| `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire` |
+| `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
+| `message.*`   | `message.direct` |
+| `templates.*` | `templates.manage`, `templates.instantiate` |
+| `human.*`     | `human.notify` |
 
 Run `tclaude agent permissions slugs` for the live registry with
 descriptions — it is the source of truth; this table can drift.
@@ -452,7 +459,7 @@ with care.
 
 ## Bundled skills
 
-Five skills ship with the binary and install to `~/.claude/skills/`
+Six skills ship with the binary and install to `~/.claude/skills/`
 via `tclaude setup --install-agent-skills`:
 
 - **`agent-coord`** — the day-to-day "talk to other agents" skill.
@@ -465,6 +472,9 @@ via `tclaude setup --install-agent-skills`:
 - **`agent-dir`** — report or open a terminal in an agent's working
   directory.
 - **`agent-schedule`** — set up and manage recurring `cron` nudges.
+- **`human-notify`** — send the human a notification via
+  `tclaude agent notify-human`; it lands in the dashboard
+  [Messages tab](dashboard.md#messages).
 
 Re-run `tclaude setup --install-agent-skills` after `go install
 …@latest` to refresh the on-disk copies with whatever the new binary

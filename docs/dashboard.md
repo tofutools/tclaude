@@ -68,14 +68,14 @@ is blocked by the Claude Code bash sandbox anyway.
 ## Layout
 
 A single-page app that polls `GET /api/snapshot` every 5 seconds and renders
-seven tabs. Common affordances across the data tabs:
+nine tabs. Common affordances across the data tabs:
 
 - **Click-to-sort** — column headers toggle ascending/descending.
-- **Search box** — per-tab text filter. On Groups and Agents it also matches
-  role, description, conv-id, and working directory; on Cron it matches the
-  job subject and body.
-- **Show offline** — Groups and Agents have a toggle that hides agents whose
-  tmux pane isn't alive. Groups additionally has a per-group override
+- **Search box** — per-tab text filter. On Groups it also matches role,
+  description, conv-id, and working directory; on Cron it matches the job
+  subject and body.
+- **Show offline** — the Groups tab has a toggle that hides agents whose
+  tmux pane isn't alive, plus a per-group override
   (`inherit → always show → always hide`).
 - **Expandable rows** — `<details>` open/closed state persists in
   `localStorage` across polls.
@@ -97,16 +97,27 @@ Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
 Per-member actions: edit role/descr, **wake** / **shut down** / **focus**
-the session, schedule a **cron** job, toggle ownership, and remove from the
-group. Per-group actions live in the group header: rename, **+ add member**
-(a searchable keyboard-navigable overlay), **+ spawn agent**, **🧹 cleanup**
-(bulk-remove confirmed-offline members — see [Cleanup](#cleanup)), delete the
-group, **⏰ multicast** cron, a click-to-edit **start-dir** chip (the
-default working directory for agents spawned into that group), and a
-click-to-edit **👥 member-cap** chip (`agent_groups.max_members` — a spawn
-that would exceed it is refused; the chip turns orange when the group is
-full). The tab's filter bar also carries a **🧹 clean up** button that
-sweeps every group at once.
+the session, open a **terminal** in its working directory, **clone**,
+**reincarnate**, **rename**, grant a **sudo** elevation, edit
+**permissions**, schedule a **cron** job, toggle ownership, **delete** the
+agent, and remove it from the group. Per-group actions live in the group
+header: rename, **+ add member** (a searchable keyboard-navigable overlay),
+**+ spawn agent**, **🧹 cleanup** (bulk-remove confirmed-offline members —
+see [Cleanup](#cleanup)), delete the group, **⏰ multicast** cron, a
+click-to-edit **start-dir** chip (the default working directory for agents
+spawned into that group), and a click-to-edit **👥 member-cap** chip
+(`agent_groups.max_members` — a spawn that would exceed it is refused; the
+chip turns orange when the group is full).
+
+The tab's filter bar carries **+ new group**, **⤓ export** / **⤒ import**
+buttons for whole-group `.zip` archives, a **🧹 clean up** button (the
+all-categories cleanup tool — see [Cleanup](#cleanup)), and toggles for
+three **virtual groups** rendered below the real ones: **Ungrouped**
+(online agents in no group), **Retired** (agents demoted to plain
+conversations, each with a **reinstate** button), and **Conversations**
+(recent non-agent conversations, each with a **promote** button). Dragging
+a row onto or off these virtual groups joins / leaves a group or promotes
+a conversation into an agent.
 
 **Drag-and-drop.** Drag a member row onto another group's header to **move**
 it; hold **Ctrl** (**Cmd** on macOS) while dragging to **clone** it into the
@@ -114,25 +125,24 @@ target group instead, leaving the original in place. A hint pill follows the
 cursor and the drop target's outline flips colour to show which effect is
 armed.
 
-### Agents
+### Templates
 
-Every conversation the daemon knows about — group members, holders of explicit
-permission grants, and online ungrouped sessions. Columns include the title,
-conv-id, online state, working directory, and git branch; expand a row for its
-group memberships and effective permissions.
+Reusable **group blueprints**. A template is a recipe for a whole team — a
+group name, a shared default context, and an ordered list of agent specs
+(name, role, description, task brief, owner flag, permission slugs). Unlike a
+group [export](#groups), a template holds no conv-ids; it describes a group
+that does not exist yet.
 
-Per-row actions: wake / shut down / focus, open a terminal in the agent's
-working directory, **clone**, **reincarnate**, rename, schedule a cron job, and
-delete. The delete confirm also offers to remove the agent's git worktree
-(see [Cleanup](#cleanup)). **+ new agent** spawns a fresh standalone session;
-the filter bar's **🧹 cleanup** button bulk-deletes confirmed-offline agents.
+**+ new template** defines one from scratch; **⤓ from a group** snapshots an
+existing group's structure into a new template. Instantiating a template
+creates a fresh group and spawns its entire agent team in one action.
 
 ### Cron
 
 The scheduled-job table — name, owner, target, interval, last run, status pill,
 and body summary. Per-row buttons: enable/disable, **run now**, edit, delete.
 **+ new cron job** opens a create form (also reachable pre-filled from the ⏰
-buttons on the Groups and Agents tabs). See
+buttons on the Groups tab). See
 [Agent Coordination → cron](agent.md#cron) for what cron jobs do.
 
 ### Sudo
@@ -159,12 +169,32 @@ Every permission slug, expandable to the list of agents that currently hold it
 The full registry of known permission slugs with their descriptions — the
 browser equivalent of `tclaude agent permissions slugs`.
 
+### Messages
+
+Notifications agents have sent the human via `tclaude agent notify-human`
+(see [Agent Coordination → bundled skills](agent.md#bundled-skills)). Each row
+shows the sender, group, subject, and body; the nav tab carries an
+unread-count badge. **✓ mark all read** clears the badge; **🧹 clear read**
+deletes every already-read message. It is the human's side of the
+human-notify channel — an explicit nudge surface kept separate from the busy
+terminal.
+
+### Config
+
+A visual editor for `~/.tclaude/config.json`, covering the settings this
+build of tclaude recognises. Edits are staged in the form until you press
+**Save changes**, which shows a confirm diff before anything is written. Most
+settings apply on next use; a few resolved at `agentd` startup (spawn
+rate-limit, clone cooldown) take effect only after an agentd restart.
+
 ## Spawning agents from the dashboard
 
-The **+ spawn agent** (into a group) and **+ new agent** (standalone) buttons
-open a modal: name, role, description, and a working-directory field with a
-git-worktree picker. The group's start-dir default pre-fills the directory when
-present.
+A group header's **+ spawn agent** button opens the spawn modal: name, role,
+description, an optional **initial message** (a task brief delivered to the new
+agent's inbox), and a working-directory field with a git-worktree picker. The
+group's start-dir default pre-fills the directory when present, and — when the
+group has a shared startup context — a checkbox offers to include it in the
+briefing.
 
 The modal has an **Auto focus** checkbox (default on): when checked, the daemon
 opens a terminal window attached to the freshly-spawned session — via
@@ -177,17 +207,24 @@ detached spawn otherwise has no window of its own.
 Long-running coordination sessions accumulate dead agents — exited workers,
 abandoned experiments. The **🧹 cleanup** affordances bulk-prune them.
 
-Three entry points, all opening the same editable modal:
+Two entry points, both on the Groups tab:
 
 - **Per group** (group header → 🧹 cleanup) — removes confirmed-offline
   *members* from that one group. The conversations keep running and stay on
   disk; only the membership is dropped.
-- **All groups** (Groups tab → 🧹 clean up) — removes confirmed-offline agents
-  from *every* group they belong to. An optional **permanently delete**
-  checkbox escalates to a full purge.
-- **Agents** (Agents tab → 🧹 cleanup) — **permanently deletes**
-  confirmed-offline agents: wipes the conversation history from disk and drops
-  every group / owner / permission row.
+- **All categories** (Groups tab filter bar → 🧹 clean up) — the rich modal.
+  It spans three conversation categories — active agents, retired agents, and
+  plain conversations — and offers four tiers:
+
+  | Tier        | Acts on                                                            |
+  |-------------|--------------------------------------------------------------------|
+  | `unjoin`    | active agents — drop their group memberships                       |
+  | `retire`    | active agents — demote to a plain conversation                     |
+  | `delete`    | any conversation — wipes history from disk, drops every group / owner / permission row |
+  | `reinstate` | retired agents — return them to the active roster                  |
+
+  A target whose tier doesn't apply is reported *skipped*, never *failed*, so
+  a mixed-category selection degrades gracefully.
 
 The modal lists the affected agents as an editable include/exclude checklist,
 with an "inactive ≥ N h" quick-filter for picking by staleness. Nothing is
