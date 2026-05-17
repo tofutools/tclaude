@@ -204,8 +204,8 @@ const (
 
 // attachHumanToken adds the operator-token header to a daemon request
 // when TCLAUDE_HUMAN_TOKEN is set in the environment. The human operator
-// exports it (see `tclaude agent token`); agents never have it set, and
-// agentd ignores it for agent-family callers anyway. No-op when unset.
+// exports it from the agentd startup banner; agents never have it set,
+// and agentd ignores it for agent-family callers anyway. No-op when unset.
 func attachHumanToken(req *http.Request) {
 	if tok := strings.TrimSpace(os.Getenv(HumanTokenEnvVar)); tok != "" {
 		req.Header.Set(HumanTokenHeader, tok)

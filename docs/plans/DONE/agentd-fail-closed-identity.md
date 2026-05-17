@@ -35,8 +35,7 @@ Every human-vs-agent decision site routes through `classify()` (or the
 cron-visibility filters (`handleCronList`, single-job log read), the six
 `sudo.go` gates, `handleAgentDir`'s cross-agent terminal spawn, and
 `requireNotifyHumanPermission`. No raw `HasClaudeAncestor` policy test
-survives outside `classify()` — except the one deliberate exception
-(`GET /v1/auth/token`, see C).
+survives outside `classify()` — there is no exception.
 
 ### B — the operator token (`agentd/humantoken.go`)
 
@@ -47,16 +46,20 @@ is a TTY; otherwise it prints a pointer, so the secret can never land in
 a redirected log. Verified via the `X-Tclaude-Human-Token` header with a
 constant-time compare.
 
-### C — `GET /v1/auth/token` + `tclaude agent token`
+### C — token delivery: the startup banner only
 
-The bootstrap endpoint: returns the operator token to a caller with no
-Claude Code ancestor (the *legacy heuristic, on purpose* — it is how the
-human obtains the token, so it cannot itself require the token; loudly
-commented against a future reader routing it through `classify()`). The
-CLI command `tclaude agent token` (`--export` prints a shell export
-line) wraps it. The human sets:
+The operator token is delivered **solely** by the daemon's startup
+banner — there is no fetch endpoint and no CLI command. When stdout is a
+TTY the banner prints a ready-to-paste `export TCLAUDE_HUMAN_TOKEN=…`
+line; the human copies it into their shell. When stdout is not a TTY
+(backgrounded / redirected) the banner never prints the token and tells
+the operator to relaunch agentd attached to a terminal.
 
-    export TCLAUDE_HUMAN_TOKEN="$(tclaude agent token)"
+(An earlier cut of this feature had a `GET /v1/auth/token` endpoint +
+`tclaude agent token` command; both were removed — the endpoint was
+gated on the legacy `!HasClaudeAncestor` heuristic, the one place that
+partially un-did fail-closed, and the token is already on the banner. A
+future iteration replaces the banner with secure on-disk token storage.)
 
 ### D — CLI header injection (`agent/client.go`)
 
@@ -90,10 +93,11 @@ superseded.
 ## UX / migration
 
 A human running a human-only `tclaude agent` command with no token set
-now gets a `403` whose body says exactly how to fix it (`export
-TCLAUDE_HUMAN_TOKEN="$(tclaude agent token)"`). The dashboard still works
-with no token (cookie-authenticated). agentd restart mints a new token —
-re-run the export. Agents need no token and see no behaviour change.
+now gets a `403` whose body says exactly how to fix it: set
+`TCLAUDE_HUMAN_TOKEN` to the operator token printed on the agentd
+startup banner. The dashboard still works with no token
+(cookie-authenticated). agentd restart mints a new token — re-copy it
+from the banner. Agents need no token and see no behaviour change.
 
 Known accepted edge: a human invoking `tclaude agent` from a shell
 incidentally descended from a non-Claude `node` process is classified
@@ -114,24 +118,24 @@ same-uid residual.
 - `agentd/identity.go` — `peer` fields, `callerClass`, `classify`,
   `authedCaller`, `writeUnconfirmed`/`writeUnidentified`/`writeAgentUnknown`,
   the routed auth helpers, `convIDForPID` fallback.
-- `agentd/humantoken.go` — new: token mint/verify, banner, env scrub,
-  `handleAuthToken`.
-- `agentd/serve.go` — token generation at startup, `GET /v1/auth/token`
-  route.
+- `agentd/humantoken.go` — token mint/verify, the startup banner, the
+  spawn-env scrub.
+- `agentd/serve.go` — token generation at startup.
 - `agentd/{agent_dispatch,groups_links,cron_handlers,sudo,dir,notify_human,head_aliases}.go`
   — auth sites routed through `classify()`.
 - `agentd/lifecycle.go` — spawn-env scrub.
-- `agent/client.go` — header injection; `agent/token.go` — new command;
-  `agent/agent.go` — command registration.
+- `agent/client.go` — `X-Tclaude-Human-Token` header injection from
+  `TCLAUDE_HUMAN_TOKEN`.
 - `common/db/sessions.go` — `FindSessionByPID`.
 - `docs/plans/agentd.md` — revised.
 
 ## Tests
 
-Flow tests (`agentd/*_flow_test.go`): human-without-token → `403`;
-human-with-valid-token → `200`; agent-with-inherited-token → still
-`classAgent` (token ignored); `GET /v1/auth/token` → token to a human,
-`403` to an agent; dashboard mutation via `asDashboardHumanPeer` still
-succeeds (gap-2 regression); a fail-closed assertion at a
-previously-inline site (`authCronWrite`) so a future un-centralised
-check is caught (gap-1 regression).
+`agentd/failclosed_test.go`: `classify()` across all five classes plus
+the load-bearing precedence cases; operator-token verify (correct /
+wrong / absent / no-token-generated); agent-with-inherited-token → still
+`classAgent` (token ignored); dashboard mutation via
+`asDashboardHumanPeer` still succeeds (gap-2 regression); a fail-closed
+assertion at a previously-inline site (`authCronWrite`) so a future
+un-centralised check is caught (gap-1 regression); an end-to-end
+fail-closed check through the production mux.

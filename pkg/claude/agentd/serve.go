@@ -348,7 +348,6 @@ func parseCloneCooldown(value, source string) (time.Duration, bool) {
 func buildMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/info", handleInfo)
-	mux.HandleFunc("GET /v1/auth/token", handleAuthToken)
 	mux.HandleFunc("/v1/dashboard/open", handleDashboardOpen)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)

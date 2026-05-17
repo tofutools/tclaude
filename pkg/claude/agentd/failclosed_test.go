@@ -77,30 +77,6 @@ func TestVerifyHumanToken(t *testing.T) {
 	assert.False(t, verifyHumanToken(mk(tok)), "no token generated => nothing verifies")
 }
 
-// TestHandleAuthToken covers the bootstrap endpoint: it hands the token
-// to a human (no Claude Code ancestor) and refuses an agent caller.
-func TestHandleAuthToken(t *testing.T) {
-	withTokenRestore(t)
-	tok := generateOperatorToken()
-
-	// Human — no Claude Code ancestor — gets the token.
-	w := httptest.NewRecorder()
-	handleAuthToken(w, requestWithPeer(&peer{PID: 7}))
-	require.Equal(t, http.StatusOK, w.Code, "human gets the token; body=%s", w.Body.String())
-	assert.Contains(t, w.Body.String(), tok)
-
-	// An agent (Claude Code ancestor) is refused — it cannot bootstrap a
-	// token, so a sandboxed agent can never obtain one.
-	w = httptest.NewRecorder()
-	handleAuthToken(w, requestWithPeer(&peer{PID: 7, HasClaudeAncestor: true, ConvID: "c1"}))
-	assert.Equal(t, http.StatusForbidden, w.Code, "agent is refused the token")
-
-	// An unreadable peer PID is refused 401.
-	w = httptest.NewRecorder()
-	handleAuthToken(w, requestWithPeer(&peer{PID: 0}))
-	assert.Equal(t, http.StatusUnauthorized, w.Code, "pid 0 is refused")
-}
-
 // TestAsDashboardHumanPeer_ClassifiesAsHuman guards the gap-2 fix: the
 // cookie-authenticated dashboard delegation must classify as the human
 // (it legitimately holds no operator token) — not as classUnconfirmed.
