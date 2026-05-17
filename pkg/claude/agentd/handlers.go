@@ -2125,8 +2125,23 @@ func normalizeGroupContext(s string) (string, error) {
 	return s, nil
 }
 
+// normalizeGroupDescr prepares a group description for storage. The
+// descr is a one-line label rendered inline in the dashboard's group
+// header, so any embedded CR / LF is folded to a single space and the
+// result is trimmed — a raw API caller can no longer wedge a newline
+// into a header that has nowhere to put it. Empty stays empty (clears
+// the description).
+func normalizeGroupDescr(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.TrimSpace(s)
+}
+
 // handleGroupUpdate patches mutable group-level settings:
 //
+//   - descr — the group's own one-line description, shown next to the
+//     group name on the dashboard. Distinct from a per-member descr.
 //   - default_cwd — the working directory pre-filled into the spawn
 //     form (and substituted server-side by handleGroupSpawn when a
 //     spawn request leaves cwd blank).
@@ -2138,16 +2153,17 @@ func normalizeGroupContext(s string) (string, error) {
 //     layer. See checkSpawnGuardrails.
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
-// fields present (non-nil) in the body are touched. default_cwd /
-// default_context are *string so a caller can clear either by sending
-// "" — distinct from omitting it; max_members is *int and clears to
-// "unlimited" with 0. An empty body (no field) is a 400.
+// fields present (non-nil) in the body are touched. descr / default_cwd
+// / default_context are *string so a caller can clear any of them by
+// sending "" — distinct from omitting it; max_members is *int and
+// clears to "unlimited" with 0. An empty body (no field) is a 400.
 //
-// Permission: groups.rename. Setting a group's default cwd / context /
-// member cap is the same class of human-curated group config as
-// renaming it (the blast radius is a UI prefill / spawn-time injection
-// / spawn refusal, strictly lower than a rename), so it rides the
-// existing slug rather than minting a new one. Default human-only.
+// Permission: groups.rename. Setting a group's description / default
+// cwd / context / member cap is the same class of human-curated group
+// config as renaming it (the blast radius is a dashboard label / UI
+// prefill / spawn-time injection / spawn refusal, strictly lower than
+// a rename), so it rides the existing slug rather than minting a new
+// one. Default human-only.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if _, ok := requirePermission(w, r, PermGroupsRename); !ok {
 		return
@@ -2156,6 +2172,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		return
 	}
 	var body struct {
+		Descr          *string `json:"descr,omitempty"`
 		DefaultCwd     *string `json:"default_cwd,omitempty"`
 		DefaultContext *string `json:"default_context,omitempty"`
 		// MaxMembers is the group's hard member cap; 0 = unlimited. A
@@ -2166,12 +2183,34 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.DefaultCwd == nil && body.DefaultContext == nil && body.MaxMembers == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.MaxMembers == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected default_cwd, default_context and/or max_members)")
+			"nothing to update (expected descr, default_cwd, default_context and/or max_members)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
+
+	if body.Descr != nil {
+		// The group descr is a one-line label. Fold any embedded
+		// newline (an API caller could send one — the CLI positional
+		// and the dashboard's <input type=text> cannot) to a space so
+		// it never breaks the single-line dashboard header. Empty
+		// stays empty — that clears the description.
+		descr := normalizeGroupDescr(*body.Descr)
+		n, err := db.SetAgentGroupDescr(g.Name, descr)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		// Zero rows: the group was renamed or deleted between the
+		// dispatcher's lookup and this update. Report not_found rather
+		// than a misleading 200.
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["descr"] = descr
+	}
 
 	if body.DefaultCwd != nil {
 		// Normalise + validate: expand "~", require an absolute path (a

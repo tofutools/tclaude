@@ -467,6 +467,69 @@ function bindRowActions() {
           });
           return; // Skip the default refresh; commit() / restore() handle it.
         }
+        case 'set-group-descr': {
+          // Inline edit of the group's own description (the 📝 chip).
+          // Mirrors set-group-dir: swap the chip for a text <input>,
+          // Enter saves (PATCH /api/groups/{name}), Esc / blur
+          // cancels. Auto-refresh suspended via renameEditing so the
+          // 5s tick can't drop the input mid-edit. Fall back to a
+          // summary lookup in case the click landed on a descendant.
+          const descrEl = btn.classList.contains('group-descr')
+            ? btn
+            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-descr'));
+          if (!descrEl) {
+            toast('description: could not locate the description element', true);
+            return;
+          }
+          const prevSnapshot = lastSnapshot;
+          renameEditing = true;
+          const origEl = descrEl.cloneNode(true);
+          const oldDescr = descrEl.getAttribute('data-descr') || '';
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'group-descr-input';
+          input.value = oldDescr;
+          input.placeholder = 'group description — empty clears it';
+          input.spellcheck = false;
+          input.autocomplete = 'off';
+          descrEl.replaceWith(input);
+          input.focus();
+          input.select();
+          const restore = () => {
+            if (input.parentNode) input.replaceWith(origEl);
+            renameEditing = false;
+            setLastSnapshot(prevSnapshot);
+          };
+          const commit = async () => {
+            const newDescr = input.value.trim();
+            if (newDescr === oldDescr) {
+              restore();
+              return;
+            }
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+              method: 'PATCH', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ descr: newDescr }),
+            });
+            if (!r.ok) {
+              toast(`set description failed: ${await r.text()}`, true);
+              restore();
+              return;
+            }
+            renameEditing = false;
+            toast(newDescr ? `${group}: description → ${newDescr}` : `${group}: description cleared`);
+            refresh();
+          };
+          input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+            else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+          });
+          input.addEventListener('blur', () => {
+            // Blur cancels (like rename) — explicit Enter to save.
+            if (renameEditing) restore();
+          });
+          return; // Skip the default refresh; commit() / restore() handle it.
+        }
         case 'set-group-max-members': {
           // Inline edit of the group's hard member cap (the 👥
           // chip). Mirrors set-group-dir: swap the chip for a number

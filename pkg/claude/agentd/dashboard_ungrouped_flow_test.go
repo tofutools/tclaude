@@ -41,6 +41,7 @@ type dashRetired struct {
 
 type dashGroup struct {
 	Name       string       `json:"name"`
+	Descr      string       `json:"descr"`
 	MaxMembers int          `json:"max_members"`
 	Members    []dashMember `json:"members"`
 }

@@ -324,6 +324,23 @@ func CreateAgentGroup(name, descr string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// SetAgentGroupDescr sets (or, with descr == "", clears) the group's
+// own one-line description — the text shown next to the group name on
+// the dashboard, distinct from any per-member descr. Returns the
+// number of rows affected — 0 means no group by that name, so the
+// caller can answer 404.
+func SetAgentGroupDescr(name, descr string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET descr = ? WHERE name = ?`, descr, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SetAgentGroupDefaultCwd sets (or, with cwd == "", clears) the
 // default working directory pre-filled for agents spawned into the
 // named group. Returns the number of rows affected — 0 means no

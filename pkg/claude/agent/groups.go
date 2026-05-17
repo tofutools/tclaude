@@ -49,6 +49,7 @@ func groupsCmd() *cobra.Command {
 			groupsGrantOwnerCmd(),
 			groupsRevokeOwnerCmd(),
 			groupsRenameCmd(),
+			groupsSetDescrCmd(),
 			groupsSetDefaultDirCmd(),
 			groupsSetContextCmd(),
 			groupsSetMaxMembersCmd(),
@@ -1002,6 +1003,72 @@ func runGroupsRename(p *groupsRenameParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s: no-op (same name)\n", resp.Group)
 	} else {
 		fmt.Fprintf(stdout, "%s -> %s\n", resp.OldName, resp.Group)
+	}
+	return rcOK
+}
+
+// --- groups set-descr ---
+
+type groupsSetDescrParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Descr    string `pos:"true" optional:"true" help:"New one-line description for the group. Omit to clear it."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetDescrCmd() *cobra.Command {
+	return boa.CmdT[groupsSetDescrParams]{
+		Use:   "set-descr",
+		Short: "Set (or clear) a group's description",
+		Long: "Set the group's own one-line description — the text shown next " +
+			"to the group name on the dashboard. This is the group entity's " +
+			"description, distinct from the per-member descr edited with " +
+			"`groups update-member`. Pass the new description as the second " +
+			"argument; omit it to clear the description. Gated on the " +
+			"`groups.rename` permission (default human-only).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDescrParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetDescrParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetDescr(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetDescr(p *groupsSetDescrParams, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group string `json:"group"`
+		Descr string `json:"descr"`
+	}
+	// descr is *string server-side, so an omitted positional sends ""
+	// — distinct from omitting the field — which clears the description.
+	body := map[string]any{"descr": p.Descr}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.Descr == "" {
+		fmt.Fprintf(stdout, "%s: description cleared\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s: description set to %q\n", resp.Group, resp.Descr)
 	}
 	return rcOK
 }
