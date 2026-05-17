@@ -72,6 +72,27 @@ func asDashboardHumanPeer(r *http.Request) *http.Request {
 // peer's PID, walks the process tree to a claude/node ancestor, reads its
 // per-pid session file, and attaches the result to the request context.
 //
+// SECURITY MODEL — read this before relying on the resolved identity.
+// The identity attached here is a COORDINATION GUARDRAIL, not a security
+// boundary. The real trust boundary is the Unix UID: the socket is mode
+// 0600, so SO_PEERCRED already bounds every caller to the same user. The
+// peer-PID process-tree walk on top of that exists to tell *which* agent
+// is calling and to separate agents from the human operator, so the
+// permission layer can shape agent behaviour and prevent accidents — it
+// is NOT, and cannot be, an attempt to authenticate a hostile caller.
+//
+// The model is deliberately fail-open toward "human": a caller with no
+// claude/node ancestor in its process tree is treated as the human
+// operator and bypasses all permission gating (see requirePermission).
+// An agent can reach that state on purpose — e.g. by double-forking so
+// its socket-opening process reparents away from its Claude Code
+// ancestor. That is an ACCEPTED residual, not a bug: a process running
+// as the same UID can already mutate ~/.tclaude state — the SQLite DB,
+// config.json — directly, with no daemon involved, so this gate was
+// never a boundary against a hostile same-UID process. Do not build a
+// feature that needs a real security boundary on top of this identity.
+// See docs/plans/agentd.md, "Security model — a guardrail, not a boundary".
+//
 // Resolving a non-empty conv-id also opportunistically flushes any
 // nudges queued for this conv while it was offline. The flush is
 // debounced per-conv and runs on its own goroutine, so chatty agents
@@ -227,6 +248,15 @@ func resolvePermission(convID, slug string) permResolution {
 }
 
 // requirePermission gates an endpoint behind a named agent permission.
+//
+// This is a guardrail, not a security boundary — see the SECURITY MODEL
+// note on withIdentity. The human bypass below is fail-open: any caller
+// without a resolvable claude/node ancestor is treated as the human and
+// passes unconditionally, and an agent can reach that state by detaching
+// from its Claude Code ancestor. Accepted: a same-UID process can mutate
+// ~/.tclaude state directly regardless of this check, so the gate exists
+// to prevent accidents and shape agent behaviour, not to contain a
+// hostile caller.
 //
 // Humans (no claude ancestor) always pass. Agents pass only when
 // resolvePermission returns permAllow — an active sudo grant, a
@@ -390,6 +420,12 @@ func parseAskHumanHeader(r *http.Request) time.Duration {
 // observed at all. Callers use the flag to distinguish "really the
 // human" (no ancestor) from "agent we can't identify" (ancestor present
 // but session file unreadable).
+//
+// The claude/node match is a process-NAME (comm) test, and the absence
+// of a match is what classifies a caller as the human. A same-UID
+// process controls its own process tree and names, so this is a
+// coordination guardrail, not authentication — see the SECURITY MODEL
+// note on withIdentity for why that is an accepted residual.
 func convIDForPID(pid int) (convID string, hasAncestor bool) {
 	cur := pid
 	for cur > 1 {
