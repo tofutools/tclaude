@@ -248,6 +248,13 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			if err := db.UpsertConvIndex(stub); err != nil {
 				slog.Warn("conv_index: db upsert stub failed", "conv_id", convID[:8], "error", err)
 			}
+			// A conv that once had branch-stamped turns and was later
+			// truncated to stub-only content must shed its stale scan
+			// rows — an empty rebuild drops them (hook rows survive),
+			// keeping the history a true mirror of the .jsonl.
+			if err := db.RebuildConvBranchHistoryScan(convID, nil); err != nil {
+				slog.Warn("conv_branch_history: stub rebuild failed", "conv_id", convID[:8], "error", err)
+			}
 			continue
 		}
 		scanned.FileSize = fileSize
@@ -758,6 +765,9 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 			IndexedAt:  time.Now(),
 		}
 		_ = db.UpsertConvIndex(stub)
+		// Shed any stale scan rows from a prior non-stub scan — see the
+		// matching empty rebuild in LoadSessionsIndexWithOptions.
+		_ = db.RebuildConvBranchHistoryScan(convID, nil)
 		return nil
 	}
 	scanned.FileSize = info.Size()

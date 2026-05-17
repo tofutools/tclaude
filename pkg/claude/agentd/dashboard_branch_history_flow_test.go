@@ -31,6 +31,10 @@ func TestConvBranchHistory_ScanThenPRStamp(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
 
+	// PR enrichment is off in production by default; this scenario
+	// exercises the stamp, so turn it on for the test.
+	t.Cleanup(agentd.SetBranchHistoryPREnrichmentForTest(true))
+
 	const conv = "aaaaaaaa-bbbb-cccc-dddd-00000000beef"
 	const cwd = "/tmp/wt/payments"
 	const branch = "feature-payments"

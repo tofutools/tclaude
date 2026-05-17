@@ -232,8 +232,9 @@ func SetConvBranchHistoryPR(repoDir, branch string, prNumber int, prURL, prState
 }
 
 // ListConvBranchHistory returns the branch history of one conversation,
-// oldest sighting first (branch name breaks ties). An unknown convID
-// yields an empty slice and a nil error.
+// ordered by first sighting (oldest first), with the branch name
+// breaking ties. An unknown convID yields an empty slice and a nil
+// error.
 func ListConvBranchHistory(convID string) ([]ConvBranchHistoryRow, error) {
 	conn, err := Open()
 	if err != nil {
@@ -242,7 +243,7 @@ func ListConvBranchHistory(convID string) ([]ConvBranchHistoryRow, error) {
 	rows, err := conn.Query(`SELECT conv_id, branch, repo_dir, pr_number,
 		pr_url, pr_state, source, first_seen, last_seen
 		FROM conv_branch_history WHERE conv_id = ?
-		ORDER BY last_seen, branch`, convID)
+		ORDER BY first_seen, branch`, convID)
 	if err != nil {
 		return nil, err
 	}

@@ -18,6 +18,16 @@ func BuildHandlerForTest() http.Handler {
 	return buildMux()
 }
 
+// SetBranchHistoryPREnrichmentForTest flips the conv_branch_history PR
+// enrichment gate, which production leaves off by default. A test that
+// wants refreshBranchLink to stamp resolved PRs onto the history table
+// calls this with true. Returns a restore closure for t.Cleanup.
+func SetBranchHistoryPREnrichmentForTest(enabled bool) func() {
+	prev := branchHistoryPREnrichment
+	branchHistoryPREnrichment = enabled
+	return func() { branchHistoryPREnrichment = prev }
+}
+
 // WaitForBackgroundForTest blocks until every goBackground goroutine
 // (spawn / clone post-init, etc.) has returned. Flow setup registers
 // this in t.Cleanup so the next test's db.ResetForTest doesn't race a

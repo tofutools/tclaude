@@ -85,6 +85,31 @@ func TestLoadSessionsIndex_BranchHistoryRebuildIsIdempotent(t *testing.T) {
 	require.Equal(t, first, second, "a re-scan of the same .jsonl converges")
 }
 
+// TestLoadSessionsIndex_BranchHistoryClearedOnStubTransition covers the
+// active→stub transition: a conv that once had branch-stamped turns and
+// is later truncated to stub-only content (no indexable data) must shed
+// its 'scan' rows, keeping the history a true mirror of the .jsonl.
+func TestLoadSessionsIndex_BranchHistoryClearedOnStubTransition(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "00000000-1111-2222-3333-444444444444"
+	jsonlPath := filepath.Join(tmpDir, sessionID+".jsonl")
+
+	// First scan: a real conv with branch history.
+	require.NoError(t, os.WriteFile(jsonlPath, []byte(jsonlWithBranchHops), 0o600))
+	_, err := LoadSessionsIndex(tmpDir)
+	require.NoError(t, err)
+	require.NotEmpty(t, branchSet(t, sessionID), "history populated on first scan")
+
+	// The .jsonl is truncated to un-indexable stub content. A forced
+	// re-scan now sees a stub — the scan rows must be dropped.
+	stub := `{"type":"last-prompt","sessionId":"` + sessionID + `"}` + "\n"
+	require.NoError(t, os.WriteFile(jsonlPath, []byte(stub), 0o600))
+	_, err = LoadSessionsIndexWithOptions(tmpDir, LoadSessionsIndexOptions{ForceRescan: true})
+	require.NoError(t, err)
+	assert.Empty(t, branchSet(t, sessionID), "stub transition sheds the scan rows")
+}
+
 // TestLoadSessionsIndex_BranchHistoryEvictedWithConv covers the
 // self-healing eviction: when a .jsonl disappears, its branch history
 // is dropped alongside the conv_index row.

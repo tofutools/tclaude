@@ -83,6 +83,21 @@ type repoBranchInfo struct {
 // — the caller then writes a negative cache entry.
 var gitInfoResolver = liveGitInfoResolver
 
+// branchHistoryPREnrichment gates whether refreshBranchLink stamps the
+// resolved PR onto the conv_branch_history table. Off by default: v1
+// of the branch-history feature records the branches an agent worked
+// on and leaves the PR columns empty until a branch→PR caching
+// strategy is designed. The daemon flips it on at startup from
+// config.Agent.BranchHistoryPREnrichment (see serve.go); flow tests
+// flip it via SetBranchHistoryPREnrichmentForTest.
+//
+// Note this gates only the *stamp*: the branch re-scan and the
+// PostToolUse hook append never resolve PRs or shell out to gh, so
+// they run identically whether this is on or off. When on, the stamp
+// adds zero gh calls — it reuses the resolution refreshBranchLink
+// already performed for the dashboard's own Branch column.
+var branchHistoryPREnrichment bool
+
 // branchLinkInflight single-flights background refreshes: a key is
 // present while its refresh goroutine runs, so the 5s snapshot poll
 // can't stack a fresh refresh on top of an in-progress one.
@@ -165,14 +180,30 @@ func refreshBranchLink(repoDir, branch, key string) {
 	// dashboard already pays for here — for an agent's active and
 	// startup branches — rather than shelling out to `gh` itself.
 	//
-	// Only stamp when a PR was actually found. `gh` is best-effort and
-	// regularly rate-limited; a failed `gh pr view` is indistinguishable
-	// from "no PR" — both yield PRNumber 0. Stamping that zero would wipe
-	// a good snapshot off a branch the agent has since moved away from
-	// (it gets no further refresh). So a zero is treated as "no new
-	// info" and the prior snapshot is left intact. A merged or closed PR
-	// still reports a non-zero number, so genuine state changes land.
-	if info.PRNumber > 0 {
+	// Gated off by default (branchHistoryPREnrichment) — v1 ships
+	// branch history with empty PR columns. Only stamp when a PR was
+	// actually found: `gh` is best-effort and regularly rate-limited,
+	// and a failed `gh pr view` is indistinguishable from "no PR" —
+	// both yield PRNumber 0. Stamping that zero would wipe a good
+	// snapshot off a branch the agent has since moved away from (it
+	// gets no further refresh), so a zero is treated as "no new info".
+	// A merged or closed PR still reports a non-zero number, so genuine
+	// state changes land.
+	//
+	// KNOWN MUST-FIX BEFORE ENABLING:
+	//   M1 — SetConvBranchHistoryPR matches rows on (repo_dir, branch),
+	//   but a scan row stores repo_dir = the launch cwd while this
+	//   resolver and the hook use the resolved git worktree root. For an
+	//   agent working in a worktree (the case the feature targets) those
+	//   differ, so the stamp can miss the scan row. Resolve repo_dir
+	//   consistently — to the git worktree root — on both the write and
+	//   match sides before this flag is turned on.
+	//   m4 — the PRNumber>0 guard means a genuinely *deleted* PR is
+	//   never cleared from a stale snapshot. Fixing this needs the
+	//   resolver to distinguish "gh ran, found no PR" from "gh failed"
+	//   (e.g. via `gh pr list` exit codes) so only the former clears.
+	// Both are harmless while the flag is off.
+	if branchHistoryPREnrichment && info.PRNumber > 0 {
 		if err := db.SetConvBranchHistoryPR(repoDir, branch, info.PRNumber, info.PRURL, info.PRState); err != nil {
 			slog.Warn("branchlinks: failed to stamp branch-history PR",
 				"error", err, "repo", repoDir, "branch", branch, "module", "agentd")
