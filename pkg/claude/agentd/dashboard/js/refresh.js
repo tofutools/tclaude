@@ -888,11 +888,17 @@ function addMemberModal(groupName) {
     async function addOne(idx) {
       const cand = candidates[idx];
       if (!cand) return;
-      const r = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({conv: cand.conv_id}),
-      });
+      let r;
+      try {
+        r = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({conv: cand.conv_id}),
+        });
+      } catch (e) {
+        toast(`add failed: ${e && e.message || e}`, true);
+        return;
+      }
       if (!r.ok) {
         toast(`add failed: ${await r.text()}`, true);
         return;
@@ -1009,7 +1015,12 @@ function deleteAgentModal(conv, label) {
     wtCb.checked = false;
     wtCb.disabled = false;
 
+    // active guards the background worktree fetch below: once the modal
+    // is closed (and possibly reopened for another agent) a late
+    // response must not mutate the now-foreign modal DOM.
+    let active = true;
     const cleanup = (result) => {
+      active = false;
       overlay.classList.remove('show');
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
@@ -1035,6 +1046,7 @@ function deleteAgentModal(conv, label) {
     fetch(`/api/agents/${encodeURIComponent(conv)}/worktree`, { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : null)
       .then(wt => {
+        if (!active) return;
         if (!wt || wt.kind === 'none' || !wt.path) return;
         wtRow.style.display = '';
         const pathTxt = wt.path + (wt.branch ? ' · ' + wt.branch : '');
@@ -1490,7 +1502,6 @@ export function openCleanupModal(opts) {
         return;
       }
       renderResult(await r.json());
-      refresh();
     } catch (err) {
       errEl.textContent = 'Request failed: ' + (err && err.message || err);
       recompute();
@@ -1547,6 +1558,12 @@ export function openCleanupModal(opts) {
     catsEl.removeEventListener('change', onCatChange);
     optsEl.removeEventListener('change', onOptChange);
     listEl.removeEventListener('change', onListChange);
+    // refresh() belongs here, not in submit(): submit() runs while the
+    // overlay still carries .show, so refreshSuspended() would drop the
+    // re-render. After a completed cleanup (phase === 'result') the
+    // dashboard needs the post-cleanup snapshot — refresh once the
+    // overlay is gone.
+    if (phase === 'result') refresh();
   }
   function onCancel() { close(); }
   function onSubmit() { if (phase === 'result') close(); else submit(); }
@@ -1635,9 +1652,15 @@ export function openCleanupModal(opts) {
 // and the offline status-dot click — both wake an agent the exact
 // same way. Returns true on success.
 async function resumeAgentReq(conv, label) {
-  const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume`, {
-    method: 'POST', credentials: 'same-origin',
-  });
+  let r;
+  try {
+    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+  } catch (e) {
+    toast(`wake failed: ${e && e.message || e}`, true);
+    return false;
+  }
   if (!r.ok) {
     toast(`wake failed: ${await r.text()}`, true);
     return false;
@@ -1660,11 +1683,17 @@ async function resumeAgentReq(conv, label) {
 // outcome, and refreshes on success. Shared by the "shut down" row
 // button and the online status-dot click. Returns true on success.
 async function stopAgentReq(conv, label, force) {
-  const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/stop`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({force: !!force}),
-  });
+  let r;
+  try {
+    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/stop`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({force: !!force}),
+    });
+  } catch (e) {
+    toast(`shutdown failed: ${e && e.message || e}`, true);
+    return false;
+  }
   if (!r.ok) {
     toast(`shutdown failed: ${await r.text()}`, true);
     return false;
