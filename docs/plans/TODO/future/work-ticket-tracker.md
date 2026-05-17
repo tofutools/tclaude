@@ -1,57 +1,57 @@
-# Work ticket tracker for the tclaude-dev agent group
+# Issue tracker for developing the tclaude repo
 
-## What's open
+## What this is — and is NOT
 
-The tclaude-dev multi-agent group (human + PO + worker agents) has no
-structured work-state tracker. Work-item state — in-dev / in-review /
-merge-ready / PO-approved / back-in-dev — is tracked informally in the PO's
-conversation and relayed to the human on request. The human wants a real
-ticket system: dynamic tickets with sub-tasks / checkboxes, explicit states a
-ticket moves between, updated independently by the PO and by worker agents.
+This is a **workflow gap in the tclaude-dev agent group**, not a tclaude
+product feature. **tclaude itself will not build an issue tracker** —
+work-tracking semantics (tickets, states, sub-tasks, dependencies) are out of
+tclaude's scope by design; tclaude orchestrates agents (lifecycle / comms /
+permissions) and leaves work-tracking to an external engine.
 
-## Why not the obvious GitHub-native options
+Every project that uses tclaude picks **its own** issue tracker. Agents reach
+whichever tracker a project chose over **MCP, a skill, or similar** — so the
+tracker is pluggable and swappable, and tclaude stays tracker-agnostic.
 
-Evaluated 2026-05-17 and rejected for now:
+This file is only about **one project's choice: the tclaude repo's own
+development.** Building features for tclaude itself is getting messy without a
+tracker — work-item state (in-dev / in-review / merge-ready / PO-approved /
+back-in-dev), sub-tasks, and follow-ups are tracked informally in the PO's
+conversation and relayed on request. The tclaude-dev group should adopt a
+real tracker.
 
-- **GitHub Issues** — `tofutools/tclaude` is a *public* repo, so anyone can
-  open an issue. If agents treat a ticket tracker as a work queue, public
-  issue creation is an injection / poisoning / noise vector — an external
-  party could file a "ticket" an agent then picks up and acts on.
-- **PR comments** — same problem: anyone can comment on a public PR.
-- **GitHub Projects** — publicly viewable; and a Project board is only a view
-  over issues/PRs, so it inherits the same writability exposure.
+## Constraint — why not the GitHub-native options
 
-The disqualifier is **public writability** (and visibility): the tracker must
-not be a surface arbitrary external parties can write to, or inject through.
+`tofutools/tclaude` is a **public** repo, so:
 
-Note: PR **labels** are *not* poisonable — only repo-write-access users can
-set them — so they remain a possible non-poisonable partial measure (a
-queryable merge-gate state). Worth reconsidering if a fuller tracker stalls.
+- **GitHub Issues** — anyone can open an issue; if agents treat the tracker
+  as a work queue, that is an external injection / poisoning / noise vector.
+- **PR comments** — same: anyone can comment on a public PR.
+- **GitHub Projects** — publicly viewable; a board is only a view over
+  issues/PRs, so it inherits the same exposure.
+
+PR **labels** are the exception — only repo-write-access users can set them —
+so they remain a usable, non-poisonable partial signal (a queryable
+merge-gate state).
 
 ## Likely direction
 
-A **separate, access-controlled ticket tracker** — not public-GitHub-native.
-Candidates to weigh when this is picked up:
+An **access-controlled tracker**, reached by agents via MCP / a skill so it
+stays swappable:
 
 - A **private** repo's GitHub Issues (issue creation gated to collaborators).
-- An external tracker (Linear / Jira / private-repo GitHub Issues) reached by
-  agents via **MCP** — consistent with tclaude's design stance that
-  work-tracking semantics belong in an external engine, not in tclaude itself.
-- An agentd-local tracker — least preferred: tclaude's scope is to
-  orchestrate agents (lifecycle / comms / permissions), explicitly NOT to own
-  work-tracking semantics, so building a tracker into the daemon cuts against
-  the project's own scope decision.
+- An external tracker (Linear / Jira / private-repo Issues) via an MCP server.
+- Not an agentd-local tracker — tclaude does not own work-tracking semantics.
 
 ## Open questions
 
-- Private GH repo vs a dedicated external tracker (Linear / Jira) vs other.
-- How agents read/write it — an MCP server, a CLI wrapper, or a `tclaude`
-  skill.
+- Which tracker for the tclaude repo specifically (private GH repo vs an
+  external engine).
+- The agent access path — an MCP server vs a `tclaude` skill vs a CLI wrapper.
 - Trust model: who or what may create a ticket and transition its state.
-- Whether tickets need to survive across machines (a cross-machine concern).
+- Cross-machine survival of tickets.
 
 ## Interim
 
 The PO tracks work state informally and relays it on request. PR labels
-(write-access-gated, non-poisonable) could be adopted as a cheap partial
-merge-gate signal in the meantime if desired.
+(write-access-gated, non-poisonable) can serve as a cheap partial merge-gate
+signal in the meantime.
