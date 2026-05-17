@@ -244,3 +244,56 @@ func TestSpawnCLI_WorktreeModifiersRequireWorktree(t *testing.T) {
 		})
 	}
 }
+
+// Scenario: a `tclaude agent spawn --worktree` whose spawn request is
+// then rejected by the daemon (here: the target group is already at
+// its member cap) must NOT leak the git worktree the CLI created up
+// front. RunSpawn tears the freshly-created worktree back down — but
+// keeps the branch, so a retry reuses it rather than tripping over a
+// half-cleaned state. This pins the failure-path cleanup in RunSpawn.
+func TestSpawnCLI_WorktreeTornDownWhenSpawnRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	// Fill alpha to its cap: a spawn into it is now refused 409
+	// group_full — a guardrail that binds the human caller too, so it
+	// fires on the bridged (human-peer) CLI path.
+	const incumbent = "exis-aaaa-bbbb-cccc-111111111111"
+	f.HaveMember("alpha", incumbent)
+	_, err := db.SetAgentGroupMaxMembers("alpha", 1)
+	require.NoError(t, err, "SetAgentGroupMaxMembers")
+	bridgeAgentClientToMux(t, f.Mux)
+
+	repo, parent := initRepoOnMain(t)
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: repo, Worktree: "feat-x"},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	// The spawn was rejected — no response, a non-zero rc. The daemon
+	// returned 409 group_full (the bridge surfaces the status; the
+	// human-readable body isn't decoded in the test transport).
+	require.Nilf(t, resp, "a rejected spawn returns no response; stderr=%s", stderr.String())
+	require.NotEqual(t, 0, rc, "a rejected spawn returns a non-zero rc")
+	assert.Contains(t, stderr.String(), "409", "the rejection status is surfaced")
+	assert.Contains(t, stderr.String(), "removed the worktree",
+		"RunSpawn should report it cleaned up the orphaned worktree")
+
+	// The worktree directory is gone — RunSpawn tore it back down — and
+	// the repo no longer registers a worktree on feat-x.
+	orphan := filepath.Join(parent, "repo-feat-x")
+	_, statErr := os.Stat(orphan)
+	assert.Truef(t, os.IsNotExist(statErr),
+		"orphaned worktree dir should be removed; stat err=%v", statErr)
+	wts, err := worktree.ListWorktreesIn(repo)
+	require.NoError(t, err, "ListWorktreesIn")
+	for _, wt := range wts {
+		assert.NotEqualf(t, "feat-x", wt.Branch,
+			"repo should no longer have a worktree on feat-x; got %+v", wts)
+	}
+
+	// ...but the branch survives, so a retry reuses it rather than
+	// erroring on a half-cleaned state.
+	assert.Containsf(t, worktree.BranchesIn(repo), "feat-x",
+		"the feat-x branch must be kept; branches=%v", worktree.BranchesIn(repo))
+}

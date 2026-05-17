@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -254,7 +255,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		if createdNew {
 			createdWorktree = wtPath
 		}
-		if worktreeRepo != cwd {
+		// Clean both sides before comparing: a trailing slash or "/."
+		// on --worktree-repo must not mis-classify an in-place worktree
+		// (worktree-repo == cwd) as the monorepo case.
+		if filepath.Clean(worktreeRepo) != filepath.Clean(cwd) {
 			// Monorepo sub-repo case: the agent launches in --cwd (the
 			// parent) and the worktree path/branch ride into its welcome.
 			req.WorktreePath = wtPath
