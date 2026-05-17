@@ -7,9 +7,9 @@ import (
 
 // Every drag-and-drop agent move on the dashboard must pop a
 // confirmation modal first, so an accidental drag cannot mutate state.
-// The gates live entirely in dashboard.html's embedded JS — each
-// runDnd* function awaits a modal as its first step — so there is no
-// server code path a flow test can exercise, and the repo has no JS
+// The gates live entirely in the dashboard's embedded JS modules —
+// each runDnd* function awaits a modal as its first step — so there is
+// no server code path a flow test can exercise, and the repo has no JS
 // test runner.
 //
 // Following the established pattern of the other dashboard_*_test.go
@@ -23,13 +23,13 @@ import (
 
 // dndFuncBody returns the source span of a single runDnd* function: the
 // text from its `async function` keyword to its closing brace. The
-// span is bounded by the next runDnd* definition (or bindTabs() for the
-// last one) and then trimmed back to the function's own closing brace,
-// so the next function's doc comment is excluded.
+// span is bounded by the next runDnd* definition (or dnd.js's export
+// block for the last one) and then trimmed back to the function's own
+// closing brace, so the next function's doc comment is excluded.
 func dndFuncBody(t *testing.T, name string) string {
 	t.Helper()
-	// Source order in dashboard.html; the definition after each
-	// function bounds its span.
+	// Source order in dnd.js; the definition after each function
+	// bounds its span.
 	order := []string{
 		"runDndClone", "runDndMove", "runDndAddToGroup",
 		"runDndRemoveFromGroup", "runDndRetire", "runDndPromoteToUngrouped",
@@ -37,12 +37,13 @@ func dndFuncBody(t *testing.T, name string) string {
 	}
 	start := strings.Index(dashboardAssets, "async function "+name+"(")
 	if start < 0 {
-		t.Fatalf("dashboard.html: %s not found", name)
+		t.Fatalf("dashboard assets: %s not found", name)
 	}
 	// Search the end marker strictly AFTER `start` so an identical
-	// token earlier in the file can never truncate the slice.
+	// token earlier in the file can never truncate the slice. The last
+	// runDnd* function is bounded by dnd.js's trailing export block.
 	rest := dashboardAssets[start+1:]
-	endRel := strings.Index(rest, "bindTabs();")
+	endRel := strings.Index(rest, "\nexport {")
 	for i, n := range order {
 		if n == name && i+1 < len(order) {
 			if next := strings.Index(rest, "async function "+order[i+1]+"("); next >= 0 {
@@ -52,14 +53,15 @@ func dndFuncBody(t *testing.T, name string) string {
 		}
 	}
 	if endRel < 0 {
-		t.Fatalf("dashboard.html: could not bound %s", name)
+		t.Fatalf("dashboard assets: could not bound %s", name)
 	}
 	body := dashboardAssets[start : start+1+endRel]
 	// Trim the trailing whitespace + next function's doc comment back
-	// to this function's own closing brace ("\n  }" — 2-space indent;
-	// every deeper brace is indented further, doc comments never are).
-	if i := strings.LastIndex(body, "\n  }"); i >= 0 {
-		body = body[:i+len("\n  }")]
+	// to this function's own closing brace ("\n}" — dnd.js is a native
+	// ES module, so the runDnd* functions sit at column 0; every deeper
+	// brace is indented further, doc comments never are).
+	if i := strings.LastIndex(body, "\n}"); i >= 0 {
+		body = body[:i+len("\n}")]
 	}
 	return body
 }

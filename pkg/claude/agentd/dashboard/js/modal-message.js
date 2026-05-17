@@ -10,9 +10,10 @@ import {
   bindTargetPicker, populateTargetPicker, readTargetPicker, pickCronTargetModal,
   openSudoGrantModal, closeSudoGrantModal, submitSudoGrant, pickSudoAgentModal,
 } from './modal-cron.js';
-// refresh() and lastSnapshot are imported back from dashboard.js — a
-// deliberate, benign cycle (see render.js). TDZ-safe.
-import { refresh, lastSnapshot, toast, openCleanupModal } from './dashboard.js';
+// lastSnapshot lives in dashboard.js; refresh() / toast / openCleanupModal
+// in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
+import { lastSnapshot } from './dashboard.js';
+import { refresh, toast, openCleanupModal } from './refresh.js';
 
 
 // --- one-shot message modal -----------------------------------------

@@ -6,13 +6,13 @@
 
 import { $, $$, esc, shortId } from './helpers.js';
 import { renderCronTab, formatInterval } from './tabs.js';
-// refresh() and shared snapshot/sudo state are imported back from
-// dashboard.js — a deliberate, benign cycle (see render.js). TDZ-safe:
-// no top-level code here reads them; the modal functions touch them
-// only when invoked, after every module has finished evaluating.
-import {
-  refresh, lastSnapshot, sudoGrantBlocklist, sudoByConv, sudoBadge, toast,
-} from './dashboard.js';
+// lastSnapshot / sudoBadge live in dashboard.js; refresh() / toast and
+// the sudo state (sudoGrantBlocklist, sudoByConv) live in refresh.js.
+// Imported back here — deliberate, benign cycles (see render.js).
+// TDZ-safe: no top-level code reads them; the modal functions touch
+// them only when invoked, after every module has finished evaluating.
+import { lastSnapshot, sudoBadge } from './dashboard.js';
+import { refresh, toast, sudoGrantBlocklist, sudoByConv } from './refresh.js';
 
 // openSudoGrantModal: builds the slug picker from the snapshot's
 // registry, restores the conv field from a per-page memory so

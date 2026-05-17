@@ -5,9 +5,10 @@
 // Stage 2 module split.
 
 import { $, esc, shortCwd } from './helpers.js';
-// refresh() and lastSnapshot are imported back from dashboard.js — a
-// deliberate, benign cycle (see render.js). TDZ-safe.
-import { refresh, lastSnapshot, toast } from './dashboard.js';
+// lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
+// Imported back — benign cycles (see render.js); TDZ-safe.
+import { lastSnapshot } from './dashboard.js';
+import { refresh, toast } from './refresh.js';
 
 
 // ---- Link modal (create + edit) ----------------------------------------
