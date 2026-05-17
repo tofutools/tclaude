@@ -25,6 +25,7 @@ lives in plain files owned by your user account:
 |--------------------------------|----------------------------------------------------------------------------|
 | `~/.tclaude/db.sqlite`         | Session, group, and permission state (plus the WAL/SHM sidecar files).      |
 | `~/.tclaude/config.json`       | tclaude configuration, including agent default permissions.                 |
+| `~/.tclaude/output.log`        | The `agentd` daemon log — an identity-and-activity trace (see below).       |
 | `~/.claude/sessions/<pid>.json`| Per-process identity files — the daemon reads these to attribute a caller.  |
 
 An agent that can **write those files directly** does not need the daemon
@@ -51,25 +52,48 @@ guardrail is advisory only.
 Deny tclaude agents direct access to these two trees:
 
 - **`~/.tclaude/`** — the whole directory. **Write must be denied**
-  (integrity: the guardrail-bypass vector above). Read denial is
-  recommended too (confidentiality: `db.sqlite` contains every group's
-  messages and permission grants) — see the socket caveat below.
+  (integrity: the guardrail-bypass vector above). **Read should be
+  denied too** (confidentiality — see below); deny the whole directory
+  and punch one hole for the daemon socket, as the config below does.
 - **`~/.claude/sessions/`** — the whole directory. **Write must be
   denied** (identity-forgery vector). Read denial is harmless and
   recommended.
 
-Write denial is the must-have. Read denial is defense-in-depth.
+Write denial is the must-have. Read denial is cheap defense-in-depth —
+worth doing.
+
+### Why read-deny `~/.tclaude/`
+
+`~/.tclaude/` holds more than `db.sqlite`, and every file in it is
+readable by any process running as your user:
+
+- `db.sqlite` — every group's messages, permission grants, and identity
+  rows. It runs in **WAL mode**: `db.sqlite-wal` holds recently-committed
+  pages in cleartext until the next checkpoint, so denying read on
+  `db.sqlite` alone still leaks recent activity through the `-wal`
+  sidecar (`-shm` is the WAL index).
+- `config.json` — tclaude configuration, including agent default
+  permissions.
+- `output.log` — the `agentd` daemon log. It carries no message
+  *bodies*, but it is a detailed identity-and-activity trace: per-agent
+  conv-ids, which agent called which endpoint when, the working
+  directories agents run in, message IDs, and permission-request events.
+
+Denying read on the **whole directory** covers all of these — and
+whatever the daemon adds later — with one rule and no filename list to
+keep in sync. The only subtlety is the daemon socket; see
+"Read-denying `~/.tclaude/`" below.
 
 ### This does not break agent ↔ daemon communication
 
 Agents still talk to the daemon over the Unix socket at
 `~/.tclaude/agentd.sock`. Connecting to that socket needs the path to
-*resolve* and the socket itself — it does **not** need filesystem
-**write** access to `~/.tclaude/`. So denying write leaves the socket
-fully usable. (Verified: with `~/.tclaude/` mounted read-only by the
-sandbox, `tclaude agent` commands and the daemon's identity resolution
-work normally.) Read denial is the one to be careful with — it can
-affect path resolution; see the socket caveat below.
+*resolve* and the socket file itself — it does **not** need filesystem
+**write** access to `~/.tclaude/`, so denying write leaves the socket
+fully usable. Denying *read* of the whole directory is also fine
+**provided you re-allow the socket** with `allowRead` — see
+"Read-denying `~/.tclaude/`" below for the details and how it was
+verified.
 
 Likewise, write-denying `~/.claude/sessions/` does **not** stop Claude
 Code from maintaining its own session files or the daemon from reading
@@ -117,7 +141,8 @@ a deny rule there cannot be weakened by any project's `.claude/settings.json`):
     "enabled": true,
     "filesystem": {
       "denyWrite": ["~/.tclaude", "~/.claude/sessions"],
-      "denyRead":  ["~/.claude/sessions"]
+      "denyRead":  ["~/.tclaude", "~/.claude/sessions"],
+      "allowRead": ["~/.tclaude/agentd.sock"]
     }
   },
   "permissions": {
@@ -135,10 +160,12 @@ Notes:
 
 - **`sandbox.enabled` must be `true`.** With the sandbox off, layer 1
   does nothing and a Bash one-liner can write anywhere your user can.
-- **`~/.claude/sessions` is safe to `denyRead` directory-wide** — it
-  holds no socket, so a directory read deny cannot break anything. Only
-  `~/.tclaude` needs the file-scoped treatment (see the socket caveat
-  below).
+- **`allowRead` re-opens the socket.** `denyRead` of `~/.tclaude` would
+  otherwise also hide `~/.tclaude/agentd.sock`, which every `tclaude
+  agent` command connects through. The `allowRead` entry re-grants read
+  access to that one path; Claude Code's docs state `allowRead` takes
+  precedence over `denyRead`. `~/.claude/sessions` holds no socket, so it
+  needs no such hole. See "Read-denying `~/.tclaude/`" below.
 - **Check for paths that re-open these.** The sandbox's writable set is
   your working directory plus `permissions.additionalDirectories` plus
   `sandbox.filesystem.allowWrite`. Make sure none of those lists contains
@@ -149,31 +176,48 @@ Notes:
   avoids relying on that and avoids surprises.
 - **`Edit` is the write rule, `Read` is the read rule.** `Edit(...)`
   covers every built-in file-editing tool (creation included), so it is
-  the must-have integrity rule; `Read(...)` is the optional
-  confidentiality rule.
+  the must-have integrity rule; `Read(...)` is the confidentiality rule
+  (recommended defense-in-depth).
 
-### Socket caveat for read-denying `~/.tclaude/`
+### Read-denying `~/.tclaude/`
 
-The example above intentionally does **not** put `~/.tclaude` in
-`sandbox.filesystem.denyRead`. A directory-wide OS-level read deny can
-also block *path resolution* of `~/.tclaude/agentd.sock`, which would
-break `tclaude agent`. The `permissions.deny` `Read(~/.tclaude/**)` rule
-above already stops the agent's `Read` tool and `cat`-style Bash
-commands from reading `db.sqlite` — that covers the realistic
-confidentiality case without risking the socket.
+`~/.tclaude/` contains the `agentd` Unix socket (`agentd.sock`) that
+every `tclaude agent` command connects through. A directory-wide
+`denyRead` must therefore re-allow that one socket, or agents lose
+contact with the daemon. The config above does exactly that —
+`denyRead: ["~/.tclaude", …]` plus `allowRead: ["~/.tclaude/agentd.sock"]`
+— and **this is verified to work.**
 
-If you also want OS-level read denial of `~/.tclaude/`, deny the
-*specific files* rather than the directory:
+On Linux, Claude Code's sandbox implements a directory `denyRead` by
+mounting an empty `tmpfs` over the directory: the files inside don't
+just become unreadable, they become *invisible* — `open()` returns "No
+such file or directory". An `allowRead` entry for a path inside is a
+read-only bind-mount of that path back on top of the tmpfs. So:
 
-```json
-"sandbox": { "filesystem": { "denyRead": ["~/.tclaude/db.sqlite", "~/.tclaude/config.json"] } }
-```
+- `db.sqlite`, `db.sqlite-wal`, `db.sqlite-shm`, `config.json` and
+  `output.log` all disappear from the agent's view — and so does any
+  future file the daemon writes there.
+- `agentd.sock` is bind-mounted back, so it stays present and
+  connectable. A read-only bind-mount does not block `connect()` (the
+  kernel exempts sockets from the read-only-mount write check), and the
+  tmpfs directory itself stays traversable, so path resolution to the
+  socket still succeeds.
 
-— or deny the directory and punch a hole for the socket with
-`"allowRead": ["~/.tclaude/agentd.sock"]` (Claude Code's sandboxing docs
-note that `sandbox.filesystem.allowRead` re-grants read within a denied
-region). Either way, **verify** afterwards (see below) — this is the
-fragile case, so confirm `tclaude agent whoami` still works.
+How this was checked: the exact `bwrap` invocation a sandboxed tclaude
+agent runs was reproduced with the `denyRead`/`allowRead` flags above
+spliced in. Inside it, reads of `db.sqlite`, `db.sqlite-wal`,
+`db.sqlite-shm`, `config.json` and `output.log` all failed, while
+`tclaude agent whoami` and `tclaude agent inbox ls` kept working. A
+control run that denied the directory **without** the socket `allowRead`
+broke `tclaude agent` ("agentd is not running") — confirming the
+`allowRead` hole is what keeps the daemon reachable.
+
+Do **not** be tempted to enumerate individual files in `denyRead`
+instead of the directory. That misses the `-wal`/`-shm` sidecars (which
+leak recent activity in cleartext — see "Why read-deny `~/.tclaude/`"
+above) and `output.log`, and it has to be hand-updated whenever the
+daemon gains a new state file. The directory deny plus the one socket
+hole is both safer and lower-maintenance.
 
 ### Multi-user / shared machines
 
@@ -192,14 +236,26 @@ inside that agent's session, confirm:
    - Bash: `echo x > ~/.tclaude/probe` → should fail (read-only / denied).
    - The `Write` tool, targeting `~/.tclaude/probe` → should be denied.
    - Repeat both for `~/.claude/sessions/probe`.
-2. **The daemon still works** — `tclaude agent whoami` returns the
+2. **Read is denied** — both layers:
+   - The `Read` tool, or `cat ~/.tclaude/db.sqlite` in Bash → blocked by
+     `permissions.deny` (layer 2).
+   - A subprocess that slips past layer 2 — e.g.
+     `python3 -c "open('$HOME/.tclaude/db.sqlite').read(1)"` → should
+     fail with "No such file or directory" (layer 1: the tmpfs makes the
+     file invisible).
+   - Repeat for `~/.tclaude/output.log` and a file under
+     `~/.claude/sessions/`.
+3. **The daemon still works** — `tclaude agent whoami` returns the
    agent's own identity, and `tclaude agent inbox ls` works. This
    confirms the socket and identity resolution survived the lockdown.
 
 If step 1 succeeds in writing a file, the sandbox is not denying that
 path — re-check `sandbox.enabled`, the `allowWrite` /
 `additionalDirectories` lists, and that the `permissions.deny` rules are
-in a scope that applies.
+in a scope that applies. If step 3 fails with "agentd is not running"
+even though the daemon is up, the socket `allowRead` is missing or
+mistyped — confirm the `allowRead` entry resolves to the same path as
+`~/.tclaude/agentd.sock`.
 
 ## Scope — what this does and does not cover
 
