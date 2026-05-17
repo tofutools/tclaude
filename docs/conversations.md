@@ -35,7 +35,7 @@ tclaude conv ls --before 2024-01-01
 |------|-------------|
 | `-w, --watch` | Interactive watch mode |
 | `-g, --global` | Search all projects |
-| `-n, --count` | Limit number of results |
+| `-n, --limit` | Limit number of results |
 | `--since` | Show only after this time |
 | `--before` | Show only before this time |
 
