@@ -1,6 +1,9 @@
 package setup
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -11,6 +14,24 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
+
+// captureStdout redirects os.Stdout for the duration of fn and returns
+// everything written to it. Used to assert that setup actually emits a
+// section, not just that the section's text-builder works in isolation.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	require.NoError(t, w.Close())
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+	return buf.String()
+}
 
 // tempHome points HOME (and USERPROFILE, which os.UserHomeDir reads on
 // Windows) at a fresh temp dir so setup's writes — ~/.claude/settings.json,
@@ -160,7 +181,9 @@ func TestRunSetup_BaselineRunsAlongsideExtras(t *testing.T) {
 	}
 	home := tempHome(t)
 
-	require.NoError(t, runSetup(&Params{Yes: true, InstallAgentSkills: true}))
+	out := captureStdout(t, func() {
+		require.NoError(t, runSetup(&Params{Yes: true, InstallAgentSkills: true}))
+	})
 
 	// Baseline ran despite the --install-* flag: hooks are installed.
 	installed, missing, _ := session.CheckHooksInstalled()
@@ -168,6 +191,23 @@ func TestRunSetup_BaselineRunsAlongsideExtras(t *testing.T) {
 	assert.FileExists(t, filepath.Join(home, ".claude", "settings.json"))
 	// The requested extra ran too.
 	assertSkillsInstalled(t, home)
+	// The agent-sandbox advisory is part of the baseline output.
+	assert.Contains(t, out, "=== Agent Sandbox ===")
+}
+
+// checkStatus must surface the agent-sandbox advisory so that
+// `tclaude setup --check` points operators at the hardening doc. This
+// guards the call site, which TestSandboxAdvisory_NamesPathsAndDoc
+// (which only exercises sandboxAdvisory itself) does not.
+func TestCheckStatus_PrintsSandboxAdvisory(t *testing.T) {
+	tempHome(t)
+
+	out := captureStdout(t, func() {
+		require.NoError(t, checkStatus())
+	})
+
+	assert.Contains(t, out, "=== Agent Sandbox ===")
+	assert.Contains(t, out, sandboxHardeningDocURL)
 }
 
 // The agent-sandbox advisory must name both sensitive trees, frame the

@@ -11,9 +11,9 @@ sandbox so agents cannot reach tclaude's daemon state directly.
 ## Why this matters
 
 `agentd`'s identity and permission layer is a **coordination guardrail,
-not a security boundary**. This is a deliberate, accepted design choice —
-see [`plans/agentd.md`](plans/agentd.md), section *"Security model — a
-guardrail, not a boundary"*, for the full reasoning.
+not a security boundary**. This is a deliberate, accepted design choice;
+[`plans/agentd.md`](plans/agentd.md) — the `agentd` design doc — covers
+the full reasoning in its security-model discussion.
 
 The short version: the daemon resolves *which agent is calling* from the
 caller's process tree and gates sensitive operations behind that identity.
@@ -63,11 +63,13 @@ Write denial is the must-have. Read denial is defense-in-depth.
 ### This does not break agent ↔ daemon communication
 
 Agents still talk to the daemon over the Unix socket at
-`~/.tclaude/agentd.sock`. Connecting to that socket is a *network*
-operation, not a filesystem write — denying filesystem **write** to
-`~/.tclaude/` leaves the socket fully usable. (Verified: with `~/.tclaude/`
-mounted read-only by the sandbox, `tclaude agent` commands and the
-daemon's identity resolution work normally.)
+`~/.tclaude/agentd.sock`. Connecting to that socket needs the path to
+*resolve* and the socket itself — it does **not** need filesystem
+**write** access to `~/.tclaude/`. So denying write leaves the socket
+fully usable. (Verified: with `~/.tclaude/` mounted read-only by the
+sandbox, `tclaude agent` commands and the daemon's identity resolution
+work normally.) Read denial is the one to be careful with — it can
+affect path resolution; see the socket caveat below.
 
 Likewise, write-denying `~/.claude/sessions/` does **not** stop Claude
 Code from maintaining its own session files or the daemon from reading
@@ -86,14 +88,20 @@ open:
    It does **not** cover Claude Code's built-in `Read`/`Write`/`Edit`
    tools.
 2. **`permissions.deny`** — tool-level rules. Covers the built-in
-   `Read`/`Write`/`Edit` tools and the file commands Claude Code
-   recognizes in Bash (`cat`, `sed`, …). It does **not** cover arbitrary
-   subprocesses.
+   `Read`/`Write`/`Edit` tools, and — per Claude Code's permissions
+   docs — the file commands it recognizes in Bash (`cat`, `sed`, …;
+   recognition is best-effort, so do not rely on it alone). It does
+   **not** cover arbitrary subprocesses — a `python`/`node` script that
+   opens a file itself slips past `permissions.deny` entirely. That gap
+   is exactly what layer 1 closes.
 
 Configure only one and there is a hole. With only the sandbox layer, an
 agent can still create or overwrite `~/.tclaude/db.sqlite` with the
-`Write`/`Edit` tools. With only `permissions.deny`, an agent can still
-write the file from a `python` one-liner in Bash.
+`Write`/`Edit` tools — the sandbox does not gate the built-in file tools
+(verified: the `Write` tool created a file under `~/.tclaude/` on a
+machine whose Bash sandbox treats `~/.tclaude/` as read-only). With only
+`permissions.deny`, an agent can still write the file from a `python`
+one-liner in Bash.
 
 Add this to your Claude Code **`~/.claude/settings.json`** (user scope —
 a deny rule there cannot be weakened by any project's `.claude/settings.json`):
@@ -124,13 +132,18 @@ Notes:
 
 - **`sandbox.enabled` must be `true`.** With the sandbox off, layer 1
   does nothing and a Bash one-liner can write anywhere your user can.
+- **`~/.claude/sessions` is safe to `denyRead` directory-wide** — it
+  holds no socket, so a directory read deny cannot break anything. Only
+  `~/.tclaude` needs the file-scoped treatment (see the socket caveat
+  below).
 - **Check for paths that re-open these.** The sandbox's writable set is
   your working directory plus `permissions.additionalDirectories` plus
   `sandbox.filesystem.allowWrite`. Make sure none of those lists contains
-  `~/.tclaude`, `~/.claude`, `~`, or a parent of them. A `denyWrite`
-  entry wins over an `allowWrite` entry for the same path, so the
-  `denyWrite` above is the robust backstop — but keeping the allow-lists
-  clean avoids surprises.
+  `~/.tclaude`, `~/.claude`, `~`, or a parent of them. Claude Code's
+  permissions and sandboxing docs state that deny rules take precedence
+  over allow rules, so a `denyWrite` entry should override an
+  `allowWrite` for the same path — but keeping the allow-lists clean
+  avoids relying on that and avoids surprises.
 - **`Read`/`Write`/`Edit` are three distinct rules.** `Edit` covers
   in-place edits, `Write` covers new-file creation; you need both. `Read`
   is the optional confidentiality rule.
@@ -153,8 +166,10 @@ If you also want OS-level read denial of `~/.tclaude/`, deny the
 ```
 
 — or deny the directory and punch a hole for the socket with
-`"allowRead": ["~/.tclaude/agentd.sock"]` (`allowRead` takes precedence
-over `denyRead`). Either way, **verify** afterwards (see below).
+`"allowRead": ["~/.tclaude/agentd.sock"]` (Claude Code's sandboxing docs
+note that `sandbox.filesystem.allowRead` re-grants read within a denied
+region). Either way, **verify** afterwards (see below) — this is the
+fragile case, so confirm `tclaude agent whoami` still works.
 
 ### Multi-user / shared machines
 
@@ -198,8 +213,8 @@ in a scope that applies.
 
 ## See also
 
-- [`plans/agentd.md`](plans/agentd.md) — `agentd` design, including the
-  *"Security model — a guardrail, not a boundary"* section this guide
-  backs.
+- [`plans/agentd.md`](plans/agentd.md) — `agentd` design and its
+  security-model discussion (guardrail, not boundary), which this guide
+  backs on the operator side.
 - Claude Code sandboxing: <https://code.claude.com/docs/en/sandboxing>
 - Claude Code permissions: <https://code.claude.com/docs/en/permissions>
