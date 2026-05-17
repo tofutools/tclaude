@@ -40,7 +40,8 @@ const (
 // operatorToken is the per-daemon-lifetime operator token. Generated once
 // at startup by generateOperatorToken, held only in memory — never
 // persisted to disk, never written through slog (slog → output.log). A
-// daemon restart mints a fresh one and the human re-fetches it.
+// daemon restart mints a fresh one; the human re-reads it from the
+// startup banner.
 var (
 	operatorTokenMu sync.RWMutex
 	operatorToken   string
@@ -85,44 +86,6 @@ func verifyHumanToken(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
-// handleAuthToken serves the operator token to the human operator so the
-// CLI (`tclaude agent token`) can bootstrap authentication.
-//
-// !!! DELIBERATE EXCEPTION — DO NOT route this through classify() / !!!
-// !!! requireHuman.                                                  !!!
-// classify() recognises the human ONLY by a valid operator token, and
-// this endpoint is how the human OBTAINS that token. Routing it through
-// classify() would be circular — you would need the token to fetch the
-// token. It is therefore gated on the legacy heuristic: a caller with NO
-// claude/node ancestor in its process tree. That is sound for the threat
-// model — a sandboxed agent always has a Claude Code ancestor in agentd's
-// host-side /proc walk (the bwrap PID namespace cannot be escaped), so it
-// is refused here and cannot bootstrap a token. A non-sandboxed detached
-// process could fetch it, but that is the accepted same-uid residual
-// (see docs/plans/agentd.md, "Security model"). A future reader must not
-// "helpfully" route this through classify().
-func handleAuthToken(w http.ResponseWriter, r *http.Request) {
-	p := peerFromContext(r.Context())
-	if p.PID == 0 {
-		writeError(w, http.StatusUnauthorized, "auth",
-			"could not determine peer PID; refusing to release the operator token")
-		return
-	}
-	// Legacy heuristic, ON PURPOSE — see the function doc above.
-	if p.HasClaudeAncestor {
-		writeError(w, http.StatusForbidden, "auth",
-			"the operator token authenticates the human operator; an agent caller cannot fetch it")
-		return
-	}
-	tok := currentOperatorToken()
-	if tok == "" {
-		writeError(w, http.StatusServiceUnavailable, "unavailable",
-			"operator token not initialised")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"token": tok})
-}
-
 // spawnEnvWithoutOperatorToken returns the current process environment
 // with TCLAUDE_HUMAN_TOKEN stripped. agentd uses it for the environment
 // of every CC session it spawns: the operator token authenticates the
@@ -143,16 +106,20 @@ func spawnEnvWithoutOperatorToken() []string {
 }
 
 // printOperatorTokenBanner writes the operator token to the daemon's
-// startup banner — but ONLY when stdout is a real terminal. When stdout
-// is not a TTY (the daemon was backgrounded or its output redirected,
-// e.g. into ~/.tclaude/output.log) it prints just a pointer, never the
-// token, so the secret can never land in a log file. Either way the
-// token is retrievable with `tclaude agent token`.
+// startup banner. The banner is the SOLE delivery channel — there is no
+// fetch endpoint — so it prints a ready-to-paste `export` line when
+// stdout is a real terminal.
+//
+// When stdout is NOT a TTY (the daemon was backgrounded or its output
+// redirected, e.g. into ~/.tclaude/output.log) it must never print the
+// token — it could land in a log file — and the token is not retrievable
+// any other way, so it tells the operator to relaunch agentd attached to
+// a terminal.
 func printOperatorTokenBanner(tok string) {
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-		fmt.Printf("  operator token:         %s\n", tok)
-		fmt.Printf("    the human sets it with: export %s=\"$(tclaude agent token)\"\n", humanTokenEnvVar)
+		fmt.Printf("  operator token — the human sets it with:\n")
+		fmt.Printf("    export %s=%q\n", humanTokenEnvVar, tok)
 	} else {
-		fmt.Printf("  operator token ready — fetch with `tclaude agent token` (not printed: stdout is not a terminal)\n")
+		fmt.Printf("  operator token issued — relaunch agentd attached to a terminal to see it\n")
 	}
 }

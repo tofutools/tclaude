@@ -111,24 +111,22 @@ Unix-socket path. It is:
 - minted fresh each daemon lifetime (`crypto/rand`, `tclo_` prefix),
   held only in memory — never persisted, never written through `slog`
   (slog → `~/.tclaude/output.log`);
-- printed to the startup banner **only when stdout is a TTY**; when
-  stdout is redirected (e.g. into the log) the banner prints only a
-  pointer, so the secret can never land in a file;
-- always retrievable with `tclaude agent token` (`GET /v1/auth/token`).
-  That endpoint is the *one* deliberate exception to "all auth routes
-  through `classify()`": it is gated on the legacy heuristic (caller has
-  no Claude Code ancestor), because it is how the human *obtains* the
-  token — routing it through `classify()` would be circular.
+- delivered **only via the daemon's startup banner** — there is no
+  fetch endpoint and no `classify()` exception. When stdout is a TTY the
+  banner prints a ready-to-paste `export TCLAUDE_HUMAN_TOKEN=…` line.
+  When stdout is **not** a TTY (backgrounded / redirected, e.g. into the
+  log) it never prints the token — it would land in the log — and
+  instead tells the operator to relaunch agentd attached to a terminal.
 
-The human sets it once per shell:
-
-```
-export TCLAUDE_HUMAN_TOKEN="$(tclaude agent token)"
-```
-
-A restart of agentd mints a new token; the human re-runs the export.
-Agents need no token and are unaffected. The cookie-authenticated
+The human copies the `export TCLAUDE_HUMAN_TOKEN=…` line from the banner
+into their shell. To see the token, agentd must be launched attached to
+a terminal. A restart of agentd mints a new token; the human re-copies
+it. Agents need no token and are unaffected. The cookie-authenticated
 dashboard continues to work with no token set.
+
+(A future iteration will replace this banner / copy-paste story with
+secure on-disk token storage — an OS keychain that agents are blocked
+from reading; until then, banner-only.)
 
 ## Security model
 

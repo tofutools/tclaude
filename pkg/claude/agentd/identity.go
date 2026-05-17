@@ -63,9 +63,7 @@ func peerFromContext(ctx context.Context) *peer {
 // callerClass is the single, centralised verdict on who a request's peer
 // is. EVERY human-vs-agent authorization decision in the daemon routes
 // through classify() — no handler re-derives identity from the raw peer
-// fields. The one deliberate exception is GET /v1/auth/token, which must
-// bootstrap the operator token before classify() can recognise a human
-// (see handleAuthToken).
+// fields, and there is no exception.
 type callerClass int
 
 const (
@@ -122,8 +120,8 @@ func classify(p *peer) callerClass {
 func writeUnconfirmed(w http.ResponseWriter) {
 	writeError(w, http.StatusForbidden, "unconfirmed",
 		"unconfirmed caller: not a known agent, and no valid operator token. "+
-			"If you are the human operator, set the operator token: "+
-			`export TCLAUDE_HUMAN_TOKEN="$(tclaude agent token)"  then retry. `+
+			"If you are the human operator, set TCLAUDE_HUMAN_TOKEN to the "+
+			"operator token printed on the agentd startup banner, then retry. "+
 			"See docs/plans/agentd.md.")
 }
 
