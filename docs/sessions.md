@@ -18,7 +18,7 @@ Start Claude in a new tmux session.
 tclaude session new
 
 # Start in a specific directory
-tclaude session new /path/to/project
+tclaude session new -C /path/to/project
 
 # Resume an existing conversation
 tclaude session new --resume <conv-id>
@@ -29,12 +29,13 @@ tclaude session new -d
 
 **Flags:**
 
-| Flag              | Description                                              |
-|-------------------|----------------------------------------------------------|
-| `-d, --detach`    | Start session without attaching                          |
-| `--resume <id>`   | Resume an existing conversation                          |
-| `--label <name>`  | Custom label for the session                             |
-| `--compact <pct>` | Auto-compact at this context usage percentage (see below) |
+| Flag               | Description                                              |
+|--------------------|----------------------------------------------------------|
+| `-d, --detached`   | Start session without attaching                          |
+| `-C, --dir <path>` | Directory to start the session in                       |
+| `--resume <id>`    | Resume an existing conversation                          |
+| `--label <name>`   | Custom label for the session                             |
+| `--compact <pct>`  | Auto-compact at this context usage percentage (see below) |
 
 ### session ls
 
@@ -51,21 +52,21 @@ tclaude session ls -w
 tclaude session ls -a
 
 # Filter by status
-tclaude session ls --status idle
+tclaude session ls --show idle
 tclaude session ls --hide exited
 ```
 
 **Flags:**
 
-| Flag           | Description                            |
-|----------------|----------------------------------------|
-| `-w, --watch`  | Interactive watch mode                 |
-| `-a, --all`    | Include exited sessions                |
-| `--status <s>` | Show only this status                  |
-| `--hide <s>`   | Hide this status                       |
-| `--sort <col>` | Sort by: id, dir, status, age, updated |
+| Flag           | Description                                  |
+|----------------|----------------------------------------------|
+| `-w, --watch`  | Interactive watch mode                       |
+| `-a, --all`    | Include exited sessions                      |
+| `--show <s>`   | Show only these statuses                     |
+| `--hide <s>`   | Hide these statuses                          |
+| `--sort <col>` | Sort by: id, directory, status, age, updated |
 
-**Status values:** `idle`, `working`, `awaiting-permission`, `awaiting-input`, `exited`
+**Status values:** `idle`, `working`, `awaiting_permission`, `awaiting_input`, `error`, `exited`
 
 ### session attach
 
@@ -75,8 +76,8 @@ Attach to an existing session.
 # Attach by session ID
 tclaude session attach <id>
 
-# Force attach (detach other clients)
-tclaude session attach -d <id>
+# Force attach (even if the session already has clients attached)
+tclaude session attach -f <id>
 ```
 
 ### session kill
@@ -151,13 +152,14 @@ Press the same key again to toggle ascending/descending/off.
 
 Sessions report their status via Claude hooks:
 
-| Status                | Color     | Description                 |
-|-----------------------|-----------|-----------------------------|
-| `idle`                | 🟡 Yellow | Claude is waiting for input |
-| `working`             | 🟢 Green  | Claude is processing        |
-| `awaiting-permission` | 🔴 Red    | Needs permission approval   |
-| `awaiting-input`      | 🔴 Red    | Waiting for user input      |
-| `exited`              | ⚫ Gray    | Session has ended           |
+| Status                | Color     | Description                          |
+|-----------------------|-----------|--------------------------------------|
+| `idle`                | 🟡 Yellow | Claude is waiting for input          |
+| `working`             | 🟢 Green  | Claude is processing                 |
+| `awaiting_permission` | 🔴 Red    | Needs permission approval            |
+| `awaiting_input`      | 🔴 Red    | Waiting for user input               |
+| `error`               | 🔴 Red    | Last turn ended in an error          |
+| `exited`              | ⚫ Gray    | Session has ended                    |
 
 ## Auto-Compact
 

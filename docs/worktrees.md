@@ -12,12 +12,13 @@ Git worktrees allow you to have multiple branches checked out simultaneously in 
 
 ## Commands
 
-| Command                    | Description                                   |
-|----------------------------|-----------------------------------------------|
-| `worktree add <branch>`    | Create a new worktree with a Claude session   |
-| `worktree ls`              | List all worktrees                            |
-| `worktree switch <branch>` | Switch to a worktree (requires shell wrapper) |
-| `worktree rm <branch>`     | Remove a worktree                             |
+| Command                     | Description                                       |
+|------------------------------|---------------------------------------------------|
+| `worktree add <branch>`      | Create a new worktree with a Claude session       |
+| `worktree restore <branch>`  | Restore a worktree from a local or remote branch  |
+| `worktree ls`                | List all worktrees                                |
+| `worktree switch <branch>`   | Switch to a worktree (requires shell wrapper)     |
+| `worktree rm <branch>`       | Remove a worktree                                 |
 
 ## Creating a Worktree
 
