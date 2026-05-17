@@ -11,15 +11,14 @@ import {
 } from './helpers.js';
 import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS } from './sort.js';
 
-// lastSnapshot, sudoByConv and sudoBadge still live in dashboard.js — the
-// snapshot-refresh and sudo clusters are not extracted yet. Importing them
-// back forms a deliberate, benign cycle (dashboard.js <-> render.js): it is
-// safe because render.js runs no top-level code that reads them — the render
-// functions touch them only when called, long after both modules finish
-// evaluating (sudoBadge is a hoisted function; lastSnapshot / sudoByConv are
-// read-only live bindings here). This import re-points to the proper module
-// once the sudo / snapshot clusters are extracted in a later PR.
-import { lastSnapshot, sudoByConv, sudoBadge } from './dashboard.js';
+// lastSnapshot and sudoBadge live in dashboard.js; sudoByConv lives in
+// refresh.js (refresh() rebuilds it on every poll). Imported back here —
+// deliberate, benign cycles: render.js runs no top-level code that reads
+// them — the render functions touch them only when called, long after
+// every module finishes evaluating (sudoBadge is a hoisted function;
+// lastSnapshot / sudoByConv are read-only live bindings here).
+import { lastSnapshot, sudoBadge } from './dashboard.js';
+import { sudoByConv } from './refresh.js';
 
 // memberRowHTML renders one draggable member <tr>. `ctx` selects the
 // drag wiring + action set:
