@@ -96,28 +96,36 @@ when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
-Per-member actions: edit role/descr, **wake** / **shut down** / **focus**
-the session, open a **terminal** in its working directory, **clone**,
-**reincarnate**, **rename**, grant a **sudo** elevation, edit
-**permissions**, schedule a **cron** job, toggle ownership, **delete** the
-agent, and remove it from the group. Per-group actions live in the group
-header: rename, **+ add member** (a searchable keyboard-navigable overlay),
-**+ spawn agent**, **🧹 cleanup** (bulk-remove confirmed-offline members —
-see [Cleanup](#cleanup)), delete the group, **⏰ multicast** cron, a
-click-to-edit **start-dir** chip (the default working directory for agents
-spawned into that group), and a click-to-edit **👥 member-cap** chip
-(`agent_groups.max_members` — a spawn that would exceed it is refused; the
-chip turns orange when the group is full).
+Per-member actions: **wake** / **shut down** / **focus** the session, open
+a **terminal** in its working directory, **clone**, **reincarnate**,
+**rename**, edit **role/descr**, toggle ownership, grant a **sudo**
+elevation, edit **permissions**, schedule a **cron** job, and **remove** it
+from the group. (Permanently *deleting* an agent is offered on the virtual
+Ungrouped group's rows, not on grouped rows — see below.)
 
-The tab's filter bar carries **+ new group**, **⤓ export** / **⤒ import**
-buttons for whole-group `.zip` archives, a **🧹 clean up** button (the
-all-categories cleanup tool — see [Cleanup](#cleanup)), and toggles for
-three **virtual groups** rendered below the real ones: **Ungrouped**
-(online agents in no group), **Retired** (agents demoted to plain
-conversations, each with a **reinstate** button), and **Conversations**
-(recent non-agent conversations, each with a **promote** button). Dragging
-a row onto or off these virtual groups joins / leaves a group or promotes
-a conversation into an agent.
+Per-group actions live in the group header: **+ spawn agent**, **+ add
+member** (a searchable keyboard-navigable overlay), **⏰ multicast** cron,
+**✉ message** (a one-shot message to the group or a ticked subset),
+**rename**, **⤓ export** (the whole group to a portable `.zip`), **🧹
+cleanup** (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)),
+**🪟 windows…** (bulk focus/unfocus the members' terminal windows), **🛑
+emergency shutdown** (stop every running member), and **delete group**. The
+header also carries three click-to-edit chips: **📁 start-dir** (the default
+working directory for agents spawned into the group), **📋 startup-context**
+(shared guidance delivered to each spawned agent's inbox), and a **👥
+member-cap** chip (`agent_groups.max_members` — a spawn that would exceed it
+is refused; the chip turns orange when the group is full).
+
+The tab's filter bar carries **+ new group**, **⤒ import** (recreate a
+group from an exported `.zip`), **⎘ from template** (spawn a whole team from
+a [template](#templates)), and a **🧹 clean up** button (the all-categories
+cleanup tool — see [Cleanup](#cleanup)). Toggles surface three **virtual
+groups** below the real ones: **Ungrouped** (online agents in no group),
+**Retired** (agents demoted to plain conversations, each with a
+**reinstate** button), and **Conversations** (recent non-agent
+conversations, each with a **promote** button). Dragging a row onto or off
+these virtual groups joins / leaves a group or promotes a conversation into
+an agent.
 
 **Drag-and-drop.** Drag a member row onto another group's header to **move**
 it; hold **Ctrl** (**Cmd** on macOS) while dragging to **clone** it into the
