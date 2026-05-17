@@ -29,9 +29,12 @@ bundler and no build step**.
 starts once that lands. Expect to deliver it as **~5–7 reviewable PRs** (a
 cutover PR, then grouped module-extraction PRs).
 
-**Status.** Planned; decision reviewed and approved by the human. Execution
-parked until the agents-tab removal lands. Everything below is *research and
-considerations*, not locked-in detail.
+**Status.** In progress. The agents-tab-removal gate (#154) has landed; Stage 2
+PR 1 — the ESM cutover — shipped as #157; PR 2 — `helpers.js` extraction —
+shipped as #158; PR 3 — `sort.js` + `virtual-groups.js` — is in progress. The
+committed plan above still holds; everything below is the original *research
+and considerations*, not locked-in detail, and has expected drift from how the
+work is actually landing.
 
 ## Considerations & research (knowledge pool)
 
@@ -361,11 +364,10 @@ why it is the chosen path.
 
 ### 10. Coordination with other in-flight work
 
-**Agents-tab removal — the gate.** Stage 2 starts only after the agents-tab
-removal PR lands. That PR removes UI from `dashboard.html` and code from
-`dashboard.js`, so it shifts every line range in §1 and drops one cluster
-(the Agents tab). Re-derive the §1 table against the post-removal `dashboard.js`
-at execution time rather than trusting the numbers here.
+**Agents-tab removal — the gate (landed).** Stage 2 was gated on the agents-tab
+removal PR; that landed as #154. It removed UI from `dashboard.html` and code
+from `dashboard.js`, so the §1 line ranges are pre-removal — re-derive them
+against the current `dashboard.js` rather than trusting the numbers here.
 
 Two further items touch these files but do **not** block Stage 2; sequencing
 just avoids rebase churn:
