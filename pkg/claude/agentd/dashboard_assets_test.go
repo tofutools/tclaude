@@ -2,26 +2,37 @@ package agentd
 
 import (
 	"io/fs"
+	"sort"
 	"strings"
 	"testing"
 )
 
-// dashboardAssetFiles are the embedded dashboard source files, in the
-// order the page loads them.
-var dashboardAssetFiles = []string{"dashboard.html", "dashboard.css", "js/dashboard.js"}
+// dashboardJSModules lists every embedded ES-module file under js/,
+// sorted — dashboard.js (the entrypoint) plus whatever feature modules
+// the Stage 2 split has extracted so far.
+func dashboardJSModules() []string {
+	mods, err := fs.Glob(dashboardAssetsFS, "js/*.js")
+	if err != nil {
+		panic("agentd: globbing embedded dashboard js/: " + err.Error())
+	}
+	sort.Strings(mods)
+	return mods
+}
 
 // dashboardAssets is the embedded dashboard source — dashboard.html,
-// dashboard.css and js/dashboard.js — concatenated into one string.
+// dashboard.css and every js/ ES module — concatenated into one string.
 //
 // Before the ES-module cutover the dashboard was a single assembled
 // `dashboardHTML` blob and content tests searched it directly. The
-// three files are now embedded and served separately, so tests that
-// assert "X is present in the dashboard source" search this
-// concatenation instead. A genuinely missing file surfaces through
+// files are now embedded and served separately, so tests that assert
+// "X is present in the dashboard source" search this concatenation
+// instead. Globbing js/*.js keeps it correct as the Stage 2 split
+// extracts more modules. A genuinely missing file surfaces through
 // TestDashboardEmbed_HasExpectedFiles, not a panic here.
 var dashboardAssets = func() string {
 	var b strings.Builder
-	for _, name := range dashboardAssetFiles {
+	names := append([]string{"dashboard.html", "dashboard.css"}, dashboardJSModules()...)
+	for _, name := range names {
 		data, _ := fs.ReadFile(dashboardAssetsFS, name)
 		b.Write(data)
 		b.WriteByte('\n')
@@ -30,11 +41,11 @@ var dashboardAssets = func() string {
 }()
 
 // TestDashboardEmbed_HasExpectedFiles guards that `//go:embed dashboard`
-// actually captured the three source files — a renamed or misplaced
-// file would otherwise fail only at runtime, when the daemon serves an
-// empty page or 404s a module.
+// captured the page shell, its stylesheet, and the ES-module entrypoint
+// — a renamed or misplaced file would otherwise fail only at runtime,
+// when the daemon serves an empty page or 404s a module.
 func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
-	for _, name := range dashboardAssetFiles {
+	for _, name := range []string{"dashboard.html", "dashboard.css", "js/dashboard.js"} {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
 		if err != nil {
 			t.Errorf("embedded dashboard asset %q not found: %v", name, err)
@@ -43,6 +54,9 @@ func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
 		if len(data) == 0 {
 			t.Errorf("embedded dashboard asset %q is empty", name)
 		}
+	}
+	if mods := dashboardJSModules(); len(mods) == 0 {
+		t.Error("no js/*.js modules embedded")
 	}
 }
 
