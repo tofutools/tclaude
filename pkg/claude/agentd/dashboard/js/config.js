@@ -152,6 +152,13 @@ function populateConfigForm(cfg) {
   $('#cfg-autocompact-pct').value = acp != null ? acp : '';
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
 
+  const lr = cfg.log_rotation || {};
+  $('#cfg-logrot-maxsize').value = lr.max_size || '';
+  // keep: 0 and absent both mean "built-in default", so show a stored 0
+  // as blank — the form drops it on save anyway. A negative keep is
+  // shown as-is so the human sees the value the server rejects.
+  $('#cfg-logrot-keep').value = (lr.keep != null && lr.keep !== 0) ? lr.keep : '';
+
   const n = cfg.notifications || {};
   $('#cfg-notif-enabled').checked = !!n.enabled;
   $('#cfg-notif-cooldown').value = n.cooldown_seconds != null ? n.cooldown_seconds : '';
@@ -198,6 +205,23 @@ function assembleConfig() {
   if ($('#cfg-autocompact-enabled').checked) cfg.auto_compact_percent = cfgInt('cfg-autocompact-pct', 80);
   else delete cfg.auto_compact_percent;
   cfg.record_hooks = $('#cfg-record-hooks').checked;
+
+  // log_rotation is an optional block. Clone the existing one so a
+  // future sub-field with no widget round-trips, then set the two
+  // form-owned keys. A blank max_size with a 0/blank keep leaves the
+  // block genuinely absent — an empty {} would marshal as a spurious
+  // diff against a config that simply had no log_rotation key.
+  const lr = (cfg.log_rotation && typeof cfg.log_rotation === 'object') ? cfg.log_rotation : {};
+  const lrMax = $('#cfg-logrot-maxsize').value.trim();
+  if (lrMax) lr.max_size = lrMax; else delete lr.max_size;
+  const lrKeepRaw = $('#cfg-logrot-keep').value.trim();
+  const lrKeep = cfgInt('cfg-logrot-keep', 0);
+  // keep > 0 is a real override; 0/blank means the built-in default and
+  // is left out. A negative keep is still written so the server's
+  // Validate surfaces "must not be negative".
+  if (lrKeepRaw !== '' && lrKeep !== 0) lr.keep = lrKeep; else delete lr.keep;
+  if (Object.keys(lr).length) cfg.log_rotation = lr;
+  else delete cfg.log_rotation;
 
   const n = (cfg.notifications && typeof cfg.notifications === 'object') ? cfg.notifications : {};
   n.enabled = $('#cfg-notif-enabled').checked;

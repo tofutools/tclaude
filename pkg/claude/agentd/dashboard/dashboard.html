@@ -105,7 +105,8 @@
       settings this version of tclaude recognizes. Edits stay in this form until you press
       <strong>Save changes</strong> — which shows a diff to confirm before anything is
       written. Most settings apply on next use; a few resolved when <code>agentd</code>
-      starts (spawn rate-limit, clone cooldown) take effect after an agentd restart.
+      starts (spawn rate-limit, clone cooldown, log rotation) take effect after an
+      agentd restart.
     </p>
     <div id="cfg-notice" class="cfg-notice" style="display:none"></div>
     <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
@@ -142,6 +143,21 @@
         <span class="cfg-label">Record hooks</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-record-hooks" /> log every hook callback payload</label>
         <span class="cfg-hint">Debugging aid — verbose; leave off for normal use.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
+      <h3>Log rotation</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Max log size</span>
+        <input type="text" id="cfg-logrot-maxsize" placeholder="10MiB" aria-label="Log rotation max size" autocomplete="off" spellcheck="false" style="min-width:120px" />
+        <span class="cfg-hint">Size cap for <code>~/.tclaude/output.log</code> before <code>agentd</code> rotates it (<code>10MiB</code>, <code>50m</code>, <code>500k</code>). Empty = built-in default (10 MiB). <code>0</code> disables rotation.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Keep</span>
+        <input type="number" id="cfg-logrot-keep" min="0" placeholder="5" aria-label="Log rotation keep count" />
+        <span>rotated files</span>
+        <span class="cfg-hint">How many rotated logs (<code>output.log.1</code> … <code>.N</code>) <code>agentd</code> retains. Empty or <code>0</code> = built-in default (5).</span>
       </div>
     </div>
 
