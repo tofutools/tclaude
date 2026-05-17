@@ -43,6 +43,15 @@ var selfPermsForBundledSkills = []string{
 // Protocol version - bump this when the handler needs to be re-registered
 const protocolVersion = "3"
 
+// sandboxHardeningDocPath is the repo-relative path of the operator
+// guide for sandboxing agents; sandboxHardeningDocURL is its canonical
+// GitHub location, shown in setup output. They are one derived pair so a
+// rename only touches the path const — the setup package's tests then
+// catch a stale path (doc missing) or out-of-sync in-repo references.
+const sandboxHardeningDocPath = "docs/sandbox-hardening.md"
+
+var sandboxHardeningDocURL = "https://github.com/tofutools/tclaude/blob/main/" + sandboxHardeningDocPath
+
 type Params struct {
 	Check         bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
 	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
@@ -274,6 +283,10 @@ func runSetup(params *Params) error {
 		return err
 	}
 
+	// Operator advisory: surface the agent-sandbox hardening doc. This
+	// is an unconditional pointer, not a detection — see sandboxAdvisory.
+	fmt.Println(sandboxAdvisory())
+
 	fmt.Println("\n=== Setup Complete ===")
 	fmt.Println("You can verify with: tclaude setup --check")
 
@@ -350,6 +363,32 @@ func installDefaultAgentPermissions() error {
 		fmt.Printf("✓ Granted default permission %s\n", slug)
 	}
 	return nil
+}
+
+// sandboxAdvisory returns the operator-facing note printed at the end of
+// `tclaude setup` and `tclaude setup --check`.
+//
+// It is deliberately an *unconditional pointer*, not a detection. Whether
+// the operator's Claude Code sandbox actually denies agents direct access
+// to ~/.tclaude and ~/.claude/sessions cannot be reliably determined from
+// tclaude's side: it depends on settings.json keys (`sandbox.*` and
+// `permissions.deny`) that merge across user, project, and managed
+// scopes — most of which tclaude setup never sees — and on Claude Code's
+// Bash-sandbox-vs-file-tool split. A detection-based warning would be
+// false-positive-prone, and a wrong warning is worse than none, so this
+// surfaces the hardening doc and leaves the verdict to the operator.
+func sandboxAdvisory() string {
+	return "\n=== Agent Sandbox ===\n" +
+		"ℹ If you run Claude Code agents through tclaude (agentd / `tclaude agent`),\n" +
+		"  make sure your Claude Code sandbox denies agents direct access to\n" +
+		"  tclaude's daemon state:\n" +
+		"    ~/.tclaude          session, group, and permission state\n" +
+		"    ~/.claude/sessions  per-process identity files agentd trusts\n" +
+		"  agentd's permission gating is a coordination guardrail, not a security\n" +
+		"  boundary — an agent that can edit those files bypasses it entirely.\n" +
+		"  tclaude can't verify this for you; it depends on your Claude Code\n" +
+		"  settings.json. See:\n" +
+		"  " + sandboxHardeningDocURL
 }
 
 // askYesNo prompts the user for a yes/no answer. If assumeYes is true, prints the prompt and returns true without reading input.
@@ -457,6 +496,8 @@ func checkStatus() error {
 		fmt.Println("✗ Notifications disabled")
 		fmt.Printf("  Run 'tclaude setup' to enable\n")
 	}
+
+	fmt.Println(sandboxAdvisory())
 
 	return nil
 }

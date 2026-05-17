@@ -1,6 +1,9 @@
 package setup
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -11,6 +14,24 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
+
+// captureStdout redirects os.Stdout for the duration of fn and returns
+// everything written to it. Used to assert that setup actually emits a
+// section, not just that the section's text-builder works in isolation.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	require.NoError(t, w.Close())
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+	return buf.String()
+}
 
 // tempHome points HOME (and USERPROFILE, which os.UserHomeDir reads on
 // Windows) at a fresh temp dir so setup's writes — ~/.claude/settings.json,
@@ -160,7 +181,9 @@ func TestRunSetup_BaselineRunsAlongsideExtras(t *testing.T) {
 	}
 	home := tempHome(t)
 
-	require.NoError(t, runSetup(&Params{Yes: true, InstallAgentSkills: true}))
+	out := captureStdout(t, func() {
+		require.NoError(t, runSetup(&Params{Yes: true, InstallAgentSkills: true}))
+	})
 
 	// Baseline ran despite the --install-* flag: hooks are installed.
 	installed, missing, _ := session.CheckHooksInstalled()
@@ -168,4 +191,71 @@ func TestRunSetup_BaselineRunsAlongsideExtras(t *testing.T) {
 	assert.FileExists(t, filepath.Join(home, ".claude", "settings.json"))
 	// The requested extra ran too.
 	assertSkillsInstalled(t, home)
+	// The agent-sandbox advisory is part of the baseline output.
+	assert.Contains(t, out, "=== Agent Sandbox ===")
+}
+
+// checkStatus must surface the agent-sandbox advisory so that
+// `tclaude setup --check` points operators at the hardening doc. This
+// guards the call site, which TestSandboxAdvisory_NamesPathsAndDoc
+// (which only exercises sandboxAdvisory itself) does not.
+func TestCheckStatus_PrintsSandboxAdvisory(t *testing.T) {
+	tempHome(t)
+
+	out := captureStdout(t, func() {
+		require.NoError(t, checkStatus())
+	})
+
+	assert.Contains(t, out, "=== Agent Sandbox ===")
+	assert.Contains(t, out, sandboxHardeningDocURL)
+}
+
+// The agent-sandbox advisory must name both sensitive trees, frame the
+// daemon layer as a guardrail, and link the hardening doc — that pointer
+// is the whole point of the advisory.
+func TestSandboxAdvisory_NamesPathsAndDoc(t *testing.T) {
+	adv := sandboxAdvisory()
+	for _, want := range []string{
+		"=== Agent Sandbox ===",
+		"~/.tclaude",
+		"~/.claude/sessions",
+		"guardrail",
+		sandboxHardeningDocURL,
+	} {
+		assert.Containsf(t, adv, want, "advisory should mention %q", want)
+	}
+}
+
+// findRepoRoot returns the repository root, derived from this test
+// file's own location (pkg/claude/setup/setup_test.go).
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller failed")
+	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+}
+
+// The doc the advisory points operators to must actually exist in the
+// repo — this guards against the const drifting from the file.
+func TestSandboxHardeningDocExists(t *testing.T) {
+	docPath := filepath.Join(findRepoRoot(t), filepath.FromSlash(sandboxHardeningDocPath))
+	assert.FileExistsf(t, docPath, "advisory points at %s; expected it at %s",
+		sandboxHardeningDocPath, docPath)
+}
+
+// Every in-repo reference to the sandbox-hardening doc must use the name
+// the setup advisory's const points at. Catches a rename that updates
+// the const and the file but leaves a markdown cross-reference dangling.
+func TestSandboxDocCrossReferencesConsistent(t *testing.T) {
+	root := findRepoRoot(t)
+	base := filepath.Base(sandboxHardeningDocPath) // sandbox-hardening.md
+	for _, ref := range []string{
+		filepath.Join("docs", "plans", "agentd.md"),
+		filepath.Join("docs", "index.md"),
+	} {
+		body, err := os.ReadFile(filepath.Join(root, ref))
+		require.NoErrorf(t, err, "reading %s", ref)
+		assert.Containsf(t, string(body), base,
+			"%s must reference the sandbox-hardening doc by name (%s)", ref, base)
+	}
 }

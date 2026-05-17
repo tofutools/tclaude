@@ -107,6 +107,7 @@ Session watch also supports:
 - [Conversation Management](conversations.md) - Detailed conversation commands
 - [Agent Coordination](agent.md) - Cross-session messaging, groups, lifecycle, and scheduling via `tclaude agent` + `agentd` (**experimental**)
 - [Agent Dashboard](dashboard.md) - Browser operations console for the agent system (**experimental**)
+- [Sandboxing Agents](sandbox-hardening.md) - Operator guide: lock down the Claude Code sandbox so `agentd`'s coordination guardrail holds
 - [Git Worktrees](worktrees.md) - Parallel development with multiple branches
 - [OS Notifications](notifications.md) - Get notified when sessions need attention
 - [Status Bar](status-bar.md) - Rich status bar for Claude Code's statusline
