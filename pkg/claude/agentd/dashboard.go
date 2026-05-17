@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"sort"
 	"strings"
@@ -50,6 +51,15 @@ func mustReadFS(fsys fs.FS, name string) []byte {
 		panic("agentd: embedded dashboard asset missing: " + name + ": " + err.Error())
 	}
 	return b
+}
+
+// init pins the MIME types the /static/ route serves, so the browser
+// always gets a type it will execute or apply — independent of the
+// host's /etc/mime.types. An ES module fetched as text/plain is refused
+// outright, so this is load-bearing for the dashboard, not cosmetic.
+func init() {
+	_ = mime.AddExtensionType(".js", "text/javascript")
+	_ = mime.AddExtensionType(".css", "text/css")
 }
 
 // dashboardSessionToken is generated once per agentd process and gates

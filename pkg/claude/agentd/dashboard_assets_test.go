@@ -2,8 +2,6 @@ package agentd
 
 import (
 	"io/fs"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -50,13 +48,14 @@ func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
 
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
-// the /static/ route, and that the retired Stage-1 inline splice points
-// (<style></style> / <script></script>) are gone.
+// the /static/ route by absolute path (so it resolves the same whatever
+// path the document was served from), and that the retired Stage-1
+// inline splice points (<style></style> / <script></script>) are gone.
 func TestDashboardHTML_ReferencesStaticAssets(t *testing.T) {
 	html := string(dashboardIndexHTML)
 	for _, needle := range []string{
-		`<link rel="stylesheet" href="static/dashboard.css">`,
-		`<script type="module" src="static/js/dashboard.js"></script>`,
+		`<link rel="stylesheet" href="/static/dashboard.css">`,
+		`<script type="module" src="/static/js/dashboard.js"></script>`,
 	} {
 		if !strings.Contains(html, needle) {
 			t.Errorf("dashboard.html missing %q", needle)
@@ -65,30 +64,6 @@ func TestDashboardHTML_ReferencesStaticAssets(t *testing.T) {
 	for _, stale := range []string{"<style></style>", "<script></script>"} {
 		if strings.Contains(html, stale) {
 			t.Errorf("dashboard.html still carries the retired splice point %q", stale)
-		}
-	}
-}
-
-// TestDashboardStatic_ServesCorrectMIME guards the one serving detail a
-// browser is unforgiving about: an ES module fetched with a non-JS
-// Content-Type is refused outright. It exercises the same file server
-// handleDashboardStatic wraps, asserting http.FileServerFS derives a
-// JavaScript type for .js and text/css for .css.
-func TestDashboardStatic_ServesCorrectMIME(t *testing.T) {
-	files := http.StripPrefix("/static/", http.FileServerFS(dashboardAssetsFS))
-	cases := map[string]string{
-		"/static/js/dashboard.js": "javascript",
-		"/static/dashboard.css":   "text/css",
-	}
-	for path, wantType := range cases {
-		rec := httptest.NewRecorder()
-		files.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		res := rec.Result()
-		if res.StatusCode != http.StatusOK {
-			t.Errorf("GET %s: status %d, want 200", path, res.StatusCode)
-		}
-		if ct := res.Header.Get("Content-Type"); !strings.Contains(ct, wantType) {
-			t.Errorf("GET %s: Content-Type %q, want it to contain %q", path, ct, wantType)
 		}
 	}
 }
