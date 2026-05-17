@@ -189,7 +189,7 @@ function roleCell(m) {
 // delegated click handler reads them and dispatches to the
 // confirm modal + the right /api endpoint.
 function memberActions(g, m) {
-  return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+  return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
 }
 // cloneAgentButton renders a "clone" button for any row that
 // represents a single agent. Clone forks a sibling that inherits the
@@ -207,15 +207,6 @@ function cloneAgentButton(m) {
 function reincarnateAgentButton(m) {
   const label = m.title || m.conv_id;
   return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.">reincarnate</button>`;
-}
-// renameAgentButton renders a "rename" button for any row that
-// represents a single agent. Opens a modal where the user can type
-// an explicit title or check "auto" to ask the agent to pick one
-// for itself via the agent-rename skill / CLI.
-function renameAgentButton(m) {
-  const label = m.title || m.conv_id;
-  const current = m.title || '';
-  return `<button data-act="rename-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-current="${esc(current)}" title="Change this conversation's title. Type one or check 'auto' to let the agent pick.">rename</button>`;
 }
 function sudoMemberButton(m) {
   return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
@@ -267,8 +258,12 @@ function lifecycleAndFocusButtons(m) {
     `<button data-act="wake-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Wake this agent — spawns a tmux session resumed onto its conv">wake</button>`;
 }
 
+// editMemberButton renders the per-agent "edit" button — the single
+// panel for editing an agent: its title (incl. the "auto" self-rename),
+// its group role and its group description. data-current carries the
+// title so the modal opens pre-filled.
 function editMemberButton(g, m) {
-  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit role / description">edit</button>`;
+  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit this agent — title, role, description">edit</button>`;
 }
 function ownerToggleButton(g, m) {
   return m.owner
@@ -281,14 +276,15 @@ function removeMemberButton(g, m) {
 
 // ungroupedMemberActions renders the per-row action cell for a row
 // in the virtual "Ungrouped" group. It deliberately OMITS every
-// group-affecting button (edit role/descr, owner toggle,
+// group-affecting button (the edit panel, owner toggle,
 // remove-from-group) — the agent belongs to no group, so those are
 // meaningless here. What remains is the agent-level lifecycle set,
 // identical to a grouped member's lifecycle set: focus / term / shut down / wake,
-// clone, reincarnate, rename, sudo, self-nudge cron, delete. To put
-// an ungrouped agent INTO a group, drag its row onto a group header.
+// clone, reincarnate, sudo, self-nudge cron, delete. Renaming is the
+// click-to-edit name cell, available on every row. To put an
+// ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m) {
-  return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${renameAgentButton(m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button></div>`;
+  return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button></div>`;
 }
 
 // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.

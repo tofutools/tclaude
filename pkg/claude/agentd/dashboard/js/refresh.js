@@ -690,37 +690,80 @@ function termDirModal({label}) {
   });
 }
 
-// editMemberModal pops the role/descr editor pre-filled with
-// current values. Resolves to the new {role, descr} object on
-// Save (only fields that actually changed are kept; unchanged fields
-// are sent as null so the daemon leaves them alone), or null on
-// Cancel / outside-click / Escape. Auto-refresh suspends while the
-// modal is open — refreshSuspended() sees its .modal-overlay.show.
-function editMemberModal({label, role, descr}) {
+// isValidRenameTitleJS mirrors the daemon's isValidRenameTitle
+// (agentd/handlers.go): 1-64 chars from [A-Za-z0-9_-[]{}() ], no
+// double spaces. A client-side pre-check so an obviously-bad title
+// is caught in the modal instead of bouncing off a 400 — the daemon
+// still enforces it authoritatively.
+function isValidRenameTitleJS(t) {
+  if (!t || t.length > 64) return false;
+  if (t.includes('  ')) return false;
+  return /^[A-Za-z0-9_\-[\]{}() ]+$/.test(t);
+}
+
+// editMemberModal is the single per-agent edit panel: conversation
+// title (incl. the "auto" self-rename), group role, group description.
+// Pre-filled from the current values. Resolves on Save to either
+// 'noop' (nothing changed) or an object carrying only what changed:
+//   - rename: {title} or {auto:true} — the conv-title edit, applied
+//     by the caller via POST /api/agents/{conv}/rename.
+//   - role / descr — present only when changed, applied via the
+//     group-members PATCH. An unchanged field is omitted entirely.
+// Resolves to null on Cancel / outside-click / Escape. Auto-refresh
+// suspends while the modal is open — refreshSuspended() sees its
+// .modal-overlay.show.
+function editMemberModal({label, title, role, descr}) {
   return new Promise(resolve => {
     const overlay = $('#edit-member-modal');
     $('#edit-member-meta').textContent = label || '';
     $('#edit-member-meta').style.display = label ? 'block' : 'none';
+    const titleEl = $('#edit-member-title-input');
+    const autoEl = $('#edit-member-auto');
     const roleEl = $('#edit-member-role');
     const descrEl = $('#edit-member-descr');
+    const errEl = $('#edit-member-error');
+    titleEl.value = title || '';
+    titleEl.disabled = false;
+    autoEl.checked = false;
     roleEl.value = role || '';
     descrEl.value = descr || '';
+    errEl.textContent = '';
     const saveBtn = $('#edit-member-save');
     const cancelBtn = $('#edit-member-cancel');
+    // Auto and an explicit title are mutually exclusive — disable the
+    // text field while auto is checked so the two paths can't be
+    // ambiguous (the rename modal this folded in did the same).
+    const onAuto = () => { titleEl.disabled = autoEl.checked; };
     const cleanup = (result) => {
       overlay.classList.remove('show');
       saveBtn.removeEventListener('click', onSave);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlay);
+      autoEl.removeEventListener('change', onAuto);
       document.removeEventListener('keydown', onKey);
       resolve(result);
     };
     const onSave = () => {
-      // Only send fields that changed; unchanged fields go as null
-      // so the daemon's PATCH leaves them untouched. Each field
-      // either differs from the original (send the new value, even
-      // if empty) or is unchanged (send null).
+      errEl.textContent = '';
       const out = {};
+      // Title half: auto wins if checked; otherwise an explicit title
+      // is sent only when it actually changed. Validated client-side
+      // so a bad title is caught here, not after a 400 round-trip.
+      if (autoEl.checked) {
+        out.rename = {auto: true};
+      } else {
+        const newTitle = titleEl.value.trim();
+        if (newTitle !== (title || '')) {
+          if (!isValidRenameTitleJS(newTitle)) {
+            errEl.textContent =
+              'title must be 1-64 chars of letters, digits, space or _ - [ ] { } ( ) — no double spaces';
+            return;
+          }
+          out.rename = {title: newTitle};
+        }
+      }
+      // Membership half: send only fields that changed (an empty
+      // value still counts as a change — it clears the field).
       const newRole = roleEl.value;
       const newDescr = descrEl.value;
       if (newRole !== (role || '')) out.role = newRole;
@@ -740,10 +783,11 @@ function editMemberModal({label, role, descr}) {
     saveBtn.addEventListener('click', onSave);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlay);
+    autoEl.addEventListener('change', onAuto);
     document.addEventListener('keydown', onKey);
     overlay.classList.add('show');
-    roleEl.focus();
-    roleEl.select();
+    titleEl.focus();
+    titleEl.select();
   });
 }
 

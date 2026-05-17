@@ -350,8 +350,16 @@
 </div>
 <div class="modal-overlay" id="edit-member-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-member-title">
-    <h3 id="edit-member-title">Edit member</h3>
+    <h3 id="edit-member-title">Edit agent</h3>
     <div class="modal-meta" id="edit-member-meta"></div>
+    <div class="field">
+      <label for="edit-member-title-input">Title</label>
+      <input id="edit-member-title-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only" />
+      <label class="edit-member-auto-row" title="Inject a [system: …] nudge asking the agent to pick a descriptive title itself via the agent-rename skill / CLI.">
+        <input id="edit-member-auto" type="checkbox" /> Auto — let the agent choose its own title
+      </label>
+    </div>
     <div class="field">
       <label for="edit-member-role">Role</label>
       <input id="edit-member-role" type="text" autocomplete="off" spellcheck="false" />
@@ -360,6 +368,7 @@
       <label for="edit-member-descr">Description</label>
       <textarea id="edit-member-descr" rows="3" spellcheck="false"></textarea>
     </div>
+    <div class="cron-create-error" id="edit-member-error"></div>
     <div class="modal-buttons">
       <button id="edit-member-cancel">Cancel</button>
       <button id="edit-member-save">Save</button>
@@ -948,26 +957,6 @@
       <button id="reincarnate-agent-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="reincarnate-agent-submit" class="primary" type="button">Ask agent</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="rename-agent-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="rename-agent-title">
-    <h3 id="rename-agent-title">Rename conversation</h3>
-    <div class="modal-meta" id="rename-agent-meta"></div>
-    <p style="margin:4px 0; font-size:12px; color:#7d8590">Injects <code>/rename &lt;title&gt;</code> (or a system nudge if auto) into the agent's pane via tmux. The agent must have a live tmux session.</p>
-    <label class="cron-create-row">
-      <span class="cron-create-label">New title</span>
-      <input id="rename-agent-title-input" type="text" placeholder="1-64 chars, [A-Za-z0-9_-[]{}() ] only — try a 3-4-word kebab slug" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-enabled" id="rename-agent-auto-row" title="Inject a [system: ...] nudge asking the agent to pick a descriptive title itself via the agent-rename skill / CLI.">
-      <input id="rename-agent-auto" type="checkbox" /> Auto (let the agent choose its own title)
-    </label>
-    <div class="cron-create-error" id="rename-agent-error"></div>
-    <div class="modal-buttons">
-      <button id="rename-agent-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="rename-agent-submit" class="primary" type="button">Rename</button>
     </div>
   </div>
 </div>
