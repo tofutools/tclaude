@@ -18,10 +18,12 @@ gated by a permission model the human curates.
 
 `tclaude agent` (the CLI) talks to `tclaude agentd` (a long-running
 daemon) over a Unix socket. The daemon owns the database, tmux nudges,
-and permission gating; the CLI is a thin client. Identity is derived
-from the connecting socket peer's PID — no tokens to manage, and
-`/fork` keeps working because the daemon re-reads each caller's
-current conv-id on every request.
+and permission gating; the CLI is a thin client. The daemon resolves
+every caller from the connecting socket peer: a caller running inside
+a Claude Code session is an *agent*, identified by its conv-id (re-read
+on every request, so `/fork` and `/resume` keep working); the *human operator*
+authenticates with an operator token. A caller it can confirm as
+neither is refused. See [Identity](#identity).
 
 ## What you can do
 
@@ -58,7 +60,9 @@ current conv-id on every request.
 - **`tclaude agentd serve`** — running in a non-sandboxed shell. The
   CLI refuses to fall back to direct DB access when the daemon is
   down — that's deliberate, so the auth model can't be bypassed by
-  killing the daemon.
+  killing the daemon. On startup the daemon prints an **operator
+  token**; the human exports it as `TCLAUDE_HUMAN_TOKEN` to run
+  human-only commands (see [Identity](#identity)).
 
 The daemon binds two sockets:
 
@@ -106,16 +110,59 @@ tclaude agent dashboard
 
 ## Identity
 
-Every command is associated with a *caller identity*:
+On every request the daemon resolves the connecting socket peer into
+exactly one *caller identity*. It reads the peer's PID from the kernel,
+walks the host process tree looking for a `claude`/`node` ancestor, and
+checks the request for an operator token. The verdict is one of:
 
-- **Human** — invocation has no `claude`/`node` ancestor in its
-  process tree. Bypasses every permission gate.
-- **Agent** — invocation came from inside a CC session. The daemon
-  walks up to the nearest claude/node ancestor and reads
-  `~/.claude/sessions/<pid>.json` for its current conv-id. That
-  conv-id is the agent's identity.
+- **Agent** — a `claude`/`node` ancestor is present in the process
+  tree. The daemon resolves that ancestor's current conv-id — from
+  `~/.claude/sessions/<pid>.json` (the `sessionId` Claude Code is
+  *currently* on, so it follows `/fork` and `/resume`), falling back
+  to the daemon's own `sessions` table keyed by host PID. That conv-id
+  is the agent's identity, and the agent is gated by the
+  [permission model](#permission-model).
+- **Human** — the operator. There are two ways to reach this class:
+  a CLI caller with **no** `claude`/`node` ancestor that presents a
+  valid operator token, or a request from the cookie-authenticated
+  browser [dashboard](dashboard.md). The human bypasses every
+  permission gate.
+- **Refused** — a caller the daemon can confirm as neither. No
+  `claude`/`node` ancestor and no valid token → `403 unconfirmed`; a
+  Claude Code ancestor whose conv-id can't be resolved → `403`; a peer
+  whose PID can't be read at all → `401`. There is **no** fail-open
+  "assume human" path — an unproven caller is always refused.
 
-`tclaude agent whoami` prints whichever the daemon resolved.
+### The operator token
+
+The operator token is how a CLI human proves who they are. The daemon
+mints a fresh one (`crypto/rand`, `tclo_` prefix) each time it starts,
+holds it **in memory only** — never written to disk, never logged —
+and prints it on the **startup banner**. The banner is the sole
+delivery channel: there is no fetch endpoint, and the token only
+prints when the daemon's stdout is a real terminal (a backgrounded or
+log-redirected daemon withholds it, so it can't leak into a log file).
+
+The human copies the `export TCLAUDE_HUMAN_TOKEN=…` line from the
+banner into their shell; the CLI then attaches it to every daemon
+request automatically. Restarting the daemon mints a new token, so the
+human re-copies it. Agents never need a token.
+
+**A Claude Code ancestor always wins over the token.** Because the
+human exports `TCLAUDE_HUMAN_TOKEN` into their shell, a CC session
+launched from that shell would inherit it — so the daemon classifies
+*agent-ness first* and never offers the token branch to a caller with
+a `claude`/`node` ancestor. An agent therefore cannot escalate to the
+human even if it holds the token (and `agentd` also strips
+`TCLAUDE_HUMAN_TOKEN` from the environment of every CC session it
+spawns). The flip side: a human running `tclaude agent` from a shell
+that happens to descend from a non-Claude `node` process is classified
+agent-side, not human, and the token won't rescue it — run operator
+commands from a clean terminal, or use the dashboard.
+
+`tclaude agent whoami` reports the resolved identity — an agent's
+conv-id, `<human>`, or neither if the daemon couldn't confirm the
+caller.
 
 Most commands accept a *selector* wherever they take an agent: a full
 conv-id, an 8+-char conv-id prefix, a global head alias, or a current
@@ -410,14 +457,15 @@ spawning, and drag-and-drop group editing.
 
 ## Permission model
 
-Every mutating action is gated by a *permission slug*. The daemon
-checks the caller's identity:
+Every mutating action is gated by a *permission slug*. Once the daemon
+has [classified the caller](#identity), it decides:
 
-1. **Human?** Pass.
+1. **Human?** Pass — the human bypasses every gate.
 2. **Agent?** Allowed iff the slug is in `default_permissions`
    (global), the agent's per-conv grants (SQLite), or an active
    `sudo` elevation. Owning a group also passes the `agent.*`
    manager-pattern checks against members of that group.
+3. **Neither?** Refused fail-closed — see [Identity](#identity).
 
 ### Storage split
 
@@ -509,8 +557,10 @@ embeds.
 - The daemon is **foreground-only**. Run it in a tmux pane / a long-
   running terminal; restart manually after upgrades. (No launchd /
   systemd unit yet.)
-- Identity is **peer-cred-based**, not token-based. There's no API
-  key to leak.
+- Identity is resolved from the **socket peer** plus, for the human
+  operator, a per-daemon-lifetime **operator token** that is held in
+  memory only — never persisted to disk. A daemon restart mints a
+  fresh token.
 - `agent_messages` rows accumulate forever for now (no auto-prune);
   bodies are short, so this is fine for a long while.
 - The popup and the dashboard share the daemon's loopback port;
@@ -524,6 +574,7 @@ embeds.
 | `Error: not in a shared group with target`                               | Add both convs to the same group, or add an inter-group link.   |
 | `Error: selector matches multiple conversations`                         | Use the 8-char conv-id prefix instead of the title.            |
 | `Error: caller is not granted permission "<slug>"`                       | Grant via `permissions grant`, retry with `--ask-human`, or `sudo request`. |
+| `Error: unconfirmed caller: not a known agent, and no valid operator token` | You're the human: `export TCLAUDE_HUMAN_TOKEN=…` from the agentd startup banner. See [Identity](#identity). |
 | Dashboard shows `403` on `GET /`                                         | Open it via `tclaude agent dashboard` — the cookie is only issued by the init-token exchange. |
 | Popup didn't open / opened wrong browser                                 | On WSL, the daemon shells out to `/mnt/c/Windows/System32/cmd.exe /c start`. Check `tclaude agentd serve` logs. |
 | `no_tmux` 503 on `agent rename`                                          | Caller has no live tmux session for the daemon to inject into.  |
@@ -532,7 +583,7 @@ embeds.
 
 - [Agent Dashboard](dashboard.md) — the browser operations console.
 - `docs/plans/agent-coord.md` — design doc for `tclaude agent`.
-- `docs/plans/agentd.md` — design doc for the daemon (peer-cred
-  identity, socket layout).
+- `docs/plans/agentd.md` — design doc for the daemon (identity
+  classification, socket layout).
 - `docs/plans/agents_todo.md` — running TODO backlog of what's coming
   next.
