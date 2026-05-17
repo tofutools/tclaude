@@ -499,6 +499,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		WorktreeBranch: worktreeBranch,
 		AutoFocus:      body.AutoFocus,
 		ReplyToConv:    replyToConv,
+		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
 	}
 	// An omitted include_group_context flag means opt-in — every spawn
@@ -547,6 +548,14 @@ type spawnParams struct {
 	// ReplyToConv is the resolved sender of the startup briefing —
 	// "" for a human-initiated spawn.
 	ReplyToConv string
+	// SpawnedByConv is the conv-id of the agent that requested the
+	// spawn, or "" for a human-initiated spawn. It drives the kickoff
+	// welcome's attribution line — "spawned by <title>" for an agent
+	// spawner, "spawned by the human" otherwise. Distinct from
+	// ReplyToConv: the spawner is *who launched* the agent, the
+	// reply-to is *where its brief-replies route*; a coordinator can
+	// hand a worker off by setting them apart.
+	SpawnedByConv string
 	// Timeout bounds the conv-id poll; <= 0 falls back to 30s.
 	Timeout time.Duration
 }
@@ -702,7 +711,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// the pane to come alive before injecting.
 	goBackground(func() {
 		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, g.Name,
-			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch)
+			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
+			p.SpawnedByConv)
 	})
 
 	return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession}, nil
@@ -729,7 +739,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 // landing a write on the .jsonl before any other turn happens. Even
 // if a later injection fails, the file exists and `agent resume` can
 // find it.
-func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) {
+//
+// spawnedByConv is the conv-id of the agent that requested the spawn
+// ("" for a human-initiated one); it is resolved to a display name
+// here so the welcome's attribution line names the real spawner.
+func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv string) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -761,7 +775,8 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	// (identity, role, descr, group, where its startup briefing waits,
 	// and — for a sub-repo worktree — where to make code edits).
 	welcome := buildSpawnWelcome(name, role, descr, groupName,
-		spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch)
+		spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch,
+		resolveSpawnerTitle(spawnedByConv))
 	if err := injectTextAndSubmit(target, welcome); err != nil {
 		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
 		return
@@ -810,6 +825,13 @@ func buildSpawnContextBody(groupName, groupContext, initialMessage string) strin
 // convention agent-message nudges use. Kept to a single line so it
 // renders cleanly in CC's prompt history.
 //
+// spawnedBy is the attribution shown in the opening clause. "" means a
+// human-initiated spawn — the clause stays "spawned by the human". A
+// non-empty value is the spawning agent's display name, so an agent
+// the PO spawned reads "spawned by <po-name>" rather than being
+// misattributed to the human. resolveSpawnerTitle produces it from
+// the spawner's conv-id.
+//
 // The trailing instruction has three forms, set by the spawn-context
 // inbox message the handler may have queued:
 //
@@ -819,8 +841,12 @@ func buildSpawnContextBody(groupName, groupContext, initialMessage string) strin
 //     point the agent at the inbox message and tell it to act.
 //   - a briefing with only the group's shared startup context →
 //     point at the inbox message, then tell it to wait.
-func buildSpawnWelcome(name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch string) string {
-	parts := []string{"spawned by the human"}
+func buildSpawnWelcome(name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedBy string) string {
+	attribution := "spawned by the human"
+	if spawnedBy != "" {
+		attribution = "spawned by " + spawnedBy
+	}
+	parts := []string{attribution}
 	if name != "" {
 		parts = append(parts, fmt.Sprintf("as %q", name))
 	}
@@ -860,6 +886,28 @@ func buildSpawnWelcome(name, role, descr, groupName string, spawnContextMsgID in
 			spawnContextMsgID, spawnContextMsgID)
 	}
 	return "[system: " + body + "]"
+}
+
+// resolveSpawnerTitle turns the spawning agent's conv-id into the
+// display name buildSpawnWelcome puts in its attribution clause.
+//
+//   - "" (a human-initiated spawn) stays "" — the welcome then keeps
+//     its "spawned by the human" framing.
+//   - an agent conv-id resolves through agent.FreshTitle, the same
+//     name listing surfaces show.
+//   - when FreshTitle can't produce a real name (no conv_index row,
+//     deleted .jsonl — vanishingly rare for a live spawner) we fall
+//     back to "another agent" rather than leaking the raw "(unknown)"
+//     placeholder into the welcome.
+func resolveSpawnerTitle(spawnedByConv string) string {
+	if spawnedByConv == "" {
+		return ""
+	}
+	title := agent.FreshTitle(spawnedByConv)
+	if title == "" || title == agent.UnknownTitle {
+		return "another agent"
+	}
+	return title
 }
 
 // generateSpawnLabel produces a "spwn-XXXXXX" identifier. 6 hex

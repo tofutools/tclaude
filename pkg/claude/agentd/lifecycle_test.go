@@ -23,6 +23,7 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 		hasInitialMessage bool
 		worktreePath      string
 		worktreeBranch    string
+		spawnedBy         string
 		mustContain       []string
 		mustOmit          []string
 	}{
@@ -42,16 +43,37 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 			},
 		},
 		{
-			name:      "name + group only",
-			agentName: "worker",
-			groupName: "alpha",
+			name:        "name + group only",
+			agentName:   "worker",
+			groupName:   "alpha",
 			mustContain: []string{"worker", "alpha"},
-			mustOmit:   []string{"role:", "Descr:", "worktree"},
+			mustOmit:    []string{"role:", "Descr:", "worktree"},
 		},
 		{
 			name:        "no name, no group",
 			mustContain: []string{"spawned by the human"},
 			mustOmit:    []string{"as ", "in group ", "worktree"},
+		},
+		{
+			// An agent-initiated spawn: the welcome attributes the
+			// spawning agent by name, NOT "the human".
+			name:        "agent spawner is attributed by name",
+			agentName:   "worker",
+			groupName:   "alpha",
+			spawnedBy:   "tclaude-PO",
+			mustContain: []string{"spawned by tclaude-PO"},
+			mustOmit:    []string{"spawned by the human"},
+		},
+		{
+			// Spawner whose name couldn't be resolved: resolveSpawnerTitle
+			// hands buildSpawnWelcome "another agent" rather than ""; the
+			// welcome must still not claim the human did it.
+			name:        "unresolved agent spawner falls back to 'another agent'",
+			agentName:   "worker",
+			groupName:   "alpha",
+			spawnedBy:   "another agent",
+			mustContain: []string{"spawned by another agent"},
+			mustOmit:    []string{"spawned by the human"},
 		},
 		{
 			name:           "sub-repo worktree",
@@ -106,7 +128,8 @@ func TestBuildSpawnWelcome_IncludesIdentityFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := buildSpawnWelcome(tt.agentName, tt.role, tt.descr, tt.groupName,
-				tt.spawnContextMsgID, tt.hasInitialMessage, tt.worktreePath, tt.worktreeBranch)
+				tt.spawnContextMsgID, tt.hasInitialMessage, tt.worktreePath, tt.worktreeBranch,
+				tt.spawnedBy)
 			for _, s := range tt.mustContain {
 				assert.Contains(t, got, s, "welcome should contain %q", s)
 			}
@@ -128,10 +151,12 @@ func TestBuildSpawnWelcome_SingleLineNoControlChars(t *testing.T) {
 	cases := []struct {
 		spawnContextMsgID int64
 		hasInitialMessage bool
+		spawnedBy         string
 	}{
-		{0, false},  // no briefing
-		{42, true},  // briefing with a task brief
-		{7, false},  // briefing with group context only
+		{0, false, ""},           // no briefing, human spawner
+		{42, true, ""},           // briefing with a task brief, human spawner
+		{7, false, ""},           // briefing with group context only
+		{42, true, "tclaude-PO"}, // agent-attributed welcome
 	}
 	for _, c := range cases {
 		got := buildSpawnWelcome(
@@ -143,6 +168,7 @@ func TestBuildSpawnWelcome_SingleLineNoControlChars(t *testing.T) {
 			c.hasInitialMessage,
 			"/home/dev/monorepo/services/api-feature-x",
 			"feature-x",
+			c.spawnedBy,
 		)
 		assert.False(t, strings.ContainsAny(got, "\n\t\r"), "welcome must be a single line, got %q", got)
 		assert.True(t, isValidFollowUp(got), "welcome should pass isValidFollowUp; got %q", got)
