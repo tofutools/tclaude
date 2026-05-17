@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -347,6 +348,25 @@ func TestApplySandboxHardening_BacksUpExistingFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, original, string(backup), "backup must hold the pre-merge contents")
 	assert.True(t, strings.HasPrefix(filepath.Base(res.backupPath), "settings.json.bak-"))
+}
+
+// The backup must inherit the original file's permission bits — a
+// private (0600) settings.json must not be copied into a 0644 backup.
+func TestApplySandboxHardening_BackupInheritsFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are not meaningful on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "settings.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"model": "opus"}`), 0o600))
+
+	res, err := applySandboxHardening(path)
+	require.NoError(t, err)
+	require.NotEmpty(t, res.backupPath)
+
+	info, err := os.Stat(res.backupPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"backup must inherit the private mode of the original")
 }
 
 // A scalar conflict in a real file: the conflicting value is preserved on

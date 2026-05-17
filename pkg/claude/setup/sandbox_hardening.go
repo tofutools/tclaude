@@ -208,6 +208,10 @@ func loadSettingsTree(settingsPath string) (map[string]any, error) {
 // (settings.json.bak-YYYYMMDD-HHMMSS) and returns the backup path. If
 // the settings file does not exist yet there is nothing to back up and
 // it returns "" with no error.
+//
+// The backup inherits the original file's permission bits, so a
+// private (0600) settings.json is never copied into a world-readable
+// backup.
 func backupSettings(settingsPath string) (string, error) {
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -216,8 +220,12 @@ func backupSettings(settingsPath string) (string, error) {
 		}
 		return "", err
 	}
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(settingsPath); statErr == nil {
+		mode = info.Mode().Perm()
+	}
 	backupPath := settingsPath + ".bak-" + time.Now().Format("20060102-150405")
-	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+	if err := os.WriteFile(backupPath, data, mode); err != nil {
 		return "", err
 	}
 	return backupPath, nil
