@@ -169,3 +169,30 @@ func TestRunSetup_BaselineRunsAlongsideExtras(t *testing.T) {
 	// The requested extra ran too.
 	assertSkillsInstalled(t, home)
 }
+
+// The agent-sandbox advisory must name both sensitive trees, frame the
+// daemon layer as a guardrail, and link the hardening doc — that pointer
+// is the whole point of the advisory.
+func TestSandboxAdvisory_NamesPathsAndDoc(t *testing.T) {
+	adv := sandboxAdvisory()
+	for _, want := range []string{
+		"=== Agent Sandbox ===",
+		"~/.tclaude",
+		"~/.claude/sessions",
+		"guardrail",
+		sandboxHardeningDocURL,
+	} {
+		assert.Containsf(t, adv, want, "advisory should mention %q", want)
+	}
+}
+
+// The doc the advisory points operators to must actually exist in the
+// repo — this guards against the advisory URL drifting from the file.
+func TestSandboxHardeningDocExists(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller failed")
+	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+	docPath := filepath.Join(repoRoot, filepath.FromSlash(sandboxHardeningDocPath))
+	assert.FileExistsf(t, docPath, "advisory points at %s; expected it at %s",
+		sandboxHardeningDocPath, docPath)
+}

@@ -240,6 +240,8 @@ target session's tmux pane.
 docs/plans/agentd.md           ← this doc
 docs/plans/agent-coord.md      ← v1 agent-coord design (still relevant)
 docs/plans/agents_todo.md      ← rolling TODO/DONE
+docs/sandbox-hardening.md      ← operator guide: sandboxing agents so
+                                 the guardrail above actually holds
 pkg/claude/agentd/agentd.go    ← cobra wiring for `tclaude agentd`
 pkg/claude/agentd/serve.go     ← Unix socket setup + http.Server
 pkg/claude/agentd/discovery.go ← well-known socket path
