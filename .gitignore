@@ -45,3 +45,23 @@ DONE.md
 # Excalidraw MCP local log
 excalidraw.log
 .claude/worktrees/
+
+# Sandbox artifacts — /dev/null device nodes the isolation-worktree
+# sub-agent sandbox drops in the repo root to mask the ambient host
+# config (~/.bashrc, ~/.gitconfig, …) from sandboxed sub-agents.
+# Harmless (not real files); ignored so they cannot be staged by
+# accident. NOTE: .mcp.json / .vscode / .gitmodules / .claude/agents /
+# .claude/commands could be legitimate project files someday — drop the
+# matching line here if tclaude ever gains a real one.
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.gitmodules
+/.mcp.json
+/.profile
+/.ripgreprc
+/.vscode
+/.zprofile
+/.zshrc
+/.claude/agents
+/.claude/commands
