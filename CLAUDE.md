@@ -104,6 +104,16 @@ When CodeRabbit has not produced a real review, do an **independent review** bef
 - The reviewer must be a **fresh agent** — a local sub-agent, or a spawned review agent — that sees the PR diff **cold**: given only the diff and a review instruction, not the design backstory or how the change was built. The point is a review uncorrelated with the author's assumptions, so it catches what the author already rationalised away.
 - Triage its findings the same way CodeRabbit's would be: fix the valid ones, document any deliberate skips.
 
+## Agent group / worker policy
+
+`tclaude` is built by a multi-agent group ("tclaude-dev"): a human operator, a PO (product-owner) coordinating agent, and dev/worker agents. The worker policy:
+
+- **One dev/worker agent per feature.** Each worker owns a single feature and stays focused on it.
+- **Same-feature follow-ups reuse that agent.** Follow-up work on the same feature — or something very similar — goes back to the agent that did the original task; it still has the context.
+- **Unrelated work goes to a fresh agent.** A different feature, or a more unrelated task, gets a new agent with its own brief — never an existing agent carrying foreign context.
+- **Idle agents are cheap.** A finished worker can sit idle in the group at low cost; there is no need to retire it promptly.
+- **The operator prunes idle agents.** Retiring/removing agents from the group is the human operator's call. The PO may *recommend* cleanups or work-org changes at any time, but does not retire agents on its own initiative.
+
 ## Active design / TODO docs
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
