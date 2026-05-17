@@ -342,58 +342,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !requireGroupActive(w, g) {
 		return
 	}
-	var body struct {
-		// Name, when set, becomes the new agent's conversation title:
-		// runSpawnPostInit injects `/rename <name>` into the fresh pane.
-		// An agent has exactly one name — its title — so there is no
-		// separate per-group handle.
-		Name string `json:"name,omitempty"`
-		Role string `json:"role,omitempty"`
-		// Descr is the short, one-line description shown on the dashboard
-		// (the group-member "Description" column). Keep it terse — the
-		// agent's actual task brief goes in InitialMessage instead.
-		Descr string `json:"descr,omitempty"`
-		// InitialMessage, when set, is delivered to the new agent as its
-		// first real prompt — a separate turn after the welcome. It is
-		// deliberately split from Descr so a long task brief doesn't bloat
-		// the dashboard's description column.
-		InitialMessage string `json:"initial_message,omitempty"`
-		Cwd            string `json:"cwd,omitempty"`
-		TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-
-		// WorktreePath / WorktreeBranch describe a git worktree the
-		// agent should do its code work in, when Cwd is a parent
-		// "monorepo" directory rather than the repo itself. They are
-		// purely informational — the agent still launches in Cwd; the
-		// worktree path rides into the welcome message so the agent
-		// knows where to make edits. Set by the dashboard's spawn
-		// modal after it creates the worktree; empty for an ordinary
-		// spawn where Cwd already is the repo.
-		WorktreePath   string `json:"worktree_path,omitempty"`
-		WorktreeBranch string `json:"worktree_branch,omitempty"`
-
-		// AutoFocus, when set, opens a terminal window attached to the
-		// new agent once the spawn lands. Opt-in on the wire — the
-		// dashboard's spawn modal defaults its checkbox on, CLI / agent
-		// callers pass it explicitly.
-		AutoFocus bool `json:"auto_focus,omitempty"`
-		// IncludeGroupContext controls whether the group's default_context
-		// (when set) is injected into the new agent on startup. It's a
-		// *bool so an omitted field means opt-in — every spawn path
-		// inherits the group context by default, the same way it inherits
-		// default_cwd. The dashboard sends false explicitly when the human
-		// unticks the "include group default context" checkbox.
-		IncludeGroupContext *bool `json:"include_group_context,omitempty"`
-
-		// ReplyTo optionally names whom the spawned agent's `reply` to
-		// its startup briefing should reach — any selector
-		// agent.ResolveSelector accepts (conv-id / prefix / title).
-		// Omitted: the briefing's sender defaults to the
-		// spawn requester (spawnerConvID — empty for a human-initiated
-		// spawn). Set it to hand a worker off to a coordinator other
-		// than the spawner.
-		ReplyTo string `json:"reply_to,omitempty"`
-	}
+	// agent.SpawnRequest is the single shared request shape — the same
+	// type `tclaude agent spawn`, `tclaude --join-group`, and the
+	// dashboard's spawn modal marshal — so the wire contract can't drift
+	// between the CLI and the dashboard. See its doc comment for the
+	// per-field semantics.
+	var body agent.SpawnRequest
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "json", err.Error())

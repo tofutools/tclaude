@@ -226,6 +226,9 @@ All mutating subcommands take `--ask-human <duration>` (see
 
 ```bash
 tclaude agent spawn <group> [--name N --role R --descr T --cwd DIR]
+                            [--initial-message MSG | --file PATH] [--reply-to SEL]
+                            [--worktree BRANCH [--worktree-base B] [--worktree-repo DIR]]
+                            [--auto-focus] [--no-group-context] [--timeout DUR]
 ```
 
 Launches a fresh detached CC session, waits for its conv-id to
@@ -233,6 +236,27 @@ materialise, and adds it to `<group>`. The new session lands in
 `--cwd` (defaults to the caller's cwd, or the group's
 [default dir](#groups)). Requires the `groups.spawn` permission
 (human-only by default).
+
+`--initial-message` (or `--file PATH` / `--file -` for stdin) delivers
+the new agent a task brief in its inbox; `--reply-to` routes its reply
+to a coordinator other than the spawner.
+
+**Spawn into a git worktree.** `--worktree BRANCH` creates (or reuses) a
+git worktree on `BRANCH` and spawns the agent into it — the CLI
+equivalent of the dashboard spawn modal's worktree picker. The worktree
+is cut in the repo containing `--cwd`; `--worktree-base` picks the
+branch it forks from (default: the repo's default branch). For a
+monorepo launch dir whose code work belongs in a nested sub-repo, point
+`--worktree-repo` at the sub-repo: the agent then launches in `--cwd`
+and the worktree path/branch ride into its welcome message. If the
+spawn is rejected outright, a freshly-created worktree is removed again
+(the branch is kept).
+
+**Other parity flags.** `--auto-focus` opens a terminal window attached
+to the new agent once it lands (off by default for the CLI — spawns are
+usually programmatic — whereas the dashboard modal defaults it on).
+`--no-group-context` opts the new agent out of the group's shared
+startup context (delivered by default, like every other spawn path).
 
 **Spawn guardrails.** `groups.spawn` is human-only by default, but the
 human can grant it to a coordinator agent so it can grow its own team.

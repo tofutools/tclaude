@@ -39,16 +39,16 @@ func RunJoinGroup(params *session.NewParams) error {
 			cwd = wd
 		}
 	}
-	body := map[string]any{
-		"name":            params.Name,
-		"role":            params.Role,
-		"descr":           params.Descr,
-		"cwd":             cwd,
-		"timeout_seconds": 30,
+	req := SpawnRequest{
+		Name:           params.Name,
+		Role:           params.Role,
+		Descr:          params.Descr,
+		Cwd:            cwd,
+		TimeoutSeconds: 30,
 	}
 	var resp SpawnResponse
 	path := "/v1/groups/" + params.JoinGroup + "/spawn"
-	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, path, req, &resp, DaemonOpts{}); err != nil {
 		return fmt.Errorf("spawn into group %q: %w", params.JoinGroup, err)
 	}
 
