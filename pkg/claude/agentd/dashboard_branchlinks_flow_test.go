@@ -36,15 +36,15 @@ func TestDashboardBranchLinks_SurfacedInSnapshot(t *testing.T) {
 	// Fake resolver: alice's branch has PR #42, bob's branch has none.
 	// An unknown branch models a non-GitHub repo (ok=false).
 	t.Cleanup(agentd.SetGitInfoResolverForTest(
-		func(repoDir, branch string) (string, string, int, string, bool) {
+		func(repoDir, branch string) (string, string, int, string, string, bool) {
 			switch branch {
 			case "feature-login":
 				return "https://github.com/acme/app", "main", 42,
-					"https://github.com/acme/app/pull/42", true
+					"https://github.com/acme/app/pull/42", "open", true
 			case "bugfix-crash":
-				return "https://github.com/acme/app", "main", 0, "", true
+				return "https://github.com/acme/app", "main", 0, "", "", true
 			}
-			return "", "", 0, "", false
+			return "", "", 0, "", "", false
 		}))
 
 	f := newFlow(t)

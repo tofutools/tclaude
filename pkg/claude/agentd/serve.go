@@ -133,6 +133,18 @@ func runServe(p *serveParams) error {
 	// fields keep the built-in defaults. See spawn_guardrails.go.
 	slog.Info("agent-spawn guardrails", "config", resolveSpawnGuardrailConfig(cfg))
 
+	// Branch-history PR enrichment — off by default. When on, the
+	// dashboard's branch-link resolver also stamps resolved PRs onto
+	// the conv_branch_history table. The branch re-scan and hook append
+	// run regardless. See branchlinks.go. Reset before the conditional
+	// assignment so a config without an `agent` section can't leave a
+	// stale value from an earlier resolve.
+	branchHistoryPREnrichment = false
+	if cfg != nil && cfg.Agent != nil {
+		branchHistoryPREnrichment = cfg.Agent.BranchHistoryPREnrichment
+	}
+	slog.Info("branch-history PR enrichment", "enabled", branchHistoryPREnrichment)
+
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
 	// (tier 1) overrides it here. Resolve then runs the one-time

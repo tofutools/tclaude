@@ -89,15 +89,25 @@ type Config struct {
 // The per-group member cap is NOT here — it is a hard property of the
 // group itself (agent_groups.max_members), set via `groups
 // set-max-members` / the dashboard, and applies to every caller.
+//
+// BranchHistoryPREnrichment, when true, lets the dashboard's
+// branch-link resolver stamp the PR it resolves (number/URL/state)
+// onto the conv_branch_history rows. Off by default: v1 of the
+// branch-history feature records the *branches* an agent worked on but
+// leaves the PR columns empty, until a caching strategy for the
+// branch→PR mapping lands. The branch re-scan and the PostToolUse hook
+// append run regardless of this flag — neither ever shells out to gh;
+// only the PR stamp is gated. See branchlinks.go.
 type AgentConfig struct {
-	DefaultPermissions    []string            `json:"default_permissions,omitempty"`
-	Sudo                  *SudoConfig         `json:"sudo,omitempty"`
-	ContextNudge          *ContextNudgeConfig `json:"context_nudge,omitempty"`
-	AutoLaunchDashboard   bool                `json:"auto_launch_dashboard,omitempty"`
-	CloneCooldown         string              `json:"clone_cooldown,omitempty"`
-	SpawnGroupRestriction *bool               `json:"spawn_group_restriction,omitempty"`
-	SpawnAllowedGroups    []string            `json:"spawn_allowed_groups,omitempty"`
-	SpawnMaxPerHour       *int                `json:"spawn_max_per_hour,omitempty"`
+	DefaultPermissions        []string            `json:"default_permissions,omitempty"`
+	Sudo                      *SudoConfig         `json:"sudo,omitempty"`
+	ContextNudge              *ContextNudgeConfig `json:"context_nudge,omitempty"`
+	AutoLaunchDashboard       bool                `json:"auto_launch_dashboard,omitempty"`
+	BranchHistoryPREnrichment bool                `json:"branch_history_pr_enrichment,omitempty"`
+	CloneCooldown             string              `json:"clone_cooldown,omitempty"`
+	SpawnGroupRestriction     *bool               `json:"spawn_group_restriction,omitempty"`
+	SpawnAllowedGroups        []string            `json:"spawn_allowed_groups,omitempty"`
+	SpawnMaxPerHour           *int                `json:"spawn_max_per_hour,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

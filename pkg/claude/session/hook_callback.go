@@ -186,6 +186,14 @@ func runHookCallback() error {
 			if err := db.UpsertAgentWorkdir(input.ConvID, dir, worktreeRoot, branch); err != nil {
 				slog.Warn("failed to record agent workdir", "error", err, "module", "hooks")
 			}
+			// Append the branch to the conv's history. This catches a
+			// branch in a worktree the launch-dir .jsonl never names —
+			// Claude Code stamps only the launch repo's branch onto each
+			// turn, so the .jsonl re-scan alone would miss it. An empty
+			// branch (edit outside a git repo) is a silent no-op.
+			if err := db.AppendConvBranchHistoryHook(input.ConvID, branch, worktreeRoot); err != nil {
+				slog.Warn("failed to record branch history", "error", err, "module", "hooks")
+			}
 		}
 
 	case "SubagentStart":

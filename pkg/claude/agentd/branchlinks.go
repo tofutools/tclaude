@@ -70,8 +70,9 @@ type repoBranchInfo struct {
 	RepoURL       string    `json:"repo_url"`       // https://github.com/owner/repo, or "" for non-GitHub
 	DefaultBranch string    `json:"default_branch"` // the repo's default branch (main/master/...)
 	Branch        string    `json:"branch"`         // the branch this entry resolved
-	PRNumber      int       `json:"pr_number"`      // open PR number for Branch; 0 = none
+	PRNumber      int       `json:"pr_number"`      // PR number for Branch; 0 = none
 	PRURL         string    `json:"pr_url"`         // web link to that PR
+	PRState       string    `json:"pr_state"`       // open|merged|closed; "" = no PR
 	FetchedAt     time.Time `json:"fetched_at"`     // resolution time — drives the TTL check
 }
 
@@ -81,6 +82,21 @@ type repoBranchInfo struct {
 // It returns ok=false when the dir isn't a GitHub repo (or git failed)
 // — the caller then writes a negative cache entry.
 var gitInfoResolver = liveGitInfoResolver
+
+// branchHistoryPREnrichment gates whether refreshBranchLink stamps the
+// resolved PR onto the conv_branch_history table. Off by default: v1
+// of the branch-history feature records the branches an agent worked
+// on and leaves the PR columns empty until a branch→PR caching
+// strategy is designed. The daemon flips it on at startup from
+// config.Agent.BranchHistoryPREnrichment (see serve.go); flow tests
+// flip it via SetBranchHistoryPREnrichmentForTest.
+//
+// Note this gates only the *stamp*: the branch re-scan and the
+// PostToolUse hook append never resolve PRs or shell out to gh, so
+// they run identically whether this is on or off. When on, the stamp
+// adds zero gh calls — it reuses the resolution refreshBranchLink
+// already performed for the dashboard's own Branch column.
+var branchHistoryPREnrichment bool
 
 // branchLinkInflight single-flights background refreshes: a key is
 // present while its refresh goroutine runs, so the 5s snapshot poll
@@ -159,6 +175,41 @@ func refreshBranchLink(repoDir, branch, key string) {
 		slog.Warn("branchlinks: failed to cache resolution",
 			"error", err, "repo", repoDir, "branch", branch, "module", "agentd")
 	}
+	// Mirror the PR snapshot onto the conv_branch_history rows for this
+	// (repoDir, branch). The history table rides the resolution the
+	// dashboard already pays for here — for an agent's active and
+	// startup branches — rather than shelling out to `gh` itself.
+	//
+	// Gated off by default (branchHistoryPREnrichment) — v1 ships
+	// branch history with empty PR columns. Only stamp when a PR was
+	// actually found: `gh` is best-effort and regularly rate-limited,
+	// and a failed `gh pr view` is indistinguishable from "no PR" —
+	// both yield PRNumber 0. Stamping that zero would wipe a good
+	// snapshot off a branch the agent has since moved away from (it
+	// gets no further refresh), so a zero is treated as "no new info".
+	// A merged or closed PR still reports a non-zero number, so genuine
+	// state changes land.
+	//
+	// KNOWN LIMITATIONS (harmless while the flag is off; worth a look
+	// before enabling it):
+	//   - repo_dir provenance: a scan row stores the launch cwd while
+	//     this resolver and the hook use the git worktree root. They
+	//     agree for an agent launched at a repo/worktree root (the
+	//     normal case) and CanonicalizeRepoDir collapses symlink/
+	//     trailing-slash spellings, but a subdir launch still records
+	//     two spellings — see CanonicalizeRepoDir's doc. The stamp then
+	//     reaches whichever row's repo_dir matches the resolved dir;
+	//     the other (cosmetic-dup) row keeps empty PR columns.
+	//   - m4: the PRNumber>0 guard means a genuinely *deleted* PR is
+	//     never cleared from a stale snapshot. Distinguishing "gh ran,
+	//     found no PR" from "gh failed" (e.g. via `gh pr list` exit
+	//     codes) would let only the former clear.
+	if branchHistoryPREnrichment && info.PRNumber > 0 {
+		if err := db.SetConvBranchHistoryPR(repoDir, branch, info.PRNumber, info.PRURL, info.PRState); err != nil {
+			slog.Warn("branchlinks: failed to stamp branch-history PR",
+				"error", err, "repo", repoDir, "branch", branch, "module", "agentd")
+		}
+	}
 }
 
 // branchLinkCacheKey derives the git_cache primary key for a
@@ -208,7 +259,7 @@ func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 	// skips the slowest call (`gh` hits the network) for the common
 	// case of an agent sitting on main.
 	if info.DefaultBranch == "" || branch != info.DefaultBranch {
-		info.PRNumber, info.PRURL = ghPRForBranch(repoDir, branch)
+		info.PRNumber, info.PRURL, info.PRState = ghPRForBranch(repoDir, branch)
 	}
 	return info, true
 }
@@ -254,22 +305,24 @@ func gitDefaultBranch(dir string) string {
 	return ""
 }
 
-// ghPRForBranch returns the number + URL of the pull request whose
-// head is branch, via `gh pr view`. Returns (0, "") when there's no
-// PR, gh isn't installed, or gh isn't authenticated — all best-effort.
-func ghPRForBranch(dir, branch string) (int, string) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url")
+// ghPRForBranch returns the number, URL and state of the pull request
+// whose head is branch, via `gh pr view`. The state is lower-cased to
+// open|merged|closed. Returns (0, "", "") when there's no PR, gh isn't
+// installed, or gh isn't authenticated — all best-effort.
+func ghPRForBranch(dir, branch string) (number int, url, state string) {
+	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
 	if out == "" {
-		return 0, ""
+		return 0, "", ""
 	}
 	var pr struct {
 		Number int    `json:"number"`
 		URL    string `json:"url"`
+		State  string `json:"state"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
-		return 0, ""
+		return 0, "", ""
 	}
-	return pr.Number, pr.URL
+	return pr.Number, pr.URL, strings.ToLower(pr.State)
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web

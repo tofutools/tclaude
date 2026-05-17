@@ -182,6 +182,7 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 
 		// Evict the SQLite cache row so the next listing pass doesn't re-surface it.
 		_ = db.DeleteConvIndex(conv.SessionID)
+		_ = db.DeleteConvBranchHistory(conv.SessionID)
 
 		// Surgically drop the entry from legacy sessions-index.json for
 		// external tooling. No-op if the file doesn't exist.
@@ -203,6 +204,12 @@ func RunPruneEmpty(params *PruneEmptyParams, stdout, stderr *os.File, stdin *os.
 		// Dangling dirs imply the entry shouldn't be in sessions-index.json
 		// either — drop it too just in case external tooling left a stub.
 		_ = RemoveSessionsIndexEntry(conv.ProjectPath, conv.SessionID)
+
+		// Defensive: a dangling dir has no .jsonl, so a scan rebuild
+		// can't reach it — but the PostToolUse hook keys conv_branch_history
+		// rows purely on conv-id, with no .jsonl dependency, so a stale
+		// hook-sourced row could outlive the conv. Drop any here too.
+		_ = db.DeleteConvBranchHistory(conv.SessionID)
 
 		danglingDeleted++
 	}
