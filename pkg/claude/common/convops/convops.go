@@ -253,7 +253,10 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			// rows — an empty rebuild drops them (hook rows survive),
 			// keeping the history a true mirror of the .jsonl. Only when
 			// the scan reached EOF: a truncated scan is not evidence the
-			// branches are gone.
+			// branches are gone. Not gated on the stub upsert (unlike
+			// the create path below): an empty rebuild only DELETES scan
+			// rows, so it can never strand one — and running it even on
+			// a failed stub upsert still reclaims them.
 			if scanComplete {
 				if err := db.RebuildConvBranchHistoryScan(convID, nil); err != nil {
 					slog.Warn("conv_branch_history: stub rebuild failed", "conv_id", convID[:8], "error", err)
@@ -265,8 +268,10 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 
 		// Upsert into DB
 		row := entryToDBRow(scanned, projectPath)
+		convIndexed := true
 		if err := db.UpsertConvIndex(row); err != nil {
 			slog.Warn("conv_index: db upsert failed", "conv_id", convID[:8], "error", err)
+			convIndexed = false
 		}
 
 		// Rebuild this conv's branch history from the scan. The scan is
@@ -274,10 +279,16 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 		// converges to the same rows, so the history self-heals on
 		// every re-scan rather than depending on incremental state.
 		// Only the scan path reaches here — a DB cache hit keeps the
-		// branch history persisted from the prior scan. A truncated
-		// scan is skipped: its branch set is partial, and a rebuild
-		// would delete the branches past the truncation point.
-		if scanComplete {
+		// branch history persisted from the prior scan.
+		//
+		// Gated on the conv_index upsert succeeding: branch-history
+		// rows are reclaimed by an eviction sweep that walks conv_index,
+		// so writing them for a conv with no conv_index row would strand
+		// them. Also gated on scanComplete — a truncated scan's branch
+		// set is partial, and a rebuild would delete the branches past
+		// the truncation point. A skipped rebuild self-heals on the
+		// next successful scan.
+		if convIndexed && scanComplete {
 			if err := db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory); err != nil {
 				slog.Warn("conv_branch_history: rebuild failed", "conv_id", convID[:8], "error", err)
 			}
@@ -832,11 +843,13 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 	scanned.FileSize = info.Size()
 
 	row := entryToDBRow(scanned, projectDir)
-	_ = db.UpsertConvIndex(row)
+	convIndexErr := db.UpsertConvIndex(row)
 	// Rebuild branch history from the same scan — see the matching
-	// call in LoadSessionsIndexWithOptions. A truncated scan is skipped:
-	// its branch set is partial.
-	if scanComplete {
+	// call in LoadSessionsIndexWithOptions. Gated on the conv_index
+	// upsert succeeding (history rows are reclaimed by a sweep over
+	// conv_index, so one for an unindexed conv would strand) and on a
+	// complete scan (a truncated branch set is partial).
+	if convIndexErr == nil && scanComplete {
 		_ = db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory)
 	}
 	return scanned

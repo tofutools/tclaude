@@ -110,6 +110,38 @@ func TestLoadSessionsIndex_BranchHistoryClearedOnStubTransition(t *testing.T) {
 	assert.Empty(t, branchSet(t, sessionID), "stub transition sheds the scan rows")
 }
 
+// TestLoadSessionsIndex_BranchHistorySkippedWhenConvIndexUpsertFails
+// covers the orphan guard: branch-history rows are reclaimed by an
+// eviction sweep that walks conv_index, so the rebuild must be skipped
+// when the conv_index upsert fails — otherwise the history rows would
+// have no conv_index row to be evicted alongside.
+//
+// The failure is forced by dropping the conv_index table: every
+// UpsertConvIndex then errors, deterministically, with no need for a
+// mock seam.
+func TestLoadSessionsIndex_BranchHistorySkippedWhenConvIndexUpsertFails(t *testing.T) {
+	setupTestDB(t)
+	tmpDir := t.TempDir()
+	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, sessionID+".jsonl"), []byte(jsonlWithBranchHops), 0o600))
+
+	conn, err := db.Open()
+	require.NoError(t, err)
+	_, err = conn.Exec(`DROP TABLE conv_index`)
+	require.NoError(t, err, "drop conv_index to force every upsert to fail")
+
+	// The scan must not abort — a conv_index upsert failure is logged
+	// and skipped, same as in production.
+	_, err = LoadSessionsIndex(tmpDir)
+	require.NoError(t, err)
+
+	rows, err := db.ListConvBranchHistory(sessionID)
+	require.NoError(t, err)
+	assert.Empty(t, rows,
+		"branch history is not written when the conv_index upsert fails")
+}
+
 // TestLoadSessionsIndex_TruncatedScanLeavesBranchHistoryIntact covers
 // CR#4: when a .jsonl line exceeds maxJSONLLineBytes the bufio.Scanner
 // stops on an error, not at EOF. parseJSONLSession reports the scan as
