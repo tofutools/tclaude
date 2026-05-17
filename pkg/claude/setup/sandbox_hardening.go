@@ -204,6 +204,23 @@ func loadSettingsTree(settingsPath string) (map[string]any, error) {
 	return tree, nil
 }
 
+// settingsFileMode returns path's permission bits, or 0o644 if path does
+// not exist or cannot be stat'd.
+//
+// It is used so both the backup and the rewrite of the settings file
+// carry the original file's mode explicitly, rather than relying on
+// os.WriteFile's subtle behaviour (it applies the perm argument only
+// when *creating* a file, and ignores it for an existing one). Making
+// the intent explicit keeps a private 0600 settings.json private and
+// future-proofs an eventual atomic temp-file+rename rewrite, where the
+// temp file is new and would otherwise be created 0644.
+func settingsFileMode(path string) os.FileMode {
+	if info, err := os.Stat(path); err == nil {
+		return info.Mode().Perm()
+	}
+	return 0o644
+}
+
 // backupSettings copies settingsPath to a timestamped sibling
 // (settings.json.bak-YYYYMMDD-HHMMSS) and returns the backup path. If
 // the settings file does not exist yet there is nothing to back up and
@@ -220,12 +237,8 @@ func backupSettings(settingsPath string) (string, error) {
 		}
 		return "", err
 	}
-	mode := os.FileMode(0o644)
-	if info, statErr := os.Stat(settingsPath); statErr == nil {
-		mode = info.Mode().Perm()
-	}
 	backupPath := settingsPath + ".bak-" + time.Now().Format("20060102-150405")
-	if err := os.WriteFile(backupPath, data, mode); err != nil {
+	if err := os.WriteFile(backupPath, data, settingsFileMode(settingsPath)); err != nil {
 		return "", err
 	}
 	return backupPath, nil
@@ -259,6 +272,11 @@ func applySandboxHardening(settingsPath string) (*hardeningResult, error) {
 		return res, nil
 	}
 
+	// Capture the original file's mode before we touch it, so the
+	// rewrite preserves it (a private 0600 settings.json stays 0600);
+	// a genuinely new file gets the 0o644 default.
+	mode := settingsFileMode(settingsPath)
+
 	backupPath, err := backupSettings(settingsPath)
 	if err != nil {
 		return nil, fmt.Errorf("back up settings: %w", err)
@@ -269,7 +287,7 @@ func applySandboxHardening(settingsPath string) (*hardeningResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("serialize settings: %w", err)
 	}
-	if err := os.WriteFile(settingsPath, output, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, output, mode); err != nil {
 		return nil, fmt.Errorf("write settings: %w", err)
 	}
 	res.wrote = true

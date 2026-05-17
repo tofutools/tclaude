@@ -369,6 +369,28 @@ func TestApplySandboxHardening_BackupInheritsFileMode(t *testing.T) {
 		"backup must inherit the private mode of the original")
 }
 
+// Rewriting an existing settings.json must preserve its permission mode
+// — a private (0600) file must not come back 0644. This pins the
+// behaviour regardless of how the rewrite is implemented (today
+// os.WriteFile keeps an existing file's mode; an atomic temp+rename
+// refactor would need the explicit mode-preservation to hold this).
+func TestApplySandboxHardening_RewritePreservesFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are not meaningful on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "settings.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"model": "opus"}`), 0o600))
+
+	res, err := applySandboxHardening(path)
+	require.NoError(t, err)
+	require.True(t, res.wrote)
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"rewritten settings.json must keep its original private mode")
+}
+
 // A scalar conflict in a real file: the conflicting value is preserved on
 // disk, the rest of the hardening is still written, and the conflict is
 // reported.
