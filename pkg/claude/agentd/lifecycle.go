@@ -895,16 +895,27 @@ func buildSpawnWelcome(name, role, descr, groupName string, spawnContextMsgID in
 //     its "spawned by the human" framing.
 //   - an agent conv-id resolves through agent.FreshTitle, the same
 //     name listing surfaces show.
-//   - when FreshTitle can't produce a real name (no conv_index row,
-//     deleted .jsonl — vanishingly rare for a live spawner) we fall
-//     back to "another agent" rather than leaking the raw "(unknown)"
-//     placeholder into the welcome.
+//   - anything that isn't a clean agent name — FreshTitle's
+//     "(unknown)" placeholder, or a title that fails isValidRenameTitle
+//     — is downgraded to the generic "another agent".
+//
+// The isValidRenameTitle gate is load-bearing, not cosmetic.
+// FreshTitle falls back to a conversation summary or first prompt when
+// a conv has no custom title, and a custom title set via Claude Code's
+// own /rename (as opposed to the daemon's gated endpoint) is never
+// charset-checked either — so the resolved string can carry newlines
+// or other control characters. The welcome is injected into the new
+// agent's pane with tmux send-keys, where a raw newline lands as a
+// premature submit; routing the title through the same gate every
+// tclaude-side rename passes keeps the welcome a safe single line.
+// "(unknown)" is rejected explicitly because it happens to satisfy
+// isValidRenameTitle.
 func resolveSpawnerTitle(spawnedByConv string) string {
 	if spawnedByConv == "" {
 		return ""
 	}
 	title := agent.FreshTitle(spawnedByConv)
-	if title == "" || title == agent.UnknownTitle {
+	if title == "" || title == agent.UnknownTitle || !isValidRenameTitle(title) {
 		return "another agent"
 	}
 	return title
