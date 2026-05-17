@@ -78,30 +78,35 @@ Bash/file tools are restricted.
 
 ## How to configure it
 
-Claude Code enforces filesystem restrictions through **two independent
-layers**, and you need **both** — each covers a hole the other leaves
-open:
+Claude Code enforces filesystem restrictions through **two layers**, and
+you need **both** — each covers a hole the other leaves open:
 
 1. **`sandbox.filesystem.*`** — OS-level enforcement (bubblewrap on
-   Linux, Seatbelt on macOS). Covers the **Bash tool and every
-   subprocess it spawns** (including scripts: `python`, `node`, etc.).
-   It does **not** cover Claude Code's built-in `Read`/`Write`/`Edit`
-   tools.
-2. **`permissions.deny`** — tool-level rules. Covers the built-in
-   `Read`/`Write`/`Edit` tools, and — per Claude Code's permissions
-   docs — the file commands it recognizes in Bash (`cat`, `sed`, …;
-   recognition is best-effort, so do not rely on it alone). It does
-   **not** cover arbitrary subprocesses — a `python`/`node` script that
-   opens a file itself slips past `permissions.deny` entirely. That gap
-   is exactly what layer 1 closes.
+   Linux, Seatbelt on macOS). Per Claude Code's docs it "applies only to
+   Bash commands and their child processes" (including scripts:
+   `python`, `node`, etc.). It does **not**, on its own, gate Claude
+   Code's built-in `Read`/`Write`/`Edit` tools.
+2. **`permissions.deny`** — tool-level rules. The two file-related rule
+   names are **`Read`** and **`Edit`**: per Claude Code's permissions
+   docs, *"`Edit` rules apply to all built-in tools that edit files"* —
+   that is the `Write`, `Edit`, `MultiEdit`, and `NotebookEdit` tools —
+   and `Read` rules apply to the file-reading tools. There is no
+   separate per-path `Write(...)` rule to set; `Edit(...)` already
+   covers new-file creation. These rules also apply to the file
+   commands Claude Code recognizes in Bash (`cat`, `sed`, …; the docs
+   call recognition best-effort) but **not** to arbitrary subprocesses —
+   a `python`/`node` script that opens a file itself slips past
+   `permissions.deny`. That gap is what layer 1 closes.
 
 Configure only one and there is a hole. With only the sandbox layer, an
 agent can still create or overwrite `~/.tclaude/db.sqlite` with the
-`Write`/`Edit` tools — the sandbox does not gate the built-in file tools
-(verified: the `Write` tool created a file under `~/.tclaude/` on a
+built-in `Write`/`Edit` tools — the sandbox does not gate them on its
+own (verified: the `Write` tool created a file under `~/.tclaude/` on a
 machine whose Bash sandbox treats `~/.tclaude/` as read-only). With only
 `permissions.deny`, an agent can still write the file from a `python`
-one-liner in Bash.
+one-liner in Bash. (Claude Code's docs note the two layers also
+reinforce each other — `Read`/`Edit` deny rules are merged into the
+sandbox boundary — but set both explicitly rather than relying on that.)
 
 Add this to your Claude Code **`~/.claude/settings.json`** (user scope —
 a deny rule there cannot be weakened by any project's `.claude/settings.json`):
@@ -117,10 +122,8 @@ a deny rule there cannot be weakened by any project's `.claude/settings.json`):
   },
   "permissions": {
     "deny": [
-      "Write(~/.tclaude/**)",
       "Edit(~/.tclaude/**)",
       "Read(~/.tclaude/**)",
-      "Write(~/.claude/sessions/**)",
       "Edit(~/.claude/sessions/**)",
       "Read(~/.claude/sessions/**)"
     ]
@@ -144,9 +147,10 @@ Notes:
   over allow rules, so a `denyWrite` entry should override an
   `allowWrite` for the same path — but keeping the allow-lists clean
   avoids relying on that and avoids surprises.
-- **`Read`/`Write`/`Edit` are three distinct rules.** `Edit` covers
-  in-place edits, `Write` covers new-file creation; you need both. `Read`
-  is the optional confidentiality rule.
+- **`Edit` is the write rule, `Read` is the read rule.** `Edit(...)`
+  covers every built-in file-editing tool (creation included), so it is
+  the must-have integrity rule; `Read(...)` is the optional
+  confidentiality rule.
 
 ### Socket caveat for read-denying `~/.tclaude/`
 

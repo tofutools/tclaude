@@ -226,13 +226,36 @@ func TestSandboxAdvisory_NamesPathsAndDoc(t *testing.T) {
 	}
 }
 
-// The doc the advisory points operators to must actually exist in the
-// repo — this guards against the advisory URL drifting from the file.
-func TestSandboxHardeningDocExists(t *testing.T) {
+// findRepoRoot returns the repository root, derived from this test
+// file's own location (pkg/claude/setup/setup_test.go).
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok, "runtime.Caller failed")
-	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	docPath := filepath.Join(repoRoot, filepath.FromSlash(sandboxHardeningDocPath))
+	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+}
+
+// The doc the advisory points operators to must actually exist in the
+// repo — this guards against the const drifting from the file.
+func TestSandboxHardeningDocExists(t *testing.T) {
+	docPath := filepath.Join(findRepoRoot(t), filepath.FromSlash(sandboxHardeningDocPath))
 	assert.FileExistsf(t, docPath, "advisory points at %s; expected it at %s",
 		sandboxHardeningDocPath, docPath)
+}
+
+// Every in-repo reference to the sandbox-hardening doc must use the name
+// the setup advisory's const points at. Catches a rename that updates
+// the const and the file but leaves a markdown cross-reference dangling.
+func TestSandboxDocCrossReferencesConsistent(t *testing.T) {
+	root := findRepoRoot(t)
+	base := filepath.Base(sandboxHardeningDocPath) // sandbox-hardening.md
+	for _, ref := range []string{
+		filepath.Join("docs", "plans", "agentd.md"),
+		filepath.Join("docs", "index.md"),
+	} {
+		body, err := os.ReadFile(filepath.Join(root, ref))
+		require.NoErrorf(t, err, "reading %s", ref)
+		assert.Containsf(t, string(body), base,
+			"%s must reference the sandbox-hardening doc by name (%s)", ref, base)
+	}
 }

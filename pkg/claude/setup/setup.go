@@ -46,8 +46,8 @@ const protocolVersion = "3"
 // sandboxHardeningDocPath is the repo-relative path of the operator
 // guide for sandboxing agents; sandboxHardeningDocURL is its canonical
 // GitHub location, shown in setup output. They are one derived pair so a
-// rename only touches the path const — and a stale path is caught by
-// the setup package's doc-exists test.
+// rename only touches the path const — the setup package's tests then
+// catch a stale path (doc missing) or out-of-sync in-repo references.
 const sandboxHardeningDocPath = "docs/sandbox-hardening.md"
 
 var sandboxHardeningDocURL = "https://github.com/tofutools/tclaude/blob/main/" + sandboxHardeningDocPath

@@ -32,10 +32,13 @@ Operator guide covering:
   write-deny as the must-have, read-deny as defense-in-depth.
 - Claude Code's **two enforcement layers** and why both are needed:
   `sandbox.filesystem.*` (covers the Bash tool + subprocesses) and
-  `permissions.deny` (covers the built-in `Read`/`Write`/`Edit` tools).
-  The sandbox does **not** restrict the file tools — verified
-  empirically: the `Write` tool created a file under `~/.tclaude/` on a
-  machine whose Bash sandbox treats `~/.tclaude/` as read-only.
+  `permissions.deny` `Read`/`Edit` rules (cover the built-in file
+  tools — per CC's docs an `Edit` rule applies to every file-editing
+  tool, so `Edit(...)`+`Read(...)` is the complete pair; there is no
+  separate per-path `Write(...)` rule). The sandbox does **not**
+  restrict the file tools on its own — verified empirically: the
+  `Write` tool created a file under `~/.tclaude/` on a machine whose
+  Bash sandbox treats `~/.tclaude/` as read-only.
 - A complete recommended `~/.claude/settings.json` snippet.
 - The socket caveat: write-denying `~/.tclaude/` does not break
   `~/.tclaude/agentd.sock` (connect is a network op, not an FS write —
