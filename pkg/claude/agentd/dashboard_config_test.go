@@ -324,3 +324,64 @@ func TestDashboardConfig_GetReportsUnknownKeys(t *testing.T) {
 		"zzz_future",
 	}, resp.UnknownKeys, "unknown keys at every depth listed (sorted); arbitrary map keys exempt")
 }
+
+// A log_rotation block POSTed through the editor must persist and
+// round-trip — the dashboard's Log rotation fields (max_size / keep)
+// write into this block.
+func TestDashboardConfig_PersistsLogRotation(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	body := wrapBody(`{"log_level":"info","log_rotation":{"max_size":"25MiB","keep":7}}`, "")
+	w, resp := postConfig(t, "/api/config", body)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.LogRotation)
+	assert.Equal(t, "25MiB", cfg.LogRotation.MaxSize)
+	assert.Equal(t, 7, cfg.LogRotation.Keep)
+
+	// The saved block must survive a fresh GET round-trip unchanged —
+	// that is the diff baseline the editor re-syncs to after a save.
+	gw, getResp := getConfig(t)
+	require.Equal(t, http.StatusOK, gw.Code)
+	assert.Equal(t, getResp.Raw, resp.Raw, "post-save raw must match a fresh GET")
+	assert.Contains(t, getResp.Raw, `"max_size": "25MiB"`)
+}
+
+// max_size "0" is a valid zero size that disables rotation — it must be
+// accepted and persisted, not mistaken for an empty/default value.
+func TestDashboardConfig_LogRotationZeroDisables(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	body := wrapBody(`{"log_level":"info","log_rotation":{"max_size":"0"}}`, "")
+	w, _ := postConfig(t, "/api/config", body)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.LogRotation)
+	assert.Equal(t, "0", cfg.LogRotation.MaxSize)
+	maxBytes, _ := cfg.ResolvedLogRotation()
+	assert.Zero(t, maxBytes, `max_size "0" must resolve to rotation-disabled`)
+}
+
+// An unparseable max_size and a negative keep must each be rejected
+// with the structured 400 — the same contract the editor surfaces
+// inline in #cfg-errors.
+func TestDashboardConfig_RejectsBadLogRotation(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, resp := postConfig(t, "/api/config",
+		wrapBody(`{"log_level":"info","log_rotation":{"max_size":"loads","keep":-2}}`, ""))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	require.NotEmpty(t, resp.Errors)
+	assertErrorContains(t, resp.Errors, "log_rotation.max_size")
+	assertErrorContains(t, resp.Errors, "log_rotation.keep")
+
+	_, statErr := os.Stat(config.ConfigPath())
+	assert.True(t, os.IsNotExist(statErr), "an invalid POST must not write the file")
+}
