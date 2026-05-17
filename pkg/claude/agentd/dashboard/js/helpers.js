@@ -249,16 +249,20 @@ function termButton(m) {
   return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
 }
 
-// lifecycleAndFocusButtons renders the focus/term/wake/shutdown
-// cluster. focus + shutdown vs wake are mutually exclusive on online
-// state so the row stays visually stable as the agent toggles; term
-// is always present. Used by both real-group member rows and the
-// virtual Ungrouped group's rows so the surface is identical in both.
+// lifecycleAndFocusButtons renders the focus/hide/term/wake/shutdown
+// cluster. focus + hide + shutdown vs wake are mutually exclusive on
+// online state so the row stays visually stable as the agent toggles;
+// term is always present. focus and hide are the window pair — focus
+// raises the agent's terminal window, hide detaches it (the per-agent
+// twin of the "windows" button's bulk unfocus). Used by both
+// real-group member rows and the virtual Ungrouped group's rows so the
+// surface is identical in both.
 function lifecycleAndFocusButtons(m) {
   const label = m.title || m.conv_id;
   if (m.online) {
     return [
       `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`,
+      `<button data-act="hide" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.">hide</button>`,
       termButton(m),
       `<button data-act="shutdown-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Soft-exit this agent (force kill available in confirm)">shut down</button>`,
     ].join('');

@@ -98,6 +98,22 @@ function bindRowActions() {
           if (ok) toast(`focused: ${label}`);
           return;
         }
+        case 'hide': {
+          // The inverse of 'jump' — detaches the agent's terminal
+          // window (tmux detach-client). Window-only: the agent keeps
+          // running, so no confirm modal and no dashboard-state change.
+          // Idempotent server-side: an already-detached agent reports
+          // detached:0 — a clean no-op, toasted as "already hidden".
+          const r = await fetch(`/api/hide/${encodeURIComponent(conv)}`, {
+            method: 'POST', credentials: 'same-origin',
+          });
+          if (!r.ok) { toast(`Hide failed: ${await r.text()}`, true); return; }
+          const info = await r.json().catch(() => ({}));
+          // Skip the default refresh — detaching a window doesn't
+          // change any dashboard state (the agent stays online).
+          toast(info.detached > 0 ? `hidden: ${label}` : `already hidden: ${label}`);
+          return;
+        }
         case 'term': {
           // Pick which directory, then ask the daemon to spawn a
           // terminal window there. Non-destructive and changes no

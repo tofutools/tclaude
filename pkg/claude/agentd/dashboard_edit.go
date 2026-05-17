@@ -52,6 +52,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
 	mux.HandleFunc("/api/worktrees", handleDashboardWorktreesAPI)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
+	mux.HandleFunc("/api/hide/", handleDashboardHideAPI)
 	mux.HandleFunc("/api/term/", handleDashboardTermAPI)
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
@@ -154,6 +155,73 @@ func handleDashboardJumpAPI(w http.ResponseWriter, r *http.Request) {
 	// id from $TCLAUDE_SESSION_ID, which the daemon doesn't set.
 	session.TryFocusAttachedSessionWithID(sess.TmuxSession, sess.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// hideAgentResp is the wire shape returned by POST /api/hide/{conv}.
+// Detached is the number of tmux clients dismissed — 0 when the agent
+// had no window open, the idempotent no-op the dashboard toasts as
+// "already hidden".
+type hideAgentResp struct {
+	ConvID   string `json:"conv_id"`
+	Detached int    `json:"detached"`
+}
+
+// handleDashboardHideAPI dispatches:
+//
+//	POST /api/hide/{conv}    → detach the agent's tmux-attached terminal
+//
+// The per-agent twin of POST /api/jump/{conv}: where jump RAISES the
+// agent's terminal window, hide DISMISSES it. It runs the exact
+// per-agent op the bulk "windows" button performs for direction
+// "unfocus" — detachAgentWindows (see window_focus.go) — scoped to one
+// agent: `tmux detach-client` for every client attached to the
+// session.
+//
+// Window-only: the agent PROCESS is never touched. It keeps running,
+// and the window can be brought back at any time with focus.
+//
+// Idempotent by construction: an agent whose session already has no
+// client attached detaches zero clients and reports detached:0 — a
+// clean no-op, never an error. 404 only when the conv has no live
+// session at all (the same boundary handleDashboardJumpAPI draws).
+func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/hide/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "expected /api/hide/{conv}", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if len(parts) > 1 && parts[1] != "" {
+		http.Error(w, "unknown subpath /api/hide/{conv}/"+parts[1], http.StatusNotFound)
+		return
+	}
+	convSelector := parts[0]
+	if u, err := url.PathUnescape(convSelector); err == nil {
+		convSelector = u
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	sess := pickAliveSession(res.ConvID)
+	if sess == nil {
+		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
+		return
+	}
+	n, err := detachAgentWindows(sess)
+	if err != nil {
+		http.Error(w, "detach windows: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, hideAgentResp{ConvID: res.ConvID, Detached: n})
 }
 
 // handleDashboardAgentsAPI dispatches:
