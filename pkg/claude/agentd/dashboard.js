@@ -428,7 +428,7 @@
   }
 
   // --- column sorting --------------------------------------------------
-  // Every primary table (group members, agents, cron, sudo, links) has
+  // Every primary table (group members, cron, sudo, links) has
   // clickable headers. The active sort — a {col, dir} pair keyed by a
   // stable table name — lives in sortState and is mirrored to
   // localStorage so it survives reloads and the 5s auto-refresh.
@@ -5737,7 +5737,7 @@
       if (mode === 'group') {
         titleEl.textContent = '🧹 Clean up group: ' + groupName;
       } else {
-        titleEl.textContent = '🧹 Clean up conversations';
+        titleEl.textContent = '🧹 Clean up agents and conversations';
       }
       applyHint();
     }

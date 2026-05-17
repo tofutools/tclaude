@@ -17,7 +17,7 @@ import (
 // conscious, reviewed act rather than an accident. Recompute it from
 // the new assembled bytes whenever you change the dashboard UI on
 // purpose — the failure message prints the new value to paste in.
-const dashboardHTMLSHA256 = "83ed244cfc474a4bda01c21e4bdd77d3312116362b8ee2876e2f712db8a6a507"
+const dashboardHTMLSHA256 = "076bfa0ea58ec5a0ac01e887e269224634254cf7a6a949bddd3ce33648b972c4"
 
 // TestDashboardHTML_ServedBytesPinned guards the bytes
 // assembleDashboardHTML() serves to the browser: it fails on any
