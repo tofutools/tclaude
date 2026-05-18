@@ -320,6 +320,19 @@ func runHookCallback() error {
 		case "elicitation_dialog":
 			state.Status = StatusAwaitingInput
 			state.StatusDetail = input.Message
+		case "idle_prompt":
+			// CC has been idle and is waiting for user input. This is
+			// our only signal back to idle after the user cancels an
+			// in-flight turn with Escape: Stop does NOT fire on
+			// interrupt (anthropics/claude-code#11189, closed as
+			// not-planned), so without this case the agent stays stuck
+			// at e.g. "working: UserPromptSubmit". CC's idle detection
+			// runs on its own ~60s timer, so recovery is delayed, not
+			// instant. Deliberately NOT setting stopped=true — that
+			// branch types /compact and context-nudges into the pane,
+			// which would collide with a user mid-typing.
+			state.Status = StatusIdle
+			state.StatusDetail = ""
 		default:
 			// Unknown notification type - log but don't update status
 			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
