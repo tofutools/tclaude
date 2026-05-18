@@ -263,3 +263,36 @@ func TestRunHookCallback_ErrorClearedByNextEvent(t *testing.T) {
 	assert.Equal(t, "UserPromptSubmit", got.StatusDetail,
 		"the next event overwrites status_detail with its own — the stale error_type is gone")
 }
+
+// A Notification hook with notification_type=idle_prompt flips the
+// session back to idle. This is the only signal we get after the user
+// cancels an in-flight turn with Escape — CC fires no dedicated
+// interrupt hook (anthropics/claude-code#11189, closed as not-planned).
+// Without this handler the dashboard would stay stuck at e.g.
+// "working: UserPromptSubmit" indefinitely.
+func TestRunHookCallback_NotificationIdlePromptClearsWorking(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:           "idle-sess",
+		ConvID:       "conv-idle",
+		Status:       StatusWorking,
+		StatusDetail: "UserPromptSubmit",
+	}))
+
+	feedHook(t, "idle-sess", map[string]any{
+		"session_id":        "conv-idle",
+		"hook_event_name":   "Notification",
+		"notification_type": "idle_prompt",
+		"cwd":               dir,
+	})
+
+	got, err := LoadSessionState("idle-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusIdle, got.Status,
+		"idle_prompt must transition the session back to idle")
+	assert.Equal(t, "", got.StatusDetail,
+		"idle_prompt must clear the stale status_detail (e.g. 'UserPromptSubmit')")
+}
