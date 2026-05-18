@@ -5,51 +5,99 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 )
 
-// TestOpenShellCmdParsesInEveryShell is the regression check for the
-// fish-on-macOS-iTerm2 bug: openShellCmd's output was
+// TestOpenShellCmdFor_AppleScriptIsTerse pins the iTerm2 / Terminal.app
+// shape: those launchers keystroke into a shell that's already
+// interactive (the AppleScript default-profile window), so no
+// `exec ${SHELL}` keepalive is needed and adding one just round-trips
+// fish → sh → fish for nothing. The result must be exactly `cd '<dir>'`.
+func TestOpenShellCmdFor_AppleScriptIsTerse(t *testing.T) {
+	for _, id := range []string{terminal.IDITerm2, terminal.IDTerminalApp} {
+		t.Run(id, func(t *testing.T) {
+			got := openShellCmdFor("/Users/me/some dir", id)
+			const want = `cd '/Users/me/some dir'`
+			if got != want {
+				t.Errorf("openShellCmdFor(%q): got %q, want %q", id, got, want)
+			}
+		})
+	}
+}
+
+// TestOpenShellCmdFor_NonAppleScriptCarriesKeepalive pins the sh-c
+// form: every non-AppleScript launcher (Linux terminals, WSL, macOS
+// CLI terminals via loginShellArgv) wraps the payload in `sh -c`
+// (directly or transitively), so the cd alone would let that wrapping
+// shell exit and close the window. The trailing
+// `&& exec sh -c 'exec "${SHELL:-bash}"'` is the keepalive; sh — not
+// the outer shell, which may be fish — evaluates the `${SHELL:-bash}`.
+func TestOpenShellCmdFor_NonAppleScriptCarriesKeepalive(t *testing.T) {
+	for _, id := range []string{
+		terminal.IDGhostty, terminal.IDKitty, terminal.IDWezterm,
+		terminal.IDAlacritty, terminal.IDFoot, terminal.IDKonsole,
+		terminal.IDGnomeTerminal, terminal.IDXfce4Terminal,
+		terminal.IDXTermEmulator, terminal.IDXterm,
+		"" /* unresolved — safe default is the keepalive form */,
+	} {
+		t.Run(id, func(t *testing.T) {
+			got := openShellCmdFor("/Users/me/some dir", id)
+			const want = `cd '/Users/me/some dir' && exec sh -c 'exec "${SHELL:-bash}"'`
+			if got != want {
+				t.Errorf("openShellCmdFor(%q): got %q, want %q", id, got, want)
+			}
+		})
+	}
+}
+
+// TestOpenShellCmdFor_ParsesInEveryShell is the regression check for
+// the fish-on-macOS-iTerm2 bug: openShellCmd used to be
 //
 //	cd '<dir>' && exec "${SHELL:-bash}"
 //
 // which fish refuses to parse — `${VAR:-default}` is POSIX, not fish.
-// The AppleScript driver (iTerm2 / Terminal.app) types this directly
-// into the user's interactive shell, and the macOS CLI path routes
-// through `$SHELL -l -c <command>` (loginShellArgv), so when that
-// shell is fish, the open-terminal button fails with
-// "fish: ${ is not a valid variable in fish."
+// The keepalive form's `${SHELL:-bash}` is now safely inside single
+// quotes that only sh interprets. Both shapes the function produces
+// (terse AppleScript and keepalive sh-c) must parse cleanly in every
+// shell we might land in: fish (the user's macOS login shell), bash,
+// zsh, POSIX sh.
 //
-// The fix wraps the parameter expansion in `sh -c '…'`: the
-// single-quoted body is opaque to fish (and any other outer shell),
-// and sh evaluates it. This test pins that by running the produced
-// command through each shell's parse-only mode — if a future edit
-// reintroduces a bare `${…}` outside the single-quoted body, the
-// fish leg fails immediately.
-func TestOpenShellCmdParsesInEveryShell(t *testing.T) {
-	cmd := openShellCmd("/Users/me/some dir/with spaces")
-
-	cases := []struct {
+// If a future edit reintroduces a bare `${…}` outside single quotes,
+// the fish leg fails immediately.
+func TestOpenShellCmdFor_ParsesInEveryShell(t *testing.T) {
+	const dir = "/Users/me/some dir/with spaces"
+	shapes := []struct {
+		name string
+		cmd  string
+	}{
+		{"AppleScript", openShellCmdFor(dir, terminal.IDITerm2)},
+		{"keepalive", openShellCmdFor(dir, terminal.IDGhostty)},
+	}
+	shells := []struct {
 		bin  string
-		args []string // appended *before* `-c <cmd>`
+		args []string
 	}{
 		{"fish", []string{"--no-execute"}},
 		{"bash", []string{"-n"}},
 		{"zsh", []string{"-n"}},
 		{"sh", []string{"-n"}},
 	}
-	for _, c := range cases {
-		t.Run(c.bin, func(t *testing.T) {
-			path, err := exec.LookPath(c.bin)
-			if err != nil {
-				t.Skipf("%s not installed", c.bin)
-			}
-			argv := append(c.args, "-c", cmd)
-			out, runErr := exec.Command(path, argv...).CombinedOutput()
-			var exitErr *exec.ExitError
-			if errors.As(runErr, &exitErr) || runErr != nil {
-				t.Fatalf("%s rejected openShellCmd output:\nerr: %v\noutput: %s\ncmd: %s",
-					c.bin, runErr, strings.TrimRight(string(out), "\n"), cmd)
-			}
-		})
+	for _, sh := range shells {
+		for _, sp := range shapes {
+			t.Run(sh.bin+"/"+sp.name, func(t *testing.T) {
+				path, err := exec.LookPath(sh.bin)
+				if err != nil {
+					t.Skipf("%s not installed", sh.bin)
+				}
+				argv := append(sh.args, "-c", sp.cmd)
+				out, runErr := exec.Command(path, argv...).CombinedOutput()
+				var exitErr *exec.ExitError
+				if errors.As(runErr, &exitErr) || runErr != nil {
+					t.Fatalf("%s rejected the %s shape:\nerr: %v\noutput: %s\ncmd: %s",
+						sh.bin, sp.name, runErr, strings.TrimRight(string(out), "\n"), sp.cmd)
+				}
+			})
+		}
 	}
 }
