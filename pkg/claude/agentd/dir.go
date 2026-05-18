@@ -281,11 +281,23 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 // agentd.Spawn boundary handles.
 var openTerminal = terminal.OpenWithCommand
 
-// openShellCmd builds the `sh -c` payload terminal.OpenWithCommand
-// runs: cd into dir, then exec an interactive shell so the window
-// stays open for the human instead of closing when a command exits.
+// openShellCmd builds the payload terminal.OpenWithCommand runs:
+// cd into dir, then exec an interactive shell so the window stays open
+// for the human instead of closing when a command exits.
+//
+// The `${SHELL:-bash}` expansion is wrapped in a `sh -c '…'` trampoline
+// so the outer shell never sees it. This matters on macOS where iTerm2
+// / Terminal.app type the command directly into the user's interactive
+// shell via AppleScript, and where the CLI-terminal path routes through
+// `$SHELL -l -c` (see terminal_darwin.go's loginShellArgv). When that
+// shell is fish, fish errors on `${VAR:-default}` because fish has no
+// POSIX-style default expansion. The single-quoted body is opaque to
+// fish, bash, zsh, and POSIX sh; only sh — chosen for its uniform
+// parameter-expansion — evaluates it. (Linux + WSL already go through
+// `sh -c`, so they were never affected, but the wrapped form remains
+// valid there as well.)
 func openShellCmd(dir string) string {
-	return "cd " + shellSingleQuote(dir) + ` && exec "${SHELL:-bash}"`
+	return "cd " + shellSingleQuote(dir) + ` && exec sh -c 'exec "${SHELL:-bash}"'`
 }
 
 // shellSingleQuote wraps s so it survives as a single shell word — the
