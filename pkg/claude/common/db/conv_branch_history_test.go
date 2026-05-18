@@ -171,8 +171,12 @@ func TestConvBranchHistory_HookAndScanCoexist(t *testing.T) {
 	hookFirstSeen := rowFor(t, "c1", "/repo", "shared").FirstSeen
 	require.False(t, hookFirstSeen.IsZero(), "hook stamps first_seen")
 
-	// A re-scan names "main" and "shared", both in /repo.
-	t1 := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	// A re-scan names "main" and "shared", both in /repo. t1 must be
+	// strictly after hookFirstSeen so the upgrade has a genuine "later
+	// scan, earlier hook" relationship to preserve — derive it from the
+	// hook's recorded time rather than a hardcoded sentinel date that
+	// goes stale once today catches up with it.
+	t1 := hookFirstSeen.Add(time.Hour)
 	require.NoError(t, RebuildConvBranchHistoryScan("c1", []BranchObservation{
 		{Branch: "main", RepoDir: "/repo", FirstSeen: t1, LastSeen: t1},
 		{Branch: "shared", RepoDir: "/repo", FirstSeen: t1, LastSeen: t1},
