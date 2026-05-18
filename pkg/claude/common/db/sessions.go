@@ -300,6 +300,38 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 	return n > 0, nil
 }
 
+// MarkSessionsIdleAfterInterrupt flips every 'working' session row of a
+// conversation back to 'idle', clearing status_detail. It is the
+// recovery path for a user-interrupt: when the user cancels an
+// in-flight turn with Escape, Claude Code writes a
+// "[Request interrupted by user]" marker into the .jsonl but fires NO
+// Stop — or any — hook (anthropics/claude-code#11189, closed as
+// not-planned), so the session row stays stuck at e.g. status='working',
+// status_detail='UserPromptSubmit'.
+//
+// convops.ScanAndUpsertFile calls this when a .jsonl rescan finds the
+// last conversation turn is that marker. The rescan already runs on
+// every dashboard poll (RefreshConvIndexEntry), so no extra poller is
+// introduced. conv-scoped because a conv can own several session rows
+// (resume, auto-registration). Only 'working' rows are touched, so it
+// is idempotent — a repeated rescan affects zero rows — and never
+// disturbs an 'exited' / 'awaiting_*' / already-'idle' row. Returns the
+// number of rows flipped.
+func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE sessions
+		SET status = 'idle', status_detail = '', updated_at = ?
+		WHERE conv_id = ? AND status = 'working'`,
+		time.Now().Format(time.RFC3339Nano), convID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SetSessionExitReason records why a session ended — the `reason` from
 // a graceful SessionEnd hook (logout / prompt_input_exit / resume /
 // bypass_permissions_disabled / other). It is row-scoped: the SessionEnd

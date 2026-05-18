@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -654,4 +655,126 @@ func TestLoadEntriesFromDB_BackfillsAndPersistsProjectPath(t *testing.T) {
 	require.NotNil(t, row, "row")
 	assert.Equal(t, "/home/gigur/git/myrepo", row.ProjectPath,
 		"backfilled cwd must be persisted onto the conv_index row")
+}
+
+// parseJSONLSession flags LastTurnInterrupted when — and only when —
+// the file's final conversation turn is a "[Request interrupted by
+// user]" marker. Sidecar records (file-history-snapshot, custom-title)
+// trail a real interrupt in the .jsonl and must not reset the flag; a
+// later genuine turn must.
+func TestParseJSONLSession_LastTurnInterrupted(t *testing.T) {
+	sessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	userTurn := `{"type":"user","cwd":"/p","message":{"role":"user","content":"hello"},"timestamp":"2026-05-18T10:00:00Z"}`
+	asstTurn := `{"type":"assistant","message":{"role":"assistant","content":"on it"},"timestamp":"2026-05-18T10:01:00Z"}`
+	marker := `{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2026-05-18T10:02:00Z"}`
+	markerToolUse := `{"type":"user","message":{"role":"user","content":"[Request interrupted by user for tool use]"},"timestamp":"2026-05-18T10:02:00Z"}`
+	snapshot := `{"type":"file-history-snapshot"}`
+	titleSidecar := `{"type":"custom-title","customTitle":"x","sessionId":"` + sessionID + `"}`
+
+	cases := []struct {
+		name  string
+		lines []string
+		want  bool
+	}{
+		{"marker is the last turn", []string{userTurn, asstTurn, marker}, true},
+		{"tool-use interrupt variant", []string{userTurn, markerToolUse}, true},
+		{"sidecar records after the marker do not reset it", []string{userTurn, marker, snapshot, titleSidecar}, true},
+		{"a real user turn after the marker clears it", []string{userTurn, marker, userTurn}, false},
+		{"an assistant turn after the marker clears it", []string{userTurn, marker, asstTurn}, false},
+		{"no marker anywhere", []string{userTurn, asstTurn}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, sessionID+".jsonl")
+			require.NoError(t, os.WriteFile(path, []byte(strings.Join(tc.lines, "\n")+"\n"), 0o600), "write jsonl")
+			entry := ParseJSONLSessionPublic(path, sessionID)
+			require.NotNil(t, entry, "parseJSONLSession returned nil")
+			assert.Equal(t, tc.want, entry.LastTurnInterrupted, "LastTurnInterrupted")
+		})
+	}
+}
+
+// RefreshConvIndexEntry — the per-conv path the dashboard poll resolves
+// through — recovers a session left stuck 'working' by a user-interrupt.
+// Claude Code writes a "[Request interrupted by user]" marker to the
+// .jsonl and fires no Stop hook, so without this the dashboard would
+// show "working: UserPromptSubmit" indefinitely. The rescan that
+// already runs on every poll (the file grew) carries the fix; sibling
+// rows in other states are left untouched.
+func TestRefreshConvIndexEntry_RecoversInterruptedSession(t *testing.T) {
+	setupTestDB(t)
+	dir := t.TempDir()
+	convID := "11111111-2222-3333-4444-555555555555"
+	path := filepath.Join(dir, convID+".jsonl")
+
+	// A normal in-flight turn — index it so the conv_index row the
+	// dashboard resolves through exists. No interrupt yet.
+	initial := `{"type":"user","cwd":"/p","message":{"role":"user","content":"do the thing"},"timestamp":"2026-05-18T10:00:00Z"}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(initial), 0o600), "write jsonl")
+	require.NotNil(t, ScanAndUpsertFile(path), "initial scan")
+
+	// The session owning this conv is stuck 'working' — a
+	// UserPromptSubmit hook fired, no Stop hook ever will.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-working", ConvID: convID,
+		Status: "working", StatusDetail: "UserPromptSubmit",
+	}), "seed working session")
+	// A sibling row already exited — must be left alone.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-exited", ConvID: convID, Status: "exited",
+	}), "seed exited session")
+
+	// The user hits Escape: Claude Code appends the interrupt marker
+	// (firing no hook). The file grows, so the next poll rescans.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err, "open for append")
+	_, err = f.WriteString(`{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2026-05-18T10:01:00Z"}` + "\n")
+	require.NoError(t, err, "append marker")
+	require.NoError(t, f.Close(), "close")
+
+	require.NotNil(t, RefreshConvIndexEntry(convID), "refresh resolves the conv")
+
+	working, err := db.LoadSession("sess-working")
+	require.NoError(t, err, "load working session")
+	require.NotNil(t, working, "working session row")
+	assert.Equal(t, "idle", working.Status, "the stuck 'working' row recovers to idle")
+	assert.Equal(t, "", working.StatusDetail, "the stale status_detail is cleared")
+
+	exited, err := db.LoadSession("sess-exited")
+	require.NoError(t, err, "load exited session")
+	require.NotNil(t, exited, "exited session row")
+	assert.Equal(t, "exited", exited.Status, "an exited sibling row is not disturbed")
+}
+
+// The mirror case: a rescan whose last turn is a genuine assistant turn
+// (the agent is really working) must leave a 'working' session alone.
+func TestRefreshConvIndexEntry_GenuineWorkLeavesSessionWorking(t *testing.T) {
+	setupTestDB(t)
+	dir := t.TempDir()
+	convID := "99999999-8888-7777-6666-555555555555"
+	path := filepath.Join(dir, convID+".jsonl")
+
+	initial := `{"type":"user","cwd":"/p","message":{"role":"user","content":"start"},"timestamp":"2026-05-18T10:00:00Z"}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(initial), 0o600), "write jsonl")
+	require.NotNil(t, ScanAndUpsertFile(path), "initial scan")
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-2", ConvID: convID, Status: "working", StatusDetail: "PreToolUse",
+	}), "seed working session")
+
+	// A normal assistant turn lands — genuine work, not an interrupt.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err, "open for append")
+	_, err = f.WriteString(`{"type":"assistant","message":{"role":"assistant","content":"on it"},"timestamp":"2026-05-18T10:01:00Z"}` + "\n")
+	require.NoError(t, err, "append turn")
+	require.NoError(t, f.Close(), "close")
+
+	require.NotNil(t, RefreshConvIndexEntry(convID), "refresh resolves the conv")
+
+	got, err := db.LoadSession("sess-2")
+	require.NoError(t, err, "load session")
+	require.NotNil(t, got, "session row")
+	assert.Equal(t, "working", got.Status, "a genuinely-working session must NOT be flipped to idle")
+	assert.Equal(t, "PreToolUse", got.StatusDetail, "status_detail untouched")
 }
