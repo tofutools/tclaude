@@ -281,23 +281,53 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 // agentd.Spawn boundary handles.
 var openTerminal = terminal.OpenWithCommand
 
-// openShellCmd builds the payload terminal.OpenWithCommand runs:
-// cd into dir, then exec an interactive shell so the window stays open
-// for the human instead of closing when a command exits.
-//
-// The `${SHELL:-bash}` expansion is wrapped in a `sh -c '…'` trampoline
-// so the outer shell never sees it. This matters on macOS where iTerm2
-// / Terminal.app type the command directly into the user's interactive
-// shell via AppleScript, and where the CLI-terminal path routes through
-// `$SHELL -l -c` (see terminal_darwin.go's loginShellArgv). When that
-// shell is fish, fish errors on `${VAR:-default}` because fish has no
-// POSIX-style default expansion. The single-quoted body is opaque to
-// fish, bash, zsh, and POSIX sh; only sh — chosen for its uniform
-// parameter-expansion — evaluates it. (Linux + WSL already go through
-// `sh -c`, so they were never affected, but the wrapped form remains
-// valid there as well.)
+// openShellCmd builds the payload terminal.OpenWithCommand runs to
+// land the human in an interactive shell at dir. The shape depends on
+// how the resolved terminal will deliver the payload — see
+// openShellCmdFor.
 func openShellCmd(dir string) string {
-	return "cd " + shellSingleQuote(dir) + ` && exec sh -c 'exec "${SHELL:-bash}"'`
+	return openShellCmdFor(dir, terminal.ResolvedTerminal())
+}
+
+// openShellCmdFor is openShellCmd factored to take the terminal ID so
+// it can be unit-tested without resolving a real terminal.
+//
+// Two shapes:
+//
+//   - `cd '<dir>'` — for AppleScript-driven terminals (iTerm2,
+//     Terminal.app). Those launchers open a window with the user's
+//     default profile, which is already an interactive login shell
+//     with profile + rc loaded, and then keystroke the command into
+//     it. The shell stays open regardless of what we type, so the
+//     `exec ${SHELL}` keepalive would just round-trip back to the
+//     same shell for nothing.
+//
+//   - `cd '<dir>' && exec sh -c 'exec "${SHELL:-bash}"'` — for every
+//     other launcher. Those deliver the payload through `sh -c
+//     '<cmd>'` (Linux + WSL) or `$SHELL -l -c '<cmd>'` (macOS CLI
+//     terminals via loginShellArgv). Without the trailing exec, that
+//     wrapping shell finishes after `cd` and the window closes; the
+//     exec replaces it with the user's interactive shell.
+//
+// The `${SHELL:-bash}` expansion is wrapped in `sh -c '…'` so the
+// outer shell never parses it directly: fish has no POSIX
+// `${VAR:-default}` and errors on it. The single-quoted body is
+// opaque to fish/bash/zsh/sh; only sh — chosen for its uniform
+// parameter-expansion — evaluates it.
+func openShellCmdFor(dir, terminalID string) string {
+	cd := "cd " + shellSingleQuote(dir)
+	if isAppleScriptTerminal(terminalID) {
+		return cd
+	}
+	return cd + ` && exec sh -c 'exec "${SHELL:-bash}"'`
+}
+
+// isAppleScriptTerminal reports whether the terminal with id is driven
+// via AppleScript (iTerm2 / Terminal.app on macOS). Those launchers
+// keystroke into a shell that's already interactive, so the cd-only
+// payload from openShellCmdFor is sufficient.
+func isAppleScriptTerminal(id string) bool {
+	return id == terminal.IDITerm2 || id == terminal.IDTerminalApp
 }
 
 // shellSingleQuote wraps s so it survives as a single shell word — the
