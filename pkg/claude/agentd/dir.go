@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -281,11 +282,53 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 // agentd.Spawn boundary handles.
 var openTerminal = terminal.OpenWithCommand
 
-// openShellCmd builds the `sh -c` payload terminal.OpenWithCommand
-// runs: cd into dir, then exec an interactive shell so the window
-// stays open for the human instead of closing when a command exits.
+// openShellCmd builds the payload terminal.OpenWithCommand runs to
+// land the human in an interactive shell at dir. The shape depends on
+// how the resolved terminal will deliver the payload — see
+// openShellCmdFor.
 func openShellCmd(dir string) string {
-	return "cd " + shellSingleQuote(dir) + ` && exec "${SHELL:-bash}"`
+	return openShellCmdFor(dir, terminal.ResolvedTerminal())
+}
+
+// openShellCmdFor is openShellCmd factored to take the terminal ID so
+// it can be unit-tested without resolving a real terminal.
+//
+// Two shapes:
+//
+//   - `cd '<dir>'` — for AppleScript-driven terminals (iTerm2,
+//     Terminal.app). Those launchers open a window with the user's
+//     default profile, which is already an interactive login shell
+//     with profile + rc loaded, and then keystroke the command into
+//     it. The shell stays open regardless of what we type, so the
+//     `exec ${SHELL}` keepalive would just round-trip back to the
+//     same shell for nothing.
+//
+//   - `cd '<dir>' && exec sh -c 'exec "${SHELL:-bash}"'` — for every
+//     other launcher. Those deliver the payload through `sh -c
+//     '<cmd>'` (Linux + WSL) or `$SHELL -l -c '<cmd>'` (macOS CLI
+//     terminals via loginShellArgv). Without the trailing exec, that
+//     wrapping shell finishes after `cd` and the window closes; the
+//     exec replaces it with the user's interactive shell.
+//
+// The `${SHELL:-bash}` expansion is wrapped in `sh -c '…'` so the
+// outer shell never parses it directly: fish has no POSIX
+// `${VAR:-default}` and errors on it. The single-quoted body is
+// opaque to fish/bash/zsh/sh; only sh — chosen for its uniform
+// parameter-expansion — evaluates it.
+func openShellCmdFor(dir, terminalID string) string {
+	cd := "cd " + shellSingleQuote(dir)
+	if isAppleScriptTerminal(terminalID) {
+		return cd
+	}
+	return cd + ` && exec sh -c 'exec "${SHELL:-bash}"'`
+}
+
+// isAppleScriptTerminal reports whether the terminal with id is driven
+// via AppleScript (iTerm2 / Terminal.app on macOS). Those launchers
+// keystroke into a shell that's already interactive, so the cd-only
+// payload from openShellCmdFor is sufficient.
+func isAppleScriptTerminal(id string) bool {
+	return id == terminal.IDITerm2 || id == terminal.IDTerminalApp
 }
 
 // shellSingleQuote wraps s so it survives as a single shell word — the
@@ -306,6 +349,25 @@ func shellSingleQuote(s string) string {
 // it one. The absolute tclaude path is used because the daemon launches
 // the terminal outside the human's login shell, where PATH may be
 // minimal (same reasoning as openShellCmd's exec-the-login-shell).
+//
+// The `exec ` prefix replaces the wrapping shell with tclaude, so when
+// a "hide" detaches the tmux client and tclaude exits, no shell is left
+// holding the tab open. This matches the openShellCmd pattern: there
+// the trailing `exec sh -c '...'` performs the same role for the
+// interactive case. Without the prefix the iTerm2 / Terminal.app
+// AppleScript drivers — which type the command into a default-profile
+// interactive shell — would return to that shell's prompt after tclaude
+// exits, leaving an orphaned tab. Linux / WSL / Ghostty / etc. already
+// wrap the command in `sh -c`, so the prefix only changes whether sh
+// terminates by exec-replacement (tab closes immediately) or by normal
+// exit (same outcome — the tab still closed) — no behavioural drift.
+// Skipped on Windows: cmd has no `exec` builtin and would try to spawn
+// `exec.exe`, and the `/k` wrapper already keeps the window open by
+// design after the command exits.
 func openAttachCmd(label string) string {
-	return clcommon.DetectAbsoluteCmd("session", "attach") + " " + shellSingleQuote(label)
+	cmd := clcommon.DetectAbsoluteCmd("session", "attach") + " " + shellSingleQuote(label)
+	if runtime.GOOS == "windows" {
+		return cmd
+	}
+	return "exec " + cmd
 }
