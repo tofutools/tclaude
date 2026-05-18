@@ -32,7 +32,7 @@ func fakeLookPath(installed ...string) lookPathFunc {
 // embedded single quotes that openShellCmd bakes in — the regression
 // that broke the old string-wrapping xfce4-terminal entry.
 func TestResolveLinuxTerminal_PerTerminal(t *testing.T) {
-	const command = `cd '/home/me/my repo' && exec "${SHELL:-bash}"`
+	const command = `cd '/home/me/my repo' && exec sh -c 'exec "${SHELL:-bash}"'`
 
 	cases := []struct {
 		terminal string
@@ -153,7 +153,7 @@ func TestHaveDisplay(t *testing.T) {
 // path and the cmd.exe fallback, and confirms the command rides through
 // as one verbatim element.
 func TestWSLCmdArgv(t *testing.T) {
-	const command = `cd '/home/me/repo' && exec "${SHELL:-bash}"`
+	const command = `cd '/home/me/repo' && exec sh -c 'exec "${SHELL:-bash}"'`
 
 	withWT := wslCmdArgv(command, "/mnt/c/wt.exe")
 	wantWT := []string{"/mnt/c/wt.exe", "new-tab", "wsl", "-e", "sh", "-c", command}

@@ -83,7 +83,7 @@ func TestLoginShellWrapRoundTrip(t *testing.T) {
 // argv elements (never a re-quoted string).
 func TestDarwinCLIArgv(t *testing.T) {
 	const bin = "/Applications/Example.app/Contents/MacOS/example"
-	const command = `cd '/Users/me/my repo' && exec "${SHELL:-bash}"`
+	const command = `cd '/Users/me/my repo' && exec sh -c 'exec "${SHELL:-bash}"'`
 	wrap := loginShellArgv(command)
 
 	cases := []struct {
@@ -113,7 +113,7 @@ func TestSingleQuote(t *testing.T) {
 		`plain`,
 		`with spaces`,
 		`embedded 'single' quotes`,
-		`cd '/Users/me/my repo' && exec "${SHELL:-bash}"`,
+		`cd '/Users/me/my repo' && exec sh -c 'exec "${SHELL:-bash}"'`,
 	} {
 		out, err := exec.Command("/bin/sh", "-c", "printf %s "+singleQuote(s)).Output()
 		if err != nil {
