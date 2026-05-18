@@ -313,10 +313,19 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 // last conversation turn is that marker. The rescan already runs on
 // every dashboard poll (RefreshConvIndexEntry), so no extra poller is
 // introduced. conv-scoped because a conv can own several session rows
-// (resume, auto-registration). Only 'working' rows are touched, so it
-// is idempotent — a repeated rescan affects zero rows — and never
-// disturbs an 'exited' / 'awaiting_*' / already-'idle' row. Returns the
-// number of rows flipped.
+// (resume, auto-registration). Only 'working' rows are touched: an
+// 'exited' / 'awaiting_*' / already-'idle' row is left alone, and a
+// repeated rescan that finds no 'working' row is a zero-row no-op.
+//
+// Not a compare-and-swap (unlike MarkSessionExitedIfUnchanged): in the
+// narrow window between the .jsonl scan and this UPDATE the user could
+// submit a new prompt, whose UserPromptSubmit hook sets status back to
+// 'working' — this UPDATE would then flip that genuinely-working row
+// to 'idle' for one dashboard poll. That is benign and self-healing
+// (the next hook, or the next rescan that now sees the new turn as the
+// last, corrects it) and far too tight a race to be worth a CAS guard.
+//
+// Returns the number of rows flipped.
 func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 	d, err := Open()
 	if err != nil {

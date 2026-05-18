@@ -668,6 +668,13 @@ func TestParseJSONLSession_LastTurnInterrupted(t *testing.T) {
 	asstTurn := `{"type":"assistant","message":{"role":"assistant","content":"on it"},"timestamp":"2026-05-18T10:01:00Z"}`
 	marker := `{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2026-05-18T10:02:00Z"}`
 	markerToolUse := `{"type":"user","message":{"role":"user","content":"[Request interrupted by user for tool use]"},"timestamp":"2026-05-18T10:02:00Z"}`
+	// The marker can also arrive with content as a block array rather
+	// than a bare string — extractMessageContent handles both.
+	markerArray := `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-05-18T10:02:00Z"}`
+	// A tool_result carrier: type/role "user" but no text block. CC
+	// writes one to close a cancelled tool call; it must NOT clear a
+	// flag the marker already set.
+	toolResult := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"cancelled"}]},"timestamp":"2026-05-18T10:03:00Z"}`
 	snapshot := `{"type":"file-history-snapshot"}`
 	titleSidecar := `{"type":"custom-title","customTitle":"x","sessionId":"` + sessionID + `"}`
 
@@ -677,8 +684,11 @@ func TestParseJSONLSession_LastTurnInterrupted(t *testing.T) {
 		want  bool
 	}{
 		{"marker is the last turn", []string{userTurn, asstTurn, marker}, true},
-		{"tool-use interrupt variant", []string{userTurn, markerToolUse}, true},
+		{"tool-use interrupt text variant", []string{userTurn, markerToolUse}, true},
+		{"marker with content as a block array", []string{userTurn, markerArray}, true},
+		{"marker is the only record in the file", []string{marker}, true},
 		{"sidecar records after the marker do not reset it", []string{userTurn, marker, snapshot, titleSidecar}, true},
+		{"a tool_result carrier after the marker does not reset it", []string{userTurn, marker, toolResult}, true},
 		{"a real user turn after the marker clears it", []string{userTurn, marker, userTurn}, false},
 		{"an assistant turn after the marker clears it", []string{userTurn, marker, asstTurn}, false},
 		{"no marker anywhere", []string{userTurn, asstTurn}, false},
@@ -720,10 +730,14 @@ func TestRefreshConvIndexEntry_RecoversInterruptedSession(t *testing.T) {
 		ID: "sess-working", ConvID: convID,
 		Status: "working", StatusDetail: "UserPromptSubmit",
 	}), "seed working session")
-	// A sibling row already exited — must be left alone.
+	// Sibling rows in other states — none may be disturbed.
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "sess-exited", ConvID: convID, Status: "exited",
 	}), "seed exited session")
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-awaiting", ConvID: convID,
+		Status: "awaiting_input", StatusDetail: "elicitation",
+	}), "seed awaiting session")
 
 	// The user hits Escape: Claude Code appends the interrupt marker
 	// (firing no hook). The file grows, so the next poll rescans.
@@ -745,6 +759,12 @@ func TestRefreshConvIndexEntry_RecoversInterruptedSession(t *testing.T) {
 	require.NoError(t, err, "load exited session")
 	require.NotNil(t, exited, "exited session row")
 	assert.Equal(t, "exited", exited.Status, "an exited sibling row is not disturbed")
+
+	awaiting, err := db.LoadSession("sess-awaiting")
+	require.NoError(t, err, "load awaiting session")
+	require.NotNil(t, awaiting, "awaiting session row")
+	assert.Equal(t, "awaiting_input", awaiting.Status, "an awaiting_* sibling row is not disturbed")
+	assert.Equal(t, "elicitation", awaiting.StatusDetail, "awaiting_* status_detail untouched")
 }
 
 // The mirror case: a rescan whose last turn is a genuine assistant turn

@@ -587,15 +587,26 @@ func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 		// "[Request interrupted by user]" user turn — and fires NO
 		// hook — when the user cancels an in-flight turn with Escape
 		// (anthropics/claude-code#11189, closed as not-planned). A
-		// later real turn (a fresh user message, or assistant output)
-		// supersedes it. Only user/assistant records are turns;
-		// sidecar records (summary, custom-title, file-history-snapshot,
-		// the spawn-preamble metadata lines) can appear after a marker
-		// yet must not reset it — so they fall through untouched.
+		// later genuine turn supersedes it.
+		//
+		// Only user/assistant records are conversation turns. Records
+		// of other types (summary, custom-title, file-history-snapshot,
+		// last-prompt/agent-name/permission-mode) can trail a real
+		// interrupt in the .jsonl yet are not turns — they fall
+		// through this switch and leave the flag intact. A user record
+		// with no extractable text is a tool_result carrier, not a
+		// turn either: skip it (the same treatment the FirstPrompt
+		// capture above gives tool_result blocks) so a cancelled-tool
+		// result trailing the marker does not wrongly clear the flag.
+		// Sub-agent sidechain turns are not distinguished — an
+		// interrupt cancels sub-agents too, so one rarely trails the
+		// marker, and the rest of this scan treats them uniformly.
 		switch msg.Type {
 		case "user":
-			lastTurnInterrupted = msg.Message.Role == "user" &&
-				strings.HasPrefix(extractMessageContent(msg.Message.Content), "[Request interrupted")
+			if text := extractMessageContent(msg.Message.Content); text != "" {
+				lastTurnInterrupted = msg.Message.Role == "user" &&
+					strings.HasPrefix(text, "[Request interrupted")
+			}
 		case "assistant":
 			lastTurnInterrupted = false
 		}

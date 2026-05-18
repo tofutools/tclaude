@@ -27,11 +27,12 @@ changed (`RefreshConvIndexEntry` → `ScanAndUpsertFile` →
 already rescans it — the recovery rides that existing rescan, with **no
 new poller / watcher / goroutine**.
 
-- `parseJSONLSession` tracks the last *conversation* turn (user /
-  assistant records only — sidecar records like `file-history-snapshot`
-  and `custom-title` trail a real interrupt and must not reset it) and
-  sets the transient `SessionEntry.LastTurnInterrupted` when it is an
-  interrupt marker.
+- `parseJSONLSession` tracks the last *conversation* turn and sets the
+  transient `SessionEntry.LastTurnInterrupted` when it is an interrupt
+  marker. Only user/assistant records count as turns: sidecar records
+  (`file-history-snapshot`, `custom-title`, …) and text-less `user`
+  records (tool_result carriers — what CC writes to close a cancelled
+  tool call) can trail a real interrupt yet must not reset the flag.
 - `ScanAndUpsertFile`, after a complete scan, calls
   `db.MarkSessionsIdleAfterInterrupt(convID)` when the flag is set.
 - `MarkSessionsIdleAfterInterrupt` flips every `working` session row of
@@ -66,12 +67,13 @@ fsnotify monitor remains an open, unrelated idea —
 ## Tests
 
 - `TestParseJSONLSession_LastTurnInterrupted` — table: marker last →
-  true; `for tool use` variant; sidecar records after the marker keep
-  it true; a real user/assistant turn after the marker clears it; no
-  marker → false.
+  true; `for tool use` text variant; marker as a content block array;
+  marker as the only record; sidecar records and a tool_result carrier
+  after the marker keep it true; a real user/assistant turn after the
+  marker clears it; no marker → false.
 - `TestRefreshConvIndexEntry_RecoversInterruptedSession` — the dashboard
   path: index a normal turn, append the marker, `RefreshConvIndexEntry`
-  → the stuck `working` row recovers to `idle`; an `exited` sibling row
-  is left alone.
+  → the stuck `working` row recovers to `idle`; `exited` and
+  `awaiting_*` sibling rows are left alone.
 - `TestRefreshConvIndexEntry_GenuineWorkLeavesSessionWorking` — mirror:
   a real assistant turn lands → a `working` session is NOT flipped.
