@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -318,6 +319,25 @@ func shellSingleQuote(s string) string {
 // it one. The absolute tclaude path is used because the daemon launches
 // the terminal outside the human's login shell, where PATH may be
 // minimal (same reasoning as openShellCmd's exec-the-login-shell).
+//
+// The `exec ` prefix replaces the wrapping shell with tclaude, so when
+// a "hide" detaches the tmux client and tclaude exits, no shell is left
+// holding the tab open. This matches the openShellCmd pattern: there
+// the trailing `exec sh -c '...'` performs the same role for the
+// interactive case. Without the prefix the iTerm2 / Terminal.app
+// AppleScript drivers — which type the command into a default-profile
+// interactive shell — would return to that shell's prompt after tclaude
+// exits, leaving an orphaned tab. Linux / WSL / Ghostty / etc. already
+// wrap the command in `sh -c`, so the prefix only changes whether sh
+// terminates by exec-replacement (tab closes immediately) or by normal
+// exit (same outcome — the tab still closed) — no behavioural drift.
+// Skipped on Windows: cmd has no `exec` builtin and would try to spawn
+// `exec.exe`, and the `/k` wrapper already keeps the window open by
+// design after the command exits.
 func openAttachCmd(label string) string {
-	return clcommon.DetectAbsoluteCmd("session", "attach") + " " + shellSingleQuote(label)
+	cmd := clcommon.DetectAbsoluteCmd("session", "attach") + " " + shellSingleQuote(label)
+	if runtime.GOOS == "windows" {
+		return cmd
+	}
+	return "exec " + cmd
 }
