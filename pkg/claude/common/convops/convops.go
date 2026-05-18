@@ -61,6 +61,13 @@ type SessionEntry struct {
 	// stored on the conv_index row; LoadSessionsIndexWithOptions feeds
 	// it to db.RebuildConvBranchHistoryScan.
 	BranchHistory []db.BranchObservation `json:"-"`
+	// LastTurnInterrupted is true when the final conversation turn is a
+	// "[Request interrupted by user]" marker — what Claude Code writes
+	// (firing NO hook) when the user cancels an in-flight turn with
+	// Escape. Like BranchHistory it is set only by a fresh
+	// parseJSONLSession scan and never persisted; ScanAndUpsertFile
+	// uses it to recover a session stuck 'working' on the dashboard.
+	LastTurnInterrupted bool `json:"-"`
 }
 
 // DisplayTitle returns the best available title for display
@@ -427,6 +434,17 @@ func parseJSONLTimestamp(s string) time.Time {
 	return time.Time{}
 }
 
+// interruptMarkers are the exact message contents Claude Code writes
+// as a standalone user turn when the user cancels an in-flight turn
+// with Escape. Matched exactly — never by prefix: a genuine user
+// prompt that merely *begins* with "[Request interrupted" (someone
+// quoting or pasting the phrase) must not be misread as an interrupt
+// and wrongly flip a working session to idle.
+var interruptMarkers = map[string]bool{
+	"[Request interrupted by user]":              true,
+	"[Request interrupted by user for tool use]": true,
+}
+
 // parseJSONLSession parses a .jsonl file and extracts session metadata.
 // Reads forward for prompt/title/summary and accumulates the conv's
 // branch history; runs to EOF so the last-wins branch and the history
@@ -469,6 +487,12 @@ func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 	scanner.Buffer(make([]byte, 0, initCap), maxJSONLLineBytes)
 
 	var firstTimestamp string
+
+	// lastTurnInterrupted tracks whether the most recent conversation
+	// turn seen so far is a user-interrupt marker. Updated on every
+	// user/assistant record and read once after the loop — its final
+	// value reflects the file's last turn.
+	var lastTurnInterrupted bool
 
 	// branchAccum gathers, per (canonical repo dir, branch), the
 	// timestamps bracketing its appearance — folded into
@@ -569,6 +593,35 @@ func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 			}
 		}
 
+		// Track whether the most recent conversation turn is a
+		// user-interrupt marker. Claude Code writes a
+		// "[Request interrupted by user]" user turn — and fires NO
+		// hook — when the user cancels an in-flight turn with Escape
+		// (anthropics/claude-code#11189, closed as not-planned). A
+		// later genuine turn supersedes it.
+		//
+		// Only user/assistant records are conversation turns. Records
+		// of other types (summary, custom-title, file-history-snapshot,
+		// last-prompt/agent-name/permission-mode) can trail a real
+		// interrupt in the .jsonl yet are not turns — they fall
+		// through this switch and leave the flag intact. A user record
+		// with no extractable text is a tool_result carrier, not a
+		// turn either: skip it (the same treatment the FirstPrompt
+		// capture above gives tool_result blocks) so a cancelled-tool
+		// result trailing the marker does not wrongly clear the flag.
+		// Sub-agent sidechain turns are not distinguished — an
+		// interrupt cancels sub-agents too, so one rarely trails the
+		// marker, and the rest of this scan treats them uniformly.
+		switch msg.Type {
+		case "user":
+			if text := extractMessageContent(msg.Message.Content); text != "" {
+				lastTurnInterrupted = msg.Message.Role == "user" &&
+					interruptMarkers[strings.TrimSpace(text)]
+			}
+		case "assistant":
+			lastTurnInterrupted = false
+		}
+
 		// The scan deliberately runs to EOF. An earlier version broke
 		// out once CustomTitle/Summary/FirstPrompt/ProjectPath were all
 		// set, but that cut a compacted conv short and reported its
@@ -578,6 +631,7 @@ func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 		// BranchHistory the complete set. This path only runs on a
 		// cache miss, so the extra reads are infrequent.
 	}
+	entry.LastTurnInterrupted = lastTurnInterrupted
 
 	// A scanner that stopped on an error rather than at EOF gives a
 	// TRUNCATED view: the BranchHistory below is a partial set, and
@@ -851,6 +905,24 @@ func ScanAndUpsertFile(filePath string) *SessionEntry {
 	// complete scan (a truncated branch set is partial).
 	if convIndexErr == nil && scanComplete {
 		_ = db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory)
+	}
+
+	// When the .jsonl's last turn is a user-interrupt marker, the
+	// session that owns this conv has no Stop hook coming — Claude Code
+	// fires none on Escape — so its row would stay stuck 'working' on
+	// the dashboard. Recover it here: this scan path already runs on
+	// every dashboard poll (RefreshConvIndexEntry rescans when the file
+	// grew), so the fix rides the existing rescan with no extra poller.
+	// Gated on scanComplete — a truncated scan never reached the real
+	// last turn, so its lastTurnInterrupted is not authoritative.
+	if scanComplete && scanned.LastTurnInterrupted {
+		if n, err := db.MarkSessionsIdleAfterInterrupt(convID); err != nil {
+			slog.Warn("conv_index: failed to recover interrupted session",
+				"conv_id", convID, "error", err)
+		} else if n > 0 {
+			slog.Info("conv_index: recovered interrupted session to idle",
+				"conv_id", convID, "sessions", n)
+		}
 	}
 	return scanned
 }

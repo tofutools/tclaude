@@ -300,6 +300,47 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 	return n > 0, nil
 }
 
+// MarkSessionsIdleAfterInterrupt flips every 'working' session row of a
+// conversation back to 'idle', clearing status_detail. It is the
+// recovery path for a user-interrupt: when the user cancels an
+// in-flight turn with Escape, Claude Code writes a
+// "[Request interrupted by user]" marker into the .jsonl but fires NO
+// Stop — or any — hook (anthropics/claude-code#11189, closed as
+// not-planned), so the session row stays stuck at e.g. status='working',
+// status_detail='UserPromptSubmit'.
+//
+// convops.ScanAndUpsertFile calls this when a .jsonl rescan finds the
+// last conversation turn is that marker. The rescan already runs on
+// every dashboard poll (RefreshConvIndexEntry), so no extra poller is
+// introduced. conv-scoped because a conv can own several session rows
+// (resume, auto-registration). Only 'working' rows are touched: an
+// 'exited' / 'awaiting_*' / already-'idle' row is left alone, and a
+// repeated rescan that finds no 'working' row is a zero-row no-op.
+//
+// Not a compare-and-swap (unlike MarkSessionExitedIfUnchanged): in the
+// narrow window between the .jsonl scan and this UPDATE the user could
+// submit a new prompt, whose UserPromptSubmit hook sets status back to
+// 'working' — this UPDATE would then flip that genuinely-working row
+// to 'idle' for one dashboard poll. That is benign and self-healing
+// (the next hook, or the next rescan that now sees the new turn as the
+// last, corrects it) and far too tight a race to be worth a CAS guard.
+//
+// Returns the number of rows flipped.
+func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE sessions
+		SET status = 'idle', status_detail = '', updated_at = ?
+		WHERE conv_id = ? AND status = 'working'`,
+		time.Now().Format(time.RFC3339Nano), convID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SetSessionExitReason records why a session ended — the `reason` from
 // a graceful SessionEnd hook (logout / prompt_input_exit / resume /
 // bypass_permissions_disabled / other). It is row-scoped: the SessionEnd
