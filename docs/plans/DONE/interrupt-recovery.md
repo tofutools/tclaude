@@ -33,6 +33,9 @@ new poller / watcher / goroutine**.
   (`file-history-snapshot`, `custom-title`, …) and text-less `user`
   records (tool_result carriers — what CC writes to close a cancelled
   tool call) can trail a real interrupt yet must not reset the flag.
+  The marker is matched **exactly** against the known strings
+  (`interruptMarkers`), never by prefix — a genuine prompt that merely
+  begins with `[Request interrupted` must not be misread.
 - `ScanAndUpsertFile`, after a complete scan, calls
   `db.MarkSessionsIdleAfterInterrupt(convID)` when the flag is set.
 - `MarkSessionsIdleAfterInterrupt` flips every `working` session row of
@@ -70,7 +73,8 @@ fsnotify monitor remains an open, unrelated idea —
   true; `for tool use` text variant; marker as a content block array;
   marker as the only record; sidecar records and a tool_result carrier
   after the marker keep it true; a real user/assistant turn after the
-  marker clears it; no marker → false.
+  marker clears it; a prompt that merely *starts with* the marker text
+  → false (exact match, not prefix); no marker → false.
 - `TestRefreshConvIndexEntry_RecoversInterruptedSession` — the dashboard
   path: index a normal turn, append the marker, `RefreshConvIndexEntry`
   → the stuck `working` row recovers to `idle`; `exited` and

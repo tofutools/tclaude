@@ -675,6 +675,10 @@ func TestParseJSONLSession_LastTurnInterrupted(t *testing.T) {
 	// writes one to close a cancelled tool call; it must NOT clear a
 	// flag the marker already set.
 	toolResult := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"cancelled"}]},"timestamp":"2026-05-18T10:03:00Z"}`
+	// A genuine user prompt that merely begins with the marker text —
+	// someone quoting/pasting the phrase. Must NOT be read as an
+	// interrupt: the match is exact, not a prefix.
+	userQuotesMarker := `{"type":"user","cwd":"/p","message":{"role":"user","content":"[Request interrupted by user] — why did that happen?"},"timestamp":"2026-05-18T10:04:00Z"}`
 	snapshot := `{"type":"file-history-snapshot"}`
 	titleSidecar := `{"type":"custom-title","customTitle":"x","sessionId":"` + sessionID + `"}`
 
@@ -691,6 +695,7 @@ func TestParseJSONLSession_LastTurnInterrupted(t *testing.T) {
 		{"a tool_result carrier after the marker does not reset it", []string{userTurn, marker, toolResult}, true},
 		{"a real user turn after the marker clears it", []string{userTurn, marker, userTurn}, false},
 		{"an assistant turn after the marker clears it", []string{userTurn, marker, asstTurn}, false},
+		{"a prompt that only starts with the marker text is not an interrupt", []string{userTurn, userQuotesMarker}, false},
 		{"no marker anywhere", []string{userTurn, asstTurn}, false},
 	}
 	for _, tc := range cases {

@@ -434,6 +434,17 @@ func parseJSONLTimestamp(s string) time.Time {
 	return time.Time{}
 }
 
+// interruptMarkers are the exact message contents Claude Code writes
+// as a standalone user turn when the user cancels an in-flight turn
+// with Escape. Matched exactly — never by prefix: a genuine user
+// prompt that merely *begins* with "[Request interrupted" (someone
+// quoting or pasting the phrase) must not be misread as an interrupt
+// and wrongly flip a working session to idle.
+var interruptMarkers = map[string]bool{
+	"[Request interrupted by user]":              true,
+	"[Request interrupted by user for tool use]": true,
+}
+
 // parseJSONLSession parses a .jsonl file and extracts session metadata.
 // Reads forward for prompt/title/summary and accumulates the conv's
 // branch history; runs to EOF so the last-wins branch and the history
@@ -605,7 +616,7 @@ func parseJSONLSession(filePath, sessionID string) (*SessionEntry, bool) {
 		case "user":
 			if text := extractMessageContent(msg.Message.Content); text != "" {
 				lastTurnInterrupted = msg.Message.Role == "user" &&
-					strings.HasPrefix(text, "[Request interrupted")
+					interruptMarkers[strings.TrimSpace(text)]
 			}
 		case "assistant":
 			lastTurnInterrupted = false
