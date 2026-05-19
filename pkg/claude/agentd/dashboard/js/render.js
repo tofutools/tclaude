@@ -6,7 +6,7 @@
 
 import {
   $, esc, shortId, onlineDot, agentStatusDot, statePill, contextMeter,
-  roleCell, memberActions, ungroupedMemberActions, relTime, shortCwd,
+  roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline, groupOfflineToggleHTML,
 } from './helpers.js';
 import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS } from './sort.js';
@@ -196,6 +196,31 @@ function renderVirtualRetiredGroup(g) {
   `;
 }
 
+// groupActionsHTML renders a real group header's action cluster. The
+// four most-used controls — spawn agent, add member, power on,
+// shutdown — stay at the TOP LEVEL; the rest (multicast cron, message,
+// rename, export, cleanup, windows, delete) are collected behind the ⚙
+// options cog so the header stays readable. Every button keeps the
+// exact data-act / data-* the row-action dispatcher already expects —
+// only their DOM position moves.
+function groupActionsHTML(g, members) {
+  const menu =
+    `<button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring cron job scoped to ${esc(g.name)} — multicast the whole group, or nudge a single member">⏰ multicast</button>`
+    + `<button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>`
+    + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>`
+    + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>`
+    + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>`
+    + `<button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Focus or unfocus this group's agent windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.">🪟 windows…</button>`
+    + `<button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>`;
+  return `<span class="group-actions">`
+    + `<button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>`
+    + `<button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>`
+    + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on</button>`
+    + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown</button>`
+    + actionCog('group-menu', menu)
+    + `</span>`;
+}
+
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
@@ -224,19 +249,7 @@ function renderGroups(groups) {
         <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) delivered to the inbox of agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
         <span class="group-max-members${g.max_members ? (members.length >= g.max_members ? ' full' : '') : ' unset'}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${g.max_members ? 'Member cap: ' + members.length + '/' + g.max_members + (members.length >= g.max_members ? ' — group is full, spawns refused' : '') + ' — click to edit' : 'No member cap — a spawn-capable agent can grow this group without bound; click to set one'}">👥 ${g.max_members ? members.length + '/' + g.max_members : 'no member cap'}</span>
         ${groupOfflineToggleHTML(g.name)}
-        <span class="group-actions">
-          <button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn agent</button>
-          <button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>
-          <button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring cron job scoped to ${esc(g.name)} — multicast the whole group, or nudge a single member">⏰ multicast</button>
-          <button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>
-          <button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>
-          <button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>
-          <button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>
-          <button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Focus or unfocus this group's agent windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.">🪟 windows…</button>
-          <button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on</button>
-          <button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown</button>
-          <button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>
-        </span>
+        ${groupActionsHTML(g, members)}
       </summary>
       <div class="subtable">
         ${members.length === 0

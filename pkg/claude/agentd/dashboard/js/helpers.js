@@ -182,15 +182,17 @@ function roleCell(m) {
   return esc(m.role || '');
 }
 
-// memberActions renders the per-row action button cell. Two
-// buttons per row:
-//   - Toggle owner: revoke if currently owner, grant if not
-//   - Remove from group (destructive)
-// Both encode the group + conv via data-* attributes; the
-// delegated click handler reads them and dispatches to the
-// confirm modal + the right /api endpoint.
+// memberActions renders the per-row action cell for a real group
+// member. focus + hide stay at the TOP LEVEL — the online-only window
+// pair — and everything heavier (term, clone, reincarnate, edit, the
+// owner toggle, sudo, permissions, cron, remove-from-group) is
+// collected behind the ⚙ options cog so the row stays uncluttered.
+// The cog is always present, whether the agent is online or offline.
 function memberActions(g, m) {
-  return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${editMemberButton(g, m)}${ownerToggleButton(g, m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}${removeMemberButton(g, m)}</div>`;
+  const menu = termButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+    + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
+    + permMemberButton(m) + cronMemberButton(m) + removeMemberButton(g, m);
+  return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
 // cloneAgentButton renders a "clone" button for any row that
 // represents a single agent. Clone forks a sibling that inherits the
@@ -241,26 +243,40 @@ function termButton(m) {
   return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
 }
 
-// lifecycleAndFocusButtons renders the focus/hide/term cluster. focus
-// and hide are the window pair, online-only (an offline agent has no
-// window to raise or detach): focus raises the agent's terminal
-// window, hide detaches it (the per-agent twin of the "windows"
-// button's bulk unfocus). term is always present. Powering the agent
-// up/down has no button here — the far-left status dot
-// (agentStatusDot) is the agent's power control: an offline dot
-// resumes, an online dot opens the soft/force shutdown confirm. Used
-// by both real-group member rows and the virtual Ungrouped group's
-// rows so the surface is identical in both.
-function lifecycleAndFocusButtons(m) {
+// focusHideButtons renders the online-only window pair kept at the TOP
+// LEVEL of a member row: focus raises the agent's terminal window,
+// hide detaches it (the per-agent twin of the group "windows" bulk
+// unfocus). An offline agent has no window, so it renders nothing —
+// that row then shows just the ⚙ cog. Powering the agent up/down has
+// no button here: the far-left status dot (agentStatusDot) is the
+// power control. term and every heavier action live in the per-row ⚙
+// options menu (see actionCog). Used by both real-group member rows
+// and the virtual Ungrouped group's rows so the surface is identical.
+function focusHideButtons(m) {
+  if (!m.online) return '';
   const label = m.title || m.conv_id;
-  if (m.online) {
-    return [
-      `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`,
-      `<button data-act="hide" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.">hide</button>`,
-      termButton(m),
-    ].join('');
-  }
-  return termButton(m);
+  return `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`
+    + `<button data-act="hide" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.">hide</button>`;
+}
+
+// actionCog renders the ⚙ "more actions" cog and its collapsed
+// dropdown — the surface that collects a row's / group's less-used
+// buttons so the table stays uncluttered. `act` is the cog's data-act
+// ('row-menu' for an agent row, 'group-menu' for a group header); the
+// delegated handler in row-actions.js toggles the sibling .action-menu
+// and closes any other open one. `items` is the pre-built HTML of the
+// menu's buttons — each keeps its own data-act and every data-*
+// untouched, so the existing dispatcher handles them unchanged; only
+// their position in the DOM moves.
+//
+// Cog and menu are emitted as siblings, inside the same .row-actions /
+// .group-actions container as the buttons kept top-level — NOT floated
+// to document.body — so a menu item's handler that walks up to its
+// <summary> (rename-group) still resolves.
+function actionCog(act, items) {
+  return `<button type="button" class="cog-btn" data-act="${esc(act)}"`
+    + ` title="More actions" aria-label="More actions">⚙</button>`
+    + `<div class="action-menu">${items}</div>`;
 }
 
 // editMemberButton renders the per-agent "edit" button — the single
@@ -279,18 +295,20 @@ function removeMemberButton(g, m) {
   return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Remove from group">remove</button>`;
 }
 
-// ungroupedMemberActions renders the per-row action cell for a row
-// in the virtual "Ungrouped" group. It deliberately OMITS every
-// group-affecting button (the edit panel, owner toggle,
-// remove-from-group) — the agent belongs to no group, so those are
-// meaningless here. What remains is the agent-level lifecycle set,
-// identical to a grouped member's lifecycle set: focus / term,
-// clone, reincarnate, sudo, self-nudge cron, delete. Powering the
-// agent up/down is the status dot's job; renaming is the
-// click-to-edit name cell, available on every row. To put an
+// ungroupedMemberActions renders the per-row action cell for a row in
+// the virtual "Ungrouped" group. Like memberActions it keeps focus +
+// hide at the top level and collects the rest behind the ⚙ options
+// cog, but it deliberately OMITS every group-affecting button (the
+// edit panel, owner toggle, remove-from-group) — the agent belongs to
+// no group — and the menu's destructive action is delete-agent rather
+// than remove-from-group. Powering the agent up/down is the status
+// dot's job; renaming is the click-to-edit name cell. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m) {
-  return `<div class="row-actions">${lifecycleAndFocusButtons(m)}${cloneAgentButton(m)}${reincarnateAgentButton(m)}${sudoMemberButton(m)}${permMemberButton(m)}${cronMemberButton(m)}<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button></div>`;
+  const menu = termButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+    + sudoMemberButton(m) + permMemberButton(m) + cronMemberButton(m)
+    + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
+  return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
 
 // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
@@ -421,13 +439,14 @@ function groupOfflineToggleHTML(name) {
   return `<span class="${cls}" data-act="cycle-group-offline" data-group="${esc(name)}" data-label="${esc(name)}" title="Per-group offline visibility — click to cycle: inherit tab default → always show → always hide">${esc(label)}</span>`;
 }
 
-// Public API — the helpers used outside this module. The rest
-// (statusPillClass, fmtTokens, contextMeterTooltip, the per-row button
-// builders, lifecycleAndFocusButtons, stackedLoc) are internal
+// Public API — the helpers used outside this module. actionCog is
+// exported because render.js builds the group header's ⚙ menu with it.
+// The rest (statusPillClass, fmtTokens, contextMeterTooltip, the
+// per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
   $, $$, esc, shortId, onlineDot, agentStatusDot, statePill, contextMeter,
-  roleCell, memberActions, ungroupedMemberActions, relTime, shortCwd,
+  roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,
 };
