@@ -6,8 +6,9 @@ import (
 	"errors"
 	"os/exec"
 	"reflect"
-	"strings"
 	"testing"
+
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // fakeFocusLookPath returns a lookPath stub that "installs" only the
@@ -257,21 +258,36 @@ func TestLinuxShellSingleQuote(t *testing.T) {
 // prefix is what lets a later "hide" detach close the tab cleanly
 // without leaving an orphaned shell prompt.
 func TestBuildLinuxAttachCmd(t *testing.T) {
-	cmd := buildLinuxAttachCmd("4d01388a")
-	if !strings.HasPrefix(cmd, "exec ") {
-		t.Errorf("buildLinuxAttachCmd should start with 'exec ' so a later detach closes the tab; got: %s", cmd)
+	// Recompute the tclaude-path prefix the same way production does
+	// (os.Executable() under the hood), so the assertion holds on any
+	// machine without hardcoding /usr/bin/tclaude. The substring
+	// version of this test let a hypothetical wrong-order rewrite —
+	// e.g. "exec session attach 'id' tclaude" — pass silently; the
+	// exact-string compare pins the contract.
+	prefix := clcommon.DetectAbsoluteCmd("session", "attach")
+
+	cases := []struct{ id, want string }{
+		// UUID — no quoting drama, but pins the full shape.
+		{
+			"4d01388a-bc9d-4617-8170-166a4a503994",
+			"exec " + prefix + " '4d01388a-bc9d-4617-8170-166a4a503994'",
+		},
+		// Short ID — yamzz's friend's log used short IDs.
+		{"4d01388a", "exec " + prefix + " '4d01388a'"},
+		// Human-set label with spaces — agent titles can be free-form.
+		{"my agent", "exec " + prefix + " 'my agent'"},
+		// Embedded single quote — POSIX `'\''` escape.
+		{"o'reilly", `exec ` + prefix + ` 'o'\''reilly'`},
+		// Shell metachars stay literal inside the single-quoted body
+		// — the belt-and-braces protection sandbox-relevant inputs.
+		{"$(rm -rf /)", "exec " + prefix + " '$(rm -rf /)'"},
 	}
-	if !strings.Contains(cmd, "session attach") {
-		t.Errorf("buildLinuxAttachCmd should invoke `tclaude session attach`; got: %s", cmd)
-	}
-	if !strings.Contains(cmd, "'4d01388a'") {
-		t.Errorf("buildLinuxAttachCmd should pass the label as a single-quoted shell word; got: %s", cmd)
-	}
-	// And the quoting must survive a label with embedded quotes —
-	// the agent title field is human-set, so this is realistic.
-	cmd = buildLinuxAttachCmd("o'reilly")
-	if !strings.Contains(cmd, `'o'\''reilly'`) {
-		t.Errorf("buildLinuxAttachCmd should escape embedded single quotes; got: %s", cmd)
+	for _, c := range cases {
+		t.Run(c.id, func(t *testing.T) {
+			if got := buildLinuxAttachCmd(c.id); got != c.want {
+				t.Errorf("buildLinuxAttachCmd(%q) =\n  got:  %s\n  want: %s", c.id, got, c.want)
+			}
+		})
 	}
 }
 
@@ -321,4 +337,101 @@ func TestOpenLinuxAttachTerminal_OpenError(t *testing.T) {
 
 	// Must not panic. Returns nothing — best-effort.
 	openLinuxAttachTerminal("4d01388a")
+}
+
+// TestTryFocusAttachedSessionWithID_Native pins the orchestration
+// around focusLinuxTmuxSession: which return state triggers the
+// open-fresh-terminal fallback, and which doesn't. The previous
+// version of this code (PR #201) spawned on ALL non-focused cases —
+// including the "client attached but activate failed" case, which
+// gave the human two attached clients to one tmux session. The
+// 3-state refactor restricts the spawn to focusLinuxNoClients, the
+// only case where opening a window is genuinely the right answer
+// (matching macOS focus_darwin.go's `tty == ""` gate).
+//
+// Uses isWSLFn to force the native-Linux branch even when the test
+// host is WSL2 — the human develops on WSL2, so a skip-on-WSL test
+// would leave the regression guard inactive in the env where it
+// would land first.
+func TestTryFocusAttachedSessionWithID_Native(t *testing.T) {
+	cases := []struct {
+		name      string
+		result    focusLinuxResult
+		sessionID string
+		wantSpawn bool
+		wantArg   string // expected sessionID arg to openLinuxAttachTerminal when wantSpawn
+	}{
+		{
+			name:      "focused -> no spawn (window was raised)",
+			result:    focusLinuxFocused,
+			sessionID: "4d01388a",
+			wantSpawn: false,
+		},
+		{
+			name:      "noClients -> spawn (the WSL-parity fallback)",
+			result:    focusLinuxNoClients,
+			sessionID: "4d01388a",
+			wantSpawn: true,
+			wantArg:   "4d01388a",
+		},
+		{
+			name:      "tryFailed -> NO spawn (would duplicate attached clients)",
+			result:    focusLinuxTryFailed,
+			sessionID: "4d01388a",
+			wantSpawn: false,
+		},
+		{
+			name:      "noClients but empty sessionID -> no spawn (can't build attach cmd)",
+			result:    focusLinuxNoClients,
+			sessionID: "",
+			wantSpawn: false,
+		},
+		{
+			name:      "unknown (zero-value) -> NO spawn (caught by default arm)",
+			result:    focusLinuxUnknown,
+			sessionID: "4d01388a",
+			wantSpawn: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Force the native-Linux branch even when the test host
+			// IS WSL2 — yamzz's dev loop relies on this.
+			prevWSL := isWSLFn
+			isWSLFn = func() bool { return false }
+			t.Cleanup(func() { isWSLFn = prevWSL })
+
+			// Swap the dispatch seam to return the chosen result.
+			prevFn := focusLinuxTmuxSessionFn
+			focusLinuxTmuxSessionFn = func(string) focusLinuxResult { return tc.result }
+			t.Cleanup(func() { focusLinuxTmuxSessionFn = prevFn })
+
+			// Swap the terminal-launch seam to a recorder.
+			var spawnArgs []string
+			prevOpen := linuxOpenTerminal
+			linuxOpenTerminal = func(cmd string) error {
+				spawnArgs = append(spawnArgs, cmd)
+				return nil
+			}
+			t.Cleanup(func() { linuxOpenTerminal = prevOpen })
+
+			TryFocusAttachedSessionWithID("tmux-label", tc.sessionID)
+
+			if tc.wantSpawn {
+				if len(spawnArgs) != 1 {
+					t.Fatalf("expected exactly 1 spawn, got %d (%v)", len(spawnArgs), spawnArgs)
+				}
+				wantCmd := buildLinuxAttachCmd(tc.wantArg)
+				if spawnArgs[0] != wantCmd {
+					t.Fatalf("spawn cmd =\n  got:  %s\n  want: %s", spawnArgs[0], wantCmd)
+				}
+			} else {
+				if len(spawnArgs) != 0 {
+					t.Fatalf("expected NO spawn, got %d (%v) — this is the regression PR #201's "+
+						"unconditional fallback caused: spawning a second client when one was "+
+						"already attached but activate failed", len(spawnArgs), spawnArgs)
+				}
+			}
+		})
+	}
 }

@@ -42,7 +42,7 @@ func TryFocusAttachedSession(tmuxSession string) {
 func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 	slog.Debug(fmt.Sprintf("TryFocusAttachedSessionWithID called for tmux=%s id=%s", tmuxSession, sessionID), "module", "focus")
 
-	if isWSL() {
+	if isWSLFn() {
 		slog.Debug("WSL detected, focusing by title pattern", "module", "focus")
 		// Skip the wsl.exe parent-tree walk (which is anchored at OUR
 		// pid, useless when the daemon is calling for another agent)
@@ -62,17 +62,36 @@ func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 	// themselves ("Found client TTY: … (tool=xdotool|kdotool)"); a
 	// fixed "using xdotool" banner up here would be misleading now
 	// that kdotool is in the dispatch.
-	if focusLinuxTmuxSession(tmuxSession) {
+	switch r := focusLinuxTmuxSessionFn(tmuxSession); r {
+	case focusLinuxFocused:
 		return
-	}
-	// No attached window — open a fresh terminal that runs
-	// `tclaude session attach` so the human gets a window without
-	// having to launch one by hand. WSL's focusWTTabByCycling does
-	// the same; the native-Linux side was missing this fallback,
-	// which is why the dashboard's focus button looked like a no-op
-	// for a stopped/never-attached agent.
-	if sessionID != "" {
-		openLinuxAttachTerminal(sessionID)
+	case focusLinuxNoClients:
+		// Genuinely nothing to focus — WSL's focusWTTabByCycling does
+		// the same: open a fresh terminal that runs `tclaude session
+		// attach` so the human gets a window without having to launch
+		// one by hand. (This is the case yamzz's friend hit and PR
+		// #201 added the fallback for.)
+		if sessionID != "" {
+			openLinuxAttachTerminal(sessionID)
+		}
+	case focusLinuxTryFailed:
+		// Either no focus tool installed, tmux list-clients errored,
+		// or a client IS attached but activate returned non-zero. We
+		// cannot safely fall back to opening a new terminal — doing so
+		// would risk giving the human two attached clients to the
+		// same tmux session. Log warn so the user can see the focus
+		// attempt happened; the inner helpers have already logged the
+		// specific failure reason at debug.
+		slog.Warn("could not focus attached tmux session; not spawning a new terminal to avoid duplicate-client attach",
+			"tmux", tmuxSession, "id", sessionID, "module", "focus")
+	default:
+		// A future focusLinuxResult variant — surface noisily rather
+		// than silently picking one of the existing branches'
+		// behaviours by accident. Bare-zero (focusLinuxUnknown) hits
+		// here too, which is exactly the regression this sentinel +
+		// arm is paired against.
+		slog.Error("TryFocusAttachedSessionWithID: unknown focusLinuxResult; not spawning",
+			"result", int(r), "tmux", tmuxSession, "id", sessionID, "module", "focus")
 	}
 }
 
@@ -100,6 +119,18 @@ func GetOwnWindowTitle() string {
 func isWSL() bool {
 	return wsl.IsWSL()
 }
+
+// isWSLFn is the WSL-detection seam used by TryFocusAttachedSessionWithID.
+// Production points at the real /proc/version probe; tests swap to
+// return false so the native-Linux orchestration branch can be
+// exercised even when the test host IS WSL — yamzz (the human)
+// develops on WSL2, and a test that only runs under CI's
+// ubuntu-latest fails to guard the dev loop where the regression
+// would land first. (The other tclaude isWSL call sites here are
+// internal-to-WSL helpers — focusWSLWindow / findTerminalPID — that
+// only run AFTER the WSL branch is taken, so threading the seam past
+// this entry-point check is unnecessary.)
+var isWSLFn = isWSL
 
 // focusWSLWindow attempts to focus the terminal window hosting this WSL session.
 // It walks up the process tree to find the Windows terminal process and focuses it.
@@ -719,12 +750,63 @@ func windowActivateCmd(tool, windowID string) *exec.Cmd {
 	return exec.Command(tool, "windowactivate", windowID)
 }
 
-// focusLinuxTmuxSession focuses the terminal window running a specific tmux session.
-func focusLinuxTmuxSession(tmuxSession string) bool {
+// focusLinuxTmuxSessionFn is the focus-dispatch seam used by
+// TryFocusAttachedSessionWithID. Production points at the real
+// focusLinuxTmuxSession; tests swap it to return a chosen
+// focusLinuxResult so the orchestration (which outcome triggers the
+// open-fresh-terminal fallback) is unit-testable without a live tmux,
+// a live focus tool, or a real desktop session.
+var focusLinuxTmuxSessionFn = focusLinuxTmuxSession
+
+// focusLinuxResult distinguishes the three outcomes the focus dispatch
+// can reach, so TryFocusAttachedSessionWithID can gate the
+// open-fresh-terminal fallback on the only outcome where opening a new
+// window is the right answer.
+//
+//   - focusLinuxFocused: a window was found and activate succeeded.
+//     The caller is done.
+//   - focusLinuxNoClients: tmux confirmed there are no clients
+//     attached to this session — nobody to focus. Opening a fresh
+//     terminal that runs `tclaude session attach` is exactly what the
+//     dashboard's focus semantics ask for in this case (see
+//     window_focus.go's "focus" docstring).
+//   - focusLinuxTryFailed: we cannot tell whether anyone is attached,
+//     OR we know they are but activate failed. Opening a fresh
+//     terminal here would risk handing the human a SECOND client to
+//     the same tmux session — `tmux attach` is multiplexed, so two
+//     attached clients is a real (and surprising) state. Match macOS,
+//     which gates on `tty == ""` (focus_darwin.go:44) and never
+//     spawns when the focus attempt could plausibly have raced with
+//     an existing window.
+type focusLinuxResult int
+
+const (
+	// focusLinuxUnknown sits at iota=0 deliberately. A
+	// `var r focusLinuxResult` or a bare `return` from a future
+	// refactor would otherwise implicitly mean "focused" — the most
+	// dangerous default, since the caller would skip the
+	// noClients-spawn fallback entirely AND skip the tryFailed warn.
+	// Reserving zero as a noisy sentinel lets the default arm in
+	// TryFocusAttachedSessionWithID catch the accident before it
+	// reaches a user.
+	focusLinuxUnknown focusLinuxResult = iota
+	focusLinuxFocused
+	focusLinuxNoClients
+	focusLinuxTryFailed
+)
+
+// focusLinuxTmuxSession focuses the terminal window running a specific
+// tmux session and reports which of the three outcomes happened.
+//
+// "no focus tool installed" maps to tryFailed (NOT noClients) because
+// at that point we have not been able to ask tmux about clients —
+// spawning could duplicate one. Same reasoning for a tmux list-clients
+// error and a per-window focusLinuxWindowByTTY failure.
+func focusLinuxTmuxSession(tmuxSession string) focusLinuxResult {
 	tool := resolveLinuxFocusTool()
 	if tool == "" {
 		slog.Debug("no focus tool found (xdotool / kdotool), cannot focus window", "module", "focus")
-		return false
+		return focusLinuxTryFailed
 	}
 
 	// Get the client TTY for this tmux session
@@ -732,19 +814,26 @@ func focusLinuxTmuxSession(tmuxSession string) bool {
 	output, err := cmd.Output()
 	if err != nil {
 		slog.Debug(fmt.Sprintf("Failed to get tmux client tty: %v", err), "module", "focus")
-		return false
+		return focusLinuxTryFailed
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	if len(lines) == 0 || lines[0] == "" {
 		slog.Debug("No clients attached to tmux session", "module", "focus")
-		return false
+		return focusLinuxNoClients
 	}
 	tty := lines[0]
 	slog.Debug(fmt.Sprintf("Found client TTY: %s (tool=%s)", tty, tool), "module", "focus")
 
 	// Find the terminal window by walking the process tree from TTY
-	return focusLinuxWindowByTTY(tool, tty)
+	if focusLinuxWindowByTTY(tool, tty) {
+		return focusLinuxFocused
+	}
+	// A client IS attached — activate failed. Do NOT fall back to
+	// opening a new terminal; that would give the human two attached
+	// clients to the same tmux session. Tell the caller so it logs
+	// instead.
+	return focusLinuxTryFailed
 }
 
 // focusLinuxCurrentWindow focuses the current terminal window.
