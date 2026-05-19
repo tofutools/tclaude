@@ -352,6 +352,11 @@ function normaliseFollowUp(s) {
   return String(s || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Server's spawn poll is 30 s (reincarnateSpawnTimeout in clone.go).
+// Give a small grace window before the UI surfaces a timeout so a
+// just-barely-late response is treated as success, not error.
+const CLONE_FETCH_TIMEOUT_MS = 35_000;
+
 async function submitCloneAgent() {
   const modal = $('#clone-agent-modal');
   const conv = modal.dataset.conv;
@@ -363,6 +368,13 @@ async function submitCloneAgent() {
   const submitBtn = $('#clone-agent-submit');
   submitBtn.disabled = true;
   submitBtn.textContent = 'Cloning…';
+  // AbortController gives us a clean "the server is hung" path instead
+  // of leaving the modal in 'Cloning…' until the browser's default
+  // network timeout (which can be minutes). The window is generous
+  // because the server itself polls up to 30 s for the new tmux
+  // session to register.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CLONE_FETCH_TIMEOUT_MS);
   try {
     // Resolve the worktree picker → optional cwd override. An empty
     // result means "inherit the source's cwd" (historical behaviour).
@@ -371,6 +383,7 @@ async function submitCloneAgent() {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ follow_up: followUp, no_copy_conv: !copyConv, cwd }),
+      signal: ctrl.signal,
     });
     if (!r.ok) {
       errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
@@ -379,11 +392,24 @@ async function submitCloneAgent() {
     let payload = {};
     try { payload = await r.json(); } catch (_) {}
     closeCloneAgentModal();
-    toast(`cloned ${label}${payload.new_conv ? ' → ' + shortId(payload.new_conv) : ''}`);
+    const dst = payload.new_conv ? ' → ' + shortId(payload.new_conv) : '';
+    if (payload.warning) {
+      // Server returned 200 but flagged a partial-success — keep the
+      // user informed instead of silently celebrating; isErr=true
+      // styles the toast as a warning.
+      toast(`cloned ${label}${dst} (warning: ${payload.warning})`, true);
+    } else {
+      toast(`cloned ${label}${dst}`);
+    }
     refresh();
   } catch (err) {
-    errEl.textContent = (err && err.message) || String(err);
+    if (err && err.name === 'AbortError') {
+      errEl.textContent = `clone timed out after ${CLONE_FETCH_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/output.log and refresh in a moment.`;
+    } else {
+      errEl.textContent = (err && err.message) || String(err);
+    }
   } finally {
+    clearTimeout(timer);
     submitBtn.disabled = false;
     submitBtn.textContent = 'Clone';
   }

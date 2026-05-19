@@ -912,7 +912,12 @@ func liveSpawnNew(label, cwd string) error {
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	// Capture stderr so a silent subprocess failure (PATH issue, bad
+	// cwd, broken tmux server, etc.) shows up in the daemon log
+	// instead of disappearing into /dev/null. Bounded so a runaway
+	// child can't grow the buffer unboundedly.
+	stderr := newSpawnStderrCapture()
+	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
 	cmd.Env = spawnEnvWithoutOperatorToken()
 	detachSpawn(cmd)
@@ -922,8 +927,9 @@ func liveSpawnNew(label, cwd string) error {
 	pid := cmd.Process.Pid
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			slog.Debug("spawn subprocess exited",
-				"label", label, "pid", pid, "err", err)
+			slog.Error("spawn subprocess exited with error",
+				"label", label, "pid", pid, "err", err,
+				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
 		}
 	}()
 	return nil
@@ -959,7 +965,8 @@ func liveSpawnResume(convID, cwd string) error {
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	stderr := newSpawnStderrCapture()
+	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
 	cmd.Env = spawnEnvWithoutOperatorToken()
 	detachSpawn(cmd)
@@ -972,9 +979,59 @@ func liveSpawnResume(convID, cwd string) error {
 	// real CC process keeps running under the tmux server.
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			slog.Debug("resume subprocess exited",
-				"conv", convID, "pid", pid, "err", err)
+			slog.Error("resume subprocess exited with error",
+				"conv", convID, "pid", pid, "err", err,
+				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
 		}
 	}()
 	return nil
+}
+
+// spawnStderrCapture is a bounded io.Writer used for capturing
+// subprocess stderr of detached `tclaude session new` invocations.
+// Caps at spawnStderrMax bytes; further writes are silently dropped
+// and Truncated() reports whether truncation happened. Concurrent
+// writes are not expected (exec.Cmd has a single writer goroutine)
+// but the mutex makes accidental concurrent String() calls safe.
+const spawnStderrMax = 8 << 10
+
+type spawnStderrCapture struct {
+	buf       []byte
+	truncated bool
+}
+
+func newSpawnStderrCapture() *spawnStderrCapture {
+	return &spawnStderrCapture{buf: make([]byte, 0, 512)}
+}
+
+func (c *spawnStderrCapture) Write(p []byte) (int, error) {
+	if c == nil {
+		return len(p), nil
+	}
+	remaining := spawnStderrMax - len(c.buf)
+	if remaining <= 0 {
+		c.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		c.buf = append(c.buf, p[:remaining]...)
+		c.truncated = true
+		return len(p), nil
+	}
+	c.buf = append(c.buf, p...)
+	return len(p), nil
+}
+
+func (c *spawnStderrCapture) String() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimRight(string(c.buf), "\r\n ")
+}
+
+func (c *spawnStderrCapture) Truncated() bool {
+	if c == nil {
+		return false
+	}
+	return c.truncated
 }

@@ -113,13 +113,16 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
-		newConv, _, label, spawnErr := cloneSpawnOnce(m.ConvID, oldSess.Cwd, body.NoCopyConv)
+		newConv, _, label, warn, spawnErr := cloneSpawnOnce(m.ConvID, oldSess.Cwd, body.NoCopyConv)
 		if spawnErr != nil {
 			results = append(results, memberResult{
 				SrcConv: m.ConvID,
 				Error:   "spawn: " + spawnErr.Msg,
 			})
 			continue
+		}
+		if warn != "" {
+			slog.Warn("groups clone: spawn-warn", "src", m.ConvID, "new_conv", newConv, "warning", warn)
 		}
 		// Add ONLY to the new group — the source group is left
 		// untouched. Per-conv permissions are copied so the clone
