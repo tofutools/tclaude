@@ -277,8 +277,16 @@ details[open] > summary .group-actions { opacity: 1; }
    behind a cog. The cog and its .action-menu are siblings inside the
    .row-actions / .group-actions cluster (both position:relative
    above); the menu is absolutely positioned against that cluster, so
-   it escapes the table cell cleanly — no ancestor sets overflow. */
-.cog-btn { line-height: 1; }
+   it escapes the table cell cleanly — no ancestor sets overflow.
+   The cog is sized up and tinted amber so it reads as a distinct
+   "more actions" affordance, not just another grey row button. */
+.row-actions .cog-btn, .group-actions .cog-btn {
+  font-size: 15px; line-height: 1; padding: 0 6px;
+  color: #e3a008; border-color: #6b4f1d;
+}
+.row-actions .cog-btn:hover, .group-actions .cog-btn:hover {
+  color: #ffb52e; border-color: #e3a008;
+}
 .action-menu {
   display: none; position: absolute; top: 100%; right: 0; z-index: 50;
   margin-top: 4px; min-width: 150px; flex-direction: column; gap: 4px;

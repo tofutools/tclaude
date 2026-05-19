@@ -40,13 +40,14 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 		"refreshSuspended() pauses the 5s poll while a menu is open")
 
 	// Buttons that must STAY at the top level — never swallowed into a
-	// menu. The group keeps spawn / add-member / power-on / shutdown;
-	// the agent row keeps focus (jump) + hide.
+	// menu. The group keeps spawn / power-on / shutdown; the agent row
+	// keeps focus (jump) + hide.
 	for _, act := range []string{
-		"spawn-agent", "add-member", "power-on-group", "shutdown-group",
+		"spawn-agent", "power-on-group", "shutdown-group",
 	} {
 		must(`data-act="`+act+`"`, "group header keeps "+act+" top-level")
 	}
+	must(">+ spawn</button>", "the group spawn button is relabelled to 'spawn'")
 	for _, act := range []string{"jump", "hide"} {
 		must(`data-act="`+act+`"`, "agent row keeps focus/hide ("+act+") top-level")
 	}
@@ -55,10 +56,10 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	// in the DOM, not removed; their data-act is unchanged so the
 	// existing dispatcher still handles them.
 	for _, act := range []string{
-		"cron-new", "message-new", "rename-group", "export-group",
-		"cleanup-group", "window-modal-group", "delete-group",
-		"term", "clone", "reincarnate", "edit-member", "perm-edit",
-		"sudo-grant", "remove-member", "delete-agent",
+		"add-member", "cron-new", "message-new", "rename-group",
+		"export-group", "cleanup-group", "window-modal-group",
+		"delete-group", "term", "clone", "reincarnate", "edit-member",
+		"perm-edit", "sudo-grant", "remove-member", "delete-agent",
 	} {
 		must(`data-act="`+act+`"`, act+" still rendered (moved into a menu)")
 	}

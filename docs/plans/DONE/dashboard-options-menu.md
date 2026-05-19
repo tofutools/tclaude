@@ -13,10 +13,11 @@ at the top level.
 
 ### Button distribution
 
-**Group header** — kept at the top level: `spawn-agent`, `add-member`,
-`power-on-group`, `shutdown-group`. Moved into the ⚙ menu: `cron-new`
-(⏰ multicast), `message-new` (✉), `rename-group`, `export-group`,
-`cleanup-group`, `window-modal-group` (🪟), `delete-group`.
+**Group header** — kept at the top level: `spawn-agent` (relabelled
+"spawn"), `power-on-group`, `shutdown-group`. Moved into the ⚙ menu:
+`add-member`, `cron-new` (⏰ multicast), `message-new` (✉),
+`rename-group`, `export-group`, `cleanup-group`, `window-modal-group`
+(🪟), `delete-group`.
 
 **Agent row** — kept at the top level: `focus` (jump) + `hide`, the
 online-only window pair. Moved into the ⚙ menu: `term`, `clone`,
@@ -63,6 +64,11 @@ buttons' DOM position moves.
   `overflow`, so it escapes the table cell. A `:has(.action-menu.open)`
   rule keeps the cluster fully opaque while its menu is open (the menu
   drops past the row, so the pointer leaving would otherwise fade it).
+- The cog glyph is sized up (15px) and tinted amber (`#e3a008`) so it
+  reads as a distinct affordance rather than another grey row button.
+  A U+FE0E text variation selector pins ⚙ to its monochrome glyph so
+  the CSS colour applies (some platforms would otherwise render U+2699
+  as a colour emoji that ignores `color`).
 
 ## Files
 

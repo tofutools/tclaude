@@ -274,8 +274,11 @@ function focusHideButtons(m) {
 // to document.body — so a menu item's handler that walks up to its
 // <summary> (rename-group) still resolves.
 function actionCog(act, items) {
+  // U+FE0E (text variation selector) pins the gear to its monochrome
+  // text glyph so the CSS amber colour applies — without it some
+  // platforms render U+2699 as a colour emoji that ignores `color`.
   return `<button type="button" class="cog-btn" data-act="${esc(act)}"`
-    + ` title="More actions" aria-label="More actions">⚙</button>`
+    + ` title="More actions" aria-label="More actions">⚙︎</button>`
     + `<div class="action-menu">${items}</div>`;
 }
 
