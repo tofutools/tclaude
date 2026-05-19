@@ -1265,6 +1265,14 @@ func CopyConversationToPath(convID, destPath string, global bool) (*CopyConversa
 		return nil, err
 	}
 
+	// Populate the SQLite conv_index for the new conv. Without this,
+	// callers that resolve via ResolveConvID (e.g. `tclaude session
+	// new -r <conv>`, used by the clone path) race against whatever
+	// other code path happens to index the file first and usually fail
+	// with "conversation not found" before any indexer catches up.
+	// Mirrors the scan-then-upsert pattern every other writer uses.
+	_ = ScanAndUpsertFile(dstConvFile)
+
 	return &CopyConversationResult{
 		NewConvID:      newConvID,
 		DstProjectPath: dstProjectPath,

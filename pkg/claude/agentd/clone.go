@@ -40,19 +40,22 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 //   - no-copy: spawn `tclaude session new --label <label>` and poll
 //     for whatever conv-id CC mints, same as reincarnate.
 //
-// Returns (newConv, newTmux, label, nil) on success. label may be
-// empty in the copy path when the session row's id field hasn't
+// Returns (newConv, newTmux, label, warn, nil) on success. label may
+// be empty in the copy path when the session row's id field hasn't
 // materialised within the deadline; that's not an error since the
-// conv-id is already known.
+// conv-id is already known. warn is a non-empty string when the spawn
+// succeeded but the tmux session never registered within the polling
+// deadline (copy path only) — the caller surfaces it as a HTTP
+// response `warning` field so the dashboard can show "started but not
+// online yet" instead of a generic success toast.
 //
 // Extracted from runCloneOrchestration so groups-clone can reuse the
-// same race handling without duplicating it. Behaviour-preserving;
-// see commit history for the original inline version.
-func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, label string, spawnErr *cloneSpawnError) {
+// same race handling without duplicating it.
+func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
 	if noCopyConv {
 		label = generateSpawnLabel()
 		if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
-			return "", "", "", &cloneSpawnError{
+			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
 			}
@@ -63,12 +66,14 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, 
 			if err == nil && s != nil {
 				newTmux = s.TmuxSession
 				if s.ConvID != "" {
-					return s.ConvID, newTmux, label, nil
+					return s.ConvID, newTmux, label, "", nil
 				}
 			}
 			time.Sleep(250 * time.Millisecond)
 		}
-		return "", newTmux, label, &cloneSpawnError{
+		slog.Warn("clone: no-copy poll timed out; conv-id never appeared",
+			"label", label, "deadline", reincarnateSpawnTimeout)
+		return "", newTmux, label, "", &cloneSpawnError{
 			Status: http.StatusGatewayTimeout, Code: "timeout",
 			Msg: "spawned session " + label + " but conv-id never materialised within " +
 				reincarnateSpawnTimeout.String() +
@@ -78,14 +83,14 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, 
 	// Copy path: fork the jsonl first, then resume into it.
 	copyResult, err := convops.CopyConversationToPath(sourceConv, cwd, true /* global */)
 	if err != nil {
-		return "", "", "", &cloneSpawnError{
+		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "copy",
 			Msg: "failed to copy conversation jsonl: " + err.Error(),
 		}
 	}
 	newConv = copyResult.NewConvID
 	if err := SpawnDetachedTclaudeResume(newConv, cwd); err != nil {
-		return "", "", "", &cloneSpawnError{
+		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
 		}
@@ -97,14 +102,21 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, 
 			if s.ID != "" {
 				label = s.ID
 			}
-			break
+			return newConv, newTmux, label, "", nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	// Don't fail if the tmux name doesn't surface — the conv-id is
-	// already known and the spawn was successful. Empty newTmux just
-	// means the human needs to look up the label themselves.
-	return newConv, newTmux, label, nil
+	// Spawn was best-effort fire-and-forget: the conv-id is already
+	// known and the .jsonl exists, so we don't fail the request. But
+	// we DO surface a warning — silently returning success here is the
+	// "clone modal sat for 30s then showed a toast but nothing appeared"
+	// trap. Logs (~/.tclaude/output.log) and the captured subprocess
+	// stderr (see liveSpawnResume) tell the rest of the story.
+	warn = fmt.Sprintf("spawned tclaude session for %s but its tmux session never registered within %s — the new agent may still come online; check ~/.tclaude/output.log for subprocess errors",
+		short8(newConv), reincarnateSpawnTimeout)
+	slog.Warn("clone: copy-path poll timed out; tmux session never registered",
+		"new_conv", newConv, "deadline", reincarnateSpawnTimeout)
+	return newConv, newTmux, label, warn, nil
 }
 
 // defaultCloneCooldown is the built-in fallback for CloneCooldown when
@@ -415,7 +427,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	// branching logic + race-handling lives in cloneSpawnOnce so the
 	// groups-clone orchestration can reuse the same code path without
 	// duplicating it.
-	newConv, newTmux, label, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv)
+	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv)
 	if spawnErr != nil {
 		spawnErr.write(w)
 		return
@@ -553,6 +565,9 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	} else {
 		resp["note"] = fmt.Sprintf("clone %s spawned alongside original %s; both are now running",
 			short8(newConv), short8(target))
+	}
+	if warn != "" {
+		resp["warning"] = warn
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
