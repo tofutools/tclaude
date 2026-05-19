@@ -113,12 +113,24 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, onSave 
 
 // closeAllActionMenus collapses every open ⚙ options menu. Called on
 // any non-cog click — outside-click dismissal and menu-item dismissal
-// alike — and by the cog toggle itself, so at most one menu is ever
-// open. While a menu is open refreshSuspended() pauses the 5s poll (it
-// sees .action-menu.open); dropping the .open class here is therefore
-// also what releases that suspension.
+// alike — by the cog toggle, and by the Escape handler, so at most one
+// menu is ever open. While a menu is open refreshSuspended() pauses
+// the 5s poll (it sees .action-menu.open); dropping the .open class
+// here is therefore also what releases that suspension. It also keeps
+// the cog's aria-expanded in sync and — when focus sat inside a menu
+// about to be display:none'd — hands focus back to that cog so it
+// doesn't fall to <body> and get lost.
 function closeAllActionMenus() {
-  $$('.action-menu.open').forEach((m) => m.classList.remove('open'));
+  $$('.action-menu.open').forEach((menu) => {
+    const cog = menu.parentElement
+      && menu.parentElement.querySelector('.cog-btn');
+    const focusInside = menu.contains(document.activeElement);
+    menu.classList.remove('open');
+    if (cog) {
+      cog.setAttribute('aria-expanded', 'false');
+      if (focusInside) cog.focus();
+    }
+  });
 }
 
 // bindRowActions delegates clicks on row-action buttons to the
@@ -1041,7 +1053,19 @@ function bindRowActions() {
             && btn.parentElement.querySelector('.action-menu');
           const willOpen = !!menu && !menu.classList.contains('open');
           closeAllActionMenus();
-          if (willOpen) menu.classList.add('open');
+          if (willOpen) {
+            menu.classList.remove('opens-up');
+            menu.classList.add('open');
+            btn.setAttribute('aria-expanded', 'true');
+            // Flip the menu above the cog when its default downward
+            // position would run off the viewport bottom — but only
+            // when it actually fits above.
+            const mr = menu.getBoundingClientRect();
+            if (mr.bottom > window.innerHeight
+                && mr.height < btn.getBoundingClientRect().top) {
+              menu.classList.add('opens-up');
+            }
+          }
           return;
         }
         default:
@@ -1054,6 +1078,16 @@ function bindRowActions() {
     } catch (err) {
       toast(`Request failed: ${err && err.message || err}`, true);
     }
+  });
+
+  // Escape closes any open ⚙ options menu — parity with the modal /
+  // inline-edit Escape handling. closeAllActionMenus restores focus to
+  // the owning cog when focus sat inside the menu.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!document.querySelector('.action-menu.open')) return;
+    e.preventDefault();
+    closeAllActionMenus();
   });
 }
 

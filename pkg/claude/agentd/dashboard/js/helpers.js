@@ -293,9 +293,19 @@ function actionCog(act, items) {
   // U+FE0E (text variation selector) pins the gear to its monochrome
   // text glyph so the CSS amber colour applies — without it some
   // platforms render U+2699 as a colour emoji that ignores `color`.
+  //
+  // ARIA menu-button pattern: the cog is aria-haspopup="menu" with an
+  // aria-expanded the toggle handler / closeAllActionMenus keep in
+  // sync; the dropdown is role="menu". role="menuitem" is stamped onto
+  // every collected button HERE, at the menu-construction site —
+  // `items` is HTML we built ourselves (a flat run of <button …>
+  // elements), so the literal substring insert is safe and can't miss
+  // one of the ~15 button templates the way per-template edits could.
+  const menuItems = items.replaceAll('<button ', '<button role="menuitem" ');
   return `<button type="button" class="cog-btn" data-act="${esc(act)}"`
+    + ` aria-haspopup="menu" aria-expanded="false"`
     + ` title="More actions" aria-label="More actions">⚙︎</button>`
-    + `<div class="action-menu">${items}</div>`;
+    + `<div class="action-menu" role="menu">${menuItems}</div>`;
 }
 
 // editMemberButton renders the per-agent "edit" button — the single
