@@ -120,3 +120,38 @@ rendered (relocated, not removed).
 - A full Groups→Agents tab rename, the group-header chip migration to
   the shared `inlineEdit` primitive — pre-existing deferred follow-ups,
   untouched.
+
+## Follow-up — keyboard / ARIA accessibility
+
+A cold-review audit of the merged PR flagged the menu as keyboard /
+screen-reader incomplete. Shipped as a second PR (`feature/options-menu-a11y`):
+
+- **Escape** closes an open menu — a `document` keydown listener in
+  `bindRowActions`, parity with the modal / `inlineEdit` Escape handling.
+- **Focus restore:** `closeAllActionMenus()` checks whether focus sat
+  inside a menu it is about to `display:none`; if so it hands focus
+  back to that menu's `.cog-btn` (otherwise focus would fall to
+  `<body>` and be lost). The menu items are plain `<button>`s right
+  after the cog in the DOM, so Tab already flows cog → items when open
+  — no explicit first-item focus-on-open was added (deliberate: the
+  mouse-vs-keyboard distinction the full pattern needs wasn't worth the
+  complexity, and Tab-in already works).
+- **ARIA menu-button roles:** the cog gets `aria-haspopup="menu"` and an
+  `aria-expanded` kept in sync by the toggle case and
+  `closeAllActionMenus()`; the dropdown is `role="menu"`; every
+  collected button is `role="menuitem"`, stamped in `actionCog()` via
+  a substring insert (`items` is HTML we built — a flat run of
+  `<button …>` — so it can't miss one of the ~15 templates).
+- **Viewport flip-up:** the toggle handler measures the menu after
+  opening; if its downward position overflows the viewport bottom (and
+  it fits above) it adds `.action-menu.opens-up`, which anchors it
+  `bottom: 100%` instead — fixes an ~8-item group menu opened near the
+  viewport bottom.
+- The `:has(.action-menu.open)` opacity rule was **kept** (not swapped
+  for a JS-toggled class): it is DOM-derived and so cannot leak across
+  a close path — the same philosophy `refreshSuspended()` documents for
+  deriving modal state from `.modal-overlay.show` rather than a flag.
+
+`TestDashboardHTML_OptionsMenu` was extended with string-search asserts
+for the ARIA attributes, the Escape handler, the focus restore, and the
+flip-up class.

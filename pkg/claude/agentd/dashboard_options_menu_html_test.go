@@ -49,6 +49,19 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must("querySelector('.action-menu.open')",
 		"refreshSuspended() pauses the 5s poll while a menu is open")
 
+	// Keyboard + ARIA: Escape closes an open menu, focus returns to the
+	// owning cog, and the cog / menu / items carry the ARIA menu-button
+	// roles. The menu also flips up when it would overflow the viewport.
+	must(`aria-haspopup="menu"`, "the cog advertises its popup menu")
+	must(`aria-expanded="false"`, "the cog starts collapsed (aria-expanded=false)")
+	must("setAttribute('aria-expanded'", "the toggle keeps aria-expanded in sync")
+	must(`role="menu"`, "the dropdown is an ARIA menu")
+	must(`role="menuitem"`, "collected buttons are tagged role=menuitem")
+	must("'Escape'", "Escape closes an open options menu")
+	must("cog.focus()", "closing a menu restores focus to its owning cog")
+	must(".action-menu.opens-up", "the menu can flip up to avoid viewport overflow")
+	must("classList.add('opens-up')", "the toggle handler flips the menu up when needed")
+
 	// Buttons that must STAY at the top level — never swallowed into a
 	// menu. The group keeps spawn / power-on / shutdown; the agent row
 	// keeps focus (jump) + hide.
