@@ -3,8 +3,10 @@
 package session
 
 import (
+	"errors"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -224,4 +226,99 @@ func TestFocusToolInstallProbesCompile(t *testing.T) {
 	default:
 		t.Fatalf("LinuxFocusToolName() returned unexpected %q", name)
 	}
+}
+
+// TestLinuxShellSingleQuote pins the quoting helper. UUID session IDs
+// don't trigger the escape path on their own, but agent LABELS can,
+// and the focus button accepts both — defensive testing.
+func TestLinuxShellSingleQuote(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"abc-123", `'abc-123'`},
+		{"4d01388a-bc9d-4617-8170-166a4a503994", `'4d01388a-bc9d-4617-8170-166a4a503994'`},
+		{"label with spaces", `'label with spaces'`},
+		// Single-quoted body terminates, '\'' inserts a literal quote,
+		// new single-quoted body opens — the POSIX-portable trick.
+		{"o'reilly", `'o'\''reilly'`},
+		{"$(rm -rf /)", `'$(rm -rf /)'`}, // shell metachars stay literal
+		{"", `''`},
+	}
+	for _, c := range cases {
+		if got := linuxShellSingleQuote(c.in); got != c.want {
+			t.Errorf("linuxShellSingleQuote(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBuildLinuxAttachCmd pins the new-window payload shape: absolute
+// tclaude path, `session attach`, single-quoted label, exec-prefix so
+// the wrapping sh terminates by exec-replacement (the same trick
+// agentd's openAttachCmd uses, and the same trick openShellCmd's
+// trailing `exec sh -c` uses for interactive shells). The exec
+// prefix is what lets a later "hide" detach close the tab cleanly
+// without leaving an orphaned shell prompt.
+func TestBuildLinuxAttachCmd(t *testing.T) {
+	cmd := buildLinuxAttachCmd("4d01388a")
+	if !strings.HasPrefix(cmd, "exec ") {
+		t.Errorf("buildLinuxAttachCmd should start with 'exec ' so a later detach closes the tab; got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "session attach") {
+		t.Errorf("buildLinuxAttachCmd should invoke `tclaude session attach`; got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "'4d01388a'") {
+		t.Errorf("buildLinuxAttachCmd should pass the label as a single-quoted shell word; got: %s", cmd)
+	}
+	// And the quoting must survive a label with embedded quotes —
+	// the agent title field is human-set, so this is realistic.
+	cmd = buildLinuxAttachCmd("o'reilly")
+	if !strings.Contains(cmd, `'o'\''reilly'`) {
+		t.Errorf("buildLinuxAttachCmd should escape embedded single quotes; got: %s", cmd)
+	}
+}
+
+// TestOpenLinuxAttachTerminal_EmptyID confirms the empty-sessionID
+// guard — without it, the terminal would launch a bare `tclaude
+// session attach` (no label), which dumps the usage page.
+func TestOpenLinuxAttachTerminal_EmptyID(t *testing.T) {
+	var called bool
+	prev := linuxOpenTerminal
+	linuxOpenTerminal = func(string) error { called = true; return nil }
+	t.Cleanup(func() { linuxOpenTerminal = prev })
+
+	openLinuxAttachTerminal("")
+	if called {
+		t.Fatal("openLinuxAttachTerminal must not invoke the terminal when sessionID is empty")
+	}
+}
+
+// TestOpenLinuxAttachTerminal_HappyPath confirms a real sessionID
+// reaches the terminal seam with the cmd buildLinuxAttachCmd builds.
+// The fallback gap this fills (no window opens on focus when no
+// client is attached) was the Kubuntu/KDE regression's second half —
+// kdotool alone wasn't going to fix it.
+func TestOpenLinuxAttachTerminal_HappyPath(t *testing.T) {
+	var got string
+	prev := linuxOpenTerminal
+	linuxOpenTerminal = func(c string) error { got = c; return nil }
+	t.Cleanup(func() { linuxOpenTerminal = prev })
+
+	openLinuxAttachTerminal("4d01388a")
+
+	want := buildLinuxAttachCmd("4d01388a")
+	if got != want {
+		t.Fatalf("linuxOpenTerminal saw %q, want %q", got, want)
+	}
+}
+
+// TestOpenLinuxAttachTerminal_OpenError verifies the best-effort
+// contract: a terminal-launch failure must NOT panic and must NOT
+// propagate to the caller — same contract as the rest of the focus
+// path. The dashboard reports "focused" regardless because the
+// underlying TryFocusAttachedSession returns nothing.
+func TestOpenLinuxAttachTerminal_OpenError(t *testing.T) {
+	prev := linuxOpenTerminal
+	linuxOpenTerminal = func(string) error { return errors.New("no terminal found") }
+	t.Cleanup(func() { linuxOpenTerminal = prev })
+
+	// Must not panic. Returns nothing — best-effort.
+	openLinuxAttachTerminal("4d01388a")
 }

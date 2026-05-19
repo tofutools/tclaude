@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
@@ -57,9 +58,22 @@ func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 		return
 	}
 
-	// Native Linux - use xdotool
-	slog.Debug("Native Linux, using xdotool", "module", "focus")
-	focusLinuxTmuxSession(tmuxSession)
+	// Native Linux. The inner helpers log the resolved focus tool
+	// themselves ("Found client TTY: … (tool=xdotool|kdotool)"); a
+	// fixed "using xdotool" banner up here would be misleading now
+	// that kdotool is in the dispatch.
+	if focusLinuxTmuxSession(tmuxSession) {
+		return
+	}
+	// No attached window — open a fresh terminal that runs
+	// `tclaude session attach` so the human gets a window without
+	// having to launch one by hand. WSL's focusWTTabByCycling does
+	// the same; the native-Linux side was missing this fallback,
+	// which is why the dashboard's focus button looked like a no-op
+	// for a stopped/never-attached agent.
+	if sessionID != "" {
+		openLinuxAttachTerminal(sessionID)
+	}
 }
 
 // FocusOwnWindow attempts to focus the current process's terminal window.
@@ -71,7 +85,9 @@ func FocusOwnWindow() bool {
 		return focusWSLWindow()
 	}
 
-	slog.Debug("Native Linux, using xdotool", "module", "focus")
+	// Same rationale as TryFocusAttachedSessionWithID: skip the
+	// "using xdotool" banner — the inner helper logs the resolved
+	// tool, which may be kdotool on Wayland Plasma.
 	return focusLinuxCurrentWindow()
 }
 
@@ -867,4 +883,61 @@ func IsKdotoolInstalled() bool {
 // diagnostics.
 func LinuxFocusToolName() string {
 	return resolveLinuxFocusTool()
+}
+
+// =============================================================================
+// Linux focus fallback — open a fresh terminal when no client is attached
+// =============================================================================
+//
+// The TryFocusAttachedSessionWithID Linux path used to bail when tmux
+// reported no attached clients ("No clients attached to tmux session"
+// debug line), even though the dashboard's focus semantics promise
+// "raise the window, OPENING a fresh one when none is open" — see
+// pkg/claude/agentd/window_focus.go. WSL had focusWTTabByCycling for
+// this; native Linux didn't. openLinuxAttachTerminal closes that gap.
+//
+// The new-window command mirrors agentd's openAttachCmd shape:
+// absolute tclaude path (the terminal launches outside the user's
+// login shell, where PATH may be minimal — same reason openShellCmd
+// does it), single-quoted label, and an `exec ` prefix so the
+// wrapping `sh -c` terminates by exec-replacement rather than normal
+// exit. Both keep the tab close cleanly when the human later "hides"
+// the agent (which detaches the tmux client → tclaude exits → tab
+// closes, no shell-prompt limbo).
+
+// linuxOpenTerminal is the terminal-launch seam for tests. Production
+// points at terminal.OpenWithCommand; tests swap in a recorder.
+var linuxOpenTerminal = terminal.OpenWithCommand
+
+// openLinuxAttachTerminal opens a new terminal window that runs
+// `tclaude session attach <sessionID>`. Best-effort: logs on failure
+// but never errors — same contract as the rest of the focus path,
+// which the dashboard treats as best-effort.
+func openLinuxAttachTerminal(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	cmd := buildLinuxAttachCmd(sessionID)
+	slog.Debug(fmt.Sprintf("Opening new terminal attaching to session %s", sessionID), "module", "focus")
+	if err := linuxOpenTerminal(cmd); err != nil {
+		slog.Debug(fmt.Sprintf("Failed to open attach terminal for %s: %v", sessionID, err), "module", "focus")
+	}
+}
+
+// buildLinuxAttachCmd assembles the shell payload openLinuxAttachTerminal
+// hands to the resolved terminal. Pure so the quoting + exec-prefix
+// behaviour is unit-testable without spawning a real terminal.
+func buildLinuxAttachCmd(sessionID string) string {
+	return "exec " + clcommon.DetectAbsoluteCmd("session", "attach") + " " +
+		linuxShellSingleQuote(sessionID)
+}
+
+// linuxShellSingleQuote wraps s as a single POSIX shell word. Labels
+// come from the human-set agent title path and can carry spaces or
+// quotes; this is the same belt-and-braces quoting agentd's
+// openAttachCmd uses via its shellSingleQuote (kept local so the
+// focus_linux.go package doesn't take a new dependency on agentd's
+// unexported helpers).
+func linuxShellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
