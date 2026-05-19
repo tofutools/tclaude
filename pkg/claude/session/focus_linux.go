@@ -42,7 +42,7 @@ func TryFocusAttachedSession(tmuxSession string) {
 func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 	slog.Debug(fmt.Sprintf("TryFocusAttachedSessionWithID called for tmux=%s id=%s", tmuxSession, sessionID), "module", "focus")
 
-	if isWSL() {
+	if isWSLFn() {
 		slog.Debug("WSL detected, focusing by title pattern", "module", "focus")
 		// Skip the wsl.exe parent-tree walk (which is anchored at OUR
 		// pid, useless when the daemon is calling for another agent)
@@ -62,7 +62,7 @@ func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 	// themselves ("Found client TTY: … (tool=xdotool|kdotool)"); a
 	// fixed "using xdotool" banner up here would be misleading now
 	// that kdotool is in the dispatch.
-	switch focusLinuxTmuxSessionFn(tmuxSession) {
+	switch r := focusLinuxTmuxSessionFn(tmuxSession); r {
 	case focusLinuxFocused:
 		return
 	case focusLinuxNoClients:
@@ -84,6 +84,14 @@ func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 		// specific failure reason at debug.
 		slog.Warn("could not focus attached tmux session; not spawning a new terminal to avoid duplicate-client attach",
 			"tmux", tmuxSession, "id", sessionID, "module", "focus")
+	default:
+		// A future focusLinuxResult variant — surface noisily rather
+		// than silently picking one of the existing branches'
+		// behaviours by accident. Bare-zero (focusLinuxUnknown) hits
+		// here too, which is exactly the regression this sentinel +
+		// arm is paired against.
+		slog.Error("TryFocusAttachedSessionWithID: unknown focusLinuxResult; not spawning",
+			"result", int(r), "tmux", tmuxSession, "id", sessionID, "module", "focus")
 	}
 }
 
@@ -111,6 +119,18 @@ func GetOwnWindowTitle() string {
 func isWSL() bool {
 	return wsl.IsWSL()
 }
+
+// isWSLFn is the WSL-detection seam used by TryFocusAttachedSessionWithID.
+// Production points at the real /proc/version probe; tests swap to
+// return false so the native-Linux orchestration branch can be
+// exercised even when the test host IS WSL — yamzz (the human)
+// develops on WSL2, and a test that only runs under CI's
+// ubuntu-latest fails to guard the dev loop where the regression
+// would land first. (The other tclaude isWSL call sites here are
+// internal-to-WSL helpers — focusWSLWindow / findTerminalPID — that
+// only run AFTER the WSL branch is taken, so threading the seam past
+// this entry-point check is unnecessary.)
+var isWSLFn = isWSL
 
 // focusWSLWindow attempts to focus the terminal window hosting this WSL session.
 // It walks up the process tree to find the Windows terminal process and focuses it.
@@ -761,7 +781,16 @@ var focusLinuxTmuxSessionFn = focusLinuxTmuxSession
 type focusLinuxResult int
 
 const (
-	focusLinuxFocused focusLinuxResult = iota
+	// focusLinuxUnknown sits at iota=0 deliberately. A
+	// `var r focusLinuxResult` or a bare `return` from a future
+	// refactor would otherwise implicitly mean "focused" — the most
+	// dangerous default, since the caller would skip the
+	// noClients-spawn fallback entirely AND skip the tryFailed warn.
+	// Reserving zero as a noisy sentinel lets the default arm in
+	// TryFocusAttachedSessionWithID catch the accident before it
+	// reaches a user.
+	focusLinuxUnknown focusLinuxResult = iota
+	focusLinuxFocused
 	focusLinuxNoClients
 	focusLinuxTryFailed
 )

@@ -349,15 +349,11 @@ func TestOpenLinuxAttachTerminal_OpenError(t *testing.T) {
 // only case where opening a window is genuinely the right answer
 // (matching macOS focus_darwin.go's `tty == ""` gate).
 //
-// Skipped under WSL because TryFocusAttachedSessionWithID takes the
-// WSL branch first and never reaches the native dispatcher this test
-// is pinning. The unit-of-test is the native-Linux switch, not the
-// platform detection.
+// Uses isWSLFn to force the native-Linux branch even when the test
+// host is WSL2 — the human develops on WSL2, so a skip-on-WSL test
+// would leave the regression guard inactive in the env where it
+// would land first.
 func TestTryFocusAttachedSessionWithID_Native(t *testing.T) {
-	if isWSL() {
-		t.Skip("test pins native-Linux orchestration; WSL branch runs first")
-	}
-
 	cases := []struct {
 		name      string
 		result    focusLinuxResult
@@ -390,9 +386,21 @@ func TestTryFocusAttachedSessionWithID_Native(t *testing.T) {
 			sessionID: "",
 			wantSpawn: false,
 		},
+		{
+			name:      "unknown (zero-value) -> NO spawn (caught by default arm)",
+			result:    focusLinuxUnknown,
+			sessionID: "4d01388a",
+			wantSpawn: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Force the native-Linux branch even when the test host
+			// IS WSL2 — yamzz's dev loop relies on this.
+			prevWSL := isWSLFn
+			isWSLFn = func() bool { return false }
+			t.Cleanup(func() { isWSLFn = prevWSL })
+
 			// Swap the dispatch seam to return the chosen result.
 			prevFn := focusLinuxTmuxSessionFn
 			focusLinuxTmuxSessionFn = func(string) focusLinuxResult { return tc.result }
