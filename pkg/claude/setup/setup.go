@@ -615,53 +615,64 @@ func isTmuxInstalled() bool {
 	return err == nil
 }
 
-// isXdotoolInstalled checks if xdotool is available (for Linux window focus on X11).
-func isXdotoolInstalled() bool {
-	_, err := exec.LookPath("xdotool")
-	return err == nil
-}
-
-// isKdotoolInstalled checks if kdotool is available — the KDE Plasma
-// Wayland drop-in for xdotool, used for window focus on Wayland
-// sessions where xdotool can't see native-Wayland windows.
-func isKdotoolInstalled() bool {
-	_, err := exec.LookPath("kdotool")
-	return err == nil
-}
-
 // reportLinuxFocusTools prints the window-focus tool status for both
 // setup paths (install + --check). It distinguishes "either tool is
-// enough" (the common case) from "neither is installed" (the no-focus
-// case), and tailors the install hint to the host's display server: a
-// Wayland session is steered to kdotool because xdotool's search is a
-// no-op for native-Wayland windows; an X11 session is steered to
-// xdotool because it's the older, more battle-tested tool. The two
-// hints converge on "install xdotool OR kdotool" only when the session
-// type is ambiguous (e.g. no DISPLAY / WAYLAND_DISPLAY at setup time).
+// enough" (the common case) from "neither is installed", and tailors
+// the install hint to the host's session type:
+//
+//   - KDE Plasma Wayland → push kdotool (the only tool that sees
+//     native-Wayland Plasma windows).
+//   - Non-KDE Wayland (GNOME / Sway / Hyprland) → push xdotool only.
+//     kdotool refuses to run on non-KDE (upstream "Unsupported KDE
+//     version") so suggesting it would just frustrate the user.
+//   - X11 → push xdotool (older, battle-tested).
+//   - Ambiguous (SSH, headless) → mention both, point at xdotool
+//     first for distro packageability.
 func reportLinuxFocusTools() {
-	xdo := isXdotoolInstalled()
-	kdo := isKdotoolInstalled()
+	xdo := session.IsXdotoolInstalled()
+	kdo := session.IsKdotoolInstalled()
 	switch {
 	case xdo && kdo:
 		fmt.Println("✓ xdotool + kdotool installed (window focus on X11 and Wayland)")
 	case xdo:
 		fmt.Println("✓ xdotool installed (for window focus on X11 / XWayland)")
-		if isWaylandSession() {
-			fmt.Println("  Tip: under Wayland, install kdotool too for native-Wayland windows")
-			fmt.Println("       (cargo install kdotool, or https://github.com/jinliu/kdotool)")
+		if isWaylandSession() && isKDEDesktop() {
+			fmt.Println("  Tip: KDE Plasma Wayland — install kdotool for native-Wayland focus")
+			printKdotoolInstallHint("       ")
 		}
 	case kdo:
-		fmt.Println("✓ kdotool installed (for window focus on Wayland / X11)")
+		fmt.Println("✓ kdotool installed (for window focus on KDE Plasma Wayland / X11)")
 	default:
 		fmt.Println("✗ no window-focus tool found (optional)")
-		if isWaylandSession() {
+		switch {
+		case isWaylandSession() && isKDEDesktop():
 			fmt.Println("  Install kdotool for KDE Plasma Wayland:")
-			fmt.Println("    cargo install kdotool   (or https://github.com/jinliu/kdotool)")
-		} else {
+			printKdotoolInstallHint("    ")
+		case isWaylandSession():
+			// Non-KDE Wayland: there isn't a great option. xdotool
+			// helps for any XWayland apps; native-Wayland focus on
+			// GNOME/Sway/Hyprland has no tclaude story today.
+			fmt.Println("  Install xdotool (covers X11 + XWayland apps):")
+			fmt.Println("    sudo apt install xdotool")
+			fmt.Println("  Native-Wayland focus is not currently supported on " +
+				"GNOME / Sway / Hyprland.")
+		default:
 			fmt.Println("  Install xdotool (X11): sudo apt install xdotool")
-			fmt.Println("  Or kdotool (Wayland / KDE Plasma): https://github.com/jinliu/kdotool")
+			fmt.Println("  Or, on KDE Plasma Wayland, kdotool:")
+			printKdotoolInstallHint("    ")
 		}
 	}
+}
+
+// printKdotoolInstallHint prints the kdotool install pointer at the
+// given indent. kdotool is not distro-packaged on most distros; the
+// upstream install paths are `cargo install kdotool` (which requires
+// the Rust toolchain — easy to forget) and the prebuilt binaries from
+// the GitHub releases page. Both are surfaced so a user without Rust
+// has somewhere to go.
+func printKdotoolInstallHint(indent string) {
+	fmt.Println(indent + "cargo install kdotool   (requires Rust toolchain)")
+	fmt.Println(indent + "or prebuilt binaries: https://github.com/jinliu/kdotool/releases")
 }
 
 // isWaylandSession reports whether the current login session looks
@@ -674,4 +685,21 @@ func isWaylandSession() bool {
 		return true
 	}
 	return strings.EqualFold(os.Getenv("XDG_SESSION_TYPE"), "wayland")
+}
+
+// isKDEDesktop reports whether the host's desktop environment is KDE
+// Plasma — matched against XDG_CURRENT_DESKTOP (colon-separated per
+// spec) and KDE_SESSION_VERSION. Used only by reportLinuxFocusTools to
+// decide which install hint to surface; the runtime focus resolver
+// does its own KDE detection (see session.pickPreferredFocusTool).
+func isKDEDesktop() bool {
+	if os.Getenv("KDE_SESSION_VERSION") != "" {
+		return true
+	}
+	for _, part := range strings.Split(os.Getenv("XDG_CURRENT_DESKTOP"), ":") {
+		if strings.EqualFold(strings.TrimSpace(part), "KDE") {
+			return true
+		}
+	}
+	return false
 }

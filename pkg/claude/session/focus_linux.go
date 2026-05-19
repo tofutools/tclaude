@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
@@ -607,56 +606,83 @@ exit 1
 // On Wayland sessions xdotool returns success-but-empty for `search`
 // (the historical behaviour that made the dashboard's focus button
 // look like a no-op for Kubuntu/KDE users), so the dispatcher prefers
-// kdotool whenever WAYLAND_DISPLAY is set and falls back to xdotool
-// when only X11 is available. If only one is installed, that one is
-// used regardless of session type.
-
-// resolveLinuxFocusToolOnce caches the focus-tool detection. The
-// answer is process-stable for the lifetime of agentd (display server +
-// installed tools rarely change underneath us), so paying for the
-// exec.LookPath / env reads once is enough.
-var (
-	resolveLinuxFocusToolOnce sync.Once
-	cachedLinuxFocusTool      string
-)
-
-// pickPreferredFocusTool returns ("preferred", "fallback") given the
-// display-server env vars, with the preferred tool chosen for the
-// session type: a Wayland-only session (WAYLAND_DISPLAY set, DISPLAY
-// unset) prefers kdotool because xdotool cannot see native-Wayland
-// windows; everywhere else xdotool wins because it is older and more
-// battle-tested. The fallback is whichever wasn't chosen — used when
-// the preferred binary is missing. Pure so the env→preference table
-// can be unit-tested without faking exec.LookPath.
-func pickPreferredFocusTool(display, wayland string) (preferred, fallback string) {
-	if wayland != "" && display == "" {
-		return "kdotool", "xdotool"
-	}
-	return "xdotool", "kdotool"
-}
+// kdotool — BUT ONLY when the session is actually KDE. kdotool fails
+// fast with "Unsupported KDE version" on GNOME / Sway / Hyprland, so
+// preferring it everywhere on Wayland would degrade those desktops
+// from "xdotool works for XWayland apps" to "kdotool errors and the
+// xdotool fallback runs anyway". The session-type check uses
+// XDG_CURRENT_DESKTOP (containing "KDE") OR KDE_SESSION_VERSION
+// (non-empty) — both are set by KDE Plasma's session start-up.
 
 // focusLookPath is the exec.LookPath seam for tests. Production points
 // at the real exec.LookPath; tests pass a fake that pins which focus
 // tools are "installed".
 var focusLookPath = exec.LookPath
 
+// isKDESession reports whether the current login session is KDE
+// Plasma, given the two env vars KDE sets. Pure so the gate in
+// pickPreferredFocusTool can be unit-tested without t.Setenv.
+func isKDESession(currentDesktop, kdeSessionVersion string) bool {
+	if kdeSessionVersion != "" {
+		return true
+	}
+	for _, part := range strings.Split(currentDesktop, ":") {
+		if strings.EqualFold(strings.TrimSpace(part), "KDE") {
+			return true
+		}
+	}
+	return false
+}
+
+// pickPreferredFocusTool returns ("preferred", "fallback") given the
+// display-server env vars + the KDE-session bits, with the preferred
+// tool chosen for the session type:
+//
+//   - KDE Plasma Wayland (WAYLAND_DISPLAY set + KDE detected) → kdotool
+//     wins, because xdotool cannot see native-Wayland Plasma windows.
+//   - Everywhere else → xdotool wins, because it is older + more
+//     battle-tested, AND kdotool refuses to run on non-KDE desktops
+//     (upstream main.rs:626 bails with "Unsupported KDE version" when
+//     KDE_SESSION_VERSION != "6", so preferring it on GNOME/Sway/
+//     Hyprland would just produce errors and force the xdotool
+//     fallback anyway).
+//
+// The fallback is whichever wasn't chosen — used when the preferred
+// binary is missing. Pure so the env→preference table can be
+// unit-tested without faking exec.LookPath.
+func pickPreferredFocusTool(display, wayland, currentDesktop, kdeSessionVersion string) (preferred, fallback string) {
+	_ = display // future: an XWayland-only KDE session may want different routing
+	if wayland != "" && isKDESession(currentDesktop, kdeSessionVersion) {
+		return "kdotool", "xdotool"
+	}
+	return "xdotool", "kdotool"
+}
+
 // resolveLinuxFocusTool returns the name of the focus binary the
 // per-call helpers below should drive — "xdotool", "kdotool", or "" if
 // neither is installed. The choice combines pickPreferredFocusTool's
 // env-aware preference with the installed-set check.
+//
+// Not cached: focus dispatch is rare (per dashboard button click),
+// exec.LookPath is microseconds, and the previous sync.Once cache
+// could lock in "no tool" if agentd happened to start before the
+// user's graphical session was up or before xdotool/kdotool was
+// installed. Cheap to re-resolve.
 func resolveLinuxFocusTool() string {
-	resolveLinuxFocusToolOnce.Do(func() {
-		cachedLinuxFocusTool = chooseLinuxFocusTool(
-			os.Getenv("DISPLAY"), os.Getenv("WAYLAND_DISPLAY"), focusLookPath)
-	})
-	return cachedLinuxFocusTool
+	return chooseLinuxFocusTool(
+		os.Getenv("DISPLAY"),
+		os.Getenv("WAYLAND_DISPLAY"),
+		os.Getenv("XDG_CURRENT_DESKTOP"),
+		os.Getenv("KDE_SESSION_VERSION"),
+		focusLookPath,
+	)
 }
 
 // chooseLinuxFocusTool is resolveLinuxFocusTool factored to take the
 // env values and a lookPath seam as args, so the full preferred/fallback
 // resolution is unit-testable.
-func chooseLinuxFocusTool(display, wayland string, lookPath func(string) (string, error)) string {
-	preferred, fallback := pickPreferredFocusTool(display, wayland)
+func chooseLinuxFocusTool(display, wayland, currentDesktop, kdeSessionVersion string, lookPath func(string) (string, error)) string {
+	preferred, fallback := pickPreferredFocusTool(display, wayland, currentDesktop, kdeSessionVersion)
 	if _, err := lookPath(preferred); err == nil {
 		return preferred
 	}
