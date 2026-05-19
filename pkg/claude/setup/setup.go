@@ -237,15 +237,11 @@ func runSetup(params *Params) error {
 			}
 		}
 	} else if runtime.GOOS == "linux" {
-		// Native Linux: Notifications use D-Bus directly, check xdotool for window focus
+		// Native Linux: Notifications use D-Bus directly, check xdotool /
+		// kdotool for window focus — kdotool is the KDE Plasma Wayland
+		// drop-in, xdotool covers X11 and XWayland.
 		fmt.Println("✓ Notifications use D-Bus (no external tools needed)")
-
-		if isXdotoolInstalled() {
-			fmt.Println("✓ xdotool installed (for window focus)")
-		} else {
-			fmt.Println("✗ xdotool not found (optional, for window focus)")
-			fmt.Println("  Install with: sudo apt install xdotool")
-		}
+		reportLinuxFocusTools()
 	} else if runtime.GOOS == "windows" {
 		fmt.Println("  Not implemented for native Windows yet")
 	} else {
@@ -481,11 +477,7 @@ func checkStatus() error {
 	} else if runtime.GOOS == "linux" {
 		// Native Linux
 		fmt.Println("✓ Notifications use D-Bus (no external tools needed)")
-		if isXdotoolInstalled() {
-			fmt.Println("✓ xdotool installed (for window focus)")
-		} else {
-			fmt.Println("✗ xdotool not found (optional)")
-		}
+		reportLinuxFocusTools()
 	} else if runtime.GOOS == "windows" {
 		fmt.Println("  Not implemented for native Windows yet")
 	} else {
@@ -623,8 +615,63 @@ func isTmuxInstalled() bool {
 	return err == nil
 }
 
-// isXdotoolInstalled checks if xdotool is available (for Linux window focus).
+// isXdotoolInstalled checks if xdotool is available (for Linux window focus on X11).
 func isXdotoolInstalled() bool {
 	_, err := exec.LookPath("xdotool")
 	return err == nil
+}
+
+// isKdotoolInstalled checks if kdotool is available — the KDE Plasma
+// Wayland drop-in for xdotool, used for window focus on Wayland
+// sessions where xdotool can't see native-Wayland windows.
+func isKdotoolInstalled() bool {
+	_, err := exec.LookPath("kdotool")
+	return err == nil
+}
+
+// reportLinuxFocusTools prints the window-focus tool status for both
+// setup paths (install + --check). It distinguishes "either tool is
+// enough" (the common case) from "neither is installed" (the no-focus
+// case), and tailors the install hint to the host's display server: a
+// Wayland session is steered to kdotool because xdotool's search is a
+// no-op for native-Wayland windows; an X11 session is steered to
+// xdotool because it's the older, more battle-tested tool. The two
+// hints converge on "install xdotool OR kdotool" only when the session
+// type is ambiguous (e.g. no DISPLAY / WAYLAND_DISPLAY at setup time).
+func reportLinuxFocusTools() {
+	xdo := isXdotoolInstalled()
+	kdo := isKdotoolInstalled()
+	switch {
+	case xdo && kdo:
+		fmt.Println("✓ xdotool + kdotool installed (window focus on X11 and Wayland)")
+	case xdo:
+		fmt.Println("✓ xdotool installed (for window focus on X11 / XWayland)")
+		if isWaylandSession() {
+			fmt.Println("  Tip: under Wayland, install kdotool too for native-Wayland windows")
+			fmt.Println("       (cargo install kdotool, or https://github.com/jinliu/kdotool)")
+		}
+	case kdo:
+		fmt.Println("✓ kdotool installed (for window focus on Wayland / X11)")
+	default:
+		fmt.Println("✗ no window-focus tool found (optional)")
+		if isWaylandSession() {
+			fmt.Println("  Install kdotool for KDE Plasma Wayland:")
+			fmt.Println("    cargo install kdotool   (or https://github.com/jinliu/kdotool)")
+		} else {
+			fmt.Println("  Install xdotool (X11): sudo apt install xdotool")
+			fmt.Println("  Or kdotool (Wayland / KDE Plasma): https://github.com/jinliu/kdotool")
+		}
+	}
+}
+
+// isWaylandSession reports whether the current login session looks
+// like Wayland — WAYLAND_DISPLAY is the authoritative signal, falling
+// back to XDG_SESSION_TYPE when WAYLAND_DISPLAY is unset (e.g. an SSH
+// shell where the env hasn't been propagated). Only used to tailor
+// install hints; the runtime focus dispatcher does its own resolution.
+func isWaylandSession() bool {
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		return true
+	}
+	return strings.EqualFold(os.Getenv("XDG_SESSION_TYPE"), "wayland")
 }

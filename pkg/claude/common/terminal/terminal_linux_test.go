@@ -40,7 +40,7 @@ func TestResolveLinuxTerminal_PerTerminal(t *testing.T) {
 	}{
 		{IDXTermEmulator, []string{"/usr/bin/x-terminal-emulator", "-e", "sh", "-c", command}},
 		{IDGnomeTerminal, []string{"/usr/bin/gnome-terminal", "--", "sh", "-c", command}},
-		{IDKonsole, []string{"/usr/bin/konsole", "-e", "sh", "-c", command}},
+		{IDKonsole, []string{"/usr/bin/konsole", "--separate", "-e", "sh", "-c", command}},
 		{IDXfce4Terminal, []string{"/usr/bin/xfce4-terminal", "-x", "sh", "-c", command}},
 		{IDAlacritty, []string{"/usr/bin/alacritty", "-e", "sh", "-c", command}},
 		{IDKitty, []string{"/usr/bin/kitty", "sh", "-c", command}},

@@ -132,13 +132,24 @@ type lookPathFunc func(string) (string, error)
 //     accepts a bare `--`.
 //   - wezterm runs through its `start` subcommand, `--` ending start's
 //     own options.
+//   - konsole gets `--separate` first: by default the konsole binary
+//     hands the request off to an already-running konsole via DBus and
+//     exits. When agentd's environment is missing the user's session
+//     bus address — or KDE silently de-dupes the request — the new
+//     window never appears, which is exactly the failure mode reported
+//     on Kubuntu/KDE. `--separate` (alias `--nofork`) forces konsole to
+//     fork a fresh process the same way every other terminal in this
+//     table does, so the new window is unconditional. We always want a
+//     new window for spawn / term / term-dir; the tabs-in-existing-
+//     window mode is the konsole-only behavior we'd otherwise be at the
+//     mercy of.
 var linuxTerminals = map[string]func(command string) []string{
 	IDGhostty:       func(c string) []string { return []string{"-e", "sh", "-c", c} },
 	IDKitty:         func(c string) []string { return []string{"sh", "-c", c} },
 	IDWezterm:       func(c string) []string { return []string{"start", "--", "sh", "-c", c} },
 	IDAlacritty:     func(c string) []string { return []string{"-e", "sh", "-c", c} },
 	IDFoot:          func(c string) []string { return []string{"sh", "-c", c} },
-	IDKonsole:       func(c string) []string { return []string{"-e", "sh", "-c", c} },
+	IDKonsole:       func(c string) []string { return []string{"--separate", "-e", "sh", "-c", c} },
 	IDGnomeTerminal: func(c string) []string { return []string{"--", "sh", "-c", c} },
 	IDXfce4Terminal: func(c string) []string { return []string{"-x", "sh", "-c", c} },
 	IDXTermEmulator: func(c string) []string { return []string{"-e", "sh", "-c", c} },
