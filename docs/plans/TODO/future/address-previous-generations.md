@@ -51,14 +51,11 @@ body field so the daemon doesn't walk the chain server-side.
 
 ## Issues / open questions
 
-1. **`/clear`-rotated convs may not have resumable data.** Reincarnate
-   `/exit`s the old pane cleanly, leaving the `.jsonl` intact. `/clear` is
-   CC's own behaviour — it may delete the old `.jsonl` outright. Needs
-   empirical verification (start a tclaude session, `/clear`, check whether
-   `~/.claude/projects/.../<old-id>.jsonl` survives). If `/clear` deletes
-   it, the old generation can be ADDRESSED via `--no-follow` but never
-   resumed as a live agent — it's an audit-only entry. Reincarnate-rotated
-   prior generations should always be reachable + resumable.
+1. **Data survives both rotations — verified 2026-05.** Reincarnate `/exit`s
+   the old pane cleanly, leaving the `.jsonl` intact. `/clear` is CC's own
+   behaviour and *also* preserves the old `.jsonl` (confirmed empirically by
+   the human). So the previous generation is fully reachable + resumable
+   regardless of which rotation produced it — no audit-only edge case.
 2. **Reply routing.** A reply to a message that came from the old
    generation — does it follow succession (reach the live thing) or address
    back to the old generation exactly? Probably follow (the live agent is
