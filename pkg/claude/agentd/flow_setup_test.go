@@ -6,6 +6,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -33,6 +34,11 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// Worst case (scenario never brings conv online) the post-init
 	// goroutine now bails in 200ms instead of 60s.
 	t.Cleanup(agentd.SetWaitTimingsForTest(300*time.Millisecond, 20*time.Millisecond))
+	// Mirror the shrink on the session-side /clear inject knobs — same
+	// "wait for CC's TUI to settle" tax the simulator has no jitter
+	// for. Without this, every /clear flow scenario sits on the 1s
+	// production ready-delay.
+	t.Cleanup(session.SetClearInjectTimingsForTest(300*time.Millisecond, 20*time.Millisecond))
 
 	w := testharness.New(t)
 	m := w.DefaultMocks(t)

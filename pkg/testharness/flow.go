@@ -106,6 +106,9 @@ type simSpawner struct {
 
 func (s *simSpawner) SpawnNew(label, cwd string) error {
 	cc := NewCCSim(s.t, s.w.HomeDir, cwd)
+	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
+	// stable key the hook callback tracks conv-id rotations against.
+	cc.SessionID = label
 	if err := cc.Start(); err != nil {
 		return err
 	}
@@ -137,6 +140,8 @@ func (s *simSpawner) SpawnResume(convID, cwd string) error {
 		return err
 	}
 	label := generateResumeLabel()
+	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
+	cc.SessionID = label
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
 		TmuxSession: label,
@@ -280,6 +285,9 @@ func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch 
 	f.T.Helper()
 	cc := NewCCSimWithID(f.T, f.World.HomeDir, convID, cwd)
 	cc.GitBranch = branch
+	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
+	// stable key the hook callback tracks conv-id rotations against.
+	cc.SessionID = label
 	if err := cc.Start(); err != nil {
 		f.T.Fatalf("HaveAliveSessionOnBranch: cc.Start: %v", err)
 	}
@@ -388,6 +396,40 @@ func (f *Flow) Resume(convID string) ResumeResp {
 		f.T.Fatalf("Resume decode: %v body=%s", err, rec.Body.String())
 	}
 	return resp
+}
+
+// ClearResp carries the conv-ids either side of a simulated /clear.
+type ClearResp struct {
+	OldConv string
+	NewConv string
+}
+
+// Clear simulates Claude Code's /clear on the agent running under the
+// given session label. It drives `/clear` into the agent's pane; the
+// CCSim turns that into a conv-id rotation plus the real
+// SessionEnd(reason=clear) / SessionStart(source=clear) hook sequence
+// (see CCSim.clear), so the production hook callback's identity
+// migration runs exactly as it would in a live session. Returns the
+// old and new conv-ids. The CCSim is re-registered under the new
+// conv-id so a later Resume can still locate it.
+func (f *Flow) Clear(label string) ClearResp {
+	f.T.Helper()
+	cc := f.World.CCs.GetByLabel(label)
+	if cc == nil {
+		f.T.Fatalf("Clear: no CCSim registered under label %q", label)
+		return ClearResp{} // unreachable: Fatalf exits the goroutine
+	}
+	oldConv := cc.ConvID
+	// Type /clear into the pane exactly as a user (or the agent) would;
+	// the buffered Enter flushes it through the CCSim's /clear handler.
+	cc.Receive("/clear")
+	cc.Receive("Enter")
+	newConv := cc.ConvID
+	if newConv == oldConv {
+		f.T.Fatalf("Clear(%q): conv-id did not rotate (still %s)", label, oldConv)
+	}
+	f.World.CCs.SetByConvID(cc)
+	return ClearResp{OldConv: oldConv, NewConv: newConv}
 }
 
 // ReincarnateResp parses POST /v1/agent/{conv}/reincarnate.

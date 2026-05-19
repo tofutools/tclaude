@@ -217,7 +217,8 @@ func TestEnrollment_CleanupRetireSkipsOnline(t *testing.T) {
 
 // Scenario: reincarnation preserves agentic status — the successor is
 // enrolled as an active agent, and the superseded predecessor is
-// un-enrolled so it doesn't linger on the roster as an offline ghost.
+// retired so it leaves live agent surfaces but remains reinstatable
+// for knowledge pings.
 func TestEnrollment_ReincarnatePreservesAgentStatus(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
@@ -237,8 +238,8 @@ func TestEnrollment_ReincarnatePreservesAgentStatus(t *testing.T) {
 
 	oldState, err := db.EnrollmentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, oldState,
-		"the superseded predecessor %s must be un-enrolled (its identity moved to the successor)", conv)
+	assert.Equal(t, db.EnrollmentRetired, oldState,
+		"the superseded predecessor %s must be retired (reinstatable for knowledge pings)", conv)
 }
 
 // Scenario: cloning preserves agentic status — the clone is enrolled

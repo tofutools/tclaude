@@ -10,6 +10,69 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+// TestIsValidRenameTitle pins the session-side mirror of agentd's
+// rename-title gate. The /clear title-restore injection in
+// restoreClearedTitle types `/rename <carried-name>` into a tmux pane
+// via send-keys; the carried name comes from
+// conv_index.custom_title (verbatim from the .jsonl) or
+// agent_enrollment.pending_name (stored even when invalid), neither
+// pre-checked by the strict gate. This unit test locks down the
+// charset rules for the cases that matter at this seam — newlines,
+// slashes, control chars, length cap, double-spaces, unicode — so a
+// future relaxation can't reopen the send-keys injection sink. The
+// agentd-side TestIsValidRenameTitle is the authoritative spec; this
+// list must stay aligned.
+func TestIsValidRenameTitle(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		// --- accepted ---
+		{"plain alphanumeric", "abc123", true},
+		{"hyphen", "code-reviewer", true},
+		{"underscore", "code_reviewer", true},
+		{"single space", "code reviewer", true},
+		{"brackets", "[reviewer]", true},
+		{"braces", "{reviewer}", true},
+		{"parens", "(reviewer)", true},
+		{"max length 64", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789AB", true},
+
+		// --- rejected: empty / oversize ---
+		{"empty", "", false},
+		{"too long 65", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789ABCD", false},
+
+		// --- rejected: keystroke-injection vectors (the load-bearing cases) ---
+		{"newline", "code\nreviewer", false},
+		{"carriage return", "code\rreviewer", false},
+		{"tab", "code\treviewer", false},
+		{"NUL", "code\x00reviewer", false},
+		{"DEL", "code\x7freviewer", false},
+		{"slash command", "foo /bash", false},
+		{"double quote", "code\"reviewer", false},
+		{"single quote", "code'reviewer", false},
+		{"backtick", "code`reviewer", false},
+		{"semicolon", "code;reviewer", false},
+		{"pipe", "code|reviewer", false},
+		{"dollar", "code$reviewer", false},
+		{"backslash", "code\\reviewer", false},
+		{"angle brackets", "code<reviewer>", false},
+
+		// --- rejected: whitespace abuse ---
+		{"double space", "code  reviewer", false},
+		{"NBSP", "code reviewer", false},
+
+		// --- rejected: unicode / non-ASCII ---
+		{"emoji", "reviewer\U0001f600", false},
+		{"latin extended", "café", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, isValidRenameTitle(c.in), "isValidRenameTitle(%q)", c.in)
+		})
+	}
+}
+
 // sessionEndIsExit decides whether a SessionEnd hook means the process
 // is going away. Only an exact "clear" (the /clear command, which keeps
 // the process alive) is a non-exit; everything else — including an
@@ -295,4 +358,111 @@ func TestRunHookCallback_NotificationIdlePromptClearsWorking(t *testing.T) {
 		"idle_prompt must transition the session back to idle")
 	assert.Equal(t, "", got.StatusDetail,
 		"idle_prompt must clear the stale status_detail (e.g. 'UserPromptSubmit')")
+}
+
+// TestNeedsIdentityMigration pins the predicate that decides whether a
+// conv-id rotation should migrate agent identity — and, crucially, that
+// it stays true until the migration actually commits (the retry
+// condition) and flips false once a succession edge exists. (bool, err)
+// is the contract: the caller must not advance the conv-id when err is
+// non-nil — see hook_callback.go's conv-id-update block.
+func TestNeedsIdentityMigration(t *testing.T) {
+	t.Run("active agent, fresh new conv, no edge -> migrate", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.True(t, got)
+	})
+	t.Run("plain (un-enrolled) old conv -> no migration", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got, "a plain conversation's /clear must not migrate")
+	})
+	t.Run("retired old agent -> no migration", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		_, err := db.RetireAgent("conv-old", "test", "test")
+		require.NoError(t, err)
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got)
+	})
+	t.Run("succession edge already recorded -> no retry", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		require.NoError(t, db.RecordConvSuccession("conv-old", "conv-new", "clear"))
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got,
+			"once the migration committed (edge exists) the predicate must stop firing")
+	})
+	t.Run("new conv is already an agent -> no migration (collision guard)", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		require.NoError(t, db.EnrollAgent("conv-new", "test"))
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got, "must not migrate onto a conv that already owns an identity")
+	})
+}
+
+// TestRunHookCallback_ClearMigratesAgentIdentity drives the full hook
+// callback for a post-/clear SessionStart(source=clear) and asserts the
+// agent's group identity migrated from the old conv-id to the new one —
+// the issue #192 fix, exercised through runHookCallback itself.
+func TestRunHookCallback_ClearMigratesAgentIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	const sessionID, oldConv, newConv = "clear-mig-sess", "conv-clear-old", "conv-clear-new"
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     sessionID,
+		ConvID: oldConv,
+		Status: StatusIdle,
+	}))
+	// The old conv is an agent: a group member (AddAgentGroupMember
+	// enrolls it).
+	gID, err := db.CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: oldConv}))
+
+	feedHook(t, sessionID, map[string]any{
+		"session_id":      newConv,
+		"hook_event_name": "SessionStart",
+		"source":          "clear",
+		"cwd":             dir,
+	})
+
+	// The session row now follows the /clear rotation.
+	got, err := LoadSessionState(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, newConv, got.ConvID, "session row should follow the /clear rotation")
+
+	// Group membership migrated old → new.
+	newGroups, err := db.ListGroupsForConv(newConv)
+	require.NoError(t, err)
+	require.Len(t, newGroups, 1, "new conv should be the group member")
+	assert.Equal(t, "alpha", newGroups[0].Name)
+	oldGroups, err := db.ListGroupsForConv(oldConv)
+	require.NoError(t, err)
+	assert.Empty(t, oldGroups, "old conv should no longer be a member")
+
+	// Old conv retired; succession edge recorded. We retire (not
+	// delete) the old enrollment so a human can reinstate the
+	// pre-rotation agent later for knowledge pings.
+	oldEnr, err := db.EnrollmentState(oldConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, oldEnr, "old conv should retire (not vanish) so it can be reinstated for knowledge pings")
+	succ, err := db.GetConvSuccessor(oldConv)
+	require.NoError(t, err)
+	assert.Equal(t, newConv, succ, "succession edge old→new should be recorded")
 }

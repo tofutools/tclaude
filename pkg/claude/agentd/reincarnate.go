@@ -290,41 +290,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	}
 	cwd := oldSess.Cwd
 
-	oldGroups, err := db.ListGroupsForConv(target)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"snapshot groups: "+err.Error())
-		return
-	}
-	oldMembers := make([]*db.AgentGroupMember, 0, len(oldGroups))
-	for _, g := range oldGroups {
-		m, err := db.FindMemberInGroup(g.ID, target)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io",
-				"snapshot membership: "+err.Error())
-			return
-		}
-		if m != nil {
-			oldMembers = append(oldMembers, m)
-		}
-	}
-
-	// Migrate the full permission posture — grant AND deny overrides —
-	// so the successor inherits the source's lockdown, not just grants.
-	oldPerms, err := db.ListAgentPermissionOverridesForConv(target)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"snapshot perms: "+err.Error())
-		return
-	}
-
-	oldOwnedIDs, err := db.ListGroupsOwnedBy(target)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"snapshot ownerships: "+err.Error())
-		return
-	}
-
 	// 2. Spawn a fresh tclaude session in the same cwd.
 	label := generateSpawnLabel()
 	if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
@@ -356,77 +321,39 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		return
 	}
 
-	// 4. Migrate identity. Best-effort: errors on individual rows are
-	// logged but don't abort. A partial migration is recoverable
-	// (humans can use `tclaude agent permissions` / `groups add` to
-	// fix), and full rollback would be more harmful than leaving the
-	// new agent partially provisioned.
-	migrated := []string{}
+	// 4. Migrate identity old → new — group memberships, ownerships,
+	// permission overrides, cron-job conv refs — plus the succession
+	// edge and the display-name carry. Shared with Claude Code's
+	// /clear path (issue #192); see db.MigrateAgentIdentity.
+	// Best-effort inside the migration: a per-row failure is logged,
+	// not fatal. A partial migration is recoverable (humans can use
+	// `tclaude agent permissions` / `groups add` to fix), whereas a
+	// hard abort would leave the new agent unprovisioned with no clean
+	// recovery.
 	granter := "system:reincarnate"
 	if caller != target {
 		granter = "system:reincarnate:by=" + auditedCaller(caller, perm)
 	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
 		granter = fmt.Sprintf("system:reincarnate:via-sudo:grant-id=%d", grantID)
 	}
-
-	for _, m := range oldMembers {
-		newMember := &db.AgentGroupMember{
-			GroupID: m.GroupID,
-			ConvID:  newConv,
-			Role:    m.Role,
-			Descr:   m.Descr,
-		}
-		if err := db.AddAgentGroupMember(newMember); err != nil {
-			slog.Warn("reincarnate: add new member failed", "group", m.GroupID, "error", err)
-			continue
-		}
-		if err := db.RemoveAgentGroupMember(m.GroupID, target); err != nil {
-			slog.Warn("reincarnate: remove old member failed", "group", m.GroupID, "error", err)
-		}
-		migrated = append(migrated, fmt.Sprintf("group:%d", m.GroupID))
+	mig, err := db.MigrateAgentIdentity(target, newConv, "reincarnate", granter)
+	if err != nil {
+		// db.MigrateAgentIdentity is atomic: an error means NOTHING
+		// committed (no membership / perm / owner / cron rekey, no
+		// succession edge, no enrollment touched). Carrying on from here
+		// would decommission the old pane (step 9: /exit + archive)
+		// while the new conv has no migrated identity, stranding the
+		// agent. Abort the request instead and leave the old pane alive
+		// with identity intact. The spawned successor stays around as
+		// an orphan tclaude session reachable via `attach_cmd` for
+		// manual cleanup.
+		slog.Error("reincarnate: identity migration failed; aborting orchestration",
+			"old", target, "new", newConv, "label", label, "error", err)
+		writeError(w, http.StatusInternalServerError, "identity_migration",
+			"failed to migrate agent identity to successor conversation: "+err.Error())
+		return
 	}
-
-	for slug, effect := range oldPerms {
-		if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
-			slog.Warn("reincarnate: copy new perm failed", "slug", slug, "effect", effect, "error", err)
-			continue
-		}
-		if _, err := db.RevokeAgentPermission(target, slug); err != nil {
-			slog.Warn("reincarnate: revoke old perm failed", "slug", slug, "error", err)
-		}
-		migrated = append(migrated, "perm:"+slug)
-	}
-
-	for _, gID := range oldOwnedIDs {
-		if err := db.AddAgentGroupOwner(gID, newConv, granter); err != nil {
-			slog.Warn("reincarnate: add new owner failed", "group", gID, "error", err)
-			continue
-		}
-		if _, err := db.RemoveAgentGroupOwner(gID, target); err != nil {
-			slog.Warn("reincarnate: remove old owner failed", "group", gID, "error", err)
-		}
-		migrated = append(migrated, fmt.Sprintf("owner:%d", gID))
-	}
-
-	// Eagerly rewrite cron job refs from old → new. Without this, jobs
-	// owned by or targeted at the reincarnated conv keep firing against
-	// a dead conv-id (the old pane is /exit'd below). Best-effort: the
-	// succession-chain lookup is the safety net for any reference we
-	// might miss here.
-	if n, err := db.MigrateCronJobConvRef(target, newConv); err != nil {
-		slog.Warn("reincarnate: migrate cron job refs failed",
-			"old", target, "new", newConv, "error", err)
-	} else if n > 0 {
-		migrated = append(migrated, fmt.Sprintf("cron:%d", n))
-	}
-
-	// Record the succession edge so historical references (CLI
-	// selectors, log spelunking, things we forgot to eagerly migrate)
-	// can be walked forward via db.ResolveLatestConv.
-	if err := db.RecordConvSuccession(target, newConv, "reincarnate"); err != nil {
-		slog.Warn("reincarnate: record conv succession failed",
-			"old", target, "new", newConv, "error", err)
-	}
+	migrated := mig.Items
 
 	// 5. Carry any tmux clients attached to the old session over to
 	// the new session BEFORE we /exit the old pane. Without this, the
@@ -456,9 +383,13 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// solo (groupless) successor still gets a row: group_id 0 is a
 	// direct message, the universal-inbox transport. (decodeReincarnate
 	// FollowUp guarantees followUp != "".)
+	// Route the handoff through the first group the migrated agent now
+	// belongs to (post-migration, newConv is the member). group_id 0 —
+	// a solo successor with no groups — is a direct message, the
+	// universal-inbox transport.
 	var handoffGroupID int64
-	if len(oldMembers) > 0 {
-		handoffGroupID = oldMembers[0].GroupID
+	if groups, err := db.ListGroupsForConv(newConv); err == nil && len(groups) > 0 {
+		handoffGroupID = groups[0].ID
 	}
 	var msgID int64
 	if id, err := db.InsertAgentMessage(&db.AgentMessage{
@@ -499,19 +430,12 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// listing surfaces a way to detect the archived state. Idempotent:
 	// the rename skips when prevTitle is empty or already ends in
 	// `-x`; the column stamp is a single UPDATE.
-	if err := db.SetConvIndexArchived(target, true); err != nil {
-		slog.Warn("reincarnate: stamp archived_at failed",
-			"old", target, "error", err)
-	}
-	// The old conv is superseded: its identity has migrated onto the
-	// successor (enrolled by RecordConvSuccession above). Drop its
-	// enrollment row so it doesn't linger on the agent roster as an
-	// offline ghost — the successor IS this agent now. The succession
-	// chain still resolves stale references forward.
-	if _, err := db.DeleteEnrollment(target); err != nil {
-		slog.Warn("reincarnate: delete old enrollment failed",
-			"old", target, "error", err)
-	}
+	// Visibility for the predecessor comes from the retired-agents tray
+	// now (db.MigrateAgentIdentity retired the enrollment in-transaction
+	// with the rekey + succession edge), not from conv_index.archived_at
+	// — keeping both would be contradictory (archived hides, retired
+	// shows). The Retired tray is the durable surface the human uses to
+	// reinstate the pre-rotation conv later for knowledge pings.
 	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
 		_ = injectSlashCommand(target, "/rename "+prevTitle+"-x", "")
 	}
