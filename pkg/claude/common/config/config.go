@@ -24,7 +24,8 @@ type Config struct {
 
 	// Terminal names the terminal emulator the agentd dashboard's
 	// spawn auto-focus / shell-attach feature should open — "ghostty",
-	// "kitty", "wezterm", "alacritty", "iterm2", "gnome-terminal", … .
+	// "kitty", "wezterm", "alacritty", "foot", "iterm2", "konsole",
+	// "gnome-terminal", … .
 	// Empty means auto-detect, which prefers a hand-installed modern
 	// terminal over the OS default. This is the middle tier of the
 	// terminal-selection priority: the `tclaude agentd serve

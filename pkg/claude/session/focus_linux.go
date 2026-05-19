@@ -585,14 +585,129 @@ exit 1
 }
 
 // =============================================================================
-// Native Linux Focus Support (using xdotool)
+// Native Linux Focus Support (xdotool / kdotool)
 // =============================================================================
+//
+// Two interchangeable focus tools cover the two display servers Linux
+// hosts in practice:
+//
+//   - xdotool: X11-only. Works under X11 sessions and X11 apps running
+//     through XWayland; reports no windows for native-Wayland apps.
+//   - kdotool: KDE Plasma's xdotool-compatible bridge. Generates KWin
+//     scripts on the fly via DBus, so it works under both X11 and
+//     Wayland Plasma sessions — including for the konsole windows
+//     Kubuntu users have. Its `search --pid` / `search --name` /
+//     `windowactivate` surface is the subset we use, with one
+//     difference: kdotool's `windowactivate` does not accept `--sync`.
+//     Window IDs are KWin UUIDs rather than X11 IDs, but each tool's
+//     IDs are valid in its own activate call — we use one tool end to
+//     end per call chain.
+//
+// On Wayland sessions xdotool returns success-but-empty for `search`
+// (the historical behaviour that made the dashboard's focus button
+// look like a no-op for Kubuntu/KDE users), so the dispatcher prefers
+// kdotool — BUT ONLY when the session is actually KDE. kdotool fails
+// fast with "Unsupported KDE version" on GNOME / Sway / Hyprland, so
+// preferring it everywhere on Wayland would degrade those desktops
+// from "xdotool works for XWayland apps" to "kdotool errors and the
+// xdotool fallback runs anyway". The session-type check uses
+// XDG_CURRENT_DESKTOP (containing "KDE") OR KDE_SESSION_VERSION
+// (non-empty) — both are set by KDE Plasma's session start-up.
+
+// focusLookPath is the exec.LookPath seam for tests. Production points
+// at the real exec.LookPath; tests pass a fake that pins which focus
+// tools are "installed".
+var focusLookPath = exec.LookPath
+
+// isKDESession reports whether the current login session is KDE
+// Plasma, given the two env vars KDE sets. Pure so the gate in
+// pickPreferredFocusTool can be unit-tested without t.Setenv.
+func isKDESession(currentDesktop, kdeSessionVersion string) bool {
+	if kdeSessionVersion != "" {
+		return true
+	}
+	for _, part := range strings.Split(currentDesktop, ":") {
+		if strings.EqualFold(strings.TrimSpace(part), "KDE") {
+			return true
+		}
+	}
+	return false
+}
+
+// pickPreferredFocusTool returns ("preferred", "fallback") given the
+// display-server env vars + the KDE-session bits, with the preferred
+// tool chosen for the session type:
+//
+//   - KDE Plasma Wayland (WAYLAND_DISPLAY set + KDE detected) → kdotool
+//     wins, because xdotool cannot see native-Wayland Plasma windows.
+//   - Everywhere else → xdotool wins, because it is older + more
+//     battle-tested, AND kdotool refuses to run on non-KDE desktops
+//     (upstream main.rs:626 bails with "Unsupported KDE version" when
+//     KDE_SESSION_VERSION != "6", so preferring it on GNOME/Sway/
+//     Hyprland would just produce errors and force the xdotool
+//     fallback anyway).
+//
+// The fallback is whichever wasn't chosen — used when the preferred
+// binary is missing. Pure so the env→preference table can be
+// unit-tested without faking exec.LookPath.
+func pickPreferredFocusTool(display, wayland, currentDesktop, kdeSessionVersion string) (preferred, fallback string) {
+	_ = display // future: an XWayland-only KDE session may want different routing
+	if wayland != "" && isKDESession(currentDesktop, kdeSessionVersion) {
+		return "kdotool", "xdotool"
+	}
+	return "xdotool", "kdotool"
+}
+
+// resolveLinuxFocusTool returns the name of the focus binary the
+// per-call helpers below should drive — "xdotool", "kdotool", or "" if
+// neither is installed. The choice combines pickPreferredFocusTool's
+// env-aware preference with the installed-set check.
+//
+// Not cached: focus dispatch is rare (per dashboard button click),
+// exec.LookPath is microseconds, and the previous sync.Once cache
+// could lock in "no tool" if agentd happened to start before the
+// user's graphical session was up or before xdotool/kdotool was
+// installed. Cheap to re-resolve.
+func resolveLinuxFocusTool() string {
+	return chooseLinuxFocusTool(
+		os.Getenv("DISPLAY"),
+		os.Getenv("WAYLAND_DISPLAY"),
+		os.Getenv("XDG_CURRENT_DESKTOP"),
+		os.Getenv("KDE_SESSION_VERSION"),
+		focusLookPath,
+	)
+}
+
+// chooseLinuxFocusTool is resolveLinuxFocusTool factored to take the
+// env values and a lookPath seam as args, so the full preferred/fallback
+// resolution is unit-testable.
+func chooseLinuxFocusTool(display, wayland, currentDesktop, kdeSessionVersion string, lookPath func(string) (string, error)) string {
+	preferred, fallback := pickPreferredFocusTool(display, wayland, currentDesktop, kdeSessionVersion)
+	if _, err := lookPath(preferred); err == nil {
+		return preferred
+	}
+	if _, err := lookPath(fallback); err == nil {
+		return fallback
+	}
+	return ""
+}
+
+// windowActivateCmd builds the activate-by-id command for the chosen
+// tool. xdotool gets the --sync that makes the activation wait for the
+// X server round-trip; kdotool does not accept --sync and is
+// synchronous through its KWin DBus call anyway.
+func windowActivateCmd(tool, windowID string) *exec.Cmd {
+	if tool == "xdotool" {
+		return exec.Command(tool, "windowactivate", "--sync", windowID)
+	}
+	return exec.Command(tool, "windowactivate", windowID)
+}
 
 // focusLinuxTmuxSession focuses the terminal window running a specific tmux session.
 func focusLinuxTmuxSession(tmuxSession string) bool {
-	// Check if xdotool is available
-	if _, err := exec.LookPath("xdotool"); err != nil {
-		slog.Debug("xdotool not found, cannot focus window", "module", "focus")
+	tool := resolveLinuxFocusTool()
+	if tool == "" {
+		slog.Debug("no focus tool found (xdotool / kdotool), cannot focus window", "module", "focus")
 		return false
 	}
 
@@ -610,17 +725,17 @@ func focusLinuxTmuxSession(tmuxSession string) bool {
 		return false
 	}
 	tty := lines[0]
-	slog.Debug(fmt.Sprintf("Found client TTY: %s", tty), "module", "focus")
+	slog.Debug(fmt.Sprintf("Found client TTY: %s (tool=%s)", tty, tool), "module", "focus")
 
 	// Find the terminal window by walking the process tree from TTY
-	return focusLinuxWindowByTTY(tty)
+	return focusLinuxWindowByTTY(tool, tty)
 }
 
 // focusLinuxCurrentWindow focuses the current terminal window.
 func focusLinuxCurrentWindow() bool {
-	// Check if xdotool is available
-	if _, err := exec.LookPath("xdotool"); err != nil {
-		slog.Debug("xdotool not found, cannot focus window", "module", "focus")
+	tool := resolveLinuxFocusTool()
+	if tool == "" {
+		slog.Debug("no focus tool found (xdotool / kdotool), cannot focus window", "module", "focus")
 		return false
 	}
 
@@ -630,20 +745,20 @@ func focusLinuxCurrentWindow() bool {
 		slog.Debug(fmt.Sprintf("Failed to get current TTY: %v", err), "module", "focus")
 		return false
 	}
-	slog.Debug(fmt.Sprintf("Current TTY: %s", tty), "module", "focus")
+	slog.Debug(fmt.Sprintf("Current TTY: %s (tool=%s)", tty, tool), "module", "focus")
 
-	return focusLinuxWindowByTTY(tty)
+	return focusLinuxWindowByTTY(tool, tty)
 }
 
 // focusLinuxWindowByTTY finds and focuses the terminal window owning a TTY.
-func focusLinuxWindowByTTY(tty string) bool {
+func focusLinuxWindowByTTY(tool, tty string) bool {
 	// Find processes on this TTY
 	cmd := exec.Command("lsof", "-t", tty)
 	output, err := cmd.Output()
 	if err != nil {
 		slog.Debug(fmt.Sprintf("lsof failed for TTY %s: %v", tty, err), "module", "focus")
 		// Fallback: try to focus by window name pattern
-		return focusLinuxWindowByPattern("tclaude:")
+		return focusLinuxWindowByPattern(tool, "tclaude:")
 	}
 
 	pids := strings.Fields(string(output))
@@ -651,25 +766,25 @@ func focusLinuxWindowByTTY(tty string) bool {
 
 	// Walk up process tree to find terminal
 	for _, pidStr := range pids {
-		if windowID := findLinuxWindowForPID(pidStr); windowID != "" {
-			return focusLinuxWindowByID(windowID)
+		if windowID := findLinuxWindowForPID(tool, pidStr); windowID != "" {
+			return focusLinuxWindowByID(tool, windowID)
 		}
 	}
 
 	// Fallback: try by window name
-	return focusLinuxWindowByPattern("tclaude:")
+	return focusLinuxWindowByPattern(tool, "tclaude:")
 }
 
 // findLinuxWindowForPID walks up the process tree to find a window.
-func findLinuxWindowForPID(pidStr string) string {
+func findLinuxWindowForPID(tool, pidStr string) string {
 	visited := make(map[string]bool)
 	current := pidStr
 
 	for current != "" && current != "0" && current != "1" && !visited[current] {
 		visited[current] = true
 
-		// Try to find X window for this PID
-		cmd := exec.Command("xdotool", "search", "--pid", current)
+		// Try to find a window for this PID via the active focus tool
+		cmd := exec.Command(tool, "search", "--pid", current)
 		output, err := cmd.Output()
 		if err == nil {
 			windows := strings.Fields(string(output))
@@ -698,14 +813,13 @@ func findLinuxWindowForPID(pidStr string) string {
 	return ""
 }
 
-// focusLinuxWindowByID focuses a window by its X window ID.
-func focusLinuxWindowByID(windowID string) bool {
-	slog.Debug(fmt.Sprintf("Focusing window ID: %s", windowID), "module", "focus")
+// focusLinuxWindowByID focuses a window by its window ID.
+func focusLinuxWindowByID(tool, windowID string) bool {
+	slog.Debug(fmt.Sprintf("Focusing window ID: %s (tool=%s)", windowID, tool), "module", "focus")
 
-	// Activate the window
-	cmd := exec.Command("xdotool", "windowactivate", "--sync", windowID)
+	cmd := windowActivateCmd(tool, windowID)
 	if err := cmd.Run(); err != nil {
-		slog.Debug(fmt.Sprintf("xdotool windowactivate failed: %v", err), "module", "focus")
+		slog.Debug(fmt.Sprintf("%s windowactivate failed: %v", tool, err), "module", "focus")
 		return false
 	}
 
@@ -714,14 +828,14 @@ func focusLinuxWindowByID(windowID string) bool {
 }
 
 // focusLinuxWindowByPattern searches for and focuses a window by name pattern.
-func focusLinuxWindowByPattern(pattern string) bool {
-	slog.Debug(fmt.Sprintf("Searching for window with pattern: %s", pattern), "module", "focus")
+func focusLinuxWindowByPattern(tool, pattern string) bool {
+	slog.Debug(fmt.Sprintf("Searching for window with pattern: %s (tool=%s)", pattern, tool), "module", "focus")
 
 	// Search for windows matching the pattern
-	cmd := exec.Command("xdotool", "search", "--name", pattern)
+	cmd := exec.Command(tool, "search", "--name", pattern)
 	output, err := cmd.Output()
 	if err != nil {
-		slog.Debug(fmt.Sprintf("xdotool search failed: %v", err), "module", "focus")
+		slog.Debug(fmt.Sprintf("%s search failed: %v", tool, err), "module", "focus")
 		return false
 	}
 
@@ -732,11 +846,25 @@ func focusLinuxWindowByPattern(pattern string) bool {
 	}
 
 	slog.Debug(fmt.Sprintf("Found %d windows, focusing first: %s", len(windows), windows[0]), "module", "focus")
-	return focusLinuxWindowByID(windows[0])
+	return focusLinuxWindowByID(tool, windows[0])
 }
 
 // IsXdotoolInstalled checks if xdotool is available.
 func IsXdotoolInstalled() bool {
 	_, err := exec.LookPath("xdotool")
 	return err == nil
+}
+
+// IsKdotoolInstalled checks if kdotool is available — the KDE Plasma
+// Wayland-friendly xdotool replacement.
+func IsKdotoolInstalled() bool {
+	_, err := exec.LookPath("kdotool")
+	return err == nil
+}
+
+// LinuxFocusToolName reports the focus binary the dispatcher will use,
+// or "" if neither xdotool nor kdotool is installed. For setup-time
+// diagnostics.
+func LinuxFocusToolName() string {
+	return resolveLinuxFocusTool()
 }
