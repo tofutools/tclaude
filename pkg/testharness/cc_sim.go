@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // CCSim is a behavior-accurate simulator of one Claude Code instance.
@@ -42,6 +43,14 @@ type CCSim struct {
 	ConvID    string
 	Cwd       string
 	JsonlPath string
+
+	// SessionID is the owning tclaude session's TCLAUDE_SESSION_ID — the
+	// stable per-process key the hook callback uses to track a conv-id
+	// rotation (/clear, /resume) across the rotation. Set by the spawner
+	// / HaveAliveSession to the session row's ID; "" for a CCSim not
+	// tied to a tclaude session, which makes the /clear handler a no-op
+	// (it has no env-keyed session to migrate).
+	SessionID string
 
 	// GitBranch, when non-empty, is stamped into the gitBranch field of
 	// every user turn — mirroring how real Claude Code records the
@@ -264,6 +273,59 @@ func (c *CCSim) WriteSummary(summary string) error {
 	})
 }
 
+// clear models Claude Code's /clear: the conversation ends and a fresh
+// one starts inside the SAME process. CC rotates the conv-id (a new
+// .jsonl in the same project dir), keeps the process — and so
+// TCLAUDE_SESSION_ID — alive, and fires SessionEnd(reason=clear) on the
+// old conv-id followed by SessionStart on the new one. Confirmed
+// against a real captured /clear hook recording (issue #192).
+//
+// Driving the production hook callback (session.ApplyHook) for both
+// events is the point: it is the daemon-side identity-migration path
+// the /clear fix lives in, exercised here exactly as CC would trigger
+// it. With no SessionID the hook has no env-keyed session to migrate,
+// so the rotation still happens on disk but no migration fires.
+func (c *CCSim) clear() {
+	c.mu.Lock()
+	oldConv := c.ConvID
+	cwd := c.Cwd
+	sessionID := c.SessionID
+	newConv := generateConvID()
+	c.ConvID = newConv
+	c.JsonlPath = filepath.Join(filepath.Dir(c.JsonlPath), newConv+".jsonl")
+	// /clear wipes the conversation; the fresh one has no custom title
+	// until the agent renames it again.
+	c.title = ""
+	c.mu.Unlock()
+
+	// SessionEnd(clear) on the OLD conv-id — not an exit, the process
+	// lives on.
+	_ = session.ApplyHook(session.HookCallbackInput{
+		ConvID:        oldConv,
+		HookEventName: "SessionEnd",
+		Reason:        "clear",
+		Cwd:           cwd,
+	}, sessionID)
+
+	// Materialise the new conv's .jsonl with an initial summary turn,
+	// exactly as a fresh CC session would, so production read paths
+	// (ScanAndUpsertFile / FreshConvRow) have a file to scan.
+	_ = c.AppendTurn(map[string]any{
+		"type":      "summary",
+		"summary":   "session " + newConv,
+		"sessionId": newConv,
+		"timestamp": now(),
+	})
+
+	// SessionStart on the NEW conv-id — the first hook carrying the
+	// rotated conv-id, where the daemon's identity migration triggers.
+	_ = session.ApplyHook(session.HookCallbackInput{
+		ConvID:        newConv,
+		HookEventName: "SessionStart",
+		Cwd:           cwd,
+	}, sessionID)
+}
+
 // OnInput registers a handler. Newer registrations win over older
 // ones when their prefix matches a submitted line. Empty prefix
 // matches every input — use it as a custom catch-all (which then
@@ -305,6 +367,10 @@ func (c *CCSim) installDefaultHandlers() {
 		}},
 		{prefix: "/compact", fn: func(c *CCSim, line string) bool {
 			_ = c.WriteSummary("post-compact " + c.ConvID)
+			return true
+		}},
+		{prefix: "/clear", fn: func(c *CCSim, _ string) bool {
+			c.clear()
 			return true
 		}},
 		{prefix: "", fn: func(c *CCSim, line string) bool {

@@ -296,3 +296,98 @@ func TestRunHookCallback_NotificationIdlePromptClearsWorking(t *testing.T) {
 	assert.Equal(t, "", got.StatusDetail,
 		"idle_prompt must clear the stale status_detail (e.g. 'UserPromptSubmit')")
 }
+
+// TestNeedsIdentityMigration pins the predicate that decides whether a
+// conv-id rotation should migrate agent identity — and, crucially, that
+// it stays true until the migration actually commits (the retry
+// condition) and flips false once a succession edge exists.
+func TestNeedsIdentityMigration(t *testing.T) {
+	t.Run("active agent, fresh new conv, no edge -> migrate", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		assert.True(t, needsIdentityMigration("conv-old", "conv-new"))
+	})
+	t.Run("plain (un-enrolled) old conv -> no migration", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		assert.False(t, needsIdentityMigration("conv-old", "conv-new"),
+			"a plain conversation's /clear must not migrate")
+	})
+	t.Run("retired old agent -> no migration", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		_, err := db.RetireAgent("conv-old", "test", "test")
+		require.NoError(t, err)
+		assert.False(t, needsIdentityMigration("conv-old", "conv-new"))
+	})
+	t.Run("succession edge already recorded -> no retry", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		require.NoError(t, db.RecordConvSuccession("conv-old", "conv-new", "clear"))
+		assert.False(t, needsIdentityMigration("conv-old", "conv-new"),
+			"once the migration committed (edge exists) the predicate must stop firing")
+	})
+	t.Run("new conv is already an agent -> no migration (collision guard)", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		db.ResetForTest()
+		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		require.NoError(t, db.EnrollAgent("conv-new", "test"))
+		assert.False(t, needsIdentityMigration("conv-old", "conv-new"),
+			"must not migrate onto a conv that already owns an identity")
+	})
+}
+
+// TestRunHookCallback_ClearMigratesAgentIdentity drives the full hook
+// callback for a post-/clear SessionStart(source=clear) and asserts the
+// agent's group identity migrated from the old conv-id to the new one —
+// the issue #192 fix, exercised through runHookCallback itself.
+func TestRunHookCallback_ClearMigratesAgentIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	const sessionID, oldConv, newConv = "clear-mig-sess", "conv-clear-old", "conv-clear-new"
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     sessionID,
+		ConvID: oldConv,
+		Status: StatusIdle,
+	}))
+	// The old conv is an agent: a group member (AddAgentGroupMember
+	// enrolls it).
+	gID, err := db.CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: oldConv}))
+
+	feedHook(t, sessionID, map[string]any{
+		"session_id":      newConv,
+		"hook_event_name": "SessionStart",
+		"source":          "clear",
+		"cwd":             dir,
+	})
+
+	// The session row now follows the /clear rotation.
+	got, err := LoadSessionState(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, newConv, got.ConvID, "session row should follow the /clear rotation")
+
+	// Group membership migrated old → new.
+	newGroups, err := db.ListGroupsForConv(newConv)
+	require.NoError(t, err)
+	require.Len(t, newGroups, 1, "new conv should be the group member")
+	assert.Equal(t, "alpha", newGroups[0].Name)
+	oldGroups, err := db.ListGroupsForConv(oldConv)
+	require.NoError(t, err)
+	assert.Empty(t, oldGroups, "old conv should no longer be a member")
+
+	// Old conv de-agented; succession edge recorded.
+	oldEnr, err := db.EnrollmentState(oldConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentNone, oldEnr, "old conv should drop off the agent roster")
+	succ, err := db.GetConvSuccessor(oldConv)
+	require.NoError(t, err)
+	assert.Equal(t, newConv, succ, "succession edge old→new should be recorded")
+}

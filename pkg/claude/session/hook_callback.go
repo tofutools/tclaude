@@ -17,6 +17,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
@@ -76,6 +77,128 @@ func sessionEndIsExit(reason string) bool {
 	return reason != "clear"
 }
 
+// needsIdentityMigration reports whether a conv-id rotation on an
+// env-keyed session is a /clear whose agent identity still has to be
+// migrated old → new.
+//
+// True when oldConv is a live agent, newConv is not already an agent of
+// its own, and no succession edge has been recorded for oldConv yet.
+// Those conditions hold for the post-/clear SessionStart AND for every
+// later hook until the migration succeeds — so a migration that fails
+// on the SessionStart hook (a transient SQLite error) is simply retried
+// on the next hook (db.MigrateAgentIdentity is atomic + idempotent: a
+// failed attempt records no succession edge, so the predicate stays
+// true; a committed one records the edge, so it flips false). The
+// predicate IS the retry condition — no extra bookkeeping needed.
+//
+// Why this tells a /clear apart from a /resume without keying on the
+// hook source: an env-keyed tclaude session's conv-id only ever rotates
+// mid-life via /clear. A resume is always a fresh `tclaude session`
+// with its own TCLAUDE_SESSION_ID, so its first hook records the
+// conv-id from scratch (oldConv == "" — not a rotation). The
+// newConv-not-already-an-agent guard is belt-and-braces against a
+// future in-session conversation switch landing on a conv that already
+// owns an identity.
+func needsIdentityMigration(oldConv, newConv string) bool {
+	oldEnr, err := db.EnrollmentState(oldConv)
+	if err != nil || oldEnr != db.EnrollmentActive {
+		return false
+	}
+	newEnr, err := db.EnrollmentState(newConv)
+	if err != nil || newEnr == db.EnrollmentActive {
+		return false
+	}
+	succ, err := db.GetConvSuccessor(oldConv)
+	if err != nil || succ != "" {
+		return false
+	}
+	return true
+}
+
+// migrateClearedIdentity migrates agent identity — group memberships,
+// ownerships, permission overrides, cron refs, the succession edge and
+// the display name — from a /clear'd conv-id onto the fresh one
+// (db.MigrateAgentIdentity), then restores the conversation title that
+// /clear wiped.
+//
+// Returns true when the migration committed (the caller may then record
+// the new conv-id on the session row), false when it failed — in which
+// case the caller leaves the session row on the old conv-id so the next
+// hook retries (see needsIdentityMigration). The migration is atomic,
+// so a failure strands nothing: identity stays wholly on oldConv.
+func migrateClearedIdentity(state *SessionState, newConv string) bool {
+	// Freshen the old conv's conv_index from its .jsonl before the
+	// migration carries the display name. An agent's /rename of itself
+	// lands as a customTitle turn in the .jsonl, and conv_index may not
+	// have been re-scanned since — without this the carried name (and
+	// so the /rename restore below) could miss a recent rename.
+	// Best-effort: a missing file / unindexable .jsonl is a no-op.
+	if state.Cwd != "" {
+		if projectDir := convops.GetClaudeProjectPath(state.Cwd); projectDir != "" {
+			convops.ScanAndUpsertFile(filepath.Join(projectDir, state.ConvID+".jsonl"))
+		}
+	}
+	mig, err := db.MigrateAgentIdentity(state.ConvID, newConv, "clear", "system:clear")
+	if err != nil {
+		slog.Error("clear-migrate: agent identity migration failed (will retry on next hook)",
+			"old_conv", state.ConvID, "new_conv", newConv, "error", err, "module", "hooks")
+		return false
+	}
+	slog.Info("clear-migrate: agent identity migrated across /clear",
+		"old_conv", state.ConvID, "new_conv", newConv,
+		"migrated", mig.Items, "module", "hooks")
+	// /clear wiped CC's conversation title. db.MigrateAgentIdentity
+	// already carried the name onto pending_name (so the dashboard shows
+	// it at once); inject /rename so the new conversation also regains a
+	// real customTitle turn — durable, visible in CC's own UI, and on
+	// every other surface.
+	restoreClearedTitle(state.TmuxSession, mig.CarriedName)
+	return true
+}
+
+// restoreClearedTitle injects `/rename <title>` into the agent's tmux
+// pane so a /clear'd conversation regains its name. Best-effort: an
+// empty tmux session, an empty / unsafe title, or a send-keys failure
+// just leaves the agent on the pending_name fallback that
+// db.MigrateAgentIdentity already set.
+//
+// Two send-keys calls (the text, then Enter) — the shape the
+// context-nudge path uses — so the keystrokes land as one typed line.
+// The keystrokes queue in the pty and CC runs them once it settles
+// after the /clear, the same mechanism auto-compact relies on.
+func restoreClearedTitle(tmuxSession, title string) {
+	if tmuxSession == "" || title == "" {
+		return
+	}
+	if !isSafeRenameTitle(title) {
+		slog.Warn("clear-migrate: carried title unsafe for /rename injection; relying on pending_name",
+			"title", title, "module", "hooks")
+		return
+	}
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/rename "+title).Run(); err != nil {
+		slog.Warn("clear-migrate: /rename injection failed; relying on pending_name",
+			"error", err, "module", "hooks")
+		return
+	}
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter").Run(); err != nil {
+		slog.Warn("clear-migrate: /rename submit failed; relying on pending_name",
+			"error", err, "module", "hooks")
+	}
+}
+
+// isSafeRenameTitle reports whether title is safe to inject into a tmux
+// pane as `/rename <title>`. Rejects control characters: a newline in a
+// send-keys payload would submit the line early and let the remainder
+// inject as a separate command (the send-keys injection-sink hazard).
+func isSafeRenameTitle(title string) bool {
+	for _, r := range title {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func runHookCallback() error {
 	// Read hook input from stdin
 	stdinData, err := io.ReadAll(os.Stdin)
@@ -116,6 +239,20 @@ func runHookCallback() error {
 		return fmt.Errorf("no input received on stdin")
 	}
 
+	return ApplyHook(input, envSessionID)
+}
+
+// ApplyHook applies a single parsed Claude Code hook event to session
+// state. It is the body of the hook callback split out from the
+// stdin/env/record-hooks IO in runHookCallback, so the hook logic can
+// be driven programmatically — by the flow-test simulator's /clear
+// behaviour, and by hook_callback_test.go — without poking os.Stdin or
+// the process environment.
+//
+// envSessionID is the TCLAUDE_SESSION_ID of the calling session ("" for
+// a session not launched by tclaude); it is the stable key that lets a
+// conv-id rotation (/clear, /resume) be tracked across the rotation.
+func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// Acquire a per-session exclusive lock to prevent concurrent hook callbacks
 	// from racing on the read-modify-write of session state.
 	sessionKey := envSessionID
@@ -144,7 +281,7 @@ func runHookCallback() error {
 	)
 
 	// Get or create session state
-	state, err := getOrCreateSessionState(input)
+	state, err := getOrCreateSessionState(input, envSessionID)
 	if err != nil || state == nil {
 		return err
 	}
@@ -357,21 +494,46 @@ func runHookCallback() error {
 		// to be invalidated by the compact). handleContextNudge's
 		// "compact_pending > 0 → skip" guard relies on
 		// handleAutoCompact running first to set the flag.
-		handleAutoCompact(input)
-		handleContextNudge(input)
+		handleAutoCompact(input, envSessionID)
+		handleContextNudge(input, envSessionID)
 	}
 
 	state.Updated = time.Now()
 
-	// Update ConvID from hook input (tracks conversation changes on resume)
+	// Update ConvID from hook input (tracks conversation changes). A
+	// /clear rotates the conv-id; needsIdentityMigration / migrateClearedIdentity
+	// handle moving the agent's identity across that rotation.
 	if input.ConvID != "" && state.ConvID != input.ConvID {
-		slog.Info("updating conversation ID",
-			"old_conv_id", state.ConvID,
-			"new_conv_id", input.ConvID,
-			"session_id", state.ID,
-			"module", "hooks",
-		)
-		state.ConvID = input.ConvID
+		if envSessionID != "" && state.ConvID != "" &&
+			needsIdentityMigration(state.ConvID, input.ConvID) {
+			// A /clear rotated the conv-id and the old conv is an agent
+			// whose identity has not moved yet. Migrate it BEFORE recording
+			// the new conv-id (the migration needs the old value). On a
+			// migration failure DO NOT advance state.ConvID: the migration
+			// is atomic so identity is still wholly on the old conv-id —
+			// keeping the session row there means needsIdentityMigration
+			// still fires on the next hook and the (idempotent) migration
+			// is retried, rather than the conv-id silently advancing to a
+			// conv whose identity never arrived (issue #192).
+			if migrateClearedIdentity(state, input.ConvID) {
+				slog.Info("updating conversation ID after /clear",
+					"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
+					"session_id", state.ID, "module", "hooks")
+				state.ConvID = input.ConvID
+			} else {
+				slog.Warn("clear-migrate: deferring conv-id advance until the migration succeeds",
+					"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
+					"session_id", state.ID, "module", "hooks")
+			}
+		} else {
+			slog.Info("updating conversation ID",
+				"old_conv_id", state.ConvID,
+				"new_conv_id", input.ConvID,
+				"session_id", state.ID,
+				"module", "hooks",
+			)
+			state.ConvID = input.ConvID
+		}
 	}
 
 	// Update PID if stale
@@ -492,10 +654,10 @@ func getConvTitle(convID, cwd string) string {
 	return convindex.GetConvTitleAndPrompt(convID, cwd)
 }
 
-// getOrCreateSessionState finds existing session or creates a new one
-func getOrCreateSessionState(input HookCallbackInput) (*SessionState, error) {
-	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")
-
+// getOrCreateSessionState finds existing session or creates a new one.
+// envSessionID is the caller's TCLAUDE_SESSION_ID ("" when the session
+// was not launched by tclaude).
+func getOrCreateSessionState(input HookCallbackInput, envSessionID string) (*SessionState, error) {
 	if envSessionID != "" {
 		return LoadSessionState(envSessionID)
 	}
@@ -571,8 +733,7 @@ func autoRegisterSessionFromHook(input HookCallbackInput) *SessionState {
 // handleAutoCompact checks if auto-compaction should be triggered on Stop.
 // Reads the config threshold and the session's stored context_pct,
 // then CAS-claims compact_pending and sends /compact via tmux keys.
-func handleAutoCompact(input HookCallbackInput) {
-	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
+func handleAutoCompact(input HookCallbackInput, sessionID string) {
 	if sessionID == "" {
 		return
 	}
@@ -687,8 +848,7 @@ func formatContextNudgeMessage(target int) string {
 //     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
 //   - compact_pending is already set (the agent is about to compact
 //     anyway, no point typing extra text into its pane)
-func handleContextNudge(input HookCallbackInput) {
-	sessionID := os.Getenv("TCLAUDE_SESSION_ID")
+func handleContextNudge(input HookCallbackInput, sessionID string) {
 	if sessionID == "" {
 		return
 	}
