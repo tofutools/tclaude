@@ -36,8 +36,15 @@ row old → new:
   (grant AND deny overrides), `agent_cron_jobs` (owner/target refs)
 - records the `agent_conv_succession` edge (powers `ResolveLatestConv`,
   so stale references to the old id route forward)
-- enrolls `newConv`, drops `oldConv`'s `agent_enrollment` row (no
-  offline ghost on the roster)
+- enrolls `newConv`, **retires** `oldConv`'s `agent_enrollment` row —
+  `retired_at` / `retired_by` / `retire_reason="superseded by <short8>
+  (<reason>)"` — so the old conv lands on the retired-agents tray and
+  stays reinstatable (originally we hard-deleted it as "no offline
+  ghost on the roster", but the human reversed that call: keeping the
+  row lets a future "knowledge ping the previous generation" feature
+  re-light it; the active-state read paths already filter on
+  `retired_at = ''` so the live-agent surfaces still hide it). Applies
+  to BOTH `/clear` AND reincarnate — the migration is shared.
 - carries the display name onto `newConv`'s `agent_enrollment.pending_name`
   (the rescan-immune fallback `agent.FreshTitle` consults), and
   returns it (`AgentIdentityMigration.CarriedName`) so the caller can
@@ -85,22 +92,40 @@ two layers:
    — what the dashboard's `agent.FreshTitle` shows the instant the
    migration commits.
 2. **A real `/rename`** injected into the agent's tmux pane by
-   `restoreClearedTitle` — two `send-keys` calls (text, then Enter,
-   matching the context-nudge pattern). The keystrokes queue in the
-   pty and CC runs them once it settles after the `/clear` (the same
-   mechanism auto-compact relies on for `/compact` from the Stop
-   hook). That writes a real `customTitle` turn into the new conv's
-   `.jsonl` — durable across rescans and visible in surfaces that
-   don't consult `pending_name` (CC's own UI, `tclaude conv ls`).
+   `restoreClearedTitle`, replicating agentd's
+   `injectTextAndSubmit` shape (`text → 500 ms gap → Enter → 500 ms
+   gap → second Enter`) so CC's bracketed-paste mode can't coalesce
+   the trailing Enter into a paste-newline. We can't import the
+   agentd helper directly from `session` (would cycle), and the
+   cold reviewer flagged the original two-back-to-back `send-keys`
+   as exactly the foot-gun reincarnate's handoff nudge originally
+   tripped on. The keystrokes queue in the pty and CC runs them
+   once it settles after the `/clear`, writing a real `customTitle`
+   turn into the new conv's `.jsonl` — durable across rescans and
+   visible in surfaces that don't consult `pending_name` (CC's own
+   UI, `tclaude conv ls`).
+
+A `waitClearInjectPaneReady` poll (mirroring reincarnate's
+`waitForConvAlive`) runs before the inject: it waits for the tmux
+pane to be reported alive, then sleeps `clearInjectReadyDelay`
+(default 1 s, var-mutable for tests) so CC's TUI has settled. A
+`/clear` keeps the same process and pane alive, so the poll usually
+returns immediately — belt-and-suspenders for the rare race where
+the pane is killed mid-`/clear`.
 
 The carried name source is the old conv's custom title, else its
-spawn-time `pending_name`. The hook also runs a best-effort
-`.jsonl` rescan of the old conv before the migration, so a `/rename`
-the agent did itself just before the `/clear` (one that hadn't
-been re-indexed yet) still surfaces. The injected title is
-charset-gated (control chars rejected — a newline in a send-keys
-payload would submit the line early and let the remainder inject as
-a separate command).
+spawn-time `pending_name`. The hook also runs a best-effort `.jsonl`
+rescan of the old conv before the migration, so a `/rename` the
+agent did itself just before the `/clear` (one that hadn't been
+re-indexed yet) still surfaces. The injected title is charset-gated
+by `isValidRenameTitle` — the same hard-security rename gate the
+daemon-side `runRenameOrchestration` uses (`[A-Za-z0-9_\-\[\]{}() ]`,
+single spaces only, 64-char cap) — kept as a session-side mirror
+because the hook callback runs in a separate subprocess that can't
+import the daemon package without cycling. An originally weaker
+local check (`isSafeRenameTitle`) only rejected control chars,
+which would have let through quotes / slashes / unicode / unbounded
+length; the cold review caught this before merge.
 
 ### Reincarnate refactor
 
@@ -117,15 +142,22 @@ match the `system:reincarnate[:by=…]` audit convention. The response
 - `pkg/claude/agentd/clear_conv_rotation_flow_test.go` — flow tests:
   identity migration to the new conv-id (asserting membership /
   ownership / perms / online / carried title / `pending_name` set /
-  `/rename` injected / succession edge recorded), resume of the
-  pre-`/clear` id targeting the new conv, a message to the pre-`/clear`
-  id reaching the agent, and a plain conversation NOT being promoted
-  to an agent.
+  `/rename` injected / succession edge recorded / old conv retired),
+  resume of the pre-`/clear` id targeting the new conv, a message to
+  the pre-`/clear` id reaching the agent, a plain conversation NOT
+  being promoted to an agent, AND a migration-failure retry scenario
+  driven by `session.SetMigrateAgentIdentityForTest` (a counter-keyed
+  fault injector that fails the first attempt and falls through to
+  the real migration on the next hook — verifies that the session
+  row holds back, identity stays on the old conv, no edge yet, then
+  the next hook converges).
 - `pkg/claude/session/hook_callback_test.go` — `TestNeedsIdentityMigration`
   (the trigger / retry predicate, including the "succession edge
-  recorded → no re-fire" case that backs the failure-retry path) and
-  `TestRunHookCallback_ClearMigratesAgentIdentity` (the full callback
-  path).
+  recorded → no re-fire" case that backs the failure-retry path),
+  `TestRunHookCallback_ClearMigratesAgentIdentity` (the full
+  callback path), and `TestIsValidRenameTitle` (the session-side
+  mirror of the rename charset gate — newlines, slashes, quotes,
+  unicode, length cap).
 - `pkg/testharness/` — `CCSim.clear()` models `/clear`: a conv-id
   rotation plus the real `SessionEnd(clear)` / `SessionStart(clear)`
   hook sequence driven through `session.ApplyHook`. `Flow.Clear(label)`

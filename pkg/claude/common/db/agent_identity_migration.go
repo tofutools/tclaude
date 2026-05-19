@@ -58,9 +58,10 @@ func resolveCarriedName(oldConv string) string {
 // (agent_conv_succession: old → new, so stale references resolve
 // forward via db.ResolveLatestConv), enrolls newConv as an agent,
 // carries the agent's display name onto newConv
-// (agent_enrollment.pending_name), and drops oldConv's enrollment row
+// (agent_enrollment.pending_name), and RETIRES oldConv's enrollment
 // (the old conv is superseded — its identity now lives on newConv;
-// without the drop it lingers on the agent roster as an offline ghost).
+// retiring instead of deleting lands it on the retired-agents roster
+// so a human can reinstate it later for knowledge pings).
 //
 // This is the shared core of the two conv-id rotations tclaude knows:
 //
@@ -114,18 +115,21 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	nowNano := time.Now().Format(time.RFC3339Nano)
-	nowSec := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now()
+	nowNano := now.Format(time.RFC3339Nano)
+	nowSec := now.UTC().Format(time.RFC3339)
 
 	// --- rekey conv-id-keyed identity rows old → new ---
 	//
 	// `UPDATE OR REPLACE` so a (theoretical) pre-existing newConv row —
 	// newConv is a fresh conv-id in practice, so this never triggers —
 	// is resolved in favour of the migrated identity rather than
-	// aborting the whole transaction on the unique constraint.
-	//
-	// Memberships rekey pure (conv_id only) — joined_at / role / descr
-	// ride along untouched. Permission + ownership rows additionally
+	// aborting the whole transaction on the unique constraint. On the
+	// source side, joined_at / role / descr from oldConv's row carry
+	// onto newConv untouched; if a collision-resolved survivor exists
+	// (newConv had pre-existing rows), those columns reflect that
+	// survivor, not the source — fine in practice because newConv is
+	// always fresh here. Permission + ownership rows additionally
 	// re-stamp granted_by/granted_at, matching the audit convention the
 	// reincarnate / clone paths already use for daemon-performed grants.
 	memRes, err := tx.Exec(
@@ -207,11 +211,27 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 		}
 	}
 
-	// --- drop the superseded old conv's enrollment ---
-	// Its identity has moved to newConv; leaving the row makes oldConv
-	// linger on the agent roster as an offline ghost.
-	if _, err := tx.Exec(`DELETE FROM agent_enrollment WHERE conv_id = ?`, oldConv); err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: drop old enrollment: %w", err)
+	// --- retire the superseded old conv's enrollment ---
+	// Its identity has moved to newConv. We RETIRE (not delete) so the
+	// old conv lands on the retired-agents roster and stays
+	// reinstatable — the human can revisit the pre-rotation
+	// conversation later without resurrecting it as an active agent.
+	// Active-state read paths use `retired_at = ''` as the filter, so
+	// retiring is enough to drop the conv off live surfaces; the
+	// `WHERE retired_at = ''` guard makes the UPDATE idempotent (a
+	// re-run never overwrites a prior retire's audit fields). The
+	// retire_reason names the successor's short8 + the path tag so
+	// the chain is scannable at a glance in the Retired tray.
+	short8 := newConv
+	if len(short8) > 8 {
+		short8 = short8[:8]
+	}
+	retireReason := fmt.Sprintf("superseded by %s (%s)", short8, reason)
+	if _, err := tx.Exec(`UPDATE agent_enrollment
+		SET retired_at = ?, retired_by = ?, retire_reason = ?
+		WHERE conv_id = ? AND retired_at = ''`,
+		nowNano, granter, retireReason, oldConv); err != nil {
+		return out, fmt.Errorf("MigrateAgentIdentity: retire old enrollment: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

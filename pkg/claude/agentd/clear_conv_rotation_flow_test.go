@@ -2,7 +2,9 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -121,12 +124,15 @@ func TestClearRotation_MigratesAgentIdentityToNewConvID(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ownOld, "old conv-id must not still own the group")
 
-	// The old conv-id is de-agented — its enrollment row is dropped, so
-	// it no longer shows on any agent surface as an offline ghost.
+	// The old conv-id is retired (not deleted) — its enrollment row
+	// stays so a human can `tclaude agent promote` it later to
+	// reinstate it as an active agent for knowledge pings. The
+	// `active`-state read paths use `retired_at = ''` as their filter,
+	// so the retired old conv still drops off live agent surfaces.
 	oldEnr, err := db.EnrollmentState(c.OldConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, oldEnr,
-		"old conv-id should drop off the agent roster (no offline ghost)")
+	assert.Equal(t, db.EnrollmentRetired, oldEnr,
+		"old conv-id should retire so it stays reinstatable for knowledge pings")
 	newEnr, err := db.EnrollmentState(c.NewConv)
 	require.NoError(t, err)
 	assert.Equal(t, db.EnrollmentActive, newEnr,
@@ -150,7 +156,7 @@ func TestClearRotation_MigratesAgentIdentityToNewConvID(t *testing.T) {
 	// real customTitle — what makes the name durable across rescans and
 	// visible in surfaces that don't consult pending_name (CC's own UI,
 	// `tclaude conv ls`).
-	f.AssertSentContains(clearAgentTmux, "/rename "+clearAgentTitle, time.Second)
+	f.AssertSentContains(clearAgentTmux+":0.0", "/rename "+clearAgentTitle, 2*time.Second)
 }
 
 // Scenario: after a /clear, the agent is taken offline and a resume is
@@ -247,6 +253,110 @@ func TestClearRotation_PlainConversationNotPromotedToAgent(t *testing.T) {
 	sess, err := db.FindSessionByConvID(c.NewConv)
 	require.NoError(t, err)
 	require.NotNil(t, sess, "session row should follow the conv-id rotation")
+}
+
+// Scenario: a transient migration failure on the post-/clear
+// SessionStart hook (a synthetic SQLite hiccup) must NOT advance the
+// session row's conv-id, and the next hook with the same rotation
+// visible must converge — migrate identity, record the succession
+// edge, and advance the session row.
+//
+// This is the retry condition that lives on needsIdentityMigration's
+// (true, nil) predicate: as long as oldConv is still an active agent
+// and no succession edge has been recorded, the predicate keeps
+// firing across hooks. db.MigrateAgentIdentity is atomic, so a failed
+// attempt strands nothing — the next attempt is a clean retry. The
+// fault is injected via session.SetMigrateAgentIdentityForTest (a
+// counter-keyed wrapper that returns an error once, then falls
+// through to the real migration), which is the cleanest seam for a
+// "one-shot transient SQLite error" model.
+func TestClearRotation_RetriesIdentityMigrationAfterTransientFailure(t *testing.T) {
+	f := newFlow(t)
+	g := setupClearedAgent(t, f)
+
+	var calls int32
+	t.Cleanup(session.SetMigrateAgentIdentityForTest(
+		func(oldConv, newConv, reason, granter string) (db.AgentIdentityMigration, error) {
+			if atomic.AddInt32(&calls, 1) == 1 {
+				return db.AgentIdentityMigration{}, errors.New("synthetic SQLite hiccup")
+			}
+			return db.MigrateAgentIdentity(oldConv, newConv, reason, granter)
+		}))
+
+	c := f.Clear(clearAgentLabel)
+
+	// After the failing migration: the session row's ConvID must
+	// remain on oldConv so the next hook re-evaluates the predicate.
+	// The conv-id rotation IS visible to CC (its .jsonl moved) — the
+	// daemon's session row is what we deliberately hold back.
+	state, err := session.LoadSessionState(clearAgentLabel)
+	require.NoError(t, err)
+	assert.Equal(t, c.OldConv, state.ConvID,
+		"failed migration must leave the session row on the old conv-id so the predicate re-fires")
+
+	// No succession edge yet — the migration transaction rolled back.
+	succ, err := db.GetConvSuccessor(c.OldConv)
+	require.NoError(t, err)
+	assert.Empty(t, succ, "no succession edge until the migration commits")
+
+	// Old conv still active — atomic migration means failure strands
+	// nothing; identity is still wholly on the old conv-id.
+	oldEnr, err := db.EnrollmentState(c.OldConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, oldEnr,
+		"old conv must remain an active agent until the migration commits")
+
+	// Identity rows have NOT moved yet — the old conv still owns the
+	// group, holds the permissions, etc.
+	oldPerms, err := db.ListAgentPermissionOverridesForConv(c.OldConv)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"human.notify": db.PermEffectGrant,
+		"agent.spawn":  db.PermEffectDeny,
+	}, oldPerms, "permission overrides must remain on the old conv-id after a failed migration")
+
+	// Drive the next hook: a UserPromptSubmit on the new conv-id, as
+	// CC would fire on the user's next turn. needsIdentityMigration
+	// sees the same (oldConv active, no edge) state and re-fires; the
+	// counter-keyed migrator now returns the real one and commits.
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		ConvID:        c.NewConv,
+		HookEventName: "UserPromptSubmit",
+		Cwd:           clearAgentCwd,
+	}, clearAgentLabel))
+
+	// The retry converged: session row advanced to the new conv-id.
+	state2, err := session.LoadSessionState(clearAgentLabel)
+	require.NoError(t, err)
+	assert.Equal(t, c.NewConv, state2.ConvID,
+		"the next hook should converge: session row advances to the new conv-id")
+
+	// Succession edge now recorded — the predicate flips false from
+	// this point so further hooks won't re-migrate.
+	succ2, err := db.GetConvSuccessor(c.OldConv)
+	require.NoError(t, err)
+	assert.Equal(t, c.NewConv, succ2,
+		"the second-attempt migration must record the succession edge")
+
+	// Identity facets resolve under the new conv-id, on the real
+	// surfaces (group-members handler) — the same property the
+	// happy-path test asserts.
+	members := f.ListGroupMembers(g.Name)
+	require.NotNil(t, findMember(members, c.NewConv),
+		"membership must arrive on the new conv-id after retry; got %+v", members)
+	assert.Nil(t, findMember(members, c.OldConv),
+		"old conv-id must no longer be a member after retry")
+
+	// Old conv retired (not deleted) — same outcome as the happy
+	// path, since MigrateAgentIdentity's transaction is the same.
+	oldEnr2, err := db.EnrollmentState(c.OldConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, oldEnr2,
+		"after retry, old conv-id should retire so it stays reinstatable")
+
+	// We expect exactly two migration attempts: one failure, one success.
+	assert.Equal(t, int32(2), atomic.LoadInt32(&calls),
+		"migration should be attempted twice: one transient failure, one retry")
 }
 
 func mustEnrollmentState(t *testing.T, conv string) string {

@@ -430,19 +430,12 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// listing surfaces a way to detect the archived state. Idempotent:
 	// the rename skips when prevTitle is empty or already ends in
 	// `-x`; the column stamp is a single UPDATE.
-	if err := db.SetConvIndexArchived(target, true); err != nil {
-		slog.Warn("reincarnate: stamp archived_at failed",
-			"old", target, "error", err)
-	}
-	// The old conv is superseded: its identity has migrated onto the
-	// successor (enrolled by RecordConvSuccession above). Drop its
-	// enrollment row so it doesn't linger on the agent roster as an
-	// offline ghost — the successor IS this agent now. The succession
-	// chain still resolves stale references forward.
-	if _, err := db.DeleteEnrollment(target); err != nil {
-		slog.Warn("reincarnate: delete old enrollment failed",
-			"old", target, "error", err)
-	}
+	// Visibility for the predecessor comes from the retired-agents tray
+	// now (db.MigrateAgentIdentity retired the enrollment in-transaction
+	// with the rekey + succession edge), not from conv_index.archived_at
+	// — keeping both would be contradictory (archived hides, retired
+	// shows). The Retired tray is the durable surface the human uses to
+	// reinstate the pre-rotation conv later for knowledge pings.
 	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
 		_ = injectSlashCommand(target, "/rename "+prevTitle+"-x", "")
 	}

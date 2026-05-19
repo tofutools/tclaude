@@ -10,6 +10,69 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+// TestIsValidRenameTitle pins the session-side mirror of agentd's
+// rename-title gate. The /clear title-restore injection in
+// restoreClearedTitle types `/rename <carried-name>` into a tmux pane
+// via send-keys; the carried name comes from
+// conv_index.custom_title (verbatim from the .jsonl) or
+// agent_enrollment.pending_name (stored even when invalid), neither
+// pre-checked by the strict gate. This unit test locks down the
+// charset rules for the cases that matter at this seam — newlines,
+// slashes, control chars, length cap, double-spaces, unicode — so a
+// future relaxation can't reopen the send-keys injection sink. The
+// agentd-side TestIsValidRenameTitle is the authoritative spec; this
+// list must stay aligned.
+func TestIsValidRenameTitle(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		// --- accepted ---
+		{"plain alphanumeric", "abc123", true},
+		{"hyphen", "code-reviewer", true},
+		{"underscore", "code_reviewer", true},
+		{"single space", "code reviewer", true},
+		{"brackets", "[reviewer]", true},
+		{"braces", "{reviewer}", true},
+		{"parens", "(reviewer)", true},
+		{"max length 64", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789AB", true},
+
+		// --- rejected: empty / oversize ---
+		{"empty", "", false},
+		{"too long 65", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789ABCD", false},
+
+		// --- rejected: keystroke-injection vectors (the load-bearing cases) ---
+		{"newline", "code\nreviewer", false},
+		{"carriage return", "code\rreviewer", false},
+		{"tab", "code\treviewer", false},
+		{"NUL", "code\x00reviewer", false},
+		{"DEL", "code\x7freviewer", false},
+		{"slash command", "foo /bash", false},
+		{"double quote", "code\"reviewer", false},
+		{"single quote", "code'reviewer", false},
+		{"backtick", "code`reviewer", false},
+		{"semicolon", "code;reviewer", false},
+		{"pipe", "code|reviewer", false},
+		{"dollar", "code$reviewer", false},
+		{"backslash", "code\\reviewer", false},
+		{"angle brackets", "code<reviewer>", false},
+
+		// --- rejected: whitespace abuse ---
+		{"double space", "code  reviewer", false},
+		{"NBSP", "code reviewer", false},
+
+		// --- rejected: unicode / non-ASCII ---
+		{"emoji", "reviewer\U0001f600", false},
+		{"latin extended", "café", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, isValidRenameTitle(c.in), "isValidRenameTitle(%q)", c.in)
+		})
+	}
+}
+
 // sessionEndIsExit decides whether a SessionEnd hook means the process
 // is going away. Only an exact "clear" (the /clear command, which keeps
 // the process alive) is a non-exit; everything else — including an
@@ -393,10 +456,12 @@ func TestRunHookCallback_ClearMigratesAgentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, oldGroups, "old conv should no longer be a member")
 
-	// Old conv de-agented; succession edge recorded.
+	// Old conv retired; succession edge recorded. We retire (not
+	// delete) the old enrollment so a human can reinstate the
+	// pre-rotation agent later for knowledge pings.
 	oldEnr, err := db.EnrollmentState(oldConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, oldEnr, "old conv should drop off the agent roster")
+	assert.Equal(t, db.EnrollmentRetired, oldEnr, "old conv should retire (not vanish) so it can be reinstated for knowledge pings")
 	succ, err := db.GetConvSuccessor(oldConv)
 	require.NoError(t, err)
 	assert.Equal(t, newConv, succ, "succession edge old→new should be recorded")

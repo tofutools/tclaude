@@ -133,11 +133,20 @@ func needsIdentityMigration(oldConv, newConv string) (bool, error) {
 	return true, nil
 }
 
+// migrateAgentIdentity is the indirection seam test code uses to inject
+// a transient migration failure. Production code is the direct
+// db.MigrateAgentIdentity call; tests swap it via
+// SetMigrateAgentIdentityForTest (testhooks_test.go) to assert the retry
+// path described on needsIdentityMigration above.
+var migrateAgentIdentity = db.MigrateAgentIdentity
+
 // migrateClearedIdentity migrates agent identity — group memberships,
 // ownerships, permission overrides, cron refs, the succession edge and
 // the display name — from a /clear'd conv-id onto the fresh one
-// (db.MigrateAgentIdentity), then restores the conversation title that
-// /clear wiped.
+// (db.MigrateAgentIdentity, which also retires the old enrollment so
+// it lands on the retired-agents roster, reactivatable later for
+// knowledge pings), then restores the conversation title that /clear
+// wiped.
 //
 // Returns true when the migration committed (the caller may then record
 // the new conv-id on the session row), false when it failed — in which
@@ -156,7 +165,7 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 			convops.ScanAndUpsertFile(filepath.Join(projectDir, state.ConvID+".jsonl"))
 		}
 	}
-	mig, err := db.MigrateAgentIdentity(state.ConvID, newConv, "clear", "system:clear")
+	mig, err := migrateAgentIdentity(state.ConvID, newConv, "clear", "system:clear")
 	if err != nil {
 		slog.Error("clear-migrate: agent identity migration failed (will retry on next hook)",
 			"old_conv", state.ConvID, "new_conv", newConv, "error", err, "module", "hooks")
@@ -174,43 +183,126 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 	return true
 }
 
+// clearInjectAliveTimeout caps how long restoreClearedTitle polls for
+// the agent's tmux pane to be alive before giving up on the /rename
+// injection. The pane was alive a moment ago (CC just fired this hook
+// from within it), so the poll usually returns immediately — the
+// timeout matters only in pathological cases (pane killed during
+// /clear). Declared `var` so flow tests can shrink via
+// SetClearInjectTimingsForTest.
+var clearInjectAliveTimeout = 5 * time.Second
+
+// clearInjectReadyDelay is how long we sleep after the pane is alive
+// before injecting any keys. CC's input box may need a moment to
+// settle after a /clear redrew the screen; without this, keystrokes
+// can land mid-render. Same `var` rationale as the timeout above —
+// flow tests shrink it.
+var clearInjectReadyDelay = 1 * time.Second
+
 // restoreClearedTitle injects `/rename <title>` into the agent's tmux
 // pane so a /clear'd conversation regains its name. Best-effort: an
-// empty tmux session, an empty / unsafe title, or a send-keys failure
-// just leaves the agent on the pending_name fallback that
+// empty tmux session, an empty title, a title that fails the strict
+// rename charset gate, a dead pane, or a send-keys failure all just
+// fall through to the pending_name dashboard fallback that
 // db.MigrateAgentIdentity already set.
 //
-// Two send-keys calls (the text, then Enter) — the shape the
-// context-nudge path uses — so the keystrokes land as one typed line.
-// The keystrokes queue in the pty and CC runs them once it settles
-// after the /clear, the same mechanism auto-compact relies on.
+// Replicates injectTextAndSubmit's shape from
+// pkg/claude/agentd/handlers.go (text → 500 ms gap → Enter → 500 ms
+// gap → Enter) so CC's bracketed-paste mode can't coalesce the
+// trailing Enter into a paste-newline — the foot-gun reincarnate's
+// handoff nudge originally tripped on. We can't import the agentd
+// helper directly from session (would cycle), and the cold reviewer
+// explicitly asked us to replicate the shape rather than reinvent.
+//
+// Charset gate is isValidRenameTitle — the strict gate documented at
+// pkg/claude/agentd/handlers.go's runRenameOrchestration as "a hard
+// security gate against keystroke injection ... not bypassable". The
+// carried name comes from conv_index.custom_title (parsed verbatim
+// from .jsonl files) or pending_name (stored even when invalid by
+// lifecycle.go) — neither is pre-checked by the strict gate, so the
+// gate runs here.
 func restoreClearedTitle(tmuxSession, title string) {
 	if tmuxSession == "" || title == "" {
 		return
 	}
-	if !isSafeRenameTitle(title) {
-		slog.Warn("clear-migrate: carried title unsafe for /rename injection; relying on pending_name",
+	if !isValidRenameTitle(title) {
+		slog.Warn("clear-migrate: carried title rejected by rename charset gate; relying on pending_name",
 			"title", title, "module", "hooks")
 		return
 	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/rename "+title).Run(); err != nil {
+	// Wait until the pane is reported alive, then sleep readyDelay so
+	// CC's TUI has settled after the /clear. Mirrors reincarnate's
+	// waitForConvAlive pattern. Polling is belt-and-suspenders: a
+	// /clear keeps the same process and pane alive, so this typically
+	// returns immediately.
+	if !waitClearInjectPaneReady(tmuxSession) {
+		slog.Warn("clear-migrate: tmux pane never became ready for /rename injection; relying on pending_name",
+			"tmux", tmuxSession, "module", "hooks")
+		return
+	}
+	target := tmuxSession + ":0.0"
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, "/rename "+title).Run(); err != nil {
 		slog.Warn("clear-migrate: /rename injection failed; relying on pending_name",
 			"error", err, "module", "hooks")
 		return
 	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter").Run(); err != nil {
+	time.Sleep(500 * time.Millisecond)
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
 		slog.Warn("clear-migrate: /rename submit failed; relying on pending_name",
 			"error", err, "module", "hooks")
+		return
 	}
+	// Belt-and-suspenders second Enter (no-op if the first already
+	// submitted) — same pattern as agentd.injectTextAndSubmit. The 500
+	// ms gap before it keeps the second Enter from being coalesced
+	// into the same bracketed-paste window as the text.
+	time.Sleep(500 * time.Millisecond)
+	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 }
 
-// isSafeRenameTitle reports whether title is safe to inject into a tmux
-// pane as `/rename <title>`. Rejects control characters: a newline in a
-// send-keys payload would submit the line early and let the remainder
-// inject as a separate command (the send-keys injection-sink hazard).
-func isSafeRenameTitle(title string) bool {
-	for _, r := range title {
-		if r < 0x20 || r == 0x7f {
+// waitClearInjectPaneReady polls IsTmuxSessionAlive on tmuxSession
+// until it reports alive or the alive-timeout elapses, then sleeps
+// the ready-delay so CC's TUI settles. Returns true on a settled
+// pane, false on timeout.
+func waitClearInjectPaneReady(tmuxSession string) bool {
+	deadline := time.Now().Add(clearInjectAliveTimeout)
+	for time.Now().Before(deadline) {
+		if IsTmuxSessionAlive(tmuxSession) {
+			time.Sleep(clearInjectReadyDelay)
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// isValidRenameTitle mirrors the daemon-side gate in
+// pkg/claude/agentd/handlers.go. Kept in sync deliberately: agentd is
+// the authoritative gate for cross-agent renames, but the /clear
+// title-restore injection happens from inside the hook callback (a
+// separate subprocess that can't import the daemon package without
+// cycling), and we want the SAME strict charset to govern keystrokes
+// before send-keys hits the pty — anything else would re-open the
+// injection sink the daemon path closed. The agentd unit test
+// TestIsValidRenameTitle is the authoritative spec; this mirror must
+// stay aligned.
+func isValidRenameTitle(t string) bool {
+	if t == "" || len(t) > 64 {
+		return false
+	}
+	if strings.Contains(t, "  ") {
+		return false
+	}
+	for _, r := range t {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		case r == '[' || r == ']' || r == '{' || r == '}':
+		case r == '(' || r == ')':
+		case r == ' ':
+		default:
 			return false
 		}
 	}
