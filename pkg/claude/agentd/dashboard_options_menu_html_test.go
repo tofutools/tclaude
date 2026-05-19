@@ -65,11 +65,15 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	// Buttons that moved into a menu must still be rendered — relocated
 	// in the DOM, not removed; their data-act is unchanged so the
 	// existing dispatcher still handles them.
+	// grant-owner / revoke-owner are the two arms of the owner-toggle
+	// ternary — only one renders per row at runtime, but both button
+	// templates are literals in the embedded source.
 	for _, act := range []string{
 		"add-member", "cron-new", "message-new", "rename-group",
 		"export-group", "cleanup-group", "window-modal-group",
 		"delete-group", "term", "clone", "reincarnate", "edit-member",
-		"perm-edit", "sudo-grant", "remove-member", "delete-agent",
+		"grant-owner", "revoke-owner", "perm-edit", "sudo-grant",
+		"remove-member", "delete-agent",
 	} {
 		must(`data-act="`+act+`"`, act+" still rendered (moved into a menu)")
 	}
