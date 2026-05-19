@@ -27,6 +27,11 @@ online-only window pair. Moved into the ⚙ menu: `term`, `clone`,
 `delete-agent` (ungrouped). The cog is present on every agent row,
 online and offline — an offline row shows just the cog.
 
+The whole per-agent action cluster (focus/hide + ⚙) also moved from
+the far-right column to the **2nd column**, right after the status
+dot, so the controls sit by the agent's name rather than off the far
+right of a wide table.
+
 The virtual Conversations / Retired groups keep their single-button
 rows (`promote` / `reinstate`) as-is; virtual groups have no
 `.group-actions`, so the group cog applies only to real groups. The
@@ -77,8 +82,11 @@ buttons' DOM position moves.
   the menu's `termButton`; new `actionCog`; `memberActions` /
   `ungroupedMemberActions` rebuilt around the cog. `actionCog` exported.
 - `pkg/claude/agentd/dashboard/js/render.js` — new `groupActionsHTML(g,
-  members)` builds the group header cluster (4 top-level buttons + cog
-  menu); `renderGroups` calls it.
+  members)` builds the group header cluster (3 top-level buttons + cog
+  menu); `renderGroups` calls it. `memberRowHTML` moves the action
+  `<td>` to the 2nd column.
+- `pkg/claude/agentd/dashboard/js/sort.js` — `MEMBER_COLS` moves the
+  label-less action header to index 1 to match the row layout.
 - `pkg/claude/agentd/dashboard/js/row-actions.js` — `closeAllActionMenus`;
   menu-dismissal logic at the top of `bindRowActions`; `row-menu` /
   `group-menu` toggle cases.
