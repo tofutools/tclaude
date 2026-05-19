@@ -111,17 +111,37 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, onSave 
   input.addEventListener('blur', revert);
 }
 
+// closeAllActionMenus collapses every open ⚙ options menu. Called on
+// any non-cog click — outside-click dismissal and menu-item dismissal
+// alike — and by the cog toggle itself, so at most one menu is ever
+// open. While a menu is open refreshSuspended() pauses the 5s poll (it
+// sees .action-menu.open); dropping the .open class here is therefore
+// also what releases that suspension.
+function closeAllActionMenus() {
+  $$('.action-menu.open').forEach((m) => m.classList.remove('open'));
+}
+
 // bindRowActions delegates clicks on row-action buttons to the
 // appropriate /api/groups/... call. After a successful mutation we
 // re-fetch the snapshot so the badge / button state updates.
 function bindRowActions() {
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-act]');
+    const act = btn ? btn.getAttribute('data-act') : null;
+    // ⚙ options-menu dismissal. The cog toggles its own menu (the
+    // row-menu / group-menu cases below) — leave open menus alone for
+    // it. Otherwise: a click on a menu ITEM closes the menu it came
+    // from, then falls through to dispatch the item (btn stays valid —
+    // only the .open class is dropped); a click anywhere OUTSIDE every
+    // menu closes them too (click-away). A click on a menu's own
+    // padding — inside a menu but not on an item — leaves it open.
+    const onCog = act === 'row-menu' || act === 'group-menu';
+    const inMenu = !!e.target.closest('.action-menu');
+    if (!onCog && (btn || !inMenu)) closeAllActionMenus();
     if (!btn) return;
     // Buttons may live inside <summary>, where the default click
     // action is to toggle the details. Stop that.
     e.preventDefault();
-    const act = btn.getAttribute('data-act');
     const group = btn.getAttribute('data-group');
     const conv = btn.getAttribute('data-conv');
     const label = btn.getAttribute('data-label') || conv;
@@ -1005,6 +1025,23 @@ function bindRowActions() {
           const res = await r.json().catch(() => ({}));
           toast(`cleared ${res.deleted || 0} read message(s)`);
           refresh();
+          return;
+        }
+        case 'row-menu':
+        case 'group-menu': {
+          // The ⚙ cog: toggle this row's / group's options menu. The
+          // menu is the cog's sibling inside .row-actions /
+          // .group-actions; for a group cog the e.preventDefault()
+          // above already stops the click from toggling the <details>.
+          // closeAllActionMenus first so opening one always closes any
+          // other; opening a menu suspends the auto-refresh
+          // (refreshSuspended sees .action-menu.open) so a 5s poll
+          // can't re-render it away mid-use.
+          const menu = btn.parentElement
+            && btn.parentElement.querySelector('.action-menu');
+          const willOpen = !!menu && !menu.classList.contains('open');
+          closeAllActionMenus();
+          if (willOpen) menu.classList.add('open');
           return;
         }
         default:

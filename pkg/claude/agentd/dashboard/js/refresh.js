@@ -50,6 +50,10 @@ function refreshSuspended() {
   if (dndDragActive) return true;
   // Any modal overlay is open.
   if (document.querySelector('.modal-overlay.show')) return true;
+  // A ⚙ options menu is open — re-rendering the Groups tab would
+  // rebuild the row/group and collapse the menu out from under the
+  // pointer. Closing the menu drops the .open class, lifting this.
+  if (document.querySelector('.action-menu.open')) return true;
   return false;
 }
 // sudoGrantBlocklist: slugs the sudo-grant modal refuses to offer.

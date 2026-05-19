@@ -88,6 +88,10 @@ function applySort(tableKey, rows, accessors) {
 // Column specs + value accessors for each sortable table. The `col`
 // strings are opaque keys shared between the header (sortHead) and
 // the sorter (applySort); they need not match the data field name.
+// MEMBER_COLS [0] is the combined controls column — the status dot
+// plus the per-row action cluster (focus/hide + ⚙ cog) share one
+// label-less, non-sortable leading cell, so all of an agent's
+// controls sit together at the left of the row.
 const MEMBER_COLS = [
   { label: '' },
   { label: 'ID', col: 'id' },
@@ -98,7 +102,6 @@ const MEMBER_COLS = [
   { label: 'Branch', col: 'branch' },
   { label: 'Role', col: 'role' },
   { label: 'Description', col: 'descr' },
-  { label: '' },
 ];
 const MEMBER_ACCESSORS = {
   id:     m => m.conv_id,
