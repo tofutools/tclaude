@@ -38,8 +38,7 @@ function memberRowHTML(m, ctx) {
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td>${agentStatusDot(m)}</td>
-                <td>${actions}</td>
+                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div></td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
                 <td>
                   <div class="rowname"><span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${esc(m.title || '(unnamed)')}</span>${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>

@@ -183,11 +183,11 @@ function roleCell(m) {
 }
 
 // memberActions renders the per-row action cell for a real group
-// member. focus + hide stay at the TOP LEVEL — the online-only window
-// pair — and everything heavier (term, clone, reincarnate, edit, the
-// owner toggle, sudo, permissions, cron, remove-from-group) is
-// collected behind the ⚙ options cog so the row stays uncluttered.
-// The cog is always present, whether the agent is online or offline.
+// member. focus + hide stay at the TOP LEVEL — the window pair,
+// disabled when the agent is offline — and everything heavier (term,
+// clone, reincarnate, edit, the owner toggle, sudo, permissions, cron,
+// remove-from-group) is collected behind the ⚙ options cog so the row
+// stays uncluttered. The cog is always present and enabled.
 function memberActions(g, m) {
   const menu = termButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
@@ -243,20 +243,36 @@ function termButton(m) {
   return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
 }
 
-// focusHideButtons renders the online-only window pair kept at the TOP
-// LEVEL of a member row: focus raises the agent's terminal window,
-// hide detaches it (the per-agent twin of the group "windows" bulk
-// unfocus). An offline agent has no window, so it renders nothing —
-// that row then shows just the ⚙ cog. Powering the agent up/down has
-// no button here: the far-left status dot (agentStatusDot) is the
-// power control. term and every heavier action live in the per-row ⚙
-// options menu (see actionCog). Used by both real-group member rows
-// and the virtual Ungrouped group's rows so the surface is identical.
+// Eye glyphs for the focus / hide window buttons — an open eye for
+// "show this window" (focus) and an eye with a slash for "hide it".
+// Inline Feather-style SVG (MIT line icons): monochrome, and they
+// inherit the button's text colour via stroke="currentColor", so they
+// dim and brighten with the rest of the row-action cluster. aria-hidden
+// because the host <button> carries the accessible name (aria-label).
+const EYE_OPEN_SVG = '<svg class="eye-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_SVG = '<svg class="eye-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+// focusHideButtons renders the window pair kept at the TOP LEVEL of a
+// member row: focus raises the agent's terminal window, hide detaches
+// it (the per-agent twin of the group "windows" bulk unfocus). They
+// render as eye icons — open eye = show, slashed eye = hide — rather
+// than text labels. An offline agent has no window, so the pair
+// renders DISABLED rather than vanishing — the row's control cluster
+// keeps a stable shape whether the agent is on or off. Powering the
+// agent up/down has no button here: the status dot (agentStatusDot)
+// is the power control. term and every heavier action live in the
+// per-row ⚙ options menu (see actionCog). Used by both real-group
+// member rows and the virtual Ungrouped group's rows so the surface
+// is identical.
 function focusHideButtons(m) {
-  if (!m.online) return '';
   const label = m.title || m.conv_id;
-  return `<button data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window">focus</button>`
-    + `<button data-act="hide" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.">hide</button>`;
+  // A disabled <button> fires no click event, so the delegated
+  // dispatcher never sees an offline focus/hide — no extra guard
+  // needed in row-actions.js.
+  const dis = m.online ? '' : ' disabled';
+  const why = m.online ? '' : ' — unavailable while the agent is offline';
+  return `<button class="icon-btn" data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window${why}" aria-label="Focus window"${dis}>${EYE_OPEN_SVG}</button>`
+    + `<button class="icon-btn" data-act="hide" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${why}" aria-label="Hide window"${dis}>${EYE_OFF_SVG}</button>`;
 }
 
 // actionCog renders the ⚙ "more actions" cog and its collapsed

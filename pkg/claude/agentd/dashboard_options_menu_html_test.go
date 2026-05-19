@@ -30,6 +30,16 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must(".action-menu {", "the .action-menu dropdown has a CSS rule")
 	must(".action-menu.open", "an open menu is shown via the .open class")
 
+	// The per-agent control cluster: the status dot + focus/hide + cog
+	// share one cell (.agent-ctl); focus/hide are eye icons, disabled
+	// (not hidden) on an offline agent.
+	must(`class="agent-ctl"`, "the status dot + action cluster share one cell")
+	must(".agent-ctl {", "the combined-controls cell has a CSS rule")
+	must(`class="icon-btn"`, "focus/hide render as icon buttons")
+	must("eye-ico", "focus/hide use eye / slashed-eye SVG glyphs")
+	must("' disabled'", "focus/hide render disabled when the agent is offline")
+	must("button:disabled", "disabled row buttons have a CSS rule")
+
 	// The cog toggle is dispatched in row-actions.js, closes any other
 	// open menu, and the auto-refresh is suspended while a menu is open.
 	must("function closeAllActionMenus(",

@@ -20,17 +20,23 @@ at the top level.
 (🪟), `delete-group`.
 
 **Agent row** — kept at the top level: `focus` (jump) + `hide`, the
-online-only window pair. Moved into the ⚙ menu: `term`, `clone`,
-`reincarnate`, `edit-member` (grouped rows only), the owner toggle
+window pair. Moved into the ⚙ menu: `term`, `clone`, `reincarnate`,
+`edit-member` (grouped rows only), the owner toggle
 `grant-owner`/`revoke-owner` (grouped only), `sudo-grant`, `perm-edit`,
 `cron-new` (⏰), and the destructive `remove-member` (grouped) /
-`delete-agent` (ungrouped). The cog is present on every agent row,
-online and offline — an offline row shows just the cog.
+`delete-agent` (ungrouped). The cog is always present and enabled.
 
-The whole per-agent action cluster (focus/hide + ⚙) also moved from
-the far-right column to the **2nd column**, right after the status
-dot, so the controls sit by the agent's name rather than off the far
-right of a wide table.
+The whole per-agent control cluster — the status dot + focus/hide + ⚙
+— now shares the row's **first cell** (`.agent-ctl`), so the controls
+sit together at the left instead of the dot living alone in column 1
+and the rest off the far right of a wide table.
+
+`focus` / `hide` render as **eye icons** — an open eye (show the
+window) and a slashed eye (hide it) — inline Feather-style SVG that
+inherits the button's colour via `stroke="currentColor"`. On an
+offline agent they render **disabled** (dim, `cursor: not-allowed`)
+rather than vanishing, so the cluster keeps a stable shape; the cog
+stays enabled.
 
 The virtual Conversations / Retired groups keep their single-button
 rows (`promote` / `reinstate`) as-is; virtual groups have no
