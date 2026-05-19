@@ -15,7 +15,7 @@ old → new). The fix routes a raw `/clear` through the same migration.
 
 Confirmed against a real captured `/clear` hook recording:
 
-```
+```text
 SessionEnd    <old-conv-id>  reason=clear   — ends the old conv (NOT an exit; process lives)
 SessionStart  <new-conv-id>  source=clear   — fresh conv; first hook carrying the new id
 ```

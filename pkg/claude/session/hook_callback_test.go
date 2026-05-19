@@ -300,19 +300,24 @@ func TestRunHookCallback_NotificationIdlePromptClearsWorking(t *testing.T) {
 // TestNeedsIdentityMigration pins the predicate that decides whether a
 // conv-id rotation should migrate agent identity — and, crucially, that
 // it stays true until the migration actually commits (the retry
-// condition) and flips false once a succession edge exists.
+// condition) and flips false once a succession edge exists. (bool, err)
+// is the contract: the caller must not advance the conv-id when err is
+// non-nil — see hook_callback.go's conv-id-update block.
 func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("active agent, fresh new conv, no edge -> migrate", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
 		require.NoError(t, db.EnrollAgent("conv-old", "test"))
-		assert.True(t, needsIdentityMigration("conv-old", "conv-new"))
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.True(t, got)
 	})
 	t.Run("plain (un-enrolled) old conv -> no migration", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
-		assert.False(t, needsIdentityMigration("conv-old", "conv-new"),
-			"a plain conversation's /clear must not migrate")
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got, "a plain conversation's /clear must not migrate")
 	})
 	t.Run("retired old agent -> no migration", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
@@ -320,14 +325,18 @@ func TestNeedsIdentityMigration(t *testing.T) {
 		require.NoError(t, db.EnrollAgent("conv-old", "test"))
 		_, err := db.RetireAgent("conv-old", "test", "test")
 		require.NoError(t, err)
-		assert.False(t, needsIdentityMigration("conv-old", "conv-new"))
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got)
 	})
 	t.Run("succession edge already recorded -> no retry", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
 		require.NoError(t, db.EnrollAgent("conv-old", "test"))
 		require.NoError(t, db.RecordConvSuccession("conv-old", "conv-new", "clear"))
-		assert.False(t, needsIdentityMigration("conv-old", "conv-new"),
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got,
 			"once the migration committed (edge exists) the predicate must stop firing")
 	})
 	t.Run("new conv is already an agent -> no migration (collision guard)", func(t *testing.T) {
@@ -335,8 +344,9 @@ func TestNeedsIdentityMigration(t *testing.T) {
 		db.ResetForTest()
 		require.NoError(t, db.EnrollAgent("conv-old", "test"))
 		require.NoError(t, db.EnrollAgent("conv-new", "test"))
-		assert.False(t, needsIdentityMigration("conv-old", "conv-new"),
-			"must not migrate onto a conv that already owns an identity")
+		got, err := needsIdentityMigration("conv-old", "conv-new")
+		require.NoError(t, err)
+		assert.False(t, got, "must not migrate onto a conv that already owns an identity")
 	})
 }
 

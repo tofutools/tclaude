@@ -81,15 +81,24 @@ func sessionEndIsExit(reason string) bool {
 // env-keyed session is a /clear whose agent identity still has to be
 // migrated old → new.
 //
-// True when oldConv is a live agent, newConv is not already an agent of
-// its own, and no succession edge has been recorded for oldConv yet.
-// Those conditions hold for the post-/clear SessionStart AND for every
-// later hook until the migration succeeds — so a migration that fails
-// on the SessionStart hook (a transient SQLite error) is simply retried
-// on the next hook (db.MigrateAgentIdentity is atomic + idempotent: a
-// failed attempt records no succession edge, so the predicate stays
-// true; a committed one records the edge, so it flips false). The
-// predicate IS the retry condition — no extra bookkeeping needed.
+// Returns (true, nil) when oldConv is a live agent, newConv is not
+// already an agent of its own, and no succession edge has been recorded
+// for oldConv yet. Returns (false, nil) when one of those checks has
+// concrete evidence migration is unnecessary (oldConv not an active
+// agent, newConv already an agent, succession edge already in place).
+// Returns (false, err) when a DB read failed — the caller must NOT
+// advance the session row's conv-id in that case: a transient SQLite
+// fault here followed by an advance would skip the migration entirely
+// and strand identity, defeating the retry below.
+//
+// The (true, nil) conditions hold for the post-/clear SessionStart AND
+// for every later hook until the migration succeeds — so a migration
+// that fails on the SessionStart hook (a transient SQLite error) is
+// simply retried on the next hook (db.MigrateAgentIdentity is atomic +
+// idempotent: a failed attempt records no succession edge, so the
+// predicate stays true; a committed one records the edge, so it flips
+// false). The predicate IS the retry condition — no extra bookkeeping
+// needed.
 //
 // Why this tells a /clear apart from a /resume without keying on the
 // hook source: an env-keyed tclaude session's conv-id only ever rotates
@@ -99,20 +108,29 @@ func sessionEndIsExit(reason string) bool {
 // newConv-not-already-an-agent guard is belt-and-braces against a
 // future in-session conversation switch landing on a conv that already
 // owns an identity.
-func needsIdentityMigration(oldConv, newConv string) bool {
+func needsIdentityMigration(oldConv, newConv string) (bool, error) {
 	oldEnr, err := db.EnrollmentState(oldConv)
-	if err != nil || oldEnr != db.EnrollmentActive {
-		return false
+	if err != nil {
+		return false, err
+	}
+	if oldEnr != db.EnrollmentActive {
+		return false, nil
 	}
 	newEnr, err := db.EnrollmentState(newConv)
-	if err != nil || newEnr == db.EnrollmentActive {
-		return false
+	if err != nil {
+		return false, err
+	}
+	if newEnr == db.EnrollmentActive {
+		return false, nil
 	}
 	succ, err := db.GetConvSuccessor(oldConv)
-	if err != nil || succ != "" {
-		return false
+	if err != nil {
+		return false, err
 	}
-	return true
+	if succ != "" {
+		return false, nil
+	}
+	return true, nil
 }
 
 // migrateClearedIdentity migrates agent identity — group memberships,
@@ -504,35 +522,59 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// /clear rotates the conv-id; needsIdentityMigration / migrateClearedIdentity
 	// handle moving the agent's identity across that rotation.
 	if input.ConvID != "" && state.ConvID != input.ConvID {
-		if envSessionID != "" && state.ConvID != "" &&
-			needsIdentityMigration(state.ConvID, input.ConvID) {
-			// A /clear rotated the conv-id and the old conv is an agent
-			// whose identity has not moved yet. Migrate it BEFORE recording
-			// the new conv-id (the migration needs the old value). On a
-			// migration failure DO NOT advance state.ConvID: the migration
-			// is atomic so identity is still wholly on the old conv-id —
-			// keeping the session row there means needsIdentityMigration
-			// still fires on the next hook and the (idempotent) migration
-			// is retried, rather than the conv-id silently advancing to a
-			// conv whose identity never arrived (issue #192).
-			if migrateClearedIdentity(state, input.ConvID) {
-				slog.Info("updating conversation ID after /clear",
+		switch {
+		case envSessionID == "" || state.ConvID == "":
+			// Not an env-keyed rotation we can migrate identity across
+			// (a non-tclaude session, or the session's first conv-id
+			// record). Plain advance — the pre-/clear-fix behaviour.
+			slog.Info("updating conversation ID",
+				"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
+				"session_id", state.ID, "module", "hooks")
+			state.ConvID = input.ConvID
+		default:
+			shouldMigrate, predErr := needsIdentityMigration(state.ConvID, input.ConvID)
+			switch {
+			case predErr != nil:
+				// A transient DB error trying to decide. Do NOT advance:
+				// advancing on an "I don't know" answer would skip the
+				// migration if the truth was "migrate," and identity
+				// would strand. The next hook re-evaluates the predicate
+				// (the rotation is still visible since we left ConvID
+				// alone).
+				slog.Warn("clear-migrate: predicate check failed; deferring conv-id advance to the next hook",
+					"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
+					"session_id", state.ID, "error", predErr, "module", "hooks")
+			case shouldMigrate:
+				// A /clear rotated the conv-id and the old conv is an
+				// agent whose identity has not moved yet. Migrate it
+				// BEFORE recording the new conv-id (the migration needs
+				// the old value). On a migration failure DO NOT advance
+				// state.ConvID: the migration is atomic so identity is
+				// still wholly on the old conv-id — keeping the session
+				// row there means needsIdentityMigration still fires on
+				// the next hook and the (idempotent) migration is
+				// retried, rather than the conv-id silently advancing
+				// to a conv whose identity never arrived (issue #192).
+				if migrateClearedIdentity(state, input.ConvID) {
+					slog.Info("updating conversation ID after /clear",
+						"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
+						"session_id", state.ID, "module", "hooks")
+					state.ConvID = input.ConvID
+				} else {
+					slog.Warn("clear-migrate: deferring conv-id advance until the migration succeeds",
+						"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
+						"session_id", state.ID, "module", "hooks")
+				}
+			default:
+				// Predicate said no — the rotation does not need
+				// identity migration (oldConv not an agent, newConv
+				// already an agent, or the edge is already recorded).
+				// Advance normally.
+				slog.Info("updating conversation ID",
 					"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
 					"session_id", state.ID, "module", "hooks")
 				state.ConvID = input.ConvID
-			} else {
-				slog.Warn("clear-migrate: deferring conv-id advance until the migration succeeds",
-					"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
-					"session_id", state.ID, "module", "hooks")
 			}
-		} else {
-			slog.Info("updating conversation ID",
-				"old_conv_id", state.ConvID,
-				"new_conv_id", input.ConvID,
-				"session_id", state.ID,
-				"module", "hooks",
-			)
-			state.ConvID = input.ConvID
 		}
 	}
 

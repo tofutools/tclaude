@@ -338,8 +338,20 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	}
 	mig, err := db.MigrateAgentIdentity(target, newConv, "reincarnate", granter)
 	if err != nil {
-		slog.Warn("reincarnate: identity migration failed",
-			"old", target, "new", newConv, "error", err)
+		// db.MigrateAgentIdentity is atomic: an error means NOTHING
+		// committed (no membership / perm / owner / cron rekey, no
+		// succession edge, no enrollment touched). Carrying on from here
+		// would decommission the old pane (step 9: /exit + archive)
+		// while the new conv has no migrated identity, stranding the
+		// agent. Abort the request instead and leave the old pane alive
+		// with identity intact. The spawned successor stays around as
+		// an orphan tclaude session reachable via `attach_cmd` for
+		// manual cleanup.
+		slog.Error("reincarnate: identity migration failed; aborting orchestration",
+			"old", target, "new", newConv, "label", label, "error", err)
+		writeError(w, http.StatusInternalServerError, "identity_migration",
+			"failed to migrate agent identity to successor conversation: "+err.Error())
+		return
 	}
 	migrated := mig.Items
 
