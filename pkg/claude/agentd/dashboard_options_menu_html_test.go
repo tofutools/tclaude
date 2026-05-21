@@ -70,7 +70,12 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	} {
 		must(`data-act="`+act+`"`, "group header keeps "+act+" top-level")
 	}
-	must(">+ spawn</button>", "the group spawn button is relabelled to 'spawn'")
+	must(`class="spawn-btn"`, "the group spawn button carries the .spawn-btn primary-CTA skin")
+	must(`<span>spawn</span></button>`, "the group spawn button renders the word 'spawn'")
+	must(`class="spawn-ico"`, "the group spawn button carries the user-plus icon")
+	must(".spawn-btn {", "the .spawn-btn CSS rule ships with the dashboard — without it the chip falls back to bare browser styling")
+	must("details[open] > summary .spawn-btn { opacity: 1; }",
+		"spawn-btn fades with the rest of the group-action chips when the group is collapsed, brightens on hover / when open")
 	for _, act := range []string{"jump", "hide"} {
 		must(`data-act="`+act+`"`, "agent row keeps focus/hide ("+act+") top-level")
 	}

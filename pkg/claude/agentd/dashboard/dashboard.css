@@ -288,6 +288,29 @@ details[open] > summary .group-actions { opacity: 1; }
 .group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
 .group-actions button.warn:hover { color: #d29922; border-color: #d29922; }
+/* The spawn button — the primary "add an agent to this group" CTA.
+   Sits as a SIBLING of .group-actions (not inside it) so its style
+   stays distinct: blue-accent skin matching filter-bar .primary so it
+   reads as a real call-to-action, not just another grey chip. The
+   fade-at-rest mirrors .group-actions — at 0.4 when the summary is
+   neither hovered nor expanded — so a collapsed list of groups stays
+   quiet; hover or open lights every action chip back up to full. */
+.spawn-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  /* vertical-align: middle so the inline-flex chip sits on the same
+     visual row as the inline-block buttons inside .group-actions —
+     without it the box is baseline-aligned and rides ~1px high. */
+  vertical-align: middle;
+  margin-left: 8px;
+  background: #1f6feb; border: 1px solid #1f6feb; color: #fff;
+  border-radius: 4px; padding: 2px 8px; font-size: 11px;
+  cursor: pointer; font-family: inherit;
+  opacity: 0.4; transition: opacity 0.15s ease;
+}
+.spawn-btn:hover { background: #388bfd; border-color: #388bfd; }
+.spawn-btn .spawn-ico { display: block; }
+details > summary:hover .spawn-btn,
+details[open] > summary .spawn-btn { opacity: 1; }
 /* ⚙ options menu — collects a row's / group's less-used actions
    behind a cog. The cog and its .action-menu are siblings inside the
    .row-actions / .group-actions cluster (both position:relative
