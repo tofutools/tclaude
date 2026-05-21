@@ -7,7 +7,7 @@
 import {
   $, esc, shortId, onlineDot, agentStatusDot, statePill, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
-  cwdCell, branchCell, offlineDefault, groupShowOffline, groupOfflineToggleHTML,
+  cwdCell, branchCell, offlineDefault, groupShowOffline,
 } from './helpers.js';
 import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS } from './sort.js';
 
@@ -202,6 +202,10 @@ function renderVirtualRetiredGroup(g) {
 // cog so the header stays readable. Every button keeps the exact
 // data-act / data-* the row-action dispatcher already expects — only
 // their DOM position moves.
+// Feather "user-plus": a person silhouette with a + alongside. Same
+// monochrome-via-currentColor convention as the helpers.js eye icons.
+const SPAWN_ICO_SVG = '<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>';
+
 function groupActionsHTML(g, members) {
   const menu =
     `<button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>`
@@ -212,8 +216,12 @@ function groupActionsHTML(g, members) {
     + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>`
     + `<button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Focus or unfocus this group's agent windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.">🪟 windows…</button>`
     + `<button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>`;
-  return `<span class="group-actions">`
-    + `<button data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group">+ spawn</button>`
+  // Spawn sits OUTSIDE .group-actions — the cluster fades to 0.4 at
+  // rest, which made spawn (the primary CTA) hard to find. As a
+  // sibling chip it keeps full opacity all the time and the
+  // blue-accent .spawn-btn skin in dashboard.css makes it pop.
+  return `<button class="spawn-btn" data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group" aria-label="Spawn a new agent into this group">${SPAWN_ICO_SVG}<span>spawn</span></button>`
+    + `<span class="group-actions">`
     + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on</button>`
     + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown</button>`
     + actionCog('group-menu', menu)
@@ -247,7 +255,6 @@ function renderGroups(groups) {
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) delivered to the inbox of agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
         <span class="group-max-members${g.max_members ? (members.length >= g.max_members ? ' full' : '') : ' unset'}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${g.max_members ? 'Member cap: ' + members.length + '/' + g.max_members + (members.length >= g.max_members ? ' — group is full, spawns refused' : '') + ' — click to edit' : 'No member cap — a spawn-capable agent can grow this group without bound; click to set one'}">👥 ${g.max_members ? members.length + '/' + g.max_members : 'no member cap'}</span>
-        ${groupOfflineToggleHTML(g.name)}
         ${groupActionsHTML(g, members)}
       </summary>
       <div class="subtable">
