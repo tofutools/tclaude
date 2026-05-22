@@ -1322,15 +1322,19 @@ body.slop .online          { color: #56d364; text-shadow: 0 0 6px rgba(86, 211, 
   0%, 100% { transform: rotate(-6deg); }
   50%      { transform: rotate(6deg); }
 }
-/* Only the leading 🎰 emoji on the h1 jiggles — applied via the
-   ::first-letter pseudo so we don't need an extra wrapper span.
-   The header h1 textContent is rewritten by slop.js to lead with
-   the slot-machine emoji, so this targets exactly that glyph. */
-body.slop header h1::first-letter {
+/* The header icon is the easter-egg toggle: click it to flip slop
+   mode on or off (see js/slop.js). `cursor: pointer` is the only
+   affordance — discoverable to anyone who hovers, silent otherwise.
+   In slop mode the icon also jiggles; the wrapper span keeps the
+   animation isolated to the glyph so the rest of the h1 stays still. */
+.slop-icon {
+  cursor: pointer;
   display: inline-block;
+}
+body.slop header h1 .slop-icon {
   animation: slop-jiggle 2.4s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   body.slop header { animation: none; }
-  body.slop header h1::first-letter { animation: none; }
+  body.slop header h1 .slop-icon { animation: none; }
 }
