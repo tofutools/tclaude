@@ -240,22 +240,43 @@ function renderGroups(groups) {
     const members = g.members || [];
     // Offline visibility: per-group override falls back to the
     // tab-wide checkbox. Hidden members still count toward the
-    // header total so "5 members, 2 online" stays truthful.
+    // 👥 chip's online/total/cap counts so the header stays truthful.
     const visible = groupShowOffline(g.name) ? members : members.filter(m => m.online);
     const hiddenOffline = members.length - visible.length;
     // Restore expanded state across the 5s polling re-renders by
     // keying on group name. Persisted in localStorage so it
     // survives a full page reload too.
     const isOpen = localStorage.getItem('tclaude.dash.group.' + g.name) === '1';
+    // 👥 chip: <online>/<total>/<cap> — but collapse the online
+    // slot to <total>/<cap> when everyone is online (the common
+    // case), so the chip stays terse and only grows a third slot
+    // when there is actually offline membership to surface. ∞
+    // holds the cap slot when unset so its slot layout stays
+    // stable; .unset still signals "click to set one". Absorbs
+    // the verbose "X members, Y online" header span that used to
+    // live alongside it.
+    const onlineCount = g.online || 0;
+    const atCap = !!g.max_members && members.length >= g.max_members;
+    const capValueText = g.max_members || '∞';
+    const capChipText = onlineCount === members.length
+      ? `${members.length}/${capValueText}`
+      : `${onlineCount}/${members.length}/${capValueText}`;
+    const capChipClass = `group-max-members${atCap ? ' full' : ''}${g.max_members ? '' : ' unset'}`;
+    const capChipTitleParts = [
+      `${members.length} member${members.length === 1 ? '' : 's'} (${onlineCount} online)`,
+      g.max_members ? `cap ${g.max_members}` : 'no cap',
+    ];
+    if (atCap) capChipTitleParts.push('group is full, spawns refused');
+    if (hiddenOffline > 0) capChipTitleParts.push(`${hiddenOffline} offline hidden in this view`);
+    const capChipTitle = capChipTitleParts.join(' · ') + (g.max_members ? ' — click to edit cap' : ' — click to set a cap');
     return `
     <details data-group-key="${esc(g.name)}"${isOpen ? ' open' : ''}>
       <summary data-dnd-target-group="${esc(g.name)}">
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
-        <span class="muted">— ${members.length} members, ${g.online || 0} online${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) delivered to the inbox of agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
-        <span class="group-max-members${g.max_members ? (members.length >= g.max_members ? ' full' : '') : ' unset'}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${g.max_members ? 'Member cap: ' + members.length + '/' + g.max_members + (members.length >= g.max_members ? ' — group is full, spawns refused' : '') + ' — click to edit' : 'No member cap — a spawn-capable agent can grow this group without bound; click to set one'}">👥 ${g.max_members ? members.length + '/' + g.max_members : 'no member cap'}</span>
+        <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
         ${groupActionsHTML(g, members)}
       </summary>
       <div class="subtable">
