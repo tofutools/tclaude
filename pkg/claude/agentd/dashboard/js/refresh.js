@@ -186,6 +186,11 @@ export async function refresh() {
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
     showStatus('● live', false);
+    // Notify out-of-tree consumers (currently slop-fx.js's marquee)
+    // that fresh snapshot data is now in lastSnapshot. A custom event
+    // keeps the dependency one-way — refresh.js doesn't have to
+    // import any feature module that wants to react to a tick.
+    document.dispatchEvent(new CustomEvent('tclaude:snapshot'));
   } catch (e) {
     showStatus('snapshot failed: ' + (e.message || e), true);
   }

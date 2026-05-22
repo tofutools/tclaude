@@ -322,9 +322,18 @@ export function bindSlopCursorTrail() {
 // ─── Marquee ticker ───────────────────────────────────────────────
 // Casino-style scrolling banner under the header (slop-only). All
 // lines are joined into one long string separated by ✦ so a single
-// CSS scroll animation does the whole work; the JS only refreshes
-// the joined string on each iteration (animationiteration event) so
-// the rotation never visibly jumps mid-scroll.
+// CSS scroll animation does the whole work; the JS rewrites the
+// joined string whenever fresh snapshot data lands (refresh.js
+// dispatches a `tclaude:snapshot` event after each successful poll),
+// AND on every animationiteration as a backstop for the lucky-symbol
+// minute rollover — the snapshot tick is the primary driver.
+//
+// Why both: the initial paint happens before the first /api/snapshot
+// returns, so lastSnapshot is null and tickerString() would read "0
+// agents online". The snapshot event refreshes that within the first
+// poll round-trip instead of waiting ~18 s for the first
+// animationiteration. To minimise visible mid-scroll jumps we only
+// rewrite the text when the computed string actually changed.
 //
 // "Last jackpot" lives in module state — the snapshot doesn't carry
 // jackpots (they're a UI concept) so we remember the most recent
@@ -370,16 +379,38 @@ function tickerString() {
   return tickerLines().join('   ✦   ');
 }
 
+// updateMarqueeText writes the current ticker string into the marquee
+// node IFF it changed. The diff is the cheap-but-effective guard
+// against snapshot ticks causing pointless mid-scroll jumps when the
+// computed string is byte-identical to what's already showing.
+function updateMarqueeText(text) {
+  const next = tickerString();
+  if (text.textContent !== next) text.textContent = next;
+}
+
 export function bindSlopMarquee() {
   const text = document.getElementById('slop-marquee-text');
   const track = document.getElementById('slop-marquee-track');
   if (!text || !track) return;
-  text.textContent = tickerString();
-  // Refresh the string each time the scroll-loop completes so a new
-  // jackpot or online-count change appears at the next pass — never
-  // mid-scroll, so there's no visible jump.
+  // Initial paint. lastSnapshot may still be null here — that's fine,
+  // the snapshot event will refresh it within the first poll
+  // round-trip. The placeholder seeded in dashboard.html ("🎰 The
+  // slop machine") is more honest than an "0 agents online" the
+  // first-paint code path used to bake in.
+  updateMarqueeText(text);
+  // Primary refresh trigger: every successful /api/snapshot. The
+  // listener stays bound for the page lifetime; the diff inside
+  // updateMarqueeText suppresses redundant writes so steady-state
+  // snapshots cause no jump.
+  document.addEventListener('tclaude:snapshot', () => {
+    if (!isSlopActive()) return;
+    updateMarqueeText(text);
+  });
+  // Backstop: the lucky-symbol minute rolls over independently of
+  // snapshot ticks, so refresh at scroll-loop boundaries too. Cheap
+  // and visually quiet (a boundary refresh never causes a jump).
   track.addEventListener('animationiteration', () => {
     if (!isSlopActive()) return;
-    text.textContent = tickerString();
+    updateMarqueeText(text);
   });
 }
