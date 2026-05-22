@@ -170,7 +170,15 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
 		})
-		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
+		// Preserve the slop param across the redirect — it's purely a
+		// client-side theme switch the dashboard JS reads from the URL,
+		// so it needs to survive the bare-path bounce. Anything else
+		// (init_token included) is intentionally dropped.
+		redirectTarget := r.URL.Path
+		if r.URL.Query().Get("slop") == "1" {
+			redirectTarget += "?slop=1"
+		}
+		http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
 		return
 	}
 
@@ -215,9 +223,11 @@ func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 			"daemon has no loopback URL bound; the dashboard is unavailable in this process")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"url": popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard),
-	})
+	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
+	if r.URL.Query().Get("slop") == "1" {
+		url += "&slop=1"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
 // dashboardBrowserOpener is the browser-launch hook used by
@@ -243,15 +253,23 @@ func shouldAutoLaunchDashboard(flagSet bool, cfg *config.Config) bool {
 // dashboard" click: the daemon IS the human side, so no socket round-
 // trip through the human-only /v1/dashboard/open is needed.
 //
+// slop=true tags the URL with ?slop=1 so the dashboard JS swaps in the
+// 🎰 slop machine theme. Purely cosmetic — the data and routes are
+// identical; the param survives the auth redirect (see handleDashboardRoot)
+// so the bare-path URL ends up as /?slop=1 in the address bar.
+//
 // Best-effort — a missing loopback listener or a failed browser launch
 // is logged and otherwise ignored; the daemon keeps running and the
 // human can still run `tclaude agent dashboard`.
-func autoLaunchDashboard() {
+func autoLaunchDashboard(slop bool) {
 	if popupBaseURL == "" {
 		slog.Warn("auto-launch-dashboard: no loopback URL bound; dashboard unavailable in this process")
 		return
 	}
 	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
+	if slop {
+		url += "&slop=1"
+	}
 	if err := dashboardBrowserOpener(url); err != nil {
 		slog.Warn("auto-launch-dashboard: failed to open browser", "error", err, "url", url)
 		return

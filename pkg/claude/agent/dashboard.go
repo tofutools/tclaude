@@ -37,6 +37,7 @@ func dashboardCmd() *cobra.Command {
 
 type dashboardParams struct {
 	Print bool `long:"print" help:"Print the one-shot URL instead of opening a browser (expires in ~60s)"`
+	Slop  bool `long:"slop" help:"Open the dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
 }
 
 func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
@@ -46,7 +47,11 @@ func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		URL string `json:"url"`
 	}
-	if err := DaemonGet("/v1/dashboard/open", &resp); err != nil {
+	path := "/v1/dashboard/open"
+	if p.Slop {
+		path += "?slop=1"
+	}
+	if err := DaemonGet(path, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
