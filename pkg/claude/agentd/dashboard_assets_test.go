@@ -60,6 +60,39 @@ func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_SlopMachineWired guards the slop-mode slot
+// machine: a JS helper (slopMachine) emits a .slop-machine widget with
+// three .slop-reel children, and CSS swaps the regular .state-pill out
+// in body.slop. The three pieces have to stay in lockstep — a rename
+// in one file silently breaks the feature in the browser. Asserting
+// on the embedded concatenation catches it at `go test ./...`.
+func TestDashboardAssets_SlopMachineWired(t *testing.T) {
+	// JS: helper is defined, exported, and wired into the row render.
+	for _, needle := range []string{
+		"function slopMachine(",
+		"slopMachine,",                              // exported from helpers.js
+		"slopMachine(state, m.online, m.conv_id)",   // called from render.js
+		"const SLOP_SYMBOLS",                        // reel glyph set
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard JS missing %q — slot machine wiring broken", needle)
+		}
+	}
+	// CSS: widget class, the working-state spin animation, and the
+	// pill-hide rule that swaps slot in for pill in slop mode.
+	for _, needle := range []string{
+		".slop-machine",
+		".slop-reel",
+		".slop-strip",
+		"@keyframes slop-spin",
+		"body.slop .state-pill { display: none; }",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard CSS missing %q — slot machine styling broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever
