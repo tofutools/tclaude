@@ -1,7 +1,10 @@
 import { esc } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
 import { applySlopThemeIfRequested } from './slop.js';
-import { bindSlopClickFx } from './slop-fx.js';
+import {
+  bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
+  bindSlopCursorTrail, bindSlopMarquee,
+} from './slop-fx.js';
 import {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
   refresh,
@@ -78,9 +81,14 @@ bindAgentSpawnModal();
 bindCloneAgentModal();
 bindReincarnateAgentModal();
 bindConfigTab();
-// Slop-mode click feedback — the delegated listener stays registered
-// for the page's lifetime and no-ops while slop is off, so we can bind
-// it once here.
+// Slop-mode flair — each binder installs a delegated listener (or
+// starts an interval) once. They no-op while slop is off and the
+// body-class check inside each handler is what actually gates the
+// effect, so toggling slop mid-session needs no re-binding.
 bindSlopClickFx();
+bindSlopMachineClicks();
+bindSlopStatusWatch();
+bindSlopCursorTrail();
+bindSlopMarquee();
 refresh();
 setInterval(refresh, 5000);

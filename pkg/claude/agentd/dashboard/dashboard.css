@@ -1504,3 +1504,180 @@ body.slop .slop-machine[data-status="exited"] {
 @media (prefers-reduced-motion: reduce) {
   .slop-coin, .slop-jackpot { display: none; animation: none; }
 }
+
+/* ─── Slop marquee ticker ──────────────────────────────────────────
+   A casino-style scrolling ticker bar that slides in under the header
+   in slop mode. The track holds a single span (rotated by slop-fx.js
+   every ~6s) and scrolls right-to-left via the slop-marquee-scroll
+   keyframes. Default-hidden so toggling slop in-place is free. */
+#slop-marquee { display: none; }
+body.slop #slop-marquee {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, #2a0808 0%, #4a0a0a 50%, #2a0808 100%);
+  border-bottom: 1px solid #ffd700;
+  color: #ffe88c;
+  font-size: 13px;
+  height: 22px;
+  line-height: 22px;
+  letter-spacing: 0.4px;
+  text-shadow: 0 0 4px rgba(255, 215, 0, 0.45);
+}
+#slop-marquee-track {
+  position: absolute;
+  white-space: nowrap;
+  will-change: transform;
+}
+body.slop #slop-marquee-track {
+  animation: slop-marquee-scroll 18s linear infinite;
+}
+@keyframes slop-marquee-scroll {
+  /* Start just off the right edge, slide across, exit on the left.
+     Using `left: 100%` + a translateX(-100% of self) keeps the
+     position viewport-relative without measuring text width in JS. */
+  from { transform: translateX(100vw); }
+  to   { transform: translateX(-100%); }
+}
+
+/* ─── Manual pull animation ────────────────────────────────────────
+   A click on a row's .slop-machine triggers slop-fx.js's manualPull(),
+   which rebuilds the cell as three slop-pull-reel strips spinning
+   independently for ~900ms, then snaps in a static 3-symbol combo.
+   The status attribute drives the look — see slop-fx.js for the
+   states it sets. */
+body.slop .slop-machine[data-status="pull-spinning"] .slop-pull-reel:nth-child(1) .slop-strip {
+  animation: slop-spin 0.18s linear infinite;
+}
+body.slop .slop-machine[data-status="pull-spinning"] .slop-pull-reel:nth-child(2) .slop-strip {
+  animation: slop-spin 0.22s linear infinite;
+}
+body.slop .slop-machine[data-status="pull-spinning"] .slop-pull-reel:nth-child(3) .slop-strip {
+  animation: slop-spin 0.28s linear infinite;
+}
+/* Manual pulls run faster than the live working spin so a click feels
+   responsive — the eye reads "you yanked the lever, the reels are
+   blurring". The post-stop static state is the default .slop-static
+   styling, so no extra rule is needed for it. */
+body.slop .slop-machine[data-status="pull-stopped"] {
+  /* Brief amber flare on settle — both for the 7-7-7 case (compounded
+     with .slop-pull-win below) and the standard combo. */
+  animation: slop-pull-settle 0.45s ease-out;
+}
+@keyframes slop-pull-settle {
+  0%   { box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6), 0 0 16px rgba(255, 215, 0, 0.9); }
+  100% { box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6), 0 0 4px rgba(255, 215, 0, 0.3); }
+}
+body.slop .slop-machine.slop-pull-win {
+  /* 7-7-7 winner: hold a brighter gold glow over the settle flash so
+     the eye lingers on it even after slop-pull-settle ends. */
+  animation: slop-pull-win-glow 1.6s ease-in-out;
+  border-color: #ffd700;
+}
+@keyframes slop-pull-win-glow {
+  0%, 100% { box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6), 0 0 8px rgba(255, 215, 0, 0.6); }
+  50%      { box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6), 0 0 24px rgba(255, 215, 0, 1); }
+}
+/* The slot-machine cell becomes a click target in slop mode — the
+   cursor cue is the only affordance the user gets. */
+body.slop .slop-machine { cursor: pointer; }
+
+/* ─── Working → idle transition flash ──────────────────────────────
+   Added by slop-fx.js's scanStatusTransitions() when an agent moves
+   from a spinning status to idle (a real jackpot moment). Compounds
+   with the existing idle "jackpot pulse" — this is a one-shot extra
+   flare on top so the actual transition reads louder than the
+   ambient state. */
+body.slop .slop-machine.slop-transition-flash {
+  animation: slop-transition-flash 1.2s ease-out;
+}
+@keyframes slop-transition-flash {
+  0%   { box-shadow: inset 0 0 4px rgba(0,0,0,0.6), 0 0 26px rgba(255, 215, 0, 1); border-color: #ffe88c; }
+  100% { box-shadow: inset 0 0 4px rgba(0,0,0,0.6), 0 0 4px rgba(255, 215, 0, 0.3); border-color: #ffd700; }
+}
+
+/* ─── Cursor coin trail ────────────────────────────────────────────
+   Throttled mousemove emits one .slop-trail-coin per tick. Smaller +
+   shorter-lived than the click-spray coins; the trail is meant to
+   feel like a tail, not a celebration. */
+.slop-trail-coin {
+  position: fixed;
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  z-index: 9998;
+  opacity: 0.85;
+  animation: slop-trail-fade 0.7s ease-out forwards;
+  will-change: transform, opacity;
+  user-select: none;
+}
+@keyframes slop-trail-fade {
+  0%   { transform: translate(-50%, -50%) translate(0, 0); opacity: 0.85; }
+  100% { transform: translate(-50%, -50%) translate(var(--dx, 0px), var(--dy, 0px)); opacity: 0; }
+}
+
+/* ─── Spawn = 🎰 PULL! lever (slop mode) ───────────────────────────
+   The spawn-modal submit button is re-skinned in slop mode into a
+   chunky pull-lever-styled button. The original button text is hidden
+   (font-size: 0) and replaced by a ::before with the "🎰 PULL!"
+   glyph. modal-spawn.js adds .slop-pull-active on click so the yank
+   keyframes fire; class self-removes after 700ms so a retry yanks
+   again. The yank class is harmless in non-slop mode — no rule
+   targets it without the body.slop scope. */
+body.slop #agent-spawn-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #b51111 0%, #7a0a0a 100%);
+  color: #ffe88c;
+  border: 2px solid #ffd700;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #4a0a0a, 0 0 8px rgba(255, 215, 0, 0.45);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.slop #agent-spawn-submit::before {
+  content: "🎰 PULL!";
+  font-size: 15px;
+  letter-spacing: 1px;
+}
+body.slop #agent-spawn-submit:hover {
+  background: linear-gradient(180deg, #d41818 0%, #8a0a0a 100%);
+  box-shadow: 0 4px 0 #4a0a0a, 0 0 14px rgba(255, 215, 0, 0.7);
+}
+body.slop #agent-spawn-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #4a0a0a, 0 0 6px rgba(255, 215, 0, 0.4);
+}
+body.slop #agent-spawn-submit:disabled {
+  /* When the click handler flips disabled=true and swaps the button
+     text to "Spawning…", restore a font-size so that fallback shows
+     instead of the now-irrelevant PULL ::before pseudo. */
+  font-size: 13px;
+  opacity: 0.7;
+}
+body.slop #agent-spawn-submit:disabled::before { content: none; }
+body.slop #agent-spawn-submit.slop-pull-active {
+  animation: slop-lever-yank 0.55s ease-out;
+}
+@keyframes slop-lever-yank {
+  0%   { transform: translateY(0)   rotate(0deg); }
+  35%  { transform: translateY(6px) rotate(-3deg); }
+  60%  { transform: translateY(8px) rotate(-4deg); }
+  100% { transform: translateY(0)   rotate(0deg); }
+}
+
+/* prefers-reduced-motion — kill every new animation. Each effect's
+   JS gate already short-circuits before spawning anything; this is
+   the belt-and-suspenders CSS layer in case a future caller forgets. */
+@media (prefers-reduced-motion: reduce) {
+  body.slop #slop-marquee-track { animation: none; }
+  body.slop .slop-machine[data-status="pull-spinning"] .slop-pull-reel .slop-strip { animation: none; }
+  body.slop .slop-machine[data-status="pull-stopped"] { animation: none; }
+  body.slop .slop-machine.slop-pull-win { animation: none; }
+  body.slop .slop-machine.slop-transition-flash { animation: none; }
+  body.slop #agent-spawn-submit.slop-pull-active { animation: none; }
+  .slop-trail-coin { display: none; animation: none; }
+}
