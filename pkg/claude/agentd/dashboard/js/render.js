@@ -93,7 +93,6 @@ function renderVirtualGroup(g) {
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group.">virtual</span>
         <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
-        <span class="muted group-virtual-hint">drag a row onto a group to add it · drag a group member here to remove it</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -137,7 +136,6 @@ function renderVirtualConversationsGroup(g) {
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.">virtual</span>
         <span class="muted">— ${members.length} conversation${members.length === 1 ? '' : 's'} that aren't agents</span>
-        <span class="muted group-virtual-hint">drag a row onto a group to promote + add it</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -187,7 +185,6 @@ function renderVirtualRetiredGroup(g) {
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.">virtual</span>
         <span class="muted">— ${members.length} retired agent${members.length === 1 ? '' : 's'}</span>
-        <span class="muted group-virtual-hint">drag an agent here to retire it · drag a retired row onto a group to reinstate + join it</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -208,10 +205,22 @@ function renderVirtualRetiredGroup(g) {
 const SPAWN_ICO_SVG = '<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>';
 
 function groupActionsHTML(g, members) {
+  // Startup-context menu item: the label switches between
+  // "📋 startup context (N chars)…" when one is configured and
+  // "📋 set startup context…" when it isn't. The ellipsis matches
+  // the "🪟 windows…" pattern signalling "opens a modal".
+  const ctxLen = g.default_context ? g.default_context.length : 0;
+  const ctxLabel = ctxLen > 0
+    ? `📋 startup context (${ctxLen} chars)…`
+    : `📋 set startup context…`;
+  const ctxTitle = ctxLen > 0
+    ? `Startup context (${ctxLen} chars) delivered to the inbox of agents spawned here — click to edit`
+    : 'No startup context — click to set one';
   const menu =
     `<button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>`
     + `<button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring cron job scoped to ${esc(g.name)} — multicast the whole group, or nudge a single member">⏰ multicast</button>`
     + `<button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>`
+    + `<button data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(ctxTitle)}">${ctxLabel}</button>`
     + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>`
     + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>`
     + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>`
@@ -240,25 +249,45 @@ function renderGroups(groups) {
     const members = g.members || [];
     // Offline visibility: per-group override falls back to the
     // tab-wide checkbox. Hidden members still count toward the
-    // header total so "5 members, 2 online" stays truthful.
+    // 👥 chip's online/total/cap counts so the header stays truthful.
     const visible = groupShowOffline(g.name) ? members : members.filter(m => m.online);
     const hiddenOffline = members.length - visible.length;
     // Restore expanded state across the 5s polling re-renders by
     // keying on group name. Persisted in localStorage so it
     // survives a full page reload too.
     const isOpen = localStorage.getItem('tclaude.dash.group.' + g.name) === '1';
+    // 👥 chip: <online>/<total>/<cap> — but collapse the online
+    // slot to <total>/<cap> when everyone is online (the common
+    // case), so the chip stays terse and only grows a third slot
+    // when there is actually offline membership to surface. ∞
+    // holds the cap slot when unset so its slot layout stays
+    // stable; .unset still signals "click to set one". Absorbs
+    // the verbose "X members, Y online" header span that used to
+    // live alongside it.
+    const onlineCount = g.online || 0;
+    const atCap = !!g.max_members && members.length >= g.max_members;
+    const capValueText = g.max_members || '∞';
+    const capChipText = onlineCount === members.length
+      ? `${members.length}/${capValueText}`
+      : `${onlineCount}/${members.length}/${capValueText}`;
+    const capChipClass = `group-max-members${atCap ? ' full' : ''}${g.max_members ? '' : ' unset'}`;
+    const capChipTitleParts = [
+      `${members.length} member${members.length === 1 ? '' : 's'} (${onlineCount} online)`,
+      g.max_members ? `cap ${g.max_members}` : 'no cap',
+    ];
+    if (atCap) capChipTitleParts.push('group is full, spawns refused');
+    if (hiddenOffline > 0) capChipTitleParts.push(`${hiddenOffline} offline hidden in this view`);
+    const capChipTitle = capChipTitleParts.join(' · ') + (g.max_members ? ' — click to edit cap' : ' — click to set a cap');
     return `
     <details data-group-key="${esc(g.name)}"${isOpen ? ' open' : ''}>
       <summary data-dnd-target-group="${esc(g.name)}">
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
-        <span class="muted">— ${members.length} members, ${g.online || 0} online${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
-        <span class="group-default-context${g.default_context ? '' : ' unset'}" data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${g.default_context ? 'Startup context (' + g.default_context.length + ' chars) delivered to the inbox of agents spawned here — click to edit' : 'No startup context — click to set one'}">📋 ${g.default_context ? 'startup context' : 'no startup context'}</span>
-        <span class="group-max-members${g.max_members ? (members.length >= g.max_members ? ' full' : '') : ' unset'}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${g.max_members ? 'Member cap: ' + members.length + '/' + g.max_members + (members.length >= g.max_members ? ' — group is full, spawns refused' : '') + ' — click to edit' : 'No member cap — a spawn-capable agent can grow this group without bound; click to set one'}">👥 ${g.max_members ? members.length + '/' + g.max_members : 'no member cap'}</span>
-        ${groupActionsHTML(g, members)}
+        <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
       </summary>
       <div class="subtable">
+        <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
         ${members.length === 0
           ? '<div class="muted">(no members yet)</div>'
           : visible.length === 0
@@ -388,6 +417,10 @@ function showStatus(text, isError) {
   const el = $('#status');
   el.textContent = text;
   el.classList.toggle('error', !!isError);
+  // "live" lights the leading dot green via the #status.live::before
+  // rule in dashboard.css. Error path stays red; empty path renders
+  // no dot at all (the ::before is gated on :not(:empty)).
+  el.classList.toggle('live', !isError && !!text);
 }
 
 // === Messages tab — human-facing notifications from agents ===

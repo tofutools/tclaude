@@ -212,7 +212,14 @@ details[open] > summary::before { content: "▼ "; }
 .copy-cmd:hover { border-color: #58a6ff; }
 .copy-cmd::before { content: "$ "; color: #7d8590; }
 #status { font-size: 11px; color: #7d8590; }
+/* Leading ● — pseudo-element so its colour can swap with the
+   live/error class without us round-tripping HTML through
+   showStatus. Gated on :not(:empty) so the initial loading state
+   (text not set yet) doesn't render a stray dot. */
+#status:not(:empty)::before { content: '● '; color: #7d8590; }
+#status.live::before { color: #3fb950; }
 #status.error { color: #f85149; }
+#status.error::before { color: #f85149; }
 /* Whole-dashboard Shutdown button — sits top-right, just to the right
    of the live dot (#status). Danger-styled but compact so it doesn't
    shout louder than the dashboard title. */
@@ -280,6 +287,18 @@ tr:hover .row-actions { opacity: 1; }
 }
 details > summary:hover .group-actions,
 details[open] > summary .group-actions { opacity: 1; }
+/* When the action cluster lives in the expanded body (.subtable)
+   rather than the summary, it is only ever rendered after the user
+   opened the group — the dim-at-rest fade no longer applies. Drop
+   the left margin too, the cluster sits flush at the subtable's
+   left edge under the group title, with a small bottom gap before
+   the member table. */
+.group-header-actions {
+  margin: 0 0 8px 0; display: flex; align-items: center; gap: 4px;
+}
+.group-header-actions .group-actions,
+.group-header-actions .spawn-btn { opacity: 1; margin-left: 0; }
+.group-header-actions .group-actions { margin-left: 4px; }
 .group-actions button {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
@@ -325,6 +344,24 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .row-actions .cog-btn:hover, .group-actions .cog-btn:hover {
   color: #ffb52e; border-color: #e3a008;
 }
+/* The .filter-bar-cog wrapper holds the trailing "more group
+   actions" cog + its menu. Mirror the +new-group .primary
+   button's exact size recipe (font-size 12 + padding 5×12 + the
+   bar's inherited line-height) so the two chips have pixel-
+   identical box height and read as a paired cluster. The smaller
+   row/group cogs the cluster reuses elsewhere keep their own
+   tighter sizing. */
+.filter-bar-cog { position: relative; display: inline-flex; align-items: center; }
+.filter-bar-cog .cog-btn {
+  background: #21262d; border: 1px solid #6b4f1d; border-radius: 4px;
+  color: #e3a008; cursor: pointer; font-family: inherit;
+  /* Larger gear glyph (16px vs the +new-group label's 12px),
+     compensated by tighter vertical padding so the box height
+     still matches .primary: ~18px line-height at 16px + 6px
+     padding ≈ ~14-15px + 10px padding at 12px. */
+  font-size: 16px; padding: 3px 12px;
+}
+.filter-bar-cog .cog-btn:hover { color: #ffb52e; border-color: #e3a008; }
 .action-menu {
   display: none; position: absolute; top: 100%; z-index: 50;
   margin-top: 4px; min-width: 150px; flex-direction: column; gap: 4px;
@@ -337,8 +374,23 @@ details[open] > summary .spawn-btn { opacity: 1; }
    on-screen. */
 .row-actions .action-menu { left: 0; }
 .group-actions .action-menu { right: 0; }
+/* The filter-bar cog sits at the far right end of the filter bar
+   — right-align so the menu drops back to the LEFT instead of
+   overflowing past the page edge. */
+.filter-bar-cog .action-menu { right: 0; }
 .action-menu.open { display: flex; }
 .action-menu button { width: 100%; text-align: left; }
+/* The filter-bar cog's menu items dispatch via id-bound listeners
+   (modal-templates.js, modal-message.js) rather than the data-act
+   handler, so they don't inherit the .row-actions / .group-actions
+   button skin. Stamp the same chrome here so the items read as
+   menu rows, not raw <button>s. */
+.filter-bar-cog .action-menu button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; padding: 5px 10px; font-size: 12px;
+  font-family: inherit;
+}
+.filter-bar-cog .action-menu button:hover { color: #d4d4d4; border-color: #58a6ff; }
 /* Flip above the cog when opening downward would run off the viewport
    bottom — the toggle handler measures the menu and sets this. */
 .action-menu.opens-up { top: auto; bottom: 100%; margin: 0 0 4px; }
@@ -378,14 +430,6 @@ details[open] > summary .spawn-btn { opacity: 1; }
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; min-width: 16em;
 }
-.group-default-context {
-  font-size: 11px; color: #7d8590;
-  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
-  border: 1px solid transparent;
-}
-.group-default-context:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-default-context.unset { color: #484f58; font-style: italic; }
-.group-default-context.unset:hover { color: #d4d4d4; }
 .group-max-members {
   font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
@@ -516,7 +560,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   color: #7d8590; border: 1px solid #2a3340; border-radius: 3px;
   vertical-align: 1px; cursor: help;
 }
-.group-virtual-hint { margin-left: 8px; font-size: 11px; font-style: italic; }
+/* Tab-wide drag & drop hint — sits at the bottom of the groups tab,
+   below every real and virtual group. Replaces the per-virtual-group
+   one-liners that previously repeated on each virtual summary; the
+   tips don't differ per group, so one quiet block at the foot is
+   plenty. Muted so the live group content keeps focus. */
+.groups-dnd-hints {
+  display: block; margin: 16px 0 0 0; padding: 8px 12px;
+  font-size: 11px; color: #7d8590; line-height: 1.6;
+  border-top: 1px solid #2a3340;
+}
+.groups-dnd-hints strong { color: #c9d1d9; font-weight: 600; margin-right: 4px; }
+.groups-dnd-hints em { color: #c9d1d9; font-style: normal; }
 .add-member-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);
@@ -617,6 +672,52 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .filter-bar label.filter-toggle:hover { color: #d4d4d4; }
 .filter-bar label.filter-toggle input { cursor: pointer; margin: 0; }
+/* View popover — collapses the per-tab "show offline / ungrouped /
+   retired / conversations" toggles behind a single 'view' button so
+   the filter bar stays compact. The button + popover are siblings
+   inside a position:relative wrapper so the popover anchors to the
+   trigger; an "N" badge surfaces when any toggle deviates from
+   default so a user can tell at a glance whether anything is hidden. */
+.filter-bar .view-popover-wrap { position: relative; display: inline-flex; align-items: center; }
+/* Trigger styled like the per-group chips (.group-descr et al.) —
+   no background fill at rest, transparent border that lights up on
+   hover, dim text. Aria-expanded="true" gets the same lit border
+   so the open state is still legible. Deliberately discreet:
+   the four toggles inside are an occasional knob, not a primary
+   action, so the trigger should fade into the bar until the user
+   reaches for it. The badge keeps its blue so an active filter
+   still pulls the eye. */
+.filter-bar .view-btn {
+  background: transparent; border: 1px solid transparent;
+  color: #7d8590; cursor: pointer; font-family: inherit;
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+}
+.filter-bar .view-btn:hover { color: #d4d4d4; border-color: #58a6ff; }
+.filter-bar .view-btn[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; }
+.filter-bar .view-badge {
+  display: inline-block; margin-left: 5px; padding: 0 5px;
+  border-radius: 7px; background: #1f6feb; color: #fff;
+  font-size: 10px; font-weight: bold; line-height: 13px; vertical-align: middle;
+}
+.view-menu {
+  display: none; position: absolute; top: 100%; left: 0; z-index: 50;
+  margin-top: 4px; min-width: 180px; flex-direction: column; gap: 2px;
+  padding: 6px; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+}
+.view-menu.open { display: flex; }
+/* Grid layout pins the checkbox to a fixed first column so all four
+   line up regardless of label length, and ignores stray whitespace
+   text nodes the older flex+gap recipe was visibly rendering between
+   items. The span wraps the label text so it becomes a real grid
+   item rather than an anonymous text run. */
+.view-menu label.filter-toggle {
+  display: grid; grid-template-columns: auto 1fr;
+  align-items: center; gap: 8px;
+  padding: 4px 8px; border-radius: 3px; font-size: 12px;
+}
+.view-menu label.filter-toggle input { margin: 0; }
+.view-menu label.filter-toggle:hover { background: #161b22; }
 .group-offline-toggle {
   font-size: 11px; color: #7d8590; margin-left: 8px;
   border: 1px solid #2a3340; border-radius: 4px;
