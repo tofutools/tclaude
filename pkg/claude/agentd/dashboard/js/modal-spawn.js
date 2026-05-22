@@ -12,6 +12,7 @@ import {
 // Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast } from './refresh.js';
+import { slopJackpot } from './slop-fx.js';
 
 
 // ---- Agent spawn modal --------------------------------------------------
@@ -246,6 +247,8 @@ async function submitAgentSpawn() {
     closeAgentSpawnModal();
     const label = name || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
     toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
+    // Vegas-themed celebration when slop is on; silent no-op otherwise.
+    slopJackpot();
     // Keep the destination group expanded so the new member is visible.
     try { localStorage.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
     refresh();

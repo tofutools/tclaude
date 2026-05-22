@@ -94,3 +94,10 @@ export function applySlopThemeIfRequested() {
     renderState();
   }
 }
+
+// isSlopActive checks the live body class instead of caching the URL
+// param at load time — slop mode can flip mid-session via the header
+// icon, and consumers (slop-fx.js) re-check on every click.
+export function isSlopActive() {
+  return document.body.classList.contains('slop');
+}
