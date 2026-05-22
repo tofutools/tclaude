@@ -1338,3 +1338,59 @@ body.slop header h1 .slop-icon {
   body.slop header { animation: none; }
   body.slop header h1 .slop-icon { animation: none; }
 }
+
+/* ─── Slop click feedback + jackpot (see js/slop-fx.js) ─────────────
+   Emitted only while body.slop is set and the user hasn't opted out
+   of motion. .slop-coin elements are short-lived; the JS spawns them
+   per click, the animation runs once, and `animationend` removes the
+   node — no GC churn from accumulated DOM. */
+.slop-coin {
+  position: fixed;
+  pointer-events: none;
+  font-size: 20px;
+  line-height: 1;
+  /* Anchor on the centre so the emoji starts where the click landed
+     instead of with its bounding box's top-left at (x,y). */
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  animation: slop-coin-arc 0.9s ease-out forwards;
+  will-change: transform, opacity;
+  user-select: none;
+}
+@keyframes slop-coin-arc {
+  0%   { transform: translate(-50%, -50%) translate(0, 0) rotate(0deg); opacity: 1; }
+  100% { transform: translate(-50%, -50%) translate(var(--dx, 0px), var(--dy, 0px)) rotate(var(--rot, 0deg)); opacity: 0; }
+}
+.slop-jackpot {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10000;
+  font-size: 84px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: #ffe88c;
+  text-shadow:
+    0 0 24px rgba(255, 215, 0, 0.85),
+    0 0 8px rgba(255, 215, 0, 0.6),
+    0 4px 0 #4a0a0a,
+    0 -2px 0 #4a0a0a;
+  animation: slop-jackpot-flash 1.6s ease-out forwards;
+  user-select: none;
+}
+@keyframes slop-jackpot-flash {
+  0%   { transform: scale(0.5) rotate(-6deg); opacity: 0; }
+  20%  { transform: scale(1.2) rotate(3deg);  opacity: 1; }
+  40%  { transform: scale(1.0) rotate(-2deg); opacity: 1; }
+  80%  { transform: scale(1.05) rotate(0deg); opacity: 1; }
+  100% { transform: scale(1.15) rotate(0deg); opacity: 0; }
+}
+/* prefers-reduced-motion is double-gated: slop-fx.js short-circuits
+   before spawning the nodes, but if a future caller forgets the JS
+   gate the CSS still hides them. */
+@media (prefers-reduced-motion: reduce) {
+  .slop-coin, .slop-jackpot { display: none; animation: none; }
+}

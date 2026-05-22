@@ -1,6 +1,7 @@
 import { esc } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
 import { applySlopThemeIfRequested } from './slop.js';
+import { bindSlopClickFx } from './slop-fx.js';
 import {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
   refresh,
@@ -77,5 +78,9 @@ bindAgentSpawnModal();
 bindCloneAgentModal();
 bindReincarnateAgentModal();
 bindConfigTab();
+// Slop-mode click feedback — the delegated listener stays registered
+// for the page's lifetime and no-ops while slop is off, so we can bind
+// it once here.
+bindSlopClickFx();
 refresh();
 setInterval(refresh, 5000);
