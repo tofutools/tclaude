@@ -1266,3 +1266,71 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .config-diff .dl.add { background: #12261a; color: #56d364; }
 .config-diff .dl.del { background: #2d1416; color: #f85149; }
 .config-diff .dl.ctx { color: #6e7681; }
+
+/* ─── Slop machine theme (body.slop) ─────────────────────────────────
+   Activated by ?slop=1 on the URL — see js/slop.js. Same data, same
+   routes, same auth — purely cosmetic. Casino palette: oxblood
+   background, gold accents, animated header gradient, a jiggling 🎰.
+   The data tables keep the dark-on-dark default; we only re-skin the
+   chrome (header, nav, top buttons, state pills) so nothing becomes
+   harder to read. */
+body.slop {
+  background: #1a0a0a;
+}
+body.slop header {
+  background: linear-gradient(
+    90deg,
+    #4a0a0a 0%, #a31515 25%, #d4a017 50%, #a31515 75%, #4a0a0a 100%
+  );
+  background-size: 200% 100%;
+  animation: slop-shimmer 6s linear infinite;
+  border-bottom: 2px solid #ffd700;
+}
+body.slop header h1 {
+  color: #ffe88c;
+  text-shadow: 0 1px 0 #4a0a0a, 0 0 8px rgba(255, 215, 0, 0.4);
+  letter-spacing: 0.5px;
+}
+body.slop header .meta { color: #ffe88c; opacity: 0.85; }
+body.slop header button {
+  background: #2a0808; border: 1px solid #ffd700; color: #ffe88c;
+  border-radius: 4px; padding: 4px 10px;
+}
+body.slop header button:hover { background: #4a0a0a; }
+body.slop nav {
+  background: #2a0808;
+  border-bottom: 1px solid #ffd700;
+}
+body.slop nav button { color: #c9a86b; }
+body.slop nav button:hover { color: #ffe88c; }
+body.slop nav button.active {
+  color: #ffe88c;
+  border-bottom-color: #ffd700;
+}
+/* Section content keeps default colors — only the casino chrome
+   changes — but state pills get a gold edge so they still pop on
+   the new background. */
+body.slop .state-working   { border-color: #ffd700; }
+body.slop .state-idle      { border-color: #ffd700; }
+body.slop .state-awaiting  { border-color: #ffd700; }
+body.slop .online          { color: #56d364; text-shadow: 0 0 6px rgba(86, 211, 100, 0.5); }
+@keyframes slop-shimmer {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}
+@keyframes slop-jiggle {
+  0%, 100% { transform: rotate(-6deg); }
+  50%      { transform: rotate(6deg); }
+}
+/* Only the leading 🎰 emoji on the h1 jiggles — applied via the
+   ::first-letter pseudo so we don't need an extra wrapper span.
+   The header h1 textContent is rewritten by slop.js to lead with
+   the slot-machine emoji, so this targets exactly that glyph. */
+body.slop header h1::first-letter {
+  display: inline-block;
+  animation: slop-jiggle 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.slop header { animation: none; }
+  body.slop header h1::first-letter { animation: none; }
+}

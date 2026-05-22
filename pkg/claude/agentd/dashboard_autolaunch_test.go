@@ -52,7 +52,7 @@ func TestAutoLaunchDashboard_OpensSingleUseTokenURL(t *testing.T) {
 	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard()
+	autoLaunchDashboard(false)
 
 	const prefix = base + "/?init_token="
 	if !strings.HasPrefix(opened, prefix) {
@@ -62,11 +62,44 @@ func TestAutoLaunchDashboard_OpensSingleUseTokenURL(t *testing.T) {
 	if tok == "" {
 		t.Fatalf("opened URL carries an empty init token: %q", opened)
 	}
+	if strings.Contains(opened, "slop") {
+		t.Fatalf("opened URL %q tagged as slop without --slop", opened)
+	}
 	if !consumeInitToken(tok, initScopeDashboard) {
 		t.Fatalf("minted init token %q was not valid", tok)
 	}
 	if consumeInitToken(tok, initScopeDashboard) {
 		t.Fatalf("init token %q accepted twice — must be single-use", tok)
+	}
+}
+
+// TestAutoLaunchDashboard_SlopMode verifies --slop tags the auto-launched
+// URL with &slop=1 — the cosmetic theme switch the dashboard JS reads. The
+// init token must still be valid: slop is layered on top of the regular
+// auth flow, not a bypass.
+func TestAutoLaunchDashboard_SlopMode(t *testing.T) {
+	const base = "http://127.0.0.1:54321"
+	prevBase := popupBaseURL
+	popupBaseURL = base
+	t.Cleanup(func() { popupBaseURL = prevBase })
+
+	var opened string
+	prevOpener := dashboardBrowserOpener
+	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
+	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
+
+	autoLaunchDashboard(true)
+
+	if !strings.HasSuffix(opened, "&slop=1") {
+		t.Fatalf("opened URL %q missing &slop=1 suffix", opened)
+	}
+	const prefix = base + "/?init_token="
+	if !strings.HasPrefix(opened, prefix) {
+		t.Fatalf("opened URL %q does not start with %q", opened, prefix)
+	}
+	tok := strings.TrimSuffix(strings.TrimPrefix(opened, prefix), "&slop=1")
+	if !consumeInitToken(tok, initScopeDashboard) {
+		t.Fatalf("slop-tagged URL carried an invalid init token: %q", tok)
 	}
 }
 
@@ -83,7 +116,7 @@ func TestAutoLaunchDashboard_NoLoopbackURL(t *testing.T) {
 	dashboardBrowserOpener = func(string) error { called = true; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard()
+	autoLaunchDashboard(false)
 
 	if called {
 		t.Fatal("autoLaunchDashboard opened a browser with no loopback URL bound")

@@ -1,9 +1,16 @@
 import { esc } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
+import { applySlopThemeIfRequested } from './slop.js';
 import {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
   refresh,
 } from './refresh.js';
+
+// Slop theme — a purely cosmetic re-skin tagged onto the URL with ?slop=1
+// (see `tclaude agent dashboard --slop` / `tclaude agentd serve --slop`).
+// Run before any binders so the body class is in place when CSS-dependent
+// modules first measure the layout.
+applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
 import { bindCronModal } from './modal-cron.js';
