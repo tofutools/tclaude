@@ -53,7 +53,7 @@ function memberRowHTML(m, ctx) {
                 <td>${cwdCell(m)}</td>
                 <td>${branchCell(m)}</td>
                 <td>${roleCell(m)}</td>
-                <td class="muted">${esc(m.descr || '')}</td>
+                <td class="descr-cell muted">${esc(m.descr || '')}</td>
               </tr>`;
 }
 
