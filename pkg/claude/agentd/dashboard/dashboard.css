@@ -161,6 +161,12 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .last-hook { color: #7d8590; font-size: 11px; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
 .rowname { font-weight: 600; }
+/* Floor the NAME column at 14ch so short titles don't let it collapse
+   into the ID column on the left. Auto layout honours min-width on a
+   td as a column-width minimum. Same trick for the Description
+   column — 40ch so short descriptions don't squish it. */
+.name-cell { min-width: 14ch; }
+.descr-cell { min-width: 40ch; }
 /* The agent name is click-to-edit: the .rowname-text span swaps for a
    .rowname-input on click (the rename-name handler). The transparent
    border keeps the row height stable as it lights up on hover. */

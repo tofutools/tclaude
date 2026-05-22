@@ -40,7 +40,7 @@ function memberRowHTML(m, ctx) {
                   data-dnd-label="${esc(m.title || m.conv_id)}">
                 <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div></td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
-                <td>
+                <td class="name-cell">
                   <div class="rowname"><span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${esc(m.title || '(unnamed)')}</span>${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
                 </td>
                 <td class="state-cell">
@@ -53,7 +53,7 @@ function memberRowHTML(m, ctx) {
                 <td>${cwdCell(m)}</td>
                 <td>${branchCell(m)}</td>
                 <td>${roleCell(m)}</td>
-                <td class="muted">${esc(m.descr || '')}</td>
+                <td class="descr-cell muted">${esc(m.descr || '')}</td>
               </tr>`;
 }
 
