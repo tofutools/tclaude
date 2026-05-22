@@ -104,6 +104,88 @@ function statePill(state, online) {
   return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
 }
 
+// === Slop slot-machine widget — the slop-mode replacement for statePill ===
+//
+// In slop mode (body.slop) the state pill is hidden via CSS and this
+// three-reel slot machine appears in its place. It's pure CSS animation —
+// no GIFs, no JS frame loop — so it costs nothing when slop is off
+// (display:none, never reflowed) and the compositor handles the spin
+// when slop is on. The widget is always emitted; the CSS swap means
+// toggling slop in-place flips between the two without a re-render.
+//
+// State mapping:
+//   working / main_agent_idle    → all 3 reels spin (per-reel duration)
+//   idle                         → 7️⃣ 7️⃣ 7️⃣ (jackpot, gold pulse)
+//   awaiting_permission / input  → ⏳ ❓ ⏳ (red/gold flicker)
+//   error                        → 💥 ❌ 💥 (red glow)
+//   crashed                      → 💀 💀 💀 (red frame)
+//   exited / offline             → — — — (dim)
+//
+// Per-agent identity: a djb2 hash of conv_id picks three rotation
+// offsets into SLOP_SYMBOLS so each agent's spinning reels show a
+// different sequence — the machine "belongs" to that agent.
+const SLOP_SYMBOLS = ['🍒', '🍋', '🍇', '🍊', '🔔', '⭐', '💎', '7️⃣'];
+const SLOP_STOPPED = {
+  idle:                ['7️⃣', '7️⃣', '7️⃣'],
+  awaiting_permission: ['⏳', '❓', '⏳'],
+  awaiting_input:      ['⏳', '❓', '⏳'],
+  error:               ['💥', '❌', '💥'],
+  crashed:             ['💀', '💀', '💀'],
+  exited:              ['—', '—', '—'],
+  offline:             ['—', '—', '—'],
+};
+
+// slopHash: djb2 over the conv-id string. The output is reduced mod
+// SLOP_SYMBOLS.length per reel, so even a small hash space gives a
+// good visual spread across the eight symbols.
+function slopHash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+// slopReelStripHTML builds one reel's vertical strip: the 8-symbol set
+// starting at `offset`, plus the starting symbol repeated at the end so
+// the CSS spin animation (translateY from 0 to -8 cells) loops without
+// a visible seam. The CSS keyframes are pinned to exactly 8 cells, so
+// the strip length must match — keep them in sync if either changes.
+function slopReelStripHTML(offset) {
+  const n = SLOP_SYMBOLS.length;
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    html += '<span>' + SLOP_SYMBOLS[(i + offset) % n] + '</span>';
+  }
+  html += '<span>' + SLOP_SYMBOLS[offset % n] + '</span>';
+  return '<span class="slop-strip">' + html + '</span>';
+}
+
+// slopMachine renders the per-row slot machine. Tooltip mirrors
+// statePill so accessibility/discoverability stay equivalent.
+function slopMachine(state, online, convID) {
+  let status;
+  if (!online) {
+    status = ((state && state.exit_reason) || '') === 'unexpected' ? 'crashed' : 'offline';
+  } else {
+    status = (state && state.status) || 'idle';
+  }
+  const detail = (state && state.status_detail) || '';
+  const tip = detail ? `${status}: ${detail}` : status;
+  const stopped = SLOP_STOPPED[status];
+  if (stopped) {
+    const reels = stopped.map(g => `<span class="slop-reel slop-static">${g}</span>`).join('');
+    return `<span class="slop-machine" data-status="${esc(status)}" title="${esc(tip)}" aria-label="${esc(tip)}">${reels}</span>`;
+  }
+  // Spinning state: a per-agent permutation of the symbol set on each
+  // reel. Three offsets carved from one hash — independent enough to
+  // look distinct, deterministic so the same agent keeps "its" machine
+  // across reloads.
+  const h = slopHash(convID || '');
+  const n = SLOP_SYMBOLS.length;
+  const offsets = [h % n, (h >>> 3) % n, (h >>> 7) % n];
+  const reels = offsets.map(o => `<span class="slop-reel">${slopReelStripHTML(o)}</span>`).join('');
+  return `<span class="slop-machine" data-status="${esc(status)}" title="${esc(tip)}" aria-label="${esc(tip)}">${reels}</span>`;
+}
+
 // CTX_SEGMENTS is the block count of the context-window meter — a
 // value in the 3-6 design range. 5 splits cleanly into 20%-wide
 // bands and leaves room for 2 green / 2 yellow / 1 red.
@@ -474,7 +556,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, onlineDot, agentStatusDot, statePill, contextMeter,
+  $, $$, esc, shortId, onlineDot, agentStatusDot, statePill, slopMachine, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,

@@ -1334,7 +1334,117 @@ body.slop .online          { color: #56d364; text-shadow: 0 0 6px rgba(86, 211, 
 body.slop header h1 .slop-icon {
   animation: slop-jiggle 2.4s ease-in-out infinite;
 }
+/* Per-agent slot-machine state indicator (body.slop).
+   ──────────────────────────────────────────────────────
+   Replaces the .state-pill in slop mode. Pure CSS animation — a 3-reel
+   widget where each reel is a clipped 1.3em viewport over a vertical
+   strip of 9 emoji glyphs (8 unique + the first repeated at the end
+   so the loop is seamless). When the agent is working the strip
+   translates upward continuously; in any stopped state the cell holds
+   a single static glyph instead. Per-agent reel offsets come from a
+   conv-id hash in slopMachine() (helpers.js), so each agent's machine
+   shows a different sequence.
+
+   The widget is always emitted in the HTML but hidden unless body.slop
+   is set, so flipping slop mode swaps the state cell without a re-render.
+   The keyframes are pinned to exactly 8 cells of 1.3em — if SLOP_SYMBOLS
+   length changes in helpers.js, the translateY constants here must
+   change with it. */
+.slop-machine { display: none; }
+body.slop .slop-machine {
+  display: inline-flex; gap: 1px; padding: 2px;
+  vertical-align: middle;
+  background: linear-gradient(180deg, #2a0808 0%, #0a0a0a 50%, #2a0808 100%);
+  border: 1px solid #ffd700; border-radius: 4px;
+  box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6),
+              0 0 4px rgba(255, 215, 0, 0.25);
+}
+/* Hide the regular state pill in slop mode — the slot machine
+   takes its place. The +N subagent detail still shows alongside. */
+body.slop .state-pill { display: none; }
+
+.slop-reel {
+  display: inline-block; width: 1.3em; height: 1.3em;
+  overflow: hidden; vertical-align: middle;
+  background: #0a0a0a; border-radius: 2px;
+  text-align: center; line-height: 1.3em; font-size: 0.95em;
+}
+.slop-reel.slop-static { line-height: 1.3em; }
+.slop-strip { display: block; will-change: transform; }
+.slop-strip > span {
+  display: block; height: 1.3em; line-height: 1.3em;
+  text-align: center;
+}
+
+/* Three spin speeds so the reels never sync visually — slowest right
+   reel gives the eye a 1-2-3 stop order even though all three loop
+   forever; spread durations also let an agent's hash-tinted offsets
+   read clearly instead of blurring into a single rolling band. */
+body.slop .slop-machine[data-status="working"] .slop-reel:nth-child(1) .slop-strip,
+body.slop .slop-machine[data-status="main_agent_idle"] .slop-reel:nth-child(1) .slop-strip {
+  animation: slop-spin 0.42s linear infinite;
+}
+body.slop .slop-machine[data-status="working"] .slop-reel:nth-child(2) .slop-strip,
+body.slop .slop-machine[data-status="main_agent_idle"] .slop-reel:nth-child(2) .slop-strip {
+  animation: slop-spin 0.56s linear infinite;
+}
+body.slop .slop-machine[data-status="working"] .slop-reel:nth-child(3) .slop-strip,
+body.slop .slop-machine[data-status="main_agent_idle"] .slop-reel:nth-child(3) .slop-strip {
+  animation: slop-spin 0.71s linear infinite;
+}
+@keyframes slop-spin {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-10.4em); } /* 8 cells * 1.3em */
+}
+
+/* Per-state frame treatments — the reel content is the JS's job; the
+   frame's pulse / glow / colour belongs here so each state reads at a
+   glance even before the player parses the glyphs. */
+body.slop .slop-machine[data-status="idle"] {
+  animation: slop-jackpot 1.8s ease-in-out infinite;
+}
+@keyframes slop-jackpot {
+  0%, 100% { box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6),
+                          0 0 4px rgba(255, 215, 0, 0.3); }
+  50%      { box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6),
+                          0 0 12px rgba(255, 215, 0, 0.8); }
+}
+body.slop .slop-machine[data-status="awaiting_permission"],
+body.slop .slop-machine[data-status="awaiting_input"] {
+  border-color: #ff7b72;
+  animation: slop-alert 1s ease-in-out infinite;
+}
+@keyframes slop-alert {
+  0%, 100% { border-color: #ff7b72; box-shadow: inset 0 0 4px rgba(0,0,0,0.6), 0 0 4px rgba(255, 123, 114, 0.4); }
+  50%      { border-color: #ffd700; box-shadow: inset 0 0 4px rgba(0,0,0,0.6), 0 0 10px rgba(255, 215, 0, 0.6); }
+}
+body.slop .slop-machine[data-status="error"] {
+  border-color: #f85149;
+  box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6),
+              0 0 8px rgba(248, 81, 73, 0.6);
+}
+body.slop .slop-machine[data-status="crashed"] {
+  border-color: #f85149;
+  opacity: 0.85;
+}
+body.slop .slop-machine[data-status="offline"],
+body.slop .slop-machine[data-status="exited"] {
+  border-color: #484f58; opacity: 0.55;
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   body.slop header { animation: none; }
   body.slop header h1 .slop-icon { animation: none; }
+  body.slop .slop-machine[data-status="working"] .slop-strip,
+  body.slop .slop-machine[data-status="main_agent_idle"] .slop-strip {
+    /* Pin the strip at the first symbol — the reel still reads as
+       "alive" via the gold frame even with the animation suppressed. */
+    animation: none;
+  }
+  body.slop .slop-machine[data-status="idle"],
+  body.slop .slop-machine[data-status="awaiting_permission"],
+  body.slop .slop-machine[data-status="awaiting_input"] {
+    animation: none;
+  }
 }
