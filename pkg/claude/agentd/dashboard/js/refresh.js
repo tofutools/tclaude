@@ -136,6 +136,73 @@ function bindFilter(tab) {
       rerender();
     });
   }
+  // Optional ▾ view popover (groups tab only) — collapses the four
+  // "show X" checkboxes above behind a single button so the filter
+  // bar stays compact. Restoration of each checkbox's state has
+  // already happened above; this only wires the trigger + open/close
+  // behaviour + a badge that surfaces the number of toggles deviating
+  // from their defaults (so a user can see at a glance whether
+  // anything is being hidden).
+  const viewBtn = $(`#filter-${tab}-view-btn`);
+  const viewMenu = $(`#filter-${tab}-view-menu`);
+  const viewBadge = $(`#filter-${tab}-view-badge`);
+  if (viewBtn && viewMenu && viewBadge) {
+    // Defaults match the `checked` attributes in dashboard.html. The
+    // first three default ON (showing everything); 'conversations'
+    // defaults OFF since there are usually many. Edit BOTH places
+    // together if the defaults ever change.
+    const viewDefaults = {
+      [`filter-${tab}-offline`]: true,
+      [`filter-${tab}-ungrouped`]: true,
+      [`filter-${tab}-retired`]: true,
+      [`filter-${tab}-conversations`]: false,
+    };
+    const updateViewBadge = () => {
+      let n = 0;
+      for (const [id, want] of Object.entries(viewDefaults)) {
+        const el = document.getElementById(id);
+        if (el && el.checked !== want) n++;
+      }
+      if (n === 0) {
+        viewBadge.hidden = true;
+        viewBadge.textContent = '';
+      } else {
+        viewBadge.hidden = false;
+        viewBadge.textContent = String(n);
+      }
+    };
+    updateViewBadge();
+    // change bubbles up from the contained inputs, so one listener on
+    // the popover covers all four. The per-checkbox handlers above
+    // already persist + rerender; this only refreshes the badge.
+    viewMenu.addEventListener('change', updateViewBadge);
+    const closeViewMenu = () => {
+      viewMenu.classList.remove('open');
+      viewBtn.setAttribute('aria-expanded', 'false');
+    };
+    viewBtn.addEventListener('click', () => {
+      const willOpen = !viewMenu.classList.contains('open');
+      viewMenu.classList.toggle('open', willOpen);
+      viewBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    // Outside-click dismissal. The trigger and the popover both live
+    // inside .view-popover-wrap, so any click that lands inside the
+    // wrapper (the button toggle, or a checkbox in the popover) is
+    // left alone; everything else closes.
+    document.addEventListener('click', (e) => {
+      if (!viewMenu.classList.contains('open')) return;
+      if (e.target.closest('.view-popover-wrap')) return;
+      closeViewMenu();
+    });
+    // Escape closes — parity with the ⚙ action menus and modals.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (!viewMenu.classList.contains('open')) return;
+      e.preventDefault();
+      closeViewMenu();
+      viewBtn.focus();
+    });
+  }
 }
 
 export async function refresh() {

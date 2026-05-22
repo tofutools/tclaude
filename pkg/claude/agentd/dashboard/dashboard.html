@@ -43,18 +43,15 @@
       <input id="filter-groups" type="text" placeholder="Filter (group name + member title/role/descr/cwd/branch)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-groups-count"></span>
       <button class="clear-filter" id="filter-groups-clear" title="Clear filter">×</button>
-      <label class="filter-toggle" title="Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.">
-        <input id="filter-groups-offline" type="checkbox" checked /> show offline
-      </label>
-      <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.">
-        <input id="filter-groups-ungrouped" type="checkbox" checked /> show ungrouped
-      </label>
-      <label class="filter-toggle" title="Show the virtual &quot;Retired&quot; group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back.">
-        <input id="filter-groups-retired" type="checkbox" checked /> show retired
-      </label>
-      <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.">
-        <input id="filter-groups-conversations" type="checkbox" /> show conversations
-      </label>
+      <div class="view-popover-wrap">
+        <button id="filter-groups-view-btn" class="view-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="filter-groups-view-menu" title="Choose which members and virtual groups to show on this tab">▾ view<span id="filter-groups-view-badge" class="view-badge" hidden></span></button>
+        <div id="filter-groups-view-menu" class="view-menu" role="menu">
+          <label class="filter-toggle" title="Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override."><input id="filter-groups-offline" type="checkbox" checked /><span>show offline</span></label>
+          <label class="filter-toggle" title="Show the virtual &quot;Ungrouped&quot; group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them."><input id="filter-groups-ungrouped" type="checkbox" checked /><span>show ungrouped</span></label>
+          <label class="filter-toggle" title="Show the virtual &quot;Retired&quot; group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back."><input id="filter-groups-retired" type="checkbox" checked /><span>show retired</span></label>
+          <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent."><input id="filter-groups-conversations" type="checkbox" /><span>show conversations</span></label>
+        </div>
+      </div>
       <span class="spacer"></span>
       <button id="group-import-open" class="tool" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
       <button id="cleanup-all-open" class="tool" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>

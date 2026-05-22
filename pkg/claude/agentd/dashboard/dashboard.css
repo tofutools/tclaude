@@ -617,6 +617,52 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .filter-bar label.filter-toggle:hover { color: #d4d4d4; }
 .filter-bar label.filter-toggle input { cursor: pointer; margin: 0; }
+/* View popover — collapses the per-tab "show offline / ungrouped /
+   retired / conversations" toggles behind a single 'view' button so
+   the filter bar stays compact. The button + popover are siblings
+   inside a position:relative wrapper so the popover anchors to the
+   trigger; an "N" badge surfaces when any toggle deviates from
+   default so a user can tell at a glance whether anything is hidden. */
+.filter-bar .view-popover-wrap { position: relative; display: inline-flex; align-items: center; }
+/* Trigger styled like the per-group chips (.group-descr et al.) —
+   no background fill at rest, transparent border that lights up on
+   hover, dim text. Aria-expanded="true" gets the same lit border
+   so the open state is still legible. Deliberately discreet:
+   the four toggles inside are an occasional knob, not a primary
+   action, so the trigger should fade into the bar until the user
+   reaches for it. The badge keeps its blue so an active filter
+   still pulls the eye. */
+.filter-bar .view-btn {
+  background: transparent; border: 1px solid transparent;
+  color: #7d8590; cursor: pointer; font-family: inherit;
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+}
+.filter-bar .view-btn:hover { color: #d4d4d4; border-color: #58a6ff; }
+.filter-bar .view-btn[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; }
+.filter-bar .view-badge {
+  display: inline-block; margin-left: 5px; padding: 0 5px;
+  border-radius: 7px; background: #1f6feb; color: #fff;
+  font-size: 10px; font-weight: bold; line-height: 13px; vertical-align: middle;
+}
+.view-menu {
+  display: none; position: absolute; top: 100%; left: 0; z-index: 50;
+  margin-top: 4px; min-width: 180px; flex-direction: column; gap: 2px;
+  padding: 6px; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+}
+.view-menu.open { display: flex; }
+/* Grid layout pins the checkbox to a fixed first column so all four
+   line up regardless of label length, and ignores stray whitespace
+   text nodes the older flex+gap recipe was visibly rendering between
+   items. The span wraps the label text so it becomes a real grid
+   item rather than an anonymous text run. */
+.view-menu label.filter-toggle {
+  display: grid; grid-template-columns: auto 1fr;
+  align-items: center; gap: 8px;
+  padding: 4px 8px; border-radius: 3px; font-size: 12px;
+}
+.view-menu label.filter-toggle input { margin: 0; }
+.view-menu label.filter-toggle:hover { background: #161b22; }
 .group-offline-toggle {
   font-size: 11px; color: #7d8590; margin-left: 8px;
   border: 1px solid #2a3340; border-radius: 4px;
