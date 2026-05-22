@@ -191,6 +191,12 @@ details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[open] > summary::before { content: "▼ "; }
 .subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
+/* Direct member tables inside a group's expanded body should size to
+   content, not stretch to the full viewport — the global "table { width:
+   100% }" rule wastes screen real-estate when only a few columns have
+   data. max-width: 100% still caps overflow if content does happen to
+   exceed the container. */
+.subtable > table { width: auto; max-width: 100%; }
 .group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
 .group-links-section > table { margin: 4px 0 6px 0; }
