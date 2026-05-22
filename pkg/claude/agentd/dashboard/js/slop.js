@@ -13,7 +13,11 @@ const SLOP_FAVICON =
   '<text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🎰</text></svg>';
 const SLOP_EMOJI = '🎰';
 const SLOP_REST = 'The slop machine';
-const SLOP_TITLE = '🎰 The slop machine';
+// The slop favicon is itself a 🎰 (see SLOP_FAVICON), and the browser
+// renders the favicon to the left of the tab title — so prefixing the
+// title with a 🎰 too gave every tab two slot machines side-by-side.
+// Drop the leading emoji here; the favicon is enough.
+const SLOP_TITLE = 'The slop machine';
 
 // Captured once on first apply so a click can restore the page to its
 // pre-slop state. Reading from the DOM rather than hard-coding the
