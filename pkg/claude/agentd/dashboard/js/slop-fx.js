@@ -392,12 +392,16 @@ export function bindSlopMarquee() {
   const text = document.getElementById('slop-marquee-text');
   const track = document.getElementById('slop-marquee-track');
   if (!text || !track) return;
-  // Initial paint. lastSnapshot may still be null here — that's fine,
-  // the snapshot event will refresh it within the first poll
-  // round-trip. The placeholder seeded in dashboard.html ("🎰 The
-  // slop machine") is more honest than an "0 agents online" the
-  // first-paint code path used to bake in.
-  updateMarqueeText(text);
+  // Initial paint — gated on lastSnapshot. With no snapshot yet,
+  // tickerString() would bake in "🎰 0 agents online" and that bogus
+  // count would be visible for the brief window until the first poll
+  // returns. The HTML placeholder ("🎰 The slop machine") is more
+  // honest in that window, so we leave it alone and rely on the
+  // snapshot event below to swap in live data once it arrives. On a
+  // mid-session slop toggle lastSnapshot is already populated, so
+  // the initial paint runs and the marquee shows real numbers
+  // immediately.
+  if (lastSnapshot) updateMarqueeText(text);
   // Primary refresh trigger: every successful /api/snapshot. The
   // listener stays bound for the page lifetime; the diff inside
   // updateMarqueeText suppresses redundant writes so steady-state
