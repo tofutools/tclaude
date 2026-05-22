@@ -390,14 +390,6 @@ details[open] > summary .spawn-btn { opacity: 1; }
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; min-width: 16em;
 }
-.group-default-context {
-  font-size: 11px; color: #7d8590;
-  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
-  border: 1px solid transparent;
-}
-.group-default-context:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-default-context.unset { color: #484f58; font-style: italic; }
-.group-default-context.unset:hover { color: #d4d4d4; }
 .group-max-members {
   font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
