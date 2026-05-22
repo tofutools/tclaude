@@ -280,6 +280,18 @@ tr:hover .row-actions { opacity: 1; }
 }
 details > summary:hover .group-actions,
 details[open] > summary .group-actions { opacity: 1; }
+/* When the action cluster lives in the expanded body (.subtable)
+   rather than the summary, it is only ever rendered after the user
+   opened the group — the dim-at-rest fade no longer applies. Drop
+   the left margin too, the cluster sits flush at the subtable's
+   left edge under the group title, with a small bottom gap before
+   the member table. */
+.group-header-actions {
+  margin: 0 0 8px 0; display: flex; align-items: center; gap: 4px;
+}
+.group-header-actions .group-actions,
+.group-header-actions .spawn-btn { opacity: 1; margin-left: 0; }
+.group-header-actions .group-actions { margin-left: 4px; }
 .group-actions button {
   background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
