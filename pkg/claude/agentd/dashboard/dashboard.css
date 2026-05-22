@@ -212,7 +212,14 @@ details[open] > summary::before { content: "▼ "; }
 .copy-cmd:hover { border-color: #58a6ff; }
 .copy-cmd::before { content: "$ "; color: #7d8590; }
 #status { font-size: 11px; color: #7d8590; }
+/* Leading ● — pseudo-element so its colour can swap with the
+   live/error class without us round-tripping HTML through
+   showStatus. Gated on :not(:empty) so the initial loading state
+   (text not set yet) doesn't render a stray dot. */
+#status:not(:empty)::before { content: '● '; color: #7d8590; }
+#status.live::before { color: #3fb950; }
 #status.error { color: #f85149; }
+#status.error::before { color: #f85149; }
 /* Whole-dashboard Shutdown button — sits top-right, just to the right
    of the live dot (#status). Danger-styled but compact so it doesn't
    shout louder than the dashboard title. */
@@ -337,6 +344,24 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .row-actions .cog-btn:hover, .group-actions .cog-btn:hover {
   color: #ffb52e; border-color: #e3a008;
 }
+/* The .filter-bar-cog wrapper holds the trailing "more group
+   actions" cog + its menu. Mirror the +new-group .primary
+   button's exact size recipe (font-size 12 + padding 5×12 + the
+   bar's inherited line-height) so the two chips have pixel-
+   identical box height and read as a paired cluster. The smaller
+   row/group cogs the cluster reuses elsewhere keep their own
+   tighter sizing. */
+.filter-bar-cog { position: relative; display: inline-flex; align-items: center; }
+.filter-bar-cog .cog-btn {
+  background: #21262d; border: 1px solid #6b4f1d; border-radius: 4px;
+  color: #e3a008; cursor: pointer; font-family: inherit;
+  /* Larger gear glyph (16px vs the +new-group label's 12px),
+     compensated by tighter vertical padding so the box height
+     still matches .primary: ~18px line-height at 16px + 6px
+     padding ≈ ~14-15px + 10px padding at 12px. */
+  font-size: 16px; padding: 3px 12px;
+}
+.filter-bar-cog .cog-btn:hover { color: #ffb52e; border-color: #e3a008; }
 .action-menu {
   display: none; position: absolute; top: 100%; z-index: 50;
   margin-top: 4px; min-width: 150px; flex-direction: column; gap: 4px;
@@ -349,8 +374,23 @@ details[open] > summary .spawn-btn { opacity: 1; }
    on-screen. */
 .row-actions .action-menu { left: 0; }
 .group-actions .action-menu { right: 0; }
+/* The filter-bar cog sits at the far right end of the filter bar
+   — right-align so the menu drops back to the LEFT instead of
+   overflowing past the page edge. */
+.filter-bar-cog .action-menu { right: 0; }
 .action-menu.open { display: flex; }
 .action-menu button { width: 100%; text-align: left; }
+/* The filter-bar cog's menu items dispatch via id-bound listeners
+   (modal-templates.js, modal-message.js) rather than the data-act
+   handler, so they don't inherit the .row-actions / .group-actions
+   button skin. Stamp the same chrome here so the items read as
+   menu rows, not raw <button>s. */
+.filter-bar-cog .action-menu button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; padding: 5px 10px; font-size: 12px;
+  font-family: inherit;
+}
+.filter-bar-cog .action-menu button:hover { color: #d4d4d4; border-color: #58a6ff; }
 /* Flip above the cog when opening downward would run off the viewport
    bottom — the toggle handler measures the menu and sets this. */
 .action-menu.opens-up { top: auto; bottom: 100%; margin: 0 0 4px; }
@@ -520,7 +560,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   color: #7d8590; border: 1px solid #2a3340; border-radius: 3px;
   vertical-align: 1px; cursor: help;
 }
-.group-virtual-hint { margin-left: 8px; font-size: 11px; font-style: italic; }
+/* Tab-wide drag & drop hint — sits at the bottom of the groups tab,
+   below every real and virtual group. Replaces the per-virtual-group
+   one-liners that previously repeated on each virtual summary; the
+   tips don't differ per group, so one quiet block at the foot is
+   plenty. Muted so the live group content keeps focus. */
+.groups-dnd-hints {
+  display: block; margin: 16px 0 0 0; padding: 8px 12px;
+  font-size: 11px; color: #7d8590; line-height: 1.6;
+  border-top: 1px solid #2a3340;
+}
+.groups-dnd-hints strong { color: #c9d1d9; font-weight: 600; margin-right: 4px; }
+.groups-dnd-hints em { color: #c9d1d9; font-style: normal; }
 .add-member-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 16px 18px; max-width: 560px; width: calc(100% - 32px);

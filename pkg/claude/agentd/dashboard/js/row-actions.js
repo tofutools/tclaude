@@ -147,9 +147,15 @@ function bindRowActions() {
     // only the .open class is dropped); a click anywhere OUTSIDE every
     // menu closes them too (click-away). A click on a menu's own
     // padding — inside a menu but not on an item — leaves it open.
-    const onCog = act === 'row-menu' || act === 'group-menu';
+    const onCog = act === 'row-menu' || act === 'group-menu' || act === 'filter-bar-menu';
     const inMenu = !!e.target.closest('.action-menu');
-    if (!onCog && (btn || !inMenu)) closeAllActionMenus();
+    // Menus self-dismiss on any click that lands on a button inside
+    // them. data-act items are caught by the `btn` check below, but
+    // the filter-bar-cog's menu items dispatch via their id-bound
+    // listeners and so have no data-act — `inMenuButton` covers
+    // them too.
+    const inMenuButton = inMenu && !!e.target.closest('.action-menu button');
+    if (!onCog && (btn || inMenuButton || !inMenu)) closeAllActionMenus();
     if (!btn) return;
     // Buttons may live inside <summary>, where the default click
     // action is to toggle the details. Stop that.
@@ -1040,11 +1046,13 @@ function bindRowActions() {
           return;
         }
         case 'row-menu':
-        case 'group-menu': {
-          // The ⚙ cog: toggle this row's / group's options menu. The
-          // menu is the cog's sibling inside .row-actions /
-          // .group-actions; for a group cog the e.preventDefault()
-          // above already stops the click from toggling the <details>.
+        case 'group-menu':
+        case 'filter-bar-menu': {
+          // The ⚙ cog: toggle this row's / group's / filter-bar's
+          // options menu. The menu is the cog's sibling inside the
+          // surrounding .row-actions / .group-actions / .filter-bar-cog;
+          // for a group cog the e.preventDefault() above already stops
+          // the click from toggling the <details>.
           // closeAllActionMenus first so opening one always closes any
           // other; opening a menu suspends the auto-refresh
           // (refreshSuspended sees .action-menu.open) so a 5s poll

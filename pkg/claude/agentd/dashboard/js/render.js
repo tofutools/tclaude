@@ -93,7 +93,6 @@ function renderVirtualGroup(g) {
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group.">virtual</span>
         <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
-        <span class="muted group-virtual-hint">drag a row onto a group to add it · drag a group member here to remove it</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -137,7 +136,6 @@ function renderVirtualConversationsGroup(g) {
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.">virtual</span>
         <span class="muted">— ${members.length} conversation${members.length === 1 ? '' : 's'} that aren't agents</span>
-        <span class="muted group-virtual-hint">drag a row onto a group to promote + add it</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -187,7 +185,6 @@ function renderVirtualRetiredGroup(g) {
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.">virtual</span>
         <span class="muted">— ${members.length} retired agent${members.length === 1 ? '' : 's'}</span>
-        <span class="muted group-virtual-hint">drag an agent here to retire it · drag a retired row onto a group to reinstate + join it</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -420,6 +417,10 @@ function showStatus(text, isError) {
   const el = $('#status');
   el.textContent = text;
   el.classList.toggle('error', !!isError);
+  // "live" lights the leading dot green via the #status.live::before
+  // rule in dashboard.css. Error path stays red; empty path renders
+  // no dot at all (the ::before is gated on :not(:empty)).
+  el.classList.toggle('live', !isError && !!text);
 }
 
 // === Messages tab — human-facing notifications from agents ===

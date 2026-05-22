@@ -252,7 +252,10 @@ export async function refresh() {
     renderMessagesTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
-    showStatus('● live', false);
+    // The leading ● is rendered by CSS (#status::before) so it can
+    // pick up the green "live" colour without us round-tripping HTML
+    // through showStatus.
+    showStatus('live', false);
     // Notify out-of-tree consumers (currently slop-fx.js's marquee)
     // that fresh snapshot data is now in lastSnapshot. A custom event
     // keeps the dependency one-way — refresh.js doesn't have to

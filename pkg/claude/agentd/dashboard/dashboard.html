@@ -53,12 +53,26 @@
         </div>
       </div>
       <span class="spacer"></span>
-      <button id="group-import-open" class="tool" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
-      <button id="cleanup-all-open" class="tool" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
-      <button id="group-from-template-open" class="tool" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
+      <div class="filter-bar-cog">
+        <button class="cog-btn" type="button" data-act="filter-bar-menu" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, from template" aria-label="More group actions">⚙︎</button>
+        <div class="action-menu" role="menu">
+          <button role="menuitem" id="group-import-open" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
+          <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
+          <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
+        </div>
+      </div>
     </div>
     <div id="groups-list"></div>
+    <aside class="groups-dnd-hints" aria-label="drag and drop tips">
+      <strong>drag &amp; drop:</strong>
+      row → another group ·
+      <em>Ungrouped</em> row → group ·
+      group member → <em>Ungrouped</em> (remove) ·
+      <em>Conversations</em> row → group (promote + add) ·
+      any row → <em>Retired</em> (retire) ·
+      <em>Retired</em> row → group (reinstate + join)
+    </aside>
   </section>
   <section id="tab-templates">
     <div class="filter-bar">
