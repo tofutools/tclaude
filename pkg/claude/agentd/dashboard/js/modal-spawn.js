@@ -214,6 +214,13 @@ async function submitAgentSpawn() {
   const submitBtn = $('#agent-spawn-submit');
   submitBtn.disabled = true;
   submitBtn.textContent = 'Spawning…';
+  // Slop-mode lever yank — the body.slop CSS swaps the button text
+  // for "🎰 PULL!" via ::before and listens for this class to play
+  // the yank-down animation. Self-removes after the animation so a
+  // failed submit retry yanks again on the next click. Harmless in
+  // non-slop mode (the class has no styling there).
+  submitBtn.classList.add('slop-pull-active');
+  setTimeout(() => submitBtn.classList.remove('slop-pull-active'), 700);
   try {
     // Resolve the worktree picker (it targets the "Worktree repo"
     // field, which may differ from CWD). Two outcomes:

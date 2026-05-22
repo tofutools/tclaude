@@ -170,10 +170,16 @@ function slopMachine(state, online, convID) {
   }
   const detail = (state && state.status_detail) || '';
   const tip = detail ? `${status}: ${detail}` : status;
+  // data-conv tags the cell so slop-fx.js can correlate refresh-tick
+  // re-renders (status transitions for the celebration) and route a
+  // manual click back to the right row. The conv-id is already public
+  // (it appears in many places on the page) so emitting it here adds
+  // no new exposure.
+  const conv = esc(convID || '');
   const stopped = SLOP_STOPPED[status];
   if (stopped) {
     const reels = stopped.map(g => `<span class="slop-reel slop-static">${g}</span>`).join('');
-    return `<span class="slop-machine" data-status="${esc(status)}" title="${esc(tip)}" aria-label="${esc(tip)}">${reels}</span>`;
+    return `<span class="slop-machine" data-status="${esc(status)}" data-conv="${conv}" title="${esc(tip)}" aria-label="${esc(tip)}">${reels}</span>`;
   }
   // Spinning state: a per-agent permutation of the symbol set on each
   // reel. Three offsets carved from one hash — independent enough to
@@ -183,7 +189,7 @@ function slopMachine(state, online, convID) {
   const n = SLOP_SYMBOLS.length;
   const offsets = [h % n, (h >>> 3) % n, (h >>> 7) % n];
   const reels = offsets.map(o => `<span class="slop-reel">${slopReelStripHTML(o)}</span>`).join('');
-  return `<span class="slop-machine" data-status="${esc(status)}" title="${esc(tip)}" aria-label="${esc(tip)}">${reels}</span>`;
+  return `<span class="slop-machine" data-status="${esc(status)}" data-conv="${conv}" title="${esc(tip)}" aria-label="${esc(tip)}">${reels}</span>`;
 }
 
 // CTX_SEGMENTS is the block count of the context-window meter — a
@@ -560,4 +566,7 @@ export {
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,
+  // slop-fx.js re-uses these for the manual-pull animation and the
+  // 7-7-7 win detection — single source of truth.
+  SLOP_SYMBOLS, SLOP_STOPPED,
 };

@@ -20,6 +20,12 @@
   <button id="power-on-all-btn" data-act="power-on-all" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on all</button>
   <button id="shutdown-all-btn" data-act="shutdown-all" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown all</button>
 </header>
+<!-- Slop-mode marquee — populated and ticked by slop-fx.js; hidden via
+     CSS unless body.slop is set. Always present in the DOM so toggling
+     slop in-place doesn't need a re-render. aria-hidden — pure flair. -->
+<div id="slop-marquee" aria-hidden="true">
+  <div id="slop-marquee-track"><span id="slop-marquee-text">🎰 The slop machine</span></div>
+</div>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="templates">Templates</button>
