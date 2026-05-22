@@ -619,11 +619,11 @@ func openBrowser(url string) error {
 	case "darwin":
 		cmd = exec.Command("open", url)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", url)
+		cmd = exec.Command("cmd", "/c", "start", "", escapeForCmdExe(url))
 	default:
 		if wsl.IsWSL() {
 			if cmdExe := findWindowsCmd(); cmdExe != "" {
-				cmd = exec.Command(cmdExe, "/c", "start", "", url)
+				cmd = exec.Command(cmdExe, "/c", "start", "", escapeForCmdExe(url))
 				break
 			}
 			if path, err := exec.LookPath("wslview"); err == nil {
@@ -635,6 +635,31 @@ func openBrowser(url string) error {
 	}
 	return cmd.Start()
 }
+
+// escapeForCmdExe escapes cmd.exe metacharacters (`^&<>|`) by prefixing
+// each with `^`. Without this `cmd /c start "" URL` splits the command
+// line at `&`, dropping the rest of the URL — exactly what happens to
+// `http://…?init_token=X&slop=1` on WSL and native Windows, where the
+// browser ends up at `…?init_token=X` and the slop theme never
+// activates. wslview and xdg-open don't parse the URL through a shell,
+// so they get the raw string unchanged.
+//
+// Order matters: `^` must be in the replacer table so an existing `^`
+// in the URL doesn't get reinterpreted as an escape lead-in. The
+// stdlib NewReplacer processes the input left-to-right without
+// re-scanning its own output, so `^&` → `^^^&` (literal `^` then
+// literal `&`) — correct.
+func escapeForCmdExe(s string) string {
+	return cmdExeEscaper.Replace(s)
+}
+
+var cmdExeEscaper = strings.NewReplacer(
+	"^", "^^",
+	"&", "^&",
+	"<", "^<",
+	">", "^>",
+	"|", "^|",
+)
 
 // findWindowsCmd locates cmd.exe on a mounted Windows drive when running
 // under WSL. Returns "" if not found.
