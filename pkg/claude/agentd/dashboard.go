@@ -15,6 +15,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -637,7 +638,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		loc := locationView(convID)
 		a := &dashboardAgent{
 			ConvID:            convID,
-			Title:             agent.FreshTitle(convID),
+			Title:             agent.CachedTitle(convID),
 			agentLocationView: loc,
 			repoLinksView:     branchLinksFor(loc),
 			Online:            isConvOnline(convID),
@@ -687,7 +688,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			loc := locationView(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            m.ConvID,
-				Title:             agent.FreshTitle(m.ConvID),
+				Title:             agent.CachedTitle(m.ConvID),
 				Role:              m.Role,
 				Descr:             m.Descr,
 				agentLocationView: loc,
@@ -716,7 +717,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ownerLoc := locationView(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            ownerConv,
-				Title:             agent.FreshTitle(ownerConv),
+				Title:             agent.CachedTitle(ownerConv),
 				Role:              "owner",
 				agentLocationView: ownerLoc,
 				repoLinksView:     branchLinksFor(ownerLoc),
@@ -796,9 +797,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	if grants, err := db.ListAllActiveSudoGrants(); err == nil {
 		now := time.Now()
 		for _, g := range grants {
-			title := ""
-			if row := agent.FreshConvRowResolved(g.ConvID); row != nil {
-				title = agent.DisplayTitle(row)
+			// Grantee name from the live conv_index cache — custom
+			// title > pending name > summary > first prompt, no .jsonl
+			// rescan. The pending-name tier covers a just-spawned
+			// grantee before its first index event; "(unknown)" means
+			// nothing resolved, which this surface renders as blank.
+			title := agent.CachedTitle(g.ConvID)
+			if title == agent.UnknownTitle {
+				title = ""
 			}
 			remaining := int64(0)
 			if rem := g.ExpiresAt.Sub(now); rem > 0 {
@@ -944,14 +950,17 @@ func collectConversationsSnapshot(active, retired []*db.AgentEnrollment) []dashb
 			continue
 		}
 		// Plain conversations are non-agents — never /rename'd — so
-		// their title is a summary or a raw first prompt. FreshConvTitle
-		// renders them through the same convindex.FormatConvTitle the
-		// CLI's `conv ls` uses, so the dashboard stops leaking uncleaned
-		// first-prompt text (system tags, newlines). Agent rows keep
-		// FreshTitle — their names already display as intended.
+		// their title is a summary or a raw first prompt. Render it
+		// straight from the cached row via convindex.FormatConvTitle —
+		// the same formatter the CLI's `conv ls` uses, so the dashboard
+		// stops leaking uncleaned first-prompt text (system tags,
+		// newlines) — WITHOUT the per-row os.Stat + reparse that
+		// agent.FreshConvTitle would do. The conv_index monitor
+		// (fsnotify.go) keeps these rows fresh, so the cached row is
+		// trustworthy; this poll no longer has to refresh it.
 		out = append(out, dashboardConversation{
 			ConvID:   row.ConvID,
-			Title:    agent.FreshConvTitle(row.ConvID),
+			Title:    convindex.FormatConvTitle(row.CustomTitle, row.Summary, row.FirstPrompt),
 			Online:   isConvOnline(row.ConvID),
 			State:    stateForConv(row.ConvID),
 			Modified: row.Modified,
@@ -973,7 +982,7 @@ func collectRetiredSnapshot(retired []*db.AgentEnrollment) []dashboardRetiredAge
 		}
 		out = append(out, dashboardRetiredAgent{
 			ConvID:       e.ConvID,
-			Title:        agent.FreshTitle(e.ConvID),
+			Title:        agent.CachedTitle(e.ConvID),
 			Online:       isConvOnline(e.ConvID),
 			RetiredAt:    retiredAt,
 			RetiredBy:    e.RetiredBy,
@@ -1070,19 +1079,17 @@ func collectCronSnapshot() []dashboardCronJob {
 	return out
 }
 
-// labelForConv returns a short display label for a conv-id. Tries
-// the conv's display title (custom-title / summary / first-prompt)
-// first, then falls back to the 8-char prefix. Mirrors the rendering
-// used in the Groups/Agents tabs.
+// labelForConv returns a short display label for a conv-id. Resolves
+// the conv's name from the live conv_index cache (custom title >
+// pending name > summary > first prompt — no .jsonl rescan), then
+// falls back to the 8-char prefix when nothing resolves. Mirrors the
+// rendering used in the Groups/Agents tabs.
 func labelForConv(convID string) string {
 	if convID == "" {
 		return ""
 	}
-	row := agent.FreshConvRowResolved(convID)
-	if row != nil {
-		if t := agent.DisplayTitle(row); t != "" {
-			return t
-		}
+	if t := agent.CachedTitle(convID); t != "" && t != agent.UnknownTitle {
+		return t
 	}
 	if len(convID) >= 8 {
 		return convID[:8]
