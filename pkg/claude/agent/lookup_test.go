@@ -253,6 +253,50 @@ func TestFreshConvRowResolved_NoSessionRow(t *testing.T) {
 	assert.Nil(t, row, "expected nil with no session row + no cache")
 }
 
+// TestCachedTitle_CustomTitleFromCache: CachedTitle reads the custom
+// title straight from the conv_index cache — FreshTitle's cache-only
+// twin, no .jsonl rescan.
+func TestCachedTitle_CustomTitleFromCache(t *testing.T) {
+	setupTestDB(t)
+	const convID = "11111111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, convID, "renamed-agent", "", "")
+	assert.Equal(t, "renamed-agent", CachedTitle(convID))
+}
+
+// TestCachedTitle_SummaryFallback: with no custom title and no pending
+// name, CachedTitle falls through to the cached summary — same priority
+// chain as FreshTitle (custom title > pending name > summary > first
+// prompt).
+func TestCachedTitle_SummaryFallback(t *testing.T) {
+	setupTestDB(t)
+	const convID = "11111111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, convID, "", "a summary line", "")
+	assert.Equal(t, "a summary line", CachedTitle(convID))
+}
+
+// TestCachedTitle_PendingNameWhenNotIndexed covers the freshly-spawned
+// agent: enrolled with its intended --name, but its .jsonl is not yet
+// in conv_index. CachedTitle has no row to read, so it must fall back
+// to the enrollment pending name rather than returning "(unknown)".
+// This is the path that keeps the dashboard from blanking a just-
+// spawned agent in the gap before its first index event lands.
+func TestCachedTitle_PendingNameWhenNotIndexed(t *testing.T) {
+	setupTestDB(t)
+	const convID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	require.NoError(t, db.EnrollAgent(convID, "test"))
+	require.NoError(t, db.SetEnrollmentPendingName(convID, "spawned-worker"))
+
+	assert.Equal(t, "spawned-worker", CachedTitle(convID),
+		"with no conv_index row, CachedTitle must fall back to the enrollment pending name")
+}
+
+// TestCachedTitle_UnknownWhenUnresolvable: no cached row and no
+// enrollment → the UnknownTitle placeholder, exactly as FreshTitle.
+func TestCachedTitle_UnknownWhenUnresolvable(t *testing.T) {
+	setupTestDB(t)
+	assert.Equal(t, UnknownTitle, CachedTitle("00000000-0000-0000-0000-000000000000"))
+}
+
 // TestResolveSelector_FollowsSuccession: typing the original conv-id
 // after a reincarnate redirects to the new conv-id. Without this, CLI
 // commands like `tclaude agent message <old-id>` would silently target
