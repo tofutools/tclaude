@@ -12,7 +12,7 @@ import { esc } from './helpers.js';
 // Every primary table (group members, cron, sudo, links) has
 // clickable headers. The active sort — a {col, dir} pair keyed by a
 // stable table name — lives in sortState and is mirrored to
-// localStorage so it survives reloads and the 5s auto-refresh.
+// localStorage so it survives reloads and the 2s auto-refresh.
 // Clicking a header cycles asc → desc → unsorted; the third click
 // drops back to the server's own ordering.
 const SORT_LS_KEY = 'tclaude.dash.sort';

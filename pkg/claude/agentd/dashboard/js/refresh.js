@@ -2,7 +2,7 @@
 // shared confirm / window / cleanup / agent-action modals, and toast.
 //
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
-// the 5-second snapshot poll that re-renders every tab.
+// the 2-second snapshot poll that re-renders every tab.
 
 import { $, $$, esc, shortId, relTime } from './helpers.js';
 import { cycleSort } from './sort.js';
@@ -308,7 +308,7 @@ function bindDetailsPersistence() {
 }
 
 // bindSortHeaders delegates clicks on sortable <th> cells. Headers
-// are re-rendered on every 5s refresh, so a single document-level
+// are re-rendered on every 2s refresh, so a single document-level
 // listener is simpler than re-binding per render (same approach as
 // bindCopy / bindDetailsPersistence). Clicking re-renders just the
 // affected tab so the new ordering — and the header arrow — show
@@ -1027,7 +1027,7 @@ function addMemberModal(groupName) {
     // list shows ONLY rows the user can actually add. Looked up from
     // lastSnapshot once at open time + refreshed on each render so
     // a successful add immediately removes the row without waiting
-    // for the 5s poll.
+    // for the 2s poll.
     function existingMembers() {
       const g = (lastSnapshot?.groups || []).find(gr => gr.name === groupName);
       return new Set((g?.members || []).map(m => m.conv_id));
@@ -1161,7 +1161,7 @@ function addMemberModal(groupName) {
       toast(`added ${label} to ${groupName}`);
       // Optimistic local mutation: append to lastSnapshot's group so
       // the next render filters this row out without waiting for the
-      // 5s poll. The poll will overwrite with the canonical state.
+      // 2s poll. The poll will overwrite with the canonical state.
       const grp = (lastSnapshot?.groups || []).find(g => g.name === groupName);
       if (grp) {
         grp.members = grp.members || [];

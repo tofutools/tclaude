@@ -233,7 +233,7 @@ export function bindSlopMachineClicks() {
 // When an agent's status changes from a spinning state (working /
 // main_agent_idle) to idle (the jackpot resting state) we want to
 // celebrate with a row-level coin burst. refresh() rebuilds the DOM
-// every 5 s so an attribute observer wouldn't fire — instead we scan
+// every 2 s so an attribute observer wouldn't fire — instead we scan
 // .slop-machine[data-conv] elements every 1 s and diff against the
 // previous tick. Cheap (a few dozen nodes, attribute reads only) and
 // decoupled from the refresh path so refresh.js doesn't have to know
@@ -282,8 +282,8 @@ function scanStatusTransitions() {
 }
 
 export function bindSlopStatusWatch() {
-  // 1-second tick. refresh() runs every 5 s but a status change is
-  // visible the moment refresh paints — a 5 s tick risks landing in
+  // 1-second tick. refresh() runs every 2 s but a status change is
+  // visible the moment refresh paints — a 2 s tick risks landing in
   // the gap and missing a fast transition. 1 s is the cheap-enough
   // compromise and still feels live.
   setInterval(scanStatusTransitions, 1000);

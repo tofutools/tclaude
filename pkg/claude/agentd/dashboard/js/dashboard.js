@@ -91,4 +91,4 @@ bindSlopStatusWatch();
 bindSlopCursorTrail();
 bindSlopMarquee();
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 2000);

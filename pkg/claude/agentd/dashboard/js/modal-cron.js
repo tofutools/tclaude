@@ -562,7 +562,7 @@ async function submitCronForm(keepOpen) {
     const verb = cronEditId ? 'saved' : 'created';
     toast(`cron ${verb}: ${resp.name || ('#' + (resp.id || ''))}`);
     // Optimistic insert/update so the table updates before the next
-    // 5s snapshot poll. We just got the canonical row back; splice it
+    // 2s snapshot poll. We just got the canonical row back; splice it
     // into lastSnapshot.cron and re-render.
     if (lastSnapshot) {
       lastSnapshot.cron = lastSnapshot.cron || [];

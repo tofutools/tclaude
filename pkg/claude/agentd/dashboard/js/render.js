@@ -252,7 +252,7 @@ function renderGroups(groups) {
     // 👥 chip's online/total/cap counts so the header stays truthful.
     const visible = groupShowOffline(g.name) ? members : members.filter(m => m.online);
     const hiddenOffline = members.length - visible.length;
-    // Restore expanded state across the 5s polling re-renders by
+    // Restore expanded state across the 2s polling re-renders by
     // keying on group name. Persisted in localStorage so it
     // survives a full page reload too.
     const isOpen = localStorage.getItem('tclaude.dash.group.' + g.name) === '1';

@@ -34,7 +34,7 @@ import (
 
 // branchLinkTTL bounds how stale a cached branch-link entry may get
 // before lookupBranchLink schedules a background refresh. The
-// dashboard polls /api/snapshot every 5s; refreshing PR state on every
+// dashboard polls /api/snapshot every 2s; refreshing PR state on every
 // poll would hammer `gh`, so the cache absorbs the gap. PR state
 // changes rarely — 90s is fresh enough that a newly-opened PR appears
 // within a poll or two, infrequent enough to stay cheap.
@@ -67,7 +67,7 @@ type repoLinksView struct {
 // (repoDir, branch) pair, stored as a JSON blob in the git_cache
 // table. An entry with an empty RepoURL is a *negative* cache result —
 // "resolved, no GitHub links" — which stops a non-GitHub repo from
-// re-triggering a refresh on every 5s snapshot.
+// re-triggering a refresh on every 2s snapshot.
 type repoBranchInfo struct {
 	RepoURL       string    `json:"repo_url"`       // https://github.com/owner/repo, or "" for non-GitHub
 	DefaultBranch string    `json:"default_branch"` // the repo's default branch (main/master/...)
@@ -101,7 +101,7 @@ var gitInfoResolver = liveGitInfoResolver
 var branchHistoryPREnrichment bool
 
 // branchLinkInflight single-flights background refreshes: a key is
-// present while its refresh goroutine runs, so the 5s snapshot poll
+// present while its refresh goroutine runs, so the 2s snapshot poll
 // can't stack a fresh refresh on top of an in-progress one.
 var branchLinkInflight sync.Map
 

@@ -28,12 +28,12 @@ import {
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 
 // True while an inline rename input is open; suspends the auto-
-// refresh so the 5s tick doesn't blow the input away mid-edit.
+// refresh so the 2s tick doesn't blow the input away mid-edit.
 let renameEditing = false;
 
 // inlineEdit turns a static element into a one-field click-to-edit:
 // it swaps `el` for a focused <input>, commits on Enter, and reverts
-// on Esc / blur. The 5s auto-refresh is suspended (renameEditing) for
+// on Esc / blur. The 2s auto-refresh is suspended (renameEditing) for
 // the input's whole lifetime so a poll can't blow it away mid-edit;
 // if the host row is a drag source its draggable attr is parked too,
 // so selecting text in the input can't accidentally start a row drag.
@@ -115,7 +115,7 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, onSave 
 // any non-cog click — outside-click dismissal and menu-item dismissal
 // alike — by the cog toggle, and by the Escape handler, so at most one
 // menu is ever open. While a menu is open refreshSuspended() pauses
-// the 5s poll (it sees .action-menu.open); dropping the .open class
+// the 2s poll (it sees .action-menu.open); dropping the .open class
 // here is therefore also what releases that suspension. It also keeps
 // the cog's aria-expanded in sync and — when focus sat inside a menu
 // about to be display:none'd — hands focus back to that cog so it
@@ -505,7 +505,7 @@ function bindRowActions() {
           // Inline edit: replace the group's <strong> label with an
           // <input>. Enter saves (POST /api/groups/{old}/rename),
           // Esc cancels (revert without touching the daemon).
-          // Background poll is suspended while editing so a 5s
+          // Background poll is suspended while editing so a 2s
           // refresh doesn't blow the input away mid-type.
           const summary = btn.closest('summary');
           const nameEl = summary && summary.querySelector('.group-name');
@@ -581,7 +581,7 @@ function bindRowActions() {
           // on the .group-default-cwd span), so btn IS the chip:
           // replace it with an <input>, Enter saves (PATCH
           // /api/groups/{name}), Esc / blur cancels. Auto-refresh
-          // suspended via renameEditing so the 5s tick can't drop
+          // suspended via renameEditing so the 2s tick can't drop
           // the input. Fall back to a summary lookup in case the
           // click landed on a descendant rather than the span.
           const cwdEl = btn.classList.contains('group-default-cwd')
@@ -645,7 +645,7 @@ function bindRowActions() {
           // Mirrors set-group-dir: swap the chip for a text <input>,
           // Enter saves (PATCH /api/groups/{name}), Esc / blur
           // cancels. Auto-refresh suspended via renameEditing so the
-          // 5s tick can't drop the input mid-edit. Fall back to a
+          // 2s tick can't drop the input mid-edit. Fall back to a
           // summary lookup in case the click landed on a descendant.
           const descrEl = btn.classList.contains('group-descr')
             ? btn
@@ -708,7 +708,7 @@ function bindRowActions() {
           // chip). Mirrors set-group-dir: swap the chip for a number
           // <input>, Enter PATCHes /api/groups/{name}, Esc / blur
           // cancels. Auto-refresh suspended via renameEditing so the
-          // 5s tick can't drop the input mid-edit.
+          // 2s tick can't drop the input mid-edit.
           const capEl = btn.classList.contains('group-max-members')
             ? btn
             : (btn.closest('summary') && btn.closest('summary').querySelector('.group-max-members'));
@@ -1055,7 +1055,7 @@ function bindRowActions() {
           // the click from toggling the <details>.
           // closeAllActionMenus first so opening one always closes any
           // other; opening a menu suspends the auto-refresh
-          // (refreshSuspended sees .action-menu.open) so a 5s poll
+          // (refreshSuspended sees .action-menu.open) so a 2s poll
           // can't re-render it away mid-use.
           const menu = btn.parentElement
             && btn.parentElement.querySelector('.action-menu');
