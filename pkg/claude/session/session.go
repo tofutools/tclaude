@@ -224,6 +224,17 @@ func IsTmuxSessionAlive(sessionName string) bool {
 	return cmd.Run() == nil
 }
 
+// LiveTmuxSessions returns the set of session names currently alive
+// on the tclaude tmux server, in one subprocess call. Snapshot-shaped
+// callers (dashboard poll, group/peer list handlers) fetch this once
+// at the top of an HTTP request and then test individual liveness via
+// map lookup, replacing O(N) `has-session` fan-out with one `ls`.
+// Thin wrapper over clcommon.Default.ListSessions so callers needn't
+// depend on the clcommon boundary directly.
+func LiveTmuxSessions() (map[string]struct{}, error) {
+	return clcommon.Default.ListSessions()
+}
+
 // GetTmuxSessionAttachedCount returns the number of clients attached to a tmux session
 // Returns 0 if session doesn't exist or on error
 func GetTmuxSessionAttachedCount(sessionName string) int {

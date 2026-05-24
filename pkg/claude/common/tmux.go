@@ -1,6 +1,9 @@
 package common
 
-import "os/exec"
+import (
+	"os/exec"
+	"strings"
+)
 
 // TmuxSocketName is the named socket for tclaude's independent tmux server.
 const TmuxSocketName = "tclaude"
@@ -10,6 +13,17 @@ const TmuxSocketName = "tclaude"
 // at setup and restore via t.Cleanup.
 type Tmux interface {
 	Command(args ...string) *exec.Cmd
+	// ListSessions returns the set of session names currently alive on
+	// the tclaude tmux server, in ONE call. Snapshot-shaped callers
+	// (dashboard poll, group/peer list handlers) fetch this once and
+	// then test individual session liveness via map lookup, avoiding
+	// per-row `has-session` subprocess fan-out.
+	//
+	// A nil/empty map with err==nil means "no server, no sessions" —
+	// callers should treat both as "everything is offline". A non-nil
+	// err means the listing itself failed (parse, exec) — distinct
+	// from "no server running" which is a normal state.
+	ListSessions() (map[string]struct{}, error)
 }
 
 // Default is the package-wide Tmux instance every caller hits via the
@@ -26,6 +40,33 @@ type LiveTmux struct{}
 // Command builds an exec.Cmd that invokes the real tmux binary.
 func (LiveTmux) Command(args ...string) *exec.Cmd {
 	return exec.Command("tmux", TmuxArgs(args...)...)
+}
+
+// ListSessions forks one `tmux -L tclaude list-sessions -F '#{session_name}'`
+// and returns the set of alive session names. Non-zero exit (typically
+// "no server running on …" when the tmux server is down) collapses to
+// an empty set with nil error — the snapshot semantics are the same as
+// "every session is offline".
+func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
+	out, err := l.Command("list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		// `tmux ls` exits non-zero when there is no server. Treat that
+		// as the empty set rather than an error — it is the normal
+		// "nothing is running" state, not a probe failure.
+		if _, ok := err.(*exec.ExitError); ok {
+			return map[string]struct{}{}, nil
+		}
+		return nil, err
+	}
+	alive := map[string]struct{}{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		alive[name] = struct{}{}
+	}
+	return alive, nil
 }
 
 // TmuxCommand is a thin facade over Default.Command. Kept so the

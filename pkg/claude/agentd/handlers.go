@@ -161,6 +161,10 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// One tmux ls for the whole listing — every isConvOnlineIn below
+	// is a map lookup against this snapshot, not a per-row subprocess.
+	aliveSessions, _ := session.LiveTmuxSessions()
+
 	byConv := map[string]*peerEntry{}
 	// Pass 1: group members.
 	for _, g := range groups {
@@ -181,7 +185,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 					Role:              m.Role,
 					Descr:             m.Descr,
 					agentLocationView: locationView(m.ConvID),
-					Online:            isConvOnline(m.ConvID),
+					Online:            isConvOnlineIn(m.ConvID, aliveSessions),
 				}
 				byConv[m.ConvID] = pe
 			}
@@ -214,7 +218,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				ConvID:            e.ConvID,
 				Title:             agent.FreshTitle(e.ConvID),
 				agentLocationView: locationView(e.ConvID),
-				Online:            isConvOnline(e.ConvID),
+				Online:            isConvOnlineIn(e.ConvID, aliveSessions),
 			}
 		}
 	}
@@ -1859,6 +1863,11 @@ type groupSummary struct {
 
 // isConvOnline reports whether any tmux session registered for this conv-id
 // is currently alive. Same alive-check `nudgeIfAlive` uses for delivery.
+//
+// Single-target callers (delivery, lifecycle, reaper) use this — one
+// conv at a time, one `tmux has-session` subprocess at most. For
+// snapshot-shaped callers iterating many convs, use isConvOnlineIn
+// with a pre-fetched alive set: O(N) subprocesses collapses to one.
 func isConvOnline(convID string) bool {
 	candidates, err := db.FindSessionsByConvID(convID)
 	if err != nil {
@@ -1866,6 +1875,29 @@ func isConvOnline(convID string) bool {
 	}
 	for _, c := range candidates {
 		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
+			return true
+		}
+	}
+	return false
+}
+
+// isConvOnlineIn is the snapshot-shaped variant of isConvOnline. It
+// takes a pre-fetched alive set (e.g. from clcommon.Default.ListSessions
+// at the top of an HTTP handler) and does the per-row check via map
+// lookup instead of per-row subprocess. Callers MUST fetch the set
+// once per request and pass the SAME map to every call — passing nil
+// (or fetching afresh per call) defeats the purpose and is the worst
+// of both worlds.
+func isConvOnlineIn(convID string, alive map[string]struct{}) bool {
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return false
+	}
+	for _, c := range candidates {
+		if c.TmuxSession == "" {
+			continue
+		}
+		if _, ok := alive[c.TmuxSession]; ok {
 			return true
 		}
 	}
@@ -1886,6 +1918,9 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		showArchived := isTruthy(r.URL.Query().Get("archived"))
+		// One tmux ls for the listing — per-member online checks below
+		// are map lookups against this snapshot.
+		aliveSessions, _ := session.LiveTmuxSessions()
 		out := make([]groupSummary, 0, len(groups))
 		for _, g := range groups {
 			if !showArchived && g.IsArchived() {
@@ -1894,7 +1929,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			members, _ := db.ListAgentGroupMembers(g.ID)
 			online := 0
 			for _, m := range members {
-				if isConvOnline(m.ConvID) {
+				if isConvOnlineIn(m.ConvID, aliveSessions) {
 					online++
 				}
 			}
@@ -2304,6 +2339,9 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// One tmux ls for the listing — per-member online checks below are
+	// map lookups against this snapshot.
+	aliveSessions, _ := session.LiveTmuxSessions()
 	// Pre-load the owner set so we can tag any members who are also
 	// owners. Distinct-from-members owners are emitted as their own
 	// rows below so the list stays comprehensive.
@@ -2323,7 +2361,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			Role:              m.Role,
 			Descr:             m.Descr,
 			agentLocationView: locationView(m.ConvID),
-			Online:            isConvOnline(m.ConvID),
+			Online:            isConvOnlineIn(m.ConvID, aliveSessions),
 			Owner:             ownerSet[m.ConvID],
 		})
 	}
@@ -2339,7 +2377,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			Title:             agent.FreshTitle(ownerConv),
 			Role:              "owner",
 			agentLocationView: locationView(ownerConv),
-			Online:            isConvOnline(ownerConv),
+			Online:            isConvOnlineIn(ownerConv, aliveSessions),
 			Owner:             true,
 		})
 	}
@@ -2363,12 +2401,15 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// One tmux ls for the listing — per-owner online checks below are
+	// map lookups against this snapshot.
+	aliveSessions, _ := session.LiveTmuxSessions()
 	out := make([]ownerJSON, 0, len(owners))
 	for _, o := range owners {
 		entry := ownerJSON{
 			ConvID: o.ConvID,
 			Title:  agent.FreshTitle(o.ConvID),
-			Online: isConvOnline(o.ConvID),
+			Online: isConvOnlineIn(o.ConvID, aliveSessions),
 		}
 		if !o.GrantedAt.IsZero() {
 			entry.GrantedAt = o.GrantedAt.Format(time.RFC3339)
