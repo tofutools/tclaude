@@ -532,9 +532,9 @@ type agentState struct {
 	ExitReason string `json:"exit_reason,omitempty"`
 }
 
-// stateForConv looks up the most-recent live tmux session row for this
-// conv-id and returns its hook-tracked state. When no tmux session is
-// alive the agent has exited: the hook-recorded Status is frozen at
+// stateForConvIn looks up the most-recent live tmux session row for
+// this conv-id and returns its hook-tracked state. When no tmux session
+// is alive the agent has exited: the hook-recorded Status is frozen at
 // whatever it was when the process died (usually "idle" from the final
 // Stop hook, since no SessionEnd-style hook fires on exit), so we
 // report StatusExited rather than passing the stale value through —
@@ -547,7 +547,12 @@ type agentState struct {
 // keyed on tmux liveness, not on the status string, so an errored but
 // still-running agent keeps its "error" status (its CC process is
 // alive; only its last turn failed).
-func stateForConv(convID string) agentState {
+//
+// Snapshot-shaped: takes a pre-fetched alive set (the SAME map across
+// every call in one HTTP request). Callers MUST fetch the set once via
+// clcommon.Default.ListSessions at the top of the handler and reuse
+// it; per-call fetching defeats the purpose.
+func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 	rows, err := db.FindSessionsByConvID(convID)
 	if err != nil || len(rows) == 0 {
 		return agentState{}
@@ -555,7 +560,10 @@ func stateForConv(convID string) agentState {
 	pick := rows[0] // already sorted most-recent first
 	alive := false
 	for _, r := range rows {
-		if r.TmuxSession != "" && session.IsTmuxSessionAlive(r.TmuxSession) {
+		if r.TmuxSession == "" {
+			continue
+		}
+		if _, ok := aliveSet[r.TmuxSession]; ok {
 			pick = r
 			alive = true
 			break
@@ -617,6 +625,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
+	// One tmux ls for the whole snapshot. Every isConvOnlineIn /
+	// stateForConvIn call below tests liveness via map lookup off this
+	// set — replacing ~150 per-poll `has-session` subprocess spawns
+	// with one. Errors / no-server collapse to an empty map (== "all
+	// offline"), matching what per-row probes would have reported when
+	// the tmux server is down.
+	aliveSessions, _ := session.LiveTmuxSessions()
+
 	groups, _ := db.ListAgentGroups()
 	allGrants, _ := db.ListAllAgentPermissions()
 	allOverrides, _ := db.ListAllAgentPermissionOverrides()
@@ -641,8 +657,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Title:             agent.CachedTitle(convID),
 			agentLocationView: loc,
 			repoLinksView:     branchLinksFor(loc),
-			Online:            isConvOnline(convID),
-			State:             stateForConv(convID),
+			Online:            isConvOnlineIn(convID, aliveSessions),
+			State:             stateForConvIn(convID, aliveSessions),
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
 			Groups:      []string{},
@@ -684,7 +700,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		memberSet := map[string]bool{}
 		for _, m := range members {
 			memberSet[m.ConvID] = true
-			online := isConvOnline(m.ConvID)
+			online := isConvOnlineIn(m.ConvID, aliveSessions)
 			loc := locationView(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            m.ConvID,
@@ -695,7 +711,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				repoLinksView:     branchLinksFor(loc),
 				Online:            online,
 				Owner:             ownerSet[m.ConvID],
-				State:             stateForConv(m.ConvID),
+				State:             stateForConvIn(m.ConvID, aliveSessions),
 			})
 			if online {
 				dg.Online++
@@ -713,7 +729,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			if memberSet[ownerConv] {
 				continue
 			}
-			online := isConvOnline(ownerConv)
+			online := isConvOnlineIn(ownerConv, aliveSessions)
 			ownerLoc := locationView(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            ownerConv,
@@ -723,7 +739,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				repoLinksView:     branchLinksFor(ownerLoc),
 				Online:            online,
 				Owner:             true,
-				State:             stateForConv(ownerConv),
+				State:             stateForConvIn(ownerConv, aliveSessions),
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so
@@ -902,8 +918,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return out.Ungrouped[i].Title < out.Ungrouped[j].Title
 	})
 
-	out.Conversations = collectConversationsSnapshot(activeAgents, retiredAgents)
-	out.Retired = collectRetiredSnapshot(retiredAgents)
+	out.Conversations = collectConversationsSnapshot(activeAgents, retiredAgents, aliveSessions)
+	out.Retired = collectRetiredSnapshot(retiredAgents, aliveSessions)
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
@@ -928,8 +944,10 @@ const (
 // recent conversations that are NOT agents, offered with a promote
 // button. enrolled (active ∪ retired) conv-ids are excluded — they are
 // already agents (or deliberately demoted ones) and have their own
-// lists. Returns an empty slice (not nil) so the JS .map() is safe.
-func collectConversationsSnapshot(active, retired []*db.AgentEnrollment) []dashboardConversation {
+// lists. aliveSessions is the snapshot-shaped alive set the caller
+// pre-fetched; this function never spawns its own tmux probe.
+// Returns an empty slice (not nil) so the JS .map() is safe.
+func collectConversationsSnapshot(active, retired []*db.AgentEnrollment, aliveSessions map[string]struct{}) []dashboardConversation {
 	out := []dashboardConversation{}
 	enrolled := make(map[string]bool, len(active)+len(retired))
 	for _, e := range active {
@@ -961,8 +979,8 @@ func collectConversationsSnapshot(active, retired []*db.AgentEnrollment) []dashb
 		out = append(out, dashboardConversation{
 			ConvID:   row.ConvID,
 			Title:    convindex.FormatConvTitle(row.CustomTitle, row.Summary, row.FirstPrompt),
-			Online:   isConvOnline(row.ConvID),
-			State:    stateForConv(row.ConvID),
+			Online:   isConvOnlineIn(row.ConvID, aliveSessions),
+			State:    stateForConvIn(row.ConvID, aliveSessions),
 			Modified: row.Modified,
 		})
 	}
@@ -972,8 +990,10 @@ func collectConversationsSnapshot(active, retired []*db.AgentEnrollment) []dashb
 // collectRetiredSnapshot turns the retired-enrollment rows into the
 // Agents tab's "Retired" section — agents demoted to plain
 // conversations, each reinstatable. Newest retirement first. Returns
-// an empty slice (not nil) so the JS .map() is safe.
-func collectRetiredSnapshot(retired []*db.AgentEnrollment) []dashboardRetiredAgent {
+// an empty slice (not nil) so the JS .map() is safe. aliveSessions is
+// the snapshot-shaped alive set the caller pre-fetched; this function
+// never spawns its own tmux probe.
+func collectRetiredSnapshot(retired []*db.AgentEnrollment, aliveSessions map[string]struct{}) []dashboardRetiredAgent {
 	out := make([]dashboardRetiredAgent, 0, len(retired))
 	for _, e := range retired {
 		retiredAt := ""
@@ -983,7 +1003,7 @@ func collectRetiredSnapshot(retired []*db.AgentEnrollment) []dashboardRetiredAge
 		out = append(out, dashboardRetiredAgent{
 			ConvID:       e.ConvID,
 			Title:        agent.CachedTitle(e.ConvID),
-			Online:       isConvOnline(e.ConvID),
+			Online:       isConvOnlineIn(e.ConvID, aliveSessions),
 			RetiredAt:    retiredAt,
 			RetiredBy:    e.RetiredBy,
 			RetireReason: e.RetireReason,
