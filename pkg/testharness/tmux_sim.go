@@ -34,6 +34,12 @@ type TmuxSim struct {
 	// target pane's CCSim — the test-time stand-in for the bracketed
 	// paste injectMultilineAndSubmit uses to land multi-line text.
 	buffers map[string]string
+	// commandCounts records every Command(verb, …) invocation by verb
+	// (args[0]) — exposed via CommandCount for regression tests that
+	// pin "snapshot collapses to ONE list-sessions and ZERO
+	// has-session calls". An accessor rather than a getter on the
+	// whole map so the lock stays internal.
+	commandCounts map[string]int
 }
 
 type tmuxSession struct {
@@ -44,8 +50,9 @@ type tmuxSession struct {
 
 func newTmuxSim() *TmuxSim {
 	return &TmuxSim{
-		sessions: map[string]*tmuxSession{},
-		buffers:  map[string]string{},
+		sessions:      map[string]*tmuxSession{},
+		buffers:       map[string]string{},
+		commandCounts: map[string]int{},
 	}
 }
 
@@ -54,6 +61,11 @@ func newTmuxSim() *TmuxSim {
 // status; for verbs that mutate state (send-keys, kill-session),
 // the mutation happens here before the cmd is returned.
 func (t *TmuxSim) Command(args ...string) *exec.Cmd {
+	if len(args) > 0 {
+		t.mu.Lock()
+		t.commandCounts[args[0]]++
+		t.mu.Unlock()
+	}
 	switch {
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
 		if t.IsAlive(args[2]) {
@@ -180,6 +192,39 @@ func (t *TmuxSim) MarkOffline(name string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.sessions, name)
+}
+
+// ListSessions satisfies clcommon.Tmux for snapshot-shaped callers.
+// Walks the same alive predicate as IsAlive over every registered
+// session and returns the names that pass — so a snapshot taken via
+// this method is identical to N IsAlive calls, just in one trip.
+// Recorded under "list-sessions" so a regression test can pin "the
+// snapshot fired ONE list-sessions and ZERO has-session calls".
+func (t *TmuxSim) ListSessions() (map[string]struct{}, error) {
+	t.mu.Lock()
+	t.commandCounts["list-sessions"]++
+	names := make([]string, 0, len(t.sessions))
+	for k := range t.sessions {
+		names = append(names, k)
+	}
+	t.mu.Unlock()
+	alive := map[string]struct{}{}
+	for _, n := range names {
+		if t.IsAlive(n) {
+			alive[n] = struct{}{}
+		}
+	}
+	return alive, nil
+}
+
+// CommandCount returns how many times Command was invoked with the
+// given verb (args[0]) since the sim was created. Exposed for
+// regression tests that pin call-count invariants — e.g. one
+// dashboard snapshot fires ONE list-sessions and ZERO has-session.
+func (t *TmuxSim) CommandCount(verb string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.commandCounts[verb]
 }
 
 // IsAlive reports whether the session is registered and (when a CC is
