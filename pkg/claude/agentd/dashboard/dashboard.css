@@ -467,6 +467,17 @@ details[open] > summary .spawn-btn { opacity: 1; }
    modal and the later DOM order wins, hiding the picker. Bumping the
    picker to 150 keeps it on top regardless of DOM order. */
 #cron-pick-target-modal { z-index: 150; }
+/* #confirm-modal is opened FROM inside other modals — by the backdrop-
+   discard guard (bindBackdropDiscard) on every data-entry modal, and
+   ahead-of-time by destructive-action confirms invoked from list rows.
+   With plain z-index:100 it ties with the modal that triggered it and
+   loses on DOM order (it appears earlier in dashboard.html), leaving
+   the user with only a darkened backdrop and no visible dialog. 1000
+   keeps it clearly above every normal overlay (modals at 100, cron
+   picker at 150, toast at 200, hover tooltip at 300) with plenty of
+   headroom — only the system-tray / approval popup family (9998–10000)
+   sits higher, which is correct since those are out-of-band. */
+#confirm-modal { z-index: 1000; }
 .modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
