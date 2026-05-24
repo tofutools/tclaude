@@ -11,7 +11,7 @@ import {
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
 // Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast } from './refresh.js';
+import { refresh, toast, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
 
 
@@ -315,9 +315,7 @@ function bindAgentSpawnModal() {
       spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     }, 350);
   });
-  $('#agent-spawn-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'agent-spawn-modal') closeAgentSpawnModal();
-  });
+  bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#agent-spawn-modal').classList.contains('show')) {
       closeAgentSpawnModal();
@@ -429,9 +427,7 @@ function bindCloneAgentModal() {
   $('#clone-agent-cancel').addEventListener('click', closeCloneAgentModal);
   $('#clone-agent-submit').addEventListener('click', submitCloneAgent);
   bindWtPicker('clone-agent');
-  $('#clone-agent-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'clone-agent-modal') closeCloneAgentModal();
-  });
+  bindBackdropDiscard('clone-agent-modal', closeCloneAgentModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#clone-agent-modal').classList.contains('show')) {
       closeCloneAgentModal();
@@ -553,9 +549,7 @@ function bindReincarnateAgentModal() {
       setTimeout(() => focusEl.focus(), 0);
     });
   });
-  $('#reincarnate-agent-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'reincarnate-agent-modal') closeReincarnateAgentModal();
-  });
+  bindBackdropDiscard('reincarnate-agent-modal', closeReincarnateAgentModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#reincarnate-agent-modal').classList.contains('show')) {
       closeReincarnateAgentModal();

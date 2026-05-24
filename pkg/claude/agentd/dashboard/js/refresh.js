@@ -361,6 +361,46 @@ export function confirmModal({title, body, meta, okLabel}) {
   });
 }
 
+// modalHasInput returns true if any text input or textarea inside the
+// modal has non-empty content, or any file input has a file selected.
+// Used by bindBackdropDiscard so an untouched modal still closes on
+// backdrop click while one the user has typed into asks first.
+function modalHasInput(modalEl) {
+  const TEXT_TYPES = new Set(['text', 'number', 'search', 'url', 'email', 'password', '']);
+  for (const el of modalEl.querySelectorAll('input, textarea')) {
+    if (el.tagName === 'TEXTAREA' || TEXT_TYPES.has(el.type || '')) {
+      if (el.value && String(el.value).trim() !== '') return true;
+    } else if (el.type === 'file') {
+      if (el.files && el.files.length > 0) return true;
+    }
+  }
+  return false;
+}
+
+// bindBackdropDiscard wires the backdrop-click handler that protects
+// data-entry modals from accidental dismissal. If the modal contains
+// any typed-in text or a picked file, clicking outside pops the shared
+// confirm overlay first; an empty modal closes instantly. Escape and
+// explicit Cancel buttons remain instant — this guard fires only on
+// the backdrop. Pass the modal's id (without leading #) and the close
+// function to invoke once the user confirms (or the form is empty).
+export function bindBackdropDiscard(modalId, closeFn) {
+  const el = $('#' + modalId);
+  if (!el) return;
+  el.addEventListener('click', async (e) => {
+    if (e.target.id !== modalId) return;
+    if (modalHasInput(el)) {
+      const ok = await confirmModal({
+        title: 'Discard input?',
+        body: 'You clicked outside the form. Closing now will discard the text you have entered. Continue?',
+        okLabel: 'Discard',
+      });
+      if (!ok) return;
+    }
+    closeFn();
+  });
+}
+
 // shutdownScope drives the group-level and whole-dashboard Shutdown
 // buttons. It counts the running agents in scope from the last
 // snapshot, pops a confirm modal that states the count and spells out

@@ -8,7 +8,7 @@ import { $, esc, shortCwd } from './helpers.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
 // Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast } from './refresh.js';
+import { refresh, toast, bindBackdropDiscard } from './refresh.js';
 
 
 // ---- Link modal (create + edit) ----------------------------------------
@@ -144,9 +144,7 @@ function bindLinkModal() {
   $('#link-new-open').addEventListener('click', () => openLinkModal({ mode: 'create' }));
   $('#link-modal-cancel').addEventListener('click', closeLinkModal);
   $('#link-modal-submit').addEventListener('click', submitLinkModal);
-  $('#link-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'link-modal') closeLinkModal();
-  });
+  bindBackdropDiscard('link-modal', closeLinkModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#link-modal').classList.contains('show')) {
       closeLinkModal();

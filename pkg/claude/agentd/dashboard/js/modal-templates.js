@@ -8,7 +8,7 @@ import { $, $$, esc } from './helpers.js';
 // lastSnapshot lives in dashboard.js; refresh() / confirmModal / toast
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, confirmModal, toast } from './refresh.js';
+import { refresh, confirmModal, toast, bindBackdropDiscard } from './refresh.js';
 
 
 // ---- Group templates --------------------------------------------------
@@ -394,25 +394,19 @@ function bindTemplatesUI() {
         $$('.ta-perm', row).filter(c => c.checked).length;
     }
   });
-  $('#template-editor-modal').addEventListener('click', e => {
-    if (e.target.id === 'template-editor-modal') closeTemplateEditor();
-  });
+  bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
 
   // Instantiate modal.
   $('#template-instantiate-cancel').addEventListener('click', closeInstantiateModal);
   $('#template-instantiate-submit').addEventListener('click', submitInstantiate);
   $('#template-instantiate-template').addEventListener('change', renderInstantiatePreview);
   $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
-  $('#template-instantiate-modal').addEventListener('click', e => {
-    if (e.target.id === 'template-instantiate-modal') closeInstantiateModal();
-  });
+  bindBackdropDiscard('template-instantiate-modal', closeInstantiateModal);
 
   // From-group modal.
   $('#template-from-group-cancel').addEventListener('click', closeFromGroupModal);
   $('#template-from-group-submit').addEventListener('click', submitFromGroup);
-  $('#template-from-group-modal').addEventListener('click', e => {
-    if (e.target.id === 'template-from-group-modal') closeFromGroupModal();
-  });
+  bindBackdropDiscard('template-from-group-modal', closeFromGroupModal);
 
   // Escape closes whichever template modal is showing.
   document.addEventListener('keydown', e => {
@@ -673,9 +667,7 @@ function bindGroupImportModal() {
     if (giAsDebounce) clearTimeout(giAsDebounce);
     giAsDebounce = setTimeout(groupImportInspect, 350);
   });
-  $('#group-import-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'group-import-modal') closeGroupImportModal();
-  });
+  bindBackdropDiscard('group-import-modal', closeGroupImportModal);
   $('#group-import-modal').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' &&
         (e.target.id === 'group-import-into' || e.target.id === 'group-import-as') &&
@@ -756,9 +748,7 @@ async function submitGroupContext() {
 function bindGroupContextModal() {
   $('#group-context-cancel').addEventListener('click', closeGroupContextModal);
   $('#group-context-submit').addEventListener('click', submitGroupContext);
-  $('#group-context-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'group-context-modal') closeGroupContextModal();
-  });
+  bindBackdropDiscard('group-context-modal', closeGroupContextModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#group-context-modal').classList.contains('show')) {
       closeGroupContextModal();
