@@ -74,6 +74,7 @@ func TestDashboardBranchLinks_SurfacedInSnapshot(t *testing.T) {
 		alice.BranchURL, "alice branch compare URL")
 	assert.Equal(t, 42, alice.BranchPRNum, "alice PR number")
 	assert.Equal(t, "https://github.com/acme/app/pull/42", alice.BranchPRURL, "alice PR URL")
+	assert.Equal(t, "open", alice.BranchPRState, "alice PR state drives the link colour")
 
 	bob := findAgent(snap.Agents, bobConv)
 	require.NotNil(t, bob, "bob on the agents tab")
