@@ -205,15 +205,58 @@ function bindFilter(tab) {
   }
 }
 
+// Single-slot reentrancy guard for refresh(). The dashboard has
+// THREE refresh triggers — SSE event, 2s safety-net poll, manual
+// post-mutation rerender — and they can fire on top of an in-flight
+// refresh (fetch in flight, JSON decode pending, render in progress).
+// Without coalescing, multiple parallel /api/snapshot fetches would
+// stack up, each doing the same work; with N triggers during one
+// in-flight, we'd issue N+1 requests instead of 2.
+//
+// The guard collapses any number of mid-flight triggers into a single
+// chained follow-up: the current refresh runs to completion, then if
+// anything fired in the meantime exactly one fresh refresh is started
+// (which itself absorbs further triggers, ad infinitum). End state
+// always matches the latest known invalidation.
+let refreshInFlight = false;
+let refreshQueued = false;
+
 export async function refresh() {
   if (refreshSuspended()) {
     // An inline-edit input, a modal, or a drag is in progress;
     // re-rendering now would blow the input away mid-keystroke,
     // disrupt the modal, or detach the dragged row. Skip this tick —
     // the commit / cancel / dragend handlers each re-trigger
-    // refresh() once the user is done.
+    // refresh() once the user is done. The queue path is also
+    // skipped: an SSE event arriving while a modal is open should
+    // be dropped, not held — the modal teardown re-triggers anyway.
     return;
   }
+  if (refreshInFlight) {
+    // A refresh is mid-fetch / mid-render. Set the queue flag and
+    // bail; the in-flight one will chain to a fresh refresh on
+    // completion. Multiple triggers in this window all collapse
+    // to the same single queued follow-up.
+    refreshQueued = true;
+    return;
+  }
+  refreshInFlight = true;
+  try {
+    await refreshOnce();
+  } finally {
+    refreshInFlight = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      // Chain: re-enter refresh so the queued trigger gets the
+      // latest snapshot. The recursive call is safe — the await
+      // unwinds before it lands, and the chain terminates when
+      // refreshQueued is false on the way out.
+      refresh();
+    }
+  }
+}
+
+async function refreshOnce() {
   try {
     const r = await fetch('/api/snapshot', { credentials: 'same-origin' });
     if (!r.ok) {
@@ -264,6 +307,54 @@ export async function refresh() {
   } catch (e) {
     showStatus('snapshot failed: ' + (e.message || e), true);
   }
+}
+
+// startEventStream opens the dashboard's SSE channel to /api/events.
+// Each event is a tiny "snapshot invalidated" nudge — the daemon
+// fires one after every successful mutation (debounced 100ms-quiet /
+// 1s-max-wait broadcaster-side, so the rapid-fire case never reaches
+// the FE as a flurry). The handler just calls refresh() — no
+// additional FE throttling, since the daemon already coalesces
+// upstream and the worst remaining case (an SSE event landing within
+// the same 100ms as a 2s-poll tick) is one extra cheap fetch that
+// the dashboard simply re-renders from. A smaller FE gap would
+// actively block legitimate fresh data after a manual refresh.
+//
+// Failures are non-fatal: a server with no /api/events route, a
+// laptop sleep, or any transport error causes EventSource to emit
+// `error` and (by spec) auto-reconnect. The polling loop in
+// dashboard.js keeps the dashboard alive at 2s latency the whole
+// time, so a hostile or older daemon just falls back to the
+// pre-SSE behaviour transparently.
+//
+// Idempotent: closes any previous EventSource before opening a new
+// one. There is no caller for "stop" today, and reconnect is the
+// browser's job.
+let dashboardSSE = null;
+export function startEventStream() {
+  if (dashboardSSE) {
+    try { dashboardSSE.close(); } catch (_) {}
+    dashboardSSE = null;
+  }
+  try {
+    dashboardSSE = new EventSource('/api/events', { withCredentials: true });
+  } catch (e) {
+    // The constructor itself can throw on a malformed URL or in
+    // some hardened browsers. The 2s poll already covers us.
+    return;
+  }
+  // The daemon names the data event "snapshot"; addEventListener
+  // targets that name specifically so we don't also re-trigger on
+  // future event types we don't yet know about.
+  dashboardSSE.addEventListener('snapshot', () => {
+    refresh();
+  });
+  // 'error' on EventSource is overloaded — it covers transient
+  // disconnects (the browser will reconnect on its own) and hard
+  // failures (no route, auth, server down). Either way the 2s poll
+  // remains the safety net, so we just leave the source object in
+  // place and let the browser drive the reconnect.
+  dashboardSSE.addEventListener('error', () => {});
 }
 
 function bindTabs() {

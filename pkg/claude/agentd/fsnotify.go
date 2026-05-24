@@ -336,13 +336,14 @@ func (m *convMonitor) reindexDir(dir string, known map[string]bool) int {
 // upserts the row on a change and deletes it when the file is gone — so
 // the same call covers writes, creates, and removes.
 //
-// This is the single seam where a "conv changed" event would be
-// published for the future SSE / dashboard-push PR (see
-// docs/plans .../dashboard-realtime-push.md). PR 1 has exactly one
-// effect — the conv_index refresh — and deliberately builds no
-// broadcaster / fan-out around it.
+// This is the seam where the dashboard SSE broadcaster is nudged: a
+// .jsonl write means a title / first-prompt / context-pct change is
+// visible. dashboardEvents.Publish() is debounced (see events.go), so a
+// burst of turn-writes during a Claude response collapses into one SSE
+// event, not one per turn.
 func (m *convMonitor) reindex(path string) {
 	convops.ScanAndUpsertFile(path)
+	dashboardEvents.Publish()
 }
 
 // reindexIfStale re-parses path only when the on-disk file is newer

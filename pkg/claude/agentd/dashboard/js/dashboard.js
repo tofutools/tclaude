@@ -7,7 +7,7 @@ import {
 } from './slop-fx.js';
 import {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
-  refresh,
+  refresh, startEventStream,
 } from './refresh.js';
 
 // Slop theme — a purely cosmetic re-skin tagged onto the URL with ?slop=1
@@ -91,4 +91,12 @@ bindSlopStatusWatch();
 bindSlopCursorTrail();
 bindSlopMarquee();
 refresh();
+// SSE push: /api/events nudges refresh() the moment the daemon writes
+// (debounced server-side; see events.go). Falls back transparently
+// to the 2s safety-net poll below if the stream isn't available
+// (browser refuses EventSource, daemon error, laptop sleep in
+// flight, …). The two channels can occasionally fire near each
+// other, but the daemon's broadcaster already coalesces upstream
+// bursts so the worst case is one extra cheap snapshot fetch.
+startEventStream();
 setInterval(refresh, 2000);

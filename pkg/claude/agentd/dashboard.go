@@ -97,6 +97,7 @@ func initDashboardToken() {
 func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
+	mux.HandleFunc("/api/events", handleDashboardEvents)
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardEditRoutes(mux)
 }

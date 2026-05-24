@@ -90,7 +90,13 @@ func runServe(p *serveParams) error {
 	defer func() { _ = os.Remove(sockPath) }()
 
 	srv := &http.Server{
-		Handler:           withIdentity(buildMux()),
+		// publishOnSuccessfulWrite nudges the dashboard SSE
+		// broadcaster on every successful non-GET on /v1/* — agent
+		// CLI mutations (group joins, permission edits, cron writes,
+		// notify-human, …) become debounced snapshot-invalidation
+		// events the dashboard re-fetches on. GET pass-through means
+		// /v1/info and friends keep their unmodified writer.
+		Handler:           publishOnSuccessfulWrite(withIdentity(buildMux())),
 		ReadHeaderTimeout: 5 * time.Second,
 		// Stash the underlying *net.UnixConn so the identity middleware
 		// can read peer credentials from it.

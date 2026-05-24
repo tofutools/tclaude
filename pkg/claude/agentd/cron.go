@@ -69,6 +69,14 @@ func runCronTick(now time.Time) {
 			slog.Warn("cron: insert run row failed", "job", j.ID, "error", err)
 		}
 	}
+	if len(due) > 0 {
+		// Cron fires originate inside the daemon goroutine, so they
+		// bypass the HTTP-mux publishOnSuccessfulWrite seam. Nudge
+		// the dashboard SSE broadcaster directly so the Cron tab's
+		// last_run_at / status / run-history changes surface without
+		// waiting for the next 2s poll.
+		dashboardEvents.Publish()
+	}
 }
 
 // sudoGrantsCleanupInterval is how often the housekeeping sweep

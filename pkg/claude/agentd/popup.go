@@ -42,7 +42,13 @@ func startPopupServer() (*http.Server, string) {
 	initDashboardToken()
 	registerDashboardRoutes(mux)
 	srv := &http.Server{
-		Handler:           mux,
+		// publishOnSuccessfulWrite nudges the dashboard SSE
+		// broadcaster on every successful non-GET — every /api/*
+		// mutation (and approval POSTs) becomes a debounced "snapshot
+		// invalidated" event the dashboard tab re-fetches on. GET
+		// passes through unmodified, so /api/events itself (the SSE
+		// stream) is unaffected.
+		Handler:           publishOnSuccessfulWrite(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {

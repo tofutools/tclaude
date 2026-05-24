@@ -171,5 +171,13 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 	}
 	r.aliveLastTick = aliveNow
 	r.seeded = true
+	if reaped > 0 {
+		// Reaper writes originate in this goroutine, so they bypass
+		// the HTTP-mux publishOnSuccessfulWrite seam. Nudge the
+		// dashboard SSE broadcaster directly so an agent flipping
+		// alive→exited surfaces without waiting for the next 2s
+		// poll.
+		dashboardEvents.Publish()
+	}
 	return reaped
 }
