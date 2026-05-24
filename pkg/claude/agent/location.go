@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"time"
+
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -39,13 +41,30 @@ func (l Location) Moved() bool {
 //     branch (conv_index.git_branch_startup, first-wins) and the
 //     launch dir's current branch (conv_index.git_branch, last-wins);
 //   - agent_workdir (written by the PostToolUse hook) → the current
-//     edit dir and its git worktree root.
+//     edit dir and its git worktree root;
+//   - agent_workspace (written by the statusbar on every CC render) →
+//     the launch dir's live branch + cwd, fresher than conv_index's
+//     per-turn cadence.
 //
 // StartupBranch is immutable — the branch the FIRST turn was stamped
 // with — so a UI can show a stable "init". CurrentBranch is the launch
-// dir's last-wins branch, unless the agent has moved into a worktree
+// dir's live branch, unless the agent has moved into a worktree
 // distinct from its launch dir, in which case that worktree's own
 // branch is the current one.
+//
+// Freshness across the three writers — the "most-recent wins" rule:
+//
+//   - For the LAUNCH-DIR case (the agent has not moved, or its
+//     PostToolUse edits are in-tree of the launch dir), conv_index and
+//     agent_workspace both describe the same world-state. Pick whichever
+//     timestamp is newer; agent_workspace usually wins because the
+//     statusbar fires on CC's render cadence while conv_index only
+//     refreshes on a turn append — which fixes the "branch flipped but
+//     dashboard stayed on the previous one for minutes" lag.
+//   - For the MOVED case (the agent has edited a file in a worktree
+//     distinct from the launch dir), agent_workdir is the only writer
+//     that can describe that worktree at all, so it stays in charge —
+//     the statusbar can only see CC's launch dir, never the worktree.
 //
 // An agent that hasn't edited anything yet has no agent_workdir row;
 // its current location simply mirrors startup (Tracked == false). A
@@ -64,6 +83,11 @@ func ResolveLocation(convID string) Location {
 		loc.StartupDir = sess.Cwd
 	}
 	row := FreshConvRowResolved(convID)
+
+	// Track the timestamp of the writer that last refreshed the
+	// launch-dir branch claim, so agent_workspace can supersede it
+	// when its own row is newer.
+	var launchBranchTs time.Time
 	if row != nil {
 		if loc.StartupDir == "" {
 			loc.StartupDir = row.ProjectPath
@@ -79,6 +103,7 @@ func ResolveLocation(convID string) Location {
 			loc.StartupBranch = row.GitBranch
 		}
 		loc.CurrentBranch = row.GitBranch
+		launchBranchTs = row.IndexedAt
 	}
 
 	// A fresh agent that hasn't edited anything is "working" right
@@ -86,6 +111,7 @@ func ResolveLocation(convID string) Location {
 	loc.EditDir = loc.StartupDir
 	loc.CurrentDir = loc.StartupDir
 
+	moved := false
 	if w, err := db.GetAgentWorkdir(convID); err == nil && w.Dir != "" {
 		loc.Tracked = true
 		loc.EditDir = w.Dir
@@ -108,14 +134,36 @@ func ResolveLocation(convID string) Location {
 				_ = db.HealAgentWorkdirGit(convID, root, branch)
 			}
 		}
-		// CurrentBranch already holds conv_index.git_branch — the
-		// launch dir's last-wins branch, the freshest signal for an
-		// agent working in its launch repo (Claude Code re-stamps it
-		// every turn). Only a genuine worktree divergence — the agent
-		// edits in a repo distinct from where Claude Code launched —
-		// overrides it with the edit worktree's own branch.
+		// Only a genuine worktree divergence — the agent edits in a
+		// repo distinct from where Claude Code launched — overrides the
+		// launch-dir branch with the edit worktree's own branch.
 		if loc.CurrentDir != "" && loc.CurrentDir != loc.StartupDir {
 			loc.CurrentBranch = workdirBranch
+			moved = true
+		}
+	}
+
+	// agent_workspace — the statusbar's render-cadence snapshot of CC's
+	// workspace. Only relevant for the launch-dir case (the statusbar
+	// can't see a worktree the agent has moved into via Bash); for that
+	// case, prefer its branch over conv_index when its row is newer.
+	if !moved {
+		if ws, err := db.GetAgentWorkspace(convID); err == nil && ws.ConvID != "" {
+			if ws.Branch != "" && ws.UpdatedAt.After(launchBranchTs) {
+				loc.CurrentBranch = ws.Branch
+			}
+			// Cwd from the statusbar is CC's launch dir — useful when
+			// sessions.cwd / conv_index.project_path didn't resolve a
+			// startup dir at all (a corrupt early-life conv).
+			if ws.Cwd != "" && loc.CurrentDir == "" {
+				loc.CurrentDir = ws.Cwd
+				if loc.StartupDir == "" {
+					loc.StartupDir = ws.Cwd
+				}
+				if loc.EditDir == "" {
+					loc.EditDir = ws.Cwd
+				}
+			}
 		}
 	}
 	return loc

@@ -64,9 +64,8 @@ func TestMigrateV44toV45_AddsConvBranchHistory(t *testing.T) {
 
 // TestMigrateV44toV45_FreshSchemaHasConvBranchHistory builds a fresh DB
 // through the full migrate() chain and confirms conv_branch_history
-// exists and the table ops work end to end. It also carries the literal
-// currentVersion pin — a tripwire that the next migration's author
-// moves forward into their own v46 test.
+// exists and the table ops work end to end. The literal currentVersion
+// pin moved forward to the v46 test.
 func TestMigrateV44toV45_FreshSchemaHasConvBranchHistory(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -75,7 +74,6 @@ func TestMigrateV44toV45_FreshSchemaHasConvBranchHistory(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 45, currentVersion, "currentVersion is 45")
 
 	// The table built through the migration chain is usable.
 	require.NoError(t, AppendConvBranchHistoryHook("c1", "feature-x", "/repo"))

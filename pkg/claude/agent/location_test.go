@@ -2,6 +2,7 @@ package agent
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,4 +62,93 @@ func TestResolveLocation(t *testing.T) {
 	assert.Equal(t, "/home/u/git/monorepo/svc/api/pkg", loc.CurrentDir,
 		"current falls back to the edit dir when no git repo resolves")
 	assert.Empty(t, loc.CurrentBranch)
+}
+
+// TestResolveLocation_WorkspaceFreshensLaunchBranch pins the statusbar
+// fix: an agent_workspace row written after conv_index supersedes
+// conv_index.git_branch as the launch-dir CurrentBranch. This is the
+// "branch flipped but the dashboard stayed on the previous one for
+// minutes" lag the user reported — a `git checkout` in an idle
+// session's launch dir reaches the dashboard via the statusbar's
+// render-cadence write, no .jsonl turn required.
+func TestResolveLocation_WorkspaceFreshensLaunchBranch(t *testing.T) {
+	setupTestDB(t)
+	const conv = "loc-ws-1"
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "ws-s1", TmuxSession: "ws-t1", ConvID: conv,
+		Cwd: "/repo", Status: "running",
+	}))
+
+	// conv_index stamps the old branch at t0.
+	t0 := time.Now().Add(-time.Hour)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:           conv,
+		ProjectDir:       "/repo",
+		ProjectPath:      "/repo",
+		GitBranch:        "old-branch",
+		GitBranchStartup: "old-branch",
+		IndexedAt:        t0,
+	}))
+	loc := ResolveLocation(conv)
+	assert.Equal(t, "old-branch", loc.CurrentBranch, "conv_index seeds the launch-dir branch")
+
+	// Statusbar writes a fresher row claiming the new branch.
+	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
+		ConvID:    conv,
+		Cwd:       "/repo",
+		Branch:    "new-branch",
+		UpdatedAt: t0.Add(30 * time.Minute),
+	}))
+	loc = ResolveLocation(conv)
+	assert.Equal(t, "new-branch", loc.CurrentBranch,
+		"fresher agent_workspace.branch supersedes conv_index for the launch-dir case")
+	assert.Equal(t, "old-branch", loc.StartupBranch,
+		"StartupBranch stays the first-turn branch — immutable")
+
+	// Now conv_index updates (new turn appended) AFTER the workspace
+	// row — it wins again.
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:           conv,
+		ProjectDir:       "/repo",
+		ProjectPath:      "/repo",
+		GitBranch:        "post-turn-branch",
+		GitBranchStartup: "old-branch",
+		IndexedAt:        t0.Add(45 * time.Minute),
+	}))
+	loc = ResolveLocation(conv)
+	assert.Equal(t, "post-turn-branch", loc.CurrentBranch,
+		"newer conv_index reclaims authority when its timestamp is more recent")
+}
+
+// TestResolveLocation_WorkspaceSkippedWhenMoved guards the worktree
+// case: agent_workspace only sees CC's launch dir, never the worktree
+// the agent has Bash'ed into, so for a moved agent the PostToolUse hook
+// (agent_workdir) remains the only writer that can describe the right
+// CurrentBranch — agent_workspace must not clobber it, no matter how
+// recent its timestamp.
+func TestResolveLocation_WorkspaceSkippedWhenMoved(t *testing.T) {
+	setupTestDB(t)
+	const conv = "loc-ws-moved"
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "wm-s1", TmuxSession: "wm-t1", ConvID: conv,
+		Cwd: "/launch", Status: "running",
+	}))
+	require.NoError(t, db.UpsertAgentWorkdir(conv,
+		"/worktree/api/pkg", "/worktree/api", "feature-x"))
+	// A very fresh statusbar row claiming the launch dir's branch.
+	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
+		ConvID:    conv,
+		Cwd:       "/launch",
+		Branch:    "main",
+		UpdatedAt: time.Now(),
+	}))
+
+	loc := ResolveLocation(conv)
+	assert.True(t, loc.Moved(), "agent has moved into a worktree")
+	assert.Equal(t, "/worktree/api", loc.CurrentDir,
+		"CurrentDir stays the worktree — agent_workspace can't see it")
+	assert.Equal(t, "feature-x", loc.CurrentBranch,
+		"CurrentBranch stays the worktree's — agent_workspace can't override it for a moved agent")
 }
