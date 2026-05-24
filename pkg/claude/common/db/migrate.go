@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 45
+const currentVersion = 46
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -293,6 +293,48 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 46 {
+		if err := migrateV45toV46(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV45toV46 adds agent_workspace — the live "where the agent is
+// right now" snapshot the statusbar (`tclaude status-bar`) refreshes on
+// every Claude Code render. Distinct from agent_workdir (PostToolUse-
+// driven, only updates on tool calls) and conv_index.git_branch (turn-
+// driven, only updates when a .jsonl turn is appended): agent_workspace
+// updates on CC's render cadence — independent of agent activity — so a
+// plain `git checkout` in an idle session's launch dir reaches the
+// dashboard within the next statusline render rather than after the
+// next turn.
+//
+// One row per conv_id (PRIMARY KEY). Columns mirror what the statusbar
+// already computes for its own display: cwd, branch, the GitHub repo
+// URL, the repo's default branch, and the open PR's number/URL/state
+// when one exists. updated_at is the freshness clock ResolveLocation
+// uses to pick a winner across the three writers.
+func migrateV45toV46(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agent_workspace (
+			conv_id        TEXT PRIMARY KEY,
+			cwd            TEXT NOT NULL DEFAULT '',
+			branch         TEXT NOT NULL DEFAULT '',
+			repo_url       TEXT NOT NULL DEFAULT '',
+			default_branch TEXT NOT NULL DEFAULT '',
+			pr_number      INTEGER NOT NULL DEFAULT 0,
+			pr_url         TEXT NOT NULL DEFAULT '',
+			pr_state       TEXT NOT NULL DEFAULT '',
+			updated_at     TEXT NOT NULL DEFAULT ''
+		);
+
+		UPDATE schema_version SET version = 46;
+	`); err != nil {
+		return fmt.Errorf("migrate v45→v46 (add agent_workspace): %w", err)
+	}
 	return nil
 }
 

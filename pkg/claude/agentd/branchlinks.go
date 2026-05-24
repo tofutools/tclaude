@@ -107,13 +107,41 @@ var branchLinkInflight sync.Map
 // branch always gets a lookup; the startup branch reuses that result
 // when it's the same branch in the same dir (the common case — the
 // agent never moved), and only gets its own lookup when it diverges.
-func branchLinksFor(loc agentLocationView) repoLinksView {
+//
+// When the statusbar has published a live agent_workspace snapshot for
+// convID whose branch matches a slot we just resolved, prefer that
+// snapshot's repo/PR over the bl_ cache: the statusbar already paid
+// for `git` + `gh` and stamped its result on CC's render cadence, so
+// it bridges the gap between a branch flip and the next async bl_
+// refresh (5–90s otherwise). The override only applies to the launch
+// dir — agent_workspace never sees a worktree the agent has Bash'ed
+// into, so a moved agent keeps the bl_ lookup for its worktree slot.
+func branchLinksFor(convID string, loc agentLocationView) repoLinksView {
 	var v repoLinksView
 	v.BranchURL, v.BranchPRNumber, v.BranchPRURL = lookupBranchLink(loc.CurrentDir, loc.Branch)
 	if loc.StartupBranch == loc.Branch && loc.StartupDir == loc.CurrentDir {
 		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL = v.BranchURL, v.BranchPRNumber, v.BranchPRURL
 	} else {
 		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL = lookupBranchLink(loc.StartupDir, loc.StartupBranch)
+	}
+
+	if convID == "" {
+		return v
+	}
+	ws, err := db.GetAgentWorkspace(convID)
+	if err != nil || ws.ConvID == "" || ws.RepoURL == "" || ws.Branch == "" {
+		return v
+	}
+	webURL := branchWebURL(ws.RepoURL, ws.DefaultBranch, ws.Branch)
+	// Branch slot: only override when the agent is on the launch dir
+	// (the dir agent_workspace describes) AND the branch matches.
+	if ws.Branch == loc.Branch && ws.Cwd != "" && loc.CurrentDir == ws.Cwd {
+		v.BranchURL, v.BranchPRNumber, v.BranchPRURL = webURL, ws.PRNumber, ws.PRURL
+	}
+	// Startup slot: workspace's Cwd is by definition the launch dir, so
+	// matching ws.Branch to StartupBranch is enough.
+	if ws.Branch == loc.StartupBranch && ws.Cwd != "" && loc.StartupDir == ws.Cwd {
+		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL = webURL, ws.PRNumber, ws.PRURL
 	}
 	return v
 }

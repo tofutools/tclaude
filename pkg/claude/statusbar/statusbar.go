@@ -39,7 +39,13 @@ const (
 
 // StatusLineInput represents the JSON Claude Code sends to the statusline command
 type StatusLineInput struct {
-	Model struct {
+	// SessionID is Claude Code's *current* conversation id — survives a
+	// /clear by rotating with it, so the statusbar can key its DB writes
+	// on whichever conv-id the dashboard's ResolveLocation will look up.
+	// Optional: not every Claude Code version emits it; the statusbar
+	// falls back to TCLAUDE_SESSION_ID (the launch-time conv-id).
+	SessionID string `json:"session_id"`
+	Model     struct {
 		DisplayName string `json:"display_name"`
 	} `json:"model"`
 	Version   string `json:"version"`
@@ -71,12 +77,17 @@ type RateLimitBucket struct {
 	ResetsAt       int64   `json:"resets_at"` // unix timestamp
 }
 
-// cachedGitData holds cached results from git/gh commands
+// cachedGitData holds cached results from git/gh commands. Extra PR
+// fields (Number, State) ride the same cache entry so the dashboard's
+// agent_workspace row can store the full PR snapshot — the statusbar
+// itself only renders the URL.
 type cachedGitData struct {
 	RepoURL       string    `json:"repo_url"`
 	Branch        string    `json:"branch"`
 	DefaultBranch string    `json:"default_branch"`
-	PRURL         string    `json:"pr_url"`
+	PRNumber      int       `json:"pr_number,omitempty"`
+	PRURL         string    `json:"pr_url,omitempty"`
+	PRState       string    `json:"pr_state,omitempty"`
 	FetchedAt     time.Time `json:"fetched_at"`
 }
 
@@ -175,8 +186,16 @@ func run() error {
 	// === Line 1: git-links ===
 	var line1 []string
 
-	// Git info (skip directory display when in a git repo)
-	branch, links := getGitInfo()
+	// Git info (skip directory display when in a git repo). getGitData
+	// is the structured source; we render it here AND publish the same
+	// snapshot to agent_workspace so the dashboard's ResolveLocation
+	// stays as fresh as what the human sees on screen.
+	gitData := getGitData()
+	var branch, links string
+	if gitData != nil {
+		branch = gitData.Branch
+		links = buildGitLinksFromData(gitData)
+	}
 	if branch != "" {
 		line1 = append(line1, fmt.Sprintf("%s[%s]%s", colorCyan, branch, colorReset))
 	}
@@ -185,6 +204,37 @@ func run() error {
 	} else if branch == "" {
 		if dir := input.Workspace.CurrentDir; dir != "" {
 			line1 = append(line1, "📂 "+dir)
+		}
+	}
+
+	// Publish the live workspace snapshot (cwd + branch + repo/PR) to
+	// agent_workspace, keyed by the session-id Claude Code is using
+	// *right now*. Drives the dashboard's "where is this agent" cells on
+	// CC's render cadence — independent of agent activity — so a plain
+	// `git checkout` in an idle session's launch dir reaches the dashboard
+	// within the next statusline render rather than after the next turn.
+	// SessionID from CC's stdin tracks /clear rotations; fall back to
+	// TCLAUDE_SESSION_ID when CC is too old to emit it.
+	sessionID := input.SessionID
+	if sessionID == "" {
+		sessionID = os.Getenv("TCLAUDE_SESSION_ID")
+	}
+	if sessionID != "" {
+		ws := db.AgentWorkspace{
+			ConvID:    sessionID,
+			Cwd:       input.Workspace.CurrentDir,
+			UpdatedAt: time.Now(),
+		}
+		if gitData != nil {
+			ws.Branch = gitData.Branch
+			ws.RepoURL = gitData.RepoURL
+			ws.DefaultBranch = gitData.DefaultBranch
+			ws.PRNumber = gitData.PRNumber
+			ws.PRURL = gitData.PRURL
+			ws.PRState = gitData.PRState
+		}
+		if err := db.UpsertAgentWorkspace(ws); err != nil {
+			slog.Warn("status-bar: failed to upsert agent_workspace", "error", err, "module", "hooks")
 		}
 	}
 
@@ -346,33 +396,31 @@ func getRepoHTTPS() string {
 	return url
 }
 
-// getGitInfo returns the current branch and a link string (repo URL, diff URL, or PR URL).
-// Uses a 15s file cache to avoid repeated git/gh calls.
-func getGitInfo() (branch string, links string) {
-	// Try cache first
+// getGitData returns the current git snapshot for the statusbar's
+// working directory (CC's launch dir): repo URL, current branch,
+// default branch, and the open PR. Uses a 15s DB-backed cache (the
+// shared git_cache table, keyed by a hash of the repo root) to avoid
+// hammering git/gh on every statusline render. Returns nil when we
+// aren't in a git repo.
+func getGitData() *cachedGitData {
 	if cached := loadGitCache(); cached != nil {
-		return cached.Branch, buildGitLinksFromData(cached)
+		return cached
 	}
-
-	// Check we're in a git repo
 	if gitCmd("rev-parse", "--git-dir") == "" {
-		return "", ""
+		return nil
 	}
-
 	data := &cachedGitData{
 		RepoURL:       getRepoHTTPS(),
 		Branch:        gitCmd("branch", "--show-current"),
 		DefaultBranch: getDefaultBranch(),
 		FetchedAt:     time.Now(),
 	}
-
-	// Only check for PR on feature branches (gh pr view is the slowest call)
+	// Only check for PR on feature branches (gh pr view is the slowest call).
 	if data.RepoURL != "" && data.Branch != "" && data.DefaultBranch != "" && data.Branch != data.DefaultBranch {
-		data.PRURL = getPRURL(data.Branch)
+		data.PRNumber, data.PRURL, data.PRState = getPRInfo(data.Branch)
 	}
-
 	saveGitCache(data)
-	return data.Branch, buildGitLinksFromData(data)
+	return data
 }
 
 // buildGitLinksFromData renders git link text from cached data.
@@ -417,13 +465,24 @@ func getDefaultBranch() string {
 	return ""
 }
 
-// getPRURL checks for an open PR for the given branch using gh CLI.
-func getPRURL(branch string) string {
-	out, err := exec.Command("gh", "pr", "view", branch, "--json", "url", "--jq", ".url").Output()
+// getPRInfo returns the open PR's number, URL, and state for the given
+// branch via gh CLI. State is lower-cased to open|merged|closed.
+// Returns (0, "", "") when there's no PR, gh isn't installed, or gh
+// isn't authenticated — all best-effort, never fatal.
+func getPRInfo(branch string) (number int, url, state string) {
+	out, err := exec.Command("gh", "pr", "view", branch, "--json", "number,url,state").Output()
 	if err != nil {
-		return ""
+		return 0, "", ""
 	}
-	return strings.TrimSpace(string(out))
+	var pr struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+		State  string `json:"state"`
+	}
+	if json.Unmarshal(out, &pr) != nil {
+		return 0, "", ""
+	}
+	return pr.Number, pr.URL, strings.ToLower(pr.State)
 }
 
 // contextBar returns a progress bar for context usage with a compaction marker.
