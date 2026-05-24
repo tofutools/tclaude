@@ -291,8 +291,6 @@ function bindSudoModal() {
       }
     });
   });
-  // Backdrop closes; clicks inside the dialog don't. If the user has
-  // typed into a text field, confirm before discarding.
   bindBackdropDiscard('sudo-grant-modal', closeSudoGrantModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#sudo-grant-modal').classList.contains('show')) {
