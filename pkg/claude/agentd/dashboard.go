@@ -311,7 +311,7 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 
 // snapshotPayload is the wire shape for /api/snapshot. One round-trip
 // gives the page everything it needs to render every tab; the page
-// re-fetches on a 5s timer.
+// re-fetches on a 2s timer.
 type snapshotPayload struct {
 	GeneratedAt string           `json:"generated_at"`
 	Groups      []dashboardGroup `json:"groups"`

@@ -23,7 +23,7 @@ import { lastSnapshot } from './dashboard.js';
 // groups (visible, recoverable) instead of nowhere (silently lost).
 //
 // Auto-refresh suspends while a drag is in flight via the
-// dndDragActive flag below — refreshSuspended() checks it — so a 5s
+// dndDragActive flag below — refreshSuspended() checks it — so a 2s
 // tick doesn't blow our optimistic mutation away while the
 // round-trip is mid-air. The drag deliberately does NOT share the
 // modal suspension: a single shared boolean let a drag and a modal
@@ -331,7 +331,7 @@ async function runDndMove(payload, targetGroup) {
   // finally so the dashboard re-syncs. The dragend-fired refresh()
   // bailed while the confirm modal was open (refreshSuspended() saw
   // it), so without this a confirmed-then-aborted move would leave
-  // the dashboard showing stale state until the next 5s tick.
+  // the dashboard showing stale state until the next 2s tick.
   try {
     if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) {
       toast(`move: dashboard snapshot not loaded`, true);

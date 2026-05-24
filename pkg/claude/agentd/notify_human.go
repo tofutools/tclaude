@@ -21,7 +21,7 @@ type notifyHumanRequest struct {
 // Size caps for a human notification. A notification is a short
 // message, not a document — bounding it keeps one looping or
 // misbehaving sender from bloating the human_messages table and the
-// /api/snapshot payload (every message ships in every 5s snapshot).
+// /api/snapshot payload (every message ships in every 2s snapshot).
 const (
 	maxNotifyHumanBodyLen    = 16 * 1024
 	maxNotifyHumanSubjectLen = 256

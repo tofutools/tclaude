@@ -47,7 +47,7 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must("case 'row-menu':", "row-actions.js dispatches the agent-row cog")
 	must("case 'group-menu':", "row-actions.js dispatches the group cog")
 	must("querySelector('.action-menu.open')",
-		"refreshSuspended() pauses the 5s poll while a menu is open")
+		"refreshSuspended() pauses the 2s poll while a menu is open")
 
 	// Keyboard + ARIA: Escape closes an open menu, focus returns to the
 	// owning cog, and the cog / menu / items carry the ARIA menu-button

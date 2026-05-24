@@ -16,7 +16,7 @@ import (
 // turns in a burst while Claude is responding; debouncing collapses a
 // burst into one ScanAndUpsertFile rather than reparsing per turn.
 //
-// 500ms is well under the 5s dashboard poll, so a title / first-prompt
+// 500ms is well under the 2s dashboard poll, so a title / first-prompt
 // change is visible on the very next render — a brand-new conversation
 // barely shows "(untitled)" — while still coalescing the rapid writes
 // of a single response (CC streams turns at intervals well under half
