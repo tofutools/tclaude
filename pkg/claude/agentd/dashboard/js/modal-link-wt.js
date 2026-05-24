@@ -145,11 +145,6 @@ function bindLinkModal() {
   $('#link-modal-cancel').addEventListener('click', closeLinkModal);
   $('#link-modal-submit').addEventListener('click', submitLinkModal);
   bindBackdropDiscard('link-modal', closeLinkModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#link-modal').classList.contains('show')) {
-      closeLinkModal();
-    }
-  });
 }
 
 // ---- Worktree picker (shared by spawn + clone modals) -------------------

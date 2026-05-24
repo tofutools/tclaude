@@ -408,15 +408,6 @@ function bindTemplatesUI() {
   $('#template-from-group-submit').addEventListener('click', submitFromGroup);
   bindBackdropDiscard('template-from-group-modal', closeFromGroupModal);
 
-  // Escape closes whichever template modal is showing.
-  document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape') return;
-    ['template-editor-modal', 'template-instantiate-modal', 'template-from-group-modal']
-      .forEach(id => {
-        const m = $('#' + id);
-        if (m && m.classList.contains('show')) m.classList.remove('show');
-      });
-  });
 }
 
 // ---- Import-group modal ------------------------------------------------
@@ -676,11 +667,6 @@ function bindGroupImportModal() {
       submitGroupImport();
     }
   });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#group-import-modal').classList.contains('show')) {
-      closeGroupImportModal();
-    }
-  });
 }
 
 // ---- Group startup-context modal ---------------------------------------
@@ -749,11 +735,6 @@ function bindGroupContextModal() {
   $('#group-context-cancel').addEventListener('click', closeGroupContextModal);
   $('#group-context-submit').addEventListener('click', submitGroupContext);
   bindBackdropDiscard('group-context-modal', closeGroupContextModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#group-context-modal').classList.contains('show')) {
-      closeGroupContextModal();
-    }
-  });
 }
 
 export {

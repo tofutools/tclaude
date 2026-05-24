@@ -253,15 +253,6 @@ function bindMessageModal() {
     const conv = await pickCronTargetModal();
     if (conv) $('#message-create-from').value = conv;
   });
-  document.addEventListener('keydown', (e) => {
-    // Skip when the shared agent-picker overlay is open — its own Esc
-    // handler closes it; closing the modal too would drop the draft.
-    if (e.key === 'Escape'
-        && $('#message-create-modal').classList.contains('show')
-        && !$('#cron-pick-target-modal').classList.contains('show')) {
-      closeMessageCreateModal();
-    }
-  });
 }
 
 function bindSudoModal() {
@@ -292,11 +283,6 @@ function bindSudoModal() {
     });
   });
   bindBackdropDiscard('sudo-grant-modal', closeSudoGrantModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#sudo-grant-modal').classList.contains('show')) {
-      closeSudoGrantModal();
-    }
-  });
 }
 
 // ---- Permanent-permission editor ----------------------------------------
@@ -425,11 +411,6 @@ function bindPermEditModal() {
     });
   });
   bindBackdropDiscard('perm-edit-modal', closePermEditModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#perm-edit-modal').classList.contains('show')) {
-      closePermEditModal();
-    }
-  });
 }
 
 // ---- Group create modal -------------------------------------------------
@@ -509,11 +490,6 @@ function bindGroupCreateModal() {
     if (e.key === 'Enter' && (e.target.id === 'group-create-name' || e.target.id === 'group-create-descr' || e.target.id === 'group-create-cwd')) {
       e.preventDefault();
       submitGroupCreate();
-    }
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#group-create-modal').classList.contains('show')) {
-      closeGroupCreateModal();
     }
   });
 }

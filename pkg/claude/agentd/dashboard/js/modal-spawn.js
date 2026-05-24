@@ -316,11 +316,6 @@ function bindAgentSpawnModal() {
     }, 350);
   });
   bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#agent-spawn-modal').classList.contains('show')) {
-      closeAgentSpawnModal();
-    }
-  });
 }
 
 // ---- Clone agent modal --------------------------------------------------
@@ -428,11 +423,6 @@ function bindCloneAgentModal() {
   $('#clone-agent-submit').addEventListener('click', submitCloneAgent);
   bindWtPicker('clone-agent');
   bindBackdropDiscard('clone-agent-modal', closeCloneAgentModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#clone-agent-modal').classList.contains('show')) {
-      closeCloneAgentModal();
-    }
-  });
 }
 
 // ---- Reincarnate agent modal --------------------------------------------
@@ -550,11 +540,6 @@ function bindReincarnateAgentModal() {
     });
   });
   bindBackdropDiscard('reincarnate-agent-modal', closeReincarnateAgentModal);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#reincarnate-agent-modal').classList.contains('show')) {
-      closeReincarnateAgentModal();
-    }
-  });
 }
 
 // Renaming an agent is no longer a modal of its own — it folded into
