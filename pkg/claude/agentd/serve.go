@@ -192,6 +192,13 @@ func runServe(p *serveParams) error {
 	// Shares the daemon-wide stop channel.
 	startUsagePoller(cronStop)
 
+	// Live conv_index monitor. One fsnotify watcher over
+	// ~/.claude/projects/ keeps the conv_index SQLite cache fresh as
+	// conversation .jsonl files change, so the dashboard (and any other
+	// reader) can trust cached rows instead of re-stat+reparsing each
+	// .jsonl on every access. Shares the daemon-wide stop channel.
+	startConvMonitor(cronStop)
+
 	// One-shot: enroll any conv that is online right now but not yet
 	// in agent_enrollment. The v29→v30 migration backfills agents from
 	// the durable agentic tables, but a still-running agent that was

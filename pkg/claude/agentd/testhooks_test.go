@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"net/http"
+	"testing"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -265,6 +266,30 @@ func SetWorktreeFnsForTest(
 		inspectWorktreeFn = prevInspect
 		removeWorktreeFn = prevRemove
 	}
+}
+
+// StartConvMonitorForTest starts the live conv_index fsnotify monitor
+// against the current test HOME's ~/.claude/projects, with the debounce
+// shrunk to `debounce` so a test does not have to wait the production
+// convMonitorDebounce for a Write to settle. Registers a t.Cleanup that
+// stops the monitor synchronously — closes the stop channel and blocks
+// until the event-loop goroutine has fully exited — so no in-flight
+// ScanAndUpsertFile can race the next test's db.ResetForTest.
+//
+// Returns the *convMonitor, which is nil when the watcher could not be
+// created (e.g. a sandbox with no inotify); a caller can t.Skip on nil.
+func StartConvMonitorForTest(t *testing.T, debounce time.Duration) *convMonitor {
+	t.Helper()
+	prevDebounce := convMonitorDebounce
+	convMonitorDebounce = debounce
+	stop := make(chan struct{})
+	m := startConvMonitor(stop)
+	t.Cleanup(func() {
+		close(stop)
+		m.wait()
+		convMonitorDebounce = prevDebounce
+	})
+	return m
 }
 
 type dashTestHandler struct{ inner http.Handler }

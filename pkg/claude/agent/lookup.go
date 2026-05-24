@@ -349,6 +349,34 @@ func FreshTitle(convID string) string {
 	return UnknownTitle
 }
 
+// CachedTitle resolves convID to its display name from the conv_index
+// cache ONLY. It is FreshTitle's cache-only twin — identical resolution
+// priority (custom title > pending name > summary > first prompt >
+// UnknownTitle) — but it trusts the cached row instead of refreshing it
+// from the .jsonl.
+//
+// Use it on the agentd dashboard poll and similar hot paths: the
+// fsnotify monitor (agentd/fsnotify.go) keeps conv_index fresh, so a
+// per-row rescan is pure waste. The pending-name fallback still names a
+// just-spawned agent in the brief gap before its first index event
+// lands. Off that hot path, or where the monitor may not be running
+// (the CLI), use FreshTitle.
+func CachedTitle(convID string) string {
+	row, _ := db.GetConvIndex(convID)
+	if row != nil && row.CustomTitle != "" {
+		return row.CustomTitle
+	}
+	if pn := pendingName(convID); pn != "" {
+		return pn
+	}
+	if row != nil {
+		if t := displayTitle(row); t != "" {
+			return t
+		}
+	}
+	return UnknownTitle
+}
+
 // pendingName returns the intended display name recorded for convID at
 // spawn time (agent_enrollment.pending_name), or "" when the conv was
 // not spawned with a name or is not an agent. Errors are swallowed — a
