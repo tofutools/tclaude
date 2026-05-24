@@ -12,7 +12,7 @@ import { renderCronTab, formatInterval } from './tabs.js';
 // TDZ-safe: no top-level code reads them; the modal functions touch
 // them only when invoked, after every module has finished evaluating.
 import { lastSnapshot, sudoBadge } from './dashboard.js';
-import { refresh, toast, sudoGrantBlocklist, sudoByConv } from './refresh.js';
+import { refresh, toast, sudoGrantBlocklist, sudoByConv, bindBackdropDiscard } from './refresh.js';
 
 // openSudoGrantModal: builds the slug picker from the snapshot's
 // registry, restores the conv field from a per-page memory so
@@ -698,9 +698,7 @@ function bindCronModal() {
   $('#cron-create-cancel').addEventListener('click', closeCronCreateModal);
   $('#cron-create-submit').addEventListener('click', () => submitCronForm(false));
   $('#cron-create-save-another').addEventListener('click', () => submitCronForm(true));
-  $('#cron-create-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'cron-create-modal') closeCronCreateModal();
-  });
+  bindBackdropDiscard('cron-create-modal', closeCronCreateModal);
   // Solo/group target picker — markup + mode radios + 🔍 button.
   bindTargetPicker('cron-create');
   // Schedule chips push value into the text input + highlight.

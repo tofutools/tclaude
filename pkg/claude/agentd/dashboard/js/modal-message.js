@@ -13,7 +13,7 @@ import {
 // lastSnapshot lives in dashboard.js; refresh() / toast / openCleanupModal
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, openCleanupModal } from './refresh.js';
+import { refresh, toast, openCleanupModal, bindBackdropDiscard } from './refresh.js';
 
 
 // --- one-shot message modal -----------------------------------------
@@ -227,9 +227,7 @@ function bindMessageModal() {
   bindTargetPicker('message-create');
   $('#message-create-cancel').addEventListener('click', closeMessageCreateModal);
   $('#message-create-submit').addEventListener('click', submitMessageForm);
-  $('#message-create-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'message-create-modal') closeMessageCreateModal();
-  });
+  bindBackdropDiscard('message-create-modal', closeMessageCreateModal);
   // Group-scoped recipient list: per-member checkbox changes + the
   // select all / none shortcuts. The list markup is (re)rendered by
   // renderMessageMembers; these delegated listeners are bound once.
@@ -293,10 +291,7 @@ function bindSudoModal() {
       }
     });
   });
-  $('#sudo-grant-modal').addEventListener('click', (e) => {
-    // Click on backdrop closes; clicks inside the dialog don't.
-    if (e.target.id === 'sudo-grant-modal') closeSudoGrantModal();
-  });
+  bindBackdropDiscard('sudo-grant-modal', closeSudoGrantModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#sudo-grant-modal').classList.contains('show')) {
       closeSudoGrantModal();
@@ -429,9 +424,7 @@ function bindPermEditModal() {
       permRowEffective(row);
     });
   });
-  $('#perm-edit-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'perm-edit-modal') closePermEditModal();
-  });
+  bindBackdropDiscard('perm-edit-modal', closePermEditModal);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#perm-edit-modal').classList.contains('show')) {
       closePermEditModal();
@@ -511,9 +504,7 @@ function bindGroupCreateModal() {
   $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
   $('#group-create-cancel').addEventListener('click', closeGroupCreateModal);
   $('#group-create-submit').addEventListener('click', submitGroupCreate);
-  $('#group-create-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'group-create-modal') closeGroupCreateModal();
-  });
+  bindBackdropDiscard('group-create-modal', closeGroupCreateModal);
   $('#group-create-modal').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.target.id === 'group-create-name' || e.target.id === 'group-create-descr' || e.target.id === 'group-create-cwd')) {
       e.preventDefault();

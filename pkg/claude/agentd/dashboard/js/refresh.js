@@ -361,6 +361,73 @@ export function confirmModal({title, body, meta, okLabel}) {
   });
 }
 
+// bindBackdropDiscard wires the backdrop-click handler that protects
+// data-entry modals from accidental dismissal. It guards against two
+// distinct gestures, both of which previously closed the modal and
+// threw away whatever the user had entered:
+//
+//   1. A genuine backdrop click — pops the shared confirm overlay if
+//      the user has actually interacted with any control inside the
+//      modal (typed in a text field, toggled a checkbox, picked a
+//      file, changed a select). An untouched modal still closes in
+//      one click. Pre-populated edit modals only count as dirty once
+//      the user changes something — opening then immediately closing
+//      an edit modal you didn't touch is friction-free.
+//
+//   2. A mouse-up that lands on the backdrop after a mouse-down inside
+//      the dialog — text-selection drags out of a textarea, drag-and-
+//      drop releases onto the backdrop, scrollbar drags that overshoot.
+//      The default `click` event fires on the lowest common ancestor
+//      (the backdrop) in all three cases, so without this guard the
+//      modal would dismiss mid-gesture. We require both endpoints to
+//      land on the backdrop before treating it as a dismiss.
+//
+// Escape and the explicit Cancel button remain instant unconditional
+// dismiss paths — this guard fires only on backdrop mouse activity.
+// Pass the modal's id (without leading #) and the close function to
+// invoke once the user confirms (or the modal is clean).
+export function bindBackdropDiscard(modalId, closeFn) {
+  const el = $('#' + modalId);
+  if (!el) return;
+
+  // Dirty tracking: input fires for typed text and pastes; change fires
+  // for checkbox/radio toggles, select changes, and file picks. Both
+  // bubble up to the modal element. Programmatic value assignment from
+  // the modal's open* function does NOT fire these, so pre-population
+  // never marks dirty. We reset on every (re)open by observing when the
+  // .show class is added.
+  let dirty = false;
+  const markDirty = () => { dirty = true; };
+  el.addEventListener('input', markDirty);
+  el.addEventListener('change', markDirty);
+  new MutationObserver(() => {
+    if (el.classList.contains('show')) dirty = false;
+  }).observe(el, { attributes: true, attributeFilter: ['class'] });
+
+  // Gesture tracking: capture where the mouse-down originated, so we
+  // can distinguish a true backdrop click from a mouse-up that happens
+  // to land on the backdrop after a drag from inside.
+  let pressedOnBackdrop = false;
+  el.addEventListener('mousedown', (e) => {
+    pressedOnBackdrop = (e.target === el);
+  });
+
+  el.addEventListener('click', async (e) => {
+    const isBackdropClick = (e.target === el) && pressedOnBackdrop;
+    pressedOnBackdrop = false;
+    if (!isBackdropClick) return;
+    if (dirty) {
+      const ok = await confirmModal({
+        title: 'Discard input?',
+        body: 'Closing the form will discard any unsaved input. Continue?',
+        okLabel: 'Discard',
+      });
+      if (!ok) return;
+    }
+    closeFn();
+  });
+}
+
 // shutdownScope drives the group-level and whole-dashboard Shutdown
 // buttons. It counts the running agents in scope from the last
 // snapshot, pops a confirm modal that states the count and spells out
