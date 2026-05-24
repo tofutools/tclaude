@@ -54,11 +54,13 @@ const branchLinkCmdTimeout = 12 * time.Second
 // haven't resolved yet, simply renders the branch as plain text.
 type repoLinksView struct {
 	BranchURL        string `json:"branch_url,omitempty"`         // web link for the current branch
-	BranchPRNumber   int    `json:"branch_pr_number,omitempty"`   // open PR # for the current branch; 0 = none
+	BranchPRNumber   int    `json:"branch_pr_number,omitempty"`   // PR # for the current branch; 0 = none
 	BranchPRURL      string `json:"branch_pr_url,omitempty"`      // web link to that PR
+	BranchPRState    string `json:"branch_pr_state,omitempty"`    // open|merged|closed for the current branch's PR
 	StartupBranchURL string `json:"startup_branch_url,omitempty"` // web link for the startup branch
-	StartupPRNumber  int    `json:"startup_pr_number,omitempty"`  // open PR # for the startup branch
+	StartupPRNumber  int    `json:"startup_pr_number,omitempty"`  // PR # for the startup branch; 0 = none
 	StartupPRURL     string `json:"startup_pr_url,omitempty"`     // web link to that PR
+	StartupPRState   string `json:"startup_pr_state,omitempty"`   // open|merged|closed for the startup branch's PR
 }
 
 // repoBranchInfo is the cached git/gh resolution for one
@@ -109,11 +111,11 @@ var branchLinkInflight sync.Map
 // agent never moved), and only gets its own lookup when it diverges.
 func branchLinksFor(loc agentLocationView) repoLinksView {
 	var v repoLinksView
-	v.BranchURL, v.BranchPRNumber, v.BranchPRURL = lookupBranchLink(loc.CurrentDir, loc.Branch)
+	v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState = lookupBranchLink(loc.CurrentDir, loc.Branch)
 	if loc.StartupBranch == loc.Branch && loc.StartupDir == loc.CurrentDir {
-		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL = v.BranchURL, v.BranchPRNumber, v.BranchPRURL
+		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState = v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState
 	} else {
-		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL = lookupBranchLink(loc.StartupDir, loc.StartupBranch)
+		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState = lookupBranchLink(loc.StartupDir, loc.StartupBranch)
 	}
 	return v
 }
@@ -124,9 +126,9 @@ func branchLinksFor(loc agentLocationView) repoLinksView {
 // whatever it has (empty on a cold miss, stale otherwise). A blank
 // repoDir/branch — a detached HEAD, or an agent outside a git repo —
 // resolves to no link.
-func lookupBranchLink(repoDir, branch string) (url string, prNumber int, prURL string) {
+func lookupBranchLink(repoDir, branch string) (url string, prNumber int, prURL, prState string) {
 	if repoDir == "" || branch == "" {
-		return "", 0, ""
+		return "", 0, "", ""
 	}
 	key := branchLinkCacheKey(repoDir, branch)
 	var info repoBranchInfo
@@ -139,7 +141,7 @@ func lookupBranchLink(repoDir, branch string) (url string, prNumber int, prURL s
 	if !fresh {
 		scheduleBranchLinkRefresh(repoDir, branch, key)
 	}
-	return branchWebURL(info.RepoURL, info.DefaultBranch, branch), info.PRNumber, info.PRURL
+	return branchWebURL(info.RepoURL, info.DefaultBranch, branch), info.PRNumber, info.PRURL, info.PRState
 }
 
 // scheduleBranchLinkRefresh kicks a single background git/gh

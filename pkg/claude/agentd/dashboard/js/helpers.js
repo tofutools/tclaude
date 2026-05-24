@@ -498,19 +498,24 @@ function cwdCell(m) {
 // its compare view and an open PR is appended as a `#<num>` link.
 // Empty / unknown renders as an em dash so the column stays aligned.
 function branchCell(m) {
-  const fmt = (branch, url, prNum, prURL) => {
+  const fmt = (branch, url, prNum, prURL, prState) => {
     if (!branch) return '<span class="muted">—</span>';
     const inner = `⎇ ${esc(branch)}`;
     const branchEl = url
       ? `<a class="branch branch-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open branch on GitHub — ${esc(branch)}">${inner}</a>`
       : `<span class="branch" title="git branch: ${esc(branch)}">${inner}</span>`;
+    // State drives the PR link color: green=open, purple=merged, red=closed,
+    // grey=unknown. Unknown covers older cache entries written before the
+    // state field landed — the badge stays clickable, just not coloured.
+    const stateClass = ['open', 'merged', 'closed'].includes(prState) ? `pr-state-${prState}` : 'pr-state-unknown';
+    const stateLabel = prState ? prState.charAt(0).toUpperCase() + prState.slice(1) : 'Pull request';
     const prEl = (prNum && prURL)
-      ? ` <a class="pr-link" href="${esc(prURL)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open pull request #${prNum}">#${prNum}</a>`
+      ? ` <a class="pr-link ${stateClass}" href="${esc(prURL)}" target="_blank" rel="noopener noreferrer" draggable="false" title="${esc(stateLabel)} pull request #${prNum}">#${prNum}</a>`
       : '';
     return branchEl + prEl;
   };
-  const startupEl = fmt(m.startup_branch || '', m.startup_branch_url || '', m.startup_pr_number || 0, m.startup_pr_url || '');
-  const currentEl = fmt(m.branch || '', m.branch_url || '', m.branch_pr_number || 0, m.branch_pr_url || '');
+  const startupEl = fmt(m.startup_branch || '', m.startup_branch_url || '', m.startup_pr_number || 0, m.startup_pr_url || '', m.startup_pr_state || '');
+  const currentEl = fmt(m.branch || '', m.branch_url || '', m.branch_pr_number || 0, m.branch_pr_url || '', m.branch_pr_state || '');
   return stackedLoc(startupEl, currentEl, (m.startup_branch || '') !== (m.branch || ''));
 }
 

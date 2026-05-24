@@ -146,9 +146,16 @@ a.branch-link { color: #8b949e; text-decoration: none; }
 a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .pr-link {
   font-family: ui-monospace, monospace; font-size: 11px;
-  color: #3fb950; text-decoration: none; margin-left: 5px;
+  text-decoration: none; margin-left: 5px;
 }
 .pr-link:hover { text-decoration: underline; }
+/* PR-state colours mirror GitHub's: open = green, merged = purple,
+   closed (without merge) = red. Unknown is the legacy fallback for
+   cache entries written before the state field landed. */
+.pr-link.pr-state-open    { color: #3fb950; }
+.pr-link.pr-state-merged  { color: #a371f7; }
+.pr-link.pr-state-closed  { color: #f85149; }
+.pr-link.pr-state-unknown { color: #8b949e; }
 /* loc-pair stacks an init/now value pair in one CWD or Branch cell,
    shown only when the agent's launch location differs from where it
    is working now — keeps the column narrow instead of adding a 2nd. */
