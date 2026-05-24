@@ -158,13 +158,19 @@ function pickSudoAgentModal() {
 
     function close(convID) {
       overlay.classList.remove('show');
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       resolve(convID || '');
     }
 
     function onKey(e) {
       if (!overlay.classList.contains('show')) return;
-      if (e.key === 'Escape') { e.preventDefault(); close(''); }
+      // Capture-phase + stopImmediatePropagation so Escape closes only
+      // this picker — never the form modal underneath that opened it.
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        close('');
+      }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlight++; render(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlight--; render(); }
       else if (e.key === 'Enter') {
@@ -184,7 +190,7 @@ function pickSudoAgentModal() {
     search.oninput = () => { highlight = 0; render(); };
     includeAll.onchange = render;
     overlay.onclick = (e) => { if (e.target === overlay) close(''); };
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
 
     overlay.classList.add('show');
     render();
@@ -662,12 +668,18 @@ function pickCronTargetModal() {
 
     function close(convID) {
       overlay.classList.remove('show');
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       resolve(convID || '');
     }
     function onKey(e) {
       if (!overlay.classList.contains('show')) return;
-      if (e.key === 'Escape') { e.preventDefault(); close(''); }
+      // Capture-phase + stopImmediatePropagation so Escape closes only
+      // this picker — never the form modal underneath that opened it.
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        close('');
+      }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlight++; render(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlight--; render(); }
       else if (e.key === 'Enter') {
@@ -686,7 +698,7 @@ function pickCronTargetModal() {
     search.oninput = () => { highlight = 0; render(); };
     includeAll.onchange = render;
     overlay.onclick = (e) => { if (e.target === overlay) close(''); };
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     overlay.classList.add('show');
     render();
     setTimeout(() => search.focus(), 0);
@@ -718,15 +730,6 @@ function bindCronModal() {
   $('#cron-create-owner-pick').addEventListener('click', async () => {
     const conv = await pickCronTargetModal();
     if (conv) $('#cron-create-owner').value = conv;
-  });
-  document.addEventListener('keydown', (e) => {
-    // Skip when the shared agent-picker overlay is open — its own Esc
-    // handler closes it; closing the modal too would drop the draft.
-    if (e.key === 'Escape'
-        && $('#cron-create-modal').classList.contains('show')
-        && !$('#cron-pick-target-modal').classList.contains('show')) {
-      closeCronCreateModal();
-    }
   });
 }
 

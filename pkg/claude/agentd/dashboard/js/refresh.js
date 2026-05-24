@@ -329,7 +329,11 @@ function bindSortHeaders() {
 // --- inline mutations: action buttons + confirm modal + toast ---
 
 // confirmModal pops the confirmation overlay; resolves true on
-// OK, false on Cancel / outside-click / Escape.
+// OK, false on Cancel / outside-click / Escape. Escape is handled in
+// capture phase with stopImmediatePropagation so that dismissing a
+// confirm popped on top of a form modal cancels only the confirm —
+// the Escape never leaks down to the underlying form's own dismiss
+// handler.
 export function confirmModal({title, body, meta, okLabel}) {
   return new Promise(resolve => {
     const overlay = $('#confirm-modal');
@@ -345,26 +349,32 @@ export function confirmModal({title, body, meta, okLabel}) {
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlay);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       resolve(result);
     };
     const onOk = () => cleanup(true);
     const onCancel = () => cleanup(false);
     const onOverlay = (e) => { if (e.target === overlay) cleanup(false); };
-    const onKey = (e) => { if (e.key === 'Escape') cleanup(false); };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      cleanup(false);
+    };
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlay);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     overlay.classList.add('show');
     okBtn.focus();
   });
 }
 
-// bindBackdropDiscard wires the backdrop-click handler that protects
-// data-entry modals from accidental dismissal. It guards against two
-// distinct gestures, both of which previously closed the modal and
-// threw away whatever the user had entered:
+// bindBackdropDiscard wires the dismissal handlers that protect a
+// data-entry modal from accidental close — both the backdrop click
+// and the Escape key route through the same dirty-check + confirm
+// flow. Three gestures previously closed the modal and threw away
+// whatever the user had entered:
 //
 //   1. A genuine backdrop click — pops the shared confirm overlay if
 //      the user has actually interacted with any control inside the
@@ -382,10 +392,16 @@ export function confirmModal({title, body, meta, okLabel}) {
 //      modal would dismiss mid-gesture. We require both endpoints to
 //      land on the backdrop before treating it as a dismiss.
 //
-// Escape and the explicit Cancel button remain instant unconditional
-// dismiss paths — this guard fires only on backdrop mouse activity.
-// Pass the modal's id (without leading #) and the close function to
-// invoke once the user confirms (or the modal is clean).
+//   3. Escape — same dirty-check + confirm flow. A clean modal still
+//      closes instantly. A nested picker overlay claims ESC with its
+//      own capture-phase stopImmediatePropagation so this handler
+//      doesn't run while a picker is up. The handler also bails when
+//      the shared confirm overlay is already on top, so we never race
+//      to pop a second confirm on top of the first.
+//
+// The explicit Cancel button remains an instant unconditional dismiss
+// path. Pass the modal's id (without leading #) and the close function
+// to invoke once the user confirms (or the modal is clean).
 export function bindBackdropDiscard(modalId, closeFn) {
   const el = $('#' + modalId);
   if (!el) return;
@@ -404,18 +420,10 @@ export function bindBackdropDiscard(modalId, closeFn) {
     if (el.classList.contains('show')) dirty = false;
   }).observe(el, { attributes: true, attributeFilter: ['class'] });
 
-  // Gesture tracking: capture where the mouse-down originated, so we
-  // can distinguish a true backdrop click from a mouse-up that happens
-  // to land on the backdrop after a drag from inside.
-  let pressedOnBackdrop = false;
-  el.addEventListener('mousedown', (e) => {
-    pressedOnBackdrop = (e.target === el);
-  });
-
-  el.addEventListener('click', async (e) => {
-    const isBackdropClick = (e.target === el) && pressedOnBackdrop;
-    pressedOnBackdrop = false;
-    if (!isBackdropClick) return;
+  // tryDismiss is the shared exit path: if the modal has been touched,
+  // pop the confirm overlay first; otherwise (or once the user accepts
+  // the discard) call closeFn.
+  const tryDismiss = async () => {
     if (dirty) {
       const ok = await confirmModal({
         title: 'Discard input?',
@@ -425,6 +433,32 @@ export function bindBackdropDiscard(modalId, closeFn) {
       if (!ok) return;
     }
     closeFn();
+  };
+
+  // Gesture tracking: capture where the mouse-down originated, so we
+  // can distinguish a true backdrop click from a mouse-up that happens
+  // to land on the backdrop after a drag from inside.
+  let pressedOnBackdrop = false;
+  el.addEventListener('mousedown', (e) => {
+    pressedOnBackdrop = (e.target === el);
+  });
+
+  el.addEventListener('click', (e) => {
+    const isBackdropClick = (e.target === el) && pressedOnBackdrop;
+    pressedOnBackdrop = false;
+    if (!isBackdropClick) return;
+    tryDismiss();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!el.classList.contains('show')) return;
+    // The confirm overlay's capture-phase handler already swallows
+    // Escape, but check anyway so we never race to pop a second
+    // confirm on top of the first.
+    if ($('#confirm-modal').classList.contains('show')) return;
+    e.preventDefault();
+    tryDismiss();
   });
 }
 
