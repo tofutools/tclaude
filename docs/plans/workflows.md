@@ -298,24 +298,36 @@ escalation + inbox handoffs (Step 6), node approval gates (Step 4).
 
 **Future:** remote state sync backend; richer verification engines.
 
-## Per-step docs (don't lose work on restart)
+## Roadmap — ordered build sequence (don't lose work on restart)
 
-- `TODO/high-prio/workflows-template-format.md`
-- `TODO/high-prio/workflows-db-schema.md`
-- `TODO/high-prio/workflows-agentd-api.md`
-- `TODO/high-prio/workflows-group-integration.md`
-- `TODO/high-prio/workflows-dashboard-tab.md`
-- `TODO/high-prio/workflows-graph-analysis.md`
-- `TODO/med-prio/workflows-execution-engine.md`
-- `TODO/med-prio/workflows-external-sources.md`
-- `TODO/future/workflows-composite-nodes.md`
-- `TODO/future/workflows-dynamic-subgraphs.md`
-- `TODO/future/workflows-ideas.md` (PO idea backlog)
-- `DONE/workflows-template-format.md` (shipped, PR #226)
+Dependency- and priority-ordered. This table is the authority on *order*; the
+TODO tier dirs are a secondary signal. The PO keeps `Status` current.
 
-As each ships, move its file to `docs/plans/DONE/` and rewrite the body to
-describe what shipped (CLI/API surface, schema migration version, file paths,
-test scenarios, commit refs).
+| #  | Step                                                | File                                            | Status            | Depends on |
+|----|-----------------------------------------------------|-------------------------------------------------|-------------------|------------|
+| 1  | Template format + parser + example                  | `DONE/workflows-template-format.md`             | ✅ done (PR #226) | —          |
+| 2  | SQLite schema + CRUD                                 | `DONE/workflows-db-schema.md`                   | ✅ done (PR #227) | 1          |
+| 2b | Static graph analysis (validator) — *parallel*      | `TODO/high-prio/workflows-graph-analysis.md`    | 🔨 wip            | 1          |
+| 3  | agentd HTTP API + snapshot                          | `TODO/high-prio/workflows-agentd-api.md`        | ⏳ next           | 1, 2       |
+| 4  | Group integration (+ live vitals, approval gates)   | `TODO/high-prio/workflows-group-integration.md` | ⏳ queued         | 3          |
+| 5  | Dashboard tab (+ live vitals overlay) — *∥ with 4*  | `TODO/high-prio/workflows-dashboard-tab.md`     | ⏳ queued         | 3          |
+| —  | **← monitoring MVP complete; operator review here** |                                                 |                   | 4, 5       |
+| 6  | Execution engine (+ stuck/SLA, inbox handoffs)      | `TODO/med-prio/workflows-execution-engine.md`   | ⏳ queued         | 1–5        |
+| 7  | External `dir:`/`git:` template sources             | `TODO/med-prio/workflows-external-sources.md`   | ⏳ queued         | 1 (+gates) |
+| 8  | Composite nodes (multi-task + success rules)        | `TODO/future/workflows-composite-nodes.md`      | ⏳ queued         | 6          |
+| 9  | Sub-workflow nodes + dynamic sub-graphs             | `TODO/future/workflows-dynamic-subgraphs.md`    | ⏳ queued         | 6, 8       |
+| 10 | `tclaude workflow` CLI (agent↔engine reflection ⭐) | `TODO/future/workflows-cli.md`                  | ⏳ queued         | 3          |
+| 11 | Agent-as-engine (opt-in)                            | `TODO/future/workflows-agent-engine.md`         | ⏳ queued         | 6, 10      |
+
+⭐ The agent↔engine **reflection/interop** (steps 10–11) is operator-flagged
+super-important and buildable right after Step 3 — pull forward if wanted sooner.
+Steps 8–11 are sequenced at the end per the operator.
+
+Idea backlog (unscheduled): `TODO/future/workflows-ideas.md`.
+
+As each ships, move its TODO file to `docs/plans/DONE/` and rewrite the body to
+describe what shipped (API surface, schema version, file paths, test scenarios,
+commit refs). Workers do this for their own step; the PO keeps the table current.
 
 ## Open questions
 
