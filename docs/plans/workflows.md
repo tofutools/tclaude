@@ -307,7 +307,7 @@ TODO tier dirs are a secondary signal. The PO keeps `Status` current.
 |----|-----------------------------------------------------|-------------------------------------------------|-------------------|------------|
 | 1  | Template format + parser + example                  | `DONE/workflows-template-format.md`             | ✅ done (PR #226) | —          |
 | 2  | SQLite schema + CRUD                                 | `DONE/workflows-db-schema.md`                   | ✅ done (PR #227) | 1          |
-| 2b | Static graph analysis (validator) — *parallel*      | `TODO/high-prio/workflows-graph-analysis.md`    | 🔨 wip            | 1          |
+| 2b | Static graph analysis (validator) — *parallel*      | `DONE/workflows-graph-analysis.md`              | ✅ done (PR #228) | 1          |
 | 3  | agentd HTTP API + snapshot                          | `TODO/high-prio/workflows-agentd-api.md`        | ⏳ next           | 1, 2       |
 | 4  | Group integration (+ live vitals, approval gates)   | `TODO/high-prio/workflows-group-integration.md` | ⏳ queued         | 3          |
 | 5  | Dashboard tab (+ live vitals overlay) — *∥ with 4*  | `TODO/high-prio/workflows-dashboard-tab.md`     | ⏳ queued         | 3          |
