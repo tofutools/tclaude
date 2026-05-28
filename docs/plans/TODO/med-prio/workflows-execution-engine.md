@@ -40,6 +40,15 @@ the cron scheduler tick) that advances instances without a human clicking:
 7. **Loops/retries/fix-loops** — the canonical agent-runner pattern (run
    validator → capture → ask agent to fix → retry until pass) expressed as a
    graph back-edge + `retries`/`break-on-pass`.
+8. **Handoffs as inbox messages** — when a node completes and hands to its
+   successor, deliver the captured output to the successor's assigned agent as a
+   normal inbox message, and nudge it. The workflow's data-flow becomes visible
+   agent-to-agent messaging over tclaude's existing inbox, not a side channel.
+9. **Stuck / SLA detection + escalation** — a node `running`/`awaiting` past a
+   threshold (unactioned human node, idle or **crashed** assigned agent) escalates:
+   ping the assignee, or notify the human via the `human.notify` channel. Reuses
+   the cron scheduler + notify. Turns the monitor into an active assistant —
+   crucial for human-in-the-loop / business-process workflows.
 
 ## Shipped context (after Phase 1)
 

@@ -24,6 +24,14 @@ auto-execution.
    assignee's tmux session via the existing attach path (out-of-sandbox, the
    daemon does it). Surfaces in the node context menu.
 5. The dashboard node context menu (in the dashboard-tab step) calls these.
+6. **Live agent vitals** — expose each AI node's assignee so the dashboard (Step 5)
+   can overlay that agent's live status (working/idle/crashed, context %). The data
+   already rides the snapshot per agent; this step maps node → assignee → vitals.
+7. **Node approval gates** — a node may require explicit human approval before it
+   runs, gated on the existing permission/sudo machinery. Important for `tool`/
+   `program` nodes that execute commands, and essential once Step 7 allows
+   `git:`-sourced templates (third-party remote code execution). A gated node sits
+   blocked/`awaiting_verify` until approved in the dashboard.
 
 MVP keeps it shallow: link/create the group, allow manual association of an agent
 to a node, support attach. Full "spawn the right agent automatically and advance

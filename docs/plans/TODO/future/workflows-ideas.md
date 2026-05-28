@@ -5,6 +5,17 @@ notes where it fits and a rough cost. Promote into a step (or a step's brief)
 when we decide to do it. Several are uniquely enabled by tclaude's existing
 agent/group/inbox/usage machinery — that's where the differentiation is.
 
+## Promoted (no longer just ideas)
+
+- Static graph analysis → its own high-prio step `workflows-graph-analysis.md`.
+- Live agent vitals on nodes → folded into Steps 4 (`group-integration`) + 5 (`dashboard-tab`).
+- Stuck/SLA escalation + inbox handoffs → folded into Step 6 (`execution-engine`).
+- Node approval gates → folded into Step 4 (`group-integration`).
+- Sub-workflow nodes + foreach fan-out → `workflows-dynamic-subgraphs.md` (Phase 3).
+- Composite nodes → `workflows-composite-nodes.md` (Phase 3).
+
+The rest below remain open ideas.
+
 ## Cheap wins — fold into existing steps
 
 - **Static graph analysis in the validator** (extends Step 1, `pkg/claude/workflow`).

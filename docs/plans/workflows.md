@@ -288,6 +288,14 @@ are reusable.)
 reference templates by `dir:<path>` or `git:<url>@<ref>#<path>`, so any repo can
 host workflows. The `source:name` ref scheme already anticipates this.
 
+**Phase 3 — advanced (future):** composite nodes (multi-task + success rules,
+`workflows-composite-nodes.md`) and dynamic sub-graphs (sub-workflow nodes +
+runtime fan-out/expansion, `workflows-dynamic-subgraphs.md`).
+
+**Folded into earlier steps** (from `workflows-ideas.md`): static graph analysis
+(its own high-prio step), live agent vitals on nodes (Steps 4–5), stuck/SLA
+escalation + inbox handoffs (Step 6), node approval gates (Step 4).
+
 **Future:** remote state sync backend; richer verification engines.
 
 ## Per-step docs (don't lose work on restart)
@@ -297,8 +305,13 @@ host workflows. The `source:name` ref scheme already anticipates this.
 - `TODO/high-prio/workflows-agentd-api.md`
 - `TODO/high-prio/workflows-group-integration.md`
 - `TODO/high-prio/workflows-dashboard-tab.md`
+- `TODO/high-prio/workflows-graph-analysis.md`
 - `TODO/med-prio/workflows-execution-engine.md`
 - `TODO/med-prio/workflows-external-sources.md`
+- `TODO/future/workflows-composite-nodes.md`
+- `TODO/future/workflows-dynamic-subgraphs.md`
+- `TODO/future/workflows-ideas.md` (PO idea backlog)
+- `DONE/workflows-template-format.md` (shipped, PR #226)
 
 As each ships, move its file to `docs/plans/DONE/` and rewrite the body to
 describe what shipped (CLI/API surface, schema migration version, file paths,

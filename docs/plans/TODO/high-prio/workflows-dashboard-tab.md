@@ -35,6 +35,11 @@ Vanilla ES modules, no build step. Follow the existing tab/modal/filter patterns
      node ids — read their bbox to place badges). Re-place on re-render.
    - Re-style on each 2s snapshot; only full re-render when topology/state set
      changes (cheap diff) to avoid flicker.
+   - **Live agent vitals on AI nodes** — for a node assigned to an agent, overlay
+     the agent's live state (working/idle/**crashed**, context-meter %) from the
+     snapshot, not just the workflow status. The graph becomes a live view of the
+     agent fleet — the key thing a non-agent runner can't show. (Pairs with Step 4,
+     which records the node↔agent `assignee`.)
 5. **Per-node I/O summary** — clicking a node (or its row in a node list beneath
    the chart) shows inputs (interpolated params/captures) + captured `output`,
    expandable.
