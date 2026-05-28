@@ -1,0 +1,16 @@
+label: Implement
+executor:
+  kind: ai
+  agent: implementor
+  mode: autonomous
+  prompt: |
+    Implement the {{service_name}} micro-service per the approved plan:
+
+    {{plan}}
+
+    Write the code and make the project build.
+verify:
+  kind: tool
+  run: go build ./...
+capture: impl_notes
+retries: 1

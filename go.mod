@@ -21,6 +21,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.1password.io/spg v0.1.0
 	golang.org/x/term v0.42.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.0
 )
 
@@ -53,7 +54,6 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

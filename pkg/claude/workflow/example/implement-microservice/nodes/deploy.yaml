@@ -1,0 +1,10 @@
+label: Deploy
+executor:
+  kind: ai
+  agent: implementor
+  mode: autonomous
+  prompt: Deploy the {{service_name}} micro-service to the {{env}} environment.
+verify:
+  kind: tool
+  run: echo "deployed {{service_name}} to {{env}}"
+capture: deploy_log
