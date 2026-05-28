@@ -280,6 +280,13 @@ You can author a workflow, instantiate it, drive it by hand, and watch it live.
 auto-advance the graph · spawn AI-node agents into the instance group · run
 tool/program nodes · run verifications (tool/ai/enum/format) · capture +
 `{{interpolation}}` · retries/loops/joins. The runner becomes autonomous.
+(Prior art for the verify/review loops, rate-limit handling and session-driving:
+the old `pkg/claude/task` runner — linear/single-agent, but the loop mechanics
+are reusable.)
+
+**Phase 2 — External template sources (med-prio):**
+reference templates by `dir:<path>` or `git:<url>@<ref>#<path>`, so any repo can
+host workflows. The `source:name` ref scheme already anticipates this.
 
 **Future:** remote state sync backend; richer verification engines.
 
@@ -291,6 +298,7 @@ tool/program nodes · run verifications (tool/ai/enum/format) · capture +
 - `TODO/high-prio/workflows-group-integration.md`
 - `TODO/high-prio/workflows-dashboard-tab.md`
 - `TODO/med-prio/workflows-execution-engine.md`
+- `TODO/med-prio/workflows-external-sources.md`
 
 As each ships, move its file to `docs/plans/DONE/` and rewrite the body to
 describe what shipped (CLI/API surface, schema migration version, file paths,
