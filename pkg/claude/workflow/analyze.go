@@ -53,7 +53,9 @@ func (t *Template) analyzeGraph(add func(string, ...any)) {
 	}
 	if len(validEntries) > 0 {
 		reached := reachable(validEntries, out)
-		entryList := strings.Join(t.Entry, ", ")
+		// Report the entries actually walked from, not the raw declared list —
+		// any non-existent declared entry is flagged separately in validate().
+		entryList := strings.Join(validEntries, ", ")
 		for _, id := range ids {
 			if !reached[id] {
 				add("node %q is unreachable: no path to it from any entry node (entry: %s)", id, entryList)
