@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 46
+const currentVersion = 47
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -299,6 +299,94 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 47 {
+		if err := migrateV46toV47(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV46toV47 adds the three Workflows tables — the persistence
+// layer behind the (future) workflow engine + dashboard tab. Templates
+// stay on disk (parsed mermaid); only INSTANCES and per-node state live
+// in SQLite. See docs/plans/workflows.md and docs/plans/DONE/workflows-db-schema.md.
+//
+// workflow_instances — one row per instantiation. The mermaid chart,
+// params and captured vars are SNAPSHOTTED here at instantiation, so a
+// later edit to the on-disk template never reshapes a running instance.
+// status walks running → completed|failed|cancelled. group_id is the
+// optional linked tclaude agent group (0 = none); it is a soft link, not
+// a foreign key, because a group can be deleted out from under a finished
+// instance without orphaning its history.
+//
+// workflow_nodes — one row per node per instance, keyed by the synthetic
+// id but uniquely identified by (instance_id, node_id) so the engine can
+// address a node by its mermaid id. status walks pending → ready →
+// running → awaiting_verify → done (or → failed, or → skipped for a
+// branch not taken). detail snapshots the node def as JSON; output is the
+// captured I/O summary; assignee is the agent conv-id / human handle
+// running it; visits counts loop re-entries. The row cascade-deletes with
+// its instance.
+//
+// workflow_events — append-only audit/timeline, one row per state
+// transition or note. Backs the per-node "open audit data" context-menu
+// action and the instance timeline. node_id is '' for instance-level
+// events. Cascade-deletes with its instance.
+//
+// Both child tables carry an instance_id index for the by-instance list
+// queries; the parent needs none beyond its primary key.
+func migrateV46toV47(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS workflow_instances (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			template_ref  TEXT NOT NULL,
+			template_name TEXT NOT NULL,
+			title         TEXT NOT NULL DEFAULT '',
+			status        TEXT NOT NULL DEFAULT 'running',
+			mermaid       TEXT NOT NULL DEFAULT '',
+			params        TEXT NOT NULL DEFAULT '{}',
+			vars          TEXT NOT NULL DEFAULT '{}',
+			group_id      INTEGER NOT NULL DEFAULT 0,
+			created_at    TEXT NOT NULL,
+			updated_at    TEXT NOT NULL,
+			completed_at  TEXT NOT NULL DEFAULT ''
+		);
+
+		CREATE TABLE IF NOT EXISTS workflow_nodes (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			instance_id   INTEGER NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+			node_id       TEXT NOT NULL,
+			label         TEXT NOT NULL DEFAULT '',
+			executor_kind TEXT NOT NULL DEFAULT '',
+			status        TEXT NOT NULL DEFAULT 'pending',
+			outcome       TEXT NOT NULL DEFAULT '',
+			detail        TEXT NOT NULL DEFAULT '{}',
+			output        TEXT NOT NULL DEFAULT '',
+			assignee      TEXT NOT NULL DEFAULT '',
+			visits        INTEGER NOT NULL DEFAULT 0,
+			started_at    TEXT NOT NULL DEFAULT '',
+			finished_at   TEXT NOT NULL DEFAULT '',
+			updated_at    TEXT NOT NULL,
+			UNIQUE(instance_id, node_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_workflow_nodes_instance ON workflow_nodes(instance_id);
+
+		CREATE TABLE IF NOT EXISTS workflow_events (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			instance_id  INTEGER NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+			node_id      TEXT NOT NULL DEFAULT '',
+			kind         TEXT NOT NULL,
+			message      TEXT NOT NULL DEFAULT '',
+			at           TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_workflow_events_instance ON workflow_events(instance_id);
+
+		UPDATE schema_version SET version = 47;
+	`); err != nil {
+		return fmt.Errorf("migrate v46→v47 (add workflow tables): %w", err)
+	}
 	return nil
 }
 
