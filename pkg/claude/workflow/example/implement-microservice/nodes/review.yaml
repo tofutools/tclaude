@@ -1,0 +1,9 @@
+label: Review
+executor:
+  kind: human
+  instructions: |
+    Review the implementation and test results for {{service_name}}.
+    Approve to deploy, or request changes to loop back to implementation.
+verify:
+  kind: enum
+  values: [approved, changes]

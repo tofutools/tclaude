@@ -1,0 +1,12 @@
+label: Plan the service
+executor:
+  kind: ai
+  agent: planner
+  mode: interactive
+  prompt: |
+    Draft an implementation plan for the {{service_name}} micro-service
+    targeting the {{env}} environment. Cover the endpoints, the data model,
+    and the deployment steps.
+verify:
+  kind: human
+capture: plan

@@ -1,0 +1,8 @@
+name: implement-microservice
+description: Plan, implement, test, review, and deploy a new micro-service end to end.
+params:
+  - name: service_name
+    required: true
+  - name: env
+    default: staging
+entry: plan

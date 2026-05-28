@@ -1,0 +1,6 @@
+label: Run tests
+executor:
+  kind: tool
+  run: go test ./...
+on_fail: continue
+capture: test_output
