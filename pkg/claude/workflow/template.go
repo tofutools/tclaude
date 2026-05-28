@@ -165,6 +165,7 @@ type Template struct {
 	Params      []Param
 	Entry       []string // node ids that start ready (computed if not declared)
 	Mermaid     string   // raw flow.mmd contents (rendered verbatim by the dashboard)
+	Warnings    []string // non-fatal topology smells found during load (sorted, deterministic)
 
 	Nodes        map[string]*Node       // keyed by node id
 	Edges        []Edge                 // parsed from the mermaid chart

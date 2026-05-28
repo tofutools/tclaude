@@ -165,6 +165,10 @@ func (t *Template) validate() []string {
 		}
 		t.validateNode(id, t.Nodes[id], add)
 	}
+
+	// Static graph topology: reachability, can-reach-terminal, terminal sanity
+	// (problems) and enum-coverage (warnings). Runs last, after Entry is settled.
+	t.analyzeGraph(add)
 	return problems
 }
 
