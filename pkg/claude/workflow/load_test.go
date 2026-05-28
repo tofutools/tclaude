@@ -193,9 +193,9 @@ func TestLoadFS_ReportsMultipleProblems(t *testing.T) {
 func TestParam_IsRequired(t *testing.T) {
 	yes := true
 	no := false
-	assert.True(t, Param{Name: "a"}.IsRequired())                         // default
-	assert.False(t, Param{Name: "a", Default: "x"}.IsRequired())          // has default
-	assert.True(t, Param{Name: "a", Required: &yes}.IsRequired())         // explicit
-	assert.False(t, Param{Name: "a", Required: &no}.IsRequired())         // explicit
+	assert.True(t, Param{Name: "a"}.IsRequired())                 // default
+	assert.False(t, Param{Name: "a", Default: "x"}.IsRequired())  // has default
+	assert.True(t, Param{Name: "a", Required: &yes}.IsRequired()) // explicit
+	assert.False(t, Param{Name: "a", Required: &no}.IsRequired()) // explicit
 	assert.False(t, Param{Name: "a", Required: &no, Default: ""}.IsRequired())
 }

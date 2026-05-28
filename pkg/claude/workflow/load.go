@@ -76,6 +76,7 @@ func LoadFS(fsys fs.FS, ref string, source Source, dir string) (*Template, error
 	if err != nil {
 		return nil, fmt.Errorf("read nodes/: %w", err)
 	}
+	var preProblems []string
 	for _, ent := range entries {
 		name := ent.Name()
 		if ent.IsDir() {
@@ -93,10 +94,14 @@ func LoadFS(fsys fs.FS, ref string, source Source, dir string) (*Template, error
 			return nil, fmt.Errorf("parse nodes/%s: %w", name, err)
 		}
 		n.ID = strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
+		if _, dup := t.Nodes[n.ID]; dup {
+			preProblems = append(preProblems, fmt.Sprintf("duplicate node definition for %q (both nodes/%s.yaml and nodes/%s.yml present)", n.ID, n.ID, n.ID))
+		}
 		t.Nodes[n.ID] = &n
 	}
 
-	if problems := t.validate(); len(problems) > 0 {
+	problems := append(preProblems, t.validate()...)
+	if len(problems) > 0 {
 		return nil, &ValidationError{Ref: ref, Problems: problems}
 	}
 	return t, nil

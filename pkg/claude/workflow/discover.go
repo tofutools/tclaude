@@ -54,6 +54,9 @@ type candidate struct {
 // examples. projectDirs are repo-local template directories (see ProjectDir).
 func Resolve(ref string, projectDirs ...string) (*Template, error) {
 	source, name, qualified := splitRef(ref)
+	if err := validRefName(name); err != nil {
+		return nil, fmt.Errorf("cannot resolve %q: %w", ref, err)
+	}
 	if qualified {
 		switch source {
 		case SourceExample:
@@ -169,6 +172,16 @@ func candidatesIn(dir string, source Source) []candidate {
 func isTemplateDir(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, "workflow.yaml"))
 	return err == nil && !info.IsDir()
+}
+
+// validRefName rejects names that would escape the workflows directory or
+// otherwise traverse the filesystem. A workflow name is a single path segment.
+func validRefName(name string) error {
+	if name == "" || name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid workflow name %q", name)
+	}
+	return nil
 }
 
 // splitRef splits "source:name" into its parts. qualified is false for a bare

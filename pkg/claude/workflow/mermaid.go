@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -17,7 +18,9 @@ import (
 //   - Node shapes (text is cosmetic, used only for labels): A, A[rect],
 //     A(round), A([stadium]), A[[subroutine]], A[(cylinder)], A((circle)),
 //     A{diamond}, A{{hexagon}}, A>flag].
-//   - Edges, left-to-right only: -->  ---  -.->  -.-  ==>  ===  --x  --o .
+//   - Edges, left-to-right only: -->  ---  -.->  -.-  ==>  ===  --x  --o ,
+//     including mermaid's link "lengthening" with extra dashes/equals
+//     (--->, ---->, ====>, etc.).
 //   - Edge labels via the pipe form only: A -->|label| B .
 //   - Chains: A --> B --> C . Multi-target with &: A --> B & C , A & B --> C .
 //   - Statements separated by newlines or ';'.
@@ -33,8 +36,9 @@ func parseMermaid(src string) (direction string, nodes map[string]MermaidNode, e
 
 	lines := strings.Split(src, "\n")
 	sawHeader := false
+	subgraphDepth := 0
 	for lineNo, raw := range lines {
-		line := strings.TrimSpace(stripCR(raw))
+		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "%%") {
 			continue
 		}
@@ -49,7 +53,20 @@ func parseMermaid(src string) (direction string, nodes map[string]MermaidNode, e
 			sawHeader = true
 			continue
 		}
-		if isIgnoredLine(line) {
+		// Ignore the mermaid directives we don't model. Matched as exact first
+		// tokens (not prefixes) so node ids like "endNode" or "classDefault" are
+		// not mistaken for keywords. "end" is special: it closes a subgraph only
+		// when one is open; at depth 0 it is an ordinary node id.
+		switch firstToken(line) {
+		case "subgraph":
+			subgraphDepth++
+			continue
+		case "end":
+			if subgraphDepth > 0 {
+				subgraphDepth--
+				continue
+			}
+		case "classDef", "class", "style", "linkStyle", "click", "direction":
 			continue
 		}
 		for stmt := range strings.SplitSeq(line, ";") {
@@ -68,7 +85,15 @@ func parseMermaid(src string) (direction string, nodes map[string]MermaidNode, e
 	return direction, nodes, edges, nil
 }
 
-func stripCR(s string) string { return strings.TrimRight(s, "\r") }
+// firstToken returns the leading whitespace-delimited token of a line.
+func firstToken(line string) string {
+	for i := 0; i < len(line); i++ {
+		if line[i] == ' ' || line[i] == '\t' {
+			return line[:i]
+		}
+	}
+	return line
+}
 
 // parseHeader matches "flowchart"/"graph" optionally followed by a direction.
 func parseHeader(line string) (dir string, ok bool) {
@@ -86,17 +111,6 @@ func parseHeader(line string) (dir string, ok bool) {
 		}
 	}
 	return "", true
-}
-
-var ignoredPrefixes = []string{"subgraph", "end", "classDef", "class ", "style ", "linkStyle", "click ", "direction "}
-
-func isIgnoredLine(line string) bool {
-	for _, p := range ignoredPrefixes {
-		if line == strings.TrimSpace(p) || strings.HasPrefix(line, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // parseStatement parses one statement (a chain of node groups joined by links)
@@ -220,8 +234,12 @@ func parseShape(s string, i int) (shape, text string, next int, matched bool) {
 	return "", "", i, false
 }
 
-// linkOps lists supported edge operators, longest first, all left-to-right.
-var linkOps = []string{"-.->", "-.-", "--x", "--o", "==>", "===", "-->", "---"}
+// linkOpRe matches a supported left-to-right edge operator at the start of the
+// string. It accepts mermaid's link "lengthening" with extra dashes/equals:
+// solid -->, --->, ----> ; thick ==>, ===> ; dotted -.->, -..-> ; open ---,
+// ----, === ; and --x / --o heads. Reversed/bidirectional arrows are rejected
+// separately in parseLink.
+var linkOpRe = regexp.MustCompile(`^(?:-\.+->|-\.+-|={2,}>|={3,}|-{2,}>|-{2,}[xo]|-{3,})`)
 
 // parseLink parses an edge operator and optional pipe label at i.
 func parseLink(s string, i int) (label string, next int, err error) {
@@ -229,23 +247,21 @@ func parseLink(s string, i int) (label string, next int, err error) {
 	if i < len(s) && s[i] == '<' {
 		return "", i, fmt.Errorf("reversed/bidirectional arrows (<-- / <-->) are not supported; write edges left-to-right at %q", s[i:])
 	}
-	for _, op := range linkOps {
-		if !strings.HasPrefix(s[i:], op) {
-			continue
-		}
-		i += len(op)
-		j := skipSpace(s, i)
-		if j < len(s) && s[j] == '|' {
-			end := strings.IndexByte(s[j+1:], '|')
-			if end < 0 {
-				return "", i, fmt.Errorf("unterminated edge label (missing closing '|') at %q", s[j:])
-			}
-			label = strings.TrimSpace(s[j+1 : j+1+end])
-			i = j + 1 + end + 1
-		}
-		return label, i, nil
+	loc := linkOpRe.FindStringIndex(s[i:])
+	if loc == nil {
+		return "", i, fmt.Errorf("expected an edge operator (e.g. -->) at %q", s[i:])
 	}
-	return "", i, fmt.Errorf("expected an edge operator (e.g. -->) at %q", s[i:])
+	i += loc[1]
+	j := skipSpace(s, i)
+	if j < len(s) && s[j] == '|' {
+		end := strings.IndexByte(s[j+1:], '|')
+		if end < 0 {
+			return "", i, fmt.Errorf("unterminated edge label (missing closing '|') at %q", s[j:])
+		}
+		label = strings.TrimSpace(s[j+1 : j+1+end])
+		i = j + 1 + end + 1
+	}
+	return label, i, nil
 }
 
 func skipSpace(s string, i int) int {
