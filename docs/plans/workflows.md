@@ -359,6 +359,28 @@ reincarnated PO can resume without re-discovery:
    dashboard's node→agent vitals match. Check the template format spec.
 5. Have both workers rebase onto the merged base before resuming.
 
+**Verified recon from the parked workers (read-only, clean trees — use to re-brief):**
+- **Lists live in the main snapshot, not separate endpoints.** Step 3 adds
+  `snapshotPayload.workflows` + `.workflow_templates`, served by `GET /api/snapshot`
+  (the frontend already polls it every 2s). Detail = `GET /api/workflows/{id}` →
+  `{instance, mermaid, params, vars, nodes[], events[]}`. Mutations: `POST /api/workflows`
+  (`{template_ref, title, params}`), `PATCH .../nodes/{id}` (advance), `POST .../cancel`,
+  `DELETE .../{id}`, `GET .../nodes/{id}/audit`. `start`/`attach` 501 → Step 4.
+- **No `GroupSummary` needed — the data already exists.** Instances carry
+  `group_id`/`group_name`; the existing `snapshot.groups[].members[]` already has
+  `online` + `state.status` (idle/working/awaiting) + `status_detail`. The vitals
+  overlay can match a node's runtime `assignee` to a group member **today**, no Step 4
+  dependency for the core; degrade to "no agent bound" when empty. (So the pinned
+  `GroupSummary` contract in the old briefs is moot — drop it.) Caveat: `workflowNodeJSON`
+  exposes `assignee` + `executor_kind` but NOT the template's declared `executor.Agent`
+  hint — a *pre-binding* "intended role" label needs that field exposed (small Step 4
+  backend add). This also answers Step 4's open Q (#4 above): the agent hint comes from
+  the template's `executor.Agent`, currently not surfaced.
+- **Mermaid offline-vendoring gotcha:** v11/v10 UMD `mermaid.min.js` lazy-loads diagram
+  chunks via dynamic `import()` → breaks as a single self-hosted file. **v9.4.3 UMD
+  (~2.7MB) is fully self-contained** and renders flowcharts offline via `window.mermaid`.
+  Vendor 9.4.3 for the "no CDN, single file" requirement (or vendor the chunk dir too).
+
 As each ships, move its TODO file to `docs/plans/DONE/` and rewrite the body to
 describe what shipped (API surface, schema version, file paths, test scenarios,
 commit refs). Workers do this for their own step; the PO keeps the table current.
