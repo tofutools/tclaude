@@ -53,6 +53,7 @@ type wfDetail struct {
 		NodeID  string `json:"node_id"`
 		Status  string `json:"status"`
 		Outcome string `json:"outcome"`
+		Output  string `json:"output"`
 	} `json:"nodes"`
 	Events []struct {
 		Kind string `json:"kind"`
@@ -541,6 +542,24 @@ func TestDashboardWorkflows_ManualSkipRejected(t *testing.T) {
 	}
 }
 
+// Scenario (L3): a manual PATCH must NOT be able to stamp the engine-owner
+// sentinel as a node's assignee — that marker is what the startup reaper trusts
+// to tell an engine corpse from a human-driven node, so a client setting it
+// could trick the reaper into resetting (and the engine into re-running) the
+// node. The assignee write is rejected with 400.
+func TestDashboardWorkflows_RejectsEngineSentinelAssignee(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"})
+	rec := wfReq(t, mux, http.MethodPatch,
+		"/api/workflows/"+strconv.FormatInt(id, 10)+"/nodes/plan",
+		map[string]any{"assignee": "<workflow-engine>"})
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"PATCH setting the engine sentinel assignee should 400; body=%s", rec.Body.String())
+}
+
 // Scenario: the node JSON surfaces the template's executor.Agent hint and
 // verify.kind (Step 5's intended-agent overlay + approve affordance), and the
 // detail payload carries a (possibly empty) warnings array.
@@ -656,10 +675,10 @@ func TestDashboardWorkflows_Snapshot(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "snapshot body=%s", rec.Body.String())
 	var snap struct {
 		Workflows []struct {
-			ID    int64  `json:"id"`
-			Title string `json:"title"`
+			ID     int64  `json:"id"`
+			Title  string `json:"title"`
 			Status string `json:"status"`
-			Total int    `json:"total"`
+			Total  int    `json:"total"`
 		} `json:"workflows"`
 		WorkflowTemplates []struct {
 			Ref    string `json:"ref"`

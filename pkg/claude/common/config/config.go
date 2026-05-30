@@ -172,6 +172,14 @@ type AgentConfig struct {
 	SpawnGroupRestriction     *bool               `json:"spawn_group_restriction,omitempty"`
 	SpawnAllowedGroups        []string            `json:"spawn_allowed_groups,omitempty"`
 	SpawnMaxPerHour           *int                `json:"spawn_max_per_hour,omitempty"`
+	// WorkflowEngine opts into the autonomous workflow execution engine —
+	// the background loop that auto-runs `ready` tool/program workflow nodes
+	// (shelling out their `run` command) and advances the graph without a
+	// human. Off by default: auto-executing a template's shell commands is a
+	// real trust decision, so a fresh daemon never does it until the operator
+	// turns it on. When false the engine goroutine still starts but every tick
+	// is a no-op. Manual node-driving via the dashboard is unaffected either way.
+	WorkflowEngine bool `json:"workflow_engine,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

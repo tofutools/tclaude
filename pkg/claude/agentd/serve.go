@@ -153,6 +153,16 @@ func runServe(p *serveParams) error {
 	}
 	slog.Info("branch-history PR enrichment", "enabled", branchHistoryPREnrichment)
 
+	// Workflows execution engine — off by default (auto-running a template's
+	// shell commands is an explicit operator opt-in). Reset before the
+	// conditional so a config without an `agent` section can't leave a stale
+	// value from an earlier resolve.
+	workflowEngineEnabled = false
+	if cfg != nil && cfg.Agent != nil {
+		workflowEngineEnabled = cfg.Agent.WorkflowEngine
+	}
+	slog.Info("workflows execution engine", "enabled", workflowEngineEnabled)
+
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
 	// (tier 1) overrides it here. Resolve then runs the one-time
@@ -171,6 +181,13 @@ func runServe(p *serveParams) error {
 	// Shares the same stop channel — both sweeps shut down together
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
+
+	// Workflows execution engine (JOH-8). Autonomously advances running
+	// workflow instances — runs ready tool/program nodes, verifies, and
+	// advances the graph — mirroring the cron tick. Shares the daemon-wide
+	// stop channel. Stateless/resumable: it re-derives work from SQLite each
+	// tick, so a restart resumes in-flight instances.
+	startWorkflowEngine(cronStop)
 
 	// Session reaper. Sweeps for sessions whose tmux session + process
 	// are gone and stamps status=exited — a crashed or kill -9'd agent

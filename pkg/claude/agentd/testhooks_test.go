@@ -152,6 +152,42 @@ func SetWorkflowProjectDirsForTest(dirs ...string) func() {
 	return func() { workflowProjectDirsFn = prev }
 }
 
+// SetWorkflowEngineEnabledForTest flips the engine's opt-in gate (off by default
+// in production). A flow test that drives the engine must enable it first.
+// Returns a restore function for t.Cleanup.
+func SetWorkflowEngineEnabledForTest(enabled bool) func() {
+	prev := workflowEngineEnabled
+	workflowEngineEnabled = enabled
+	return func() { workflowEngineEnabled = prev }
+}
+
+// RunWorkflowEngineTickForTest drives one synchronous engine sweep, so flow
+// tests can advance the autonomous runner deterministically instead of waiting
+// on the 5s ticker. Uses a background context. The engine gate must be enabled
+// (SetWorkflowEngineEnabledForTest) or the tick is a no-op.
+func RunWorkflowEngineTickForTest() {
+	runWorkflowEngineTick(context.Background())
+}
+
+// WorkflowEngineAssigneeForTest exposes the engine-owner sentinel so a flow test
+// can stamp it to simulate an engine-claimed (vs human-driven) running node.
+func WorkflowEngineAssigneeForTest() string { return engineAssignee }
+
+// ReapOrphanedEngineNodesForTest runs the startup orphan-node recovery so a flow
+// test can assert that a tool/program node left `running` by a "crashed" daemon
+// is reset to `ready`. Independent of the engine gate (reaping is always safe).
+func ReapOrphanedEngineNodesForTest() {
+	reapOrphanedEngineNodes()
+}
+
+// SetWorkflowNodeRunTimeoutForTest shrinks the per-node command timeout so a
+// hung command fails fast under test. Returns a restore function.
+func SetWorkflowNodeRunTimeoutForTest(d time.Duration) func() {
+	prev := workflowNodeRunTimeout
+	workflowNodeRunTimeout = d
+	return func() { workflowNodeRunTimeout = prev }
+}
+
 // SetFocusAgentWindowForTest swaps the per-agent focus seam behind
 // the bulk /api/agent-windows endpoint so flow tests can assert which
 // agents the focus path was dispatched for without popping a real OS
