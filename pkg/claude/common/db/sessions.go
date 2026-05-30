@@ -439,6 +439,30 @@ func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOut
 	return err
 }
 
+// UpdateSessionModel stores the LLM model display name ("Opus 4.8",
+// "Sonnet 4.6", …) the session is currently running on. Claude Code's
+// statusline carries model.display_name on every render, so the
+// statusbar hook records it here keyed by the tclaude session id.
+//
+// Written separately from UpdateContextSnapshot — and crucially NOT
+// gated on the all-zero context guard — because the model is present
+// in every statusline render, including the empty-context ones that
+// arrive before a turn's first API response. Folding it into the
+// snapshot write would mean a freshly-spawned agent shows no model
+// until its first response. An empty model is a no-op so a stray
+// render without one can never blank a good value.
+func UpdateSessionModel(sessionID, model string) error {
+	if model == "" {
+		return nil
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET model = ? WHERE id = ?`, model, sessionID)
+	return err
+}
+
 // ContextSnapshot is the full context-window state for a session.
 // Zero values mean "not populated yet" — caller should fall back to
 // the percentage-only display.
@@ -448,6 +472,11 @@ type ContextSnapshot struct {
 	TokensOutput      int64
 	ContextWindowSize int64
 	CompactPending    float64
+	// Model is the LLM model display name the session last reported
+	// running on (from the statusline hook). "" until the statusbar
+	// has ticked at least once. Rides on the same row read so the
+	// dashboard gets it with no extra query.
+	Model string
 }
 
 // GetContextSnapshot reads the full context-window state for a
@@ -459,9 +488,9 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	}
 	var s ContextSnapshot
 	err = db.QueryRow(
-		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model
 		 FROM sessions WHERE id = ?`, sessionID).
-		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending)
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model)
 	return s, err
 }
 

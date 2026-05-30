@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 47
+const currentVersion = 48
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -305,10 +305,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 48 {
+		if err := migrateV47toV48(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// migrateV46toV47 adds the three Workflows tables — the persistence
+// migrateV47toV48 adds the three Workflows tables — the persistence
 // layer behind the (future) workflow engine + dashboard tab. Templates
 // stay on disk (parsed mermaid); only INSTANCES and per-node state live
 // in SQLite. See docs/plans/workflows.md and docs/plans/DONE/workflows-db-schema.md.
@@ -332,12 +338,12 @@ func migrate(db *sql.DB) error {
 //
 // workflow_events — append-only audit/timeline, one row per state
 // transition or note. Backs the per-node "open audit data" context-menu
-// action and the instance timeline. node_id is '' for instance-level
+// action and the instance timeline. node_id is ” for instance-level
 // events. Cascade-deletes with its instance.
 //
 // Both child tables carry an instance_id index for the by-instance list
 // queries; the parent needs none beyond its primary key.
-func migrateV46toV47(db *sql.DB) error {
+func migrateV47toV48(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS workflow_instances (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -383,9 +389,35 @@ func migrateV46toV47(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_workflow_events_instance ON workflow_events(instance_id);
 
-		UPDATE schema_version SET version = 47;
+		UPDATE schema_version SET version = 48;
 	`); err != nil {
-		return fmt.Errorf("migrate v46→v47 (add workflow tables): %w", err)
+		return fmt.Errorf("migrate v47→v48 (add workflow tables): %w", err)
+	}
+	return nil
+}
+
+// migrateV46toV47 adds sessions.model — the LLM model display name
+// ("Opus 4.8", "Sonnet 4.6", …) the agent is currently running on.
+// Claude Code's statusline JSON carries it (model.display_name) on
+// every render, so the statusbar hook (`tclaude status-bar`) records
+// it onto the session row alongside the context-window snapshot. The
+// dashboard surfaces it per-agent so you can see at a glance which
+// model each agent is on. Distinct from the context-snapshot columns
+// only in that it's written unconditionally (the model is present in
+// every render, including before a turn's first API response), not
+// gated on the all-zero context guard.
+//
+// Defaults to ” — rows from before this migration, or sessions whose
+// statusbar hasn't ticked yet, read back empty, which the dashboard
+// renders as "model not reported yet" (no harness line).
+func migrateV46toV47(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 47;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v46→v47 (add sessions.model): %w", err)
 	}
 	return nil
 }
@@ -774,7 +806,7 @@ func migrateV37toV38(db *sql.DB) error {
 // .jsonl scan, so a pending name written here is stable — it survives
 // every snapshot refresh until the real /rename supersedes it.
 //
-// Existing rows backfill to '' (no pending name) — they are agents that
+// Existing rows backfill to ” (no pending name) — they are agents that
 // have long since been named, so the read path resolves their title
 // from conv_index as before.
 func migrateV36toV37(db *sql.DB) error {
