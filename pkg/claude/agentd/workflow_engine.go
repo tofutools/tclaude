@@ -156,19 +156,28 @@ func startWorkflowEngine(stop <-chan struct{}) {
 // (allowed by the PATCH path, with an empty/human assignee) is therefore NOT
 // reaped — its manual state is preserved across a restart.
 //
-// This now covers ai nodes too: an ai node carries the sentinel only in the
-// brief claim→spawn→settle window (claimNextAINode marks it running+sentinel
-// before executeSpawn; settleAISpawn swaps in the real conv-id on success). A
-// crash inside that window leaves a sentinel-bearing running ai node with no
-// spawned agent yet, so reaping it back to ready is correct — the next tick
-// re-spawns. A LIVE ai node (a successfully-spawned agent) carries its conv-id
-// as the assignee, not the sentinel, so it is left alone; a human node is
-// dashboard-driven and likewise untouched. (Reaping a node WAS re-spawns: if
-// the crash landed after executeSpawn returned but before settle, the original
-// agent is orphaned in the group and a duplicate is spawned — a rare, bounded
-// cost of the same idempotent-re-run model the tool path accepts.) Reaping runs
-// regardless of the engine's opt-in gate: it only ever unsticks rows the engine
-// itself created.
+// This now covers ai nodes too — in BOTH sentinel-bearing windows, because the
+// sweep deliberately skips sentinel nodes and the spawn passes only claim
+// non-sentinel ones, so a crash-stranded sentinel is recoverable ONLY here:
+//   - a `running` ai node (claimNextAINode marks it running+sentinel before
+//     executeSpawn; settleAISpawn swaps in the conv-id on success): a crash
+//     inside that window has no spawned agent yet, so reaping it back to `ready`
+//     is correct — the next tick re-spawns.
+//   - an `awaiting_verify` ai-verify node (claimNextVerifyJudge stamps the
+//     sentinel before spawning the judge; settleJudgeSpawn swaps in the conv-id):
+//     a crash inside THAT window would otherwise wedge the node forever (the
+//     sweep skips sentinels, the judge pass only claims empty-assignee nodes) AND
+//     keep eating a global cap slot. Clearing the sentinel back to empty (the
+//     "ready to judge" marker) — status left awaiting_verify, the executor is
+//     already done — lets the next tick re-spawn the judge.
+//
+// A LIVE ai node (a successfully-spawned worker/judge) carries its conv-id, not
+// the sentinel, so it is left alone; a human node is dashboard-driven and
+// likewise untouched. (Reaping a worker node WAS re-spawns: a crash after
+// executeSpawn returned but before settle orphans the original agent and spawns a
+// duplicate — a rare, bounded cost of the same idempotent-re-run model the tool
+// path accepts.) Reaping runs regardless of the engine's opt-in gate: it only
+// ever unsticks rows the engine itself created.
 func reapOrphanedEngineNodes() {
 	insts, err := db.ListWorkflowInstances()
 	if err != nil {
@@ -186,14 +195,27 @@ func reapOrphanedEngineNodes() {
 			continue
 		}
 		for _, n := range nodes {
-			if n.Status != db.WorkflowNodeStatusRunning || n.Assignee != engineAssignee {
-				continue // not an engine corpse — leave manual/ai/human running nodes alone
+			if n.Assignee != engineAssignee {
+				continue // not an engine corpse — leave manual/ai/human/live nodes alone
 			}
-			if _, err := db.UpdateWorkflowNode(inst.ID, n.NodeID,
-				db.WorkflowNodePatch{Status: &ready, Assignee: &cleared}); err == nil {
-				_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: inst.ID, NodeID: n.NodeID,
-					Kind: db.WorkflowEventNodeReady, Message: "engine: reset orphaned running node after restart"})
-				slog.Info("workflow engine: reaped orphaned running node", "instance", inst.ID, "node", n.NodeID)
+			switch n.Status {
+			case db.WorkflowNodeStatusRunning:
+				// Mid tool-run / worker-spawn corpse → reset to ready (re-run/re-spawn).
+				if _, err := db.UpdateWorkflowNode(inst.ID, n.NodeID,
+					db.WorkflowNodePatch{Status: &ready, Assignee: &cleared}); err == nil {
+					_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: inst.ID, NodeID: n.NodeID,
+						Kind: db.WorkflowEventNodeReady, Message: "engine: reset orphaned running node after restart"})
+					slog.Info("workflow engine: reaped orphaned running node", "instance", inst.ID, "node", n.NodeID)
+				}
+			case db.WorkflowNodeStatusAwaitingVerify:
+				// Mid judge-spawn corpse → clear the sentinel back to empty (ready to
+				// judge); status stays awaiting_verify. Next tick re-spawns the judge.
+				if _, err := db.UpdateWorkflowNode(inst.ID, n.NodeID,
+					db.WorkflowNodePatch{Assignee: &cleared}); err == nil {
+					_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: inst.ID, NodeID: n.NodeID,
+						Kind: db.WorkflowEventNodeAwaitingVerify, Message: "engine: reset orphaned judge-claim after restart"})
+					slog.Info("workflow engine: reaped orphaned judge-claim", "instance", inst.ID, "node", n.NodeID)
+				}
 			}
 		}
 	}
@@ -687,7 +709,9 @@ func claimNextVerifyJudge(instanceID int64) *verifyJudgeClaim {
 
 	// Claim: stamp the engine sentinel as the assignee (node stays
 	// awaiting_verify). A crash mid-spawn leaves a sentinel-bearing awaiting_verify
-	// node, recovered by the stuck-node sweep (it has no live agent).
+	// node, recovered by reapOrphanedEngineNodes at startup — NOT the stuck sweep,
+	// which deliberately skips sentinel nodes (an in-flight spawn). The reaper
+	// clears the sentinel back to empty so the next tick re-spawns the judge.
 	owner := engineAssignee
 	if _, err := db.UpdateWorkflowNode(instanceID, node.NodeID, db.WorkflowNodePatch{Assignee: &owner}); err != nil {
 		slog.Warn("workflow engine: claim verify node failed", "instance", instanceID, "node", node.NodeID, "error", err)

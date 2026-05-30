@@ -849,3 +849,50 @@ func TestWorkflowEngine_ParkedNeverJudgedSwept(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", got.Status, "a parked-never-judged node is swept to failed, unwedging the cap")
 }
+
+// Scenario (cold-review regression): a daemon that crashed mid-judge-spawn leaves
+// a node awaiting_verify + the engine sentinel. The startup reaper must clear the
+// sentinel back to empty (ready-to-judge) so the next tick re-spawns the judge —
+// otherwise the node (and its global cap slot) would be wedged forever: the sweep
+// skips sentinels and the judge pass only claims empty-assignee nodes.
+func TestWorkflowEngine_ReapsOrphanedJudgeClaim(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "reapjudge",
+		"name: reapjudge\nentry: build\n",
+		"flowchart TD\n build --> ship\n",
+		map[string]string{
+			"build": writeAIVerifyNode("worker", "do the work", "the work is correct"),
+			"ship":  "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:reapjudge", "", nil, "squad")
+
+	// Simulate a crash mid-judge-spawn: node awaiting_verify, assignee = the
+	// engine sentinel (what claimNextVerifyJudge stamps before the off-tick spawn).
+	awaiting := db.WorkflowNodeStatusAwaitingVerify
+	sentinel := agentd.WorkflowEngineAssigneeForTest()
+	_, err := db.UpdateWorkflowNode(id, "build", db.WorkflowNodePatch{Status: &awaiting, Assignee: &sentinel})
+	require.NoError(t, err)
+
+	// Startup reaper clears the sentinel; status stays awaiting_verify.
+	agentd.ReapOrphanedEngineNodesForTest()
+	reaped, err := db.GetWorkflowNode(id, "build")
+	require.NoError(t, err)
+	assert.Equal(t, "awaiting_verify", reaped.Status, "executor already done — status stays awaiting_verify")
+	assert.Empty(t, reaped.Assignee, "reaper clears the crash-stranded judge sentinel (ready to re-judge)")
+
+	// Next tick re-spawns the judge against the now-empty assignee.
+	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
+	rejudged, err := db.GetWorkflowNode(id, "build")
+	require.NoError(t, err)
+	assert.NotEmpty(t, rejudged.Assignee, "next tick re-spawns a judge after recovery")
+	assert.NotEqual(t, sentinel, rejudged.Assignee, "a real judge conv-id, not the sentinel")
+}
