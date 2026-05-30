@@ -161,6 +161,48 @@ func TestContextSnapshotRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(180_000), got.TokensInput, "after pct-only update: TokensInput (preserved)")
 }
 
+// TestUpdateSessionModelRoundTrip covers the per-agent model the
+// statusline hook records (sessions.model) and the dashboard reads back
+// via GetContextSnapshot.Model: a fresh row reads '', a write round-trips,
+// an empty-model write is a no-op (never blanks a good value), and a
+// SaveSession hook tick — which does NOT list the model column — leaves
+// it intact, the same out-of-band guarantee the context columns rely on.
+func TestUpdateSessionModelRoundTrip(t *testing.T) {
+	setupTestDB(t)
+
+	s := &SessionRow{ID: "model-001", Status: "idle", CreatedAt: time.Now()}
+	require.NoError(t, SaveSession(s), "SaveSession")
+
+	// Default: no model before the statusbar hook fires.
+	got, err := GetContextSnapshot("model-001")
+	require.NoError(t, err, "GetContextSnapshot empty")
+	assert.Equal(t, "", got.Model, "model defaults to empty")
+
+	// Statusbar tick records the model.
+	require.NoError(t, UpdateSessionModel("model-001", "Opus 4.8"), "UpdateSessionModel")
+	got, err = GetContextSnapshot("model-001")
+	require.NoError(t, err, "GetContextSnapshot populated")
+	assert.Equal(t, "Opus 4.8", got.Model, "model round-trips")
+
+	// An empty model is a no-op — a stray render without one must not
+	// blank a good value.
+	require.NoError(t, UpdateSessionModel("model-001", ""), "empty model is a no-op")
+	got, _ = GetContextSnapshot("model-001")
+	assert.Equal(t, "Opus 4.8", got.Model, "empty write preserves the model")
+
+	// A state-tracking hook tick (SaveSession) must not clobber the model
+	// — it isn't one of the columns SaveSession owns.
+	s.Status = "working"
+	require.NoError(t, SaveSession(s), "SaveSession hook tick")
+	got, _ = GetContextSnapshot("model-001")
+	assert.Equal(t, "Opus 4.8", got.Model, "model preserved across a SaveSession tick")
+
+	// A new model (e.g. the user switched with /model) updates normally.
+	require.NoError(t, UpdateSessionModel("model-001", "Sonnet 4.6"), "switch model")
+	got, _ = GetContextSnapshot("model-001")
+	assert.Equal(t, "Sonnet 4.6", got.Model, "model updates on switch")
+}
+
 // TestUpdateContextSnapshotEmptyDoesNotClobber locks down the guard
 // that fixes the dashboard context-meter flicker: Claude Code emits
 // statusline renders with an empty context_window block, which the

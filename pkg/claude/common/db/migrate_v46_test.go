@@ -56,8 +56,8 @@ func TestMigrateV45toV46_AddsAgentWorkspace(t *testing.T) {
 // TestMigrateV45toV46_FreshSchemaHasAgentWorkspace builds a fresh DB
 // through the full migrate() chain and confirms agent_workspace exists
 // and the accessors work end to end. The literal currentVersion pin
-// (the "next migration moves this forward" tripwire) now lives in
-// migrate_v47_test.go.
+// (the tripwire) moved forward to migrate_v47_test.go with the v47
+// migration.
 func TestMigrateV45toV46_FreshSchemaHasAgentWorkspace(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
