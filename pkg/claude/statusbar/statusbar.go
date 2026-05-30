@@ -62,6 +62,13 @@ type StatusLineInput struct {
 		TotalCostUSD float64 `json:"total_cost_usd"`
 	} `json:"cost"`
 	RateLimits *RateLimits `json:"rate_limits"`
+	// Effort is Claude Code's live reasoning-effort level. The block is
+	// absent when the current model doesn't support the reasoning-effort
+	// parameter, so Level is "" in that case (and ultracode reports as
+	// "xhigh", not a distinct level).
+	Effort struct {
+		Level string `json:"level"` // low | medium | high | xhigh | max
+	} `json:"effort"`
 }
 
 // RateLimits represents the rate limit buckets from Claude Code's statusline input.
@@ -282,6 +289,14 @@ func run() error {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
 		}
+		// Reasoning-effort level rides on the same write cadence as the
+		// model — present in (almost) every render, recorded onto the
+		// session row so the dashboard can append it to the model line.
+		// An empty level (model without effort support, or a pre-first-
+		// response render) is a no-op inside UpdateSessionEffort.
+		if err := db.UpdateSessionEffort(sessionID, input.Effort.Level); err != nil {
+			slog.Warn("status-bar: failed to update session effort", "error", err, "module", "hooks")
+		}
 	}
 
 	var line2 []string
@@ -374,6 +389,15 @@ func run() error {
 	// Cost only shown on API plan (no rate limit buckets available)
 	if !hasLimits && input.Cost.TotalCostUSD > 0 {
 		line2 = append(line2, fmt.Sprintf("$%.2f", input.Cost.TotalCostUSD))
+	}
+
+	// Reasoning-effort level (🧠 high) trails the first line, far right.
+	// Absent when the model lacks reasoning-effort support — appended only
+	// when set so there's no empty trailing token. Printed in the
+	// terminal's default foreground (no colour code), matching the model
+	// label at the start of this line — colorDim made it too dark to read.
+	if input.Effort.Level != "" {
+		line2 = append(line2, fmt.Sprintf("🧠 %s", input.Effort.Level))
 	}
 
 	fmt.Println(strings.Join(line2, " | "))

@@ -148,6 +148,7 @@ function openAgentSpawnModal(opts) {
   $('#agent-spawn-role').value = '';
   $('#agent-spawn-descr').value = '';
   $('#agent-spawn-init-msg').value = '';
+  $('#agent-spawn-effort').value = '';
   $('#agent-spawn-cwd').value = '';
   // Restore the auto-focus checkbox from the human's last choice
   // (defaults on — see spawnAutoFocusPref).
@@ -199,6 +200,9 @@ async function submitAgentSpawn() {
   // agent_messages row), not typed into its pane — so newlines are
   // preserved. Send the textarea verbatim; the daemon trims it.
   const initMsg = $('#agent-spawn-init-msg').value;
+  // Empty value = the "Default" option → omit effort entirely so claude
+  // uses its own default; a chosen level rides along in the POST body.
+  const effort = $('#agent-spawn-effort').value;
   const cwd = $('#agent-spawn-cwd').value.trim();
   const wtRepo = $('#agent-spawn-wt-repo').value.trim();
   const autoFocus = $('#agent-spawn-focus').checked;
@@ -231,6 +235,7 @@ async function submitAgentSpawn() {
     //     along so the daemon's welcome points the agent at it.
     const sel = await wtResolve('agent-spawn', wtRepo);
     const body = { name, role, descr, initial_message: initMsg, auto_focus: autoFocus, include_group_context: includeGroupContext };
+    if (effort) body.effort = effort;
     if (sel.path && wtRepo && wtRepo !== cwd) {
       body.cwd = cwd;
       body.worktree_path = sel.path;

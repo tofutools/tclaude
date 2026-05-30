@@ -10,6 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -54,6 +55,15 @@ type SpawnRequest struct {
 	// TimeoutSeconds bounds how long the daemon waits for the new
 	// conv-id to materialise. <= 0 falls back to 30s; capped at 300s.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+
+	// Effort sets the spawned agent's Claude reasoning effort. It is
+	// forwarded to the new agent's `tclaude session new --effort <level>`
+	// (and on to `claude`). Empty omits the flag so claude uses its own
+	// default; a non-empty value must be one of clcommon.ValidEffortLevels.
+	// Every spawn surface — `tclaude agent spawn`, `tclaude --join-group`,
+	// and the dashboard's spawn modal — sets this same field, so the wire
+	// contract stays single-sourced.
+	Effort string `json:"effort,omitempty"`
 
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
@@ -111,6 +121,11 @@ type SpawnParams struct {
 
 	AutoFocus      bool `long:"auto-focus" help:"Open a terminal window attached to the new agent once it spawns (default: off — CLI spawns are usually programmatic; the dashboard's modal defaults this on)"`
 	NoGroupContext bool `long:"no-group-context" help:"Do not deliver the group's shared startup context to the new agent (default: the group context is included, same as every other spawn path)"`
+
+	// Effort is declared last so boa's short-flag enricher (which
+	// assigns the first free letter in field order) cannot steal a short
+	// from any existing field. No explicit short — `--effort` only.
+	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -209,6 +224,15 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Validate --effort client-side so a typo fails fast with a clear
+	// message instead of reaching the daemon (where an invalid level
+	// would otherwise surface only as a conv-id-poll timeout once the
+	// forked `tclaude session new --effort <bad>` exits non-zero).
+	effort, err := clcommon.ValidateEffort(p.Effort)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	cwd := p.Cwd
 	if cwd == "" {
 		if wd, err := os.Getwd(); err == nil {
@@ -225,6 +249,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Cwd:            cwd,
 		TimeoutSeconds: timeoutSeconds,
 		AutoFocus:      p.AutoFocus,
+		Effort:         effort,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 48
+const currentVersion = 49
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -311,10 +311,47 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 49 {
+		if err := migrateV48toV49(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// migrateV47toV48 adds the three Workflows tables — the persistence
+// migrateV47toV48 adds sessions.effort_level — Claude Code's live
+// reasoning-effort level ("low", "medium", "high", "xhigh", "max") the
+// agent is currently running on. Claude Code's statusline JSON carries
+// it as effort.level on every render (when the model supports the
+// reasoning-effort parameter), so the statusbar hook records it onto the
+// session row alongside the model and context-window snapshot. The
+// statusbar renders it left of the branch and the dashboard appends it
+// to the per-agent model line ("CC · O4.8 1M high").
+//
+// A sibling column to sessions.model (v47) rather than a JSON side-blob:
+// it's a single display-only string written on the same cadence as the
+// model, so a plain column keeps it type-safe and consistent with how
+// the model is already stored and surfaced.
+//
+// Defaults to ” — rows from before this migration, sessions whose
+// statusbar hasn't ticked yet, and models without reasoning-effort
+// support all read back empty, which both surfaces render as "no effort
+// token" (the statusbar omits it; the dashboard line shows just the
+// model).
+func migrateV47toV48(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN effort_level TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 48;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v47→v48 (add sessions.effort_level): %w", err)
+	}
+	return nil
+}
+
+// migrateV48toV49 adds the three Workflows tables — the persistence
 // layer behind the (future) workflow engine + dashboard tab. Templates
 // stay on disk (parsed mermaid); only INSTANCES and per-node state live
 // in SQLite. See docs/plans/workflows.md and docs/plans/DONE/workflows-db-schema.md.
@@ -343,7 +380,7 @@ func migrate(db *sql.DB) error {
 //
 // Both child tables carry an instance_id index for the by-instance list
 // queries; the parent needs none beyond its primary key.
-func migrateV47toV48(db *sql.DB) error {
+func migrateV48toV49(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS workflow_instances (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -389,9 +426,9 @@ func migrateV47toV48(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_workflow_events_instance ON workflow_events(instance_id);
 
-		UPDATE schema_version SET version = 48;
+		UPDATE schema_version SET version = 49;
 	`); err != nil {
-		return fmt.Errorf("migrate v47→v48 (add workflow tables): %w", err)
+		return fmt.Errorf("migrate v48→v49 (add workflow tables): %w", err)
 	}
 	return nil
 }
