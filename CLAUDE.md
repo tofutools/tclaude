@@ -114,24 +114,15 @@ When CodeRabbit has not produced a real review, do an **independent review** bef
 - **Idle agents are cheap.** A finished worker can sit idle in the group at low cost; there is no need to retire it promptly.
 - **The operator prunes idle agents.** Retiring/removing agents from the group is the human operator's call. The PO may *recommend* cleanups or work-org changes at any time, but does not retire agents on its own initiative.
 
-## Active design / TODO docs
+## Work tracking
+
+tclaude-dev's work tracker is an external Linear board, not this repo. The actual
+board/team and access details live in the operator's **private Claude Code project
+memory** (deliberately not committed here, to avoid leaking internal locations). A
+fresh agent picking up coordination should read its memory for the current Linear
+setup, and keep the board current as work ships.
+
+## Active design docs
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
 - `docs/plans/agentd.md` — design for `tclaude agentd` HTTP-over-Unix-socket daemon. Identity comes from socket peer credentials (`LOCAL_PEERPID` / `SO_PEERCRED`), not tokens; tmux delivery happens out-of-sandbox.
-- `docs/plans/agents_todo.md` — root README explaining the layout below.
-
-### TODO / DONE layout
-
-```
-docs/plans/
-├── TODO/
-│   ├── high-prio/   pick from here first
-│   ├── med-prio/    worth doing, not blocking
-│   └── future/      deferred / "if shows up in practice" / cross-machine
-└── DONE/
-    └── *.md         one shipped feature per file (no index — mod times tell the story)
-```
-
-**One file per coherent feature** on BOTH sides (kebab-case slug). Each TODO file is self-contained: it states what's open, briefly notes shipped context, lists relevant source files, and any open questions. **Pick up work by listing one tier dir** rather than loading the whole backlog into context.
-
-After shipping, **move the TODO file into `DONE/`** — keep its filename, rewrite the body to describe what shipped (CLI surface, schema migrations, slugs, file paths, test scenarios, commit refs if known). One file per feature, NOT a single monolithic log. No index file: `ls -lt docs/plans/DONE/` orders by ship date, and `grep -rli` finds features by keyword. Reprioritise TODO files by `mv`-ing between tier dirs — the directory IS the priority.
