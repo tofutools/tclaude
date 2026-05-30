@@ -143,6 +143,15 @@ func SetOpenTerminalForTest(fn func(string) error) func() {
 	return func() { openTerminal = prev }
 }
 
+// SetWorkflowProjectDirsForTest overrides the project-source dirs used to
+// resolve / list workflow templates, so flow tests can point instantiation at a
+// fixture template dir instead of the daemon's cwd. Returns a restore function.
+func SetWorkflowProjectDirsForTest(dirs ...string) func() {
+	prev := workflowProjectDirsFn
+	workflowProjectDirsFn = func() []string { return dirs }
+	return func() { workflowProjectDirsFn = prev }
+}
+
 // SetFocusAgentWindowForTest swaps the per-agent focus seam behind
 // the bulk /api/agent-windows endpoint so flow tests can assert which
 // agents the focus path was dispatched for without popping a real OS

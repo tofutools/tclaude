@@ -356,6 +356,13 @@ type snapshotPayload struct {
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
+	// Workflows are the running/finished workflow instances rendered in
+	// the Workflows tab, each with node-progress counts. Empty slice (not
+	// nil) so JS .map() is safe.
+	Workflows []dashboardWorkflowInstance `json:"workflows"`
+	// WorkflowTemplates are the discoverable workflow templates (project /
+	// user / example) offered for instantiation. Empty slice (not nil).
+	WorkflowTemplates []dashboardWorkflowTemplate `json:"workflow_templates"`
 	// Messages are the human-facing notifications agents have sent via
 	// `tclaude agent notify-human`, newest first — the Messages tab.
 	// MessagesUnread is the count of unread ones, driving the tab badge.
@@ -924,6 +931,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
 	out.Templates = collectTemplatesSnapshot()
+	out.Workflows = collectWorkflowsSnapshot()
+	out.WorkflowTemplates = collectWorkflowTemplatesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 
 	writeJSON(w, http.StatusOK, out)
