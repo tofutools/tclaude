@@ -357,12 +357,13 @@ func TestWorkflowEngine_ReaperLeavesHumanDrivenRunningNode(t *testing.T) {
 	assert.Equal(t, "running", got.Status, "human-driven running node must survive the reaper")
 }
 
-// Scenario: the engine does NOT auto-run human or ai nodes — it leaves them on
-// the frontier for the dashboard / start path. A human entry node stays ready
-// after a tick; the instance stays running.
-func TestWorkflowEngine_LeavesHumanAndAINodesAlone(t *testing.T) {
+// Scenario: the engine never auto-runs a human node — even on a BOUND instance
+// (where it WOULD auto-spawn an ai node). A human entry node stays ready after a
+// tick; the instance stays running, parked for the dashboard approve/drive path.
+func TestWorkflowEngine_LeavesHumanNodeAlone(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	_ = newFlow(t)
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
 	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
 
 	root := t.TempDir()
@@ -376,7 +377,7 @@ func TestWorkflowEngine_LeavesHumanAndAINodesAlone(t *testing.T) {
 	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
 
 	mux := agentd.BuildDashboardHandlerForTest()
-	id := wfCreate(t, mux, "project:humanfirst", "", nil)
+	id := wfCreateInGroup(t, mux, "project:humanfirst", "", nil, "squad")
 
 	agentd.RunWorkflowEngineTickForTest()
 
@@ -385,7 +386,235 @@ func TestWorkflowEngine_LeavesHumanAndAINodesAlone(t *testing.T) {
 	for _, n := range d.Nodes {
 		st[n.NodeID] = n.Status
 	}
-	assert.Equal(t, "ready", st["review"], "human node left ready (not auto-run)")
+	assert.Equal(t, "ready", st["review"], "human node left ready (not auto-run) even on a bound instance")
 	assert.Equal(t, "pending", st["ship"], "downstream waits on the human node")
 	assert.Equal(t, "running", d.Instance.Status, "instance still running, parked on the human node")
+	assert.Empty(t, f.ListGroupMembers("squad"), "engine must not spawn anything for a human node")
+}
+
+// writeAINode is the node-yaml for an `ai` executor with the given agent role +
+// task prompt — the engine spawns an agent into the instance's bound group and
+// hands it this prompt.
+func writeAINode(agent, prompt string) string {
+	return "executor:\n  kind: ai\n  agent: " + agent + "\n  prompt: " + prompt + "\n"
+}
+
+// runningAINode fetches a node and asserts it's running, assigned to a real
+// conv-id (not the engine sentinel), and returns that conv-id.
+func assertRunningAIAssignee(t *testing.T, id int64, nodeID string) string {
+	t.Helper()
+	n, err := db.GetWorkflowNode(id, nodeID)
+	require.NoError(t, err)
+	require.NotNil(t, n, "node %s exists", nodeID)
+	assert.Equal(t, "running", n.Status, "ai node %s running", nodeID)
+	assert.NotEmpty(t, n.Assignee, "ai node %s has an assignee", nodeID)
+	assert.NotEqual(t, agentd.WorkflowEngineAssigneeForTest(), n.Assignee,
+		"the sentinel must be swapped for the spawned conv-id after settle")
+	return n.Assignee
+}
+
+// Scenario: the engine's AI path — a ready ai node on a BOUND-group instance is
+// auto-spawned an agent (via the shared executeSpawn core), the node goes
+// running with the spawned conv-id as its assignee, and the new agent joins the
+// bound group. The downstream node waits (the agent settles it later out-of-band
+// via the node-PATCH), and the instance stays running.
+func TestWorkflowEngine_AINodeAutoSpawnsIntoBoundGroup(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "aifirst",
+		"name: aifirst\nentry: plan\n",
+		"flowchart TD\n plan --> ship\n",
+		map[string]string{
+			"plan": writeAINode("planner", "make a plan"),
+			"ship": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:aifirst", "", nil, "squad")
+
+	agentd.RunWorkflowEngineTickForTest()
+
+	conv := assertRunningAIAssignee(t, id, "plan")
+
+	d := wfGet(t, mux, id)
+	st := map[string]string{}
+	for _, n := range d.Nodes {
+		st[n.NodeID] = n.Status
+	}
+	assert.Equal(t, "pending", st["ship"], "downstream waits while the agent works async")
+	assert.Equal(t, "running", d.Instance.Status, "instance keeps running while the agent works")
+
+	// The spawned agent is a member of the bound group.
+	var joined bool
+	for _, m := range f.ListGroupMembers("squad") {
+		if m.ConvID == conv {
+			joined = true
+		}
+	}
+	assert.True(t, joined, "spawned agent %q should have joined squad", conv)
+}
+
+// Scenario: the engine never force-spawns an ai node without a group — an ai
+// node on an UNBOUND instance is left ready for the dashboard start path.
+func TestWorkflowEngine_AINodeUnboundLeftReady(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "aiunbound",
+		"name: aiunbound\nentry: plan\n",
+		"flowchart TD\n plan --> ship\n",
+		map[string]string{
+			"plan": writeAINode("planner", "make a plan"),
+			"ship": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreate(t, mux, "project:aiunbound", "", nil) // no group
+
+	agentd.RunWorkflowEngineTickForTest()
+
+	d := wfGet(t, mux, id)
+	st := map[string]string{}
+	for _, n := range d.Nodes {
+		st[n.NodeID] = n.Status
+	}
+	assert.Equal(t, "ready", st["plan"], "unbound ai node stays ready (no group to spawn into)")
+	assert.Equal(t, "pending", st["ship"], "downstream still pending")
+	assert.Equal(t, "running", d.Instance.Status)
+}
+
+// Scenario: the opt-in gate covers the AI path too — with the engine disabled, a
+// ready ai node on a bound group is NOT auto-spawned.
+func TestWorkflowEngine_AIDisabledLeavesNodeReady(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	// Engine left at its production default (disabled) — no enable call.
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "aigated",
+		"name: aigated\nentry: plan\n",
+		"flowchart TD\n plan --> ship\n",
+		map[string]string{
+			"plan": writeAINode("planner", "make a plan"),
+			"ship": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:aigated", "", nil, "squad")
+
+	agentd.RunWorkflowEngineTickForTest() // no-op: engine disabled
+
+	d := wfGet(t, mux, id)
+	st := map[string]string{}
+	for _, n := range d.Nodes {
+		st[n.NodeID] = n.Status
+	}
+	assert.Equal(t, "ready", st["plan"], "disabled engine must not auto-spawn the ai node")
+	assert.Empty(t, f.ListGroupMembers("squad"), "nothing spawned while the engine is off")
+}
+
+// Scenario: the per-instance parallelism cap. With two parallel ready ai nodes
+// and a per-instance cap of 1, one tick spawns exactly one; the other stays
+// ready. Raising the cap to 2 and ticking again spawns the second — proving the
+// cap, not chance, gated the first pass.
+func TestWorkflowEngine_AIPerInstanceCap(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+	t.Cleanup(agentd.SetWorkflowAICapsForTest(1, 8)) // per-instance 1, global 8
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "aifanout",
+		"name: aifanout\nentry: [a, b]\n",
+		"flowchart TD\n a --> done\n b --> done\n",
+		map[string]string{
+			"a":    writeAINode("worker", "branch a"),
+			"b":    writeAINode("worker", "branch b"),
+			"done": "executor:\n  kind: tool\n  run: echo done\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:aifanout", "", nil, "squad")
+
+	// Cap = 1: one tick spawns exactly one of {a, b}; the other stays ready.
+	agentd.RunWorkflowEngineTickForTest()
+	running, ready := countAIStatuses(t, id, "a", "b")
+	assert.Equal(t, 1, running, "per-instance cap 1 → exactly one ai node running")
+	assert.Equal(t, 1, ready, "the capped-out ai node stays ready")
+	assert.Len(t, f.ListGroupMembers("squad"), 1, "only one agent spawned under the cap")
+
+	// A second tick at cap 1 still spawns nothing more (one already running).
+	agentd.RunWorkflowEngineTickForTest()
+	running, ready = countAIStatuses(t, id, "a", "b")
+	assert.Equal(t, 1, running, "cap still holds across ticks")
+	assert.Equal(t, 1, ready)
+
+	// Raise the cap to 2 and tick: the second ai node now spawns.
+	agentd.SetWorkflowAICapsForTest(2, 8)
+	agentd.RunWorkflowEngineTickForTest()
+	running, _ = countAIStatuses(t, id, "a", "b")
+	assert.Equal(t, 2, running, "raising the cap lets the second ai node spawn")
+	assert.Len(t, f.ListGroupMembers("squad"), 2, "second agent spawned after the cap was raised")
+}
+
+// Scenario: the GLOBAL parallelism cap gates across instances. Two bound
+// instances each with a ready ai entry node, a global cap of 1: a single tick
+// spawns the ai node of exactly one instance; the other instance's node is held
+// ready by the global cap even though its own per-instance budget is free.
+func TestWorkflowEngine_AIGlobalCap(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+	t.Cleanup(agentd.SetWorkflowAICapsForTest(1, 1)) // per-instance 1, global 1
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "aionly",
+		"name: aionly\nentry: plan\n",
+		"flowchart TD\n plan --> done\n",
+		map[string]string{
+			"plan": writeAINode("worker", "do it"),
+			"done": "executor:\n  kind: tool\n  run: echo done\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id1 := wfCreateInGroup(t, mux, "project:aionly", "one", nil, "squad")
+	id2 := wfCreateInGroup(t, mux, "project:aionly", "two", nil, "squad")
+
+	agentd.RunWorkflowEngineTickForTest()
+
+	r1, _ := countAIStatuses(t, id1, "plan")
+	r2, _ := countAIStatuses(t, id2, "plan")
+	assert.Equal(t, 1, r1+r2, "global cap 1 → exactly one ai node running across both instances")
+	assert.Len(t, f.ListGroupMembers("squad"), 1, "only one agent spawned globally under the cap")
+}
+
+// countAIStatuses tallies how many of the given nodes are running vs ready.
+func countAIStatuses(t *testing.T, id int64, nodeIDs ...string) (running, ready int) {
+	t.Helper()
+	for _, nid := range nodeIDs {
+		n, err := db.GetWorkflowNode(id, nid)
+		require.NoError(t, err)
+		require.NotNil(t, n)
+		switch n.Status {
+		case "running":
+			running++
+		case "ready":
+			ready++
+		}
+	}
+	return running, ready
 }

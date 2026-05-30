@@ -180,6 +180,19 @@ type AgentConfig struct {
 	// turns it on. When false the engine goroutine still starts but every tick
 	// is a no-op. Manual node-driving via the dashboard is unaffected either way.
 	WorkflowEngine bool `json:"workflow_engine,omitempty"`
+	// WorkflowAIPerInstance caps how many `ai` workflow nodes the engine
+	// will auto-spawn concurrently within a SINGLE instance (default 1 when
+	// unset / <= 0). A linear template never fans out past 1, but a graph with
+	// parallel ai branches would otherwise spawn an agent per branch at once;
+	// this bounds that. The dashboard start path is not gated by it — a human
+	// can always start a node manually.
+	WorkflowAIPerInstance *int `json:"workflow_ai_per_instance,omitempty"`
+	// WorkflowAIGlobal caps how many `ai` workflow nodes the engine will
+	// auto-spawn concurrently across ALL instances (default 8 when unset /
+	// <= 0), so many running instances can't collectively spawn a swarm of
+	// agents. Like the per-instance cap, it gates only the engine's
+	// auto-spawn, never the manual dashboard start.
+	WorkflowAIGlobal *int `json:"workflow_ai_global,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

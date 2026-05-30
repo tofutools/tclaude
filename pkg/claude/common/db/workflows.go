@@ -373,6 +373,23 @@ func ListAssignedWorkflowNodes() ([]*WorkflowNode, error) {
 	return out, rows.Err()
 }
 
+// CountRunningWorkflowNodesByKind returns how many nodes of the given executor
+// kind are currently `running`, across ALL instances. The workflow engine uses
+// it for the global AI-node parallelism cap: a single COUNT query gives an
+// always-fresh tally (spawns committed earlier in the same tick are visible),
+// without walking every instance's node list.
+func CountRunningWorkflowNodesByKind(executorKind string) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM workflow_nodes
+		WHERE executor_kind = ? AND status = ?`,
+		executorKind, WorkflowNodeStatusRunning).Scan(&n)
+	return n, err
+}
+
 // WorkflowNodePatch is the partial-update shape for UpdateWorkflowNode.
 // nil → leave the field unchanged. Pointer-shaped so callers can
 // distinguish "set to zero/empty" from "don't touch" — mirrors
