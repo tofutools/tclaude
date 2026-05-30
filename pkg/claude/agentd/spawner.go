@@ -5,7 +5,7 @@ package agentd
 // fork-exec subprocess. Production wires LiveSpawner; tests assign
 // a fake to Spawn at setup with t.Cleanup-restoration.
 type Spawner interface {
-	SpawnNew(label, cwd string) error
+	SpawnNew(label, cwd, effort string) error
 	SpawnResume(convID, cwd string) error
 }
 
@@ -21,5 +21,5 @@ var Spawn Spawner = LiveSpawner{}
 // it (e.g., a recording proxy).
 type LiveSpawner struct{}
 
-func (LiveSpawner) SpawnNew(label, cwd string) error    { return liveSpawnNew(label, cwd) }
-func (LiveSpawner) SpawnResume(convID, cwd string) error { return liveSpawnResume(convID, cwd) }
+func (LiveSpawner) SpawnNew(label, cwd, effort string) error { return liveSpawnNew(label, cwd, effort) }
+func (LiveSpawner) SpawnResume(convID, cwd string) error     { return liveSpawnResume(convID, cwd) }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -39,11 +40,20 @@ func RunJoinGroup(params *session.NewParams) error {
 			cwd = wd
 		}
 	}
+	// Validate --effort here too: this surface is reachable directly
+	// (RunJoinGroup runs both via `session new --effort --join-group`,
+	// where runNew already normalised it, and standalone), so a clean
+	// client-side error beats a daemon round-trip on a typo.
+	effort, err := clcommon.ValidateEffort(params.Effort)
+	if err != nil {
+		return err
+	}
 	req := SpawnRequest{
 		Name:           params.Name,
 		Role:           params.Role,
 		Descr:          params.Descr,
 		Cwd:            cwd,
+		Effort:         effort,
 		TimeoutSeconds: 30,
 	}
 	var resp SpawnResponse

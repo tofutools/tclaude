@@ -438,6 +438,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	worktreeBranch := strings.TrimSpace(body.WorktreeBranch)
 
+	// Validate the requested effort before building the spawn params.
+	// Empty → "" (downstream omits the flag); a bad level becomes a 400
+	// here rather than a silent 504 once the forked session exits.
+	effort, effErr := clcommon.ValidateEffort(body.Effort)
+	if effErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_effort", effErr.Error())
+		return
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
@@ -452,6 +461,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		WorktreePath:   worktreePath,
 		WorktreeBranch: worktreeBranch,
 		AutoFocus:      body.AutoFocus,
+		Effort:         effort,
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
@@ -495,6 +505,9 @@ type spawnParams struct {
 	WorktreePath   string // resolved absolute directory, or ""
 	WorktreeBranch string
 	AutoFocus      bool
+	// Effort is the validated Claude reasoning effort to forward to the
+	// new session's `tclaude session new --effort`, or "" to omit it.
+	Effort string
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -555,7 +568,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -887,13 +900,28 @@ func generateSpawnLabel() string {
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default.
-func SpawnDetachedTclaudeNew(label, cwd string) error {
-	return Spawn.SpawnNew(label, cwd)
+func SpawnDetachedTclaudeNew(label, cwd, effort string) error {
+	return Spawn.SpawnNew(label, cwd, effort)
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
 func SpawnDetachedTclaudeResume(convID, cwd string) error {
 	return Spawn.SpawnResume(convID, cwd)
+}
+
+// sessionNewArgs builds the argv for the detached `tclaude session new`
+// that a spawn forks. --effort is appended only when an explicit level
+// was chosen; an empty effort leaves claude on its own default. Kept
+// pure so it can be unit-tested without forking a subprocess.
+func sessionNewArgs(label, cwd, effort string) []string {
+	args := []string{"session", "new", "-d", "--global", "--label", label}
+	if cwd != "" {
+		args = append(args, "-C", cwd)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
+	return args
 }
 
 // liveSpawnNew runs `tclaude session new -d --global --label <label>`
@@ -904,12 +932,13 @@ func SpawnDetachedTclaudeResume(convID, cwd string) error {
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func liveSpawnNew(label, cwd string) error {
-	args := []string{"session", "new", "-d", "--global", "--label", label}
-	if cwd != "" {
-		args = append(args, "-C", cwd)
-	}
-	cmd := exec.Command("tclaude", args...)
+func liveSpawnNew(label, cwd, effort string) error {
+	// effort is validated at the spawn boundary (handleGroupSpawn / the
+	// `agent spawn` CLI) before it reaches here; the forked `tclaude
+	// session new` re-validates too, though by then a bad value would
+	// only surface as a non-zero exit in the daemon log. sessionNewArgs
+	// omits --effort entirely when effort is "".
+	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	// Capture stderr so a silent subprocess failure (PATH issue, bad

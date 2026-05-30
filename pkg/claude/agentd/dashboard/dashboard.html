@@ -874,6 +874,17 @@
       <span class="cron-create-label">Descr</span>
       <textarea id="agent-spawn-descr" rows="2" placeholder="optional — short one-line description shown on the dashboard" spellcheck="false"></textarea>
     </label>
+    <label class="cron-create-row" title="Claude reasoning effort for the new agent. Default leaves claude on its own setting (no --effort passed).">
+      <span class="cron-create-label">Effort</span>
+      <select id="agent-spawn-effort">
+        <option value="">Default (claude's own)</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max</option>
+      </select>
+    </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
       <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 chars)" spellcheck="false"></textarea>
