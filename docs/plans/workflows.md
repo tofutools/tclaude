@@ -1,8 +1,39 @@
 # tclaude Workflows — design
 
-> Status: **design / in progress**. Umbrella doc. Per-step work lives in
-> `docs/plans/TODO/high-prio/workflows-*.md` (and `med-prio/` for Phase 2).
-> Started 2026-05-28 by the `agent-workflows` dev agent in group `tclaude-dev`.
+> Status: **monitoring MVP + most of the execution engine shipped to
+> `agent-workflows`**; engine remainder (handoffs/loops/SLA) + Phase 3 in
+> progress. Umbrella + **North-Star** doc. Per-step tracking lives on the
+> **Linear board** (team JOH, project `tclaude`) — the roadmap table below
+> carries current status. Started 2026-05-28 by the `agent-workflows` dev agents
+> in group `tclaude-dev`.
+
+## North Star — the bar we're building to
+
+> Operator's framing (2026-05-30): we are aiming for a **really good workflow
+> system** — expect several tests + iterations before we're there. **Robustness
+> and usability are the standing priorities, over speed.** Build for the long
+> term; a feature isn't done until it actually works and makes sense to use.
+
+What "really good" means concretely — the experience to keep designing toward:
+
+- **Templates are discoverable.** See every available workflow template at a
+  glance and instantiate one in a couple of clicks.
+- **Instances are legible.** For every running/finished instance, see how far it
+  has got — which nodes are done / running / waiting / failed / skipped — at a
+  glance, live.
+- **The composition is inspectable.** Click any node to see its definition
+  (executor, verification, I/O), its current status, and its audit trail. The
+  mermaid graph is the map; the node detail is the territory.
+- **You can zoom into the work itself.** For an AI node, watch the *individual
+  agent working inside it* — live vitals, and ideally attach to what it is
+  actually doing. And when an instance runs in **agent-as-engine** mode (JOH-15),
+  the same for the **root coordinating agent** driving the whole graph.
+- **It's robust.** Survives daemon restarts, crashed / idle agents, races, and
+  human-in-the-loop gaps without losing or mis-reporting state.
+
+Most of this maps to roadmap steps / Linear tickets below; the deepest "zoom into
+the agents" observability is its own tracked thread. This section is the durable
+statement of intent — keep it in view when making design calls.
 
 ## What this is
 
@@ -303,21 +334,26 @@ escalation + inbox handoffs (Step 6), node approval gates (Step 4).
 Dependency- and priority-ordered. This table is the authority on *order*; the
 TODO tier dirs are a secondary signal. The PO keeps `Status` current.
 
-| #  | Step                                                | File                                            | Status            | Depends on |
-|----|-----------------------------------------------------|-------------------------------------------------|-------------------|------------|
-| 1  | Template format + parser + example                  | `DONE/workflows-template-format.md`             | ✅ done (PR #226) | —          |
-| 2  | SQLite schema + CRUD                                 | `DONE/workflows-db-schema.md`                   | ✅ done (PR #227) | 1          |
-| 2b | Static graph analysis (validator) — *parallel*      | `DONE/workflows-graph-analysis.md`              | ✅ done (PR #228) | 1          |
-| 3  | agentd HTTP API + snapshot                          | `DONE/workflows-agentd-api.md`                  | ✅ done (PR #230) | 1, 2       |
-| 4  | Group integration (+ live vitals, approval gates)   | `TODO/high-prio/workflows-group-integration.md` | 🔨 wip            | 3          |
-| 5  | Dashboard tab (+ live vitals overlay) — *∥ with 4*  | `TODO/high-prio/workflows-dashboard-tab.md`     | 🔨 wip            | 3          |
-| —  | **← monitoring MVP complete; operator review here** |                                                 |                   | 4, 5       |
-| 6  | Execution engine (+ stuck/SLA, inbox handoffs)      | `TODO/med-prio/workflows-execution-engine.md`   | ⏳ queued         | 1–5        |
-| 7  | External `dir:`/`git:` template sources             | `TODO/med-prio/workflows-external-sources.md`   | ⏳ queued         | 1 (+gates) |
-| 8  | Composite nodes (multi-task + success rules)        | `TODO/future/workflows-composite-nodes.md`      | ⏳ queued         | 6          |
-| 9  | Sub-workflow nodes + dynamic sub-graphs             | `TODO/future/workflows-dynamic-subgraphs.md`    | ⏳ queued         | 6, 8       |
-| 10 | `tclaude workflow` CLI (agent↔engine reflection ⭐) | `TODO/future/workflows-cli.md`                  | ⏳ queued         | 3          |
-| 11 | Agent-as-engine (opt-in)                            | `TODO/future/workflows-agent-engine.md`         | ⏳ queued         | 6, 10      |
+| #  | Step                                                | Linear  | Status                                                                                  | Depends on |
+|----|-----------------------------------------------------|---------|-----------------------------------------------------------------------------------------|------------|
+| 1  | Template format + parser + example                  | —       | ✅ done (#226)                                                                          | —          |
+| 2  | SQLite schema + CRUD                                 | —       | ✅ done (#227; schema now v49 after main merges)                                        | 1          |
+| 2b | Static graph analysis (validator) — *parallel*      | —       | ✅ done (#228)                                                                          | 1          |
+| 3  | agentd HTTP API + snapshot                          | —       | ✅ done (#230)                                                                          | 1, 2       |
+| 4  | Group integration (+ live vitals, approval gates)   | —       | ✅ done (#234)                                                                          | 3          |
+| 5  | Dashboard tab (+ live vitals overlay) — *∥ with 4*  | —       | ✅ done (#233, + #235 hardening)                                                        | 3          |
+| —  | **← monitoring MVP complete; operator review here** |         | ✅ reached                                                                              | 4, 5       |
+| 6  | Execution engine (+ stuck/SLA, inbox handoffs)      | JOH-8   | 🔨 wip — slices A #239, B #243, C #251 (JOH-35) done; remainder **JOH-40/39/41**         | 1–5        |
+| 7  | External `dir:`/`git:` template sources             | JOH-12  | ✅ done (#236)                                                                          | 1 (+gates) |
+| 8  | Composite nodes (multi-task + success rules)        | JOH-14  | ⏳ queued (blocked by Step 6)                                                           | 6          |
+| 9  | Sub-workflow nodes + dynamic sub-graphs             | JOH-16  | ⏳ queued (blocked by Steps 6, 8)                                                       | 6, 8       |
+| 10 | `tclaude workflow` CLI (agent↔engine reflection ⭐) | JOH-13  | ✅ done (#238 + #245 + #247)                                                            | 3          |
+| 11 | Agent-as-engine (opt-in)                            | JOH-15  | ⏳ queued — Part A ~shipped (CLI #238/#245/#247 + skill #249/JOH-38); Part B remaining   | 6, 10      |
+
+> **Agent ↔ engine interop (Steps 10–11) is operator-flagged super-important.** Step 10 (the
+> `tclaude workflow` CLI reflection surface) + the bundled `workflow-node` skill (JOH-38) have
+> shipped; the deepest "zoom into the agents working inside nodes" observability (North Star)
+> and the opt-in agent-as-engine mode (JOH-15 Part B) are the remaining frontier.
 
 ⭐ The agent↔engine **reflection/interop** (steps 10–11) is operator-flagged
 super-important and buildable right after Step 3 — pull forward if wanted sooner.
@@ -325,7 +361,14 @@ Steps 8–11 are sequenced at the end per the operator.
 
 Idea backlog (unscheduled): `TODO/future/workflows-ideas.md`.
 
-## ⟳ REINCARNATION HANDOFF (2026-05-30, ~15:30) — READ FIRST
+---
+
+> ⚠️ **The sections below are HISTORICAL working/handoff logs** from mid-flight
+> states that are now all resolved. They are kept for record only. **For current
+> status, use the roadmap table + North Star above and the Linear board.** Do not
+> trust the PR numbers / "active" / "wip" claims below as current.
+
+## ⟳ REINCARNATION HANDOFF (2026-05-30, ~15:30) — historical
 
 The previous PO instance hit context rot (fabricated a non-existent "PR #233",
 mis-attributed Step-4 progress reports to `wf-main-merge`, and replied to messages
