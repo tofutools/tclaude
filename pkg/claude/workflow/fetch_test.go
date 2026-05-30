@@ -82,7 +82,11 @@ func TestParseGitSpec(t *testing.T) {
 }
 
 func TestParseGitSpec_Errors(t *testing.T) {
-	for _, in := range []string{"git:", "git:   ", "git:@main#t", "git:#onlysub"} {
+	for _, in := range []string{
+		"git:", "git:   ", "git:@main#t", "git:#onlysub",
+		"git:--upload-pack=evil",       // leading-dash url → flag injection
+		"git:https://h/r@-evilref#sub", // leading-dash ref → flag injection
+	} {
 		t.Run(in, func(t *testing.T) {
 			_, err := parseGitSpec(in)
 			assert.Error(t, err)
@@ -91,13 +95,22 @@ func TestParseGitSpec_Errors(t *testing.T) {
 }
 
 func TestIsCommitSHA(t *testing.T) {
-	assert.True(t, isCommitSHA("abc1234"))                                 // 7 hex
-	assert.True(t, isCommitSHA("0123456789abcdef0123456789abcdef01234567")) // 40 hex
+	assert.True(t, isCommitSHA("0123456789abcdef0123456789abcdef01234567")) // full 40 hex
+	assert.False(t, isCommitSHA("abc1234"))                                 // abbreviated → mutable
 	assert.False(t, isCommitSHA("main"))
 	assert.False(t, isCommitSHA("v1.2.3"))
-	assert.False(t, isCommitSHA("abc12"))    // too short
-	assert.False(t, isCommitSHA("ghijklm"))  // non-hex
-	assert.False(t, isCommitSHA("feature/x")) // branch with slash
+	assert.False(t, isCommitSHA("deadbeef"))                                  // hex-looking branch name
+	assert.False(t, isCommitSHA("0123456789abcdef0123456789abcdef0123456g"))  // 40 chars, non-hex
+	assert.False(t, isCommitSHA("feature/x"))
+}
+
+func TestCheckSubpath(t *testing.T) {
+	for _, ok := range []string{"", "tmpl", "a/b/c", "./tmpl", "a/../b"} {
+		assert.NoError(t, checkSubpath(ok), "expected %q to be allowed", ok)
+	}
+	for _, bad := range []string{"../etc", "a/../../etc", `..\..\etc`, "/abs", `C:\win`, ".."} {
+		assert.Error(t, checkSubpath(bad), "expected %q to be rejected", bad)
+	}
 }
 
 // ── git: resolution against a local bare-repo fixture (no network) ──────────

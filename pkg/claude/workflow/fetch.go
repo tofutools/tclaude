@@ -1,12 +1,15 @@
 package workflow
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,7 +21,7 @@ import (
 //
 // A dir: or git: source is THIRD-PARTY data. Resolution in this file only
 // fetches and parses static definition files (flow.mmd / workflow.yaml /
-// nodes/*.yaml) — it NEVER executes anything. Two layers keep that safe:
+// nodes/*.yaml) — it NEVER executes anything. Layers that keep that safe:
 //
 //  1. Resolution is explicit. Nothing scans for or auto-resolves external refs;
 //     a caller (CLI/dashboard) must pass one in, which is the operator's opt-in.
@@ -30,24 +33,39 @@ import (
 //     package introduces that seam; it does not run nodes. Until the gate
 //     exists the engine should leave an external tool/program node awaiting
 //     (human-gated) rather than auto-running third-party commands.
+//  3. The clone itself is hardened: url/ref may not begin with '-' (so a crafted
+//     ref can't smuggle a git flag like --upload-pack), positional args are
+//     fenced with "--", the ext transport (a known git RCE vector) is disabled,
+//     and every git invocation runs under a deadline so a hostile/slow server
+//     cannot hang the resolver.
 //
-// Path traversal: a git: subpath that climbs out of the clone is rejected
-// (checkSubpath) so a malicious ref cannot point the loader at arbitrary files.
+// Residual, documented: git: subpath traversal is rejected lexically AND a
+// symlinked template dir that escapes the clone is rejected (ensureWithin). A
+// hostile repo could still ship an individual config file (workflow.yaml, …) as
+// a symlink to an arbitrary local path; LoadDir would then READ that file
+// (parsed as YAML, no execution, no network egress at resolve time). Bounded by
+// the explicit opt-in + read-only nature; a symlink-safe loader (os.Root) is a
+// future hardening if external sourcing sees wide use.
 //
 // Auth for private repos relies on the user's own git credential helpers / SSH.
-// GIT_TERMINAL_PROMPT=0 makes a missing credential fail fast instead of hanging
-// on an interactive prompt.
+// GIT_TERMINAL_PROMPT=0 makes a missing credential fail fast instead of hanging.
 
-// DefaultGitTTL is how long a cached mutable git ref (branch, tag, or the
-// default branch) is reused before a re-fetch. Pinned commit SHAs are immutable
-// and never expire.
-const DefaultGitTTL = time.Hour
+const (
+	// DefaultGitTTL is how long a cached mutable git ref (branch, tag, or the
+	// default branch) is reused before a re-fetch. A full 40-hex commit SHA is
+	// immutable and never expires.
+	DefaultGitTTL = time.Hour
+	// DefaultGitTimeout caps any single git invocation, so a hostile or slow
+	// remote cannot hang the resolver indefinitely.
+	DefaultGitTimeout = 2 * time.Minute
+)
 
 // ResolveOptions tunes resolution of external git: sources. The zero value is
-// valid (default TTL, default cache dir, no forced refresh).
+// valid (default TTL, default timeout, default cache dir, no forced refresh).
 type ResolveOptions struct {
 	Refresh  bool          // force a re-fetch of a mutable git ref even if cached
 	TTL      time.Duration // staleness window for mutable git refs (<=0 → DefaultGitTTL)
+	Timeout  time.Duration // per-git-invocation deadline (<=0 → DefaultGitTimeout)
 	CacheDir string        // git clone cache root ("" → CacheDir())
 }
 
@@ -91,11 +109,22 @@ func resolveGit(ref string, opts ResolveOptions) (*Template, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil, fmt.Errorf("git ref %q: git executable not found in PATH: %w", ref, err)
 	}
-	dest, err := fetchGit(gs, opts)
+
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = DefaultGitTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	dest, err := fetchGit(ctx, gs, opts)
 	if err != nil {
 		return nil, fmt.Errorf("git ref %q: %w", ref, err)
 	}
 	tmplDir := filepath.Join(dest, filepath.FromSlash(gs.subpath))
+	if err := ensureWithin(dest, tmplDir); err != nil {
+		return nil, fmt.Errorf("git ref %q: %w", ref, err)
+	}
 	if !isTemplateDir(tmplDir) {
 		return nil, fmt.Errorf("git ref %q: %s is not a template dir (no workflow.yaml)", ref, displaySub(gs.subpath))
 	}
@@ -117,6 +146,10 @@ type gitSpec struct {
 // only treating an '@' as the ref delimiter when it falls in the url's PATH
 // region — past scheme+authority for "scheme://…" urls, or past the first ':'
 // for scp-style urls. The last such '@' wins.
+//
+// url and ref may not begin with '-': git treats a leading-dash argument as a
+// flag, so allowing one would let a crafted ref inject options (e.g.
+// --upload-pack=<cmd>) into the clone.
 func parseGitSpec(ref string) (gitSpec, error) {
 	spec := strings.TrimPrefix(ref, string(SourceGit)+":")
 	urlAndRef, subpath, _ := strings.Cut(spec, "#")
@@ -127,13 +160,20 @@ func parseGitSpec(ref string) (gitSpec, error) {
 		url, gitRef = urlAndRef[:idx], urlAndRef[idx+1:]
 	}
 	url = strings.TrimSpace(url)
+	gitRef = strings.TrimSpace(gitRef)
 	if url == "" {
 		return gitSpec{}, fmt.Errorf("git ref %q: empty url", ref)
 	}
+	if strings.HasPrefix(url, "-") {
+		return gitSpec{}, fmt.Errorf("git ref %q: url may not start with '-'", ref)
+	}
+	if strings.HasPrefix(gitRef, "-") {
+		return gitSpec{}, fmt.Errorf("git ref %q: ref may not start with '-'", ref)
+	}
 	return gitSpec{
 		url:     url,
-		ref:     strings.TrimSpace(gitRef),
-		subpath: strings.Trim(strings.TrimSpace(subpath), "/"),
+		ref:     gitRef,
+		subpath: strings.Trim(subpath, "/"),
 	}, nil
 }
 
@@ -154,14 +194,46 @@ func refSearchStart(u string) int {
 	return 0 // local path / bare
 }
 
-// checkSubpath rejects a git: subpath that escapes the clone root.
+// checkSubpath rejects a git: subpath that escapes the clone root. It is
+// deliberately platform-independent (normalising '\' and rejecting drive
+// letters) so a repo authored on one OS can't smuggle a traversal past a
+// consumer on another.
 func checkSubpath(sub string) error {
 	if sub == "" {
 		return nil
 	}
-	clean := filepath.Clean(filepath.FromSlash(sub))
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	norm := strings.ReplaceAll(sub, `\`, "/")
+	if strings.HasPrefix(norm, "/") || hasDriveLetter(norm) {
+		return fmt.Errorf("subpath %q must be relative", sub)
+	}
+	clean := path.Clean(norm)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return fmt.Errorf("subpath %q escapes the repository", sub)
+	}
+	return nil
+}
+
+func hasDriveLetter(s string) bool {
+	return len(s) >= 2 && s[1] == ':' &&
+		((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z'))
+}
+
+// ensureWithin rejects a target that, after symlink resolution, escapes root —
+// catching a checked-out template dir that is a symlink pointing outside the
+// clone. A non-existent target (e.g. a missing template dir) is left to the
+// lexical checkSubpath guard + the isTemplateDir check that follow.
+func ensureWithin(root, target string) error {
+	et, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return nil // doesn't exist yet
+	}
+	er, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil
+	}
+	rel, err := filepath.Rel(er, et)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("resolved template path escapes the clone (symlink)")
 	}
 	return nil
 }
@@ -169,7 +241,7 @@ func checkSubpath(sub string) error {
 // fetchGit ensures a clone for gs exists in the cache and returns its directory.
 // A fresh ref is cloned; a stale mutable ref is re-cloned; a pinned commit or a
 // fresh-enough mutable ref is reused as-is.
-func fetchGit(gs gitSpec, opts ResolveOptions) (string, error) {
+func fetchGit(ctx context.Context, gs gitSpec, opts ResolveOptions) (string, error) {
 	root := opts.CacheDir
 	if root == "" {
 		root = CacheDir()
@@ -186,17 +258,12 @@ func fetchGit(gs gitSpec, opts ResolveOptions) (string, error) {
 	switch {
 	case !dirExists(dest):
 		slog.Info("workflow: cloning git template source", "url", gs.url, "ref", refOrDefault(gs.ref), "dest", dest)
-		if err := gitClone(gs, dest); err != nil {
-			_ = os.RemoveAll(dest) // don't leave a half-clone behind
+		if err := gitClone(ctx, gs, dest); err != nil {
 			return "", err
 		}
 	case shouldRefresh(gs, stamp, opts):
 		slog.Info("workflow: refreshing git template source", "url", gs.url, "ref", refOrDefault(gs.ref), "dest", dest)
-		if err := os.RemoveAll(dest); err != nil {
-			return "", fmt.Errorf("clear stale cache: %w", err)
-		}
-		if err := gitClone(gs, dest); err != nil {
-			_ = os.RemoveAll(dest)
+		if err := gitClone(ctx, gs, dest); err != nil {
 			return "", err
 		}
 	default:
@@ -207,13 +274,17 @@ func fetchGit(gs gitSpec, opts ResolveOptions) (string, error) {
 	return dest, nil
 }
 
-// shouldRefresh decides whether a cached clone must be re-fetched.
+// shouldRefresh decides whether a cached clone must be re-fetched. Only a full
+// 40-hex commit SHA is treated as immutable; a branch, tag, or the default
+// branch is re-fetched once its cached clone is older than the TTL. (Treating
+// abbreviated SHAs / tags as mutable only costs a harmless re-clone to the same
+// commit — the safe direction vs. silently serving a stale branch.)
 func shouldRefresh(gs gitSpec, stamp string, opts ResolveOptions) bool {
 	if opts.Refresh {
 		return true
 	}
 	if isCommitSHA(gs.ref) {
-		return false // a pinned commit is immutable
+		return false // a pinned full commit SHA is immutable
 	}
 	ttl := opts.TTL
 	if ttl <= 0 {
@@ -226,29 +297,79 @@ func shouldRefresh(gs gitSpec, stamp string, opts ResolveOptions) bool {
 	return time.Since(info.ModTime()) > ttl
 }
 
-// gitClone clones gs into dest at the requested ref. It tries a shallow
-// branch/tag clone first, falling back to a full clone + checkout for commit
-// SHAs (which --branch cannot take).
-func gitClone(gs gitSpec, dest string) error {
-	if gs.ref == "" {
-		return runGit("", "clone", "--quiet", "--depth", "1", gs.url, dest)
-	}
-	if err := runGit("", "clone", "--quiet", "--depth", "1", "--branch", gs.ref, gs.url, dest); err == nil {
-		return nil
-	}
-	// Fallback: a commit SHA (or a server that rejected the shallow branch) →
-	// full clone, then detached checkout.
-	_ = os.RemoveAll(dest)
-	if err := runGit("", "clone", "--quiet", gs.url, dest); err != nil {
+// gitClone clones gs and publishes it at dest atomically: it clones into a
+// unique temp dir under the same parent, then renames it into place. A failed
+// clone only ever removes its own temp dir, never dest, so two concurrent
+// resolves of the same ref can't clobber each other's good clone.
+func gitClone(ctx context.Context, gs gitSpec, dest string) error {
+	parent := filepath.Dir(dest)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
 	}
-	return runGit(dest, "-c", "advice.detachedHead=false", "checkout", "--quiet", gs.ref)
+	tmp, err := os.MkdirTemp(parent, "."+filepath.Base(dest)+".tmp-")
+	if err != nil {
+		return err
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+
+	if err := cloneInto(ctx, gs, tmp); err != nil {
+		return err
+	}
+
+	// Publish: replace any existing dest with our fresh clone. RemoveAll runs
+	// only here, after a *successful* clone — never on the error path — so a
+	// failing clone can't delete a sibling's good clone.
+	_ = os.RemoveAll(dest)
+	if err := os.Rename(tmp, dest); err != nil {
+		if dirExists(dest) { // a concurrent resolver published first — use theirs
+			_ = os.RemoveAll(tmp)
+			published = true
+			return nil
+		}
+		return err
+	}
+	published = true
+	return nil
 }
 
-// runGit runs a git command (in dir, if non-empty) with interactive auth
-// prompts disabled, surfacing stderr on failure.
-func runGit(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
+// cloneInto clones gs into the (empty) dir tmp at the requested ref. It tries a
+// shallow branch/tag clone first, falling back to a full clone + detached
+// checkout for commit SHAs (which --branch cannot take). The ext transport is
+// disabled and url is fenced with "--" (see the trust-model note).
+func cloneInto(ctx context.Context, gs gitSpec, tmp string) error {
+	hard := []string{"-c", "protocol.ext.allow=never"}
+	clone := func(extra ...string) []string {
+		args := append([]string{}, hard...)
+		args = append(args, "clone", "--quiet")
+		args = append(args, extra...)
+		return append(args, "--", gs.url, tmp)
+	}
+
+	if gs.ref == "" {
+		return runGit(ctx, "clone", "", clone("--depth", "1")...)
+	}
+	if err := runGit(ctx, "clone", "", clone("--depth", "1", "--branch", gs.ref)...); err == nil {
+		return nil
+	}
+	// Fallback (commit SHA, or a server that rejected the shallow branch): full
+	// clone into a clean tmp, then detached checkout. ref is validated non-dash.
+	_ = os.RemoveAll(tmp)
+	if err := runGit(ctx, "clone", "", clone()...); err != nil {
+		return err
+	}
+	return runGit(ctx, "checkout", tmp, "-c", "advice.detachedHead=false", "checkout", "--quiet", gs.ref)
+}
+
+// runGit runs a git command (in dir, if non-empty) under ctx with interactive
+// auth prompts disabled, surfacing stderr (or a timeout) on failure. label is
+// used only for error messages.
+func runGit(ctx context.Context, label, dir string, args ...string) error {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -256,19 +377,25 @@ func runGit(dir string, args ...string) error {
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return fmt.Errorf("git %s: %w: %s", args[0], err, msg)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("git %s: timed out", label)
 		}
-		return fmt.Errorf("git %s: %w", args[0], err)
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("git %s: %w: %s", label, err, msg)
+		}
+		return fmt.Errorf("git %s: %w", label, err)
 	}
 	return nil
 }
 
 // cacheKey is a stable, filesystem-safe directory name for a (url, ref) pair.
 // Including ref means different refs of one repo are cached independently, so a
-// pinned commit/tag stays immutable while a branch refreshes on its own.
+// pinned commit stays immutable while a branch refreshes on its own. The url is
+// normalised (trailing slash / ".git" stripped) so "…/r" and "…/r.git" share a
+// cache rather than cloning twice.
 func cacheKey(url, ref string) string {
-	sum := sha256.Sum256([]byte(url + "\x00" + ref))
+	norm := strings.TrimSuffix(strings.TrimRight(url, "/"), ".git")
+	sum := sha256.Sum256([]byte(norm + "\x00" + ref))
 	hash := hex.EncodeToString(sum[:])[:16]
 	if base := sanitizeForFS(repoBase(url)); base != "" {
 		return base + "-" + hash
@@ -303,10 +430,11 @@ func sanitizeForFS(s string) string {
 	return out
 }
 
-// isCommitSHA reports whether ref looks like an (abbreviated) commit SHA, i.e.
-// 7–40 hex digits. Such a ref is treated as immutable.
+// isCommitSHA reports whether ref is a full 40-hex commit SHA. Only a full SHA
+// is treated as immutable (see shouldRefresh) — an abbreviated SHA is
+// ambiguous with a ref name, so it is left mutable.
 func isCommitSHA(ref string) bool {
-	if len(ref) < 7 || len(ref) > 40 {
+	if len(ref) != 40 {
 		return false
 	}
 	for _, r := range ref {
