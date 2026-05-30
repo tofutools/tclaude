@@ -2,12 +2,14 @@ package agentd
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -21,9 +23,15 @@ import (
 //
 // Scope (Step 3): instantiate from a snapshotted template, inspect, manually
 // advance nodes (which follows the template's branches via workflow.Advance),
-// cancel and delete. Spawning/attaching the per-node AI agent is Step 4 and is
-// stubbed here with 501. The execution engine that auto-drives nodes is Step 6;
-// the manual PATCH path and that engine share workflow.Advance.
+// cancel and delete.
+//
+// Scope (Step 4 — group integration): bind an instance to a tclaude agent
+// group at create (group_id), spawn/attach the per-node ai agent into that
+// group (start/attach, replacing Step 3's 501 stubs), and the human-approval
+// verify gate (approve/reject). All mutating paths serialise per instance via
+// lockWorkflowInstance so two concurrent drives never read-modify-write stale
+// node state. The execution engine that AUTO-drives nodes is Step 6; the manual
+// PATCH / start / approve paths and that engine all share workflow.Advance.
 
 // workflowProjectDirsFn yields the project-source directories searched when
 // resolving / listing workflow templates. The daemon serves the whole machine,
@@ -65,6 +73,7 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 		TemplateRef string          `json:"template_ref"`
 		Title       string          `json:"title"`
 		Params      json.RawMessage `json:"params"`
+		Group       string          `json:"group"` // optional agent-group NAME to bind; "" = unbound
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
@@ -79,6 +88,25 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "resolve template: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Optional group binding. The instance stores a soft link by group_id
+	// (Step 2 schema); we accept the friendlier group NAME on the wire and
+	// resolve it. Instantiation never auto-creates a group — an unknown name
+	// is a 400, so a typo can't silently leave the instance unbound.
+	var groupID int64
+	if gname := strings.TrimSpace(body.Group); gname != "" {
+		g, gerr := db.GetAgentGroupByName(gname)
+		if gerr != nil {
+			http.Error(w, "lookup group: "+gerr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if g == nil {
+			http.Error(w, "group "+strconv.Quote(gname)+" not found "+
+				"(create it first; instantiation does not auto-create groups)", http.StatusBadRequest)
+			return
+		}
+		groupID = g.ID
 	}
 
 	// Params: an opaque JSON object. We only validate that every required
@@ -119,6 +147,7 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 		Mermaid:      tmpl.Mermaid, // snapshot — later template edits never reshape this instance
 		Params:       string(paramsJSON),
 		Vars:         "{}",
+		GroupID:      groupID, // 0 = unbound
 	}
 	id, err := db.InsertWorkflowInstance(inst)
 	if err != nil {
@@ -167,7 +196,7 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"id": id})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "group_id": groupID})
 }
 
 // handleDashboardWorkflowsAPI dispatches the /api/workflows/{id}... surface:
@@ -177,8 +206,9 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/workflows/{id}/cancel                  → cancel
 //	PATCH  /api/workflows/{id}/nodes/{nodeId}          → manual node update + advance
 //	GET    /api/workflows/{id}/nodes/{nodeId}/audit    → that node's event timeline
-//	POST   /api/workflows/{id}/nodes/{nodeId}/start    → 501 (Step 4)
-//	POST   /api/workflows/{id}/nodes/{nodeId}/attach   → 501 (Step 4)
+//	POST   /api/workflows/{id}/nodes/{nodeId}/start    → spawn the node's ai agent into the bound group
+//	POST   /api/workflows/{id}/nodes/{nodeId}/attach   → attach an existing group member to the node
+//	POST   /api/workflows/{id}/nodes/{nodeId}/approve  → human-verify gate (approve/reject)
 func handleDashboardWorkflowsAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -210,8 +240,21 @@ func handleDashboardWorkflowsAPI(w http.ResponseWriter, r *http.Request) {
 		case http.MethodGet:
 			dashboardWorkflowDetail(w, inst)
 		case http.MethodDelete:
-			if err := db.DeleteWorkflowInstance(id); err != nil {
-				http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)
+			// Serialise the delete against any in-flight drive on this instance
+			// (start's up-to-30s spawn poll, a settle's advance) under the SAME
+			// per-instance lock the mutating handlers take. Without it a delete
+			// could wipe the rows mid read-modify-write, and removing the map
+			// entry while another goroutine still holds the mutex would let a
+			// fresh caller mint a second mutex for the same id — breaking the
+			// mutual exclusion. Holding the lock here closes both.
+			unlock := lockWorkflowInstance(id)
+			delErr := db.DeleteWorkflowInstance(id)
+			if delErr == nil {
+				workflowInstanceLocks.Delete(id) // row is gone; drop the now-unreachable mutex
+			}
+			unlock()
+			if delErr != nil {
+				http.Error(w, "delete: "+delErr.Error(), http.StatusInternalServerError)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -255,6 +298,15 @@ func dashboardWorkflowDetail(w http.ResponseWriter, inst *db.WorkflowInstance) {
 		eventViews = append(eventViews, eventToJSON(e))
 	}
 
+	// Topology warnings (Step 2b smells). RebuildFromSnapshot skips analysis,
+	// so re-run it here over the instance's snapshotted chart — the warnings
+	// match what the template carried at instantiation. Non-nil so the
+	// front-end's .map() is safe even when clean.
+	warnings := []string{}
+	if tmpl != nil {
+		warnings = append(warnings, tmpl.Analyze()...)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"instance": instanceDetailJSON(inst),
 		"mermaid":  inst.Mermaid,
@@ -262,6 +314,7 @@ func dashboardWorkflowDetail(w http.ResponseWriter, inst *db.WorkflowInstance) {
 		"vars":     rawJSONOrEmpty(inst.Vars),
 		"nodes":    nodeViews,
 		"events":   eventViews,
+		"warnings": warnings,
 	})
 }
 
@@ -294,10 +347,19 @@ func dashboardWorkflowNode(w http.ResponseWriter, r *http.Request, inst *db.Work
 			out = append(out, eventToJSON(e))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"events": out})
-	case "start", "attach":
-		// Step 4 (group integration) owns spawning/attaching the node's agent.
-		writeError(w, http.StatusNotImplemented, "not_implemented",
-			"node "+sub+" lands in Step 4 (workflow group integration)")
+	case "start", "attach", "approve":
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only on /nodes/{nodeId}/"+sub, http.StatusMethodNotAllowed)
+			return
+		}
+		switch sub {
+		case "start":
+			dashboardWorkflowNodeStart(w, inst, node.NodeID)
+		case "attach":
+			dashboardWorkflowNodeAttach(w, r, inst, node.NodeID)
+		case "approve":
+			dashboardWorkflowNodeApprove(w, r, inst, node.NodeID)
+		}
 	default:
 		http.Error(w, "unknown node subpath "+sub, http.StatusNotFound)
 	}
@@ -308,6 +370,25 @@ func dashboardWorkflowNode(w http.ResponseWriter, r *http.Request, inst *db.Work
 // the taken successors and skip the abandoned branches, then recomputes the
 // instance status. Events are appended for every transition.
 func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db.WorkflowInstance, node *db.WorkflowNode) {
+	unlock := lockWorkflowInstance(inst.ID)
+	defer unlock()
+	// Re-read fresh under the lock: a concurrent settle/cancel/start may have
+	// moved this node or the instance since the dispatcher fetched them, and
+	// the guards below (re-settle 409, instance-running) must see current state.
+	if fresh, _ := db.GetWorkflowInstance(inst.ID); fresh != nil {
+		inst = fresh
+	}
+	fresh, ferr := db.GetWorkflowNode(inst.ID, node.NodeID)
+	if ferr != nil {
+		http.Error(w, "lookup node: "+ferr.Error(), http.StatusInternalServerError)
+		return
+	}
+	if fresh == nil {
+		http.Error(w, "node "+node.NodeID+" not found", http.StatusNotFound)
+		return
+	}
+	node = fresh
+
 	var body struct {
 		Status   *string `json:"status"`
 		Outcome  *string `json:"outcome"`
@@ -340,6 +421,18 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		s := strings.TrimSpace(*body.Status)
 		if !validWorkflowNodeStatus(s) {
 			http.Error(w, "invalid node status "+strconv.Quote(s), http.StatusBadRequest)
+			return
+		}
+		// Manual PATCH may only drive a node to running / done / failed. A
+		// direct hop to "skipped" would settle the node WITHOUT running
+		// Advance, stranding the sub-tree behind it; "pending"/"ready"/
+		// "awaiting_verify" are engine-internal frontier states. Skipping a
+		// branch is reached by cancelling the instance, and the frontier is
+		// only ever moved by a settle's Advance. (Cold-review #230 finding.)
+		if !isManualDriveStatus(s) {
+			http.Error(w, "node status "+strconv.Quote(s)+" is not manually settable; "+
+				"use running, done or failed (skip a branch by cancelling the instance)",
+				http.StatusBadRequest)
 			return
 		}
 		patch.Status = &s
@@ -456,9 +549,390 @@ func applyWorkflowAdvance(instanceID int64, res workflow.AdvanceResult, now time
 	}
 }
 
+// ----- group integration: start / attach / approve (Step 4) -----------
+
+// workflowInstanceLocks serialises mutating operations on a single workflow
+// instance. The PATCH / start / attach / approve / cancel / delete paths all do
+// a read-modify-write over node + frontier state; without this, two concurrent
+// drives (a double "start" click, or a start racing a settle) could both read
+// the same `ready` node and both act on it — double-spawning, or advancing over
+// stale state.
+//
+// Keyed by instance id (monotonic, never reused). An entry is created on first
+// touch and removed only when the instance is DELETEd, so a terminal-but-kept
+// instance retains its entry until deletion: the map grows by instances-ever-
+// driven, never thrashes. Each entry is one pointer-sized mutex, so the
+// footprint is negligible for a daemon's lifetime; instances are reclaimed when
+// the human deletes them from the dashboard.
+var workflowInstanceLocks sync.Map // int64 → *sync.Mutex
+
+// lockWorkflowInstance acquires the per-instance mutex and returns its unlock
+// func, for use as `defer lockWorkflowInstance(id)()`. Mutating handlers re-read
+// instance/node state AFTER acquiring it, so the guards act on current state.
+func lockWorkflowInstance(id int64) func() {
+	actual, _ := workflowInstanceLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := actual.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// isManualDriveStatus reports whether a node status may be set via the manual
+// PATCH endpoint. running/done/failed are the human-driving transitions;
+// pending/ready/awaiting_verify are engine-internal frontier states, and
+// "skipped" is reached only through a settle's Advance (or cancel) — never a
+// direct manual hop, which would settle the node WITHOUT readying/skipping its
+// successors and strand the sub-tree behind it.
+func isManualDriveStatus(s string) bool {
+	switch s {
+	case db.WorkflowNodeStatusRunning, db.WorkflowNodeStatusDone, db.WorkflowNodeStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// reloadReadyAINode re-reads (instance, node) fresh under the held instance lock
+// and enforces the shared start/attach preconditions: the instance is running,
+// the node exists, is an ai-executor node, and is `ready` (on the frontier). It
+// writes the matching 4xx/5xx and returns ok=false on any violation. The caller
+// MUST already hold lockWorkflowInstance(instID).
+func reloadReadyAINode(w http.ResponseWriter, instID int64, nodeID string) (*db.WorkflowInstance, *db.WorkflowNode, bool) {
+	inst, err := db.GetWorkflowInstance(instID)
+	if err != nil {
+		http.Error(w, "lookup: "+err.Error(), http.StatusInternalServerError)
+		return nil, nil, false
+	}
+	if inst == nil {
+		http.Error(w, "workflow not found", http.StatusNotFound)
+		return nil, nil, false
+	}
+	if inst.Status != db.WorkflowStatusRunning {
+		http.Error(w, "instance is "+inst.Status+"; cannot start/attach a node", http.StatusConflict)
+		return nil, nil, false
+	}
+	node, err := db.GetWorkflowNode(instID, nodeID)
+	if err != nil {
+		http.Error(w, "lookup node: "+err.Error(), http.StatusInternalServerError)
+		return nil, nil, false
+	}
+	if node == nil {
+		http.Error(w, "node "+nodeID+" not found", http.StatusNotFound)
+		return nil, nil, false
+	}
+	if node.ExecutorKind != string(workflow.ExecAI) {
+		http.Error(w, "start/attach apply only to ai-executor nodes (node "+nodeID+" is "+
+			strconv.Quote(node.ExecutorKind)+")", http.StatusBadRequest)
+		return nil, nil, false
+	}
+	if node.Status != db.WorkflowNodeStatusReady {
+		http.Error(w, "node "+nodeID+" is "+node.Status+
+			"; only a ready node can be started/attached", http.StatusConflict)
+		return nil, nil, false
+	}
+	return inst, node, true
+}
+
+// boundGroup resolves the instance's bound agent group, or writes a 400 when the
+// instance is unbound / its group no longer exists.
+func boundGroup(w http.ResponseWriter, inst *db.WorkflowInstance) (*db.AgentGroup, bool) {
+	if inst.GroupID == 0 {
+		http.Error(w, "instance has no bound group; bind one at create (POST /api/workflows {\"group\":\"<name>\"})",
+			http.StatusBadRequest)
+		return nil, false
+	}
+	g, err := db.GetAgentGroupByID(inst.GroupID)
+	if err != nil {
+		http.Error(w, "lookup group: "+err.Error(), http.StatusInternalServerError)
+		return nil, false
+	}
+	if g == nil {
+		http.Error(w, "bound group (id "+strconv.FormatInt(inst.GroupID, 10)+") no longer exists", http.StatusBadRequest)
+		return nil, false
+	}
+	return g, true
+}
+
+// dashboardWorkflowNodeStart spawns a fresh ai agent for a ready node into the
+// instance's bound group, via the shared executeSpawn core (same path the group
+// spawn endpoint and the group-template instantiator use). The node's
+// snapshotted executor def supplies the agent name/role hint (Executor.Agent)
+// and task prompt (Executor.Prompt → the agent's inbox briefing). On success the
+// node goes running, assigned to the spawned conv-id.
+func dashboardWorkflowNodeStart(w http.ResponseWriter, inst *db.WorkflowInstance, nodeID string) {
+	unlock := lockWorkflowInstance(inst.ID)
+	defer unlock()
+
+	inst, node, ok := reloadReadyAINode(w, inst.ID, nodeID)
+	if !ok {
+		return
+	}
+	g, ok := boundGroup(w, inst)
+	if !ok {
+		return
+	}
+
+	var def workflow.Node
+	if tmpl, _ := rebuildInstanceTemplate(inst); tmpl != nil && tmpl.Nodes[nodeID] != nil {
+		def = *tmpl.Nodes[nodeID]
+	}
+	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
+	if cwdErr != nil {
+		http.Error(w, "resolve group cwd: "+cwdErr.Error(), http.StatusBadRequest)
+		return
+	}
+	initMsg := strings.TrimSpace(def.Executor.Prompt)
+	if initMsg != "" && !isValidInitialMessage(initMsg) {
+		slog.Warn("workflow start: node prompt is not a valid initial message; spawning without it",
+			"instance", inst.ID, "node", nodeID)
+		initMsg = ""
+	}
+	outcome, fail := executeSpawn(g, spawnParams{
+		Name:           def.Executor.Agent,
+		Role:           def.Executor.Agent,
+		Descr:          "workflow " + strconv.FormatInt(inst.ID, 10) + " · " + node.Label,
+		InitialMessage: initMsg,
+		Cwd:            cwd,
+		GroupContext:   g.DefaultContext,
+	})
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+
+	now := time.Now()
+	st := db.WorkflowNodeStatusRunning
+	asg := outcome.ConvID
+	if _, err := db.UpdateWorkflowNode(inst.ID, nodeID,
+		db.WorkflowNodePatch{Status: &st, Assignee: &asg, StartedAt: &now}); err != nil {
+		http.Error(w, "update node: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
+		InstanceID: inst.ID, NodeID: nodeID, Kind: db.WorkflowEventNodeStarted,
+		Message: "spawned " + outcome.ConvID + " into group " + g.Name,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "node_id": nodeID, "status": db.WorkflowNodeStatusRunning,
+		"assignee": outcome.ConvID, "conv_id": outcome.ConvID,
+		"label": outcome.Label, "tmux_session": outcome.TmuxSession,
+		"attach_cmd": "tclaude session attach " + outcome.Label,
+	})
+}
+
+// dashboardWorkflowNodeAttach assigns an EXISTING member of the bound group to a
+// ready node — the "I already have a worker, hand it this node" path — instead
+// of spawning a fresh one. The attachee's conv-id must already be a group
+// member (attach assigns, it does not enroll). The node goes running, and the
+// node's task prompt is delivered to that agent's inbox (best-effort).
+func dashboardWorkflowNodeAttach(w http.ResponseWriter, r *http.Request, inst *db.WorkflowInstance, nodeID string) {
+	unlock := lockWorkflowInstance(inst.ID)
+	defer unlock()
+
+	var body struct {
+		ConvID string `json:"conv_id"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	convID := strings.TrimSpace(body.ConvID)
+	if convID == "" {
+		http.Error(w, "conv_id is required (the existing group member to attach)", http.StatusBadRequest)
+		return
+	}
+
+	inst, node, ok := reloadReadyAINode(w, inst.ID, nodeID)
+	if !ok {
+		return
+	}
+	g, ok := boundGroup(w, inst)
+	if !ok {
+		return
+	}
+	members, _ := db.ListAgentGroupMembers(g.ID)
+	if !convIsMember(members, convID) {
+		http.Error(w, "conv "+strconv.Quote(convID)+" is not a member of the bound group "+strconv.Quote(g.Name),
+			http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now()
+	st := db.WorkflowNodeStatusRunning
+	asg := convID
+	if _, err := db.UpdateWorkflowNode(inst.ID, nodeID,
+		db.WorkflowNodePatch{Status: &st, Assignee: &asg, StartedAt: &now}); err != nil {
+		http.Error(w, "update node: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
+		InstanceID: inst.ID, NodeID: nodeID, Kind: db.WorkflowEventNodeStarted,
+		Message: "attached " + convID,
+	})
+
+	// Hand the node's task to the attached agent's inbox so the existing worker
+	// actually receives the work, not just the assignment. Best-effort, and
+	// gated on the same control-char/length check start applies before handing a
+	// prompt to executeSpawn — the inbox render must stay clean either way.
+	if tmpl, _ := rebuildInstanceTemplate(inst); tmpl != nil && tmpl.Nodes[nodeID] != nil {
+		prompt := strings.TrimSpace(tmpl.Nodes[nodeID].Executor.Prompt)
+		switch {
+		case prompt == "":
+			// no task body to deliver
+		case !isValidInitialMessage(prompt):
+			slog.Warn("workflow attach: node prompt is not a valid inbox message; assigned without delivering it",
+				"conv", convID, "node", nodeID)
+		default:
+			if _, err := db.InsertAgentMessage(&db.AgentMessage{
+				GroupID:      g.ID,
+				ToConv:       convID,
+				Subject:      "Workflow task: " + node.Label,
+				Body:         prompt,
+				ToRecipients: []string{convID},
+			}); err != nil {
+				slog.Warn("workflow attach: failed to deliver task to inbox",
+					"conv", convID, "node", nodeID, "error", err)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "node_id": nodeID, "status": db.WorkflowNodeStatusRunning, "assignee": convID,
+	})
+}
+
+// dashboardWorkflowNodeApprove is the human-verify gate for a node whose
+// verify.kind is human. approve settles the node done on the success outcome and
+// advances the graph through the SAME helpers the manual settle uses
+// (workflow.Advance + applyWorkflowAdvance — no duplicated frontier logic); a
+// human-verified node's success continuation is its unlabeled edge, which
+// OutcomePass takes. reject records the rejection (with optional note) and does
+// NOT advance — the node stays as-is so it can be re-worked and re-approved.
+func dashboardWorkflowNodeApprove(w http.ResponseWriter, r *http.Request, inst *db.WorkflowInstance, nodeID string) {
+	unlock := lockWorkflowInstance(inst.ID)
+	defer unlock()
+
+	var body struct {
+		Decision string `json:"decision"`
+		Note     string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	decision := strings.TrimSpace(body.Decision)
+	if decision != "approve" && decision != "reject" {
+		http.Error(w, "decision must be \"approve\" or \"reject\"", http.StatusBadRequest)
+		return
+	}
+
+	if fresh, _ := db.GetWorkflowInstance(inst.ID); fresh != nil {
+		inst = fresh
+	}
+	node, err := db.GetWorkflowNode(inst.ID, nodeID)
+	if err != nil {
+		http.Error(w, "lookup node: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if node == nil {
+		http.Error(w, "node "+nodeID+" not found", http.StatusNotFound)
+		return
+	}
+
+	tmpl, _ := rebuildInstanceTemplate(inst)
+	if tmpl == nil || tmpl.Nodes[nodeID] == nil || tmpl.Nodes[nodeID].Verify.Kind != workflow.VerifyHuman {
+		http.Error(w, "node "+nodeID+" is not human-verified; the approve gate only applies to verify.kind: human",
+			http.StatusBadRequest)
+		return
+	}
+	if isSettledWorkflowNodeStatus(node.Status) {
+		http.Error(w, "node "+nodeID+" is already "+node.Status+"; cannot approve/reject a settled node",
+			http.StatusConflict)
+		return
+	}
+	if node.Status != db.WorkflowNodeStatusRunning && node.Status != db.WorkflowNodeStatusAwaitingVerify {
+		http.Error(w, "node "+nodeID+" is "+node.Status+
+			"; it must be running (or awaiting_verify) before approval — start it first", http.StatusConflict)
+		return
+	}
+
+	now := time.Now()
+	note := strings.TrimSpace(body.Note)
+
+	if decision == "reject" {
+		msg := "rejected"
+		if note != "" {
+			msg += ": " + note
+		}
+		_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
+			InstanceID: inst.ID, NodeID: nodeID, Kind: db.WorkflowEventNodeRejected, Message: msg,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "node_id": nodeID, "decision": "reject", "status": node.Status,
+		})
+		return
+	}
+
+	// approve → settle done on the success path, then advance.
+	st := db.WorkflowNodeStatusDone
+	out := workflow.OutcomePass
+	fin := now
+	patch := db.WorkflowNodePatch{Status: &st, Outcome: &out, FinishedAt: &fin}
+	if node.StartedAt.IsZero() {
+		patch.StartedAt = &now
+	}
+	if _, err := db.UpdateWorkflowNode(inst.ID, nodeID, patch); err != nil {
+		http.Error(w, "update node: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	msg := "approved"
+	if note != "" {
+		msg += ": " + note
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
+		InstanceID: inst.ID, NodeID: nodeID, Kind: db.WorkflowEventNodeApproved, Message: msg,
+	})
+	appendNodeStatusEvent(inst.ID, nodeID, db.WorkflowNodeStatusDone) // node_done
+
+	instanceRunning := inst.Status == db.WorkflowStatusRunning
+	advanced := workflow.AdvanceResult{Ready: []string{}, Skipped: []string{}}
+	newInstStatus := inst.Status
+	if instanceRunning {
+		advanced = workflow.Advance(tmpl, nodeID, workflow.OutcomePass, nodeStateMap(inst.ID))
+		applyWorkflowAdvance(inst.ID, advanced, now)
+		nodes, _ := db.ListWorkflowNodes(inst.ID)
+		newInstStatus = recomputeWorkflowInstanceStatus(tmpl, nodes)
+		if newInstStatus != inst.Status {
+			if _, err := db.UpdateWorkflowInstanceStatus(inst.ID, newInstStatus); err == nil {
+				appendInstanceStatusEvent(inst.ID, newInstStatus)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "node_id": nodeID, "decision": "approve",
+		"status": db.WorkflowNodeStatusDone, "instance_status": newInstStatus,
+		"ready": advanced.Ready, "skipped": advanced.Skipped,
+	})
+}
+
+// convIsMember reports whether convID is among the group's members.
+func convIsMember(members []*db.AgentGroupMember, convID string) bool {
+	for _, m := range members {
+		if m.ConvID == convID {
+			return true
+		}
+	}
+	return false
+}
+
 // dashboardWorkflowCancel marks every non-terminal node skipped and the
 // instance cancelled — a clean terminal snapshot for the dashboard.
 func dashboardWorkflowCancel(w http.ResponseWriter, inst *db.WorkflowInstance) {
+	unlock := lockWorkflowInstance(inst.ID)
+	defer unlock()
 	nodes, _ := db.ListWorkflowNodes(inst.ID)
 	now := time.Now()
 	for _, n := range nodes {
@@ -504,12 +978,13 @@ type dashboardWorkflowInstance struct {
 // the "what can I instantiate" list. Err is set when the template failed to
 // load, so the dashboard can surface a broken template instead of hiding it.
 type dashboardWorkflowTemplate struct {
-	Ref         string `json:"ref"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	NodeCount   int    `json:"node_count"`
-	Source      string `json:"source"`
-	Err         string `json:"err,omitempty"`
+	Ref         string   `json:"ref"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	NodeCount   int      `json:"node_count"`
+	Source      string   `json:"source"`
+	Err         string   `json:"err,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"` // Step 2b topology smells; Step 5 renders a banner
 }
 
 // collectWorkflowsSnapshot builds the Workflows tab rows. Empty (non-nil) slice
@@ -578,6 +1053,7 @@ func collectWorkflowTemplatesSnapshot() []dashboardWorkflowTemplate {
 			NodeCount:   e.NodeCount,
 			Source:      string(e.Source),
 			Err:         e.Err,
+			Warnings:    e.Warnings,
 		})
 	}
 	return out
@@ -589,6 +1065,8 @@ type workflowNodeJSON struct {
 	NodeID          string   `json:"node_id"`
 	Label           string   `json:"label"`
 	ExecutorKind    string   `json:"executor_kind"`
+	Agent           string   `json:"agent,omitempty"`       // executor.Agent: intended ai agent/role hint (Step 5 overlays vitals on this)
+	VerifyKind      string   `json:"verify_kind,omitempty"` // verify.Kind: drives the dashboard's approve-gate affordance
 	Status          string   `json:"status"`
 	Outcome         string   `json:"outcome,omitempty"`
 	Assignee        string   `json:"assignee,omitempty"`
@@ -626,6 +1104,10 @@ func nodeToJSON(n *db.WorkflowNode, tmpl *workflow.Template) workflowNodeJSON {
 	}
 	if tmpl != nil {
 		v.AllowedOutcomes = tmpl.AllowedOutcomes(n.NodeID)
+		if def := tmpl.Nodes[n.NodeID]; def != nil {
+			v.Agent = def.Executor.Agent
+			v.VerifyKind = string(def.Verify.Kind)
+		}
 	}
 	return v
 }

@@ -5,6 +5,20 @@ import (
 	"strings"
 )
 
+// Analyze re-runs the static topology analysis on t and returns its non-fatal
+// warnings (topology smells) in the same deterministic order load() produces.
+// load() runs this during template loading and stores the result on t.Warnings;
+// RebuildFromSnapshot deliberately skips it (the advance path doesn't need it),
+// so callers that reconstruct a Template from an instance snapshot use Analyze
+// to recover the warnings for display. Hard problems are discarded here — a
+// snapshot was a valid template when it was instantiated, so re-flagging them
+// would be noise. Recomputes from scratch, so it is idempotent.
+func (t *Template) Analyze() []string {
+	t.Warnings = nil
+	t.analyzeGraph(func(string, ...any) {}) // discard hard problems; warnings land on t.Warnings
+	return t.Warnings
+}
+
 // analyzeGraph runs static topology checks over the parsed chart (Edges /
 // MermaidNodes / Entry). Hard problems are appended via add; non-fatal smells
 // accumulate on t.Warnings.
