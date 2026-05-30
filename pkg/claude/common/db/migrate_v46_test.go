@@ -55,9 +55,9 @@ func TestMigrateV45toV46_AddsAgentWorkspace(t *testing.T) {
 
 // TestMigrateV45toV46_FreshSchemaHasAgentWorkspace builds a fresh DB
 // through the full migrate() chain and confirms agent_workspace exists
-// and the accessors work end to end. Carries the literal currentVersion
-// pin — a tripwire the next migration's author moves forward into their
-// own v47 test.
+// and the accessors work end to end. The literal currentVersion pin
+// (the tripwire) moved forward to migrate_v47_test.go with the v47
+// migration.
 func TestMigrateV45toV46_FreshSchemaHasAgentWorkspace(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -66,7 +66,6 @@ func TestMigrateV45toV46_FreshSchemaHasAgentWorkspace(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 46, currentVersion, "currentVersion is 46")
 
 	require.NoError(t, UpsertAgentWorkspace(AgentWorkspace{
 		ConvID: "c1", Cwd: "/repo", Branch: "feature-x",

@@ -50,6 +50,11 @@ function agentStatusDot(m) {
   } else {
     tip = `offline — click to turn on (wake ${label})`;
   }
+  // Surface the harness + model on hover (the brief's second ask). The
+  // visible harness line under the controls already shows it, but the
+  // dot's tooltip is the natural "what is this running on?" probe.
+  const hm = harnessModel(m);
+  if (hm) tip += ` · running on ${hm}`;
   let cls;
   if (errored) cls = 'status-dot status-dot-error';
   else if (online) cls = 'status-dot status-dot-online';
@@ -59,6 +64,82 @@ function agentStatusDot(m) {
     ` data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"` +
     ` data-online="${online ? '1' : '0'}"` +
     ` title="${esc(tip)}" aria-label="${esc(tip)}">${glyph}</button>`;
+}
+
+// The harness an agent runs under. tclaude only drives Claude Code, so
+// this is a constant — there is no DB column for it (a 2nd harness can
+// add one when it actually exists). HARNESS_SHORT is the compact chip
+// shown in the row; HARNESS_LONG is spelled out in tooltips.
+const HARNESS_SHORT = 'CC';
+const HARNESS_LONG = 'Claude Code';
+
+// harnessModel returns "Claude Code · Opus 4.8" for tooltips, or '' when
+// the model isn't known yet (the statusbar hook hasn't ticked for this
+// agent). The model comes from state.model — the statusline hook records
+// model.display_name onto the session row every render. Uses the FULL
+// model name (tooltips have room); shortModel() is for the visible chip.
+function harnessModel(m) {
+  const model = (m && m.state && m.state.model) || '';
+  if (!model) return '';
+  return `${HARNESS_LONG} · ${model}`;
+}
+
+// shortModel compresses a model display name for the always-visible row
+// label, where horizontal space is tight. The full name stays in the
+// tooltip (harnessLine's title / the status-dot tip), so nothing is lost.
+//
+// Rules (CC names are "<Family> <version> [(<window> context)]"):
+//   1. Family → its capitalised initial, glued straight onto the version
+//      with no space:  "Opus 4.8" → "O4.8", "Sonnet 4.6" → "S4.6".
+//   2. A trailing "(… context)" parenthetical → just its size token
+//      ("1M", "200K"), appended after a space:
+//        "Opus 4.8 (1M context)" → "O4.8 1M".
+//   3. Graceful degrade: a single-word name is left as-is; extra version
+//      words are kept after the initial; a parenthetical with no size
+//      token is dropped from the chip (it survives in the tooltip).
+//
+// Examples:
+//   "Opus 4.8 (1M context)" → "O4.8 1M"
+//   "Opus 4.8"              → "O4.8"
+//   "Sonnet 4.6"            → "S4.6"
+//   "Haiku 4.5"             → "H4.5"
+function shortModel(model) {
+  let main = (model || '').trim();
+  if (!main) return '';
+  // Peel off a trailing parenthetical and pull a size token out of it.
+  let size = '';
+  const paren = main.match(/\(([^)]*)\)\s*$/);
+  if (paren) {
+    main = main.slice(0, paren.index).trim();
+    const m = paren[1].match(/\d+\s*[KMBkmb]/);
+    if (m) size = m[0].replace(/\s+/g, '').toUpperCase();
+  }
+  // Family initial + version, no space between them.
+  const parts = main.split(/\s+/);
+  const core = parts.length >= 2
+    ? parts[0].charAt(0).toUpperCase() + parts.slice(1).join(' ')
+    : main;
+  return size ? `${core} ${size}` : core;
+}
+
+// harnessLine renders the small muted "CC · O4.8 1M" line that sits
+// UNDER the status-dot / focus / cog cluster in the same column (the
+// brief's primary ask — no new table column). Returns '' when the model
+// isn't known yet, so freshly-spawned / never-ticked rows stay clean
+// rather than showing a bare harness with no model. The harness chip is
+// dimmer than the model so the eye lands on the model first. The visible
+// model is shortModel()-compressed; the full name rides in the title.
+function harnessLine(m) {
+  const model = (m && m.state && m.state.model) || '';
+  if (!model) return '';
+  const tip = `Harness: ${HARNESS_LONG} — Model: ${model}`;
+  // One continuous string — "CC · O4.8 1M" — no chip/box around the
+  // harness. The spans exist only for typographic emphasis (the harness
+  // prefix and the middot sit a shade dimmer than the model).
+  return `<div class="agent-harness" title="${esc(tip)}">`
+    + `<span class="harness-name">${esc(HARNESS_SHORT)}</span>`
+    + `<span class="harness-sep">·</span>`
+    + `<span class="harness-model">${esc(shortModel(model))}</span></div>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so
@@ -567,7 +648,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, onlineDot, agentStatusDot, statePill, slopMachine, contextMeter,
+  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,

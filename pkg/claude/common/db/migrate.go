@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 46
+const currentVersion = 47
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -299,6 +299,38 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 47 {
+		if err := migrateV46toV47(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV46toV47 adds sessions.model — the LLM model display name
+// ("Opus 4.8", "Sonnet 4.6", …) the agent is currently running on.
+// Claude Code's statusline JSON carries it (model.display_name) on
+// every render, so the statusbar hook (`tclaude status-bar`) records
+// it onto the session row alongside the context-window snapshot. The
+// dashboard surfaces it per-agent so you can see at a glance which
+// model each agent is on. Distinct from the context-snapshot columns
+// only in that it's written unconditionally (the model is present in
+// every render, including before a turn's first API response), not
+// gated on the all-zero context guard.
+//
+// Defaults to '' — rows from before this migration, or sessions whose
+// statusbar hasn't ticked yet, read back empty, which the dashboard
+// renders as "model not reported yet" (no harness line).
+func migrateV46toV47(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 47;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v46→v47 (add sessions.model): %w", err)
+	}
 	return nil
 }
 

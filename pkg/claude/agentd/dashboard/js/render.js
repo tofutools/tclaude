@@ -5,7 +5,7 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, onlineDot, agentStatusDot, statePill, slopMachine, contextMeter,
+  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline,
 } from './helpers.js';
@@ -38,7 +38,7 @@ function memberRowHTML(m, ctx) {
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div></td>
+                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}</td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
                 <td class="name-cell">
                   <div class="rowname"><span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${esc(m.title || '(unnamed)')}</span>${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
