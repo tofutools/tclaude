@@ -48,6 +48,7 @@ func Cmd() *cobra.Command {
 			lsCmd(),
 			templatesCmd(),
 			showCmd(),
+			installCmd(),
 			statusCmd(),
 			eventsCmd(),
 			whereCmd(),
