@@ -120,17 +120,26 @@ func runShow(p *showParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
-// refLooksInvalid reports whether ref is malformed: an empty name, a dotted
-// name, or one carrying path separators — the cases the workflow package
-// rejects before any filesystem lookup. It mirrors that package's validRefName
-// over the name part (after stripping a recognised source: prefix) so the CLI
-// can return rcInvalidArg for these rather than collapsing them into
-// rcNotFound.
+// refLooksInvalid reports whether ref is a malformed single-segment reference:
+// an empty / dotted / path-separated name. It lets `show` return rcInvalidArg
+// for an obviously-bad ref instead of collapsing it into rcNotFound — matching
+// the invalid_arg vs not_found split agent.MapDaemonErrorToRC uses for the
+// daemon verbs.
+//
+// It is deliberately a touch stricter than the workflow package's validRefName
+// (it trims surrounding whitespace first), and it applies ONLY to the
+// single-segment sources (project/user/example, or a bare name). EXTERNAL
+// sources — dir:<path>, git:<url> — name a filesystem path or URL that
+// legitimately contains separators, so they are never pre-rejected here; their
+// validation (including subpath-traversal guards) is workflow.Resolve's job.
 func refLooksInvalid(ref string) bool {
 	name := ref
 	if src, rest, found := strings.Cut(ref, ":"); found {
-		switch workflow.Source(src) {
-		case workflow.SourceProject, workflow.SourceUser, workflow.SourceExample:
+		s := workflow.Source(src)
+		switch {
+		case s.IsExternal():
+			return false // dir:/git: — defer entirely to workflow.Resolve
+		case s == workflow.SourceProject || s == workflow.SourceUser || s == workflow.SourceExample:
 			name = rest
 		}
 	}

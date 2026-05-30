@@ -114,6 +114,18 @@ func TestRunShow_InvalidRef(t *testing.T) {
 	}
 }
 
+// An external dir:/git: ref names a path/URL with separators, so it must NOT be
+// pre-rejected as rcInvalidArg by refLooksInvalid — it has to reach
+// workflow.Resolve (which here can't find the template → rcNotFound). Guards the
+// JOH-12 external-source regression. (git: is not exercised — it would clone.)
+func TestRunShow_ExternalRefNotPreRejected(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	rc := runShow(&showParams{Ref: "dir:/no/such/workflow/template/dir"}, &out, &errBuf)
+	if rc == rcInvalidArg {
+		t.Fatalf("dir: ref was pre-rejected as rcInvalidArg; external refs must defer to workflow.Resolve (got rc=%d)", rc)
+	}
+}
+
 // renderTemplateList must flag a template that failed to load (Err) or carries
 // topology warnings with a ⚠ marker, rather than hiding the problem.
 func TestRenderTemplateList_FlagsErrorsAndWarnings(t *testing.T) {
