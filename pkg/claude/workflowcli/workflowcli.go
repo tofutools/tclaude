@@ -45,8 +45,16 @@ func Cmd() *cobra.Command {
 			"/v1/workflows API.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
+			lsCmd(),
 			templatesCmd(),
 			showCmd(),
+			statusCmd(),
+			eventsCmd(),
+			whereCmd(),
+			newCmd(),
+			nodeCmd(),
+			cancelCmd(),
+			rmCmd(),
 		},
 	}.ToCobra()
 }
