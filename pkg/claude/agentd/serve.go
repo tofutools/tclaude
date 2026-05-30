@@ -158,10 +158,19 @@ func runServe(p *serveParams) error {
 	// conditional so a config without an `agent` section can't leave a stale
 	// value from an earlier resolve.
 	workflowEngineEnabled = false
+	workflowAIPerInstanceCap = defaultWorkflowAIPerInstanceCap
+	workflowAIGlobalCap = defaultWorkflowAIGlobalCap
 	if cfg != nil && cfg.Agent != nil {
 		workflowEngineEnabled = cfg.Agent.WorkflowEngine
+		if c := cfg.Agent.WorkflowAIPerInstance; c != nil && *c > 0 {
+			workflowAIPerInstanceCap = *c
+		}
+		if c := cfg.Agent.WorkflowAIGlobal; c != nil && *c > 0 {
+			workflowAIGlobalCap = *c
+		}
 	}
-	slog.Info("workflows execution engine", "enabled", workflowEngineEnabled)
+	slog.Info("workflows execution engine", "enabled", workflowEngineEnabled,
+		"ai_per_instance_cap", workflowAIPerInstanceCap, "ai_global_cap", workflowAIGlobalCap)
 
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
@@ -420,6 +429,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo", handleSudo)
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
+	registerWorkflowV1Routes(mux)
 	return logRequest(mux)
 }
 

@@ -344,11 +344,57 @@ func GetWorkflowNode(instanceID int64, nodeID string) (*WorkflowNode, error) {
 	return n, err
 }
 
+// ListAssignedWorkflowNodes returns every workflow node that has a non-empty
+// assignee, across all instances, ordered by instance_id then id. The
+// /v1/workflows/where handler resolves each row's assignee to its succession
+// head (ResolveLatestConv) and keeps the rows whose head equals the caller, so
+// an assignee that has since reincarnated still resolves to the live caller.
+func ListAssignedWorkflowNodes() ([]*WorkflowNode, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT id, instance_id, node_id, label, executor_kind,
+		status, outcome, detail, output, assignee, visits,
+		started_at, finished_at, updated_at
+		FROM workflow_nodes WHERE assignee != '' ORDER BY instance_id, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*WorkflowNode
+	for rows.Next() {
+		n, err := scanWorkflowNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// CountRunningWorkflowNodesByKind returns how many nodes of the given executor
+// kind are currently `running`, across ALL instances. The workflow engine uses
+// it for the global AI-node parallelism cap: a single COUNT query gives an
+// always-fresh tally (spawns committed earlier in the same tick are visible),
+// without walking every instance's node list.
+func CountRunningWorkflowNodesByKind(executorKind string) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM workflow_nodes
+		WHERE executor_kind = ? AND status = ?`,
+		executorKind, WorkflowNodeStatusRunning).Scan(&n)
+	return n, err
+}
+
 // WorkflowNodePatch is the partial-update shape for UpdateWorkflowNode.
 // nil → leave the field unchanged. Pointer-shaped so callers can
 // distinguish "set to zero/empty" from "don't touch" — mirrors
 // UpdateCronPatch. The StartedAt/FinishedAt pointers carry a time.Time:
-// a zero value writes '' (clears the stamp), a non-zero value writes the
+// a zero value writes ” (clears the stamp), a non-zero value writes the
 // RFC3339 UTC timestamp.
 type WorkflowNodePatch struct {
 	Label        *string

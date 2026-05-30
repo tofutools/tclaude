@@ -169,6 +169,21 @@ func RunWorkflowEngineTickForTest() {
 	runWorkflowEngineTick(context.Background())
 }
 
+// SetWorkflowAICapsForTest overrides the engine's per-instance + global AI
+// auto-spawn parallelism caps for the duration of a test, so a flow test can
+// assert the cap behaviour with small, deterministic limits. Returns a restore
+// function for t.Cleanup.
+func SetWorkflowAICapsForTest(perInstance, global int) func() {
+	prevPer := workflowAIPerInstanceCap
+	prevGlobal := workflowAIGlobalCap
+	workflowAIPerInstanceCap = perInstance
+	workflowAIGlobalCap = global
+	return func() {
+		workflowAIPerInstanceCap = prevPer
+		workflowAIGlobalCap = prevGlobal
+	}
+}
+
 // WorkflowEngineAssigneeForTest exposes the engine-owner sentinel so a flow test
 // can stamp it to simulate an engine-claimed (vs human-driven) running node.
 func WorkflowEngineAssigneeForTest() string { return engineAssignee }

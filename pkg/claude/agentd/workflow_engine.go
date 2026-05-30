@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,9 +20,19 @@ import (
 //
 // Slice A scope: drive tool/program nodes end to end — interpolate the command,
 // run it, capture output into the instance vars, verify (tool/program/enum/
-// format/none), settle the node, and advance the graph. ai and human nodes are
-// left where they are (ready/awaiting) for the dashboard / Step-4 start path and
-// Step-6 slice B; the engine never auto-runs them yet.
+// format/none), settle the node, and advance the graph.
+//
+// Slice B adds the AI path (spawnReadyAINodes): a ready `ai` node on a
+// bound-group instance is auto-spawned an agent via executeSpawn (NON-BLOCKING —
+// the engine spawns and moves on; the agent works async and signals done later
+// via the node-PATCH the CLI wraps). An ai node on an UNBOUND instance, and any
+// `human` node, is still left where it is (ready/awaiting) for the dashboard /
+// Step-4 start path — the engine never force-spawns without a group, nor auto-
+// runs a human node. ai-verify (a judge agent ruling pass/fail) is a deliberate
+// carve-out, parked behind a clean seam: the engine accepts an ai node's
+// self-reported done as today (equivalent to verify.kind:none), and the judge
+// round-trip is a follow-up (it needs its own completion contract). human-verify
+// is the dashboard approve gate, unchanged.
 //
 // Opt-in: the engine is OFF unless config sets agent.workflow_engine. Auto-
 // running a template's shell commands is a real trust decision, so a fresh
@@ -71,6 +82,36 @@ var workflowNodeRunTimeout = 10 * time.Minute
 // tests flip it via SetWorkflowEngineEnabledForTest.
 var workflowEngineEnabled = false
 
+// workflowAIPerInstanceCap / workflowAIGlobalCap bound how many `ai` nodes the
+// engine auto-spawns concurrently — per instance, and across all instances. A
+// fan-out graph could otherwise spawn an agent per parallel branch (per
+// instance) or many instances could collectively spawn a swarm (global); these
+// caps keep the autonomous driver from launching agents faster than a human can
+// follow. They gate ONLY the engine's auto-spawn — the dashboard start path is
+// never blocked by them. runServe sets both from config (defaults below); tests
+// override via SetWorkflowAICapsForTest.
+//
+// LIMITATION (tracked for slice C — JOH-8 #9, stuck/SLA detection): the cap
+// counts every `running` ai node, and a running ai node clears only when its
+// agent reports done/failed via the node-PATCH. An agent that dies WITHOUT
+// reporting leaves its node `running` forever, so it counts against these caps
+// indefinitely — enough dead agents can wedge the global cap and silently stop
+// all future auto-spawns. There is no liveness/timeout reconciliation yet (the
+// startup reaper only recovers the brief claim→spawn window, not a settled live
+// node). Slice C adds the stuck-node sweep (idle/crashed-assignee detection +
+// escalation) that resets or fails such nodes; until then a wedged cap is an
+// operator-visible "stuck ai node" condition recovered by cancelling the
+// instance from the dashboard.
+const (
+	defaultWorkflowAIPerInstanceCap = 1
+	defaultWorkflowAIGlobalCap      = 8
+)
+
+var (
+	workflowAIPerInstanceCap = defaultWorkflowAIPerInstanceCap
+	workflowAIGlobalCap      = defaultWorkflowAIGlobalCap
+)
+
 // startWorkflowEngine spins up the engine in its own goroutine, ticking every
 // workflowEngineTickInterval until stop closes. Mirrors startCronScheduler:
 // a one-time reap of orphaned nodes + an immediate tick on startup (so a daemon
@@ -103,14 +144,25 @@ func startWorkflowEngine(stop <-chan struct{}) {
 // program nodes are meant to be idempotent re-runs).
 //
 // Only a node carrying the engineAssignee sentinel is reaped — that marker is
-// stamped by claimNextNode when THIS engine starts a tool/program command and
+// stamped by claimNextNode/claimNextAINode when THIS engine claims a node and
 // cleared when it settles, so it pinpoints exactly an engine corpse. A
 // tool/program node a HUMAN manually drove to running via the dashboard
 // (allowed by the PATCH path, with an empty/human assignee) is therefore NOT
-// reaped — its manual state is preserved across a restart. ai/human nodes are
-// likewise untouched: an ai node may be legitimately running with a live agent,
-// a human node is dashboard-driven. Reaping runs regardless of the engine's
-// opt-in gate: it only ever unsticks rows the engine itself created.
+// reaped — its manual state is preserved across a restart.
+//
+// This now covers ai nodes too: an ai node carries the sentinel only in the
+// brief claim→spawn→settle window (claimNextAINode marks it running+sentinel
+// before executeSpawn; settleAISpawn swaps in the real conv-id on success). A
+// crash inside that window leaves a sentinel-bearing running ai node with no
+// spawned agent yet, so reaping it back to ready is correct — the next tick
+// re-spawns. A LIVE ai node (a successfully-spawned agent) carries its conv-id
+// as the assignee, not the sentinel, so it is left alone; a human node is
+// dashboard-driven and likewise untouched. (Reaping a node WAS re-spawns: if
+// the crash landed after executeSpawn returned but before settle, the original
+// agent is orphaned in the group and a duplicate is spawned — a rare, bounded
+// cost of the same idempotent-re-run model the tool path accepts.) Reaping runs
+// regardless of the engine's opt-in gate: it only ever unsticks rows the engine
+// itself created.
 func reapOrphanedEngineNodes() {
 	insts, err := db.ListWorkflowInstances()
 	if err != nil {
@@ -198,6 +250,20 @@ func safeProcessWorkflowInstance(ctx context.Context, instanceID int64) {
 }
 
 func processWorkflowInstance(ctx context.Context, instanceID int64) {
+	// Two passes per instance. First drain the synchronous tool/program nodes
+	// (run-to-completion, possibly readying downstream ai nodes); then do a
+	// non-blocking sweep of ready ai nodes, auto-spawning agents for them. Order
+	// matters: draining tools first means a tool node that hands off to an ai
+	// node gets that ai node spawned in the SAME tick rather than the next.
+	drainRunnableToolNodes(ctx, instanceID)
+	spawnReadyAINodes(instanceID)
+}
+
+// drainRunnableToolNodes is the synchronous tool/program pass: each ready
+// tool/program node is claimed, run, verified, settled, and the graph advanced.
+// It loops so a chain of instantly-completing tool nodes drains within one tick;
+// bounded by a fuel counter so a misconfigured tight loop can't spin forever.
+func drainRunnableToolNodes(ctx context.Context, instanceID int64) {
 	const maxStepsPerTick = 100
 	for range maxStepsPerTick {
 		claim := claimNextNode(instanceID)
@@ -226,6 +292,256 @@ func processWorkflowInstance(ctx context.Context, instanceID int64) {
 		}
 	}
 	slog.Warn("workflow engine: instance hit per-tick step cap; continuing next tick", "instance", instanceID)
+}
+
+// ----- AI executor (non-blocking auto-spawn) ---------------------------------
+
+// spawnReadyAINodes is the engine's AI path. Unlike the tool drain it does NOT
+// run-and-settle the node: a ready `ai` node is auto-spawned an agent into the
+// instance's bound group (reusing executeSpawn, the same core the dashboard
+// start path uses), the node goes `running` with the spawned conv-id as its
+// assignee, and the engine MOVES ON. The agent then works asynchronously and
+// signals completion later via the node-PATCH the `tclaude workflow node … done`
+// CLI wraps, which the engine observes on a subsequent tick (it never blocks on
+// the agent's work).
+//
+// Three gates, all required:
+//   - engineMayAutoRun — the opt-in + external-source guard (an externally-
+//     sourced instance's ai nodes are left for the operator, same as tool nodes).
+//   - a BOUND group — an unbound instance has nowhere to spawn into, so its ai
+//     nodes stay `ready` for the dashboard start path; the engine never
+//     force-spawns an agent without a group.
+//   - the per-instance + global parallelism caps — so a fan-out graph (or many
+//     instances) can't launch a swarm of agents at once.
+//
+// Each spawn is claim→spawn→settle: the node is claimed SYNCHRONOUSLY under the
+// lock (marked running + the engine sentinel) — that claim is what enforces the
+// caps and prevents a double-claim — but executeSpawn + settleAISpawn then run
+// OFF the tick goroutine (goBackground). The conv-id handshake can take seconds
+// and the engine ticks on a single goroutine, so running it inline would stall
+// every OTHER instance's progress for the whole handshake. Spawning off-tick is
+// what makes the AI path genuinely "spawn and move on". A claimed node already
+// counts as running toward both caps, so the caps stay honest while the spawn is
+// in flight, and the loop naturally stops once a cap is hit (claimNextAINode
+// returns nil) — a per-instance cap of 1 claims exactly one node per tick.
+func spawnReadyAINodes(instanceID int64) {
+	// Backstop only — the per-instance cap normally bounds this far lower. A
+	// raised cap on a wide fan-out could legitimately want several; this keeps a
+	// pathological config from spinning the tick.
+	const maxSpawnsPerTick = 32
+	for range maxSpawnsPerTick {
+		claim := claimNextAINode(instanceID)
+		if claim == nil {
+			return // no eligible ai node, or a cap/gate blocks spawning
+		}
+		// claim is a fresh per-iteration variable (declared in the loop body), so
+		// capturing it in the goroutine is race-free. The node stays running +
+		// sentinel until this goroutine settles it; a failed spawn resets it to
+		// ready, so it is retried on a later TICK, not in a tight loop.
+		goBackground(func() {
+			outcome, fail := executeSpawn(claim.group, claim.params)
+			settleAISpawn(instanceID, claim, outcome, fail)
+		})
+	}
+}
+
+// aiNodeClaim is a ready ai node the engine has claimed (marked running + the
+// engine sentinel) and is about to spawn an agent for, carrying everything
+// settleAISpawn needs without re-reading mid-spawn.
+type aiNodeClaim struct {
+	nodeID string
+	group  *db.AgentGroup
+	params spawnParams
+}
+
+// claimNextAINode picks the next ready ai node eligible for auto-spawn under the
+// instance lock and claims it (running + engine sentinel), returning the snapshot
+// to spawn it. Returns nil when nothing is eligible — unbound instance, gate
+// closed, a cap is hit, or no ready ai node. Holds the lock only for the claim;
+// the spawn itself runs lock-free in the caller.
+func claimNextAINode(instanceID int64) *aiNodeClaim {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil || inst.Status != db.WorkflowStatusRunning {
+		return nil
+	}
+	// The engine never force-spawns without a group: an unbound instance's ai
+	// nodes stay ready for the dashboard start path.
+	if inst.GroupID == 0 {
+		return nil
+	}
+	// Opt-in + external-source guard (the same chokepoint the tool path uses;
+	// it ignores the node arg).
+	if !engineMayAutoRun(inst, nil) {
+		return nil
+	}
+	g, err := db.GetAgentGroupByID(inst.GroupID)
+	if err != nil || g == nil {
+		// Bound group vanished — leave the node ready; the dashboard surfaces the
+		// dangling binding (boundGroup 400s there). Nothing for the engine to do.
+		return nil
+	}
+	nodes, err := db.ListWorkflowNodes(instanceID)
+	if err != nil {
+		slog.Warn("workflow engine: list nodes failed (ai pass)", "instance", instanceID, "error", err)
+		return nil
+	}
+
+	// Per-instance cap: count this instance's already-running ai nodes.
+	perInstance := 0
+	for _, n := range nodes {
+		if n.ExecutorKind == string(workflow.ExecAI) && n.Status == db.WorkflowNodeStatusRunning {
+			perInstance++
+		}
+	}
+	if perInstance >= workflowAIPerInstanceCap {
+		return nil
+	}
+	// Global cap: total running ai nodes across all instances. Re-queried each
+	// pass so spawns committed earlier this tick count toward it.
+	total, err := db.CountRunningWorkflowNodesByKind(string(workflow.ExecAI))
+	if err != nil {
+		slog.Warn("workflow engine: count running ai nodes failed", "instance", instanceID, "error", err)
+		return nil
+	}
+	if total >= workflowAIGlobalCap {
+		return nil
+	}
+
+	// First ready ai node in chart order.
+	var node *db.WorkflowNode
+	for _, n := range nodes {
+		if n.Status == db.WorkflowNodeStatusReady && n.ExecutorKind == string(workflow.ExecAI) {
+			node = n
+			break
+		}
+	}
+	if node == nil {
+		return nil
+	}
+
+	tmpl, terr := rebuildInstanceTemplate(inst)
+	if terr != nil || tmpl == nil || tmpl.Nodes[node.NodeID] == nil {
+		slog.Warn("workflow engine: cannot rebuild ai node def; skipping", "instance", instanceID, "node", node.NodeID, "error", terr)
+		return nil
+	}
+	def := tmpl.Nodes[node.NodeID]
+
+	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
+	if cwdErr != nil {
+		// A bad group default cwd is an operator misconfiguration; leave the node
+		// ready and log (the dashboard start path would 400 with the same error).
+		slog.Warn("workflow engine: resolve group cwd failed; leaving ai node ready",
+			"instance", instanceID, "node", node.NodeID, "group", g.Name, "error", cwdErr)
+		return nil
+	}
+
+	// Interpolate the prompt against the instance scope (params + captures) so a
+	// briefing referencing {{param}} / {{upstream.output}} resolves. Unresolved
+	// refs are left visible (logged) rather than blanked — a prompt is not shell,
+	// so the risk is prompt-injection, not command execution.
+	initMsg, missing := instanceScope(inst).Interpolate(strings.TrimSpace(def.Executor.Prompt))
+	if len(missing) > 0 {
+		slog.Warn("workflow engine: ai node prompt has unresolved refs",
+			"instance", instanceID, "node", node.NodeID, "missing", missing)
+	}
+	if initMsg != "" && !isValidInitialMessage(initMsg) {
+		slog.Warn("workflow engine: ai node prompt is not a valid initial message; spawning without it",
+			"instance", instanceID, "node", node.NodeID)
+		initMsg = ""
+	}
+
+	// Claim it. Marking it running + the engine sentinel (the same marker the
+	// tool path uses) is what makes a crash mid-spawn recoverable: the startup
+	// reaper resets a sentinel-bearing running node back to ready, so the next
+	// tick re-spawns. Once settleAISpawn swaps in the real conv-id assignee the
+	// reaper leaves it alone (a live agent's node is not an engine corpse).
+	running := db.WorkflowNodeStatusRunning
+	startedAt := time.Now()
+	owner := engineAssignee
+	if _, err := db.UpdateWorkflowNode(instanceID, node.NodeID,
+		db.WorkflowNodePatch{Status: &running, StartedAt: &startedAt, Assignee: &owner}); err != nil {
+		slog.Warn("workflow engine: claim ai node (mark running) failed", "instance", instanceID, "node", node.NodeID, "error", err)
+		return nil
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: node.NodeID,
+		Kind: db.WorkflowEventNodeStarted, Message: "engine: spawning agent for ai node"})
+
+	return &aiNodeClaim{
+		nodeID: node.NodeID,
+		group:  g,
+		params: spawnParams{
+			Name:           def.Executor.Agent,
+			Role:           def.Executor.Agent,
+			Descr:          "workflow " + strconv.FormatInt(instanceID, 10) + " · " + node.Label,
+			InitialMessage: initMsg,
+			Cwd:            cwd,
+			GroupContext:   g.DefaultContext,
+		},
+	}
+}
+
+// settleAISpawn finishes an ai-node claim after executeSpawn ran (off the tick
+// goroutine). It re-acquires the instance lock, re-reads fresh, and applies the
+// result only if the claim is still valid (instance running, node still the
+// running one WE claimed — sentinel-assigned). On success it swaps the engine
+// sentinel for the spawned conv-id, leaving the node `running` for the live agent
+// to drive to completion. On spawn failure it resets the node to `ready` so a
+// later tick retries. If the claim was invalidated (a concurrent cancel/delete,
+// or the node moved) the spawned agent — if any — is now an orphan member of the
+// group: that is surfaced in a log, not torn down (we don't fight the human's
+// cancel).
+func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, fail *spawnFailure) {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil || inst.Status != db.WorkflowStatusRunning {
+		if outcome != nil {
+			slog.Warn("workflow engine: ai spawn finished after instance left running; agent orphaned in group",
+				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
+		}
+		return
+	}
+	node, err := db.GetWorkflowNode(instanceID, claim.nodeID)
+	if err != nil || node == nil || node.Status != db.WorkflowNodeStatusRunning || node.Assignee != engineAssignee {
+		// A manual settle / cancel moved the node while we spawned — discard.
+		if outcome != nil {
+			slog.Warn("workflow engine: ai node moved during spawn; spawned agent orphaned in group",
+				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
+		}
+		return
+	}
+
+	if fail != nil {
+		// Spawn failed — reset to ready (drop the sentinel + the premature start
+		// stamp) so a later tick retries rather than the node hanging running.
+		ready := db.WorkflowNodeStatusReady
+		cleared := ""
+		var noStart time.Time
+		_, _ = db.UpdateWorkflowNode(instanceID, claim.nodeID,
+			db.WorkflowNodePatch{Status: &ready, Assignee: &cleared, StartedAt: &noStart})
+		_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: claim.nodeID,
+			Kind: db.WorkflowEventNodeReady, Message: "engine: ai spawn failed, will retry: " + fail.Msg})
+		slog.Warn("workflow engine: ai spawn failed; node reset to ready",
+			"instance", instanceID, "node", claim.nodeID, "error", fail.Msg)
+		return
+	}
+
+	// Success — hand the node to the live agent: swap the sentinel for its
+	// conv-id. The node stays `running`; the agent settles it later via the
+	// node-PATCH the CLI wraps, which authorises an assignee to settle its own
+	// node (so the conv-id MUST be in place before the agent can report done).
+	convID := outcome.ConvID
+	if _, err := db.UpdateWorkflowNode(instanceID, claim.nodeID,
+		db.WorkflowNodePatch{Assignee: &convID}); err != nil {
+		slog.Warn("workflow engine: record ai assignee failed", "instance", instanceID, "node", claim.nodeID, "error", err)
+		return
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: claim.nodeID,
+		Kind: db.WorkflowEventNodeStarted, Message: "engine: spawned " + convID + " into group " + claim.group.Name})
 }
 
 // nodeClaim is a node the engine has moved ready→running and is about to execute,
