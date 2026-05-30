@@ -334,6 +334,13 @@ Resumed after the travel pause. **PR #230 merged** into `agent-workflows` (squas
 blind cold review of the final diff (verdict: merge as-is, only LOW findings).
 Steps 4 & 5 unblocked and re-briefed against the **real** contract below.
 
+**`main` merged in** (PR #232, merge commit `6f5aaa4`): main's PR #231 (`sessions.model`)
+collided with our workflows migration on **v47**. Resolved by keeping main's v47
+canonical (it's deployed/already-run) and renumbering the workflows tables to **v48**
+(`migrateV47toV48`; current max schema version = 48). Kept as a true merge commit so the
+rollup PR #225 (agent-workflows→main) stays clean. Steps 4 & 5 rebase onto this base.
+(`wf-db-schema` was pruned by the operator, so a fresh `wf-main-merge` agent did this.)
+
 **Track for Step 6 (engine), from the #230 cold review — not blockers now:**
 - **Concurrency:** the node-PATCH read-modify-write has no per-instance lock; fine
   for today's single-human dashboard, but the engine will be the concurrent driver
