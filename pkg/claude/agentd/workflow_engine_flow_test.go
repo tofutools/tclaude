@@ -438,6 +438,9 @@ func TestWorkflowEngine_AINodeAutoSpawnsIntoBoundGroup(t *testing.T) {
 	id := wfCreateInGroup(t, mux, "project:aifirst", "", nil, "squad")
 
 	agentd.RunWorkflowEngineTickForTest()
+	// The spawn runs off the tick goroutine (goBackground); drain it before
+	// asserting on the spawned conv-id / group membership.
+	agentd.WaitForBackgroundForTest()
 
 	conv := assertRunningAIAssignee(t, id, "plan")
 
@@ -548,8 +551,11 @@ func TestWorkflowEngine_AIPerInstanceCap(t *testing.T) {
 	mux := agentd.BuildDashboardHandlerForTest()
 	id := wfCreateInGroup(t, mux, "project:aifanout", "", nil, "squad")
 
-	// Cap = 1: one tick spawns exactly one of {a, b}; the other stays ready.
+	// Cap = 1: one tick spawns exactly one of {a, b}; the other stays ready. The
+	// claim that enforces the cap is synchronous, but the spawn settles off-tick,
+	// so drain it before asserting on group membership.
 	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
 	running, ready := countAIStatuses(t, id, "a", "b")
 	assert.Equal(t, 1, running, "per-instance cap 1 → exactly one ai node running")
 	assert.Equal(t, 1, ready, "the capped-out ai node stays ready")
@@ -557,6 +563,7 @@ func TestWorkflowEngine_AIPerInstanceCap(t *testing.T) {
 
 	// A second tick at cap 1 still spawns nothing more (one already running).
 	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
 	running, ready = countAIStatuses(t, id, "a", "b")
 	assert.Equal(t, 1, running, "cap still holds across ticks")
 	assert.Equal(t, 1, ready)
@@ -564,6 +571,7 @@ func TestWorkflowEngine_AIPerInstanceCap(t *testing.T) {
 	// Raise the cap to 2 and tick: the second ai node now spawns.
 	agentd.SetWorkflowAICapsForTest(2, 8)
 	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
 	running, _ = countAIStatuses(t, id, "a", "b")
 	assert.Equal(t, 2, running, "raising the cap lets the second ai node spawn")
 	assert.Len(t, f.ListGroupMembers("squad"), 2, "second agent spawned after the cap was raised")
@@ -595,6 +603,7 @@ func TestWorkflowEngine_AIGlobalCap(t *testing.T) {
 	id2 := wfCreateInGroup(t, mux, "project:aionly", "two", nil, "squad")
 
 	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
 
 	r1, _ := countAIStatuses(t, id1, "plan")
 	r2, _ := countAIStatuses(t, id2, "plan")

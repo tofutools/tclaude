@@ -112,11 +112,23 @@ func handleV1WorkflowsByID(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "forbidden", "only the human or the bound-group owner may delete a workflow")
 				return
 			}
-			if err := db.DeleteWorkflowInstance(id); err != nil {
-				writeError(w, http.StatusInternalServerError, "io", "delete: "+err.Error())
+			// Serialise the delete against any in-flight drive on this instance
+			// (the engine's spawn/settle, a node-PATCH's advance) under the SAME
+			// per-instance lock the mutating handlers take — exactly as the
+			// dashboard DELETE twin does. Without it a delete could wipe the rows
+			// mid read-modify-write, and dropping the map entry while another
+			// goroutine still holds the mutex would let a fresh caller mint a
+			// SECOND mutex for the same id, breaking the mutual exclusion.
+			unlock := lockWorkflowInstance(id)
+			delErr := db.DeleteWorkflowInstance(id)
+			if delErr == nil {
+				workflowInstanceLocks.Delete(id) // row is gone; drop the now-unreachable mutex
+			}
+			unlock()
+			if delErr != nil {
+				writeError(w, http.StatusInternalServerError, "io", "delete: "+delErr.Error())
 				return
 			}
-			workflowInstanceLocks.Delete(id)
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method", "GET or DELETE on /v1/workflows/{id}")

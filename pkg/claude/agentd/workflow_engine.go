@@ -90,6 +90,18 @@ var workflowEngineEnabled = false
 // follow. They gate ONLY the engine's auto-spawn — the dashboard start path is
 // never blocked by them. runServe sets both from config (defaults below); tests
 // override via SetWorkflowAICapsForTest.
+//
+// LIMITATION (tracked for slice C — JOH-8 #9, stuck/SLA detection): the cap
+// counts every `running` ai node, and a running ai node clears only when its
+// agent reports done/failed via the node-PATCH. An agent that dies WITHOUT
+// reporting leaves its node `running` forever, so it counts against these caps
+// indefinitely — enough dead agents can wedge the global cap and silently stop
+// all future auto-spawns. There is no liveness/timeout reconciliation yet (the
+// startup reaper only recovers the brief claim→spawn window, not a settled live
+// node). Slice C adds the stuck-node sweep (idle/crashed-assignee detection +
+// escalation) that resets or fails such nodes; until then a wedged cap is an
+// operator-visible "stuck ai node" condition recovered by cancelling the
+// instance from the dashboard.
 const (
 	defaultWorkflowAIPerInstanceCap = 1
 	defaultWorkflowAIGlobalCap      = 8
@@ -302,14 +314,16 @@ func drainRunnableToolNodes(ctx context.Context, instanceID int64) {
 //   - the per-instance + global parallelism caps — so a fan-out graph (or many
 //     instances) can't launch a swarm of agents at once.
 //
-// Each spawn is claim→spawn→settle like the tool path: the node is claimed under
-// the lock (marked running + the engine sentinel), executeSpawn runs LOCK-FREE
-// (its conv-id handshake can take seconds — holding the instance lock across it
-// would block a dashboard cancel/delete, the slice-A H1 hazard), then the result
-// is settled under the lock. The loop spawns more than one node only when the
-// caps allow it (a wide fan-out under a raised cap); it stops on the first
-// failed/invalidated claim so a persistently-failing spawn retries next tick
-// rather than spinning.
+// Each spawn is claim→spawn→settle: the node is claimed SYNCHRONOUSLY under the
+// lock (marked running + the engine sentinel) — that claim is what enforces the
+// caps and prevents a double-claim — but executeSpawn + settleAISpawn then run
+// OFF the tick goroutine (goBackground). The conv-id handshake can take seconds
+// and the engine ticks on a single goroutine, so running it inline would stall
+// every OTHER instance's progress for the whole handshake. Spawning off-tick is
+// what makes the AI path genuinely "spawn and move on". A claimed node already
+// counts as running toward both caps, so the caps stay honest while the spawn is
+// in flight, and the loop naturally stops once a cap is hit (claimNextAINode
+// returns nil) — a per-instance cap of 1 claims exactly one node per tick.
 func spawnReadyAINodes(instanceID int64) {
 	// Backstop only — the per-instance cap normally bounds this far lower. A
 	// raised cap on a wide fan-out could legitimately want several; this keeps a
@@ -320,10 +334,14 @@ func spawnReadyAINodes(instanceID int64) {
 		if claim == nil {
 			return // no eligible ai node, or a cap/gate blocks spawning
 		}
-		outcome, fail := executeSpawn(claim.group, claim.params)
-		if !settleAISpawn(instanceID, claim, outcome, fail) {
-			return // spawn failed or the claim was invalidated — retry next tick
-		}
+		// claim is a fresh per-iteration variable (declared in the loop body), so
+		// capturing it in the goroutine is race-free. The node stays running +
+		// sentinel until this goroutine settles it; a failed spawn resets it to
+		// ready, so it is retried on a later TICK, not in a tight loop.
+		goBackground(func() {
+			outcome, fail := executeSpawn(claim.group, claim.params)
+			settleAISpawn(instanceID, claim, outcome, fail)
+		})
 	}
 }
 
@@ -465,18 +483,17 @@ func claimNextAINode(instanceID int64) *aiNodeClaim {
 	}
 }
 
-// settleAISpawn finishes an ai-node claim after executeSpawn ran lock-free. It
-// re-acquires the instance lock, re-reads fresh, and applies the result only if
-// the claim is still valid (instance running, node still the running one WE
-// claimed — sentinel-assigned). On success it swaps the engine sentinel for the
-// spawned conv-id, leaving the node `running` for the live agent to drive to
-// completion. On spawn failure it resets the node to `ready` so a later tick
-// retries. If the claim was invalidated (a concurrent cancel/delete, or the node
-// moved) the spawned agent — if any — is now an orphan member of the group: that
-// is surfaced in a log, not torn down (we don't fight the human's cancel).
-// Returns true only on a clean success, so the caller keeps spawning under the
-// cap; false stops the per-tick loop.
-func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, fail *spawnFailure) bool {
+// settleAISpawn finishes an ai-node claim after executeSpawn ran (off the tick
+// goroutine). It re-acquires the instance lock, re-reads fresh, and applies the
+// result only if the claim is still valid (instance running, node still the
+// running one WE claimed — sentinel-assigned). On success it swaps the engine
+// sentinel for the spawned conv-id, leaving the node `running` for the live agent
+// to drive to completion. On spawn failure it resets the node to `ready` so a
+// later tick retries. If the claim was invalidated (a concurrent cancel/delete,
+// or the node moved) the spawned agent — if any — is now an orphan member of the
+// group: that is surfaced in a log, not torn down (we don't fight the human's
+// cancel).
+func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, fail *spawnFailure) {
 	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
 
@@ -486,7 +503,7 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 			slog.Warn("workflow engine: ai spawn finished after instance left running; agent orphaned in group",
 				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
 		}
-		return false
+		return
 	}
 	node, err := db.GetWorkflowNode(instanceID, claim.nodeID)
 	if err != nil || node == nil || node.Status != db.WorkflowNodeStatusRunning || node.Assignee != engineAssignee {
@@ -495,7 +512,7 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 			slog.Warn("workflow engine: ai node moved during spawn; spawned agent orphaned in group",
 				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
 		}
-		return false
+		return
 	}
 
 	if fail != nil {
@@ -510,7 +527,7 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 			Kind: db.WorkflowEventNodeReady, Message: "engine: ai spawn failed, will retry: " + fail.Msg})
 		slog.Warn("workflow engine: ai spawn failed; node reset to ready",
 			"instance", instanceID, "node", claim.nodeID, "error", fail.Msg)
-		return false
+		return
 	}
 
 	// Success — hand the node to the live agent: swap the sentinel for its
@@ -521,11 +538,10 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 	if _, err := db.UpdateWorkflowNode(instanceID, claim.nodeID,
 		db.WorkflowNodePatch{Assignee: &convID}); err != nil {
 		slog.Warn("workflow engine: record ai assignee failed", "instance", instanceID, "node", claim.nodeID, "error", err)
-		return false
+		return
 	}
 	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: claim.nodeID,
 		Kind: db.WorkflowEventNodeStarted, Message: "engine: spawned " + convID + " into group " + claim.group.Name})
-	return true
 }
 
 // nodeClaim is a node the engine has moved ready→running and is about to execute,
