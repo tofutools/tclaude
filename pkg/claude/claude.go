@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/task"
 	"github.com/tofutools/tclaude/pkg/claude/usage"
 	"github.com/tofutools/tclaude/pkg/claude/web"
+	"github.com/tofutools/tclaude/pkg/claude/workflowcli"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -44,6 +45,7 @@ func Cmd() *cobra.Command {
 			task.Cmd(),
 			agent.Cmd(),
 			agentd.Cmd(),
+			workflowcli.Cmd(),
 		},
 		RunFunc: func(params *session.NewParams, cmd *cobra.Command, args []string) {
 			if err := session.RunNew(params); err != nil {
