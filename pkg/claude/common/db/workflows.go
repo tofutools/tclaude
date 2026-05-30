@@ -43,6 +43,7 @@ const (
 	WorkflowEventNodeApproved       = "node_approved"        // human-verify gate: approved (settles done + advances)
 	WorkflowEventNodeRejected       = "node_rejected"        // human-verify gate: rejected (recorded, no advance)
 	WorkflowEventNodeAwaitingVerify = "node_awaiting_verify" // ai-verify: executor done, judge round-trip pending
+	WorkflowEventHandoff            = "handoff"              // engine delivered a predecessor's output to a bound successor's inbox (JOH-40)
 )
 
 // WorkflowInstance is a row in workflow_instances — one instantiation of

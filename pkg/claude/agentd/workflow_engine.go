@@ -281,11 +281,13 @@ func processWorkflowInstance(ctx context.Context, instanceID int64) {
 	// Passes per instance, ordered so a chain advances within one tick where it
 	// can. (1) drain synchronous tool/program nodes (may ready downstream ai
 	// nodes); (2) auto-spawn ready ai-executor nodes (workers); (3) spawn judges
-	// for nodes parked in awaiting_verify by an ai verify.kind; (4) sweep stuck
+	// for nodes parked in awaiting_verify by an ai verify.kind; (4) deliver
+	// predecessor output to each bound successor's inbox (JOH-40); (5) sweep stuck
 	// nodes whose responsible agent is gone, freeing their cap slot.
 	drainRunnableToolNodes(ctx, instanceID)
 	spawnReadyAINodes(instanceID)
 	spawnReadyVerifyJudges(instanceID)
+	deliverReadyHandoffs(instanceID)
 	sweepStuckAINodes(instanceID)
 }
 
@@ -906,6 +908,245 @@ func sweepStuckAINodes(instanceID int64) {
 		slog.Warn("workflow engine: failed stuck ai node",
 			"instance", instanceID, "node", n.NodeID, "status", n.Status, "assignee", n.Assignee)
 	}
+}
+
+// ----- handoffs as inbox messages (JOH-40) -----------------------------------
+
+// workflowHandoffSender is the from_conv stamped on engine-delivered handoff
+// messages. A predecessor node's agent conv is cleared the moment the node
+// settles (settleWorkflowNodeDone/Failed), and tool/program/human predecessors
+// never had an agent at all, so there is no live predecessor conv to attribute
+// the handoff to — the synthetic sender names the engine as the deliverer. It
+// resolves to no title (titleFor → ""), so the recipient's `inbox read` renders
+// the raw id; the message subject + body name the actual predecessor node and
+// workflow, which is the meaningful attribution. Reuses the engineAssignee
+// sentinel so one "<workflow-engine>" identity covers both node.assignee and the
+// handoff from_conv.
+const workflowHandoffSender = engineAssignee
+
+// deliverReadyHandoffs is the engine's inbox-handoff pass (JOH-40). When a node
+// settles and the graph advances, its captured output is delivered to each
+// downstream successor's BOUND agent as a normal inbox message (+ a tmux nudge),
+// so a workflow's data-flow is visible agent-to-agent traffic over tclaude's
+// existing inbox rather than a hidden side channel.
+//
+// It is a reconciliation pass, NOT an inline hook on advance: each tick it
+// re-derives the work from SQLite, so it holds no in-memory state and is correct
+// across daemon restarts, late agent binding, and joins — the same stateless
+// idiom as the rest of the engine. For every successor node that has a LIVE
+// bound agent (status running, a real conv assignee — not empty, not the engine
+// sentinel) it walks that node's settled direct predecessors (done/failed — a
+// skipped not-taken branch has nothing to hand off) and delivers one handoff per
+// predecessor not yet delivered to THIS agent.
+//
+// A handoff fires only along a TAKEN edge: predecessor P hands to successor S
+// iff the P→S edge was followed given P's recorded outcome (workflow.EdgeTaken —
+// the same rule the advance uses). So a node that settled `pass` but whose only
+// edge into S is a `|fail|` branch never hands to S, even though it is `done` and
+// S became ready via another (joinAny) predecessor — data flows only where the
+// graph actually routed it.
+//
+// Idempotency is a per-(predNode→succNode@succConv) marker appended to
+// workflow_events (kind "handoff"). The marker is written BEFORE the inbox row,
+// so the failure modes collapse to at-most-once: a crash (or an insert error)
+// between marker and message yields a missed handoff — recoverable, the agent
+// can pull state via `tclaude workflow show` — never a duplicate, which is the
+// invariant the design exists to protect. A re-derivation (next tick) or an
+// engine restart (markers persist in SQLite) re-runs the pass and the marker
+// suppresses the resend; a successor RE-bound under a NEW conv (a future loop
+// iteration, a reaper respawn) keys on the new conv and correctly gets a fresh
+// handoff.
+//
+// Joins fall out for free: a bound join-successor has N taken-edge predecessors,
+// so it receives N independent handoff messages — one per upstream branch.
+//
+// Runs under the per-instance lock (consistent with the other passes); the nudge
+// goes out via nudgeIfAlive — the same out-of-sandbox tmux delivery the
+// cross-agent message path uses. A successor whose agent is offline still gets
+// the durable inbox row (read on its next launch); only the live nudge is
+// skipped. Gated by engineMayAutoRun, so an engine-off / external instance emits
+// nothing.
+func deliverReadyHandoffs(instanceID int64) {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil || inst.Status != db.WorkflowStatusRunning {
+		return
+	}
+	if !engineMayAutoRun(inst, nil) {
+		return
+	}
+	nodes, err := db.ListWorkflowNodes(instanceID)
+	if err != nil {
+		slog.Warn("workflow engine: list nodes failed (handoff pass)", "instance", instanceID, "error", err)
+		return
+	}
+	tmpl, _ := rebuildInstanceTemplate(inst)
+	if tmpl == nil {
+		return
+	}
+
+	byID := make(map[string]*db.WorkflowNode, len(nodes))
+	for _, n := range nodes {
+		byID[n.NodeID] = n
+	}
+	// Taken in-edges per successor: each is a (predecessor → this node) edge that
+	// was actually followed given the predecessor's settled outcome. Deduped on
+	// predecessor (a node could reach a successor by >1 edge; one handoff suffices).
+	takenPreds := map[string][]string{}
+	seen := map[string]map[string]bool{}
+	for _, e := range tmpl.Edges {
+		pred := byID[e.From]
+		// Only a settled-with-output predecessor hands off: a still-live one has
+		// yet to produce its result, a skipped not-taken branch never will.
+		if pred == nil ||
+			(pred.Status != db.WorkflowNodeStatusDone && pred.Status != db.WorkflowNodeStatusFailed) {
+			continue
+		}
+		if !workflow.EdgeTaken(e, pred.Outcome) {
+			continue // data did not flow along this edge
+		}
+		if seen[e.To] == nil {
+			seen[e.To] = map[string]bool{}
+		}
+		if seen[e.To][e.From] {
+			continue
+		}
+		seen[e.To][e.From] = true
+		takenPreds[e.To] = append(takenPreds[e.To], e.From)
+	}
+
+	for _, succ := range nodes {
+		// Recipient must be a live, bound agent actively working the node.
+		if succ.Status != db.WorkflowNodeStatusRunning {
+			continue
+		}
+		toConv := succ.Assignee
+		if toConv == "" || toConv == engineAssignee {
+			continue // unbound, or an engine claim still in flight
+		}
+		preds := takenPreds[succ.NodeID]
+		if len(preds) == 0 {
+			continue
+		}
+		// One read of this successor's audit events serves every predecessor's
+		// idempotency check (instead of re-querying per predecessor).
+		delivered := deliveredHandoffMarkers(instanceID, succ.NodeID)
+		if delivered == nil {
+			continue // read error already logged; skip to avoid a double-send
+		}
+		for _, predID := range preds {
+			marker := handoffMarker(predID, succ.NodeID, toConv)
+			if delivered[marker] {
+				continue
+			}
+			// Marker first (see the at-most-once rationale on deliverReadyHandoffs):
+			// a crash between this and the insert costs a recoverable miss, never a
+			// duplicate. Record it locally too so a later predecessor this pass can't
+			// double-send before the next read.
+			if _, err := db.AppendWorkflowEvent(&db.WorkflowEvent{
+				InstanceID: instanceID, NodeID: succ.NodeID, Kind: db.WorkflowEventHandoff,
+				Message: marker,
+			}); err != nil {
+				slog.Warn("workflow engine: handoff marker write failed; skipping to avoid double-send",
+					"instance", instanceID, "from", predID, "to", succ.NodeID, "error", err)
+				continue
+			}
+			delivered[marker] = true
+
+			subject, body := buildHandoffMessage(inst, byID[predID], succ)
+			msgID, err := db.InsertAgentMessage(&db.AgentMessage{
+				GroupID:      inst.GroupID,
+				FromConv:     workflowHandoffSender,
+				ToConv:       toConv,
+				Subject:      subject,
+				Body:         body,
+				ToRecipients: []string{toConv},
+			})
+			if err != nil {
+				// The marker is already written, so this handoff won't retry — a
+				// recoverable miss, consistent with the at-most-once choice.
+				slog.Warn("workflow engine: handoff insert failed (marked; will not retry)",
+					"instance", instanceID, "from", predID, "to", succ.NodeID, "error", err)
+				continue
+			}
+			nudgeIfAlive(msgID, toConv)
+			slog.Info("workflow engine: delivered handoff",
+				"instance", instanceID, "from", predID, "to", succ.NodeID, "conv", toConv, "msg", msgID)
+		}
+	}
+}
+
+// handoffMarker is the idempotency key for one predecessor→successor handoff to
+// a specific bound agent, stored as the message of a workflow_events(kind=handoff)
+// row. Including the successor conv-id means a successor re-bound to a NEW agent
+// (a loop iteration, a respawn) gets a fresh handoff rather than being suppressed.
+func handoffMarker(predID, succID, toConv string) string {
+	return predID + "->" + succID + "@" + toConv
+}
+
+// deliveredHandoffMarkers returns the set of handoff-marker strings already
+// recorded for one successor node, or nil on a read error (the caller skips the
+// node rather than risk a double-send — a missed handoff is recoverable via
+// `tclaude workflow show`, a duplicate spams the inbox). A non-nil empty map
+// means "no handoff delivered yet".
+func deliveredHandoffMarkers(instanceID int64, succID string) map[string]bool {
+	events, err := db.ListWorkflowEvents(instanceID, succID)
+	if err != nil {
+		slog.Warn("workflow engine: handoff marker lookup failed; skipping to avoid double-send",
+			"instance", instanceID, "node", succID, "error", err)
+		return nil
+	}
+	out := make(map[string]bool, len(events))
+	for _, e := range events {
+		if e.Kind == db.WorkflowEventHandoff {
+			out[e.Message] = true
+		}
+	}
+	return out
+}
+
+// buildHandoffMessage assembles the subject + body of a predecessor→successor
+// handoff: orientation (which workflow/instance, which upstream node finished
+// with what outcome, which node the recipient owns) then the predecessor's
+// captured output, tail-capped so a chatty build log can't blow past the inbox.
+// Plain prose — the recipient is an agent reading its inbox, not a shell — so no
+// interpolation/escaping is needed beyond the cap (the output is already the
+// captured final value).
+func buildHandoffMessage(inst *db.WorkflowInstance, pred, succ *db.WorkflowNode) (subject, body string) {
+	id := strconv.FormatInt(inst.ID, 10)
+	predLabel := pred.Label
+	if predLabel == "" {
+		predLabel = pred.NodeID
+	}
+	succLabel := succ.Label
+	if succLabel == "" {
+		succLabel = succ.NodeID
+	}
+	subject = fmt.Sprintf("[workflow %s] handoff: %s → %s", id, pred.NodeID, succ.NodeID)
+
+	outcome := pred.Outcome
+	if outcome == "" {
+		outcome = "done"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Workflow #%s", id)
+	if name := strings.TrimSpace(inst.TemplateName); name != "" {
+		fmt.Fprintf(&b, " (%s)", name)
+	}
+	b.WriteString(" handoff.\n\n")
+	fmt.Fprintf(&b, "Upstream node %q (%s) finished with outcome %q.\n", predLabel, pred.NodeID, outcome)
+	fmt.Fprintf(&b, "You are working node %q (%s).\n\n", succLabel, succ.NodeID)
+	if out := strings.TrimSpace(pred.Output); out != "" {
+		fmt.Fprintf(&b, "--- output of %s ---\n", pred.NodeID)
+		b.WriteString(tailCapBytes(out, 8192))
+		b.WriteString("\n")
+	} else {
+		fmt.Fprintf(&b, "(node %s reported no captured output.)\n", pred.NodeID)
+	}
+	fmt.Fprintf(&b, "\nFull instance state: tclaude workflow show %s", id)
+	return subject, b.String()
 }
 
 // nodeClaim is a node the engine has moved ready→running and is about to execute,

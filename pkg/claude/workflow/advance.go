@@ -105,7 +105,7 @@ func Advance(t *Template, settledID, outcome string, state map[string]NodeRunSta
 	// 1. Taken edges → ready successors, in chart order, deduped, join-gated.
 	readySet := map[string]bool{}
 	for _, e := range t.OutEdges(settledID) {
-		if !edgeTaken(e, outcome) || readySet[e.To] {
+		if !EdgeTaken(e, outcome) || readySet[e.To] {
 			continue
 		}
 		if st(e.To) != NodePending {
@@ -130,10 +130,12 @@ func Advance(t *Template, settledID, outcome string, state map[string]NodeRunSta
 	return res
 }
 
-// edgeTaken reports whether an outgoing edge is followed for the given outcome.
-// A labeled edge is taken when its label equals the outcome; an unlabeled edge
-// is the success path, taken only on OutcomePass.
-func edgeTaken(e Edge, outcome string) bool {
+// EdgeTaken reports whether an edge is followed for the given outcome of its
+// source node. A labeled edge is taken when its label equals the outcome; an
+// unlabeled edge is the success path, taken only on OutcomePass. Exported so the
+// engine's handoff pass can ask "did data actually flow along this edge?" using
+// the same rule that drives the advance, rather than re-deriving it.
+func EdgeTaken(e Edge, outcome string) bool {
 	if e.Label == "" {
 		return outcome == OutcomePass
 	}
