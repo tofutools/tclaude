@@ -358,6 +358,38 @@ climbs (memory `po-context-reincarnate`).
 
 ---
 
+## ✎ PO RESUME — corrections to the handoff above (2026-05-30 ~15:35)
+
+New PO instance (`8ce5ef43`) re-derived state on-wire. The handoff block above is
+mostly right but has **two errors — trust this section over it:**
+
+- **"PR #233 is fabricated" is WRONG.** PR **#233 is real**: Step 5
+  (`wf-dashboard-tab`, e01d3f10), base `agent-workflows`, **OPEN / non-draft /
+  MERGEABLE-CLEAN**, head `481c775` (branch `workflows-dashboard-tab`, pushed).
+  Created 13:32, ~2h *before* the handoff — so it existed at handoff time; the
+  dying PO mis-stated it. Step 5 reported done (msg #70): front-end only, **touches
+  ZERO shared .go files**, gates green locally, ran its own cold review. Independent
+  of Step 4 — no merge-order dep.
+- **`origin/agent-workflows` tip is `1ce2d28`**, not `aeec048` (the handoff doc
+  commit got pushed). Local == origin, clean.
+
+**Verified state at resume:**
+- **Step 5 / PR #233** — OPEN, ready. CodeRabbit check SUCCESS but **reviews:0 =
+  skip, not a review.** PO launched an independent blind cold review + fresh
+  build/test/lint on head `481c775` (running). Clean → squash-merge into
+  `agent-workflows`. Note: `ci.yml` only runs on PRs→`main`, so GitHub won't gate
+  an `agent-workflows`-targeted PR (same as #227–#233) — **local gates are the
+  authority.**
+- **Step 4 / `wf-group-integration` (878d3cd5)** — still **NOT on origin, no PR**
+  (re-confirmed via `git ls-remote` + `gh`). PO pinged it (msg #72) to rebase onto
+  `1ce2d28`, push, open a PR into `agent-workflows`, and carry the #54 cross-dep
+  (`warnings[]` on `dashboardWorkflowTemplate` + the GET detail; expose
+  `executor.Agent` as `agent` in `workflowNodeJSON`). Awaiting its PR #.
+- When BOTH 4 & 5 land → monitoring MVP complete → tell the operator it's testable
+  (their checkpoint for rollup PR #225).
+
+---
+
 ## ▶ RESUMED — Step 3 merged; Steps 4 & 5 active (2026-05-30)
 
 Resumed after the travel pause. **PR #230 merged** into `agent-workflows` (squash
