@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"maps"
 	"strconv"
@@ -91,17 +92,11 @@ var workflowEngineEnabled = false
 // never blocked by them. runServe sets both from config (defaults below); tests
 // override via SetWorkflowAICapsForTest.
 //
-// LIMITATION (tracked for slice C — JOH-8 #9, stuck/SLA detection): the cap
-// counts every `running` ai node, and a running ai node clears only when its
-// agent reports done/failed via the node-PATCH. An agent that dies WITHOUT
-// reporting leaves its node `running` forever, so it counts against these caps
-// indefinitely — enough dead agents can wedge the global cap and silently stop
-// all future auto-spawns. There is no liveness/timeout reconciliation yet (the
-// startup reaper only recovers the brief claim→spawn window, not a settled live
-// node). Slice C adds the stuck-node sweep (idle/crashed-assignee detection +
-// escalation) that resets or fails such nodes; until then a wedged cap is an
-// operator-visible "stuck ai node" condition recovered by cancelling the
-// instance from the dashboard.
+// A `running` ai node (worker) and an `awaiting_verify` ai-verify node (judge)
+// both count toward the global cap and clear only when settled. An agent that
+// dies WITHOUT reporting would otherwise pin its node — and its cap slot —
+// forever; sweepStuckAINodes (the SLA sweep, below) is what releases such a slot,
+// so a few dead agents can no longer silently wedge auto-spawn.
 const (
 	defaultWorkflowAIPerInstanceCap = 1
 	defaultWorkflowAIGlobalCap      = 8
@@ -111,6 +106,17 @@ var (
 	workflowAIPerInstanceCap = defaultWorkflowAIPerInstanceCap
 	workflowAIGlobalCap      = defaultWorkflowAIGlobalCap
 )
+
+// workflowAINodeSLA bounds how long an engine ai node may sit with NO progress
+// before sweepStuckAINodes fails it to release its cap slot. It is the MED-C
+// backstop: a worker whose agent crashed without reporting, a judge that died
+// mid-verdict, a node parked in awaiting_verify that the cap starved of a judge —
+// all stop advancing their updated_at, so once idle past this window AND with no
+// live responsible agent they are failed (routing on_fail / the |fail| edge).
+// Generous on purpose: it must not kill a legitimately slow-but-live agent (those
+// are exempted by the liveness check regardless), only reap genuinely stuck rows.
+// Tests shrink it via SetWorkflowAINodeSLAForTest.
+var workflowAINodeSLA = 15 * time.Minute
 
 // startWorkflowEngine spins up the engine in its own goroutine, ticking every
 // workflowEngineTickInterval until stop closes. Mirrors startCronScheduler:
@@ -250,13 +256,15 @@ func safeProcessWorkflowInstance(ctx context.Context, instanceID int64) {
 }
 
 func processWorkflowInstance(ctx context.Context, instanceID int64) {
-	// Two passes per instance. First drain the synchronous tool/program nodes
-	// (run-to-completion, possibly readying downstream ai nodes); then do a
-	// non-blocking sweep of ready ai nodes, auto-spawning agents for them. Order
-	// matters: draining tools first means a tool node that hands off to an ai
-	// node gets that ai node spawned in the SAME tick rather than the next.
+	// Passes per instance, ordered so a chain advances within one tick where it
+	// can. (1) drain synchronous tool/program nodes (may ready downstream ai
+	// nodes); (2) auto-spawn ready ai-executor nodes (workers); (3) spawn judges
+	// for nodes parked in awaiting_verify by an ai verify.kind; (4) sweep stuck
+	// nodes whose responsible agent is gone, freeing their cap slot.
 	drainRunnableToolNodes(ctx, instanceID)
 	spawnReadyAINodes(instanceID)
+	spawnReadyVerifyJudges(instanceID)
+	sweepStuckAINodes(instanceID)
 }
 
 // drainRunnableToolNodes is the synchronous tool/program pass: each ready
@@ -544,6 +552,338 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 		Kind: db.WorkflowEventNodeStarted, Message: "engine: spawned " + convID + " into group " + claim.group.Name})
 }
 
+// ----- ai-verify judge round-trip (JOH-35) -----------------------------------
+
+// spawnReadyVerifyJudges is the engine's ai-verify pass. A node reaches
+// awaiting_verify when its executor is done but its definition-of-done is an AI
+// judge (verify.kind: ai): an ai-executor node parks there on its worker's
+// done-report (parkNodeForAIVerify), a tool/program node via the slice-A
+// RunVerifier Defer. Both CLEAR the assignee, so an awaiting_verify node with an
+// EMPTY assignee is "ready to judge". This pass spawns a short-lived judge agent
+// into the bound group, hands it the interpolated Verify.Prompt + the node's
+// reported output, and sets the node's assignee to the judge conv-id. The judge
+// then reports its verdict through the SAME node-PATCH the worker used — `done`
+// (pass) settles the node + advances, `fail` settles it failed — authorised
+// because the judge is now the node's assignee ("assignee = currently-responsible
+// actor": worker while running, judge while awaiting_verify). The worker can no
+// longer settle it, so it can't self-approve.
+//
+// Same claim→spawn→settle shape as spawnReadyAINodes (locked claim, off-tick
+// spawn). The claim only stamps the assignee — the node stays awaiting_verify —
+// and the empty→sentinel→conv-id assignee progression both prevents a
+// double-judge and counts the judge toward the global agent cap while in flight.
+func spawnReadyVerifyJudges(instanceID int64) {
+	const maxJudgesPerTick = 32 // backstop; the global cap normally bounds this lower
+	for range maxJudgesPerTick {
+		claim := claimNextVerifyJudge(instanceID)
+		if claim == nil {
+			return
+		}
+		// claim is a fresh per-iteration variable, race-free to capture. The node
+		// stays awaiting_verify + sentinel until this goroutine settles it; a failed
+		// spawn clears the sentinel so a later TICK retries (not a tight loop).
+		goBackground(func() {
+			outcome, fail := executeSpawn(claim.group, claim.params)
+			settleJudgeSpawn(instanceID, claim, outcome, fail)
+		})
+	}
+}
+
+// verifyJudgeClaim is an awaiting_verify ai-verify node the engine has claimed
+// (assignee = engine sentinel) and is about to spawn a judge for.
+type verifyJudgeClaim struct {
+	nodeID string
+	group  *db.AgentGroup
+	params spawnParams
+}
+
+// claimNextVerifyJudge picks the next awaiting_verify ai-verify node with no
+// judge yet (empty assignee) under the instance lock and claims it (assignee =
+// sentinel), returning the snapshot to spawn the judge. Returns nil when nothing
+// is eligible — unbound/closed gate, the global agent cap is hit, or no such node.
+func claimNextVerifyJudge(instanceID int64) *verifyJudgeClaim {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil || inst.Status != db.WorkflowStatusRunning {
+		return nil
+	}
+	// ai-verify only runs on a bound, auto-runnable instance — same gate as the
+	// worker spawn. On an unbound/engine-off instance the node never parks here
+	// (the worker's done settles directly), so this is belt-and-suspenders.
+	if inst.GroupID == 0 || !engineMayAutoRun(inst, nil) {
+		return nil
+	}
+	g, err := db.GetAgentGroupByID(inst.GroupID)
+	if err != nil || g == nil {
+		return nil
+	}
+	nodes, err := db.ListWorkflowNodes(instanceID)
+	if err != nil {
+		slog.Warn("workflow engine: list nodes failed (verify pass)", "instance", instanceID, "error", err)
+		return nil
+	}
+	tmpl, terr := rebuildInstanceTemplate(inst)
+	if terr != nil || tmpl == nil {
+		slog.Warn("workflow engine: cannot rebuild template (verify pass); skipping", "instance", instanceID, "error", terr)
+		return nil
+	}
+
+	// Global agent cap: workers (running ai) + judges (awaiting_verify with an
+	// assignee) share the budget so the two passes can't collectively oversubscribe.
+	workers, err := db.CountRunningWorkflowNodesByKind(string(workflow.ExecAI))
+	if err != nil {
+		slog.Warn("workflow engine: count running ai nodes failed (verify pass)", "instance", instanceID, "error", err)
+		return nil
+	}
+	judges, err := db.CountAwaitingVerifyAssignedNodes()
+	if err != nil {
+		slog.Warn("workflow engine: count in-flight judges failed", "instance", instanceID, "error", err)
+		return nil
+	}
+	if workers+judges >= workflowAIGlobalCap {
+		return nil
+	}
+
+	// First awaiting_verify node wanting an ai judge with no judge yet: empty
+	// assignee = ready to judge; sentinel = a judge is being spawned; a conv-id =
+	// a judge is already assigned (waiting on its verdict).
+	var node *db.WorkflowNode
+	for _, n := range nodes {
+		if n.Status == db.WorkflowNodeStatusAwaitingVerify && n.Assignee == "" && nodeWantsAIVerify(tmpl, n.NodeID) {
+			node = n
+			break
+		}
+	}
+	if node == nil {
+		return nil
+	}
+	def := tmpl.Nodes[node.NodeID]
+
+	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
+	if cwdErr != nil {
+		slog.Warn("workflow engine: resolve group cwd failed; leaving node awaiting_verify",
+			"instance", instanceID, "node", node.NodeID, "group", g.Name, "error", cwdErr)
+		return nil
+	}
+
+	// Interpolate the judge's criteria against the instance scope, then assemble
+	// the brief (criteria + the node's reported output + the exact report command).
+	criteria, missing := instanceScope(inst).Interpolate(strings.TrimSpace(def.Verify.Prompt))
+	if len(missing) > 0 {
+		slog.Warn("workflow engine: verify prompt has unresolved refs",
+			"instance", instanceID, "node", node.NodeID, "missing", missing)
+	}
+	prompt := buildVerifyJudgePrompt(instanceID, node.NodeID, node.Label, criteria, node.Output)
+	if !isValidInitialMessage(prompt) {
+		// Per-part capping keeps this rare, but never spawn a judge with a
+		// malformed brief (it would have no criteria / no report command). Leave the
+		// node for the stuck sweep or a dashboard action.
+		slog.Warn("workflow engine: judge prompt is not a valid initial message; leaving node awaiting_verify",
+			"instance", instanceID, "node", node.NodeID)
+		return nil
+	}
+
+	// Claim: stamp the engine sentinel as the assignee (node stays
+	// awaiting_verify). A crash mid-spawn leaves a sentinel-bearing awaiting_verify
+	// node, recovered by the stuck-node sweep (it has no live agent).
+	owner := engineAssignee
+	if _, err := db.UpdateWorkflowNode(instanceID, node.NodeID, db.WorkflowNodePatch{Assignee: &owner}); err != nil {
+		slog.Warn("workflow engine: claim verify node failed", "instance", instanceID, "node", node.NodeID, "error", err)
+		return nil
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: node.NodeID,
+		Kind: db.WorkflowEventNodeAwaitingVerify, Message: "engine: spawning ai-verify judge"})
+
+	return &verifyJudgeClaim{
+		nodeID: node.NodeID,
+		group:  g,
+		params: spawnParams{
+			Name:           "verifier",
+			Role:           "verifier",
+			Descr:          "workflow " + strconv.FormatInt(instanceID, 10) + " · verify " + node.Label,
+			InitialMessage: prompt,
+			Cwd:            cwd,
+			GroupContext:   g.DefaultContext,
+		},
+	}
+}
+
+// settleJudgeSpawn finishes a judge claim after executeSpawn ran off the tick
+// goroutine. Re-reads fresh under the lock and applies the result only if the
+// claim is still valid (instance running, node still awaiting_verify + sentinel).
+// On success it records the judge conv-id as the assignee (the node stays
+// awaiting_verify until the judge reports its verdict via node-PATCH). On spawn
+// failure it clears the sentinel back to empty so a later tick retries. A claim
+// invalidated by a concurrent cancel/delete orphans the spawned judge — logged,
+// not torn down.
+func settleJudgeSpawn(instanceID int64, claim *verifyJudgeClaim, outcome *spawnOutcome, fail *spawnFailure) {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil || inst.Status != db.WorkflowStatusRunning {
+		if outcome != nil {
+			slog.Warn("workflow engine: judge spawn finished after instance left running; judge orphaned in group",
+				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
+		}
+		return
+	}
+	node, err := db.GetWorkflowNode(instanceID, claim.nodeID)
+	if err != nil || node == nil || node.Status != db.WorkflowNodeStatusAwaitingVerify || node.Assignee != engineAssignee {
+		if outcome != nil {
+			slog.Warn("workflow engine: verify node moved during judge spawn; judge orphaned in group",
+				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
+		}
+		return
+	}
+
+	if fail != nil {
+		// Spawn failed — clear the sentinel back to empty (node stays
+		// awaiting_verify) so a later tick retries.
+		cleared := ""
+		_, _ = db.UpdateWorkflowNode(instanceID, claim.nodeID, db.WorkflowNodePatch{Assignee: &cleared})
+		_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: claim.nodeID,
+			Kind: db.WorkflowEventNodeAwaitingVerify, Message: "engine: judge spawn failed, will retry: " + fail.Msg})
+		slog.Warn("workflow engine: judge spawn failed; node left awaiting_verify",
+			"instance", instanceID, "node", claim.nodeID, "error", fail.Msg)
+		return
+	}
+
+	// Success — the judge is now the node's responsible actor. node-PATCH's
+	// assignee path authorises its done/fail verdict; the original worker can no
+	// longer settle (it's no longer the assignee), so it can't self-approve.
+	convID := outcome.ConvID
+	if _, err := db.UpdateWorkflowNode(instanceID, claim.nodeID, db.WorkflowNodePatch{Assignee: &convID}); err != nil {
+		slog.Warn("workflow engine: record judge assignee failed", "instance", instanceID, "node", claim.nodeID, "error", err)
+		return
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: claim.nodeID,
+		Kind: db.WorkflowEventNodeAwaitingVerify, Message: "engine: ai-verify judge " + convID + " assigned"})
+}
+
+// buildVerifyJudgePrompt assembles a judge agent's task brief: the (interpolated)
+// acceptance criteria, the node's reported output, and the EXACT report command
+// for each verdict. The embedded criteria + output are byte-capped so the brief
+// always fits MaxInitialMessageBytes with the report commands intact — a judge
+// must never be spawned without its instructions.
+func buildVerifyJudgePrompt(instanceID int64, nodeID, label, criteria, output string) string {
+	id := strconv.FormatInt(instanceID, 10)
+	var b strings.Builder
+	b.WriteString("You are an independent verification judge for workflow ")
+	b.WriteString(id)
+	b.WriteString(`, node "`)
+	b.WriteString(label)
+	b.WriteString("\".\n\n")
+	if strings.TrimSpace(criteria) != "" {
+		b.WriteString("Acceptance criteria:\n")
+		b.WriteString(headCapBytes(criteria, 4096))
+		b.WriteString("\n\n")
+	}
+	if strings.TrimSpace(output) != "" {
+		b.WriteString("The node's reported output:\n")
+		b.WriteString(tailCapBytes(output, 8192))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Judge whether the work meets the criteria — inspect the workspace if you need to confirm. ")
+	b.WriteString("Then report your verdict by running EXACTLY ONE command:\n")
+	fmt.Fprintf(&b, "  PASS -> tclaude workflow node %s %s done\n", id, nodeID)
+	fmt.Fprintf(&b, "  FAIL -> tclaude workflow node %s %s fail\n", id, nodeID)
+	b.WriteString("Run one of those, then stop. Do NOT do the node's work yourself — only verify it.")
+	return b.String()
+}
+
+// headCapBytes keeps the first max bytes of s (criteria reads top-down), with a
+// trailing marker when it truncated. tailCapBytes keeps the LAST max bytes (a
+// command's verdict/result is at the end), line-clean, with a leading marker.
+func headCapBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	head := s[:max]
+	if nl := strings.LastIndexByte(head, '\n'); nl > 0 {
+		head = head[:nl]
+	}
+	return head + "\n[…truncated…]"
+}
+
+func tailCapBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	tail := s[len(s)-max:]
+	if nl := strings.IndexByte(tail, '\n'); nl >= 0 && nl+1 < len(tail) {
+		tail = tail[nl+1:]
+	}
+	return "[…truncated…]\n" + tail
+}
+
+// ----- stuck-node sweep (MED-C / JOH-8 #9) -----------------------------------
+
+// sweepStuckAINodes fails engine ai nodes that are wedged: a `running` ai
+// (worker) or an `awaiting_verify` ai-verify node (judge / parked-awaiting-judge)
+// that has had NO progress for workflowAINodeSLA AND has no live responsible
+// agent. Such a node would otherwise sit forever holding a parallelism-cap slot
+// — the MED-C hazard — so the sweep fails it (routing on_fail / the |fail| edge),
+// releasing the slot. It is the one rule covering every wedge mode: a crashed
+// worker, a judge that died mid-verdict, AND a node the cap starved of a judge
+// (empty assignee → trivially "no live agent") all stop advancing updated_at and
+// fall past the SLA.
+//
+// Two guards keep it from killing healthy work: a node with a spawn/claim in
+// flight (sentinel assignee) is skipped (its off-tick goroutine settles within
+// executeSpawn's timeout), and a node whose assignee still has a running session
+// is exempt — the engine never reaps a live agent's node, only one with no actor.
+// (A hung-but-online agent is therefore NOT auto-reaped; that remains an
+// operator cancel, by design.) Runs under the per-instance lock; the liveness
+// check is DB-only (convHasRunningSession) so no subprocess runs under the lock.
+func sweepStuckAINodes(instanceID int64) {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil || inst.Status != db.WorkflowStatusRunning {
+		return
+	}
+	nodes, err := db.ListWorkflowNodes(instanceID)
+	if err != nil {
+		return
+	}
+	tmpl, _ := rebuildInstanceTemplate(inst)
+	if tmpl == nil {
+		return
+	}
+	now := time.Now()
+	for _, n := range nodes {
+		// Only engine ai nodes: a running ai-executor (worker) or an
+		// awaiting_verify ai-verify node (judge / parked-awaiting-judge).
+		isWorker := n.Status == db.WorkflowNodeStatusRunning && n.ExecutorKind == string(workflow.ExecAI)
+		isVerify := n.Status == db.WorkflowNodeStatusAwaitingVerify && nodeWantsAIVerify(tmpl, n.NodeID)
+		if !isWorker && !isVerify {
+			continue
+		}
+		// A spawn/claim is in flight (sentinel) — leave it; the off-tick goroutine
+		// settles it within executeSpawn's timeout.
+		if n.Assignee == engineAssignee {
+			continue
+		}
+		// Idle = time since the node last changed (claim / capture / park / assign).
+		if now.Sub(n.UpdatedAt) < workflowAINodeSLA {
+			continue
+		}
+		// Exempt a node whose responsible agent is still alive — never reap a
+		// working agent's node, only one with no live actor.
+		if n.Assignee != "" && convHasRunningSession(n.Assignee) {
+			continue
+		}
+		settleWorkflowNodeFailed(inst, n.NodeID, tmpl,
+			"ai node idle past SLA with no live agent (status "+n.Status+")", now)
+		slog.Warn("workflow engine: failed stuck ai node",
+			"instance", instanceID, "node", n.NodeID, "status", n.Status, "assignee", n.Assignee)
+	}
+}
+
 // nodeClaim is a node the engine has moved ready→running and is about to execute,
 // carrying the snapshot it needs to run + settle without re-reading mid-exec.
 type nodeClaim struct {
@@ -638,9 +978,16 @@ func settleClaimedNode(instanceID int64, claim *nodeClaim, exec workflow.ExecRes
 	captureNodeOutput(inst, claim.def, claim.nodeID, exec.Output)
 
 	if verdict.Defer {
-		// tool/program never defer verification (only human/ai do); guard anyway.
+		// A tool/program node whose verify.kind is ai or human defers its verdict
+		// (RunVerifier returns Defer for those). Park it in awaiting_verify AND
+		// clear the engine-owner sentinel the claim stamped: an empty assignee on
+		// an awaiting_verify node is the "ready to verify" marker — the ai-verify
+		// judge pass claims it, and a human-verify node is left for the dashboard
+		// approve gate. (Leaving the sentinel would both miscount it as a judge in
+		// flight and confuse the manual PATCH guard.)
 		awaiting := db.WorkflowNodeStatusAwaitingVerify
-		_, _ = db.UpdateWorkflowNode(instanceID, claim.nodeID, db.WorkflowNodePatch{Status: &awaiting})
+		cleared := ""
+		_, _ = db.UpdateWorkflowNode(instanceID, claim.nodeID, db.WorkflowNodePatch{Status: &awaiting, Assignee: &cleared})
 		return false
 	}
 	if !verdict.Done {
@@ -695,6 +1042,28 @@ func nextRunnableNode(inst *db.WorkflowInstance, nodes []*db.WorkflowNode) *db.W
 // against a future caller that reaches the dispatch without the tick's guard.
 func engineMayAutoRun(inst *db.WorkflowInstance, _ *db.WorkflowNode) bool {
 	return workflowEngineEnabled && !workflowInstanceIsExternal(inst)
+}
+
+// nodeWantsAIVerify reports whether a node's definition-of-done is an AI judge
+// (verify.kind: ai). Used by the node-PATCH path to decide whether a worker's
+// done-report parks for ai-verify, and by the engine's judge pass / stuck sweep
+// to recognise verify nodes. A nil template / missing node → false.
+func nodeWantsAIVerify(tmpl *workflow.Template, nodeID string) bool {
+	if tmpl == nil || tmpl.Nodes[nodeID] == nil {
+		return false
+	}
+	return tmpl.Nodes[nodeID].Verify.Kind == workflow.VerifyAI
+}
+
+// aiVerifyCanRun reports whether the engine is in a position to run the ai-verify
+// judge round-trip for an instance: the engine must be allowed to auto-run on it
+// (opt-in + not external) AND it must have a bound group to spawn the judge into.
+// When false, an ai-verify node does NOT park — the worker's done-report settles
+// the node directly (the slice-B self-report fallback), so a dashboard-only /
+// engine-off / unbound instance keeps completing instead of stranding the node
+// in awaiting_verify with no judge ever coming.
+func aiVerifyCanRun(inst *db.WorkflowInstance) bool {
+	return inst != nil && inst.GroupID != 0 && engineMayAutoRun(inst, nil)
 }
 
 // workflowInstanceIsExternal reports whether an instance was created from an
