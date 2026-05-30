@@ -9,7 +9,7 @@
 // daemon's peer-cred /v1/workflows* surface, so the daemon stays the single
 // owner of the SQLite store.
 //
-// See docs/plans/TODO/future/workflows-cli.md for the design.
+// See the workflow-CLI ticket on Linear (JOH-13).
 package workflowcli
 
 import (

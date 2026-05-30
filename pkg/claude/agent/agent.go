@@ -1,7 +1,7 @@
 // Package agent implements `tclaude agent` — coordination between
 // Claude Code conversations.
 //
-// See docs/plans/agent-coord.md for the design.
+// See the agent-coordination tickets on Linear (project tclaude, JOH-10).
 package agent
 
 import (

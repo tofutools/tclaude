@@ -93,16 +93,17 @@ t.Cleanup(func() { clcommon.Default = prevTmux })
 
 When discovering a new CC or tmux quirk that bites in production, **encode it in the simulator** — `cc.OnInput` for behavior, `cc.SetCommandDelay` for timing — so the regression fails the relevant flow test. Over time the sims accrete the institutional knowledge of "things that have surprised us."
 
-See `docs/plans/testharness-v2.md` for the full design.
+(The original `testharness-v2.md` design doc was removed along with `docs/plans/`; the summary above is the working reference, and the original is recoverable from git history.)
 
 ## Code review
 
 CodeRabbit reviews every PR automatically, but it is frequently rate-limited or out of usage credits. When that happens its status check still goes **green** — but as a no-review *skip*, not a review or an approval. A green CodeRabbit check does not by itself mean the PR was reviewed.
 
-When CodeRabbit has not produced a real review, do an **independent review** before merge:
+When CodeRabbit has not produced a real review, an **independent blind cold review** is still required before merge:
 
-- The reviewer must be a **fresh agent** — a local sub-agent, or a spawned review agent — that sees the PR diff **cold**: given only the diff and a review instruction, not the design backstory or how the change was built. The point is a review uncorrelated with the author's assumptions, so it catches what the author already rationalised away.
-- Triage its findings the same way CodeRabbit's would be: fix the valid ones, document any deliberate skips.
+- The reviewer must be a **fresh agent** — a local sub-agent the worker spawns — that sees the PR diff **cold**: given only the diff and a review instruction, not the design backstory or how the change was built. The point is a review uncorrelated with the author's assumptions, so it catches what the author already rationalised away.
+- **The cold review is the worker's own responsibility, part of finishing the task** — not the PO's. The worker spawns the fresh reviewer, triages its findings (fix the valid ones, document deliberate skips), gets the gates green, and brings the PR to merge-ready. The PO does **not** re-gate every PR by default; a worker reporting "cold review done, gates green, ready to merge" is trusted.
+- **When the PO steps in:** only for something **architecturally deep** (a change that reshapes a core contract / data model / concurrency or security boundary) or **fundamentally product-shaping** (alters what the feature *is* or a cross-feature decision). Those merit PO involvement — an extra pair of eyes, a design call, or holding the merge. Routine correctness/quality bugs are the worker + its cold reviewer's job to catch and fix; the PO trusting that is what keeps workers able to finish without a coordination bottleneck.
 
 ## Agent group / worker policy
 
@@ -122,7 +123,8 @@ memory** (deliberately not committed here, to avoid leaking internal locations).
 fresh agent picking up coordination should read its memory for the current Linear
 setup, and keep the board current as work ships.
 
-## Active design docs
+## Design & planning
 
-- `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
-- `docs/plans/agentd.md` — design for `tclaude agentd` HTTP-over-Unix-socket daemon. Identity comes from socket peer credentials (`LOCAL_PEERPID` / `SO_PEERCRED`), not tokens; tmux delivery happens out-of-sandbox.
+**Linear is the planning tool.** Planning and design live on the **Linear board** (team JOH, project `tclaude`) — epics, roadmap, North Star, and per-step tickets. The Workflows feature's canonical home is the **JOH-9 epic**; agent-platform work is under **JOH-10**, dashboard/UI under **JOH-11**.
+
+The in-repo `docs/plans/` directory was **removed** (2026-05-30, Linear-only). The original design docs (`workflows.md`, `agentd.md`, `agent-coord.md`, `testharness-v2.md`) are preserved in **git history** if you need the original rationale; otherwise the code + this file + the Linear tickets are the working reference.

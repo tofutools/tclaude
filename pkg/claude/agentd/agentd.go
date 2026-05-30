@@ -1,6 +1,6 @@
 // Package agentd implements `tclaude agentd` — a foreground HTTP daemon
 // that owns the agent-coordination data plane (groups, members, messages,
-// tokens, tmux delivery). See docs/plans/agentd.md for the design.
+// tokens, tmux delivery). See the agentd design on Linear (JOH-10; original in git history).
 package agentd
 
 import (

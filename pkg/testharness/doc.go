@@ -1,7 +1,7 @@
 // Package testharness provides scaffolding for end-to-end flow tests
 // that drive the agentd HTTP layer without spinning up real
 // subprocesses, tmux servers, or sockets. See
-// docs/plans/testharness-v2.md for the design rationale.
+// the Testing section in CLAUDE.md (original design in git history).
 //
 // The harness mocks at exactly two boundaries:
 //   - clcommon.TmuxCommand — replaced by TmuxSim, which owns a
