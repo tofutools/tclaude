@@ -27,6 +27,12 @@ type NewParams struct {
 	Compact          int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
 	WaitForRateLimit bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
+	// Effort sets Claude Code's reasoning effort for the session via
+	// `claude --effort <level>`. Empty (the default) omits the flag so
+	// claude uses its own default; a non-empty value is normalised and
+	// validated against clcommon.ValidEffortLevels in runNew.
+	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -98,6 +104,18 @@ func RunNew(params *NewParams) error {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
+	// Normalise + validate --effort up front so a typo errors cleanly
+	// here (and, on the daemon spawn path, surfaces as the forked
+	// `tclaude session new`'s non-zero exit) rather than being forwarded
+	// to claude. Empty stays empty → the flag is omitted entirely. The
+	// cleaned value is written back so the --join-group handler sees the
+	// normalised level too.
+	effort, err := clcommon.ValidateEffort(params.Effort)
+	if err != nil {
+		return err
+	}
+	params.Effort = effort
+
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
 			return fmt.Errorf("--join-group is not wired up in this binary")
@@ -218,17 +236,7 @@ func runNew(params *NewParams) error {
 	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
-	claudeCmd := envExports + "claude"
-	if fullConvID != "" {
-		claudeCmd += " --resume " + fullConvID
-	}
-	if len(extraArgs) > 0 {
-		quoted := make([]string, len(extraArgs))
-		for i, a := range extraArgs {
-			quoted[i] = clcommon.ShellQuoteArg(a)
-		}
-		claudeCmd += " " + strings.Join(quoted, " ")
-	}
+	claudeCmd := buildClaudeCmd(envExports, fullConvID, effort, extraArgs)
 
 	// Create tmux session with claude
 	// Use tmux new-session -d to create detached
@@ -286,4 +294,33 @@ func runNew(params *NewParams) error {
 
 	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
 	return AttachToSession(sessionID, tmuxSession, false)
+}
+
+// buildClaudeCmd assembles the `claude` invocation runNew runs inside
+// tmux: env exports + the claude binary, an optional --resume, an
+// optional --effort (appended only when a level was chosen — empty
+// leaves claude on its own default), then any post-`--` passthrough
+// args. effort is a validated single token, so it needs no quoting;
+// the passthrough args are shell-quoted individually. Kept pure so the
+// "unset omits --effort" guarantee is unit-testable without tmux.
+func buildClaudeCmd(envExports, fullConvID, effort string, extraArgs []string) string {
+	claudeCmd := envExports + "claude"
+	if fullConvID != "" {
+		claudeCmd += " --resume " + fullConvID
+	}
+	if effort != "" {
+		// Quote defensively even though effort is a validated single
+		// token: this string is handed to `sh -c`, so quoting keeps the
+		// safety local here rather than trusting every caller to have
+		// validated first. For a clean level it is a no-op.
+		claudeCmd += " --effort " + clcommon.ShellQuoteArg(effort)
+	}
+	if len(extraArgs) > 0 {
+		quoted := make([]string, len(extraArgs))
+		for i, a := range extraArgs {
+			quoted[i] = clcommon.ShellQuoteArg(a)
+		}
+		claudeCmd += " " + strings.Join(quoted, " ")
+	}
+	return claudeCmd
 }
