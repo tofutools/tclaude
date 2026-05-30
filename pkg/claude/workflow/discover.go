@@ -49,12 +49,37 @@ type candidate struct {
 	source Source
 }
 
-// Resolve loads a template by reference. A ref may be qualified
-// ("project:name", "user:name", "example:name") or bare ("name"), in which case
-// project dirs are searched first, then the user dir, then the embedded
-// examples. projectDirs are repo-local template directories (see ProjectDir).
+// Resolve loads a template by reference using default options. See ResolveOpts.
 func Resolve(ref string, projectDirs ...string) (*Template, error) {
-	source, name, qualified := splitRef(ref)
+	return ResolveOpts(ref, ResolveOptions{}, projectDirs...)
+}
+
+// ResolveOpts loads a template by reference. A ref may be:
+//
+//   - qualified local: "project:name", "user:name", "example:name"
+//   - external:        "dir:<path>" or "git:<url>[@<ref>][#<path>]"
+//   - bare "name", searched project dirs → user dir → embedded examples.
+//
+// projectDirs are repo-local template directories (see ProjectDir). dir: and
+// git: are external (third-party) sources whose specs carry path characters
+// ('/', ':', '@', '#'), so they skip the single-segment name validation; see
+// fetch.go for the git fetch/cache and the trust model. opts only affects git:.
+func ResolveOpts(ref string, opts ResolveOptions, projectDirs ...string) (*Template, error) {
+	source, spec, qualified := splitRef(ref)
+
+	// External, path-bearing sources first — their spec is a path/url, not a
+	// single-segment name, so validRefName must not run on it.
+	if qualified {
+		switch source {
+		case SourceDir:
+			return resolveDir(spec, ref)
+		case SourceGit:
+			return resolveGit(ref, opts)
+		}
+	}
+
+	// Local sources use a single-segment name.
+	name := spec
 	if err := validRefName(name); err != nil {
 		return nil, fmt.Errorf("cannot resolve %q: %w", ref, err)
 	}
@@ -194,7 +219,9 @@ func splitRef(ref string) (source Source, name string, qualified bool) {
 		return "", ref, false
 	}
 	switch Source(prefix) {
-	case SourceProject, SourceUser, SourceExample:
+	case SourceProject, SourceUser, SourceExample, SourceDir, SourceGit:
+		// For dir:/git: the "name" is the rest of the ref verbatim (a path/url
+		// spec), not a single-segment template name.
 		return Source(prefix), rest, true
 	default:
 		// Not a recognised source — treat the whole thing as a bare name.

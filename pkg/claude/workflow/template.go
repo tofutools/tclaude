@@ -153,12 +153,23 @@ const (
 	SourceProject Source = "project"
 	SourceUser    Source = "user"
 	SourceExample Source = "example"
+	SourceDir     Source = "dir" // a plain on-disk directory (external, dir:<path>)
+	SourceGit     Source = "git" // a git repo, fetched+cached (external, git:<url>...)
 )
+
+// IsExternal reports whether a template came from an external, third-party
+// source (a dir: path or a git: repo) rather than a trusted local/embedded one.
+// The execution engine and node approval gates use this seam to require
+// confirmation before running an externally-sourced tool/program node; see the
+// trust-model note in fetch.go.
+func (s Source) IsExternal() bool {
+	return s == SourceDir || s == SourceGit
+}
 
 // Template is a fully-loaded, validated workflow template.
 type Template struct {
 	Ref         string // resolved reference, e.g. "user:foo" or "example:foo"
-	Source      Source // project | user | example
+	Source      Source // project | user | example | dir | git
 	Dir         string // absolute source dir ("" for the embedded example)
 	Name        string
 	Description string
