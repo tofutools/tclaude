@@ -54,7 +54,11 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
 	if noCopyConv {
 		label = generateSpawnLabel()
-		if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
+		// "" effort: a clone deliberately does not carry the source's
+		// --effort (a launch-time claude flag, not persisted — JOH-36
+		// MVP is spawn-time pass-through). The clone starts on claude's
+		// default.
+		if err := SpawnDetachedTclaudeNew(label, cwd, ""); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),

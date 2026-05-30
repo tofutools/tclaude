@@ -537,6 +537,12 @@ type agentState struct {
 	// the status-dot tooltip. Surfaced regardless of liveness — a frozen
 	// model for an exited agent is still informative.
 	Model string `json:"model,omitempty"`
+	// EffortLevel is the reasoning-effort level the agent is running on
+	// ("low"…"max"), recorded by the statusline hook on the same row as
+	// Model. Empty until the statusbar has ticked, or when the model
+	// lacks reasoning-effort support; the dashboard appends it to the
+	// per-agent model line ("CC · O4.8 1M high") and omits it when empty.
+	EffortLevel string `json:"effort_level,omitempty"`
 	// ExitReason is why a now-offline agent's session ended: a graceful
 	// SessionEnd `reason`, or 'unexpected' when the process died with no
 	// clean shutdown (reaper-stamped). Only populated for an offline
@@ -603,6 +609,7 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		out.TokensOutput = snap.TokensOutput
 		out.ContextWindowSize = snap.ContextWindowSize
 		out.Model = snap.Model
+		out.EffortLevel = snap.EffortLevel
 	}
 	// No live tmux session — the agent's process is gone. Report it as
 	// exited rather than letting the frozen hook status (typically

@@ -20,6 +20,14 @@ type World struct {
 	HomeDir string
 	Tmux    *TmuxSim
 	CCs     *CCRegistry
+
+	// spawnEfforts records the effort string each simSpawner.SpawnNew
+	// received, keyed by the new conv-id, so a flow test can assert what
+	// effort the spawn path threaded end-to-end. The unset case ("") is
+	// recorded too. Guarded by spawnMu — spawns are sequential in flow
+	// tests, but the post-init goroutines make the mutex cheap insurance.
+	spawnMu      sync.Mutex
+	spawnEfforts map[string]string
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -36,10 +44,29 @@ func New(t *testing.T) *World {
 	t.Setenv("HOME", home)
 	db.ResetForTest()
 	return &World{
-		HomeDir: home,
-		Tmux:    newTmuxSim(),
-		CCs:     newCCRegistry(),
+		HomeDir:      home,
+		Tmux:         newTmuxSim(),
+		CCs:          newCCRegistry(),
+		spawnEfforts: map[string]string{},
 	}
+}
+
+// RecordSpawnEffort captures the effort a simSpawner.SpawnNew received,
+// keyed by the new conv-id, so a flow test can assert what effort the
+// spawn path threaded through. The unset case ("") is recorded too.
+func (w *World) RecordSpawnEffort(convID, effort string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnEfforts[convID] = effort
+}
+
+// SpawnEffort returns the effort recorded for a spawned conv-id and
+// whether a spawn for that conv was observed.
+func (w *World) SpawnEffort(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	e, ok := w.spawnEfforts[convID]
+	return e, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the

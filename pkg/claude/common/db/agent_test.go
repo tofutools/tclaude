@@ -428,6 +428,39 @@ func TestListUndeliveredAgentMessagesFor(t *testing.T) {
 	assert.Nil(t, out, "empty toConv out")
 }
 
+// TestListUndeliveredAgentMessagesForWholeSecondOrdering locks in oldest-first
+// ordering across the RFC3339Nano whole-second boundary — the macOS-CI flake
+// behind TestListUndeliveredAgentMessagesFor.
+//
+// created_at is stored as an RFC3339Nano string. A time on an exact second
+// serialises as "…:00Z" (no fraction) and, compared as text, sorts AFTER a
+// later same-second value "…:00.004Z" because '.' < 'Z'. So under
+// ORDER BY created_at the older message (id "older") comes back AFTER the newer
+// one. Ordering by id (insertion order) is correct and total. This fails
+// deterministically against the old query and passes with the fix.
+func TestListUndeliveredAgentMessagesForWholeSecondOrdering(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("alpha", "")
+
+	// older lands exactly on a second; newer is 4ms later in the SAME second.
+	whole := time.Date(2026, 5, 30, 14, 29, 0, 0, time.UTC)
+	older, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "older", CreatedAt: whole,
+	})
+	require.NoError(t, err)
+	newer, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "me", Body: "newer",
+		CreatedAt: whole.Add(4 * time.Millisecond),
+	})
+	require.NoError(t, err)
+
+	out, err := ListUndeliveredAgentMessagesFor("me")
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, older, out[0].ID, "oldest (whole-second) message must come first")
+	assert.Equal(t, newer, out[1].ID, "newer (fractional) message must come second")
+}
+
 // TestClaimAgentMessageDelivery validates the race-safe claim
 // primitive: first claim returns true, subsequent claims return
 // false without error.

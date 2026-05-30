@@ -265,11 +265,13 @@ func decodeReincarnateFollowUp(w http.ResponseWriter, r *http.Request) (string, 
 //
 //   - target is the conv being reincarnated (its identity migrates onto
 //     the new conv-id, its tmux pane is /exit-ed at the end).
+//
 //   - caller is the conv that triggered the reincarnation (recorded in
 //     the audit trail as `system:reincarnate:by=<caller>` for cross-agent,
 //     plain `system:reincarnate` when caller == target). It's also the
 //     handoff message's FromConv so the new agent sees who asked it to
 //     pick up.
+//
 //   - followUp is an optional first-turn prompt; empty means "just
 //     reincarnate, no handoff message".
 //
@@ -290,9 +292,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	}
 	cwd := oldSess.Cwd
 
-	// 2. Spawn a fresh tclaude session in the same cwd.
+	// 2. Spawn a fresh tclaude session in the same cwd. The trailing
+	// "" is the effort: reincarnation deliberately does NOT carry the
+	// predecessor's --effort, because effort is a launch-time claude
+	// flag that isn't persisted on the session (JOH-36 MVP is
+	// spawn-time pass-through; inheritance is a tracked follow-up). The
+	// successor therefore comes up on claude's own default.
 	label := generateSpawnLabel()
-	if err := SpawnDetachedTclaudeNew(label, cwd); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, cwd, ""); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return

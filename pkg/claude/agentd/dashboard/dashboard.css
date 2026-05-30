@@ -305,6 +305,10 @@ tr:hover .row-actions { opacity: 1; }
 }
 .agent-harness .harness-name { color: #6e7681; }
 .agent-harness .harness-sep { color: #484f58; margin: 0 3px; }
+/* The reasoning-effort token trails the model after a small gap, a shade
+   brighter than the surrounding harness text so the eye catches the
+   current effort level. */
+.agent-harness .harness-effort { color: #d2a8ff; margin-left: 5px; }
 tr:hover .agent-harness { color: #c9d1d9; }
 /* focus / hide are icon buttons (eye / slashed-eye) — same chip frame
    as the text buttons, just a centred SVG that inherits the button's
