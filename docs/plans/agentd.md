@@ -6,8 +6,7 @@ work in [`agent-coord.md`](agent-coord.md).
 > **Hand-off pointer:** if you (future-Claude / a different machine)
 > are picking this up cold, the live state is in
 > `pkg/claude/agentd/`. Read this doc top-to-bottom — it is the
-> source of truth for design intent. The TODO/DONE rolling list is
-> in [`agents_todo.md`](agents_todo.md).
+> source of truth for design intent.
 
 ## Why
 
@@ -303,7 +302,6 @@ target session's tmux pane.
 ```
 docs/plans/agentd.md           ← this doc
 docs/plans/agent-coord.md      ← v1 agent-coord design (still relevant)
-docs/plans/agents_todo.md      ← rolling TODO/DONE
 docs/sandbox-hardening.md      ← operator guide: sandboxing agents — what
                                  the Security model above composes with
 pkg/claude/agentd/agentd.go    ← cobra wiring for `tclaude agentd`
@@ -334,4 +332,4 @@ pkg/claude/agent/*             ← v1 CLI commands (still wired up;
   Not blocking; revisit when forks come up in practice.
 - **Federation across hosts.** Out of scope, but the design (per-host
   daemon owning local conv pool) makes a future federation layer
-  tractable. See `agents_todo.md`.
+  tractable.

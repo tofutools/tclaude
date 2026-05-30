@@ -18,7 +18,7 @@ import (
 // Bob-r-1 and persist the message there, recording the original
 // addressee in agent_messages.original_to_conv.
 //
-// Pins the gap the DONE/conv-succession-chain.md doc called out: the
+// Pins the gap the conv-succession-chain design called out: the
 // reincarnate orchestration migrates membership eagerly so title
 // lookups already resolve to the live successor, but a literal
 // conv-id reference still needs the chain-walk on send. Without this

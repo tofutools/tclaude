@@ -94,7 +94,7 @@ func (c *Config) ResolvedLogRotation() (maxSizeBytes int64, keep int) {
 	return maxSizeBytes, keep
 }
 
-// AgentConfig holds agent-coordination knobs (see agents_todo.md).
+// AgentConfig holds agent-coordination knobs.
 //
 // DefaultPermissions are granted to every agent — baseline trust the
 // human curates by hand. Per-agent overrides used to live here too,

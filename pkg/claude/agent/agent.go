@@ -1,8 +1,7 @@
 // Package agent implements `tclaude agent` — coordination between
 // Claude Code conversations.
 //
-// See docs/plans/agent-coord.md for the design and docs/plans/agents_todo.md
-// for the running todo list.
+// See docs/plans/agent-coord.md for the design.
 package agent
 
 import (
