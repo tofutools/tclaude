@@ -27,7 +27,7 @@ func ValidLinkMode(mode string) bool {
 }
 
 // AgentGroupLink is a row in agent_group_links — a directed comm edge
-// between two groups. See docs/plans/TODO/med-prio/group-links.md.
+// between two groups.
 type AgentGroupLink struct {
 	ID          int64
 	FromGroupID int64

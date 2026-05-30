@@ -170,8 +170,7 @@ This keeps the picture simple: one source of truth, atomic writes, no
 retention plumbing in v1. SQLite handles message-sized text just fine.
 
 Future: a `tclaude agent inbox prune --older-than 30d --read-only` would
-delete rows whose `read_at` is set and older than the cutoff. Tracked in
-`agents_todo.md`.
+delete rows whose `read_at` is set and older than the cutoff.
 
 ## Tmux nudge
 
@@ -234,8 +233,7 @@ Caveats inherited from `pushRenameToTmux`:
 ## Settled in v1
 
 - **Self-message refusal**: yes, hard refuse.
-- **Inbox retention**: keep forever; pruning is on the roadmap (see
-  `agents_todo.md`).
+- **Inbox retention**: keep forever; pruning is on the roadmap.
 - **Cross-project lookup**: global by default. Groups are
   project-agnostic.
 - **Multiple shared groups**: pick the first by name; deterministic.
