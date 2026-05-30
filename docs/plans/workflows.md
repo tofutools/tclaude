@@ -325,6 +325,39 @@ Steps 8–11 are sequenced at the end per the operator.
 
 Idea backlog (unscheduled): `TODO/future/workflows-ideas.md`.
 
+## ⟳ REINCARNATION HANDOFF (2026-05-30, ~15:30) — READ FIRST
+
+The previous PO instance hit context rot (fabricated a non-existent "PR #233",
+mis-attributed Step-4 progress reports to `wf-main-merge`, and replied to messages
+that were never sent). Operator authorized a reincarnate even though context was
+only 22% (~224k/1M) — the *error rate*, not the token count, was the trigger.
+**Do not trust the prior PO's recent inbox replies (#60, #61, #64, and the bogus
+"PR #233" cold-review/gate run).** Re-derive state from git + `gh` + this doc.
+
+**VERIFIED GROUND TRUTH at handoff (re-confirm before acting):**
+- `origin/agent-workflows` tip = `aeec048` (Step 3 + main merged; schema v48).
+- Open PRs: **#225** (rollup agent-workflows→main, DRAFT) and #223 (unrelated). **There is NO PR for Step 4 or Step 5 yet.**
+- **Steps 4 & 5 have real local commits but have NOT pushed / opened PRs and have NOT messaged the PO:**
+  - `wf-group-integration` (878d3cd5) — local branch `workflows-group-integration` tip `3ff97a0` "group binding, start/attach, human-approve gate (Step 4)", 1 commit ahead of `aeec048`. NOT on origin.
+  - `wf-dashboard-tab` (e01d3f10) — local branch `workflows-dashboard-tab` tip `60d4a08` "dashboard Workflows tab + live vitals overlay (Step 5)", 1 commit ahead of `aeec048`. NOT on origin.
+- `wf-main-merge` (28338c59): task DONE + merged (#232). Idle/parked. Standing owner for `pkg/claude/common/db` migration/schema work (v49+) and agent-workflows↔main lineage. **It did ZERO Step-4 work** — never route Step-4 traffic to it.
+- Other idle/parked: `wf-agentd-api` (2489beb5, owns Step 3 → will own Step 6 engine), `wf-graph-analysis2` (ebc65cd7, validator/graph context).
+
+**FIRST ACTIONS on resume:**
+1. `tclaude agent inbox ls` — handle any genuinely-new worker reports (verify sender identity; the prior PO confused senders).
+2. For Step 4 & 5: they likely just need to push their branches + open PRs into `agent-workflows`. Ping the ACTUAL agents (878d3cd5, e01d3f10) — ask them to push + open PR, or confirm status. Do NOT assume progress you haven't seen on-wire.
+3. Per step PR: independent cold review (CodeRabbit skips) + `go build/test/lint` on its head, then squash-merge via API into `agent-workflows`, `pull --rebase`, flip the roadmap row.
+4. When BOTH 4 & 5 land → monitoring MVP complete → tell the operator it's testable (their review checkpoint for PR #225).
+5. Outstanding cross-dep: Step 4 was asked (msg #54) to add `warnings[]` to `dashboardWorkflowTemplate` + the `GET /api/workflows/{id}` detail, and to expose `executor.Agent` as `agent` in `workflowNodeJSON` (Step 5 feature-detects both).
+
+**Operating discipline (the rot was process, not just tokens):** read each inbound
+message and let the result return BEFORE composing any reply — never batch a read
+with the dependent reply/action (see memory `feedback-read-before-batching`). Poll
+`tclaude agent context-info`; reincarnate well before 300k, or sooner if error rate
+climbs (memory `po-context-reincarnate`).
+
+---
+
 ## ▶ RESUMED — Step 3 merged; Steps 4 & 5 active (2026-05-30)
 
 Resumed after the travel pause. **PR #230 merged** into `agent-workflows` (squash
