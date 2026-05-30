@@ -308,9 +308,9 @@ TODO tier dirs are a secondary signal. The PO keeps `Status` current.
 | 1  | Template format + parser + example                  | `DONE/workflows-template-format.md`             | ✅ done (PR #226) | —          |
 | 2  | SQLite schema + CRUD                                 | `DONE/workflows-db-schema.md`                   | ✅ done (PR #227) | 1          |
 | 2b | Static graph analysis (validator) — *parallel*      | `DONE/workflows-graph-analysis.md`              | ✅ done (PR #228) | 1          |
-| 3  | agentd HTTP API + snapshot                          | `TODO/high-prio/workflows-agentd-api.md`        | 🔎 in review — PR #230 **open** | 1, 2       |
-| 4  | Group integration (+ live vitals, approval gates)   | `TODO/high-prio/workflows-group-integration.md` | ⏸ paused (blocked on #230) | 3          |
-| 5  | Dashboard tab (+ live vitals overlay) — *∥ with 4*  | `TODO/high-prio/workflows-dashboard-tab.md`     | ⏸ paused (blocked on #230) | 3          |
+| 3  | agentd HTTP API + snapshot                          | `DONE/workflows-agentd-api.md`                  | ✅ done (PR #230) | 1, 2       |
+| 4  | Group integration (+ live vitals, approval gates)   | `TODO/high-prio/workflows-group-integration.md` | 🔨 wip            | 3          |
+| 5  | Dashboard tab (+ live vitals overlay) — *∥ with 4*  | `TODO/high-prio/workflows-dashboard-tab.md`     | 🔨 wip            | 3          |
 | —  | **← monitoring MVP complete; operator review here** |                                                 |                   | 4, 5       |
 | 6  | Execution engine (+ stuck/SLA, inbox handoffs)      | `TODO/med-prio/workflows-execution-engine.md`   | ⏳ queued         | 1–5        |
 | 7  | External `dir:`/`git:` template sources             | `TODO/med-prio/workflows-external-sources.md`   | ⏳ queued         | 1 (+gates) |
@@ -325,41 +325,24 @@ Steps 8–11 are sequenced at the end per the operator.
 
 Idea backlog (unscheduled): `TODO/future/workflows-ideas.md`.
 
-## ⏸ PAUSED — resume state (2026-05-29, operator travelling)
+## ▶ RESUMED — Step 3 merged; Steps 4 & 5 active (2026-05-30)
 
-The PO (`agent-workflows`) paused the group mid-flight. Precise state so any
-reincarnated PO can resume without re-discovery:
+Resumed after the travel pause. **PR #230 merged** into `agent-workflows` (squash
+`0304725`) after: `wf-agentd-api` fixed two real bugs its own cold review caught
+(reachability-based `JoinAll` rewrite + terminal/re-settle guards, commit
+`72f6711`); PO re-ran gates uncached (build/test/lint all green) and ran one fresh
+blind cold review of the final diff (verdict: merge as-is, only LOW findings).
+Steps 4 & 5 unblocked and re-briefed against the **real** contract below.
 
-- **Step 3 / PR #230 is OPEN, NOT merged.** A prior (glitched) PO read wrongly
-  marked it done; corrected above. The real Step 3 code is only on branch
-  `workflows-agentd-api` (commit `758778c`). `agent-workflows` has no Step 3 code.
-- **The real Step 3 API diverged from the original plan.** It is *not* a `/v1/`
-  socket API in `workflows_api.go` with `advanceInstance`/`InstanceSnapshot`.
-  Reality: dashboard cookie-auth `/api/workflows/...` routes in
-  `pkg/claude/agentd/dashboard_workflows.go`, plus a **pure func**
-  `workflow.Advance(t, settledID, outcome, state) AdvanceResult` in
-  `pkg/claude/workflow/advance.go`. `start`/`attach` are 501-stubbed "Step 4".
-  Instance↔group binding already exists as `GroupID int64` in **schema v47** —
-  no v48 migration needed (`collectWorkflowsSnapshot` already resolves the name).
-- **Steps 4 & 5 workers were spawned on a false "Step 3 done" premise** and are
-  now **parked, told not to code**: `wf-group-integration` (878d3cd5, branch
-  `workflows-group-integration`) and `wf-dashboard-tab` (e01d3f10, branch
-  `workflows-dashboard-tab`). Both bases lack Step 3 code; both briefs carried
-  the fictional `/v1/` contract.
+**Track for Step 6 (engine), from the #230 cold review — not blockers now:**
+- **Concurrency:** the node-PATCH read-modify-write has no per-instance lock; fine
+  for today's single-human dashboard, but the engine will be the concurrent driver
+  — add a per-instance mutex / `WHERE status='pending'`-guarded update then.
+- **Manual-skip escape hatch:** a manual PATCH to `skipped`/`pending` can strand a
+  sub-tree (skip doesn't run `Advance`); consider restricting manual status to
+  running/done/failed and routing skip through cancel.
 
-**Resume checklist:**
-1. Ask `wf-agentd-api` (2489beb5) why PR #230 is still open (review? gates? did it
-   ever report done?). Get it review-ready, then merge #230 → `agent-workflows`.
-2. `git -C <worktree> pull --rebase`; flip row 3 → done.
-3. Re-brief Step 4 & Step 5 against the **real** `/api/` + `workflow.Advance`
-   contract; reuse `group_id` (no v48). Ownership split: Step 4 = workflow
-   backend in `dashboard_workflows.go`; Step 5 = front-end (HTML/JS/static + tab).
-4. Answer Step 4's open Q: what does node YAML `agent:` carry (role vs member
-   title)? — decides what `GroupSummary.Members[].Name` should hold for the
-   dashboard's node→agent vitals match. Check the template format spec.
-5. Have both workers rebase onto the merged base before resuming.
-
-**Verified recon from the parked workers (read-only, clean trees — use to re-brief):**
+**Contract recon (verified by the workers; this is what the re-briefs use):**
 - **Lists live in the main snapshot, not separate endpoints.** Step 3 adds
   `snapshotPayload.workflows` + `.workflow_templates`, served by `GET /api/snapshot`
   (the frontend already polls it every 2s). Detail = `GET /api/workflows/{id}` →
