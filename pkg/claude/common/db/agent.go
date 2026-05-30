@@ -1287,6 +1287,15 @@ func MarkAgentMessageDelivered(id int64) error {
 // whose delivered_at is still empty, oldest first. Used by the flush-
 // on-online path so messages queued while the recipient was offline
 // get nudged when they come back.
+//
+// Ordering is by id (autoincrement = insertion order), NOT created_at.
+// created_at is stored as an RFC3339Nano string and compared lexically by
+// SQLite; a time that lands exactly on a whole second serialises with no
+// fractional part ("…:00Z") and sorts AFTER a later same-second value
+// ("…:00.004Z") because '.' < 'Z'. ORDER BY created_at could therefore put a
+// newer message before an older one — the macOS-CI flake behind
+// TestListUndeliveredAgentMessagesFor. id is monotonic with insertion, giving
+// a correct, total oldest-first order independent of the timestamp format.
 func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	if toConv == "" {
 		return nil, nil
@@ -1300,7 +1309,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages
 		WHERE to_conv = ? AND delivered_at = ''
-		ORDER BY created_at ASC`
+		ORDER BY id ASC`
 	rows, err := db.Query(q, toConv)
 	if err != nil {
 		return nil, err
