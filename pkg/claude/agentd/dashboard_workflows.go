@@ -474,6 +474,18 @@ func applyWorkflowNodePatch(instanceID int64, nodeID string, body workflowNodePa
 				"node status " + strconv.Quote(s) + " is not manually settable; " +
 					"use running, done or failed (skip a branch by cancelling the instance)"}
 		}
+		// ai-verify interception: a worker reporting its node `done`, on a node
+		// whose definition-of-done is an AI judge, does NOT settle — it parks in
+		// awaiting_verify for the engine to spawn a judge (JOH-35). The park fires
+		// ONLY from `running` (the executor-done report); the judge's later verdict
+		// PATCH comes from awaiting_verify and settles for real, so there is no
+		// re-park loop. When ai-verify can't run (engine off / unbound instance) it
+		// falls through to the normal settle — the slice-B self-report fallback —
+		// so a dashboard-only flow still completes instead of stranding the node.
+		if s == db.WorkflowNodeStatusDone && node.Status == db.WorkflowNodeStatusRunning &&
+			nodeWantsAIVerify(tmpl, nodeID) && aiVerifyCanRun(inst) {
+			return parkNodeForAIVerify(instanceID, nodeID, body)
+		}
 		patch.Status = &s
 		newStatus = s
 		if s == db.WorkflowNodeStatusRunning && node.StartedAt.IsZero() {
@@ -568,6 +580,38 @@ func applyWorkflowNodePatch(instanceID int64, nodeID string, body workflowNodePa
 		"instance_status": newInstStatus,
 		"ready":           advanced.Ready,
 		"skipped":         advanced.Skipped,
+	}, nil
+}
+
+// parkNodeForAIVerify lands an ai-executor node in awaiting_verify when its
+// worker reports done but the node's verify.kind is ai — the executor is done,
+// but the definition-of-done is a judge agent the engine will spawn. It captures
+// the worker's reported output (so the judge can inspect it) and CLEARS the
+// assignee: an empty assignee on an awaiting_verify node is the engine judge
+// pass's "ready to judge" marker (the worker no longer owns the node, so it can't
+// self-approve). It does NOT advance — the node settles only on the judge's
+// verdict. The caller holds the per-instance lock.
+func parkNodeForAIVerify(instanceID int64, nodeID string, body workflowNodePatchBody) (map[string]any, *spawnFailure) {
+	awaiting := db.WorkflowNodeStatusAwaitingVerify
+	cleared := ""
+	patch := db.WorkflowNodePatch{Status: &awaiting, Assignee: &cleared}
+	if body.Output != nil {
+		patch.Output = body.Output
+	}
+	if _, err := db.UpdateWorkflowNode(instanceID, nodeID, patch); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "park for ai-verify: " + err.Error()}
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
+		InstanceID: instanceID, NodeID: nodeID, Kind: db.WorkflowEventNodeAwaitingVerify,
+		Message: "executor reported done; awaiting ai-verify judge",
+	})
+	return map[string]any{
+		"ok":              true,
+		"node_id":         nodeID,
+		"status":          awaiting,
+		"instance_status": db.WorkflowStatusRunning,
+		"ready":           []string{},
+		"skipped":         []string{},
 	}, nil
 }
 

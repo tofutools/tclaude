@@ -184,6 +184,15 @@ func SetWorkflowAICapsForTest(perInstance, global int) func() {
 	}
 }
 
+// SetWorkflowAINodeSLAForTest overrides the stuck-node sweep's SLA window so a
+// flow test can drive sweepStuckAINodes deterministically (e.g. 0 → any idle
+// node with no live agent is immediately stuck). Returns a restore function.
+func SetWorkflowAINodeSLAForTest(d time.Duration) func() {
+	prev := workflowAINodeSLA
+	workflowAINodeSLA = d
+	return func() { workflowAINodeSLA = prev }
+}
+
 // WorkflowEngineAssigneeForTest exposes the engine-owner sentinel so a flow test
 // can stamp it to simulate an engine-claimed (vs human-driven) running node.
 func WorkflowEngineAssigneeForTest() string { return engineAssignee }

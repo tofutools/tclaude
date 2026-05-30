@@ -34,14 +34,15 @@ const (
 // engine appends one per state transition; the list is open (the column
 // is free text), these are the well-known kinds the dashboard renders.
 const (
-	WorkflowEventInstanceCreated = "instance_created"
-	WorkflowEventNodeReady       = "node_ready"
-	WorkflowEventNodeStarted     = "node_started"
-	WorkflowEventNodeDone        = "node_done"
-	WorkflowEventNodeFailed      = "node_failed"
-	WorkflowEventNodeSkipped     = "node_skipped"
-	WorkflowEventNodeApproved    = "node_approved" // human-verify gate: approved (settles done + advances)
-	WorkflowEventNodeRejected    = "node_rejected" // human-verify gate: rejected (recorded, no advance)
+	WorkflowEventInstanceCreated    = "instance_created"
+	WorkflowEventNodeReady          = "node_ready"
+	WorkflowEventNodeStarted        = "node_started"
+	WorkflowEventNodeDone           = "node_done"
+	WorkflowEventNodeFailed         = "node_failed"
+	WorkflowEventNodeSkipped        = "node_skipped"
+	WorkflowEventNodeApproved       = "node_approved"        // human-verify gate: approved (settles done + advances)
+	WorkflowEventNodeRejected       = "node_rejected"        // human-verify gate: rejected (recorded, no advance)
+	WorkflowEventNodeAwaitingVerify = "node_awaiting_verify" // ai-verify: executor done, judge round-trip pending
 )
 
 // WorkflowInstance is a row in workflow_instances — one instantiation of
@@ -387,6 +388,34 @@ func CountRunningWorkflowNodesByKind(executorKind string) (int, error) {
 	err = d.QueryRow(`SELECT COUNT(*) FROM workflow_nodes
 		WHERE executor_kind = ? AND status = ?`,
 		executorKind, WorkflowNodeStatusRunning).Scan(&n)
+	return n, err
+}
+
+// CountAwaitingVerifyAssignedNodes returns how many nodes are in
+// `awaiting_verify` with a non-empty assignee, across ALL instances. The
+// workflow engine uses it to count verify-judges in flight toward the global
+// agent cap: an awaiting_verify node carries an assignee ONLY once the engine
+// has claimed/spawned a judge for it (the worker-park and the tool-verify defer
+// both CLEAR the assignee; the human-verify approve gate never assigns), so this
+// is exactly "judges currently occupying a slot". One COUNT query, always-fresh —
+// mirrors CountRunningWorkflowNodesByKind.
+//
+// The invariant has one theoretical hole: a human/owner could manually PATCH an
+// assignee onto an awaiting_verify human-verify node, which this would then
+// miscount as a judge (consuming a cap slot it can never claim, since the judge
+// pass only picks verify.kind:ai nodes). That requires deliberate operator
+// action on a non-ai-verify node and only over-counts the cap (fail-safe — it
+// throttles, never over-spawns), so it is left as a documented edge rather than
+// re-querying verify.kind (which lives in the node-def JSON, not a column).
+func CountAwaitingVerifyAssignedNodes() (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM workflow_nodes
+		WHERE status = ? AND assignee != ''`,
+		WorkflowNodeStatusAwaitingVerify).Scan(&n)
 	return n, err
 }
 

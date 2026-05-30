@@ -182,6 +182,47 @@ func TestWorkflowV1_NodePatchAuthz(t *testing.T) {
 	assert.Equal(t, "done", got.Status, "node settled done by its assignee")
 }
 
+// Scenario: the ai-verify authz contract (JOH-35). After a node is parked in
+// awaiting_verify and the engine reassigns it to a JUDGE, only the judge — the
+// node's current responsible actor — may settle the verdict; the original worker
+// (no longer the assignee) is refused, so it cannot self-approve. The judge's
+// `done` settles from awaiting_verify (the park interception only fires from
+// `running`, so there is no re-park).
+func TestWorkflowV1_AIVerifyJudgeAuthz(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(v1WfTemplate(t, "v1verify")))
+
+	const worker = "wrkr-aaaa-bbbb-cccc-7777"
+	const judge = "judg-aaaa-bbbb-cccc-8888"
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveConvWithTitle(judge, "judge")
+
+	id := v1Create(t, f, "project:v1verify", "")
+	// Model the post-park, judge-assigned state: the worker did the work, the node
+	// parked in awaiting_verify (assignee cleared), and the engine reassigned it to
+	// the judge.
+	awaiting := db.WorkflowNodeStatusAwaitingVerify
+	asgJudge := judge
+	_, err := db.UpdateWorkflowNode(id, "work", db.WorkflowNodePatch{Status: &awaiting, Assignee: &asgJudge})
+	require.NoError(t, err)
+
+	nodePath := "/v1/workflows/" + strconv.FormatInt(id, 10) + "/nodes/work"
+
+	// The original worker — no longer the assignee — cannot settle the verdict.
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch, nodePath,
+		map[string]any{"status": "done"}), worker)
+	assert.Equal(t, http.StatusForbidden, testharness.Serve(f.Mux, r).Code,
+		"the worker can't self-approve once the judge owns the node")
+
+	// The judge (current assignee) settles its verdict from awaiting_verify.
+	r = agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch, nodePath,
+		map[string]any{"status": "done"}), judge)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "judge settles its verdict; body=%s", rec.Body.String())
+	got, _ := db.GetWorkflowNode(id, "work")
+	assert.Equal(t, "done", got.Status, "judge's done verdict settles the node (no re-park from awaiting_verify)")
+}
+
 // Scenario: an agent that is the node's assignee marks it running then done —
 // the start/done flow the CLI `workflow node` verb drives.
 func TestWorkflowV1_AssigneeRunningThenDone(t *testing.T) {

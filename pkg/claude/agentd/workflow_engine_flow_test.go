@@ -627,3 +627,272 @@ func countAIStatuses(t *testing.T, id int64, nodeIDs ...string) (running, ready 
 	}
 	return running, ready
 }
+
+// ----- ai-verify judge round-trip (JOH-35) -----------------------------------
+
+// writeAIVerifyNode is an ai-executor node whose definition-of-done is an AI
+// judge (verify.kind: ai) — the worker does the work, then the engine spawns a
+// judge to rule pass/fail against `criteria`.
+func writeAIVerifyNode(agent, prompt, criteria string) string {
+	return "executor:\n  kind: ai\n  agent: " + agent + "\n  prompt: " + prompt +
+		"\nverify:\n  kind: ai\n  prompt: " + criteria + "\n"
+}
+
+// Scenario: the full ai-verify round-trip. The engine spawns a worker for a ready
+// ai+verify:ai node; the worker's done-report PARKS the node in awaiting_verify
+// (assignee cleared, no advance); the engine spawns a judge and reassigns the
+// node to it; the judge's `done` verdict settles the node and advances the graph.
+func TestWorkflowEngine_AIVerifyJudgeRoundTrip(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "verifyflow",
+		"name: verifyflow\nentry: build\n",
+		"flowchart TD\n build --> ship\n",
+		map[string]string{
+			"build": writeAIVerifyNode("worker", "do the work", "the work is correct"),
+			"ship":  "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:verifyflow", "", nil, "squad")
+
+	// Tick 1: worker spawns for the ready ai node.
+	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
+	worker := assertRunningAIAssignee(t, id, "build")
+
+	// Worker reports done → the node PARKS in awaiting_verify (not done): the
+	// definition-of-done is a judge, not the worker's say-so.
+	res := wfPatch(t, mux, id, "build", map[string]any{"status": "done"})
+	assert.Equal(t, "awaiting_verify", res.Status, "worker done-report parks for ai-verify, does not settle")
+	parked, _ := db.GetWorkflowNode(id, "build")
+	assert.Equal(t, "awaiting_verify", parked.Status)
+	assert.Empty(t, parked.Assignee, "park clears the assignee (ready-to-judge marker); worker can't self-approve")
+	assert.Equal(t, "pending", wfNodeStatuses(wfGet(t, mux, id))["ship"], "downstream still waits on the verdict")
+
+	// Tick 2: the engine spawns a judge and reassigns the node to it.
+	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
+	judged, _ := db.GetWorkflowNode(id, "build")
+	assert.Equal(t, "awaiting_verify", judged.Status, "node stays awaiting_verify until the judge rules")
+	judge := judged.Assignee
+	assert.NotEmpty(t, judge, "judge assigned as the node's current responsible actor")
+	assert.NotEqual(t, worker, judge, "the judge is a different agent than the worker")
+	assert.NotEqual(t, agentd.WorkflowEngineAssigneeForTest(), judge, "sentinel swapped for the judge conv-id")
+	var sawJudge bool
+	for _, m := range f.ListGroupMembers("squad") {
+		if m.ConvID == judge {
+			sawJudge = true
+		}
+	}
+	assert.True(t, sawJudge, "judge %q joined the bound group", judge)
+
+	// Judge rules PASS (done) — node is awaiting_verify (not running), so this
+	// settles for real and advances rather than re-parking.
+	pass := wfPatch(t, mux, id, "build", map[string]any{"status": "done"})
+	assert.Equal(t, "done", pass.Status, "judge's done verdict settles the node")
+	assert.Contains(t, pass.Ready, "ship", "verdict advances the graph to the downstream node")
+
+	// Tick 3 drains the downstream tool node → instance completes.
+	agentd.RunWorkflowEngineTickForTest()
+	d := wfGet(t, mux, id)
+	assert.Equal(t, "done", wfNodeStatuses(d)["ship"])
+	assert.Equal(t, "completed", d.Instance.Status, "instance completes via the verified path")
+}
+
+// Scenario: a judge's FAIL verdict settles the node failed (routing on_fail as
+// any failure does) — the worker's self-report does not get the final word.
+func TestWorkflowEngine_AIVerifyJudgeFail(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "verifyfail",
+		"name: verifyfail\nentry: build\n",
+		"flowchart TD\n build --> ship\n",
+		map[string]string{
+			"build": writeAIVerifyNode("worker", "do the work", "the work is correct"),
+			"ship":  "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:verifyfail", "", nil, "squad")
+
+	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
+	_ = assertRunningAIAssignee(t, id, "build")
+
+	wfPatch(t, mux, id, "build", map[string]any{"status": "done"}) // park
+	agentd.RunWorkflowEngineTickForTest()                          // judge spawns
+	agentd.WaitForBackgroundForTest()
+
+	// Judge rules FAIL.
+	fail := wfPatch(t, mux, id, "build", map[string]any{"status": "failed"})
+	assert.Equal(t, "failed", fail.Status, "judge's fail verdict fails the node")
+
+	d := wfGet(t, mux, id)
+	st := wfNodeStatuses(d)
+	assert.Equal(t, "failed", st["build"])
+	assert.Equal(t, "skipped", st["ship"], "no |fail| edge → downstream unreachable → skipped")
+	assert.Equal(t, "failed", d.Instance.Status, "instance halts failed on a failed verdict")
+}
+
+// Scenario: self-report fallback. When ai-verify can't run (engine disabled, so
+// no judge could ever spawn), a done-report on an ai+verify:ai node settles
+// directly instead of stranding it in awaiting_verify — the slice-B behaviour.
+func TestWorkflowEngine_AIVerifySelfReportFallback(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	// Engine left DISABLED — ai-verify can't run, so done must self-report.
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "verifyfallback",
+		"name: verifyfallback\nentry: build\n",
+		"flowchart TD\n build --> ship\n",
+		map[string]string{
+			"build": writeAIVerifyNode("worker", "do the work", "the work is correct"),
+			"ship":  "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:verifyfallback", "", nil, "squad")
+
+	// Manually drive the entry node running (a human start), then report done.
+	wfPatch(t, mux, id, "build", map[string]any{"status": "running"})
+	res := wfPatch(t, mux, id, "build", map[string]any{"status": "done"})
+	assert.Equal(t, "done", res.Status, "with the engine off, done self-reports (no park) — no judge would ever come")
+	assert.Contains(t, res.Ready, "ship", "the self-reported done advances the graph")
+}
+
+// Scenario: the stuck-node sweep (MED-C) fails a `running` ai node whose worker
+// died without reporting — releasing its parallelism-cap slot. Modelled by a node
+// stuck running with an assignee that has no live session, past a shrunk SLA.
+func TestWorkflowEngine_StuckRunningWorkerSwept(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+	t.Cleanup(agentd.SetWorkflowAINodeSLAForTest(0)) // any idle node with no live agent is stuck
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "stuckworker",
+		"name: stuckworker\nentry: build\n",
+		"flowchart TD\n build --> ship\n",
+		map[string]string{
+			"build": writeAINode("worker", "do the work"),
+			"ship":  "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:stuckworker", "", nil, "squad")
+
+	// Simulate a worker that was spawned then died without reporting: node running,
+	// assignee = a conv-id with no live session.
+	running := db.WorkflowNodeStatusRunning
+	dead := "dead-worker-conv"
+	_, err := db.UpdateWorkflowNode(id, "build", db.WorkflowNodePatch{Status: &running, Assignee: &dead})
+	require.NoError(t, err)
+
+	agentd.RunWorkflowEngineTickForTest()
+
+	got, err := db.GetWorkflowNode(id, "build")
+	require.NoError(t, err)
+	assert.Equal(t, "failed", got.Status, "stuck running worker (no live agent, past SLA) is swept to failed")
+}
+
+// Scenario: the cap-starvation case the PO flagged — a node parked in
+// awaiting_verify that NEVER got a live judge (global cap exhausted) is swept to
+// failed past the SLA, so it can't wedge the cap forever.
+func TestWorkflowEngine_ParkedNeverJudgedSwept(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+	t.Cleanup(agentd.SetWorkflowAINodeSLAForTest(0))
+	t.Cleanup(agentd.SetWorkflowAICapsForTest(0, 0)) // no judge can ever spawn (cap starved)
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "starved",
+		"name: starved\nentry: build\n",
+		"flowchart TD\n build --> ship\n",
+		map[string]string{
+			"build": writeAIVerifyNode("worker", "do the work", "the work is correct"),
+			"ship":  "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:starved", "", nil, "squad")
+
+	// Park the entry node in awaiting_verify with no judge (empty assignee) —
+	// exactly the state the worker-park leaves, but with the cap starving the judge.
+	awaiting := db.WorkflowNodeStatusAwaitingVerify
+	cleared := ""
+	_, err := db.UpdateWorkflowNode(id, "build", db.WorkflowNodePatch{Status: &awaiting, Assignee: &cleared})
+	require.NoError(t, err)
+
+	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
+
+	got, err := db.GetWorkflowNode(id, "build")
+	require.NoError(t, err)
+	assert.Equal(t, "failed", got.Status, "a parked-never-judged node is swept to failed, unwedging the cap")
+}
+
+// Scenario (cold-review regression): a daemon that crashed mid-judge-spawn leaves
+// a node awaiting_verify + the engine sentinel. The startup reaper must clear the
+// sentinel back to empty (ready-to-judge) so the next tick re-spawns the judge —
+// otherwise the node (and its global cap slot) would be wedged forever: the sweep
+// skips sentinels and the judge pass only claims empty-assignee nodes.
+func TestWorkflowEngine_ReapsOrphanedJudgeClaim(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "reapjudge",
+		"name: reapjudge\nentry: build\n",
+		"flowchart TD\n build --> ship\n",
+		map[string]string{
+			"build": writeAIVerifyNode("worker", "do the work", "the work is correct"),
+			"ship":  "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreateInGroup(t, mux, "project:reapjudge", "", nil, "squad")
+
+	// Simulate a crash mid-judge-spawn: node awaiting_verify, assignee = the
+	// engine sentinel (what claimNextVerifyJudge stamps before the off-tick spawn).
+	awaiting := db.WorkflowNodeStatusAwaitingVerify
+	sentinel := agentd.WorkflowEngineAssigneeForTest()
+	_, err := db.UpdateWorkflowNode(id, "build", db.WorkflowNodePatch{Status: &awaiting, Assignee: &sentinel})
+	require.NoError(t, err)
+
+	// Startup reaper clears the sentinel; status stays awaiting_verify.
+	agentd.ReapOrphanedEngineNodesForTest()
+	reaped, err := db.GetWorkflowNode(id, "build")
+	require.NoError(t, err)
+	assert.Equal(t, "awaiting_verify", reaped.Status, "executor already done — status stays awaiting_verify")
+	assert.Empty(t, reaped.Assignee, "reaper clears the crash-stranded judge sentinel (ready to re-judge)")
+
+	// Next tick re-spawns the judge against the now-empty assignee.
+	agentd.RunWorkflowEngineTickForTest()
+	agentd.WaitForBackgroundForTest()
+	rejudged, err := db.GetWorkflowNode(id, "build")
+	require.NoError(t, err)
+	assert.NotEmpty(t, rejudged.Assignee, "next tick re-spawns a judge after recovery")
+	assert.NotEqual(t, sentinel, rejudged.Assignee, "a real judge conv-id, not the sentinel")
+}

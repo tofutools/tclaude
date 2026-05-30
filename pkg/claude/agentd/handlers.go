@@ -1881,6 +1881,31 @@ func isConvOnline(convID string) bool {
 	return false
 }
 
+// convHasRunningSession is a DB-ONLY liveness signal: it reports whether any
+// session row for convID is still status=running. Unlike isConvOnline it does
+// NOT shell out to tmux (no `has-session` subprocess), so it is safe to call
+// while holding a lock — the workflow engine's stuck-node sweep uses it under
+// the per-instance lock. The trade-off is freshness: a crashed agent reads
+// `running` until the session reaper marks it exited, so this lags real tmux
+// liveness by up to a reaper tick. That lag is immaterial to the sweep, which is
+// gated by a minutes-scale SLA anyway; what matters is that an empty/sentinel
+// assignee (no agent at all) and a reaper-confirmed-dead one both read false.
+func convHasRunningSession(convID string) bool {
+	if convID == "" {
+		return false
+	}
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return false
+	}
+	for _, c := range candidates {
+		if c.Status == session.StatusRunning {
+			return true
+		}
+	}
+	return false
+}
+
 // isConvOnlineIn is the snapshot-shaped variant of isConvOnline. It
 // takes a pre-fetched alive set (e.g. from clcommon.Default.ListSessions
 // at the top of an HTTP handler) and does the per-row check via map
