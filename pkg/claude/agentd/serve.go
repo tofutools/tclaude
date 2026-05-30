@@ -420,6 +420,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo", handleSudo)
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
+	registerWorkflowV1Routes(mux)
 	return logRequest(mux)
 }
 

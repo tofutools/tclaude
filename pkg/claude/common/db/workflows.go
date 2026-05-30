@@ -344,11 +344,40 @@ func GetWorkflowNode(instanceID int64, nodeID string) (*WorkflowNode, error) {
 	return n, err
 }
 
+// ListAssignedWorkflowNodes returns every workflow node that has a non-empty
+// assignee, across all instances, ordered by instance_id then id. The
+// /v1/workflows/where handler resolves each row's assignee to its succession
+// head (ResolveLatestConv) and keeps the rows whose head equals the caller, so
+// an assignee that has since reincarnated still resolves to the live caller.
+func ListAssignedWorkflowNodes() ([]*WorkflowNode, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT id, instance_id, node_id, label, executor_kind,
+		status, outcome, detail, output, assignee, visits,
+		started_at, finished_at, updated_at
+		FROM workflow_nodes WHERE assignee != '' ORDER BY instance_id, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*WorkflowNode
+	for rows.Next() {
+		n, err := scanWorkflowNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // WorkflowNodePatch is the partial-update shape for UpdateWorkflowNode.
 // nil → leave the field unchanged. Pointer-shaped so callers can
 // distinguish "set to zero/empty" from "don't touch" — mirrors
 // UpdateCronPatch. The StartedAt/FinishedAt pointers carry a time.Time:
-// a zero value writes '' (clears the stamp), a non-zero value writes the
+// a zero value writes ” (clears the stamp), a non-zero value writes the
 // RFC3339 UTC timestamp.
 type WorkflowNodePatch struct {
 	Label        *string

@@ -69,25 +69,41 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	var body struct {
-		TemplateRef string          `json:"template_ref"`
-		Title       string          `json:"title"`
-		Params      json.RawMessage `json:"params"`
-		Group       string          `json:"group"` // optional agent-group NAME to bind; "" = unbound
-	}
+	var body workflowCreateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	res, fail := createWorkflowInstance(body)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// workflowCreateBody is the instantiate wire shape shared by the dashboard POST
+// and the /v1 socket twin.
+type workflowCreateBody struct {
+	TemplateRef string          `json:"template_ref"`
+	Title       string          `json:"title"`
+	Params      json.RawMessage `json:"params"`
+	Group       string          `json:"group"` // optional agent-group NAME to bind; "" = unbound
+}
+
+// createWorkflowInstance is the shared instantiation core: resolve + snapshot
+// the template, bind an optional group, validate required params, insert the
+// instance + all nodes (entry→ready, rest→pending), and emit the creation
+// events. Returns {id, group_id} on success or a typed *spawnFailure. The caller
+// authenticates/authorises first (dashboard cookie, or /v1 human/owner check).
+func createWorkflowInstance(body workflowCreateBody) (map[string]any, *spawnFailure) {
 	ref := strings.TrimSpace(body.TemplateRef)
 	if ref == "" {
-		http.Error(w, "template_ref is required", http.StatusBadRequest)
-		return
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "template_ref is required"}
 	}
 	tmpl, err := workflow.Resolve(ref, workflowProjectDirsFn()...)
 	if err != nil {
-		http.Error(w, "resolve template: "+err.Error(), http.StatusBadRequest)
-		return
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "resolve template: " + err.Error()}
 	}
 
 	// Optional group binding. The instance stores a soft link by group_id
@@ -98,25 +114,22 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 	if gname := strings.TrimSpace(body.Group); gname != "" {
 		g, gerr := db.GetAgentGroupByName(gname)
 		if gerr != nil {
-			http.Error(w, "lookup group: "+gerr.Error(), http.StatusInternalServerError)
-			return
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", "lookup group: " + gerr.Error()}
 		}
 		if g == nil {
-			http.Error(w, "group "+strconv.Quote(gname)+" not found "+
-				"(create it first; instantiation does not auto-create groups)", http.StatusBadRequest)
-			return
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				"group " + strconv.Quote(gname) + " not found (create it first; instantiation does not auto-create groups)"}
 		}
 		groupID = g.ID
 	}
 
 	// Params: an opaque JSON object. We only validate that every required
 	// param is present — interpolation into prompts/commands is the engine's
-	// job (Step 6). Store a canonical re-marshal so the column is clean JSON.
+	// job. Store a canonical re-marshal so the column is clean JSON.
 	params := map[string]any{}
 	if len(body.Params) > 0 {
 		if err := json.Unmarshal(body.Params, &params); err != nil {
-			http.Error(w, "params must be a JSON object: "+err.Error(), http.StatusBadRequest)
-			return
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "params must be a JSON object: " + err.Error()}
 		}
 	}
 	var missing []string
@@ -129,8 +142,7 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		http.Error(w, "missing required params: "+strings.Join(missing, ", "), http.StatusBadRequest)
-		return
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "missing required params: " + strings.Join(missing, ", ")}
 	}
 	paramsJSON, _ := json.Marshal(params)
 
@@ -151,8 +163,7 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := db.InsertWorkflowInstance(inst)
 	if err != nil {
-		http.Error(w, "create instance: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "create instance: " + err.Error()}
 	}
 
 	entry := map[string]bool{}
@@ -179,8 +190,7 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 	if err := db.InsertWorkflowNodes(id, nodes); err != nil {
 		// Roll back the instance so a failed node batch leaves no orphan.
 		_ = db.DeleteWorkflowInstance(id)
-		http.Error(w, "create nodes: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "create nodes: " + err.Error()}
 	}
 
 	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
@@ -196,7 +206,7 @@ func handleDashboardWorkflowsCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "group_id": groupID})
+	return map[string]any{"id": id, "group_id": groupID}, nil
 }
 
 // handleDashboardWorkflowsAPI dispatches the /api/workflows/{id}... surface:
@@ -281,6 +291,13 @@ func handleDashboardWorkflowsAPI(w http.ResponseWriter, r *http.Request) {
 // dashboardWorkflowDetail returns one instance with its nodes, snapshotted
 // chart, params/vars, and recent timeline — everything the detail view renders.
 func dashboardWorkflowDetail(w http.ResponseWriter, inst *db.WorkflowInstance) {
+	writeJSON(w, http.StatusOK, workflowDetailJSON(inst))
+}
+
+// workflowDetailJSON builds the full instance-detail payload (instance + mermaid
+// + params/vars + nodes + recent events + topology warnings) shared by the
+// dashboard GET and the /v1 socket twin.
+func workflowDetailJSON(inst *db.WorkflowInstance) map[string]any {
 	nodes, _ := db.ListWorkflowNodes(inst.ID)
 	events, _ := db.ListWorkflowEvents(inst.ID)
 	const maxEvents = 200
@@ -307,7 +324,7 @@ func dashboardWorkflowDetail(w http.ResponseWriter, inst *db.WorkflowInstance) {
 		warnings = append(warnings, tmpl.Analyze()...)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"instance": instanceDetailJSON(inst),
 		"mermaid":  inst.Mermaid,
 		"params":   rawJSONOrEmpty(inst.Params),
@@ -315,7 +332,7 @@ func dashboardWorkflowDetail(w http.ResponseWriter, inst *db.WorkflowInstance) {
 		"nodes":    nodeViews,
 		"events":   eventViews,
 		"warnings": warnings,
-	})
+	}
 }
 
 // dashboardWorkflowNode dispatches the per-node subroutes.
@@ -370,46 +387,70 @@ func dashboardWorkflowNode(w http.ResponseWriter, r *http.Request, inst *db.Work
 // the taken successors and skip the abandoned branches, then recomputes the
 // instance status. Events are appended for every transition.
 func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db.WorkflowInstance, node *db.WorkflowNode) {
-	unlock := lockWorkflowInstance(inst.ID)
-	defer unlock()
-	// Re-read fresh under the lock: a concurrent settle/cancel/start may have
-	// moved this node or the instance since the dispatcher fetched them, and
-	// the guards below (re-settle 409, instance-running) must see current state.
-	if fresh, _ := db.GetWorkflowInstance(inst.ID); fresh != nil {
-		inst = fresh
-	}
-	fresh, ferr := db.GetWorkflowNode(inst.ID, node.NodeID)
-	if ferr != nil {
-		http.Error(w, "lookup node: "+ferr.Error(), http.StatusInternalServerError)
-		return
-	}
-	if fresh == nil {
-		http.Error(w, "node "+node.NodeID+" not found", http.StatusNotFound)
-		return
-	}
-	node = fresh
-
-	var body struct {
-		Status   *string `json:"status"`
-		Outcome  *string `json:"outcome"`
-		Output   *string `json:"output"`
-		Assignee *string `json:"assignee"`
-	}
+	var body workflowNodePatchBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	res, fail := applyWorkflowNodePatch(inst.ID, node.NodeID, body)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// workflowNodePatchBody is the wire shape for a manual node update — shared by
+// the dashboard PATCH and the /v1 socket twin. All fields optional; a settling
+// status (done/failed) drives Advance.
+type workflowNodePatchBody struct {
+	Status   *string `json:"status"`
+	Outcome  *string `json:"outcome"`
+	Output   *string `json:"output"`
+	Assignee *string `json:"assignee"`
+}
+
+// applyWorkflowNodePatch is the shared core behind both the dashboard PATCH and
+// the /v1 socket node-PATCH: it takes the (already authorised) patch, applies it
+// under the per-instance lock with all the guards (re-settle 409, manual-drive
+// status allowlist, engine-sentinel rejection, outcome validation), settles +
+// advances the graph on a done/failed, and recomputes the instance status. It
+// returns the JSON result map on success, or a *spawnFailure (reused as a
+// typed status+message carrier) the caller maps onto its transport's error.
+//
+// Authorisation is the CALLER's job (done before this) — the dashboard's cookie
+// gate, or the /v1 twin's assignee-or-human/owner check — because the two
+// surfaces authenticate differently; this core only enforces state correctness.
+func applyWorkflowNodePatch(instanceID int64, nodeID string, body workflowNodePatchBody) (map[string]any, *spawnFailure) {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	// Re-read fresh under the lock: a concurrent settle/cancel/start may have
+	// moved this node or the instance since the caller fetched them, and the
+	// guards below must see current state.
+	inst, ierr := db.GetWorkflowInstance(instanceID)
+	if ierr != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "lookup instance: " + ierr.Error()}
+	}
+	if inst == nil {
+		return nil, &spawnFailure{http.StatusNotFound, "not_found", "workflow not found"}
+	}
+	node, ferr := db.GetWorkflowNode(instanceID, nodeID)
+	if ferr != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "lookup node: " + ferr.Error()}
+	}
+	if node == nil {
+		return nil, &spawnFailure{http.StatusNotFound, "not_found", "node " + nodeID + " not found"}
 	}
 
 	// Re-settling an already-terminal node is rejected: it would append a
 	// duplicate node_done/failed event and re-run Advance over now-stale state
 	// (successors already moved past pending), so the second advance is a
-	// no-op at best and a wrong skip at worst. A human who needs to redo a node
-	// goes through the (future) re-open path, not a second settle. A patch that
-	// only touches output/assignee on a settled node is still allowed.
+	// no-op at best and a wrong skip at worst. A patch that only touches
+	// output/assignee on a settled node is still allowed.
 	if isSettledWorkflowNodeStatus(node.Status) && body.Status != nil &&
 		isSettledWorkflowNodeStatus(strings.TrimSpace(*body.Status)) {
-		http.Error(w, "node "+node.NodeID+" is already "+node.Status+"; cannot re-settle", http.StatusConflict)
-		return
+		return nil, &spawnFailure{http.StatusConflict, "conflict", "node " + nodeID + " is already " + node.Status + "; cannot re-settle"}
 	}
 
 	tmpl, _ := rebuildInstanceTemplate(inst) // nil only on an unparsable snapshot
@@ -420,8 +461,7 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 	if body.Status != nil {
 		s := strings.TrimSpace(*body.Status)
 		if !validWorkflowNodeStatus(s) {
-			http.Error(w, "invalid node status "+strconv.Quote(s), http.StatusBadRequest)
-			return
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "invalid node status " + strconv.Quote(s)}
 		}
 		// Manual PATCH may only drive a node to running / done / failed. A
 		// direct hop to "skipped" would settle the node WITHOUT running
@@ -430,10 +470,9 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		// branch is reached by cancelling the instance, and the frontier is
 		// only ever moved by a settle's Advance. (Cold-review #230 finding.)
 		if !isManualDriveStatus(s) {
-			http.Error(w, "node status "+strconv.Quote(s)+" is not manually settable; "+
-				"use running, done or failed (skip a branch by cancelling the instance)",
-				http.StatusBadRequest)
-			return
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				"node status " + strconv.Quote(s) + " is not manually settable; " +
+					"use running, done or failed (skip a branch by cancelling the instance)"}
 		}
 		patch.Status = &s
 		newStatus = s
@@ -457,8 +496,8 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		// caller trick the reaper into resetting (and the engine into re-running)
 		// an arbitrary node. The sentinel is engine-internal only.
 		if strings.TrimSpace(*body.Assignee) == engineAssignee {
-			http.Error(w, "assignee "+strconv.Quote(engineAssignee)+" is reserved for the engine", http.StatusBadRequest)
-			return
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				"assignee " + strconv.Quote(engineAssignee) + " is reserved for the engine"}
 		}
 		patch.Assignee = body.Assignee
 	}
@@ -473,16 +512,16 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		} else { // done
 			settleOutcome = strings.TrimSpace(deref(body.Outcome))
 			if settleOutcome == "" {
-				if tmpl != nil && isEnumNode(tmpl, node.NodeID) {
-					http.Error(w, "node "+node.NodeID+" is enum-verified; an outcome is required", http.StatusBadRequest)
-					return
+				if tmpl != nil && isEnumNode(tmpl, nodeID) {
+					return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+						"node " + nodeID + " is enum-verified; an outcome is required"}
 				}
 				settleOutcome = workflow.OutcomePass
 			}
-			if tmpl != nil && !slices.Contains(tmpl.AllowedOutcomes(node.NodeID), settleOutcome) {
-				http.Error(w, "outcome "+strconv.Quote(settleOutcome)+" is not valid for node "+node.NodeID+
-					" (allowed: "+strings.Join(tmpl.AllowedOutcomes(node.NodeID), ", ")+")", http.StatusBadRequest)
-				return
+			if tmpl != nil && !slices.Contains(tmpl.AllowedOutcomes(nodeID), settleOutcome) {
+				return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+					"outcome " + strconv.Quote(settleOutcome) + " is not valid for node " + nodeID +
+						" (allowed: " + strings.Join(tmpl.AllowedOutcomes(nodeID), ", ") + ")"}
 			}
 		}
 		patch.Outcome = &settleOutcome
@@ -491,12 +530,11 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		patch.Outcome = &o
 	}
 
-	if _, err := db.UpdateWorkflowNode(inst.ID, node.NodeID, patch); err != nil {
-		http.Error(w, "update node: "+err.Error(), http.StatusInternalServerError)
-		return
+	if _, err := db.UpdateWorkflowNode(instanceID, nodeID, patch); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "update node: " + err.Error()}
 	}
 	if body.Status != nil {
-		appendNodeStatusEvent(inst.ID, node.NodeID, newStatus)
+		appendNodeStatusEvent(instanceID, nodeID, newStatus)
 	}
 
 	// Settle → advance the graph, but only while the instance is still
@@ -508,29 +546,29 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 	instanceRunning := inst.Status == db.WorkflowStatusRunning
 	advanced := workflow.AdvanceResult{Ready: []string{}, Skipped: []string{}}
 	if settling && tmpl != nil && instanceRunning {
-		advanced = workflow.Advance(tmpl, node.NodeID, settleOutcome, nodeStateMap(inst.ID))
-		applyWorkflowAdvance(inst.ID, advanced, now)
+		advanced = workflow.Advance(tmpl, nodeID, settleOutcome, nodeStateMap(instanceID))
+		applyWorkflowAdvance(instanceID, advanced, now)
 	}
 
 	newInstStatus := inst.Status
 	if instanceRunning {
-		nodes, _ := db.ListWorkflowNodes(inst.ID)
+		nodes, _ := db.ListWorkflowNodes(instanceID)
 		newInstStatus = recomputeWorkflowInstanceStatus(tmpl, nodes)
 		if newInstStatus != inst.Status {
-			if _, err := db.UpdateWorkflowInstanceStatus(inst.ID, newInstStatus); err == nil {
-				appendInstanceStatusEvent(inst.ID, newInstStatus)
+			if _, err := db.UpdateWorkflowInstanceStatus(instanceID, newInstStatus); err == nil {
+				appendInstanceStatusEvent(instanceID, newInstStatus)
 			}
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"ok":              true,
-		"node_id":         node.NodeID,
+		"node_id":         nodeID,
 		"status":          newStatus,
 		"instance_status": newInstStatus,
 		"ready":           advanced.Ready,
 		"skipped":         advanced.Skipped,
-	})
+	}, nil
 }
 
 // applyWorkflowAdvance writes the proposed transitions: pending → ready for each
@@ -940,9 +978,20 @@ func convIsMember(members []*db.AgentGroupMember, convID string) bool {
 // dashboardWorkflowCancel marks every non-terminal node skipped and the
 // instance cancelled — a clean terminal snapshot for the dashboard.
 func dashboardWorkflowCancel(w http.ResponseWriter, inst *db.WorkflowInstance) {
-	unlock := lockWorkflowInstance(inst.ID)
+	if fail := cancelWorkflowInstance(inst.ID); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_status": db.WorkflowStatusCancelled})
+}
+
+// cancelWorkflowInstance is the shared cancel core: under the per-instance lock,
+// skip every non-terminal node and mark the instance cancelled. Shared by the
+// dashboard POST and the /v1 socket twin. Returns nil on success.
+func cancelWorkflowInstance(instanceID int64) *spawnFailure {
+	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
-	nodes, _ := db.ListWorkflowNodes(inst.ID)
+	nodes, _ := db.ListWorkflowNodes(instanceID)
 	now := time.Now()
 	for _, n := range nodes {
 		if isSettledWorkflowNodeStatus(n.Status) {
@@ -950,15 +999,14 @@ func dashboardWorkflowCancel(w http.ResponseWriter, inst *db.WorkflowInstance) {
 		}
 		st := db.WorkflowNodeStatusSkipped
 		fin := now
-		_, _ = db.UpdateWorkflowNode(inst.ID, n.NodeID, db.WorkflowNodePatch{Status: &st, FinishedAt: &fin})
-		_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: inst.ID, NodeID: n.NodeID, Kind: db.WorkflowEventNodeSkipped})
+		_, _ = db.UpdateWorkflowNode(instanceID, n.NodeID, db.WorkflowNodePatch{Status: &st, FinishedAt: &fin})
+		_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: n.NodeID, Kind: db.WorkflowEventNodeSkipped})
 	}
-	if _, err := db.UpdateWorkflowInstanceStatus(inst.ID, db.WorkflowStatusCancelled); err != nil {
-		http.Error(w, "cancel: "+err.Error(), http.StatusInternalServerError)
-		return
+	if _, err := db.UpdateWorkflowInstanceStatus(instanceID, db.WorkflowStatusCancelled); err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "cancel: " + err.Error()}
 	}
-	appendInstanceStatusEvent(inst.ID, db.WorkflowStatusCancelled)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_status": db.WorkflowStatusCancelled})
+	appendInstanceStatusEvent(instanceID, db.WorkflowStatusCancelled)
+	return nil
 }
 
 // ----- snapshot integration -------------------------------------------
@@ -1142,6 +1190,14 @@ func instanceDetailJSON(inst *db.WorkflowInstance) map[string]any {
 		"template_name": inst.TemplateName,
 		"status":        inst.Status,
 		"group_id":      inst.GroupID,
+	}
+	// Resolve the bound group's name so detail matches the `where` instance
+	// view (and the CLI `status` can print a group line). omitempty on the
+	// consumer side — absent/0 group leaves it off.
+	if inst.GroupID > 0 {
+		if g, err := db.GetAgentGroupByID(inst.GroupID); err == nil && g != nil {
+			m["group_name"] = g.Name
+		}
 	}
 	if !inst.CreatedAt.IsZero() {
 		m["created_at"] = inst.CreatedAt.Format(time.RFC3339)
