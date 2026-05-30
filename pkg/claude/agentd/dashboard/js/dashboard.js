@@ -30,6 +30,7 @@ import {
   bindReincarnateAgentModal,
 } from './modal-spawn.js';
 import { bindConfigTab } from './config.js';
+import { bindWorkflowsUI } from './workflows.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -64,6 +65,7 @@ bindRowActions();
 bindDnd();
 bindFilter('groups');
 bindFilter('templates');
+bindFilter('workflows');
 bindFilter('cron');
 bindFilter('sudo');
 bindFilter('links');
@@ -81,6 +83,7 @@ bindAgentSpawnModal();
 bindCloneAgentModal();
 bindReincarnateAgentModal();
 bindConfigTab();
+bindWorkflowsUI();
 // Slop-mode flair — each binder installs a delegated listener (or
 // starts an interval) once. They no-op while slop is off and the
 // body-class check inside each handler is what actually gates the

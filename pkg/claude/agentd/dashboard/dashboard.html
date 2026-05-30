@@ -29,6 +29,7 @@
 <nav>
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="templates">Templates</button>
+  <button data-tab="workflows">Workflows</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
   <button data-tab="links">Links</button>
@@ -84,6 +85,26 @@
       <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
     </div>
     <div id="templates-list"></div>
+  </section>
+  <section id="tab-workflows">
+    <div class="filter-bar">
+      <input id="filter-workflows" type="text" placeholder="Filter (instance title / template / status / group)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-workflows-count"></span>
+      <button class="clear-filter" id="filter-workflows-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="wf-new-open" class="primary" title="Instantiate a workflow from a template">+ new instance</button>
+    </div>
+    <div class="wf-layout">
+      <div class="wf-col wf-templates-col">
+        <h3 class="wf-col-head">Templates</h3>
+        <div id="wf-templates-list" class="wf-list"></div>
+      </div>
+      <div class="wf-col wf-instances-col">
+        <h3 class="wf-col-head">Instances</h3>
+        <div id="wf-instances-list" class="wf-list"></div>
+      </div>
+    </div>
+    <div id="wf-detail" class="wf-detail"></div>
   </section>
   <section id="tab-cron">
     <div class="filter-bar">
@@ -994,8 +1015,36 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="wf-instantiate-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="wf-instantiate-modal-title">
+    <h3 id="wf-instantiate-modal-title">Instantiate a workflow</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Template</span>
+      <select id="wf-instantiate-template"></select>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Title</span>
+      <input id="wf-instantiate-title" type="text" placeholder="optional — defaults to the template name" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Params</span>
+      <textarea id="wf-instantiate-params" class="modal-context-textarea" rows="4" placeholder="one key=value per line — required params are validated on submit" spellcheck="false"></textarea>
+    </label>
+    <div class="modal-meta">Snapshots the template's chart + node defs into a fresh instance. Entry nodes start ready; drive them forward from the instance detail.</div>
+    <div class="cron-create-error" id="wf-instantiate-error"></div>
+    <div class="modal-buttons">
+      <button id="wf-instantiate-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="wf-instantiate-submit" class="primary" type="button">Instantiate</button>
+    </div>
+  </div>
+</div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
+<!-- Mermaid (vendored v9.4.3 UMD, self-contained — no CDN, no ES-module
+     chunks) lands on window.mermaid. A classic script so it runs before
+     the deferred dashboard.js module that reads it. -->
+<script src="/static/vendor/mermaid.min.js"></script>
 <script type="module" src="/static/js/dashboard.js"></script>
 </body>
 </html>
