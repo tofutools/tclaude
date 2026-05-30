@@ -294,6 +294,12 @@ tr:hover .row-actions { opacity: 1; }
    brightens on row hover. Hidden entirely until the statusbar reports a
    model (harnessLine returns ''), so fresh rows stay clean. */
 .agent-harness {
+  /* Indent so the text starts under the status dot's glyph, not at the
+     cell's left edge. The dot is a <button> with padding: 2px 5px, so
+     its glyph sits 5px in — match that here (keep in sync with
+     .status-dot's horizontal padding) so the line reads as belonging to
+     the controls above it rather than floating out to the left. */
+  padding-left: 5px;
   margin-top: 3px; font-size: 10px; line-height: 1.2;
   white-space: nowrap; cursor: default; color: #8b949e;
 }
