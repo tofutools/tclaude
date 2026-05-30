@@ -463,6 +463,31 @@ func UpdateSessionModel(sessionID, model string) error {
 	return err
 }
 
+// UpdateSessionEffort stores the reasoning-effort level ("low", "medium",
+// "high", "xhigh", "max") the session is currently running on. Claude
+// Code's statusline carries it as effort.level on every render (when the
+// model supports the reasoning-effort parameter), so the statusbar hook
+// records it here keyed by the tclaude session id — the sibling write to
+// UpdateSessionModel.
+//
+// An empty level is a no-op, mirroring UpdateSessionModel: the field is
+// absent both on renders before a turn's first API response and whenever
+// the model lacks reasoning-effort support, and a stray empty render must
+// never blank a good value. The rare model→non-effort-model switch
+// therefore leaves the last level stale, which is benign for a
+// display-only field.
+func UpdateSessionEffort(sessionID, level string) error {
+	if level == "" {
+		return nil
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET effort_level = ? WHERE id = ?`, level, sessionID)
+	return err
+}
+
 // ContextSnapshot is the full context-window state for a session.
 // Zero values mean "not populated yet" — caller should fall back to
 // the percentage-only display.
@@ -477,6 +502,11 @@ type ContextSnapshot struct {
 	// has ticked at least once. Rides on the same row read so the
 	// dashboard gets it with no extra query.
 	Model string
+	// EffortLevel is the reasoning-effort level the session last
+	// reported ("low"…"max"), from the same statusline hook. "" until
+	// the statusbar has ticked, or when the model lacks reasoning-effort
+	// support. Rides on the same row read as Model.
+	EffortLevel string
 }
 
 // GetContextSnapshot reads the full context-window state for a
@@ -488,9 +518,9 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	}
 	var s ContextSnapshot
 	err = db.QueryRow(
-		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model, effort_level
 		 FROM sessions WHERE id = ?`, sessionID).
-		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model)
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model, &s.EffortLevel)
 	return s, err
 }
 

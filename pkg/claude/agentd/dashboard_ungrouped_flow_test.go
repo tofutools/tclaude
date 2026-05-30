@@ -87,6 +87,7 @@ type dashState struct {
 	TokensOutput      int64   `json:"tokens_output,omitempty"`
 	ContextWindowSize int64   `json:"context_window_size,omitempty"`
 	Model             string  `json:"model,omitempty"`
+	EffortLevel       string  `json:"effort_level,omitempty"`
 	ExitReason        string  `json:"exit_reason,omitempty"`
 }
 

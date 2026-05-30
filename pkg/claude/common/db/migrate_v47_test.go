@@ -50,8 +50,9 @@ func TestMigrateV46toV47_AddsModelColumn(t *testing.T) {
 // TestMigrateV46toV47_FreshSchemaHasModelColumn builds a fresh DB through
 // the full migrate() chain and confirms sessions.model exists and the
 // UpdateSessionModel / GetContextSnapshot accessors work end to end.
-// Carries the literal currentVersion pin — a tripwire the next
-// migration's author moves forward into their own v48 test.
+// The literal currentVersion pin moved forward to migrate_v48_test.go's
+// TestMigrateV47toV48_FreshSchemaHasEffortColumn — the next migration's
+// author moves it again.
 func TestMigrateV46toV47_FreshSchemaHasModelColumn(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -60,7 +61,6 @@ func TestMigrateV46toV47_FreshSchemaHasModelColumn(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 47, currentVersion, "currentVersion is 47")
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "s1", Status: "idle"}), "SaveSession")
 	require.NoError(t, UpdateSessionModel("s1", "Opus 4.8"), "UpdateSessionModel on a fresh schema")

@@ -62,6 +62,13 @@ type StatusLineInput struct {
 		TotalCostUSD float64 `json:"total_cost_usd"`
 	} `json:"cost"`
 	RateLimits *RateLimits `json:"rate_limits"`
+	// Effort is Claude Code's live reasoning-effort level. The block is
+	// absent when the current model doesn't support the reasoning-effort
+	// parameter, so Level is "" in that case (and ultracode reports as
+	// "xhigh", not a distinct level).
+	Effort struct {
+		Level string `json:"level"` // low | medium | high | xhigh | max
+	} `json:"effort"`
 }
 
 // RateLimits represents the rate limit buckets from Claude Code's statusline input.
@@ -196,6 +203,12 @@ func run() error {
 		branch = gitData.Branch
 		links = buildGitLinksFromData(gitData)
 	}
+	// Reasoning-effort level sits left of the branch (🧠 high). Absent
+	// when the model lacks reasoning-effort support — render nothing so
+	// there's no empty trailing token.
+	if input.Effort.Level != "" {
+		line1 = append(line1, fmt.Sprintf("%s🧠 %s%s", colorDim, input.Effort.Level, colorReset))
+	}
 	if branch != "" {
 		line1 = append(line1, fmt.Sprintf("%s[%s]%s", colorCyan, branch, colorReset))
 	}
@@ -281,6 +294,14 @@ func run() error {
 	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
+		}
+		// Reasoning-effort level rides on the same write cadence as the
+		// model — present in (almost) every render, recorded onto the
+		// session row so the dashboard can append it to the model line.
+		// An empty level (model without effort support, or a pre-first-
+		// response render) is a no-op inside UpdateSessionEffort.
+		if err := db.UpdateSessionEffort(sessionID, input.Effort.Level); err != nil {
+			slog.Warn("status-bar: failed to update session effort", "error", err, "module", "hooks")
 		}
 	}
 

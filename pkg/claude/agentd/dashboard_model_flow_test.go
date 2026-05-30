@@ -30,19 +30,22 @@ func TestDashboardSnapshot_ModelSurfaced(t *testing.T) {
 	f.HaveAliveSession(conv, label, "tmux-modl", "/tmp/modl")
 	f.HaveMember("squad", conv)
 
-	// The statusline hook's write path: the model lands on the sessions
-	// row keyed by tclaude session ID (the label).
+	// The statusline hook's write path: the model + effort level land on
+	// the sessions row keyed by tclaude session ID (the label).
 	require.NoError(t, db.UpdateSessionModel(label, "Opus 4.8"), "UpdateSessionModel")
+	require.NoError(t, db.UpdateSessionEffort(label, "high"), "UpdateSessionEffort")
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
 	agentRow := findDashAgent(snap, conv)
 	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
 	assert.Equal(t, "Opus 4.8", agentRow.State.Model, "Agents[] model")
+	assert.Equal(t, "high", agentRow.State.EffortLevel, "Agents[] effort level")
 
 	memberRow := findDashMember(snap, "squad", conv)
 	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
 	assert.Equal(t, "Opus 4.8", memberRow.State.Model, "Members[] model")
+	assert.Equal(t, "high", memberRow.State.EffortLevel, "Members[] effort level")
 }
 
 // Scenario: a freshly-spawned agent whose statusline hook has not yet
