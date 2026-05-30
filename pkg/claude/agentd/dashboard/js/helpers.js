@@ -50,6 +50,11 @@ function agentStatusDot(m) {
   } else {
     tip = `offline — click to turn on (wake ${label})`;
   }
+  // Surface the harness + model on hover (the brief's second ask). The
+  // visible harness line under the controls already shows it, but the
+  // dot's tooltip is the natural "what is this running on?" probe.
+  const hm = harnessModel(m);
+  if (hm) tip += ` · running on ${hm}`;
   let cls;
   if (errored) cls = 'status-dot status-dot-error';
   else if (online) cls = 'status-dot status-dot-online';
@@ -59,6 +64,38 @@ function agentStatusDot(m) {
     ` data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"` +
     ` data-online="${online ? '1' : '0'}"` +
     ` title="${esc(tip)}" aria-label="${esc(tip)}">${glyph}</button>`;
+}
+
+// The harness an agent runs under. tclaude only drives Claude Code, so
+// this is a constant — there is no DB column for it (a 2nd harness can
+// add one when it actually exists). HARNESS_SHORT is the compact chip
+// shown in the row; HARNESS_LONG is spelled out in tooltips.
+const HARNESS_SHORT = 'CC';
+const HARNESS_LONG = 'Claude Code';
+
+// harnessModel returns "Claude Code · Opus 4.8" for tooltips, or '' when
+// the model isn't known yet (the statusbar hook hasn't ticked for this
+// agent). The model comes from state.model — the statusline hook records
+// model.display_name onto the session row every render.
+function harnessModel(m) {
+  const model = (m && m.state && m.state.model) || '';
+  if (!model) return '';
+  return `${HARNESS_LONG} · ${model}`;
+}
+
+// harnessLine renders the small muted "CC · Opus 4.8" line that sits
+// UNDER the status-dot / focus / cog cluster in the same column (the
+// brief's primary ask — no new table column). Returns '' when the model
+// isn't known yet, so freshly-spawned / never-ticked rows stay clean
+// rather than showing a bare harness with no model. The harness chip is
+// dimmer than the model so the eye lands on the model first.
+function harnessLine(m) {
+  const model = (m && m.state && m.state.model) || '';
+  if (!model) return '';
+  const tip = `Harness: ${HARNESS_LONG} — Model: ${model}`;
+  return `<div class="agent-harness" title="${esc(tip)}">`
+    + `<span class="harness-name">${esc(HARNESS_SHORT)}</span>`
+    + `<span class="harness-model">${esc(model)}</span></div>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so
@@ -567,7 +604,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, onlineDot, agentStatusDot, statePill, slopMachine, contextMeter,
+  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,

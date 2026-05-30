@@ -271,6 +271,19 @@ func run() error {
 		}
 	}
 
+	// Record the model the agent is running on so the dashboard can show
+	// it per-agent. Keyed by TCLAUDE_SESSION_ID (the stable tclaude
+	// session id == the sessions-row id the dashboard reads back via
+	// GetContextSnapshot) — NOT input.SessionID. Written every render
+	// regardless of hasContextData: model.display_name is present even
+	// before a turn's first API response, and UpdateSessionModel no-ops
+	// on an empty string, so we never blank a good value.
+	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+		if err := db.UpdateSessionModel(sessionID, model); err != nil {
+			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
+		}
+	}
+
 	var line2 []string
 	compactThreshold := autoCompactThreshold()
 	ctxLabel := fmt.Sprintf("%d%%", ctxPct)

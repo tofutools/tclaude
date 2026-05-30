@@ -523,6 +523,13 @@ type agentState struct {
 	TokensInput       int64   `json:"tokens_input,omitempty"`
 	TokensOutput      int64   `json:"tokens_output,omitempty"`
 	ContextWindowSize int64   `json:"context_window_size,omitempty"`
+	// Model is the LLM model display name the agent is running on
+	// ("Opus 4.8", "Sonnet 4.6", …), recorded by the statusline hook.
+	// Empty until the statusbar has ticked at least once; the dashboard
+	// renders it as the harness line under the per-row controls and in
+	// the status-dot tooltip. Surfaced regardless of liveness — a frozen
+	// model for an exited agent is still informative.
+	Model string `json:"model,omitempty"`
 	// ExitReason is why a now-offline agent's session ended: a graceful
 	// SessionEnd `reason`, or 'unexpected' when the process died with no
 	// clean shutdown (reaper-stamped). Only populated for an offline
@@ -588,6 +595,7 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		out.TokensInput = snap.TokensInput
 		out.TokensOutput = snap.TokensOutput
 		out.ContextWindowSize = snap.ContextWindowSize
+		out.Model = snap.Model
 	}
 	// No live tmux session — the agent's process is gone. Report it as
 	// exited rather than letting the frozen hook status (typically
