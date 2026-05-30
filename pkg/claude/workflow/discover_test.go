@@ -113,6 +113,10 @@ func TestSplitRef(t *testing.T) {
 		{"project:baz", SourceProject, "baz", true},
 		{"plainname", "", "plainname", false},
 		{"unknown:thing", "", "unknown:thing", false}, // unrecognised prefix → bare
+		{"dir:/abs/path", SourceDir, "/abs/path", true},
+		{"dir:./rel", SourceDir, "./rel", true},
+		{"git:https://h/o/r.git@main#sub", SourceGit, "https://h/o/r.git@main#sub", true},
+		{"git:git@github.com:o/r.git", SourceGit, "git@github.com:o/r.git", true},
 	}
 	for _, c := range cases {
 		t.Run(c.ref, func(t *testing.T) {
