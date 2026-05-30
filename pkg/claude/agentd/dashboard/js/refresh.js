@@ -14,6 +14,7 @@ import {
   renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
 } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
+import { renderWorkflowsTab } from './workflows.js';
 // renameEditing (row-actions.js) and dndDragActive (dnd.js) are owned by
 // their feature modules; refreshSuspended() only reads them. lastSnapshot
 // is dashboard.js's shared state — read directly, written via the
@@ -72,6 +73,7 @@ function bindFilter(tab) {
   const rerender = () => {
     if (tab === 'groups') renderGroupsTab();
     else if (tab === 'templates') renderTemplatesTab();
+    else if (tab === 'workflows') renderWorkflowsTab();
     else if (tab === 'cron') renderCronTab();
     else if (tab === 'sudo') renderSudoTab();
     else if (tab === 'links') renderLinksTab();
@@ -244,6 +246,7 @@ export async function refresh() {
     });
     renderGroupsTab();
     renderTemplatesTab();
+    renderWorkflowsTab();
     renderCronTab();
     renderSudoTab();
     renderLinksTab();
