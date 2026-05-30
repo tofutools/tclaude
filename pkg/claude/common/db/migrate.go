@@ -354,7 +354,7 @@ func migrateV47toV48(db *sql.DB) error {
 // migrateV48toV49 adds the three Workflows tables — the persistence
 // layer behind the (future) workflow engine + dashboard tab. Templates
 // stay on disk (parsed mermaid); only INSTANCES and per-node state live
-// in SQLite. See docs/plans/workflows.md and docs/plans/DONE/workflows-db-schema.md.
+// in SQLite. See the Workflows epic on Linear (JOH-9).
 //
 // workflow_instances — one row per instantiation. The mermaid chart,
 // params and captured vars are SNAPSHOTTED here at instantiation, so a

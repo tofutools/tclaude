@@ -8,7 +8,7 @@
 //
 // This package only handles the static definition (load + validate). Running
 // instances and their per-node state live in SQLite (pkg/claude/common/db) and
-// are advanced by agentd; see docs/plans/workflows.md.
+// are advanced by agentd; see the Workflows epic on Linear (JOH-9).
 package workflow
 
 import "gopkg.in/yaml.v3"

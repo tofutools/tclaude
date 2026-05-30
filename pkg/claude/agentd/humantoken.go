@@ -13,7 +13,7 @@ import (
 
 // The operator token positively authenticates the human operator on the
 // CLI / Unix-socket path, so the daemon can fail closed instead of
-// assuming "no Claude Code ancestor => human". See docs/plans/agentd.md,
+// assuming "no Claude Code ancestor => human". See the agentd design on Linear (JOH-10),
 // "Security model".
 //
 // THREAT MODEL — do not over-claim. The token is a real boundary only in
