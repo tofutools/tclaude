@@ -203,12 +203,6 @@ func run() error {
 		branch = gitData.Branch
 		links = buildGitLinksFromData(gitData)
 	}
-	// Reasoning-effort level sits left of the branch (🧠 high). Absent
-	// when the model lacks reasoning-effort support — render nothing so
-	// there's no empty trailing token.
-	if input.Effort.Level != "" {
-		line1 = append(line1, fmt.Sprintf("%s🧠 %s%s", colorDim, input.Effort.Level, colorReset))
-	}
 	if branch != "" {
 		line1 = append(line1, fmt.Sprintf("%s[%s]%s", colorCyan, branch, colorReset))
 	}
@@ -395,6 +389,15 @@ func run() error {
 	// Cost only shown on API plan (no rate limit buckets available)
 	if !hasLimits && input.Cost.TotalCostUSD > 0 {
 		line2 = append(line2, fmt.Sprintf("$%.2f", input.Cost.TotalCostUSD))
+	}
+
+	// Reasoning-effort level (🧠 high) trails the first line, far right.
+	// Absent when the model lacks reasoning-effort support — appended only
+	// when set so there's no empty trailing token. Printed in the
+	// terminal's default foreground (no colour code), matching the model
+	// label at the start of this line — colorDim made it too dark to read.
+	if input.Effort.Level != "" {
+		line2 = append(line2, fmt.Sprintf("🧠 %s", input.Effort.Level))
 	}
 
 	fmt.Println(strings.Join(line2, " | "))
