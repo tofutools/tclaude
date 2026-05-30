@@ -338,7 +338,7 @@ func migrate(db *sql.DB) error {
 //
 // workflow_events — append-only audit/timeline, one row per state
 // transition or note. Backs the per-node "open audit data" context-menu
-// action and the instance timeline. node_id is ” for instance-level
+// action and the instance timeline. node_id is '' — for instance-level
 // events. Cascade-deletes with its instance.
 //
 // Both child tables carry an instance_id index for the by-instance list
@@ -407,7 +407,7 @@ func migrateV47toV48(db *sql.DB) error {
 // every render, including before a turn's first API response), not
 // gated on the all-zero context guard.
 //
-// Defaults to ” — rows from before this migration, or sessions whose
+// Defaults to '' — — rows from before this migration, or sessions whose
 // statusbar hasn't ticked yet, read back empty, which the dashboard
 // renders as "model not reported yet" (no harness line).
 func migrateV46toV47(db *sql.DB) error {
@@ -806,7 +806,7 @@ func migrateV37toV38(db *sql.DB) error {
 // .jsonl scan, so a pending name written here is stable — it survives
 // every snapshot refresh until the real /rename supersedes it.
 //
-// Existing rows backfill to ” (no pending name) — they are agents that
+// Existing rows backfill to '' — (no pending name) — they are agents that
 // have long since been named, so the read path resolves their title
 // from conv_index as before.
 func migrateV36toV37(db *sql.DB) error {
@@ -991,7 +991,7 @@ func migrateV34toV35(db *sql.DB) error {
 // last-wins (it tracks the current branch as the session moves);
 // git_branch_startup is first-wins and immutable, so a dashboard can
 // honestly show an "init → now" branch pair. Existing rows backfill
-// to ” and self-heal on the next .jsonl rescan (the scanner fills
+// to '' — and self-heal on the next .jsonl rescan (the scanner fills
 // the column, and UpsertConvIndex carries it through ON CONFLICT).
 func migrateV31toV32(db *sql.DB) error {
 	if _, err := db.Exec(`
@@ -1045,7 +1045,7 @@ func migrateV30toV31(db *sql.DB) error {
 // makes the bit explicit and reversible:
 //
 //   - a row exists   ⇒ the conv has been an agent.
-//   - retired_at=”  ⇒ active agent (shows on the roster).
+//   - retired_at='' —  ⇒ active agent (shows on the roster).
 //   - retired_at set ⇒ retired — demoted to a plain conversation; the
 //     .jsonl is untouched, and it can be reinstated.
 //
@@ -1160,7 +1160,7 @@ func migrateV28toV29(db *sql.DB) error {
 // between sub-repos of a monorepo launch dir, where Claude Code's own
 // per-turn gitBranch stamp (the launch dir's branch) goes stale.
 //
-// Both columns default to ” so rows written by a pre-v28 hook keep
+// Both columns default to '' — so rows written by a pre-v28 hook keep
 // working — readers fall back to an on-demand git resolution then.
 func migrateV27toV28(db *sql.DB) error {
 	_, err := db.Exec(`
@@ -1371,7 +1371,7 @@ func migrateV21toV22(db *sql.DB) error {
 // live successor, the recipient still wants to see who the message
 // was originally for. Empty for sends that didn't get redirected.
 //
-// Shape: TEXT NOT NULL DEFAULT ” (empty == "this row was sent
+// Shape: TEXT NOT NULL DEFAULT '' — (empty == "this row was sent
 // directly, no redirection happened"). Cheap to filter on, no index
 // needed — reads are by primary key.
 func migrateV20toV21(db *sql.DB) error {
@@ -1498,7 +1498,7 @@ func migrateV17toV18(db *sql.DB) error {
 // renaming the title.
 //
 // Empty string = active. Non-empty (RFC3339 timestamp) = archived.
-// Indexed so the eventual `WHERE archived_at = ”` filter on
+// Indexed so the eventual `WHERE archived_at = '' —` filter on
 // listing endpoints stays cheap as the table grows.
 //
 // Crucially: UpsertConvIndex does NOT include archived_at in its ON
@@ -1531,7 +1531,7 @@ func migrateV16toV17(db *sql.DB) error {
 // Plain TEXT column rather than separate epoch + flag because a
 // human reading the row directly should see when, not just whether.
 //
-// Indexed so the eventual `WHERE archived_at = ”` filter on
+// Indexed so the eventual `WHERE archived_at = '' —` filter on
 // listing endpoints stays cheap as the table grows.
 func migrateV15toV16(db *sql.DB) error {
 	_, err := db.Exec(`
