@@ -132,14 +132,25 @@ function shortModel(model) {
 function harnessLine(m) {
   const model = (m && m.state && m.state.model) || '';
   if (!model) return '';
-  const tip = `Harness: ${HARNESS_LONG} — Model: ${model}`;
-  // One continuous string — "CC · O4.8 1M" — no chip/box around the
+  // Reasoning-effort level (low…max), recorded by the statusline hook on
+  // the same row as the model. Trails the model — "CC · O4.8 1M high" —
+  // and is omitted entirely when absent (model without effort support, or
+  // not ticked yet) so the line degrades to just "CC · O4.8 1M".
+  const effort = (m && m.state && m.state.effort_level) || '';
+  let tip = `Harness: ${HARNESS_LONG} — Model: ${model}`;
+  if (effort) tip += ` — Effort: ${effort}`;
+  // One continuous string — "CC · O4.8 1M high" — no chip/box around the
   // harness. The spans exist only for typographic emphasis (the harness
-  // prefix and the middot sit a shade dimmer than the model).
+  // prefix and the middot sit a shade dimmer than the model; the effort
+  // token a shade brighter).
+  const effortEl = effort
+    ? `<span class="harness-effort">${esc(effort)}</span>`
+    : '';
   return `<div class="agent-harness" title="${esc(tip)}">`
     + `<span class="harness-name">${esc(HARNESS_SHORT)}</span>`
     + `<span class="harness-sep">·</span>`
-    + `<span class="harness-model">${esc(shortModel(model))}</span></div>`;
+    + `<span class="harness-model">${esc(shortModel(model))}</span>`
+    + effortEl + `</div>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so

@@ -40,6 +40,14 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("${esc(shortModel(model))}", "the visible chip uses the shortened model")
 	must("Model: ${model}", "harnessLine's tooltip keeps the FULL model name")
 
+	// The reasoning-effort level (JOH-37) trails the model — "CC · O4.8 1M
+	// high" — read off state.effort_level, with its own styled span and a
+	// tooltip clause. Omitted when absent so models without effort support
+	// stay at "CC · O4.8 1M".
+	must("m.state.effort_level", "harnessLine reads the effort level off the agent's state")
+	must("harness-effort", "the effort token has its own span")
+	must("Effort: ${effort}", "harnessLine's tooltip names the effort level when present")
+
 	// Status-dot tooltip surfaces the harness+model on hover (the brief's
 	// second ask), using the full model via harnessModel.
 	must("running on ${hm}", "the status-dot tooltip appends the harness/model")
@@ -48,6 +56,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	// continuous string).
 	must(".agent-harness", "harness line has a style rule")
 	must(".harness-sep", "the middot separator is styled")
+	must(".harness-effort", "the effort token is styled")
 
 	// The harness is a frontend constant (only Claude Code exists), not a
 	// DB column — the label says "CC".
