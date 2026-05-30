@@ -3,7 +3,8 @@
 Part of the **Workflows** feature (see `docs/plans/workflows.md`). Step 5 — the
 monitoring surface. Front-end only; consumes the Step 3/4 backend (the
 `/api/workflows*` routes + the `workflows` / `workflow_templates` fields on the
-`/api/snapshot` payload). Shipped in **PR #<TBD>**.
+`/api/snapshot` payload). Shipped in **PR #233** (squash `fbc9dfb`);
+post-merge hardening in **PR #<TBD2>**.
 
 ## What shipped
 
@@ -108,3 +109,17 @@ to coloring + vitals + drive. Left as future enhancements:
   drill-down (the instance-level event timeline covers the common case today).
 - Param-schema-driven instantiate form (needs the template's declared `params`
   on the wire; today's `key=value` textarea + server-side validation is the MVP).
+
+## Post-merge hardening (PR #<TBD2>)
+
+Three LOW findings from the PO's independent cold review of #233, fixed:
+
+- The selected-instance detail poll now only fetches `GET /api/workflows/{id}`
+  while the Workflows tab is actually visible (`workflowsTabActive()`), instead
+  of every 2 s from a backgrounded tab.
+- `nodeElements` fallback now matches a node id on whole-segment boundaries
+  (`(^|-)id(-|$)`), so a node id that's a substring of another (`build` vs
+  `build_all`) can't be mis-picked when the exact-strip path misses.
+- `mermaidRender` gained an 8 s no-settle timeout, so a hypothetical future
+  mermaid build that neither returns a value nor invokes the callback rejects
+  (→ retried next poll) instead of hanging the render forever.

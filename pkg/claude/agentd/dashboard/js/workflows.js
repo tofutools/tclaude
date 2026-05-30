@@ -111,12 +111,22 @@ function renderWorkflowsTab() {
   markSelectedInstanceRow();
 
   // Keep the open detail pane live: re-fetch on each poll (fire and
-  // forget — the seq guard drops stale responses).
+  // forget — the seq guard drops stale responses). Only while the
+  // Workflows tab is actually showing, so a selected instance doesn't
+  // keep polling GET /api/workflows/{id} from a backgrounded tab; the
+  // next poll resumes within 2s once the user switches back.
   if (selectedInstanceId != null) {
-    refreshDetail();
+    if (workflowsTabActive()) refreshDetail();
   } else {
     renderDetailEmpty();
   }
+}
+
+// workflowsTabActive reports whether the Workflows tab section is the
+// visible one (bindTabs toggles .active on the shown <main> section).
+function workflowsTabActive() {
+  const s = $('#tab-workflows');
+  return !!(s && s.classList.contains('active'));
 }
 
 function templatesListHTML(templates) {
@@ -367,6 +377,11 @@ function buildGraphDef(mermaidText, nodes) {
 // already restricted by the parser, but guard against stray spaces.
 function cssId(id) { return String(id).trim(); }
 
+// escapeRe escapes regex metacharacters so a node id can be embedded in
+// a RegExp literal safely (mermaid ids are normally alnum/underscore,
+// but this keeps the whole-segment match robust regardless).
+function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 // renderGraph draws the mermaid SVG and returns true on success. A
 // false return (no chart, mermaid not loaded, or a render throw) tells
 // the caller to retry on the next poll rather than cache it as drawn.
@@ -398,13 +413,19 @@ async function renderGraph(mermaidText, def, nodes) {
 function mermaidRender(id, def) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const done = (svg) => { if (!settled) { settled = true; resolve(svg); } };
+    const done = (svg) => { if (!settled) { settled = true; clearTimeout(timer); resolve(svg); } };
+    const fail = (e) => { if (!settled) { settled = true; clearTimeout(timer); reject(e); } };
+    // Guard against a future mermaid build that neither returns a
+    // value nor invokes the callback — without this the await would
+    // hang forever and the graph would never settle. v9.4.3 always
+    // settles synchronously, so this timer is only ever cleared.
+    const timer = setTimeout(() => fail(new Error('mermaid render timed out')), 8000);
     try {
       const ret = window.mermaid.render(id, def, (svgCode) => done(svgCode));
       if (typeof ret === 'string') done(ret);
-      else if (ret && typeof ret.then === 'function') ret.then(o => done(o && o.svg ? o.svg : o)).catch(reject);
+      else if (ret && typeof ret.then === 'function') ret.then(o => done(o && o.svg ? o.svg : o)).catch(fail);
       else if (ret && ret.svg) done(ret.svg);
-    } catch (e) { reject(e); }
+    } catch (e) { fail(e); }
   });
 }
 
@@ -419,9 +440,15 @@ function nodeElements(knownIds) {
     const raw = el.id || '';
     let guess = raw.replace(/^flowchart-/, '').replace(/-\d+$/, '');
     if (!ids.has(guess)) {
-      // Fall back to the longest known id the element id contains.
+      // Fall back to the longest known id that sits on whole-segment
+      // boundaries in the element id (mermaid ids look like
+      // "flowchart-<id>-<n>"). A plain substring test would let "build"
+      // win inside "build_all"; the (^|-)id(-|$) anchors prevent that.
       let best = '';
-      ids.forEach(id => { if (raw.includes(id) && id.length > best.length) best = id; });
+      ids.forEach(id => {
+        const re = new RegExp('(^|-)' + escapeRe(id) + '(-|$)');
+        if (re.test(raw) && id.length > best.length) best = id;
+      });
       if (best) guess = best;
     }
     if (guess && !map[guess]) map[guess] = el;
