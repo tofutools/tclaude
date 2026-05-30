@@ -114,6 +114,14 @@ When CodeRabbit has not produced a real review, do an **independent review** bef
 - **Idle agents are cheap.** A finished worker can sit idle in the group at low cost; there is no need to retire it promptly.
 - **The operator prunes idle agents.** Retiring/removing agents from the group is the human operator's call. The PO may *recommend* cleanups or work-org changes at any time, but does not retire agents on its own initiative.
 
+## Work tracking
+
+tclaude-dev's work tracker is an external Linear board, not this repo. The actual
+board/team and access details live in the operator's **private Claude Code project
+memory** (deliberately not committed here, to avoid leaking internal locations). A
+fresh agent picking up coordination should read its memory for the current Linear
+setup, and keep the board current as work ships.
+
 ## Active design docs
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
