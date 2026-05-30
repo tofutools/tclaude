@@ -30,8 +30,7 @@ func inboxCmd() *cobra.Command {
 		},
 	}.ToCobra()
 	// `mailbox` is the longer-form term we're standardising on (matches the
-	// planned interactive `mailbox -w` view tracked in agents_todo.md).
-	// Both names work.
+	// planned interactive `mailbox -w` view). Both names work.
 	c.Aliases = []string{"mailbox", "mail"}
 	return c
 }

@@ -173,10 +173,8 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		})
 	}
 
-	// Owners stay as the same conv-id — they're separate from members
-	// (see DONE/conv-succession-chain.md for the model). The TODO
-	// flagged this explicitly: "Same conv-id, same granted_by audit
-	// semantics as a manual grant."
+	// Owners stay as the same conv-id — they're separate from members.
+	// Same conv-id, same granted_by audit semantics as a manual grant.
 	ownersCopied := 0
 	for _, o := range srcOwners {
 		if err := db.AddAgentGroupOwner(newGroupID, o.ConvID, granter); err != nil {

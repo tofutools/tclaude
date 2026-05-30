@@ -22,9 +22,9 @@ The post-inflection burst is real and is genuinely AI-assisted (91% of commits C
 
 ## 1. Timeline & Inflection Point
 
-- **Project lifetime:** 2026-03-07 → 2026-05-17 (~10 weeks, 520 commits, 149 merged PRs, 90 `docs/plans/DONE/` feature docs).
+- **Project lifetime:** 2026-03-07 → 2026-05-17 (~10 weeks, 520 commits, 149 merged PRs, 90 shipped-feature docs).
 - **The agentic inflection is sharp and unambiguous: PR #47, merged 2026-05-09** — "tclaude agent + agentd: cross-session coordination" (+4720 / −20, 31 files). Before that date, the strings `agentd`, `tclaude agent`, agent-coordination, and the agent dashboard **do not appear anywhere** in commit history.
-- After #47, the agentic surface expanded explosively: ~70 of the 90 `DONE/` feature docs are dated 2026-05-09 onward (agent CLI, dashboard, groups, cron, permissions, spawn/clone/reincarnate, system tray).
+- After #47, the agentic surface expanded explosively: ~70 of the 90 shipped-feature docs are dated 2026-05-09 onward (agent CLI, dashboard, groups, cron, permissions, spawn/clone/reincarnate, system tray).
 - **The web UI is not part of the inflection** — `tclaude web` shipped 2026-04-04 and was *marked deprecated the same day*. It is a dead end, not an agentic enabler. ("web dashboard" is still a TODO.)
 
 So the inflection date is **2026-05-09**. Everything before is "pre", everything from that day on is "post".
@@ -117,4 +117,4 @@ An honest reading: the agentic features and the activity spike are **coincident 
 
 ---
 
-*Data sources: `git log` (520 commits, 2026-03-07→05-17), `gh pr list` (149 merged PRs), `git log --numstat`, `docs/plans/DONE/` (90 feature docs). Inflection pinned to PR #47, merge commit `05c0723`, 2026-05-09.*
+*Data sources: `git log` (520 commits, 2026-03-07→05-17), `gh pr list` (149 merged PRs), `git log --numstat`, shipped-feature docs (90). Inflection pinned to PR #47, merge commit `05c0723`, 2026-05-09.*

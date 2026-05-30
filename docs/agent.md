@@ -7,9 +7,8 @@
 > SQLite schema may all change without notice. Per-agent permission
 > grants and time-bounded elevations are stored in tables that have
 > not been field-tested across many upgrades. **Don't build automation
-> against this yet that you can't readily migrate.** See
-> [`docs/plans/agents_todo.md`](plans/agents_todo.md) for what's still
-> in flight.
+> against this yet that you can't readily migrate.** See the
+> project's issue tracker for what's still in flight.
 
 Cross-session coordination between Claude Code conversations on the
 same machine: messaging, group membership, agent lifecycle (spawn,
@@ -585,5 +584,3 @@ embeds.
 - `docs/plans/agent-coord.md` — design doc for `tclaude agent`.
 - `docs/plans/agentd.md` — design doc for the daemon (identity
   classification, socket layout).
-- `docs/plans/agents_todo.md` — running TODO backlog of what's coming
-  next.

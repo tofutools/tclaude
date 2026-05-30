@@ -1,7 +1,7 @@
 # The Making of tclaude
 
 *An origin story, reconstructed from the git log and the pile of
-shipped-feature notes in `docs/plans/DONE/`. Roughly 437 commits and
+shipped-feature notes. Roughly 437 commits and
 two months span this tale.*
 
 ---
@@ -88,7 +88,7 @@ port as the approval popup, gated behind a peer-cred-minted init
 token.
 
 The dashboard did not arrive finished. It arrived *and then kept
-arriving* — the `DONE/` folder holds something like seventeen
+arriving* — there are something like seventeen shipped
 dashboard notes, each a small honest improvement:
 
 - clickable column headers, an offline filter, a cwd column;
@@ -146,10 +146,10 @@ memory of every surprise the project ever had.
 
 As of the latest commit (**15 May 2026**):
 
-- `docs/plans/TODO/high-prio/` is **empty**. Nothing is on fire.
-- `med-prio/` holds the next dozen ideas — realtime dashboard push, an
+- Nothing is on fire — the urgent queue is **empty**.
+- The next dozen ideas are mid-priority: realtime dashboard push, an
   fsnotify-based monitor, cross-agent lifecycle, group links.
-- `future/` keeps the daydreams: cross-machine agents, human-in-the-
+- And the daydreams wait further out: cross-machine agents, human-in-the-
   loop approval, and something called `agent-seance` that this
   document is too responsible to speculate about.
 
@@ -161,5 +161,5 @@ Silly and useful, exactly as planned.
 
 ---
 
-*Want to add a chapter? Ship a feature, move its note into
-`docs/plans/DONE/`, and the next storyteller will find it.*
+*Want to add a chapter? Ship a feature, leave a note on what shipped,
+and the next storyteller will find it.*

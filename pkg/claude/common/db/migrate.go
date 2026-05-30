@@ -965,7 +965,7 @@ func migrateV32toV33(db *sql.DB) error {
 // (conv_index.custom_title). The per-group alias was pure duplication:
 // spawn always set it equal to the title (the daemon injected
 // `/rename <alias>`), and per-group semantics are already carried by
-// the member role/descr fields. See docs/plans/DONE/scrap-agent-alias.md.
+// the member role/descr fields.
 //
 // A plain ALTER TABLE ... DROP COLUMN suffices: the column is a bare
 // TEXT field — not part of the (group_id, conv_id) primary key, not
@@ -1225,8 +1225,7 @@ func migrateV25toV26(db *sql.DB) error {
 
 // migrateV24toV25 adds agent_group_links — directed comm edges between
 // groups. Lets two flat groups exchange messages without merging
-// memberships or installing owner bridges. See
-// docs/plans/TODO/med-prio/group-links.md for the design.
+// memberships or installing owner bridges.
 //
 // Shape:
 //   - (from_group_id, to_group_id, mode) is unique — at most one row

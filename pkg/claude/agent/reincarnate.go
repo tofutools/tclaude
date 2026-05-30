@@ -20,8 +20,7 @@ import (
 //
 // The daemon does the heavy lifting; this CLI is a thin wrapper over
 // /v1/whoami/reincarnate. See reincarnate.go in the agentd package
-// (and agents_todo.md → "Agent reincarnate") for the orchestration
-// design.
+// for the orchestration design.
 
 type reincarnateParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"First-turn prompt for the new agent (REQUIRED — give it inline here or via --file). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
