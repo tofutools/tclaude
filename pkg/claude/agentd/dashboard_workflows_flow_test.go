@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -265,18 +266,381 @@ func TestDashboardWorkflows_NodeAudit(t *testing.T) {
 	}
 }
 
-// Scenario: node start/attach are Step 4 — they return 501 for now.
-func TestDashboardWorkflows_StartAttachStubbed(t *testing.T) {
+// ----- Step 4: group binding, start/attach, approve gate ----------------
+
+// wfNodePost drives POST /api/workflows/{id}/nodes/{node}/{sub} (start/attach/approve).
+func wfNodePost(t *testing.T, mux http.Handler, id int64, node, sub string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	return wfReq(t, mux, http.MethodPost,
+		"/api/workflows/"+strconv.FormatInt(id, 10)+"/nodes/"+node+"/"+sub, body)
+}
+
+// Scenario: an instance binds to an existing group by name at create — the
+// snapshot then carries the group_id + resolved group_name. An unknown group
+// name is rejected (no auto-create); omitting it leaves the instance unbound.
+func TestDashboardWorkflows_GroupBindingOnCreate(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	g := f.HaveGroup("squad")
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	rec := wfReq(t, mux, http.MethodPost, "/api/workflows", map[string]any{
+		"template_ref": "example:implement-microservice", "title": "bound",
+		"params": map[string]any{"service_name": "b"}, "group": "squad",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "bound create body=%s", rec.Body.String())
+	var created struct {
+		ID      int64 `json:"id"`
+		GroupID int64 `json:"group_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	assert.Equal(t, g.ID, created.GroupID, "create response echoes the bound group id")
+
+	// The snapshot resolves the group name off the bound id.
+	snapRec := wfReq(t, mux, http.MethodGet, "/api/snapshot", nil)
+	require.Equal(t, http.StatusOK, snapRec.Code)
+	var snap struct {
+		Workflows []struct {
+			ID        int64  `json:"id"`
+			GroupID   int64  `json:"group_id"`
+			GroupName string `json:"group_name"`
+		} `json:"workflows"`
+	}
+	require.NoError(t, json.Unmarshal(snapRec.Body.Bytes(), &snap))
+	var found bool
+	for _, wfi := range snap.Workflows {
+		if wfi.ID == created.ID {
+			found = true
+			assert.Equal(t, g.ID, wfi.GroupID)
+			assert.Equal(t, "squad", wfi.GroupName, "snapshot resolves group_name from group_id")
+		}
+	}
+	assert.True(t, found, "bound instance should appear in snapshot")
+
+	// Unknown group → 400, no auto-create.
+	bad := wfReq(t, mux, http.MethodPost, "/api/workflows", map[string]any{
+		"template_ref": "example:implement-microservice",
+		"params":       map[string]any{"service_name": "b"}, "group": "ghost",
+	})
+	assert.Equal(t, http.StatusBadRequest, bad.Code, "unknown group should 400; body=%s", bad.Body.String())
+
+	// Omitted group → unbound (group_id 0).
+	unbound := wfReq(t, mux, http.MethodPost, "/api/workflows", map[string]any{
+		"template_ref": "example:implement-microservice", "params": map[string]any{"service_name": "b"},
+	})
+	require.Equal(t, http.StatusOK, unbound.Code, "unbound create body=%s", unbound.Body.String())
+	var ub struct {
+		GroupID int64 `json:"group_id"`
+	}
+	require.NoError(t, json.Unmarshal(unbound.Body.Bytes(), &ub))
+	assert.Zero(t, ub.GroupID, "omitted group leaves the instance unbound")
+}
+
+// Scenario: starting a ready ai node spawns a fresh agent into the instance's
+// bound group (via the shared executeSpawn core), marks the node running, and
+// records the spawned conv-id as the assignee. The new agent joins the group.
+func TestDashboardWorkflows_StartSpawnsAgentIntoGroup(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreateInGroup(t, mux, "example:implement-microservice", "build", map[string]any{"service_name": "b"}, "squad")
+
+	rec := wfNodePost(t, mux, id, "plan", "start", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "start plan body=%s", rec.Body.String())
+	var out struct {
+		Status   string `json:"status"`
+		Assignee string `json:"assignee"`
+		ConvID   string `json:"conv_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, "running", out.Status)
+	assert.NotEmpty(t, out.Assignee, "spawned conv-id recorded as assignee")
+	assert.Equal(t, out.Assignee, out.ConvID)
+
+	// Node is running in the detail view.
+	assert.Equal(t, "running", wfNodeStatuses(wfGet(t, mux, id))["plan"])
+
+	// The spawned agent is now a member of the bound group.
+	members := f.ListGroupMembers("squad")
+	var sawSpawned bool
+	for _, m := range members {
+		if m.ConvID == out.ConvID {
+			sawSpawned = true
+		}
+	}
+	assert.True(t, sawSpawned, "spawned agent %q should be a member of squad", out.ConvID)
+}
+
+// Scenario: start's preconditions — unbound instance (400), non-ai node (400),
+// a node that isn't ready (409), and a double-start (409).
+func TestDashboardWorkflows_StartGuards(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Unbound instance: plan is ai+ready, but there's no group → 400.
+	unbound := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"})
+	assert.Equal(t, http.StatusBadRequest, wfNodePost(t, mux, unbound, "plan", "start", nil).Code,
+		"start on an unbound instance should 400")
+
+	// Non-ai node: the diamond's entry node is a human executor → 400.
+	root := t.TempDir()
+	writeDiamondTemplate(t, root)
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+	dia := wfCreate(t, mux, "project:diamond", "", nil)
+	assert.Equal(t, http.StatusBadRequest, wfNodePost(t, mux, dia, "start", "start", nil).Code,
+		"start on a non-ai node should 400")
+
+	// Bound instance for the ready/double-start checks.
+	id := wfCreateInGroup(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"}, "squad")
+	// implement is pending (not on the frontier) → 409.
+	assert.Equal(t, http.StatusConflict, wfNodePost(t, mux, id, "implement", "start", nil).Code,
+		"start on a pending node should 409")
+	// First start of plan succeeds; the second 409s (no longer ready).
+	require.Equal(t, http.StatusOK, wfNodePost(t, mux, id, "plan", "start", nil).Code)
+	assert.Equal(t, http.StatusConflict, wfNodePost(t, mux, id, "plan", "start", nil).Code,
+		"double start should 409")
+}
+
+// Scenario: attach assigns an existing group member to a ready node and delivers
+// the node's task to that member's inbox — no new agent is spawned. A non-member
+// conv-id and an empty conv-id are both rejected.
+func TestDashboardWorkflows_AttachExistingMember(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f.HaveGroup("squad")
+	f.HaveMember("squad", "worker-1")
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreateInGroup(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"}, "squad")
+
+	// Empty conv_id → 400.
+	assert.Equal(t, http.StatusBadRequest, wfNodePost(t, mux, id, "plan", "attach", map[string]any{}).Code,
+		"attach without conv_id should 400")
+
+	// Non-member conv → 400.
+	assert.Equal(t, http.StatusBadRequest,
+		wfNodePost(t, mux, id, "plan", "attach", map[string]any{"conv_id": "stranger"}).Code,
+		"attach of a non-member should 400")
+
+	// Member conv → 200, node running + assigned, task delivered to inbox.
+	rec := wfNodePost(t, mux, id, "plan", "attach", map[string]any{"conv_id": "worker-1"})
+	require.Equal(t, http.StatusOK, rec.Code, "attach member body=%s", rec.Body.String())
+	var out struct {
+		Status   string `json:"status"`
+		Assignee string `json:"assignee"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, "running", out.Status)
+	assert.Equal(t, "worker-1", out.Assignee)
+	assert.Equal(t, "running", wfNodeStatuses(wfGet(t, mux, id))["plan"])
+
+	msgs, err := db.ListAgentMessagesForConv("worker-1", 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, msgs, "attach should deliver the node task to the member's inbox")
+	assert.Contains(t, msgs[0].Subject, "Workflow task", "inbox message names the workflow task")
+}
+
+// Scenario: the human-verify gate. A node whose verify.kind is human goes
+// running, then approve settles it done and advances the frontier (its unlabeled
+// successor readies) — using the same Advance the manual settle uses.
+func TestDashboardWorkflows_HumanApproveAdvancesFrontier(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	_ = newFlow(t)
 	mux := agentd.BuildDashboardHandlerForTest()
 
-	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "x"})
-	for _, sub := range []string{"start", "attach"} {
-		rec := wfReq(t, mux, http.MethodPost,
-			"/api/workflows/"+strconv.FormatInt(id, 10)+"/nodes/plan/"+sub, nil)
-		assert.Equal(t, http.StatusNotImplemented, rec.Code, "%s should be 501; body=%s", sub, rec.Body.String())
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"})
+
+	// plan (verify: human) → running, then approve.
+	wfPatch(t, mux, id, "plan", map[string]any{"status": "running"})
+	rec := wfNodePost(t, mux, id, "plan", "approve", map[string]any{"decision": "approve", "note": "looks good"})
+	require.Equal(t, http.StatusOK, rec.Code, "approve plan body=%s", rec.Body.String())
+	var out struct {
+		Status         string   `json:"status"`
+		InstanceStatus string   `json:"instance_status"`
+		Ready          []string `json:"ready"`
 	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, "done", out.Status)
+	assert.Contains(t, out.Ready, "implement", "approving plan readies its successor")
+
+	st := wfNodeStatuses(wfGet(t, mux, id))
+	assert.Equal(t, "done", st["plan"])
+	assert.Equal(t, "ready", st["implement"])
+}
+
+// Scenario: reject records the rejection (audit event) and does NOT advance —
+// the node stays running so it can be re-worked, and successors stay pending.
+func TestDashboardWorkflows_HumanRejectRecordsNoAdvance(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"})
+	wfPatch(t, mux, id, "plan", map[string]any{"status": "running"})
+
+	rec := wfNodePost(t, mux, id, "plan", "approve", map[string]any{"decision": "reject", "note": "needs work"})
+	require.Equal(t, http.StatusOK, rec.Code, "reject plan body=%s", rec.Body.String())
+
+	st := wfNodeStatuses(wfGet(t, mux, id))
+	assert.Equal(t, "running", st["plan"], "reject leaves the node running for re-work")
+	assert.Equal(t, "pending", st["implement"], "reject does not advance the frontier")
+
+	// The rejection is on the node's audit timeline.
+	audit := wfReq(t, mux, http.MethodGet,
+		"/api/workflows/"+strconv.FormatInt(id, 10)+"/nodes/plan/audit", nil)
+	require.Equal(t, http.StatusOK, audit.Code)
+	assert.Contains(t, audit.Body.String(), "node_rejected", "audit records the rejection")
+}
+
+// Scenario: approve guards — the gate only applies to human-verify nodes (400
+// otherwise), and the node must have run first (409 on a not-yet-started node).
+func TestDashboardWorkflows_ApproveGuards(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"})
+
+	// plan is human-verify but still ready (not started) → 409.
+	assert.Equal(t, http.StatusConflict,
+		wfNodePost(t, mux, id, "plan", "approve", map[string]any{"decision": "approve"}).Code,
+		"approving a not-yet-running node should 409")
+
+	// implement has tool verify, not human → 400 once it is running.
+	wfPatch(t, mux, id, "plan", map[string]any{"status": "done"}) // readies implement
+	wfPatch(t, mux, id, "implement", map[string]any{"status": "running"})
+	assert.Equal(t, http.StatusBadRequest,
+		wfNodePost(t, mux, id, "implement", "approve", map[string]any{"decision": "approve"}).Code,
+		"approving a non-human-verify node should 400")
+
+	// Bad decision value → 400.
+	assert.Equal(t, http.StatusBadRequest,
+		wfNodePost(t, mux, id, "plan", "approve", map[string]any{"decision": "maybe"}).Code,
+		"an unknown decision should 400")
+}
+
+// Scenario: manual PATCH may only drive running/done/failed; a direct hop to
+// skipped (which would strand the sub-tree) or pending is rejected. (Cold-review
+// #230 hardening.)
+func TestDashboardWorkflows_ManualSkipRejected(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"})
+	for _, bad := range []string{"skipped", "pending", "ready", "awaiting_verify"} {
+		rec := wfReq(t, mux, http.MethodPatch,
+			"/api/workflows/"+strconv.FormatInt(id, 10)+"/nodes/plan",
+			map[string]any{"status": bad})
+		assert.Equal(t, http.StatusBadRequest, rec.Code,
+			"manual PATCH to %q should 400; body=%s", bad, rec.Body.String())
+	}
+}
+
+// Scenario: the node JSON surfaces the template's executor.Agent hint and
+// verify.kind (Step 5's intended-agent overlay + approve affordance), and the
+// detail payload carries a (possibly empty) warnings array.
+func TestDashboardWorkflows_NodeJSONAgentVerifyAndWarnings(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "b"})
+	rec := wfReq(t, mux, http.MethodGet, "/api/workflows/"+strconv.FormatInt(id, 10), nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var detail struct {
+		Nodes []struct {
+			NodeID     string `json:"node_id"`
+			Agent      string `json:"agent"`
+			VerifyKind string `json:"verify_kind"`
+		} `json:"nodes"`
+		Warnings []string `json:"warnings"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &detail))
+	byID := map[string]struct{ agent, verify string }{}
+	for _, n := range detail.Nodes {
+		byID[n.NodeID] = struct{ agent, verify string }{n.Agent, n.VerifyKind}
+	}
+	assert.Equal(t, "planner", byID["plan"].agent, "plan surfaces its executor.agent hint")
+	assert.Equal(t, "human", byID["plan"].verify, "plan surfaces verify.kind human")
+	assert.Equal(t, "implementor", byID["implement"].agent)
+	assert.NotNil(t, detail.Warnings, "warnings is present (empty array when clean)")
+}
+
+// Scenario: a template with an enum value that has no outgoing edge is a
+// topology smell; the warning rides through on both the templates snapshot and
+// the instance detail payload.
+func TestDashboardWorkflows_Warnings(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	root := t.TempDir()
+	writeLeakyEnumTemplate(t, root)
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Templates snapshot carries the warning.
+	snapRec := wfReq(t, mux, http.MethodGet, "/api/snapshot", nil)
+	require.Equal(t, http.StatusOK, snapRec.Code)
+	var snap struct {
+		WorkflowTemplates []struct {
+			Ref      string   `json:"ref"`
+			Warnings []string `json:"warnings"`
+		} `json:"workflow_templates"`
+	}
+	require.NoError(t, json.Unmarshal(snapRec.Body.Bytes(), &snap))
+	var tplWarned bool
+	for _, tpl := range snap.WorkflowTemplates {
+		if tpl.Ref == "project:leaky" {
+			tplWarned = len(tpl.Warnings) > 0
+		}
+	}
+	assert.True(t, tplWarned, "leaky template should carry a topology warning in the snapshot")
+
+	// Instance detail re-derives the same warning off the snapshotted chart.
+	id := wfCreate(t, mux, "project:leaky", "", nil)
+	detRec := wfReq(t, mux, http.MethodGet, "/api/workflows/"+strconv.FormatInt(id, 10), nil)
+	require.Equal(t, http.StatusOK, detRec.Code)
+	var detail struct {
+		Warnings []string `json:"warnings"`
+	}
+	require.NoError(t, json.Unmarshal(detRec.Body.Bytes(), &detail))
+	assert.NotEmpty(t, detail.Warnings, "instance detail surfaces the topology warning")
+}
+
+// wfCreateInGroup instantiates a template bound to an existing agent group.
+func wfCreateInGroup(t *testing.T, mux http.Handler, ref, title string, params map[string]any, group string) int64 {
+	t.Helper()
+	rec := wfReq(t, mux, http.MethodPost, "/api/workflows", map[string]any{
+		"template_ref": ref, "title": title, "params": params, "group": group,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "POST /api/workflows (group=%s) body=%s", group, rec.Body.String())
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotZero(t, resp.ID)
+	return resp.ID
+}
+
+// writeLeakyEnumTemplate lays down a template whose enum node declares a value
+// ("hold") with no matching outgoing edge — the Step-2b enum-coverage smell.
+func writeLeakyEnumTemplate(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "leaky")
+	nodes := filepath.Join(dir, "nodes")
+	require.NoError(t, os.MkdirAll(nodes, 0o755))
+	write := func(rel, content string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644))
+	}
+	write("workflow.yaml", "name: leaky\ndescription: enum with an uncovered value\nentry: gate\n")
+	write("flow.mmd", "flowchart TD\n"+
+		"  gate{Gate} -->|go| done\n")
+	write("nodes/gate.yaml", "label: Gate\nexecutor:\n  kind: human\nverify:\n  kind: enum\n  values: [go, hold]\n")
+	write("nodes/done.yaml", "label: Done\nexecutor:\n  kind: human\n")
 }
 
 // Scenario: the snapshot carries workflow instances (with node counts) and the

@@ -32,13 +32,14 @@ func ProjectDir(root string) string {
 // ListEntry summarises one discoverable template for listing. When the template
 // failed to load/validate, Err is set and the structural fields are best-effort.
 type ListEntry struct {
-	Ref         string `json:"ref"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Source      Source `json:"source"`
-	Dir         string `json:"dir,omitempty"`
-	NodeCount   int    `json:"node_count"`
-	Err         string `json:"err,omitempty"`
+	Ref         string   `json:"ref"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Source      Source   `json:"source"`
+	Dir         string   `json:"dir,omitempty"`
+	NodeCount   int      `json:"node_count"`
+	Err         string   `json:"err,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"` // non-fatal topology smells from load (sorted, deterministic)
 }
 
 // candidate is a not-yet-loaded template directory found during discovery.
@@ -143,6 +144,7 @@ func loadEntry(c candidate) ListEntry {
 		Source:      c.source,
 		Dir:         c.dir,
 		NodeCount:   len(t.Nodes),
+		Warnings:    t.Warnings, // populated by load's analyzeGraph
 	}
 }
 

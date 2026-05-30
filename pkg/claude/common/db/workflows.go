@@ -40,6 +40,8 @@ const (
 	WorkflowEventNodeDone        = "node_done"
 	WorkflowEventNodeFailed      = "node_failed"
 	WorkflowEventNodeSkipped     = "node_skipped"
+	WorkflowEventNodeApproved    = "node_approved" // human-verify gate: approved (settles done + advances)
+	WorkflowEventNodeRejected    = "node_rejected" // human-verify gate: rejected (recorded, no advance)
 )
 
 // WorkflowInstance is a row in workflow_instances — one instantiation of
