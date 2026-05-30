@@ -78,9 +78,23 @@ func (s Scope) Interpolate(text string) (out string, missing []string) {
 }
 
 // renderValue turns a resolved value into its string form for text
-// interpolation. Strings pass through untouched; everything else (numbers,
-// bools, lists, maps, nil) is JSON-encoded so it is unambiguous and shell-safe
-// enough to drop into a command or prompt.
+// interpolation. Strings pass through UNTOUCHED; everything else (numbers,
+// bools, lists, maps, nil) is JSON-encoded for an unambiguous representation.
+//
+// WARNING — NOT shell-escaped. JSON encoding makes a value unambiguous but does
+// NOT neutralise shell metacharacters, and a string value is emitted verbatim.
+// When the engine interpolates a captured value into a `tool`/`program` node's
+// `run` command, that value lands in shell command position with no quoting, so
+// a capture containing `; rm -rf …`, backticks, or `$(…)` executes. This is
+// acceptable today ONLY because every interpolated value originates from a
+// first-party template's own params or a sibling node's output within the same
+// instance (the external-source gate keeps third-party templates from
+// auto-running at all) — i.e. the trust boundary is the template author, who
+// already controls the `run` command directly. It is NOT safe for
+// attacker-controlled captures. Proper fix (tracked as a follow-up): quote
+// interpolations in shell command position, or refuse to interpolate a capture
+// into `run` without explicit opt-in. Prompts (ai nodes) are not shell, so the
+// risk there is prompt-injection, not command execution.
 func renderValue(v any) string {
 	if s, ok := v.(string); ok {
 		return s

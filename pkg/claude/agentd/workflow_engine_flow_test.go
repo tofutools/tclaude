@@ -205,6 +205,55 @@ func TestWorkflowEngine_CaptureInterpolatesDownstream(t *testing.T) {
 	assert.Equal(t, "completed", d.Instance.Status)
 }
 
+// Scenario (M1): a node that emits more than the 64KiB capture cap has its
+// output truncated in storage, but the captured value stays USABLE downstream —
+// the tail (where a command's verdict lives) survives, so {{node.output}} is not
+// silently empty. A gate node greps the tail marker to prove it threaded through.
+func TestWorkflowEngine_LargeOutputTruncatedButUsable(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	root := t.TempDir()
+	// produce prints ~200KB of filler then a final sentinel line; the tail
+	// (incl. the sentinel) must survive the 64KiB cap.
+	writeToolTemplate(t, root, "bigout",
+		"name: bigout\nentry: produce\n",
+		"flowchart TD\n produce --> gate\n",
+		map[string]string{
+			"produce": "executor:\n  kind: tool\n  run: |\n" +
+				"    for i in $(seq 1 4000); do echo 'filler-line-padding-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done\n" +
+				"    echo SENTINEL-TAIL\n" +
+				"capture: blob\n",
+			// gate passes only if the captured blob still contains the tail sentinel.
+			"gate": "executor:\n  kind: tool\n  run: \"printf '%s' '{{produce.output}}' | grep -q SENTINEL-TAIL\"\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	id := wfCreate(t, mux, "project:bigout", "", nil)
+
+	agentd.RunWorkflowEngineTickForTest()
+
+	d := wfGet(t, mux, id)
+	st := map[string]string{}
+	var produceOut string
+	for _, n := range d.Nodes {
+		st[n.NodeID] = n.Status
+		if n.NodeID == "produce" {
+			produceOut = n.Output
+		}
+	}
+	assert.Equal(t, "done", st["produce"])
+	assert.Equal(t, "done", st["gate"], "captured tail must survive truncation and interpolate downstream")
+	assert.Equal(t, "completed", d.Instance.Status)
+	// Stored output is capped (well under the raw ~200KB) but non-empty.
+	assert.NotEmpty(t, produceOut, "captured output must not be empty after truncation")
+	assert.LessOrEqual(t, len(produceOut), 70*1024, "stored output should be capped near 64KiB")
+	assert.Contains(t, produceOut, "SENTINEL-TAIL", "the tail (verdict) must be kept")
+	assert.Contains(t, produceOut, "truncated", "a truncation marker should be present")
+}
+
 // Scenario: the opt-in gate. With the engine disabled (production default), a
 // tick is a no-op — a ready tool node is NOT auto-run.
 func TestWorkflowEngine_DisabledIsNoOp(t *testing.T) {

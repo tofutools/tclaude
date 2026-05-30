@@ -451,6 +451,15 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		patch.Output = body.Output
 	}
 	if body.Assignee != nil {
+		// A client must not be able to stamp the engine-owner sentinel: it is the
+		// marker the startup reaper trusts to tell an engine corpse from a
+		// human-driven running node, so letting a manual PATCH set it would let a
+		// caller trick the reaper into resetting (and the engine into re-running)
+		// an arbitrary node. The sentinel is engine-internal only.
+		if strings.TrimSpace(*body.Assignee) == engineAssignee {
+			http.Error(w, "assignee "+strconv.Quote(engineAssignee)+" is reserved for the engine", http.StatusBadRequest)
+			return
+		}
 		patch.Assignee = body.Assignee
 	}
 

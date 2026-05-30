@@ -161,7 +161,11 @@ func runWorkflowEngineTick(ctx context.Context) {
 		if inst.Status != db.WorkflowStatusRunning {
 			continue
 		}
-		processWorkflowInstance(ctx, inst.ID)
+		// Isolate each instance: a panic processing one (a malformed snapshot,
+		// a nil deref in a future executor) must not kill the engine goroutine
+		// and freeze every OTHER instance. Recover, log, move on — the next
+		// tick retries the instance from its persisted state.
+		safeProcessWorkflowInstance(ctx, inst.ID)
 	}
 }
 
@@ -179,6 +183,20 @@ func runWorkflowEngineTick(ctx context.Context) {
 // the running one we claimed and the instance is still running (a concurrent
 // cancel/delete may have moved on). This is what makes cancellation work and
 // keeps the per-instance lock short-held, matching the dashboard handlers.
+// safeProcessWorkflowInstance runs processWorkflowInstance with a panic
+// recover, so one bad instance can't take down the engine goroutine (which
+// would freeze every other instance until the daemon restarts). The recovered
+// instance is simply retried on the next tick from its persisted state.
+func safeProcessWorkflowInstance(ctx context.Context, instanceID int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("workflow engine: panic processing instance; skipping this tick",
+				"instance", instanceID, "panic", r)
+		}
+	}()
+	processWorkflowInstance(ctx, instanceID)
+}
+
 func processWorkflowInstance(ctx context.Context, instanceID int64) {
 	const maxStepsPerTick = 100
 	for range maxStepsPerTick {
@@ -186,11 +204,21 @@ func processWorkflowInstance(ctx context.Context, instanceID int64) {
 		if claim == nil {
 			return // nothing actionable this tick
 		}
-		// Exec phase — no lock held.
+		// Exec + verify phase — NO lock held. Both the executor command and the
+		// verification command shell out, so both run lock-free; only the DB
+		// writes (capture + settle + advance) happen under the lock in
+		// settleClaimedNode. This is what keeps a long `go test` verify from
+		// blocking a concurrent dashboard cancel/delete.
 		runCtx, cancel := context.WithTimeout(ctx, workflowNodeRunTimeout)
 		exec := workflow.RunExecutor(runCtx, claim.def, claim.scope, bashRunner{})
-		settled := settleClaimedNode(instanceID, claim, exec, runCtx)
+		var verdict workflow.VerifyDisposition
+		if exec.Outcome == workflow.ExecRan {
+			// Verify inspects the executor's output; it runs only when the
+			// executor produced a result (an ExecError skips straight to fail).
+			verdict = workflow.RunVerifier(runCtx, claim.def, claim.scope, exec.Output, exec.Success, bashRunner{})
+		}
 		cancel()
+		settled := settleClaimedNode(instanceID, claim, exec, verdict)
 		if !settled {
 			// Node deferred / errored-without-progress, or was cancelled out from
 			// under us — stop draining so we don't spin; next tick revisits.
@@ -254,14 +282,15 @@ func claimNextNode(instanceID int64) *nodeClaim {
 	return &nodeClaim{nodeID: node.NodeID, def: def, scope: instanceScope(inst)}
 }
 
-// settleClaimedNode finishes a claimed node after its command ran (no lock was
-// held during the run): it re-acquires the lock, re-reads fresh, and settles +
-// advances only if the claim is still valid (instance running, node still the
-// running one we claimed). Returns true when the node settled (so the caller
-// drains the next), false when it deferred or the claim was invalidated by a
-// concurrent cancel/delete. Capture + verify run here too, under the lock, so
-// the vars write and the settle are atomic w.r.t. other drives.
-func settleClaimedNode(instanceID int64, claim *nodeClaim, exec workflow.ExecResult, runCtx context.Context) bool {
+// settleClaimedNode finishes a claimed node after its command AND verification
+// already ran lock-free (their disposition is passed in). It re-acquires the
+// lock, re-reads fresh, and applies the result only if the claim is still valid
+// (instance running, node still the running one we claimed). Returns true when
+// the node settled (so the caller drains the next), false when it deferred or
+// the claim was invalidated by a concurrent cancel/delete. ONLY DB writes —
+// capture, status-settle, Advance, recompute — run under the lock; no shell-out
+// happens here, so a long verify can't block a dashboard cancel/delete.
+func settleClaimedNode(instanceID int64, claim *nodeClaim, exec workflow.ExecResult, verdict workflow.VerifyDisposition) bool {
 	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
 
@@ -292,7 +321,6 @@ func settleClaimedNode(instanceID int64, claim *nodeClaim, exec workflow.ExecRes
 	// Capture output into the node + instance vars so downstream refs resolve.
 	captureNodeOutput(inst, claim.def, claim.nodeID, exec.Output)
 
-	verdict := workflow.RunVerifier(runCtx, claim.def, claim.scope, exec.Output, exec.Success, bashRunner{})
 	if verdict.Defer {
 		// tool/program never defer verification (only human/ai do); guard anyway.
 		awaiting := db.WorkflowNodeStatusAwaitingVerify
@@ -343,8 +371,14 @@ func nextRunnableNode(inst *db.WorkflowInstance, nodes []*db.WorkflowNode) *db.W
 //
 // Returning false leaves the node ready (untouched) so the dashboard / a future
 // approval flow can run it; the engine simply never picks it.
+//
+// It also re-asserts the engine opt-in gate. runWorkflowEngineTick already
+// returns early when the engine is disabled, so in the normal path this is
+// redundant — but as the single chokepoint that authorises auto-execution, it
+// must not authorise anything when the engine is off. Belt-and-suspenders
+// against a future caller that reaches the dispatch without the tick's guard.
 func engineMayAutoRun(inst *db.WorkflowInstance, _ *db.WorkflowNode) bool {
-	return !workflowInstanceIsExternal(inst)
+	return workflowEngineEnabled && !workflowInstanceIsExternal(inst)
 }
 
 // workflowInstanceIsExternal reports whether an instance was created from an
@@ -446,11 +480,36 @@ func mergeJSONObject(dst workflow.Scope, raw string) {
 	maps.Copy(dst, m)
 }
 
-// captureNodeOutput stores a node's output on the node row, and — when the node
-// declares a capture name — into the instance vars under that name AND under
-// "<nodeID>.output" so both {{capture}} and {{node.output}} references resolve.
-// Best-effort: a failed vars write just means a later ref goes unresolved.
-func captureNodeOutput(inst *db.WorkflowInstance, def *workflow.Node, nodeID, output string) {
+// maxCapturedOutputBytes caps how much of a node's output is captured into the
+// node row and the instance vars. A chatty build log would otherwise grow vars
+// without bound — and vars is re-marshalled per capturing node and re-parsed on
+// every claim, so unbounded output is O(nodes × output) work plus a row that
+// balloons. The TAIL is kept (a command's verdict / error is at the end, and
+// enum verify reads the last line), with a truncation marker prepended.
+const maxCapturedOutputBytes = 64 * 1024
+
+// capCapturedOutput trims s to its last maxCapturedOutputBytes bytes, prefixing
+// a marker when it truncated. Byte-based (not rune-based) since it bounds
+// storage; it trims to the next line boundary inside the window so the kept tail
+// stays line-clean (important for enum verify's last-non-empty-line read).
+func capCapturedOutput(s string) string {
+	if len(s) <= maxCapturedOutputBytes {
+		return s
+	}
+	tail := s[len(s)-maxCapturedOutputBytes:]
+	if nl := strings.IndexByte(tail, '\n'); nl >= 0 && nl+1 < len(tail) {
+		tail = tail[nl+1:] // drop the partial leading line
+	}
+	return "[…output truncated to last 64KiB…]\n" + tail
+}
+
+// captureNodeOutput stores a node's (capped) output on the node row, and — when
+// the node declares a capture name — into the instance vars under that name AND
+// under "<nodeID>.output" so both {{capture}} and {{node.output}} references
+// resolve. Best-effort: a failed vars write just means a later ref goes
+// unresolved.
+func captureNodeOutput(inst *db.WorkflowInstance, def *workflow.Node, nodeID, rawOutput string) {
+	output := capCapturedOutput(rawOutput)
 	out := output
 	_, _ = db.UpdateWorkflowNode(inst.ID, nodeID, db.WorkflowNodePatch{Output: &out})
 
