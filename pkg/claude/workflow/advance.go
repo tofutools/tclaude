@@ -45,22 +45,33 @@ type AdvanceResult struct {
 // Branch selection — an outgoing edge of settledID is "taken" when its label
 // equals outcome, plus, on the success outcome (OutcomePass), every unlabeled
 // edge (the success path). Each taken edge's target becomes ready once its join
-// condition is met: a single-predecessor node or a JoinAny node readies
-// immediately; a JoinAll node (the default for a multi-incoming node) readies
-// only when every other predecessor has already settled.
+// condition is met (see joinReady): a single-predecessor node or a JoinAny node
+// readies on this one arrival; a JoinAll node readies only when no other
+// predecessor can still deliver a token.
 //
-// Skip — once the ready set is known, any still-pending node that is no longer
-// forward-reachable from a live node (a currently-live node or a freshly
-// readied successor) is dead and is skipped. Reachability-based skip — rather
-// than "the targets of the not-taken edges" — is what makes this correct around
-// loops and joins: it never skips a loop-back target or a join still fed by a
-// live path, and it transitively abandons a whole dead sub-branch, not just its
-// first node.
+// Join — JoinAll is "every predecessor ON A TAKEN PATH is done", NOT "every
+// predecessor, period". The distinction is decided by reachability rather than
+// by waiting for a literal settled-state on every incoming node, because a raw
+// "wait for all predecessors" rule deadlocks the moment a node has a loop-back
+// or not-taken predecessor (e.g. the example's `implement`, fed by
+// `test -->|fail|` and `review -->|changes|`, would wait forever on its own
+// not-yet-run successors). A JoinAll target fires when no still-live node can
+// reach one of its predecessors WITHOUT passing through the target itself —
+// which correctly (a) ignores downstream loop-back predecessors, (b) ignores
+// predecessors on a not-taken branch (they will be skipped), and (c) still
+// waits on a genuinely concurrent live predecessor of a parallel fork-join.
 //
-// Advance is single-step. A settle that BOTH supplies a join's last arrival AND
-// orphans one of that join's other predecessors in the same step can leave the
-// join pending until the orphaned predecessor is skipped and a subsequent
-// settle re-evaluates it; the Step 6 engine will iterate Advance to a fixpoint.
+// Skip — once the ready set is known, any still-pending node no longer
+// forward-reachable from the live frontier (currently-live nodes + freshly
+// readied successors) is dead and is skipped. This never skips a loop-back
+// target or a join still fed by a live path, and it transitively abandons a
+// whole dead sub-branch, not just its first node.
+//
+// Advance is single-step and does not re-enter loops: a target already past
+// pending (live/settled) is left alone, so a loop-back into an already-run node
+// is a no-op here. Re-running a node across a loop iteration (visit counting,
+// status reset) is the Step 6 engine's job; this helper computes one settle's
+// immediate consequences.
 func Advance(t *Template, settledID, outcome string, state map[string]NodeRunState) AdvanceResult {
 	res := AdvanceResult{Ready: []string{}, Skipped: []string{}}
 	if t == nil {
@@ -76,6 +87,21 @@ func Advance(t *Template, settledID, outcome string, state map[string]NodeRunSta
 		return state[id]
 	}
 
+	// Forward adjacency over the chart node set.
+	out := map[string][]string{}
+	for _, e := range t.Edges {
+		out[e.From] = append(out[e.From], e.To)
+	}
+
+	// The live frontier as it stands BEFORE this settle's readies: every node
+	// still live (the just-settled node is excluded — st() forces it settled).
+	var liveNodes []string
+	for _, id := range sortedMermaidIDs(t.MermaidNodes) {
+		if st(id) == NodeLive {
+			liveNodes = append(liveNodes, id)
+		}
+	}
+
 	// 1. Taken edges → ready successors, in chart order, deduped, join-gated.
 	readySet := map[string]bool{}
 	for _, e := range t.OutEdges(settledID) {
@@ -83,30 +109,19 @@ func Advance(t *Template, settledID, outcome string, state map[string]NodeRunSta
 			continue
 		}
 		if st(e.To) != NodePending {
-			continue // already live/settled — leave it be
+			continue // already live/settled — leave it be (loop-back / re-entry)
 		}
-		if joinSatisfied(t, e.To, settledID, st) {
+		if joinReady(t, e.To, settledID, liveNodes, out) {
 			readySet[e.To] = true
 			res.Ready = append(res.Ready, e.To)
 		}
 	}
 
-	// 2. Forward reachability for skip. Seeds are the live frontier — every
-	//    currently-live node plus the freshly readied successors. A pending node
-	//    not reachable from a seed can never run again, so it is dead.
-	out := map[string][]string{}
-	for _, e := range t.Edges {
-		out[e.From] = append(out[e.From], e.To)
-	}
-	var seeds []string
-	for _, id := range sortedMermaidIDs(t.MermaidNodes) {
-		if st(id) == NodeLive {
-			seeds = append(seeds, id)
-		}
-	}
-	seeds = append(seeds, res.Ready...)
+	// 2. Forward reachability for skip. Seeds are the live frontier plus the
+	//    freshly readied successors. A pending node not reachable from a seed
+	//    can never run again, so it is dead.
+	seeds := append(append([]string(nil), liveNodes...), res.Ready...)
 	alive := reachable(seeds, out)
-
 	for _, id := range sortedMermaidIDs(t.MermaidNodes) {
 		if st(id) == NodePending && !alive[id] && !readySet[id] {
 			res.Skipped = append(res.Skipped, id)
@@ -125,16 +140,22 @@ func edgeTaken(e Edge, outcome string) bool {
 	return e.Label == outcome
 }
 
-// joinSatisfied reports whether target's join condition is met given that
-// settledID just settled on a taken edge into it. A node with at most one
+// joinReady reports whether target may become ready now that settledID has
+// delivered a token along a taken edge into it. A node with at most one
 // predecessor, or an explicit JoinAny, fires on this single arrival. A JoinAll
-// node (the default for a multi-incoming node) fires only when every other
-// predecessor has already settled (done/failed/skipped).
-func joinSatisfied(t *Template, target, settledID string, st func(string) NodeRunState) bool {
-	preds := map[string]bool{}
+// node (the default for a multi-incoming node) fires only when no OTHER
+// predecessor can still deliver a future token — i.e. no currently-live node
+// can reach that predecessor without passing through target. settledID has just
+// delivered, so it never blocks; a predecessor reachable from the live frontier
+// (including a live predecessor itself, as a BFS seed) still owes a token and
+// holds the join.
+func joinReady(t *Template, target, settledID string, liveNodes []string, out map[string][]string) bool {
+	var preds []string
+	seenPred := map[string]bool{}
 	for _, e := range t.Edges {
-		if e.To == target {
-			preds[e.From] = true
+		if e.To == target && !seenPred[e.From] {
+			seenPred[e.From] = true
+			preds = append(preds, e.From)
 		}
 	}
 	if len(preds) <= 1 {
@@ -147,12 +168,16 @@ func joinSatisfied(t *Template, target, settledID string, st func(string) NodeRu
 	if join == JoinAny {
 		return true
 	}
-	for p := range preds {
+	// JoinAll: a predecessor still owes a token if a live node can still reach
+	// it without routing through target (a loop that re-enters target first does
+	// not count as "before target runs").
+	reachFromLive := reachableExcluding(liveNodes, out, target)
+	for _, p := range preds {
 		if p == settledID {
-			continue
+			continue // just delivered
 		}
-		if st(p) != NodeSettled {
-			return false
+		if reachFromLive[p] {
+			return false // p can still deliver — hold the join
 		}
 	}
 	return true
@@ -222,4 +247,34 @@ func RebuildFromSnapshot(mermaid string, nodes map[string]*Node) (*Template, err
 	}
 	t.Entry = t.computeEntry()
 	return t, nil
+}
+
+// reachableExcluding is a BFS like analyze.go's reachable(), but with one node
+// treated as a wall: it is never seeded, never traversed through, and never
+// appears in the result. The JoinAll check uses it to ask "can a live node
+// still reach this predecessor WITHOUT first routing back through the join
+// target" — a loop that re-enters the target before reaching the predecessor
+// must not count as the predecessor still owing a token.
+func reachableExcluding(seeds []string, adj map[string][]string, exclude string) map[string]bool {
+	seen := make(map[string]bool, len(adj))
+	queue := make([]string, 0, len(seeds))
+	for _, s := range seeds {
+		if s == exclude || seen[s] {
+			continue
+		}
+		seen[s] = true
+		queue = append(queue, s)
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range adj[cur] {
+			if next == exclude || seen[next] {
+				continue
+			}
+			seen[next] = true
+			queue = append(queue, next)
+		}
+	}
+	return seen
 }

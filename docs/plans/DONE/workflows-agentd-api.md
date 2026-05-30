@@ -14,14 +14,25 @@ The shared "what happens when a node settles" brain (no DB, fully unit-tested in
 - `Advance(t *Template, settledID, outcome string, state map[string]NodeRunState) AdvanceResult`
   → `AdvanceResult{Ready, Skipped []string}`. Follows the taken edges (label ==
   outcome; unlabeled edges are the `pass` path) to ready successors, **respecting
-  joins** (single-pred / `JoinAny` fire immediately; `JoinAll` waits until every
-  other predecessor has settled). Skips are **reachability-based**: any pending
-  node no longer forward-reachable from a live node (live ∪ freshly-readied) is
-  dead — so loop-backs and still-fed joins are never wrongly skipped, and a whole
-  abandoned sub-branch is skipped transitively. Single-step (documented: a settle
-  that both supplies a join's last arrival and orphans another of its
-  predecessors in the same step needs the next settle to converge; Step 6's
-  engine will iterate to a fixpoint).
+  joins**. Join semantics are **reachability-based, not "wait for every literal
+  predecessor"**: `JoinAll` means "every predecessor *on a taken path* is done"
+  — the target fires once no still-live node can reach one of its predecessors
+  *without routing through the target itself*. That single rule handles all three
+  shapes uniformly: (a) loop-back predecessors (downstream of the join, only
+  reachable through it) never block — so the example's `implement` node, fed by
+  `test -->|fail|` and `review -->|changes|`, readies on `plan` alone instead of
+  deadlocking; (b) not-taken-branch predecessors get skipped, so a direct branch
+  into a `JoinAll` readies the join rather than wrongly skipping it; (c) a
+  genuinely concurrent live arm of a parallel fork-join still holds it.
+  `single-pred` / `JoinAny` fire on the one arrival. Skips are likewise
+  reachability-based: any pending node no longer forward-reachable from the live
+  frontier (live ∪ freshly-readied) is dead — loop-backs and still-fed joins are
+  never wrongly skipped, and a whole abandoned sub-branch is skipped transitively.
+  Advance is **single-step / does not re-enter loops** (a target already past
+  `pending` is left alone); re-running a node across a loop iteration — visit
+  counting, status reset — is Step 6's engine job. Verified by `advance_test.go`,
+  incl. explicit regressions for the loop-back-deadlock and direct-branch-into-
+  join cases.
 - `NodeRunState` (`NodePending` / `NodeLive` / `NodeSettled`) — the db-agnostic
   state Advance reasons over; agentd maps storage statuses onto it.
 - `RebuildFromSnapshot(mermaid, nodes)` — reconstructs the topology-relevant
@@ -63,12 +74,17 @@ via `collectWorkflowsSnapshot` / `collectWorkflowTemplatesSnapshot`
 
 ## Tests
 - `pkg/claude/workflow/advance_test.go` — linear, enum branch + sibling skip,
-  JoinAll (waits then fires), JoinAny, loop-back-not-skipped, fail-follows-fail-
-  edge, transitive sub-tree skip, AllowedOutcomes, FailHalts, RebuildFromSnapshot.
+  JoinAll parallel (holds until both arms arrive, then fires), JoinAny,
+  loop-back-not-skipped, **loop-back-predecessor-does-not-deadlock-join**
+  (the `implement` shape), **direct-branch-into-join readies not skips**,
+  fail-follows-fail-edge, transitive sub-tree skip, AllowedOutcomes, FailHalts,
+  RebuildFromSnapshot.
 - `pkg/claude/agentd/dashboard_workflows_flow_test.go` — instantiate example +
-  walk to `completed`; diamond (temp project dir) branch→ready + sibling→skipped
-  + join fires; enum-requires-outcome 400; missing-param 400; cancel+delete;
-  node audit; start/attach 501; snapshot carries instances+templates; auth gate.
+  walk to `completed` (exercises the loopy template end-to-end); diamond (temp
+  project dir) branch→ready + sibling→skipped + join fires; enum-requires-outcome
+  400; missing-param 400; cancel+delete; node audit; start/attach 501; snapshot
+  carries instances+templates; auth gate; **re-settle 409**; **terminal-instance
+  not resurrected** (output-only PATCH after cancel stays `cancelled`).
 
 ## Gates
 `go build ./...` · `go test ./...` · `golangci-lint run ./...` — all clean.
@@ -80,7 +96,19 @@ via `collectWorkflowsSnapshot` / `collectWorkflowTemplatesSnapshot`
 - **Node Detail JSON** is `encoding/json` of the yaml-tagged `workflow.Node`
   (Go field names), round-tripped by `RebuildFromSnapshot`. If Step 5 wants a
   prettier shape it can remap; the dashboard mainly reads the dedicated columns.
-- **Advance is single-step** (see helper notes) — Step 6's engine should iterate
-  it to a fixpoint for the rare simultaneous skip-unblocks-join case.
+- **Advance is single-step and does not re-enter loops** — a target already past
+  `pending` is left alone. Step 6's engine owns loop *re-entry* (resetting a
+  node's status + bumping `visits` for the next iteration); `Advance` only
+  computes one settle's immediate readies/skips. The join rule is reachability-
+  based (see the helper section), so it does NOT need fixpoint iteration for the
+  branch-into-join case — that was the old, since-rewritten rule.
+- **Re-settle guard (PATCH).** PATCHing an already-terminal node back to a
+  terminal status returns **409** — a second settle would duplicate audit events
+  and re-run `Advance` over stale successor state. Output/assignee-only patches
+  on a settled node are still allowed.
+- **Terminal-instance freeze (PATCH).** Node PATCHes only advance/recompute while
+  the instance is `running`; a PATCH against a `completed`/`failed`/`cancelled`
+  instance still writes the node fields but leaves instance status frozen (stops
+  a stray patch resurrecting `cancelled → completed`).
 - Snapshot does an N+1 `ListWorkflowNodes` per instance — fine at expected
   instance counts; cache by mtime/count if profiling flags it.

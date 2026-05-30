@@ -340,6 +340,43 @@ func TestDashboardWorkflows_AuthRequired(t *testing.T) {
 		"uncookied POST /api/workflows should be refused; body=%s", rec.Body.String())
 }
 
+// Scenario: a non-settling PATCH (output only) on a cancelled instance must NOT
+// resurrect it. After cancel every node is skipped, so the status recompute
+// would read "all terminal → completed" and overwrite "cancelled" — the
+// instance-running guard freezes the recompute instead. (Uses an output-only
+// patch so it bypasses the re-settle 409 guard and reaches the recompute path.)
+func TestDashboardWorkflows_TerminalInstanceNotResurrected(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "x"})
+
+	rec := wfReq(t, mux, http.MethodPost, "/api/workflows/"+strconv.FormatInt(id, 10)+"/cancel", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "cancel body=%s", rec.Body.String())
+
+	res := wfPatch(t, mux, id, "plan", map[string]any{"output": "late note"})
+	assert.Equal(t, "cancelled", res.InstanceStatus, "cancelled instance must stay cancelled")
+	assert.Equal(t, "cancelled", wfGet(t, mux, id).Instance.Status, "still cancelled in detail")
+}
+
+// Scenario: re-settling an already-done node is rejected (409) — it would
+// duplicate audit events and re-run advance over stale state.
+func TestDashboardWorkflows_ReSettleRejected(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	id := wfCreate(t, mux, "example:implement-microservice", "", map[string]any{"service_name": "x"})
+	wfPatch(t, mux, id, "plan", map[string]any{"status": "done"})
+
+	rec := wfReq(t, mux, http.MethodPatch,
+		"/api/workflows/"+strconv.FormatInt(id, 10)+"/nodes/plan",
+		map[string]any{"status": "done"})
+	assert.Equal(t, http.StatusConflict, rec.Code,
+		"re-settling a done node should 409; body=%s", rec.Body.String())
+}
+
 // writeDiamondTemplate lays down a minimal branch+join template under
 // <root>/diamond so it resolves as "project:diamond":
 //

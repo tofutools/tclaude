@@ -184,6 +184,51 @@ func TestAdvance_TransitiveSkip(t *testing.T) {
 	assertSet(t, "skipped sub-tree", res.Skipped, []string{"b", "b2", "b3"})
 }
 
+// Regression: a join node with loop-back predecessors must NOT wait for those
+// not-yet-run predecessors. The example template's `implement` is fed by
+// plan-->, test-->|fail|, review-->|changes|; when plan settles, implement must
+// ready immediately rather than deadlocking on test/review (which run AFTER it).
+func TestAdvance_LoopBackPredecessorDoesNotDeadlockJoin(t *testing.T) {
+	mmd := "flowchart TD\n" +
+		" plan --> implement\n" +
+		" implement --> test\n" +
+		" test -->|pass| review\n test -->|fail| implement\n" +
+		" review -->|approved| deploy\n review -->|changes| implement\n" +
+		" deploy --> done\n"
+	tmpl := build(t, mmd, map[string]*Node{
+		"test":   {OnFail: OnFailContinue, Verify: Verify{Kind: VerifyEnum, Values: []string{"pass"}}},
+		"review": {Verify: Verify{Kind: VerifyEnum, Values: []string{"approved", "changes"}}},
+	})
+	// plan settles first; everything else pending. implement has 3 incoming
+	// edges (plan + two loop-backs) but must still fire on plan alone.
+	res := Advance(tmpl, "plan", OutcomePass, map[string]NodeRunState{
+		"implement": NodePending, "test": NodePending, "review": NodePending,
+		"deploy": NodePending, "done": NodePending,
+	})
+	assertSet(t, "implement readies on plan despite loop-back preds", res.Ready, []string{"implement"})
+	assertSet(t, "nothing skipped (all still reachable via the loop)", res.Skipped, nil)
+}
+
+// Regression: a branch edge straight into a JoinAll node. Taking the live arm
+// must ready the join (the other arm is dead and will be skipped), NOT skip the
+// join + everything downstream and falsely complete. This is the cold-review
+// "direct-branch-into-JoinAll" case.
+func TestAdvance_DirectBranchIntoJoinReadiesNotSkips(t *testing.T) {
+	mmd := "flowchart TD\n" +
+		" s{Pick} -->|a| j\n" +
+		" s -->|b| q\n q --> j\n" +
+		" j --> done\n"
+	tmpl := build(t, mmd, nil)
+	// s settles on outcome a: edge s-->j is taken. The other pred of j is q,
+	// which sits on the not-taken b-branch and will be skipped — so j must
+	// ready now, not stall.
+	res := Advance(tmpl, "s", "a", map[string]NodeRunState{
+		"j": NodePending, "q": NodePending, "done": NodePending,
+	})
+	assertSet(t, "join readies on the taken arm", res.Ready, []string{"j"})
+	assertSet(t, "the not-taken arm q is skipped", res.Skipped, []string{"q"})
+}
+
 func TestAdvance_NilTemplate(t *testing.T) {
 	res := Advance(nil, "x", OutcomePass, nil)
 	assertSet(t, "ready", res.Ready, nil)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -318,6 +319,18 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		return
 	}
 
+	// Re-settling an already-terminal node is rejected: it would append a
+	// duplicate node_done/failed event and re-run Advance over now-stale state
+	// (successors already moved past pending), so the second advance is a
+	// no-op at best and a wrong skip at worst. A human who needs to redo a node
+	// goes through the (future) re-open path, not a second settle. A patch that
+	// only touches output/assignee on a settled node is still allowed.
+	if isSettledWorkflowNodeStatus(node.Status) && body.Status != nil &&
+		isSettledWorkflowNodeStatus(strings.TrimSpace(*body.Status)) {
+		http.Error(w, "node "+node.NodeID+" is already "+node.Status+"; cannot re-settle", http.StatusConflict)
+		return
+	}
+
 	tmpl, _ := rebuildInstanceTemplate(inst) // nil only on an unparsable snapshot
 
 	now := time.Now()
@@ -364,7 +377,7 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 				}
 				settleOutcome = workflow.OutcomePass
 			}
-			if tmpl != nil && !contains(tmpl.AllowedOutcomes(node.NodeID), settleOutcome) {
+			if tmpl != nil && !slices.Contains(tmpl.AllowedOutcomes(node.NodeID), settleOutcome) {
 				http.Error(w, "outcome "+strconv.Quote(settleOutcome)+" is not valid for node "+node.NodeID+
 					" (allowed: "+strings.Join(tmpl.AllowedOutcomes(node.NodeID), ", ")+")", http.StatusBadRequest)
 				return
@@ -384,19 +397,27 @@ func dashboardWorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db
 		appendNodeStatusEvent(inst.ID, node.NodeID, newStatus)
 	}
 
-	// Settle → advance the graph.
+	// Settle → advance the graph, but only while the instance is still
+	// running. A terminal instance (completed / failed / cancelled) must not
+	// be re-driven: advancing or recomputing it from a stray node PATCH would
+	// resurrect a cancelled instance back to completed, or un-complete a
+	// finished one. The node field write above still lands (bookkeeping);
+	// the instance status is left frozen.
+	instanceRunning := inst.Status == db.WorkflowStatusRunning
 	advanced := workflow.AdvanceResult{Ready: []string{}, Skipped: []string{}}
-	if settling && tmpl != nil {
+	if settling && tmpl != nil && instanceRunning {
 		advanced = workflow.Advance(tmpl, node.NodeID, settleOutcome, nodeStateMap(inst.ID))
 		applyWorkflowAdvance(inst.ID, advanced, now)
 	}
 
-	// Recompute the instance status from the settled set.
-	nodes, _ := db.ListWorkflowNodes(inst.ID)
-	newInstStatus := recomputeWorkflowInstanceStatus(tmpl, nodes)
-	if newInstStatus != inst.Status {
-		if _, err := db.UpdateWorkflowInstanceStatus(inst.ID, newInstStatus); err == nil {
-			appendInstanceStatusEvent(inst.ID, newInstStatus)
+	newInstStatus := inst.Status
+	if instanceRunning {
+		nodes, _ := db.ListWorkflowNodes(inst.ID)
+		newInstStatus = recomputeWorkflowInstanceStatus(tmpl, nodes)
+		if newInstStatus != inst.Status {
+			if _, err := db.UpdateWorkflowInstanceStatus(inst.ID, newInstStatus); err == nil {
+				appendInstanceStatusEvent(inst.ID, newInstStatus)
+			}
 		}
 	}
 
@@ -781,15 +802,6 @@ func rawJSONOrEmpty(s string) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	return json.RawMessage(s)
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 func deref(s *string) string {
