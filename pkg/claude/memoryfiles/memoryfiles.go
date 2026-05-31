@@ -135,6 +135,14 @@ func resolveProjectDirs(targetDir string, includeSiblings bool) ([]string, strin
 	}
 	encoded := convops.PathToProjectDir(abs)
 
+	// Refuse a degenerate target whose encoded form is empty or all
+	// dashes (e.g. "/", which encodes to "-"): its sibling prefix would
+	// match a huge swath of ~/.claude/projects. No real project path
+	// encodes this short.
+	if strings.Trim(encoded, "-") == "" {
+		return nil, encoded, fmt.Errorf("refusing to operate on root/degenerate target %q (encoded %q)", targetDir, encoded)
+	}
+
 	projectsDir := convops.ClaudeProjectsDir()
 	if projectsDir == "" {
 		return nil, encoded, fmt.Errorf("could not determine Claude projects directory (no home dir?)")

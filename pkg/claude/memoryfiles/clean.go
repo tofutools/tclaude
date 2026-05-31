@@ -96,6 +96,8 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 	if !params.Yes {
 		fmt.Fprintf(stdout, "\nDelete these %d file(s)? [y/N]: ", len(toDelete))
 		reader := bufio.NewReader(stdin)
+		// A closed/empty stdin (EOF) yields "" → treated as "no" below,
+		// so the read error is intentionally ignored: it fails safe to abort.
 		resp, _ := reader.ReadString('\n')
 		resp = strings.TrimSpace(strings.ToLower(resp))
 		if resp != "y" && resp != "yes" {

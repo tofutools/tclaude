@@ -73,6 +73,18 @@ func TestResolveProjectDirs_ExactAndSiblings(t *testing.T) {
 	assert.Equal(t, []string{filepath.Join(projects, encoded)}, exactOnly)
 }
 
+func TestResolveProjectDirs_RejectsDegenerateTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755))
+
+	// "/" encodes to "-"; matching siblings on "--" (or worse) would
+	// sweep a huge chunk of ~/.claude/projects, so it must error out.
+	_, _, err := resolveProjectDirs("/", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "degenerate")
+}
+
 // ---- RunClean (end-to-end against an isolated $HOME) ----
 
 // memEnv sets up an isolated $HOME with a Claude projects tree and
