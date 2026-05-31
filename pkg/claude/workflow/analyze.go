@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -115,6 +116,68 @@ func (t *Template) analyzeGraph(add func(string, ...any)) {
 			}
 		}
 	}
+
+	// 5. Loop exit (JOH-39) — a cycle (a back-edge loop, e.g. test -->|fail|
+	//    implement) with NO edge leaving it can only ever terminate by hitting the
+	//    visit cap (a forced failure), never by completing: there is no
+	//    break-on-pass exit. Warn so the author adds the exit edge (e.g. the |pass|
+	//    branch out of the loop). Emitted once per cycle, from its smallest member,
+	//    so the warning order stays deterministic.
+	for _, id := range ids {
+		scc := stronglyConnected(id, out, in)
+		selfLoop := false
+		for _, nb := range out[id] {
+			if nb == id {
+				selfLoop = true
+			}
+		}
+		if len(scc) < 2 && !selfLoop {
+			continue // not part of a cycle
+		}
+		members := sortedSet(scc)
+		if members[0] != id {
+			continue // only the smallest member of the cycle emits, to dedupe
+		}
+		hasExit := false
+		for m := range scc {
+			for _, nb := range out[m] {
+				if !scc[nb] {
+					hasExit = true
+				}
+			}
+		}
+		if !hasExit {
+			t.Warnings = append(t.Warnings, fmt.Sprintf(
+				"loop {%s} has no exit edge: it can only terminate by hitting max_visits, never by completing — add a break/exit edge (e.g. a |pass| branch out of the loop)",
+				strings.Join(members, ", ")))
+		}
+	}
+}
+
+// stronglyConnected returns the strongly-connected component containing id: the
+// nodes both reachable FROM id (via out) and able to REACH id (via in). A node
+// with no cycle yields just {id}; a real cycle yields ≥2 members (or {id} when id
+// has a self-edge, which the caller checks separately).
+func stronglyConnected(id string, out, in map[string][]string) map[string]bool {
+	fwd := reachable([]string{id}, out)
+	back := reachable([]string{id}, in)
+	scc := map[string]bool{}
+	for n := range fwd {
+		if back[n] {
+			scc[n] = true
+		}
+	}
+	return scc
+}
+
+// sortedSet returns the keys of a set, sorted — for deterministic warning text.
+func sortedSet(s map[string]bool) []string {
+	out := make([]string, 0, len(s))
+	for k := range s {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // reachable returns the set of nodes reachable from any seed by following adj

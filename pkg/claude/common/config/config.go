@@ -193,6 +193,15 @@ type AgentConfig struct {
 	// agents. Like the per-instance cap, it gates only the engine's
 	// auto-spawn, never the manual dashboard start.
 	WorkflowAIGlobal *int `json:"workflow_ai_global,omitempty"`
+	// WorkflowMaxVisits is the engine default cap on how many times a single
+	// workflow node may execute across loop iterations + in-place retries
+	// (default 20 when unset / 0). It backs a node whose own `max_visits` is 0
+	// (unspecified): for an autonomous engine that auto-runs shell + spawns
+	// agents, an omitted loop bound must be fail-safe, not unbounded. A node may
+	// still opt into a different finite cap (max_visits: N) or, deliberately,
+	// truly-unbounded (max_visits: -1). Exceeding the effective cap fails the
+	// node ("max_visits exceeded") and halts the instance. (JOH-39)
+	WorkflowMaxVisits *int `json:"workflow_max_visits,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

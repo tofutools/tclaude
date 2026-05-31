@@ -486,6 +486,21 @@ func applyWorkflowNodePatch(instanceID int64, nodeID string, body workflowNodePa
 			nodeWantsAIVerify(tmpl, nodeID) && aiVerifyCanRun(inst) {
 			return parkNodeForAIVerify(instanceID, nodeID, body)
 		}
+		// In-place retry interception (JOH-39): an ai node reporting `failed`, with
+		// retry budget left and an engine that can re-run it (bound group + engine
+		// on — the same gate ai-verify uses), re-arms to ready instead of settling.
+		// The next tick re-spawns the agent (a fresh conv, so its JOH-40 handoff
+		// re-fires with the failure context as the fix brief). Falls through to a
+		// real settle once the budget is spent or the engine can't re-run it (so a
+		// dashboard-only / engine-off flow still fails cleanly). Only fires from a
+		// `running` report (the worker's own verdict), never re-interpreting a
+		// human's later force-fail of an already-settled node.
+		if s == db.WorkflowNodeStatusFailed && node.Status == db.WorkflowNodeStatusRunning &&
+			node.ExecutorKind == string(workflow.ExecAI) && aiVerifyCanRun(inst) &&
+			tmpl != nil && tmpl.Nodes[nodeID] != nil &&
+			retriesUsedThisActivation(instanceID, nodeID) < tmpl.Nodes[nodeID].Retries {
+			return rearmAINodeForRetry(instanceID, nodeID, deref(body.Output))
+		}
 		patch.Status = &s
 		newStatus = s
 		if s == db.WorkflowNodeStatusRunning && node.StartedAt.IsZero() {
@@ -559,7 +574,7 @@ func applyWorkflowNodePatch(instanceID int64, nodeID string, body workflowNodePa
 	advanced := workflow.AdvanceResult{Ready: []string{}, Skipped: []string{}}
 	if settling && tmpl != nil && instanceRunning {
 		advanced = workflow.Advance(tmpl, nodeID, settleOutcome, nodeStateMap(instanceID))
-		applyWorkflowAdvance(instanceID, advanced, now)
+		applyWorkflowAdvance(instanceID, nodeID, tmpl, advanced, now)
 	}
 
 	newInstStatus := inst.Status
@@ -615,10 +630,44 @@ func parkNodeForAIVerify(instanceID int64, nodeID string, body workflowNodePatch
 	}, nil
 }
 
+// rearmAINodeForRetry re-arms a failed ai node for an in-place retry (JOH-39):
+// it captures the worker's reported output (so the retry's fresh agent gets the
+// failure context via its JOH-40 handoff), CLEARS the assignee, and sets the
+// node back to ready so the engine's next tick re-spawns the agent. A node_retry
+// event records the attempt (and feeds retriesUsedThisActivation). It does NOT
+// advance — the node has not settled. The caller holds the per-instance lock.
+func rearmAINodeForRetry(instanceID int64, nodeID, output string) (map[string]any, *spawnFailure) {
+	ready := db.WorkflowNodeStatusReady
+	cleared := ""
+	patch := db.WorkflowNodePatch{Status: &ready, Assignee: &cleared}
+	if output != "" {
+		patch.Output = &output
+	}
+	if _, err := db.UpdateWorkflowNode(instanceID, nodeID, patch); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "re-arm for retry: " + err.Error()}
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
+		InstanceID: instanceID, NodeID: nodeID, Kind: db.WorkflowEventNodeRetry,
+		Message: "ai node reported failed; retrying in place (re-spawn next tick)",
+	})
+	return map[string]any{
+		"ok":              true,
+		"node_id":         nodeID,
+		"status":          ready,
+		"instance_status": db.WorkflowStatusRunning,
+		"ready":           []string{},
+		"skipped":         []string{},
+	}, nil
+}
+
 // applyWorkflowAdvance writes the proposed transitions: pending → ready for each
-// taken successor, pending → skipped for each abandoned branch. Only nodes still
-// pending are touched, so a re-run (or a node a human already moved) is a no-op.
-func applyWorkflowAdvance(instanceID int64, res workflow.AdvanceResult, now time.Time) {
+// taken successor, pending → skipped for each abandoned branch, and — for a
+// back-edge loop-back (res.Reentry) — resets the loop body so the iteration
+// re-runs (JOH-39). Only nodes still pending are touched by Ready/Skipped, so a
+// re-run (or a node a human already moved) is a no-op there. settledID is the
+// node that just settled (the back-edge source); tmpl supplies the topology for
+// the loop-body computation. The caller holds the per-instance lock.
+func applyWorkflowAdvance(instanceID int64, settledID string, tmpl *workflow.Template, res workflow.AdvanceResult, now time.Time) {
 	for _, nid := range res.Ready {
 		cur, _ := db.GetWorkflowNode(instanceID, nid)
 		if cur == nil || cur.Status != db.WorkflowNodeStatusPending {
@@ -637,6 +686,64 @@ func applyWorkflowAdvance(instanceID int64, res workflow.AdvanceResult, now time
 		fin := now
 		_, _ = db.UpdateWorkflowNode(instanceID, nid, db.WorkflowNodePatch{Status: &st, FinishedAt: &fin})
 		_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: nid, Kind: db.WorkflowEventNodeSkipped})
+	}
+	for _, target := range res.Reentry {
+		reenterLoop(instanceID, settledID, target, tmpl)
+	}
+}
+
+// reenterLoop re-arms a back-edge loop: the loop body (nodes on a path from
+// target to the back-edge source settledID — see workflow.Template.LoopBody) is
+// reset so the iteration re-runs. The re-entry target → ready; every other
+// settled body node (done/failed/skipped) → pending so the normal advance
+// re-readies it from THIS iteration's outcomes (a branch skipped last time may be
+// taken now — we never preserve a prior iteration's skip/branch decisions).
+// Assignee + outcome + finished_at are cleared on every reset node, so an ai node
+// re-spawns under a fresh conv (which re-fires its JOH-40 handoff with the new
+// iteration's input). Visits is NOT reset — it is the absolute execution counter
+// the claim-time MaxVisits guard reads, so a runaway loop still halts. Events are
+// append-only (node_reentry marks each reset); the visit counter in the node row
+// distinguishes iterations on the timeline. The caller holds the instance lock.
+//
+// Two known limitations, acceptable for the common single-predecessor fix-loop
+// and flagged for the rare cases: (1) the target is re-armed straight to ready
+// without re-checking joinReady, so a multi-predecessor JoinAll loop target could
+// re-arm before a concurrent live predecessor delivers; (2) the body is reset via
+// N separate row updates, not one transaction — a daemon crash mid-reset leaves a
+// half-reset body until the next tick re-derives (bounded: the whole reset runs
+// under the instance lock, so only a crash, not another op, can interleave).
+func reenterLoop(instanceID int64, settledID, target string, tmpl *workflow.Template) {
+	if tmpl == nil {
+		return
+	}
+	body := tmpl.LoopBody(target, settledID)
+	ready := db.WorkflowNodeStatusReady
+	pending := db.WorkflowNodeStatusPending
+	cleared := ""
+	var zeroTime time.Time
+	for id := range body {
+		cur, _ := db.GetWorkflowNode(instanceID, id)
+		if cur == nil {
+			continue
+		}
+		if id == target {
+			// The re-entry point itself becomes ready for the new iteration.
+			_, _ = db.UpdateWorkflowNode(instanceID, id, db.WorkflowNodePatch{
+				Status: &ready, Outcome: &cleared, FinishedAt: &zeroTime, Assignee: &cleared})
+			_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: id,
+				Kind: db.WorkflowEventNodeReentry, Message: "engine: loop re-entry via back-edge from " + settledID})
+			continue
+		}
+		// Other body nodes: reset settled ones to pending so they re-run; leave a
+		// still-live one (pending/ready/running/awaiting) alone — it has not yet
+		// fired this iteration.
+		switch cur.Status {
+		case db.WorkflowNodeStatusDone, db.WorkflowNodeStatusFailed, db.WorkflowNodeStatusSkipped:
+			_, _ = db.UpdateWorkflowNode(instanceID, id, db.WorkflowNodePatch{
+				Status: &pending, Outcome: &cleared, FinishedAt: &zeroTime, Assignee: &cleared})
+			_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: id,
+				Kind: db.WorkflowEventNodeReentry, Message: "engine: reset for loop re-entry"})
+		}
 	}
 }
 
@@ -992,7 +1099,7 @@ func dashboardWorkflowNodeApprove(w http.ResponseWriter, r *http.Request, inst *
 	newInstStatus := inst.Status
 	if instanceRunning {
 		advanced = workflow.Advance(tmpl, nodeID, workflow.OutcomePass, nodeStateMap(inst.ID))
-		applyWorkflowAdvance(inst.ID, advanced, now)
+		applyWorkflowAdvance(inst.ID, nodeID, tmpl, advanced, now)
 		nodes, _ := db.ListWorkflowNodes(inst.ID)
 		newInstStatus = recomputeWorkflowInstanceStatus(tmpl, nodes)
 		if newInstStatus != inst.Status {

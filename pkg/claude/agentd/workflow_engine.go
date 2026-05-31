@@ -107,6 +107,19 @@ var (
 	workflowAIGlobalCap      = defaultWorkflowAIGlobalCap
 )
 
+// defaultWorkflowMaxVisits is the engine default cap on a node's total
+// executions (loop iterations + in-place retries) when its own max_visits is
+// unspecified (0). For an autonomous engine that auto-runs shell + spawns
+// agents, an omitted loop bound must be fail-safe rather than unbounded — a
+// runaway back-edge can never spin forever by mere omission. A node opts into a
+// different finite cap with max_visits: N, or truly-unbounded with -1 (an
+// explicit power-user choice). See workflow.EffectiveMaxVisits. runServe sets
+// workflowMaxVisits from config (agent.workflow_max_visits); tests override via
+// SetWorkflowMaxVisitsForTest. (JOH-39)
+const defaultWorkflowMaxVisits = 20
+
+var workflowMaxVisits = defaultWorkflowMaxVisits
+
 // workflowAINodeSLA bounds how long an engine ai node may sit with NO progress
 // before sweepStuckAINodes fails it to release its cap slot. It is the MED-C
 // backstop: a worker whose agent crashed without reporting, a judge that died
@@ -297,11 +310,18 @@ func processWorkflowInstance(ctx context.Context, instanceID int64) {
 // bounded by a fuel counter so a misconfigured tight loop can't spin forever.
 func drainRunnableToolNodes(ctx context.Context, instanceID int64) {
 	const maxStepsPerTick = 100
+	// attempted bounds each node to ONE execution per tick: a node re-armed to
+	// ready this tick (an in-place retry, or a loop-back that re-readied a body
+	// node) is skipped until the NEXT tick. This tick-paces retries (one attempt
+	// per tick — JOH-39) so a fast-failing node can't spin the tick, and unifies
+	// retry pacing with loop-back (both just "re-arm; the next tick runs it").
+	attempted := map[string]bool{}
 	for range maxStepsPerTick {
-		claim := claimNextNode(instanceID)
+		claim := claimNextNode(instanceID, attempted)
 		if claim == nil {
 			return // nothing actionable this tick
 		}
+		attempted[claim.nodeID] = true
 		// Exec + verify phase — NO lock held. Both the executor command and the
 		// verification command shell out, so both run lock-free; only the DB
 		// writes (capture + settle + advance) happen under the lock in
@@ -318,8 +338,10 @@ func drainRunnableToolNodes(ctx context.Context, instanceID int64) {
 		cancel()
 		settled := settleClaimedNode(instanceID, claim, exec, verdict)
 		if !settled {
-			// Node deferred / errored-without-progress, or was cancelled out from
-			// under us — stop draining so we don't spin; next tick revisits.
+			// Node was cancelled out from under us, or the claim was invalidated —
+			// stop draining so we don't spin; next tick revisits. (A retry re-arm
+			// returns true and is skipped via `attempted`, so it does NOT stop the
+			// drain — other ready nodes still run this tick.)
 			return
 		}
 	}
@@ -461,6 +483,14 @@ func claimNextAINode(instanceID int64) *aiNodeClaim {
 	}
 	def := tmpl.Nodes[node.NodeID]
 
+	// Visit cap (JOH-39): an ai node that has used its execution budget is
+	// force-failed + halts rather than re-spawned, the same guard the tool claim
+	// applies — so a back-edge loop through an ai node can't spawn agents forever.
+	if cap, unbounded := workflow.EffectiveMaxVisits(def, workflowMaxVisits); !unbounded && node.Visits >= int64(cap) {
+		settleWorkflowNodeMaxVisits(inst, node.NodeID, cap, time.Now())
+		return nil
+	}
+
 	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
 	if cwdErr != nil {
 		// A bad group default cwd is an operator misconfiguration; leave the node
@@ -493,6 +523,10 @@ func claimNextAINode(instanceID int64) *aiNodeClaim {
 	running := db.WorkflowNodeStatusRunning
 	startedAt := time.Now()
 	owner := engineAssignee
+	// Visits is bumped on spawn SUCCESS (settleAISpawn), NOT here: a claim that
+	// fails to spawn (bad cwd, spawn error) resets to ready and must not burn a
+	// visit, else a flaky group could force-fail a node that never actually ran.
+	// So Visits counts agents actually launched, and the claim cap reads that count.
 	if _, err := db.UpdateWorkflowNode(instanceID, node.NodeID,
 		db.WorkflowNodePatch{Status: &running, StartedAt: &startedAt, Assignee: &owner}); err != nil {
 		slog.Warn("workflow engine: claim ai node (mark running) failed", "instance", instanceID, "node", node.NodeID, "error", err)
@@ -566,9 +600,13 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 	// conv-id. The node stays `running`; the agent settles it later via the
 	// node-PATCH the CLI wraps, which authorises an assignee to settle its own
 	// node (so the conv-id MUST be in place before the agent can report done).
+	// Bump Visits here (not at claim): this is the point an agent actually
+	// launched, so a failed spawn never burns a visit and the cap counts real
+	// executions (JOH-39).
 	convID := outcome.ConvID
+	visits := node.Visits + 1
 	if _, err := db.UpdateWorkflowNode(instanceID, claim.nodeID,
-		db.WorkflowNodePatch{Assignee: &convID}); err != nil {
+		db.WorkflowNodePatch{Assignee: &convID, Visits: &visits}); err != nil {
 		slog.Warn("workflow engine: record ai assignee failed", "instance", instanceID, "node", claim.nodeID, "error", err)
 		return
 	}
@@ -1160,8 +1198,16 @@ type nodeClaim struct {
 // claimNextNode picks the next runnable node under the instance lock, marks it
 // running (so a concurrent tick / dashboard sees it as taken), and returns the
 // snapshot needed to run it. Returns nil when there is nothing to do. Holds the
-// lock only for the claim — released before the command runs.
-func claimNextNode(instanceID int64) *nodeClaim {
+// lock only for the claim — released before the command runs. attempted holds
+// node ids already run THIS tick (so a node re-armed to ready mid-tick by an
+// in-place retry / loop-back is skipped until the next tick — JOH-39 tick-pacing).
+//
+// Visit cap (JOH-39): before claiming, a node whose Visits has reached its
+// effective MaxVisits is NOT run — it is force-failed ("max_visits exceeded")
+// and the instance halts, so a runaway loop can't spin. Otherwise Visits is
+// bumped as the node goes running, the single counter that bounds loop
+// iterations AND in-place retries.
+func claimNextNode(instanceID int64, attempted map[string]bool) *nodeClaim {
 	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
 
@@ -1174,7 +1220,7 @@ func claimNextNode(instanceID int64) *nodeClaim {
 		slog.Warn("workflow engine: list nodes failed", "instance", instanceID, "error", err)
 		return nil
 	}
-	node := nextRunnableNode(inst, nodes)
+	node := nextRunnableNode(inst, nodes, attempted)
 	if node == nil {
 		return nil
 	}
@@ -1185,16 +1231,26 @@ func claimNextNode(instanceID int64) *nodeClaim {
 	}
 	def := tmpl.Nodes[node.NodeID]
 
+	// Visit cap: refuse to run a node that has already used its execution budget.
+	// Force-fail + halt rather than route on_fail (a loop node's |fail| edge would
+	// just loop again — defeating the guard). This is the one rule that bounds
+	// every re-execution path (loop-backs + in-place retries both go through here).
+	if cap, unbounded := workflow.EffectiveMaxVisits(def, workflowMaxVisits); !unbounded && node.Visits >= int64(cap) {
+		settleWorkflowNodeMaxVisits(inst, node.NodeID, cap, time.Now())
+		return nil
+	}
+
 	// Stamp the engine-owner sentinel alongside running, so the startup reaper
 	// can recognise a node THIS engine claimed (vs one a human manually drove to
 	// running) and only reap its own corpses after a crash. startedAt uses the
 	// real wall clock at the claim, not the tick's start, so a drained chain
-	// gets truthful per-node timestamps.
+	// gets truthful per-node timestamps. Visits++ counts this execution.
 	running := db.WorkflowNodeStatusRunning
 	startedAt := time.Now()
 	owner := engineAssignee
+	visits := node.Visits + 1
 	if _, err := db.UpdateWorkflowNode(instanceID, node.NodeID,
-		db.WorkflowNodePatch{Status: &running, StartedAt: &startedAt, Assignee: &owner}); err != nil {
+		db.WorkflowNodePatch{Status: &running, StartedAt: &startedAt, Assignee: &owner, Visits: &visits}); err != nil {
 		slog.Warn("workflow engine: claim (mark running) failed", "instance", instanceID, "node", node.NodeID, "error", err)
 		return nil
 	}
@@ -1256,6 +1312,16 @@ func settleClaimedNode(instanceID int64, claim *nodeClaim, exec workflow.ExecRes
 		return false
 	}
 	if !verdict.Done {
+		// In-place retry (JOH-39): a node that failed its OWN verify re-runs in
+		// place, up to def.Retries times, BEFORE it settles failed and emits its
+		// fail outcome (which a |fail| back-edge may then loop on — the outer loop).
+		// Re-arm to ready (clear the sentinel) + record a node_retry; the next TICK
+		// re-runs it (tick-paced — the attempted-this-tick set keeps it from
+		// re-running now). Returns true so the drain keeps serving OTHER ready nodes.
+		if retriesUsedThisActivation(inst.ID, claim.nodeID) < claim.def.Retries {
+			rearmForRetry(inst.ID, claim.nodeID, verdict.Err)
+			return true
+		}
 		settleWorkflowNodeFailed(inst, claim.nodeID, tmpl, verdict.Err, now)
 		return true
 	}
@@ -1263,14 +1329,53 @@ func settleClaimedNode(instanceID int64, claim *nodeClaim, exec workflow.ExecRes
 	return true
 }
 
+// retriesUsedThisActivation counts how many in-place retries a node has already
+// used in its CURRENT activation — the number of node_retry events since the
+// last fresh-activation boundary (node_ready from advance, or node_reentry from
+// a loop-back). Events-derived so it needs no schema column and survives a daemon
+// restart (mirrors JOH-40's event-as-durable-state idiom). A read error degrades
+// to 0 (treat as fresh) — at worst one extra retry, never a stuck node.
+func retriesUsedThisActivation(instanceID int64, nodeID string) int {
+	events, err := db.ListWorkflowEvents(instanceID, nodeID)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].Kind {
+		case db.WorkflowEventNodeRetry:
+			n++
+		case db.WorkflowEventNodeReady, db.WorkflowEventNodeReentry:
+			return n // reached the start of this activation
+		}
+	}
+	return n
+}
+
+// rearmForRetry re-arms a tool/program node for an in-place retry: status →
+// ready, the engine sentinel cleared, and a node_retry event recorded (the
+// counter retriesUsedThisActivation reads). The next tick re-runs it; the visit
+// cap at claim still bounds the absolute count. The caller holds the instance lock.
+func rearmForRetry(instanceID int64, nodeID, reason string) {
+	ready := db.WorkflowNodeStatusReady
+	cleared := ""
+	_, _ = db.UpdateWorkflowNode(instanceID, nodeID, db.WorkflowNodePatch{Status: &ready, Assignee: &cleared})
+	msg := "engine: verify failed, retrying in place"
+	if reason != "" {
+		msg += ": " + reason
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: nodeID,
+		Kind: db.WorkflowEventNodeRetry, Message: msg})
+}
+
 // nextRunnableNode returns the first ready node whose executor the engine runs
 // synchronously (tool/program) AND that the engine is allowed to auto-run.
 // ai/human ready nodes are skipped — they are driven by start/attach + the
 // dashboard, not the engine (slice A). Insertion order (chart order) gives a
 // stable, predictable pick.
-func nextRunnableNode(inst *db.WorkflowInstance, nodes []*db.WorkflowNode) *db.WorkflowNode {
+func nextRunnableNode(inst *db.WorkflowInstance, nodes []*db.WorkflowNode, attempted map[string]bool) *db.WorkflowNode {
 	for _, n := range nodes {
-		if n.Status != db.WorkflowNodeStatusReady {
+		if n.Status != db.WorkflowNodeStatusReady || attempted[n.NodeID] {
 			continue
 		}
 		switch n.ExecutorKind {
@@ -1370,7 +1475,7 @@ func settleWorkflowNodeDone(inst *db.WorkflowInstance, nodeID string, tmpl *work
 	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: inst.ID, NodeID: nodeID, Kind: db.WorkflowEventNodeDone, Message: "engine: outcome " + outcome})
 
 	advanced := workflow.Advance(tmpl, nodeID, outcome, nodeStateMap(inst.ID))
-	applyWorkflowAdvance(inst.ID, advanced, now)
+	applyWorkflowAdvance(inst.ID, nodeID, tmpl, advanced, now)
 	recomputeAndPersistInstanceStatus(inst, tmpl)
 }
 
@@ -1390,8 +1495,33 @@ func settleWorkflowNodeFailed(inst *db.WorkflowInstance, nodeID string, tmpl *wo
 	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: inst.ID, NodeID: nodeID, Kind: db.WorkflowEventNodeFailed, Message: msg})
 
 	advanced := workflow.Advance(tmpl, nodeID, workflow.OutcomeFail, nodeStateMap(inst.ID))
-	applyWorkflowAdvance(inst.ID, advanced, now)
+	applyWorkflowAdvance(inst.ID, nodeID, tmpl, advanced, now)
 	recomputeAndPersistInstanceStatus(inst, tmpl)
+}
+
+// settleWorkflowNodeMaxVisits fails a node that has exhausted its visit budget
+// and HALTS the instance — it deliberately does NOT advance. A loop node carries
+// on_fail: continue + a |fail| back-edge, so routing the failure normally would
+// just re-enter the loop, defeating the guard. The visit cap is the hard stop on
+// a runaway loop, so it forces the instance to failed directly rather than
+// letting FailHalts (false for a loop node) keep it running. (JOH-39)
+func settleWorkflowNodeMaxVisits(inst *db.WorkflowInstance, nodeID string, cap int, now time.Time) {
+	failed := db.WorkflowNodeStatusFailed
+	fin := now
+	oc := workflow.OutcomeFail
+	cleared := ""
+	_, _ = db.UpdateWorkflowNode(inst.ID, nodeID, db.WorkflowNodePatch{Status: &failed, Outcome: &oc, FinishedAt: &fin, Assignee: &cleared})
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: inst.ID, NodeID: nodeID,
+		Kind: db.WorkflowEventNodeFailed, Message: fmt.Sprintf("engine: max_visits exceeded (cap %d) — halting instance", cap)})
+	// Force the instance to failed: do NOT advance (no loop re-entry), and bypass
+	// recompute's FailHalts (which is false for an on_fail:continue loop node).
+	if inst.Status == db.WorkflowStatusRunning {
+		if _, err := db.UpdateWorkflowInstanceStatus(inst.ID, db.WorkflowStatusFailed); err == nil {
+			appendInstanceStatusEvent(inst.ID, db.WorkflowStatusFailed)
+			inst.Status = db.WorkflowStatusFailed
+		}
+	}
+	slog.Warn("workflow engine: node hit max_visits; instance failed", "instance", inst.ID, "node", nodeID, "cap", cap)
 }
 
 // recomputeAndPersistInstanceStatus recomputes the instance status from its

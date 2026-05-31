@@ -144,3 +144,24 @@ func TestAnalyze_ExampleLoadsCleanWithNoWarnings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, tmpl.Warnings, "the shipped example must load with no topology warnings")
 }
+
+// JOH-39: a cycle with no edge leaving it can only end by hitting max_visits.
+func TestAnalyze_LoopWithoutExitWarns(t *testing.T) {
+	tmpl := build(t, "flowchart TD\n a --> b\n b -->|fail| a\n", map[string]*Node{"b": {OnFail: OnFailContinue}})
+	var found bool
+	for _, w := range tmpl.Analyze() {
+		if strings.Contains(w, "no exit edge") {
+			found = true
+		}
+	}
+	assert.True(t, found, "a cycle with no exit edge should warn; got %v", tmpl.Analyze())
+}
+
+// A loop WITH a break-on-pass exit edge must not warn.
+func TestAnalyze_LoopWithExitNoWarn(t *testing.T) {
+	tmpl := build(t, "flowchart TD\n a --> b\n b -->|fail| a\n b -->|pass| done\n",
+		map[string]*Node{"b": {OnFail: OnFailContinue}})
+	for _, w := range tmpl.Analyze() {
+		assert.NotContains(t, w, "no exit edge", "a loop with a |pass| exit must not warn")
+	}
+}

@@ -108,7 +108,7 @@ type Node struct {
 	Verify    Verify   `yaml:"verify,omitempty"`     //
 	Capture   string   `yaml:"capture,omitempty"`    // name to store this node's output under
 	Retries   int      `yaml:"retries,omitempty"`    // re-runs on failure before the node fails
-	MaxVisits int      `yaml:"max_visits,omitempty"` // loop guard: max times this node may run (0 = unbounded)
+	MaxVisits int      `yaml:"max_visits,omitempty"` // loop guard: max executions (0 = engine default cap; -1 = unbounded)
 	OnFail    string   `yaml:"on_fail,omitempty"`    // stop | continue
 	Join      string   `yaml:"join,omitempty"`       // all | any
 }

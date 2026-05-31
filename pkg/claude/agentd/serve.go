@@ -160,6 +160,7 @@ func runServe(p *serveParams) error {
 	workflowEngineEnabled = false
 	workflowAIPerInstanceCap = defaultWorkflowAIPerInstanceCap
 	workflowAIGlobalCap = defaultWorkflowAIGlobalCap
+	workflowMaxVisits = defaultWorkflowMaxVisits
 	if cfg != nil && cfg.Agent != nil {
 		workflowEngineEnabled = cfg.Agent.WorkflowEngine
 		if c := cfg.Agent.WorkflowAIPerInstance; c != nil && *c > 0 {
@@ -168,9 +169,13 @@ func runServe(p *serveParams) error {
 		if c := cfg.Agent.WorkflowAIGlobal; c != nil && *c > 0 {
 			workflowAIGlobalCap = *c
 		}
+		if c := cfg.Agent.WorkflowMaxVisits; c != nil && *c > 0 {
+			workflowMaxVisits = *c
+		}
 	}
 	slog.Info("workflows execution engine", "enabled", workflowEngineEnabled,
-		"ai_per_instance_cap", workflowAIPerInstanceCap, "ai_global_cap", workflowAIGlobalCap)
+		"ai_per_instance_cap", workflowAIPerInstanceCap, "ai_global_cap", workflowAIGlobalCap,
+		"max_visits", workflowMaxVisits)
 
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
