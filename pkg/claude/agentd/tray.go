@@ -104,6 +104,11 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 		if !dashAvailable {
 			mDash.Disable()
 		}
+		// Quick declutter — the dashboard's whole-roster "unfocus all"
+		// without the trip through the browser. Detaches every active
+		// agent's terminal window; the agents themselves keep running.
+		mUnfocusAll := systray.AddMenuItem("Unfocus all agents",
+			"Detach every agent's terminal window — agents keep running")
 		mReinstall := systray.AddMenuItem("Reinstall agent skills",
 			"Run `tclaude setup --install-agent-skills`")
 		mConfig := systray.AddMenuItem("Open config.json", config.ConfigPath())
@@ -220,6 +225,20 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 							slog.Warn("tray: open dashboard failed", "error", err)
 						}
 					}
+				case <-mUnfocusAll.ClickedCh:
+					// Detach every active agent's window in the background —
+					// the parallel tmux detaches shouldn't block the tray
+					// event loop. Same fire-and-log shape as Reinstall.
+					go func() {
+						resp, err := unfocusAllAgentWindows()
+						if err != nil {
+							slog.Warn("tray: unfocus all agents failed", "error", err)
+							return
+						}
+						slog.Info("tray: unfocused all agents",
+							"targeted", resp.Targeted, "detached", resp.Detached,
+							"no_window", resp.NoWindow, "failed", resp.Failed)
+					}()
 				case <-mReinstall.ClickedCh:
 					go runReinstallSkills()
 				case <-mConfig.ClickedCh:

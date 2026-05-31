@@ -201,6 +201,43 @@ func TestAgentWindows_AllScope_UnfocusHitsGroupedAndUngrouped(t *testing.T) {
 	assert.True(t, f.World.Tmux.IsAlive("tmux-wfal"), "ungrouped agent keeps running")
 }
 
+// Scenario: the tray's "Unfocus all agents" item detaches every active
+// agent's window — grouped and ungrouped alike — without an HTTP
+// round-trip. It is the in-process twin of POST /api/agent-windows
+// {"direction":"unfocus","scope":"all"}: window-only, no agent process
+// is stopped. Covers the path runTrayBlocking's menu handler drives.
+func TestUnfocusAllAgentWindows_TrayPath_DetachesEveryActiveAgent(t *testing.T) {
+	f := newFlow(t)
+	rec := newWinRecorder()
+	rec.installDetach(t)
+
+	const group = "tclaude-dev"
+	const groupedConv = "wfta-1111-2222-3333-4444"
+	const looseConv = "wftl-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(groupedConv, "grouped-worker")
+	f.HaveConvWithTitle(looseConv, "ungrouped-worker")
+	f.HaveAliveSession(groupedConv, "spwn-wfta", "tmux-wfta", "/tmp/wfta")
+	f.HaveAliveSession(looseConv, "spwn-wftl", "tmux-wftl", "/tmp/wftl")
+	f.HaveMember(group, groupedConv)
+	f.HaveEnrolledAgent(looseConv) // ungrouped — on the roster, in no group
+
+	targeted, detached, noWindow, failed, err := agentd.UnfocusAllAgentWindowsForTest()
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, targeted, "all-scope covers grouped + ungrouped agents")
+	assert.Equal(t, 2, detached)
+	assert.Equal(t, 0, noWindow)
+	assert.Equal(t, 0, failed)
+	assert.Equal(t, []string{groupedConv, looseConv}, rec.detachedSet(),
+		"the detach path must be dispatched for grouped AND ungrouped agents")
+
+	// Window-only: both agents keep running — the tray button declutters
+	// windows, it never stops a process.
+	assert.True(t, f.World.Tmux.IsAlive("tmux-wfta"), "grouped agent keeps running")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-wftl"), "ungrouped agent keeps running")
+}
+
 // Scenario: the selection modal narrows the set — the human ticked a
 // subset of the group. The endpoint acts on exactly the "convs" list,
 // intersected with the scope: a conv outside the group is dropped, so
