@@ -82,7 +82,10 @@ type RunState struct {
 	Phases       []Phase  `json:"phases"`
 	Agents       []Agent  `json:"agents"`
 	ScriptPath   string   `json:"scriptPath,omitempty"`
-	Logs         []string `json:"logs,omitempty"`
+	// Script is the resolved workflow script text — embedded in the completed
+	// JSON, or read from the snapshot for in-flight runs. Empty if unavailable.
+	Script string   `json:"script,omitempty"`
+	Logs   []string `json:"logs,omitempty"`
 }
 
 // RunRef is a lightweight pointer to a run discovered by enumeration, with just
@@ -109,6 +112,10 @@ type RunRef struct {
 	// JSON; for in-flight runs it is a best-effort estimate from the script
 	// snapshot's mtime (written at launch). 0 if unknown.
 	StartTimeMs int64 `json:"startTimeMs,omitempty"`
+	// AgentCount is the run's agent count from the completed JSON (0 for an
+	// in-flight run, whose final count is not yet known — call LoadRun for the
+	// live agent count from the journal).
+	AgentCount int `json:"agentCount,omitempty"`
 	// HasCompletedJSON is true when a <runId>.json record exists.
 	HasCompletedJSON bool `json:"hasCompletedJson"`
 }
@@ -176,6 +183,7 @@ func ParseCompletedRun(data []byte) (*RunState, error) {
 		TotalTokens:  cr.TotalTokens,
 		DefaultModel: cr.DefaultModel,
 		ScriptPath:   cr.ScriptPath,
+		Script:       cr.Script,
 		Logs:         cr.Logs,
 	}
 
@@ -259,16 +267,19 @@ func LoadRun(sessionDir, runID string) (*RunState, error) {
 	var spawn []AgentCall
 	dynamic := false
 	scriptPath, hasScript := findRunScript(sessionDir, runID)
+	var scriptText string
 	if hasScript {
 		if src, err := os.ReadFile(scriptPath); err == nil {
-			meta, _ = ParseScriptMeta(string(src))
-			spawn = ParseSpawnOrder(string(src))
-			dynamic = ScriptHasDynamicSpawns(string(src))
+			scriptText = string(src)
+			meta, _ = ParseScriptMeta(scriptText)
+			spawn = ParseSpawnOrder(scriptText)
+			dynamic = ScriptHasDynamicSpawns(scriptText)
 		}
 	}
 	rs := buildLiveRunState(runID, events, meta, spawn, dynamic)
 	if hasScript {
 		rs.ScriptPath = scriptPath
+		rs.Script = scriptText
 	}
 	return rs, nil
 }
@@ -343,6 +354,7 @@ func runsInSession(sessionDir, projectDir, sessionID string) []RunRef {
 			r.Status = head.status
 			r.WorkflowName = head.workflowName
 			r.StartTimeMs = head.startTime
+			r.AgentCount = head.agentCount
 		}
 	}
 
@@ -385,6 +397,7 @@ type completedHead struct {
 	status       RunStatus
 	workflowName string
 	startTime    int64
+	agentCount   int
 }
 
 func readCompletedHead(path string) completedHead {
@@ -396,6 +409,7 @@ func readCompletedHead(path string) completedHead {
 		Status       string `json:"status"`
 		WorkflowName string `json:"workflowName"`
 		StartTime    int64  `json:"startTime"`
+		AgentCount   int    `json:"agentCount"`
 	}
 	if err := json.Unmarshal(data, &head); err != nil {
 		return completedHead{status: RunUnknown}
@@ -404,6 +418,7 @@ func readCompletedHead(path string) completedHead {
 		status:       normalizeRunStatus(head.Status),
 		workflowName: head.WorkflowName,
 		startTime:    head.StartTime,
+		agentCount:   head.AgentCount,
 	}
 }
 
