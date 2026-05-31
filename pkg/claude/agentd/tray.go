@@ -271,7 +271,6 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 					} else {
 						blinkOn = false
 					}
-					tickN++
 
 					icon := renderTrayIcon(mode, blinkOn, greenIcon, yellowIcon, orangeIcon, redIcon)
 					if !bytes.Equal(icon, lastIcon) {
@@ -282,10 +281,16 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 						systray.SetTooltip(tooltip)
 						lastTooltip = tooltip
 					}
-					if !sliceEq(ids, lastIDs) {
+					// Refresh the approvals submenu when the id-set changes
+					// (instant) OR, while requests stay pending, on the slow
+					// sub-cadence so the relative "Xs ago" labels keep ticking
+					// instead of freezing at whatever they read when the set
+					// last changed.
+					if !sliceEq(ids, lastIDs) || (len(ids) > 0 && tickN%agentRefreshEvery == 0) {
 						refreshApprovalsSubmenu(mApprovalsHeader, approvalSlots, summary)
 						lastIDs = ids
 					}
+					tickN++
 				}
 			}
 		}()
@@ -469,12 +474,14 @@ func pickTrayMode(a agentTrayCounts, pending, sudoActive int, sudoExpiryHint str
 		}
 		return trayOrange, t
 	}
-	// Past the blink check, awaiting == errored == 0, so any online agent
-	// is either busy or idle. No busy agent + at least one online → all
-	// idle → yellow. Otherwise green (something's working, or nothing's
-	// online).
-	if a.online > 0 && a.busy == 0 {
-		return trayYellow, fmt.Sprintf("tclaude agentd · all %d agent(s) idle", a.online)
+	// All online agents idle → yellow (the quiet state). Checked as
+	// idle == online (not merely busy == 0) so a status that counts
+	// toward online without being idle can never masquerade as idle.
+	// For today's statuses, past the blink check awaiting == errored == 0
+	// so online == busy + idle and the two forms agree; the explicit form
+	// just doesn't depend on that invariant holding forever.
+	if a.online > 0 && a.idle == a.online {
+		return trayYellow, fmt.Sprintf("tclaude agentd · all %d agent(s) idle", a.idle)
 	}
 	if a.busy > 0 {
 		return trayGreen, fmt.Sprintf("tclaude agentd · %d agent(s) working", a.busy)

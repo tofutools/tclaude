@@ -38,6 +38,16 @@ func TestPickTrayMode_YellowWhenAllIdle(t *testing.T) {
 	assert.Contains(t, tooltip, "all 2 agent(s) idle", "tooltip should mention idle count")
 }
 
+// "not busy" must not be mistaken for "all idle": a counts where online
+// exceeds the recognized idle bucket (a hypothetical status that counts
+// toward online without being idle) stays green, not yellow. Pins the
+// idle == online guard at the policy layer.
+func TestPickTrayMode_NotAllIdleWhenOnlineExceedsIdle(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 2, idle: 1}, 0, 0, "")
+	assert.Equal(t, trayGreen, mode, "online=2 idle=1 (one unclassified) → not yellow")
+	assert.Equal(t, "tclaude agentd", tooltip, "unclassified-only: plain tooltip")
+}
+
 // A pending approval popup blinks (folded into "blocked on human").
 func TestPickTrayMode_BlinkWhenPendingApproval(t *testing.T) {
 	mode, tooltip := pickTrayMode(agentTrayCounts{online: 1, busy: 1}, 1, 0, "")
