@@ -57,8 +57,9 @@ const (
 // agentTrayCounts is the aggregate over currently-online agents that
 // pickTrayMode reduces to a colour. busy = working / main_agent_idle;
 // awaiting = awaiting_permission / awaiting_input; errored = a turn
-// that ended in error. online is the total (busy+idle+awaiting+errored
-// plus any state we don't special-case).
+// that ended in error. online = busy + idle + awaiting + errored —
+// only agents in a recognized LIVE status; an alive row with an
+// exited/empty/unknown status is excluded (see countAgentStates).
 type agentTrayCounts struct {
 	online   int
 	busy     int
@@ -544,16 +545,24 @@ func countAgentStates(rows []*db.SessionRow, alive map[string]struct{}) agentTra
 	}
 	var c agentTrayCounts
 	for _, p := range best {
-		c.online++
+		// online counts only rows in a recognized LIVE status. An alive
+		// tmux session whose status is exited/empty/unknown (e.g.
+		// SessionEnd fired but tmux hasn't torn the session down yet) is
+		// deliberately NOT counted: it must not tip the icon to the
+		// "all idle" yellow when the agent isn't actually idle.
 		switch p.status {
 		case session.StatusWorking, session.StatusMainAgentIdle:
 			c.busy++
+			c.online++
 		case session.StatusIdle:
 			c.idle++
+			c.online++
 		case session.StatusAwaitingPermission, session.StatusAwaitingInput:
 			c.awaiting++
+			c.online++
 		case session.StatusError:
 			c.errored++
+			c.online++
 		}
 	}
 	return c

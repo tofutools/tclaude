@@ -137,16 +137,38 @@ func TestCountAgentStates(t *testing.T) {
 		{ConvID: "c", TmuxSession: "tmux-c", Status: session.StatusIdle, UpdatedAt: base.Add(-time.Minute)},
 		// row with no tmux session — skipped
 		{ConvID: "g", TmuxSession: "", Status: session.StatusWorking, UpdatedAt: base},
+		// alive tmux row but status=exited (SessionEnd fired before tmux
+		// teardown) — must NOT count toward online (would falsely tip yellow)
+		{ConvID: "h", TmuxSession: "tmux-h", Status: session.StatusExited, UpdatedAt: base},
 	}
 	alive := map[string]struct{}{
-		"tmux-a": {}, "tmux-b": {}, "tmux-c": {}, "tmux-d": {}, "tmux-e": {},
+		"tmux-a": {}, "tmux-b": {}, "tmux-c": {}, "tmux-d": {}, "tmux-e": {}, "tmux-h": {},
 	}
 	c := countAgentStates(rows, alive)
-	assert.Equal(t, 5, c.online, "online convs (a,b,c,d,e; f offline, g no-tmux)")
+	assert.Equal(t, 5, c.online, "online convs (a,b,c,d,e; f offline, g no-tmux, h exited)")
 	assert.Equal(t, 2, c.busy, "busy (a working + e main_agent_idle)")
 	assert.Equal(t, 1, c.idle, "idle (b)")
 	assert.Equal(t, 1, c.awaiting, "awaiting (c — newest row wins over the older idle one)")
 	assert.Equal(t, 1, c.errored, "errored (d)")
+}
+
+// Per-conv pick across DISTINCT tmux sessions: when a conv's newest row
+// is dead and an older row is alive (different tmux session names), the
+// alive one is the only candidate and its status is what counts. Pins
+// the load-bearing tray/dashboard agreement on which row wins.
+func TestCountAgentStates_NewestDeadOlderAlive(t *testing.T) {
+	base := time.Now()
+	rows := []*db.SessionRow{
+		// newest row for conv x — its tmux session is DEAD
+		{ConvID: "x", TmuxSession: "tmux-x-new", Status: session.StatusWorking, UpdatedAt: base},
+		// older row for conv x — its tmux session is ALIVE, status idle
+		{ConvID: "x", TmuxSession: "tmux-x-old", Status: session.StatusIdle, UpdatedAt: base.Add(-time.Minute)},
+	}
+	alive := map[string]struct{}{"tmux-x-old": {}} // only the older session lives
+	c := countAgentStates(rows, alive)
+	assert.Equal(t, 1, c.online, "one online conv (via the alive older row)")
+	assert.Equal(t, 0, c.busy, "newest (working) row is dead and filtered out")
+	assert.Equal(t, 1, c.idle, "the alive older row's idle status is what counts")
 }
 
 func TestCountAgentStates_Empty(t *testing.T) {
