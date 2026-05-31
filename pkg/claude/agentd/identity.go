@@ -287,6 +287,7 @@ const (
 	PermTemplatesManage   = "templates.manage"
 	PermTemplatesUse      = "templates.instantiate"
 	PermHumanNotify       = "human.notify"
+	PermWorkflowTrigger   = "workflow.trigger"
 )
 
 // permResolution is the verdict of the non-interactive permission

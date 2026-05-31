@@ -32,13 +32,16 @@ func Cmd() *cobra.Command {
 		Long: "Inspect Claude Code's builtin \"workflows\" feature: list saved workflow\n" +
 			"templates and runs, show a run's phase/agent fan-out tree, and print the\n" +
 			"script behind a run or template.\n\n" +
-			"Read-only. Output is plain and greppable by default; pass --json for machine\n" +
-			"use. (Distinct from tclaude's own `workgraph` engine.)",
+			"The ls/show/cat subcommands are read-only; output is plain and greppable by\n" +
+			"default, pass --json for machine use. `run` is an EXPERIMENTAL trigger that\n" +
+			"injects a saved workflow's launch into another agent's pane (best-effort).\n" +
+			"(Distinct from tclaude's own `workgraph` engine.)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			LsCmd(),
 			ShowCmd(),
 			CatCmd(),
+			RunCmd(),
 		},
 		// No RunFunc: invoking the bare group prints help (cobra default).
 	}.ToCobra()

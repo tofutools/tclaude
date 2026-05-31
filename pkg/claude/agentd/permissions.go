@@ -170,6 +170,10 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermHumanNotify,
 		Description: "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Not default-granted: the human grants it to the PO so workers cannot spam the channel.",
 	},
+	{
+		Slug:        PermWorkflowTrigger,
+		Description: "EXPERIMENTAL — trigger a saved Claude Code workflow in ANOTHER agent's pane (`tclaude workflows run <name> --target`): injects the workflow's `/<name>` slash command via tmux send-keys. Best-effort, not guaranteed-fire — in the target's default permission mode it raises an approval prompt the target must accept. Strict name-only (the name is validated against the enumerated saved-script set and a slash-command-safe charset). Not default-granted; the human grants it to a trusted orchestrator. Group owners can trigger workflows in members of groups they own without this slug.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.
@@ -348,8 +352,8 @@ type permissionsMutateResp struct {
 	TargetKey string   `json:"target_key,omitempty"` // resolved conv-id when target != "default"
 	Title     string   `json:"title,omitempty"`      // display title of the resolved conv, when known
 	Slug      string   `json:"slug"`
-	Effect    string   `json:"effect,omitempty"`     // post-mutation override effect: "grant", "deny", or "default" (cleared)
-	Effective []string `json:"effective"`            // post-mutation GRANTED slug list for that target
+	Effect    string   `json:"effect,omitempty"` // post-mutation override effect: "grant", "deny", or "default" (cleared)
+	Effective []string `json:"effective"`        // post-mutation GRANTED slug list for that target
 }
 
 func decodeMutateReq(w http.ResponseWriter, r *http.Request) (*permissionsMutateReq, bool) {
