@@ -3,7 +3,6 @@ package memoryfiles
 import (
 	"bufio"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,8 +17,8 @@ import (
 type CleanParams struct {
 	Dir string `pos:"true" optional:"true" help:"Project directory whose memory files to clean (defaults to current directory)"`
 
-	Include []string `long:"include" optional:"true" help:"Glob selecting files to DELETE, matched against both the file name and its path under memory/ (e.g. '*.md', 'feedback_*'). Repeatable. Default: every memory file."`
-	Exclude []string `long:"exclude" optional:"true" help:"Glob selecting files to KEEP; overrides --include (e.g. 'MEMORY.md', 'project_*'). Repeatable."`
+	Include []string `long:"include" optional:"true" help:"Glob selecting .md files to DELETE, matched against the file name (e.g. 'feedback_*', '*'). Repeatable. Default: every .md file."`
+	Exclude []string `long:"exclude" optional:"true" help:"Glob selecting .md files to KEEP; overrides --include (e.g. 'MEMORY.md', 'project_*'). Repeatable."`
 
 	// DryRun is declared before NoSiblings on purpose: boa's auto-short
 	// enricher assigns the first free initial letter, and we want the
@@ -40,11 +39,13 @@ func CleanCmd() *cobra.Command {
 		Long: "Delete Claude Code memory files for a project directory.\n\n" +
 			"Resolves <dir> to its encoded ~/.claude/projects/<dir> directory and, by\n" +
 			"default, every worktree-sibling project dir sharing that encoded prefix\n" +
-			"(pass --no-siblings to restrict to the exact dir). Files under each\n" +
-			"memory/ subdir are classified using --include / --exclude globs: a file is\n" +
-			"deleted when it matches an --include (or none were given, meaning all) AND\n" +
-			"no --exclude. The full to-delete / to-keep split is printed before anything\n" +
-			"is removed; without --dry-run or --yes you are asked to confirm.",
+			"(pass --no-siblings to restrict to the exact dir). Only top-level .md files\n" +
+			"directly in each memory/ dir are considered — subdirectories (e.g. a stray\n" +
+			".idea/) are never traversed. Those .md files are classified using --include\n" +
+			"/ --exclude globs: a file is deleted when it matches an --include (or none\n" +
+			"were given, meaning all) AND no --exclude. The full to-delete / to-keep\n" +
+			"split is printed before anything is removed; without --dry-run or --yes you\n" +
+			"are asked to confirm.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *CleanParams, _ *cobra.Command, _ []string) {
 			if code := RunClean(params, os.Stdout, os.Stderr, os.Stdin); code != 0 {
@@ -140,40 +141,36 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 	return 0
 }
 
-// gatherMemoryFiles walks the memory/ subdir of each project dir,
-// classifying every file with the include/exclude globs. Project dirs
-// without a memory/ subdir are skipped. The result is sorted by
-// (projectDir, rel) for deterministic output.
+// gatherMemoryFiles lists the top-level .md files directly inside each
+// project dir's memory/ subdir, classifying them with the
+// include/exclude globs. Subdirectories are NOT traversed (a stray
+// .idea/, for example, is ignored) and non-.md files are skipped, so
+// the only thing we ever touch is the markdown memory itself. Project
+// dirs without a readable memory/ subdir are skipped. The result is
+// sorted by (projectDir, name) for deterministic output.
 func gatherMemoryFiles(projectDirs, includes, excludes []string) ([]memFile, error) {
 	var out []memFile
 	for _, pd := range projectDirs {
 		memDir := filepath.Join(pd, "memory")
-		info, err := os.Stat(memDir)
-		if err != nil || !info.IsDir() {
-			continue
+		entries, err := os.ReadDir(memDir)
+		if err != nil {
+			continue // no memory/ dir here (or it's a file / unreadable)
 		}
-		walkErr := filepath.WalkDir(memDir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+		for _, e := range entries {
+			if e.IsDir() {
+				continue // never descend into subdirs
 			}
-			if d.IsDir() {
-				return nil
-			}
-			rel, relErr := filepath.Rel(memDir, path)
-			if relErr != nil {
-				rel = d.Name()
+			name := e.Name()
+			if !strings.EqualFold(filepath.Ext(name), ".md") {
+				continue // .md files only
 			}
 			out = append(out, memFile{
 				projectDir: pd,
 				memoryDir:  memDir,
-				rel:        rel,
-				abs:        path,
-				del:        classify(rel, includes, excludes),
+				rel:        name,
+				abs:        filepath.Join(memDir, name),
+				del:        classify(name, includes, excludes),
 			})
-			return nil
-		})
-		if walkErr != nil {
-			return nil, fmt.Errorf("walking %s: %w", memDir, walkErr)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -185,32 +182,25 @@ func gatherMemoryFiles(projectDirs, includes, excludes []string) ([]memFile, err
 	return out, nil
 }
 
-// classify reports whether a memory file (identified by its path
-// relative to the memory/ dir) should be DELETED. A file is deleted
-// when it matches an --include glob — or no includes were given,
-// meaning "all files" — AND does not match any --exclude glob.
-// Exclusions always win over inclusions.
-func classify(rel string, includes, excludes []string) bool {
-	if matchesAny(excludes, rel) {
+// classify reports whether a memory file (identified by its file name)
+// should be DELETED. A file is deleted when it matches an --include
+// glob — or no includes were given, meaning "all .md files" — AND does
+// not match any --exclude glob. Exclusions always win over inclusions.
+func classify(name string, includes, excludes []string) bool {
+	if matchesAny(excludes, name) {
 		return false
 	}
 	if len(includes) == 0 {
 		return true
 	}
-	return matchesAny(includes, rel)
+	return matchesAny(includes, name)
 }
 
-// matchesAny reports whether rel matches any of the glob patterns.
-// Each pattern is tried against both the full relative path and the
-// base name, so '*.md' matches nested files too (filepath.Match's '*'
-// does not cross '/').
-func matchesAny(patterns []string, rel string) bool {
-	base := filepath.Base(rel)
+// matchesAny reports whether name matches any of the glob patterns
+// (filepath.Match semantics, against the bare file name).
+func matchesAny(patterns []string, name string) bool {
 	for _, p := range patterns {
-		if ok, _ := filepath.Match(p, rel); ok {
-			return true
-		}
-		if ok, _ := filepath.Match(p, base); ok {
+		if ok, _ := filepath.Match(p, name); ok {
 			return true
 		}
 	}

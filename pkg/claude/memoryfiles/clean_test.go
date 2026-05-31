@@ -26,8 +26,7 @@ func TestClassify(t *testing.T) {
 		{"include miss keeps", "project_x.md", []string{"feedback_*"}, nil, false},
 		{"exclude wins over default-all", "MEMORY.md", nil, []string{"MEMORY.md"}, false},
 		{"exclude wins over include", "feedback_x.md", []string{"*.md"}, []string{"feedback_*"}, false},
-		{"glob star matches nested by basename", "sub/dir/note.md", []string{"*.md"}, nil, true},
-		{"explicit nested path glob", "sub/note.md", []string{"sub/*.md"}, nil, true},
+		{"star matches any name", "note.md", []string{"*"}, nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,6 +189,38 @@ func TestRunClean_IncludeExcludeFilters(t *testing.T) {
 	assert.True(t, exists(filepath.Join(memDir, "MEMORY.md")))
 	assert.True(t, exists(filepath.Join(memDir, "project_keep.md")))
 	// dir not pruned because files remain
+	assert.True(t, exists(memDir))
+}
+
+func TestRunClean_OnlyTopLevelMarkdownNoSubdirs(t *testing.T) {
+	target := "/work/proj"
+	encoded := convops.PathToProjectDir(target)
+	projects := memEnv(t, target, []memFileSpec{
+		{encoded, "MEMORY.md"},
+		{encoded, "note.md"},
+		{encoded, "README.txt"},            // non-.md → ignored entirely
+		{encoded, ".idea/workspace.xml"},   // subdir → never traversed
+		{encoded, ".idea/codeStyles/x.md"}, // .md but nested → still ignored
+	})
+
+	stdout := tmpStream(t, "")
+	code := RunClean(&CleanParams{Dir: target, Yes: true}, stdout, tmpStream(t, ""), tmpStream(t, ""))
+	assert.Equal(t, 0, code)
+
+	out := readStream(t, stdout)
+	// Only the two top-level .md files are even mentioned.
+	assert.Contains(t, out, "Deleted 2 file(s)")
+	assert.NotContains(t, out, "README.txt")
+	assert.NotContains(t, out, ".idea")
+
+	memDir := filepath.Join(projects, encoded, "memory")
+	assert.False(t, exists(filepath.Join(memDir, "MEMORY.md")))
+	assert.False(t, exists(filepath.Join(memDir, "note.md")))
+	// Untouched: non-md file and the whole subdir (incl. its nested .md).
+	assert.True(t, exists(filepath.Join(memDir, "README.txt")))
+	assert.True(t, exists(filepath.Join(memDir, ".idea", "workspace.xml")))
+	assert.True(t, exists(filepath.Join(memDir, ".idea", "codeStyles", "x.md")))
+	// memory/ dir not pruned because README.txt + .idea/ remain.
 	assert.True(t, exists(memDir))
 }
 
