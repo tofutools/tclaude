@@ -143,77 +143,77 @@ func SetOpenTerminalForTest(fn func(string) error) func() {
 	return func() { openTerminal = prev }
 }
 
-// SetWorkflowProjectDirsForTest overrides the project-source dirs used to
-// resolve / list workflow templates, so flow tests can point instantiation at a
+// SetWorkgraphProjectDirsForTest overrides the project-source dirs used to
+// resolve / list workgraph templates, so flow tests can point instantiation at a
 // fixture template dir instead of the daemon's cwd. Returns a restore function.
-func SetWorkflowProjectDirsForTest(dirs ...string) func() {
-	prev := workflowProjectDirsFn
-	workflowProjectDirsFn = func() []string { return dirs }
-	return func() { workflowProjectDirsFn = prev }
+func SetWorkgraphProjectDirsForTest(dirs ...string) func() {
+	prev := workgraphProjectDirsFn
+	workgraphProjectDirsFn = func() []string { return dirs }
+	return func() { workgraphProjectDirsFn = prev }
 }
 
-// SetWorkflowEngineEnabledForTest flips the engine's opt-in gate (off by default
+// SetWorkgraphEngineEnabledForTest flips the engine's opt-in gate (off by default
 // in production). A flow test that drives the engine must enable it first.
 // Returns a restore function for t.Cleanup.
-func SetWorkflowEngineEnabledForTest(enabled bool) func() {
-	prev := workflowEngineEnabled
-	workflowEngineEnabled = enabled
-	return func() { workflowEngineEnabled = prev }
+func SetWorkgraphEngineEnabledForTest(enabled bool) func() {
+	prev := workgraphEngineEnabled
+	workgraphEngineEnabled = enabled
+	return func() { workgraphEngineEnabled = prev }
 }
 
-// RunWorkflowEngineTickForTest drives one synchronous engine sweep, so flow
+// RunWorkgraphEngineTickForTest drives one synchronous engine sweep, so flow
 // tests can advance the autonomous runner deterministically instead of waiting
 // on the 5s ticker. Uses a background context. The engine gate must be enabled
-// (SetWorkflowEngineEnabledForTest) or the tick is a no-op.
-func RunWorkflowEngineTickForTest() {
-	runWorkflowEngineTick(context.Background())
+// (SetWorkgraphEngineEnabledForTest) or the tick is a no-op.
+func RunWorkgraphEngineTickForTest() {
+	runWorkgraphEngineTick(context.Background())
 }
 
-// SetWorkflowAICapsForTest overrides the engine's per-instance + global AI
+// SetWorkgraphAICapsForTest overrides the engine's per-instance + global AI
 // auto-spawn parallelism caps for the duration of a test, so a flow test can
 // assert the cap behaviour with small, deterministic limits. Returns a restore
 // function for t.Cleanup.
-func SetWorkflowAICapsForTest(perInstance, global int) func() {
-	prevPer := workflowAIPerInstanceCap
-	prevGlobal := workflowAIGlobalCap
-	workflowAIPerInstanceCap = perInstance
-	workflowAIGlobalCap = global
+func SetWorkgraphAICapsForTest(perInstance, global int) func() {
+	prevPer := workgraphAIPerInstanceCap
+	prevGlobal := workgraphAIGlobalCap
+	workgraphAIPerInstanceCap = perInstance
+	workgraphAIGlobalCap = global
 	return func() {
-		workflowAIPerInstanceCap = prevPer
-		workflowAIGlobalCap = prevGlobal
+		workgraphAIPerInstanceCap = prevPer
+		workgraphAIGlobalCap = prevGlobal
 	}
 }
 
-// SetWorkflowNodeSLAForTest overrides the non-human stuck-node SLA window T so a
+// SetWorkgraphNodeSLAForTest overrides the non-human stuck-node SLA window T so a
 // flow test can drive sweepStuckNodes deterministically (e.g. a tiny duration →
 // any idle node with no live agent is immediately past terminal). Returns a
 // restore function. (JOH-41)
-func SetWorkflowNodeSLAForTest(d time.Duration) func() {
-	prev := workflowNodeSLA
-	workflowNodeSLA = d
-	return func() { workflowNodeSLA = prev }
+func SetWorkgraphNodeSLAForTest(d time.Duration) func() {
+	prev := workgraphNodeSLA
+	workgraphNodeSLA = d
+	return func() { workgraphNodeSLA = prev }
 }
 
-// SetWorkflowHumanNodeSLAForTest overrides the human-node SLA window T so a flow
+// SetWorkgraphHumanNodeSLAForTest overrides the human-node SLA window T so a flow
 // test can drive the human-gate escalation rungs deterministically. Returns a
 // restore function. (JOH-41)
-func SetWorkflowHumanNodeSLAForTest(d time.Duration) func() {
-	prev := workflowHumanNodeSLA
-	workflowHumanNodeSLA = d
-	return func() { workflowHumanNodeSLA = prev }
+func SetWorkgraphHumanNodeSLAForTest(d time.Duration) func() {
+	prev := workgraphHumanNodeSLA
+	workgraphHumanNodeSLA = d
+	return func() { workgraphHumanNodeSLA = prev }
 }
 
-// WorkflowEngineAssigneeForTest exposes the engine-owner sentinel so a flow test
+// WorkgraphEngineAssigneeForTest exposes the engine-owner sentinel so a flow test
 // can stamp it to simulate an engine-claimed (vs human-driven) running node.
-func WorkflowEngineAssigneeForTest() string { return engineAssignee }
+func WorkgraphEngineAssigneeForTest() string { return engineAssignee }
 
-// SetWorkflowMaxVisitsForTest overrides the engine default max-visits cap so a
+// SetWorkgraphMaxVisitsForTest overrides the engine default max-visits cap so a
 // loop test can drive the runaway-loop guard with a small deterministic bound.
 // Returns a restore function for t.Cleanup. (JOH-39)
-func SetWorkflowMaxVisitsForTest(n int) func() {
-	prev := workflowMaxVisits
-	workflowMaxVisits = n
-	return func() { workflowMaxVisits = prev }
+func SetWorkgraphMaxVisitsForTest(n int) func() {
+	prev := workgraphMaxVisits
+	workgraphMaxVisits = n
+	return func() { workgraphMaxVisits = prev }
 }
 
 // ReapOrphanedEngineNodesForTest runs the startup orphan-node recovery so a flow
@@ -223,12 +223,12 @@ func ReapOrphanedEngineNodesForTest() {
 	reapOrphanedEngineNodes()
 }
 
-// SetWorkflowNodeRunTimeoutForTest shrinks the per-node command timeout so a
+// SetWorkgraphNodeRunTimeoutForTest shrinks the per-node command timeout so a
 // hung command fails fast under test. Returns a restore function.
-func SetWorkflowNodeRunTimeoutForTest(d time.Duration) func() {
-	prev := workflowNodeRunTimeout
-	workflowNodeRunTimeout = d
-	return func() { workflowNodeRunTimeout = prev }
+func SetWorkgraphNodeRunTimeoutForTest(d time.Duration) func() {
+	prev := workgraphNodeRunTimeout
+	workgraphNodeRunTimeout = d
+	return func() { workgraphNodeRunTimeout = prev }
 }
 
 // SetFocusAgentWindowForTest swaps the per-agent focus seam behind

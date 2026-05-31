@@ -1830,7 +1830,7 @@ body.slop #agent-spawn-submit.slop-pull-active {
   .slop-trail-coin { display: none; animation: none; }
 }
 
-/* ===== Workflows tab ================================================= */
+/* ===== Workgraphs tab ================================================= */
 
 .wf-muted { color: #7d8590; }
 .wf-ref { color: #6e7681; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }

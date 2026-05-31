@@ -10,8 +10,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestMigrateV49toV50_AddsEngineMode seeds a bare v49 DB (with the v49 workflow
-// tables), runs the v50 migration, and asserts workflow_instances.engine_mode
+// TestMigrateV49toV50_AddsEngineMode seeds a bare v49 DB (with the v49 workgraph
+// tables), runs the v50 migration, and asserts workgraph_instances.engine_mode
 // lands with the right default and is writable. Plain ALTER TABLE ADD COLUMN
 // migration — a pre-existing row reads back the 'system' default (JOH-15 B1).
 func TestMigrateV49toV50_AddsEngineMode(t *testing.T) {
@@ -20,12 +20,12 @@ func TestMigrateV49toV50_AddsEngineMode(t *testing.T) {
 	require.NoError(t, err, "open raw sqlite")
 	defer func() { _ = d.Close() }()
 
-	// A minimal v49 workflow_instances table with one pre-existing row (the
+	// A minimal v49 workgraph_instances table with one pre-existing row (the
 	// columns the v48→v49 migration created, sans engine_mode).
 	_, err = d.Exec(`
 		CREATE TABLE schema_version (version INTEGER NOT NULL);
 		INSERT INTO schema_version (version) VALUES (49);
-		CREATE TABLE workflow_instances (
+		CREATE TABLE workgraph_instances (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			template_ref  TEXT NOT NULL,
 			template_name TEXT NOT NULL,
@@ -39,7 +39,7 @@ func TestMigrateV49toV50_AddsEngineMode(t *testing.T) {
 			updated_at    TEXT NOT NULL,
 			completed_at  TEXT NOT NULL DEFAULT ''
 		);
-		INSERT INTO workflow_instances (template_ref, template_name, created_at, updated_at)
+		INSERT INTO workgraph_instances (template_ref, template_name, created_at, updated_at)
 			VALUES ('example:demo', 'demo', '2026-05-28T00:00:00Z', '2026-05-28T00:00:00Z');
 	`)
 	require.NoError(t, err, "seed v49 schema")
@@ -52,13 +52,13 @@ func TestMigrateV49toV50_AddsEngineMode(t *testing.T) {
 
 	// The pre-existing row defaults to the system engine (back-compat).
 	var mode string
-	require.NoError(t, d.QueryRow(`SELECT engine_mode FROM workflow_instances WHERE template_name = 'demo'`).Scan(&mode))
+	require.NoError(t, d.QueryRow(`SELECT engine_mode FROM workgraph_instances WHERE template_name = 'demo'`).Scan(&mode))
 	assert.Equal(t, "system", mode, "pre-existing row defaults engine_mode to 'system'")
 
 	// The column is writable (an agent-engine instance).
-	_, err = d.Exec(`UPDATE workflow_instances SET engine_mode = 'agent' WHERE template_name = 'demo'`)
+	_, err = d.Exec(`UPDATE workgraph_instances SET engine_mode = 'agent' WHERE template_name = 'demo'`)
 	require.NoError(t, err, "write engine_mode")
-	require.NoError(t, d.QueryRow(`SELECT engine_mode FROM workflow_instances WHERE template_name = 'demo'`).Scan(&mode))
+	require.NoError(t, d.QueryRow(`SELECT engine_mode FROM workgraph_instances WHERE template_name = 'demo'`).Scan(&mode))
 	assert.Equal(t, "agent", mode, "engine_mode round-trips")
 }
 
@@ -78,22 +78,22 @@ func TestMigrateV49toV50_FreshSchemaHasEngineMode(t *testing.T) {
 	require.Equal(t, 50, currentVersion, "currentVersion is 50")
 
 	// An explicit agent-engine instance round-trips its mode.
-	agentID, err := InsertWorkflowInstance(&WorkflowInstance{
+	agentID, err := InsertWorkgraphInstance(&WorkgraphInstance{
 		TemplateRef: "user:agentwf", TemplateName: "agentwf", EngineMode: "agent",
 	})
-	require.NoError(t, err, "InsertWorkflowInstance(agent) on a fresh schema")
-	got, err := GetWorkflowInstance(agentID)
-	require.NoError(t, err, "GetWorkflowInstance")
+	require.NoError(t, err, "InsertWorkgraphInstance(agent) on a fresh schema")
+	got, err := GetWorkgraphInstance(agentID)
+	require.NoError(t, err, "GetWorkgraphInstance")
 	require.NotNil(t, got)
 	assert.Equal(t, "agent", got.EngineMode, "explicit engine_mode round-trips")
 
 	// An omitted engine_mode defaults to 'system' at the DB layer.
-	sysID, err := InsertWorkflowInstance(&WorkflowInstance{
+	sysID, err := InsertWorkgraphInstance(&WorkgraphInstance{
 		TemplateRef: "user:syswf", TemplateName: "syswf",
 	})
-	require.NoError(t, err, "InsertWorkflowInstance(default)")
-	gotSys, err := GetWorkflowInstance(sysID)
-	require.NoError(t, err, "GetWorkflowInstance")
+	require.NoError(t, err, "InsertWorkgraphInstance(default)")
+	gotSys, err := GetWorkgraphInstance(sysID)
+	require.NoError(t, err, "GetWorkgraphInstance")
 	require.NotNil(t, gotSys)
 	assert.Equal(t, "system", gotSys.EngineMode, "omitted engine_mode defaults to 'system'")
 }
