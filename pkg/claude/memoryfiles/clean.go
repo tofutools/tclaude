@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -104,8 +105,23 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 		return 0
 	}
 
+	// Work out which MEMORY.md index entries the deletion will leave dangling,
+	// so we can show them in the preview and tidy them up afterwards. Computed
+	// against the to-delete set (the files still exist on disk right now), so
+	// the preview is accurate before anything is removed.
+	delByDir, indexDeletedByDir := groupDeletions(toDelete)
+	idxPlans := planIndexPrune(delByDir, indexDeletedByDir, stderr)
+	if len(idxPlans) > 0 {
+		idxTotal := 0
+		for _, p := range idxPlans {
+			idxTotal += len(p.entries)
+		}
+		fmt.Fprintf(stdout, "\nMEMORY.md %s to prune (dangling after deletion):\n", nEntries(idxTotal))
+		printIndexPlan(stdout, idxPlans)
+	}
+
 	if params.DryRun {
-		fmt.Fprintf(stdout, "\nDry run — no files deleted.\n")
+		fmt.Fprintf(stdout, "\nDry run — no files deleted, no index entries pruned.\n")
 		return 0
 	}
 
@@ -123,6 +139,7 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 	}
 
 	deleted, failed := 0, 0
+	deletedByDir := map[string]map[string]bool{}
 	for _, f := range toDelete {
 		if err := os.Remove(f.abs); err != nil {
 			fmt.Fprintf(stderr, "Error deleting %s: %v\n", f.abs, err)
@@ -130,11 +147,38 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 			continue
 		}
 		deleted++
+		if deletedByDir[f.memoryDir] == nil {
+			deletedByDir[f.memoryDir] = map[string]bool{}
+		}
+		deletedByDir[f.memoryDir][f.rel] = true
+	}
+
+	// Tidy each modified index. Removal is driven by the names we ACTUALLY
+	// deleted (not the intended set — a failed os.Remove must not orphan its
+	// still-present file from the index), with treatMissingAsGone=false so we
+	// only drop entries for files clean removed, leaving any pre-existing stale
+	// entries for prune-index. We do NOT pre-skip dirs whose MEMORY.md was
+	// targeted for deletion: pruneIndexFile is missing-safe (a deleted index
+	// just yields no entries), and intent-based skipping would wrongly leave a
+	// MEMORY.md whose OWN deletion FAILED still holding its deleted siblings'
+	// stale entries.
+	prunedEntries := 0
+	for memDir, set := range deletedByDir {
+		removed, perr := pruneIndexFile(memDir, set, false, false)
+		if perr != nil {
+			fmt.Fprintf(stderr, "Error pruning %s: %v\n", filepath.Join(memDir, memoryIndexFile), perr)
+			failed++
+			continue
+		}
+		prunedEntries += len(removed)
 	}
 
 	removedDirs := pruneEmptyMemoryDirs(res.dirs)
 
 	fmt.Fprintf(stdout, "Deleted %d file(s)", deleted)
+	if prunedEntries > 0 {
+		fmt.Fprintf(stdout, ", pruned %s from MEMORY.md", nEntries(prunedEntries))
+	}
 	if removedDirs > 0 {
 		fmt.Fprintf(stdout, ", removed %d empty memory dir(s)", removedDirs)
 	}
@@ -147,6 +191,52 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 		return 1
 	}
 	return 0
+}
+
+// groupDeletions buckets the to-delete files by their memory dir, returning
+// the set of file names being deleted per dir and a flag per dir for whether
+// MEMORY.md itself is among them (in which case there's no index left to
+// tidy).
+func groupDeletions(toDelete []memFile) (delByDir map[string]map[string]bool, indexDeletedByDir map[string]bool) {
+	delByDir = map[string]map[string]bool{}
+	indexDeletedByDir = map[string]bool{}
+	for _, f := range toDelete {
+		if delByDir[f.memoryDir] == nil {
+			delByDir[f.memoryDir] = map[string]bool{}
+		}
+		delByDir[f.memoryDir][f.rel] = true
+		if strings.EqualFold(f.rel, memoryIndexFile) {
+			indexDeletedByDir[f.memoryDir] = true
+		}
+	}
+	return delByDir, indexDeletedByDir
+}
+
+// planIndexPrune computes, per modified memory dir, which MEMORY.md entries
+// the deletion would leave dangling — treating the to-delete set as already
+// gone so the result is accurate before any file is removed. Dirs whose
+// MEMORY.md is itself being deleted are skipped. Plans are returned sorted by
+// dir for deterministic output; read errors are surfaced to stderr.
+func planIndexPrune(delByDir map[string]map[string]bool, indexDeletedByDir map[string]bool, stderr *os.File) []indexPrunePlan {
+	var plans []indexPrunePlan
+	for memDir, set := range delByDir {
+		if indexDeletedByDir[memDir] {
+			continue
+		}
+		// treatMissingAsGone=false: clean removes only entries for the files
+		// IT is deleting (carried in `set`), never unrelated stale entries —
+		// those are prune-index's job.
+		entries, err := pruneIndexFile(memDir, set, false, true) // dry-run: just compute
+		if err != nil {
+			fmt.Fprintf(stderr, "Error reading %s: %v\n", filepath.Join(memDir, memoryIndexFile), err)
+			continue
+		}
+		if len(entries) > 0 {
+			plans = append(plans, indexPrunePlan{memDir: memDir, entries: entries})
+		}
+	}
+	sort.Slice(plans, func(i, j int) bool { return plans[i].memDir < plans[j].memDir })
+	return plans
 }
 
 // gatherMemoryFiles lists the project dirs' top-level .md memory files

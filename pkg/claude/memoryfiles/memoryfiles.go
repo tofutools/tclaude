@@ -42,6 +42,7 @@ func Cmd() *cobra.Command {
 			LsCmd(),
 			CatCmd(),
 			CleanCmd(),
+			PruneIndexCmd(),
 		},
 		// No RunFunc: invoking the bare group prints help (cobra default).
 	}.ToCobra()

@@ -3,6 +3,7 @@ package memoryfiles
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -329,6 +330,126 @@ func TestRunClean_NoMemoryFiles(t *testing.T) {
 	code := RunClean(&CleanParams{Dir: target, Yes: true}, stdout, tmpStream(t, ""), tmpStream(t, ""))
 	assert.Equal(t, 0, code)
 	assert.Contains(t, readStream(t, stdout), "No memory files found")
+}
+
+// writeIndex overwrites <projects>/<encoded>/memory/MEMORY.md with body.
+func writeIndex(t *testing.T, projects, encoded, body string) {
+	t.Helper()
+	p := filepath.Join(projects, encoded, "memory", "MEMORY.md")
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+}
+
+func TestRunClean_PrunesDanglingIndexEntryForDeletedFile(t *testing.T) {
+	target := "/work/proj"
+	encoded := convops.PathToProjectDir(target)
+	projects := memEnv(t, target, []memFileSpec{
+		{encoded, "MEMORY.md"},
+		{encoded, "feedback_logging.md"},
+		{encoded, "project_pappfigur.md"},
+	})
+	writeIndex(t, projects, encoded, "# Memory Index\n\n"+
+		"- [Logging](feedback_logging.md) — slog\n"+
+		"- [Project: pappfigur](project_pappfigur.md) — silly FPS\n")
+
+	stdout := tmpStream(t, "")
+	code := RunClean(&CleanParams{Dir: target, Include: []string{"*papp*"}, Yes: true},
+		stdout, tmpStream(t, ""), tmpStream(t, ""))
+	require.Equal(t, 0, code)
+
+	out := readStream(t, stdout)
+	assert.Contains(t, out, "Deleted 1 file(s)")
+	assert.Contains(t, out, "pruned 1 entry from MEMORY.md")
+
+	memDir := filepath.Join(projects, encoded, "memory")
+	assert.False(t, exists(filepath.Join(memDir, "project_pappfigur.md")))
+	got, err := os.ReadFile(filepath.Join(memDir, "MEMORY.md"))
+	require.NoError(t, err)
+	// Dangling entry gone, the live one (and the header) preserved.
+	assert.NotContains(t, string(got), "project_pappfigur.md")
+	assert.Contains(t, string(got), "feedback_logging.md")
+	assert.Contains(t, string(got), "# Memory Index")
+}
+
+func TestRunClean_DryRunPreviewsIndexPruneWithoutWriting(t *testing.T) {
+	target := "/work/proj"
+	encoded := convops.PathToProjectDir(target)
+	projects := memEnv(t, target, []memFileSpec{
+		{encoded, "MEMORY.md"},
+		{encoded, "project_pappfigur.md"},
+	})
+	writeIndex(t, projects, encoded, "- [Project: pappfigur](project_pappfigur.md) — silly FPS\n")
+
+	stdout := tmpStream(t, "")
+	code := RunClean(&CleanParams{Dir: target, Include: []string{"*papp*"}, DryRun: true},
+		stdout, tmpStream(t, ""), tmpStream(t, ""))
+	require.Equal(t, 0, code)
+
+	out := readStream(t, stdout)
+	assert.Contains(t, out, "to prune")
+	assert.Contains(t, out, "project_pappfigur.md")
+	assert.Contains(t, out, "no index entries pruned")
+
+	// Nothing changed on disk.
+	memDir := filepath.Join(projects, encoded, "memory")
+	assert.True(t, exists(filepath.Join(memDir, "project_pappfigur.md")))
+	got, _ := os.ReadFile(filepath.Join(memDir, "MEMORY.md"))
+	assert.Contains(t, string(got), "project_pappfigur.md")
+}
+
+func TestRunClean_FailedDeleteDoesNotPruneIndexEntry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only-dir delete-failure semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks")
+	}
+	target := "/work/proj"
+	encoded := convops.PathToProjectDir(target)
+	projects := memEnv(t, target, []memFileSpec{
+		{encoded, "MEMORY.md"},
+		{encoded, "project_pappfigur.md"},
+	})
+	memDir := filepath.Join(projects, encoded, "memory")
+	writeIndex(t, projects, encoded, "- [Project: pappfigur](project_pappfigur.md) — FPS\n")
+
+	// Read-only memory dir → os.Remove of the target fails (Unix needs write
+	// on the parent dir to unlink). Restore perms so t.TempDir cleanup works.
+	require.NoError(t, os.Chmod(memDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(memDir, 0o755) })
+
+	stderr := tmpStream(t, "")
+	code := RunClean(&CleanParams{Dir: target, Include: []string{"*papp*"}, Yes: true},
+		tmpStream(t, ""), stderr, tmpStream(t, ""))
+
+	assert.Equal(t, 1, code) // partial/total failure surfaces as non-zero
+	assert.Contains(t, readStream(t, stderr), "Error deleting")
+
+	require.NoError(t, os.Chmod(memDir, 0o755))
+	got, err := os.ReadFile(filepath.Join(memDir, "MEMORY.md"))
+	require.NoError(t, err)
+	// The file is still on disk, so its index entry must NOT have been pruned.
+	assert.Contains(t, string(got), "project_pappfigur.md")
+}
+
+func TestRunClean_DeletingIndexItselfSkipsPrune(t *testing.T) {
+	target := "/work/proj"
+	encoded := convops.PathToProjectDir(target)
+	projects := memEnv(t, target, []memFileSpec{
+		{encoded, "MEMORY.md"},
+		{encoded, "project_pappfigur.md"},
+	})
+	writeIndex(t, projects, encoded, "- [Project: pappfigur](project_pappfigur.md) — silly FPS\n")
+
+	// Delete everything, including MEMORY.md — there's no index left to tidy,
+	// so the run must not claim to have pruned entries.
+	stdout := tmpStream(t, "")
+	code := RunClean(&CleanParams{Dir: target, Yes: true}, stdout, tmpStream(t, ""), tmpStream(t, ""))
+	require.Equal(t, 0, code)
+
+	out := readStream(t, stdout)
+	assert.Contains(t, out, "Deleted 2 file(s)")
+	assert.NotContains(t, out, "pruned")
+	assert.False(t, exists(filepath.Join(projects, encoded, "memory")))
 }
 
 func TestRunClean_NoMatchingProjectDirs(t *testing.T) {
