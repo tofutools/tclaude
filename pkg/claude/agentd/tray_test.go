@@ -1,80 +1,189 @@
 package agentd
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// pickTrayIcon's policy: priority yellow (pending) > orange (sudo) >
-// green (idle). Tooltip carries the count of whichever colour fired
-// (and the soonest-expiry hint for the orange path).
-func TestPickTrayIcon_GreenWhenIdle(t *testing.T) {
-	green := []byte("green")
-	yellow := []byte("yellow")
-	orange := []byte("orange")
-	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 0, "")
-	assert.Equal(t, "green", string(icon), "idle: icon")
-	assert.Equal(t, "tclaude agentd", tooltip, "idle: tooltip")
+// pickTrayMode's policy priority: blink (agent blocked on the human:
+// awaiting / errored / pending approval) > orange (sudo active) >
+// yellow (all online agents idle) > green (working, or nothing online).
+// Tooltip carries the count(s) of whichever state fired.
+
+// No agents online, nothing pending: the default green.
+func TestPickTrayMode_GreenWhenNothingOnline(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{}, 0, 0, "")
+	assert.Equal(t, trayGreen, mode, "nothing online: mode")
+	assert.Equal(t, "tclaude agentd", tooltip, "nothing online: tooltip")
 }
 
-func TestPickTrayIcon_YellowWhenPending(t *testing.T) {
-	green := []byte("green")
-	yellow := []byte("yellow")
-	orange := []byte("orange")
-	icon, tooltip := pickTrayIcon(green, yellow, orange, 1, 0, "")
-	assert.Equal(t, "yellow", string(icon), "pending=1: icon")
-	assert.Contains(t, tooltip, "1 pending", "pending=1: tooltip should mention count")
+// At least one agent working → green, even when others are idle.
+func TestPickTrayMode_GreenWhenAnyWorking(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 3, busy: 1, idle: 2}, 0, 0, "")
+	assert.Equal(t, trayGreen, mode, "1 working: mode")
+	assert.Contains(t, tooltip, "1 agent(s) working", "tooltip should mention working count")
 }
 
-func TestPickTrayIcon_YellowCountUpdatesWithMultiple(t *testing.T) {
-	green := []byte("green")
-	yellow := []byte("yellow")
-	orange := []byte("orange")
-	_, tooltip := pickTrayIcon(green, yellow, orange, 7, 0, "")
-	assert.Contains(t, tooltip, "7 pending", "pending=7 tooltip should mention 7")
+// Online agents present and ALL idle → yellow (the quiet state).
+func TestPickTrayMode_YellowWhenAllIdle(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 2, idle: 2}, 0, 0, "")
+	assert.Equal(t, trayYellow, mode, "all idle: mode")
+	assert.Contains(t, tooltip, "all 2 agent(s) idle", "tooltip should mention idle count")
 }
 
-// pending=0, sudoActive>0 → orange + count + expiry hint. Pins the
-// new state from v2 slice 4.
-func TestPickTrayIcon_OrangeWhenSudoActive(t *testing.T) {
-	green := []byte("green")
-	yellow := []byte("yellow")
-	orange := []byte("orange")
-	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 2, "soonest expires in 4m12s")
-	assert.Equal(t, "orange", string(icon), "sudoActive=2: icon")
-	assert.Contains(t, tooltip, "2 active sudo", "sudoActive=2: tooltip should mention count")
-	assert.Contains(t, tooltip, "soonest expires in 4m12s", "sudoActive=2: tooltip should include expiry hint")
+// "not busy" must not be mistaken for "all idle": a counts where online
+// exceeds the recognized idle bucket (a hypothetical status that counts
+// toward online without being idle) stays green, not yellow. Pins the
+// idle == online guard at the policy layer.
+func TestPickTrayMode_NotAllIdleWhenOnlineExceedsIdle(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 2, idle: 1}, 0, 0, "")
+	assert.Equal(t, trayGreen, mode, "online=2 idle=1 (one unclassified) → not yellow")
+	assert.Equal(t, "tclaude agentd", tooltip, "unclassified-only: plain tooltip")
 }
 
-// Yellow takes priority over orange when BOTH are non-zero — the
-// human's blocked-on-popup state is more time-critical than the
-// passive elevation reminder. Pins the precedence rule.
-func TestPickTrayIcon_YellowBeatsOrange(t *testing.T) {
-	green := []byte("green")
-	yellow := []byte("yellow")
-	orange := []byte("orange")
-	icon, tooltip := pickTrayIcon(green, yellow, orange, 1, 3, "soonest expires in 1m")
-	assert.Equal(t, "yellow", string(icon), "pending=1 sudoActive=3: icon (blocking > passive)")
-	assert.Contains(t, tooltip, "1 pending", "pending=1 sudoActive=3: tooltip should mention pending")
-	assert.NotContains(t, tooltip, "sudo", "yellow tooltip should NOT mention sudo (different state)")
+// A pending approval popup blinks (folded into "blocked on human").
+func TestPickTrayMode_BlinkWhenPendingApproval(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 1, busy: 1}, 1, 0, "")
+	assert.Equal(t, trayBlink, mode, "pending=1: mode")
+	assert.Contains(t, tooltip, "1 pending approval(s)", "tooltip should mention pending")
 }
 
-// Orange tooltip without an expiry hint — the SELECT-then-format
-// race in snapshotSudoTrayState collapses to "" hint. Pins the
-// fallback path so the icon still flips orange but the tooltip
-// stays clean.
-func TestPickTrayIcon_OrangeWithoutExpiryHint(t *testing.T) {
-	green := []byte("green")
-	yellow := []byte("yellow")
-	orange := []byte("orange")
-	icon, tooltip := pickTrayIcon(green, yellow, orange, 0, 1, "")
-	assert.Equal(t, "orange", string(icon), "sudoActive=1, no hint: icon")
+// An agent awaiting permission/input blinks.
+func TestPickTrayMode_BlinkWhenAwaiting(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 2, busy: 1, awaiting: 1}, 0, 0, "")
+	assert.Equal(t, trayBlink, mode, "awaiting=1: mode")
+	assert.Contains(t, tooltip, "1 awaiting input", "tooltip should mention awaiting")
+}
+
+// An errored agent blinks too (operator chose "needs attention").
+func TestPickTrayMode_BlinkWhenErrored(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 1, errored: 1}, 0, 0, "")
+	assert.Equal(t, trayBlink, mode, "errored=1: mode")
+	assert.Contains(t, tooltip, "1 errored", "tooltip should mention errored")
+}
+
+// Blink tooltip composes all three sources in priority order.
+func TestPickTrayMode_BlinkTooltipComposesSources(t *testing.T) {
+	_, tooltip := pickTrayMode(agentTrayCounts{online: 4, awaiting: 2, errored: 1}, 3, 0, "")
+	assert.Contains(t, tooltip, "2 awaiting input", "tooltip awaiting")
+	assert.Contains(t, tooltip, "1 errored", "tooltip errored")
+	assert.Contains(t, tooltip, "3 pending approval(s)", "tooltip pending")
+	// Order: awaiting before errored before pending.
+	assert.Less(t, strings.Index(tooltip, "awaiting"), strings.Index(tooltip, "errored"), "awaiting before errored")
+	assert.Less(t, strings.Index(tooltip, "errored"), strings.Index(tooltip, "pending"), "errored before pending")
+}
+
+// sudoActive>0, nothing blocked → orange + count + expiry hint.
+func TestPickTrayMode_OrangeWhenSudoActive(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 1, busy: 1}, 0, 2, "soonest expires in 4m12s")
+	assert.Equal(t, trayOrange, mode, "sudoActive=2: mode")
+	assert.Contains(t, tooltip, "2 active sudo", "tooltip should mention count")
+	assert.Contains(t, tooltip, "soonest expires in 4m12s", "tooltip should include expiry hint")
+}
+
+// Blink takes priority over orange — a human blocked on a popup is more
+// time-critical than the passive elevation reminder.
+func TestPickTrayMode_BlinkBeatsOrange(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{online: 1, awaiting: 1}, 0, 3, "soonest expires in 1m")
+	assert.Equal(t, trayBlink, mode, "awaiting + sudo: mode (blocking > passive)")
+	assert.Contains(t, tooltip, "awaiting input", "tooltip should mention awaiting")
+	assert.NotContains(t, tooltip, "sudo", "blink tooltip should NOT mention sudo (different state)")
+}
+
+// Orange takes priority over yellow — an active elevation reminder
+// outranks the quiet all-idle state.
+func TestPickTrayMode_OrangeBeatsYellow(t *testing.T) {
+	mode, _ := pickTrayMode(agentTrayCounts{online: 2, idle: 2}, 0, 1, "")
+	assert.Equal(t, trayOrange, mode, "all idle + sudo: orange wins over yellow")
+}
+
+// Orange tooltip without an expiry hint — the SELECT-then-format race
+// in snapshotSudoTrayState collapses to "" hint. The icon still flips
+// orange but the tooltip stays clean.
+func TestPickTrayMode_OrangeWithoutExpiryHint(t *testing.T) {
+	mode, tooltip := pickTrayMode(agentTrayCounts{}, 0, 1, "")
+	assert.Equal(t, trayOrange, mode, "sudoActive=1, no hint: mode")
 	assert.Contains(t, tooltip, "1 active sudo", "tooltip should mention count")
 	assert.NotContains(t, tooltip, "expires in", "tooltip should NOT have expiry hint when none provided")
+}
+
+// renderTrayIcon maps a mode (+ blink phase) to icon bytes. Blink
+// alternates green/red; every other mode is static.
+func TestRenderTrayIcon(t *testing.T) {
+	g, y, o, r := []byte("green"), []byte("yellow"), []byte("orange"), []byte("red")
+	assert.Equal(t, "green", string(renderTrayIcon(trayGreen, false, g, y, o, r)), "green mode")
+	assert.Equal(t, "yellow", string(renderTrayIcon(trayYellow, false, g, y, o, r)), "yellow mode")
+	assert.Equal(t, "orange", string(renderTrayIcon(trayOrange, false, g, y, o, r)), "orange mode")
+	assert.Equal(t, "red", string(renderTrayIcon(trayBlink, true, g, y, o, r)), "blink on → red")
+	assert.Equal(t, "green", string(renderTrayIcon(trayBlink, false, g, y, o, r)), "blink off → green")
+}
+
+// countAgentStates reduces session rows + the live tmux set to per-status
+// counts over ONLINE convs. Offline convs (no alive tmux row) are
+// skipped; per-conv the most-recently-updated alive row wins.
+func TestCountAgentStates(t *testing.T) {
+	base := time.Now()
+	rows := []*db.SessionRow{
+		// online: working
+		{ConvID: "a", TmuxSession: "tmux-a", Status: session.StatusWorking, UpdatedAt: base},
+		// online: idle
+		{ConvID: "b", TmuxSession: "tmux-b", Status: session.StatusIdle, UpdatedAt: base},
+		// online: awaiting permission
+		{ConvID: "c", TmuxSession: "tmux-c", Status: session.StatusAwaitingPermission, UpdatedAt: base},
+		// online: errored
+		{ConvID: "d", TmuxSession: "tmux-d", Status: session.StatusError, UpdatedAt: base},
+		// online: main_agent_idle counts as busy
+		{ConvID: "e", TmuxSession: "tmux-e", Status: session.StatusMainAgentIdle, UpdatedAt: base},
+		// OFFLINE (tmux not alive) — skipped even though status is idle
+		{ConvID: "f", TmuxSession: "tmux-f", Status: session.StatusIdle, UpdatedAt: base},
+		// conv c has a second alive row, older + idle — most-recent (awaiting) must win
+		{ConvID: "c", TmuxSession: "tmux-c", Status: session.StatusIdle, UpdatedAt: base.Add(-time.Minute)},
+		// row with no tmux session — skipped
+		{ConvID: "g", TmuxSession: "", Status: session.StatusWorking, UpdatedAt: base},
+		// alive tmux row but status=exited (SessionEnd fired before tmux
+		// teardown) — must NOT count toward online (would falsely tip yellow)
+		{ConvID: "h", TmuxSession: "tmux-h", Status: session.StatusExited, UpdatedAt: base},
+	}
+	alive := map[string]struct{}{
+		"tmux-a": {}, "tmux-b": {}, "tmux-c": {}, "tmux-d": {}, "tmux-e": {}, "tmux-h": {},
+	}
+	c := countAgentStates(rows, alive)
+	assert.Equal(t, 5, c.online, "online convs (a,b,c,d,e; f offline, g no-tmux, h exited)")
+	assert.Equal(t, 2, c.busy, "busy (a working + e main_agent_idle)")
+	assert.Equal(t, 1, c.idle, "idle (b)")
+	assert.Equal(t, 1, c.awaiting, "awaiting (c — newest row wins over the older idle one)")
+	assert.Equal(t, 1, c.errored, "errored (d)")
+}
+
+// Per-conv pick across DISTINCT tmux sessions: when a conv's newest row
+// is dead and an older row is alive (different tmux session names), the
+// alive one is the only candidate and its status is what counts. Pins
+// the load-bearing tray/dashboard agreement on which row wins.
+func TestCountAgentStates_NewestDeadOlderAlive(t *testing.T) {
+	base := time.Now()
+	rows := []*db.SessionRow{
+		// newest row for conv x — its tmux session is DEAD
+		{ConvID: "x", TmuxSession: "tmux-x-new", Status: session.StatusWorking, UpdatedAt: base},
+		// older row for conv x — its tmux session is ALIVE, status idle
+		{ConvID: "x", TmuxSession: "tmux-x-old", Status: session.StatusIdle, UpdatedAt: base.Add(-time.Minute)},
+	}
+	alive := map[string]struct{}{"tmux-x-old": {}} // only the older session lives
+	c := countAgentStates(rows, alive)
+	assert.Equal(t, 1, c.online, "one online conv (via the alive older row)")
+	assert.Equal(t, 0, c.busy, "newest (working) row is dead and filtered out")
+	assert.Equal(t, 1, c.idle, "the alive older row's idle status is what counts")
+}
+
+func TestCountAgentStates_Empty(t *testing.T) {
+	c := countAgentStates(nil, map[string]struct{}{})
+	assert.Equal(t, agentTrayCounts{}, c, "no rows → zero aggregate")
 }
 
 // snapshot must order rows oldest-first so the longest-blocked

@@ -30,6 +30,20 @@ Other entry points:
 
 - **System tray** — `agentd serve` adds a tray icon on hosts that support one;
   its **Open dashboard** item opens the dashboard with no terminal round-trip.
+  The icon's **colour** is a glanceable summary of the daemon's state, in
+  priority order:
+  - **blinking green↔red** — at least one agent is blocked on you: a Claude
+    Code permission prompt / elicitation dialog (`awaiting_*`), a turn that
+    ended in error, or a pending `--ask-human` approval popup. Act now.
+  - **orange** — a sudo grant is currently active somewhere (a passive
+    "an elevation window is open" reminder).
+  - **yellow** — every online agent is idle (the quiet state — nothing is
+    working and nothing needs you).
+  - **green** — at least one agent is working, or there are no online agents
+    (the default).
+
+  The same colours match the per-agent status dots/pills on the dashboard.
+  Hover the tray icon for the count behind whichever colour is showing.
 - **On startup** — `tclaude agentd serve --auto-launch-dashboard` (or
   `agent.auto_launch_dashboard: true` in `~/.tclaude/config.json`) pops the
   dashboard automatically when the daemon comes up. Off by default — a fresh

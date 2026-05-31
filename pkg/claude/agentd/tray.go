@@ -10,12 +10,14 @@ import (
 	"log/slog"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"fyne.io/systray"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // trayApprovalSlotCount caps how many pending-approval rows we surface
@@ -24,6 +26,47 @@ import (
 // handful blocked at once) and small enough that the menu stays
 // scannable. Overflow is signalled via "+N more…" on the header.
 const trayApprovalSlotCount = 5
+
+// Tray poller cadence. trayTick is the base poll — small enough that a
+// pending-approval popup flips the icon promptly. agentRefreshEvery
+// throttles the agent-status aggregate (which shells out to `tmux ls`)
+// to a slower sub-cadence so we don't spawn a tmux subprocess 5×/sec
+// when nothing is changing. blinkEvery sets the blink half-period: the
+// icon toggles green↔red every blinkEvery ticks while an agent is
+// blocked on the human.
+const (
+	trayTick          = 200 * time.Millisecond
+	agentRefreshEvery = 5 // every ~1s
+	blinkEvery        = 2 // ~400ms half-period → ~800ms full blink cycle
+)
+
+// trayMode is the colour state pickTrayMode resolves the daemon into.
+// renderTrayIcon turns a mode (+ the current blink phase) into the
+// actual icon bytes. Splitting policy (mode) from rendering (bytes)
+// keeps the decision pure and unit-testable, and lets the poller
+// animate the blink without the policy knowing about timing.
+type trayMode int
+
+const (
+	trayGreen  trayMode = iota // ≥1 agent working, or nothing to watch (default)
+	trayYellow                 // at least one online agent, and all of them idle
+	trayOrange                 // a sudo grant is active (passive reminder)
+	trayBlink                  // an agent is blocked on the human (green↔red)
+)
+
+// agentTrayCounts is the aggregate over currently-online agents that
+// pickTrayMode reduces to a colour. busy = working / main_agent_idle;
+// awaiting = awaiting_permission / awaiting_input; errored = a turn
+// that ended in error. online = busy + idle + awaiting + errored —
+// only agents in a recognized LIVE status; an alive row with an
+// exited/empty/unknown status is excluded (see countAgentStates).
+type agentTrayCounts struct {
+	online   int
+	busy     int
+	idle     int
+	awaiting int
+	errored  int
+}
 
 // approvalSlot is one pre-allocated submenu item the tray poller
 // rebinds as the pending-approvals set changes. Pre-allocation matters:
@@ -88,6 +131,12 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 	// (pending approval) takes priority so the human can never miss a
 	// popup waiting on them.
 	orangeIcon := makeTrayIcon(color.RGBA{R: 255, G: 140, B: 0, A: 255})
+	// Red is the blink's "on" frame — the icon alternates green↔red
+	// while an agent is blocked on the human (a CC permission prompt /
+	// elicitation dialog, an errored turn, or a pending agentd approval
+	// popup). A bright red so the blink reads clearly even against a
+	// busy taskbar; it pairs with greenIcon as the "off" frame.
+	redIcon := makeTrayIcon(color.RGBA{R: 220, G: 40, B: 40, A: 255})
 
 	onReady := func() {
 		systray.SetIcon(greenIcon)
@@ -165,46 +214,83 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 
 		mQuit := systray.AddMenuItem("Quit", "Stop tclaude agentd")
 
-		// Pending-approval + sudo-active poller. Flips
-		// green ↔ orange ↔ yellow as approval requests come and go and
-		// sudo grants open and close. 200ms tick is small enough that a
-		// popup feels responsive without burning cycles when nothing is
+		// State poller. Resolves the daemon into a trayMode each tick and
+		// flips the icon green → yellow → orange → blink(green↔red) as
+		// agents change status, approval requests come and go, and sudo
+		// grants open and close. trayTick is small enough that a popup
+		// feels responsive without burning cycles when nothing is
 		// happening. Quits when mQuit fires (the goroutine below closes
 		// trayDone).
 		//
-		// Same tick also refreshes the pending-approvals submenu: takes
-		// a fresh snapshot, binds the first N slots to the oldest
-		// approvals (so the longest-waiting popup is at the top), hides
-		// any unused slots. Always rebinds when the set changes — the
-		// approval-id set isn't captured by lastPending alone (count
-		// can stay the same while a request is replaced).
+		// Three things move on their own cadence here:
+		//   - approvals + sudo are read every tick (cheap in-process /
+		//     SQLite reads);
+		//   - the agent-status aggregate is refreshed every
+		//     agentRefreshEvery ticks — it shells out to `tmux ls`, which
+		//     we don't want to spawn 5×/sec;
+		//   - the blink phase flips every blinkEvery ticks, INDEPENDENT of
+		//     state change, so a blocked-on-human icon keeps toggling even
+		//     while the underlying counts hold steady.
+		//
+		// The same tick refreshes the pending-approvals submenu when the
+		// id set changes: binds the first N slots to the oldest approvals
+		// (longest-waiting popup at the top), hides any unused slots.
 		trayDone := make(chan struct{})
 		go func() {
-			lastPending, lastSudo := 0, 0
-			lastHint := ""
-			var lastIDs []string
-			tk := time.NewTicker(200 * time.Millisecond)
+			tk := time.NewTicker(trayTick)
 			defer tk.Stop()
+			var (
+				agentCounts agentTrayCounts
+				tickN       int
+				blinkOn     bool
+				lastIcon    []byte
+				lastTooltip string
+				lastIDs     []string
+			)
 			for {
 				select {
 				case <-trayDone:
 					return
 				case <-tk.C:
+					if tickN%agentRefreshEvery == 0 {
+						agentCounts = snapshotAgentTrayState()
+					}
 					pending := approvals.pendingCount()
 					sudoActive, hint := snapshotSudoTrayState()
 					summary := approvals.snapshot()
 					ids := pendingIDs(summary)
-					if pending == lastPending && sudoActive == lastSudo &&
-						hint == lastHint && sliceEq(ids, lastIDs) {
-						continue
+
+					mode, tooltip := pickTrayMode(agentCounts, pending, sudoActive, hint)
+					// Advance the blink phase only while blinking; reset to
+					// the green ("off") frame otherwise so a state that
+					// stops blinking doesn't freeze on the red frame.
+					if mode == trayBlink {
+						if tickN%blinkEvery == 0 {
+							blinkOn = !blinkOn
+						}
+					} else {
+						blinkOn = false
 					}
-					icon, tooltip := pickTrayIcon(greenIcon, yellowIcon, orangeIcon,
-						pending, sudoActive, hint)
-					systray.SetIcon(icon)
-					systray.SetTooltip(tooltip)
-					refreshApprovalsSubmenu(mApprovalsHeader, approvalSlots, summary)
-					lastPending, lastSudo, lastHint = pending, sudoActive, hint
-					lastIDs = ids
+
+					icon := renderTrayIcon(mode, blinkOn, greenIcon, yellowIcon, orangeIcon, redIcon)
+					if !bytes.Equal(icon, lastIcon) {
+						systray.SetIcon(icon)
+						lastIcon = icon
+					}
+					if tooltip != lastTooltip {
+						systray.SetTooltip(tooltip)
+						lastTooltip = tooltip
+					}
+					// Refresh the approvals submenu when the id-set changes
+					// (instant) OR, while requests stay pending, on the slow
+					// sub-cadence so the relative "Xs ago" labels keep ticking
+					// instead of freezing at whatever they read when the set
+					// last changed.
+					if !sliceEq(ids, lastIDs) || (len(ids) > 0 && tickN%agentRefreshEvery == 0) {
+						refreshApprovalsSubmenu(mApprovalsHeader, approvalSlots, summary)
+						lastIDs = ids
+					}
+					tickN++
 				}
 			}
 		}()
@@ -352,36 +438,159 @@ func sliceEq(a, b []string) bool {
 	return true
 }
 
-// pickTrayIcon picks the icon + tooltip the tray should display for a
-// given (pending-approval, sudo-active-grant) snapshot. Pure function
-// so the policy can be unit-tested without spawning a real systray
-// or the daemon SQLite.
+// pickTrayMode resolves the daemon's current state into a trayMode +
+// tooltip. Pure function over the aggregate counts so the policy can be
+// unit-tested without spawning a real systray or the daemon SQLite; the
+// poller maps the returned mode (+ the live blink phase) to icon bytes
+// via renderTrayIcon.
 //
 // Priority (highest first):
 //
-//   - yellow — at least one --ask-human popup is open. Highest because
-//     the human is BLOCKING; missing this stalls an agent.
+//   - blink (green↔red) — at least one agent is BLOCKED ON THE HUMAN:
+//     a CC permission prompt / elicitation dialog (awaiting), an errored
+//     turn (needs attention), or a pending --ask-human approval popup.
+//     Highest because the human is the bottleneck; missing it stalls an
+//     agent. The three sources collapse into one "act now" signal.
 //   - orange — at least one sudo grant is active somewhere. The human
 //     should know an elevation window is open, but it's a passive
 //     reminder, not a blocking interrupt.
-//   - green  — idle.
+//   - yellow — there is at least one online agent and ALL of them are
+//     idle (the quiet state — nothing is working, nothing needs you).
+//   - green  — at least one agent is working, or there are no online
+//     agents at all (the default: nothing to flag).
 //
 // sudoExpiryHint is appended to the orange tooltip when non-empty
-// (e.g. "soonest expires in 4m12s"); pickTrayIcon doesn't format
+// (e.g. "soonest expires in 4m12s"); pickTrayMode doesn't format
 // durations itself so the unit test can pin tooltip composition
 // without time math.
-func pickTrayIcon(green, yellow, orange []byte, pending, sudoActive int, sudoExpiryHint string) ([]byte, string) {
-	if pending > 0 {
-		return yellow, fmt.Sprintf("tclaude agentd · %d pending approval(s)", pending)
+func pickTrayMode(a agentTrayCounts, pending, sudoActive int, sudoExpiryHint string) (trayMode, string) {
+	if pending > 0 || a.awaiting > 0 || a.errored > 0 {
+		return trayBlink, blockedTooltip(pending, a.awaiting, a.errored)
 	}
 	if sudoActive > 0 {
 		t := fmt.Sprintf("tclaude agentd · %d active sudo grant(s)", sudoActive)
 		if sudoExpiryHint != "" {
 			t += " · " + sudoExpiryHint
 		}
-		return orange, t
+		return trayOrange, t
 	}
-	return green, "tclaude agentd"
+	// All online agents idle → yellow (the quiet state). Checked as
+	// idle == online (not merely busy == 0) so a status that counts
+	// toward online without being idle can never masquerade as idle.
+	// For today's statuses, past the blink check awaiting == errored == 0
+	// so online == busy + idle and the two forms agree; the explicit form
+	// just doesn't depend on that invariant holding forever.
+	if a.online > 0 && a.idle == a.online {
+		return trayYellow, fmt.Sprintf("tclaude agentd · all %d agent(s) idle", a.idle)
+	}
+	if a.busy > 0 {
+		return trayGreen, fmt.Sprintf("tclaude agentd · %d agent(s) working", a.busy)
+	}
+	return trayGreen, "tclaude agentd"
+}
+
+// blockedTooltip composes the blink-state tooltip from whichever
+// "needs you" sources are non-zero, in the same order the icon priority
+// implies: awaiting input, then errored turns, then approval popups.
+func blockedTooltip(pending, awaiting, errored int) string {
+	var parts []string
+	if awaiting > 0 {
+		parts = append(parts, fmt.Sprintf("%d awaiting input", awaiting))
+	}
+	if errored > 0 {
+		parts = append(parts, fmt.Sprintf("%d errored", errored))
+	}
+	if pending > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending approval(s)", pending))
+	}
+	return "tclaude agentd · " + strings.Join(parts, ", ")
+}
+
+// renderTrayIcon maps a trayMode (plus the current blink phase) to the
+// icon bytes the systray should display. For trayBlink the phase picks
+// the frame: blinkOn → red, otherwise green. Every other mode is static.
+func renderTrayIcon(mode trayMode, blinkOn bool, green, yellow, orange, red []byte) []byte {
+	switch mode {
+	case trayBlink:
+		if blinkOn {
+			return red
+		}
+		return green
+	case trayOrange:
+		return orange
+	case trayYellow:
+		return yellow
+	default:
+		return green
+	}
+}
+
+// countAgentStates reduces the daemon's session rows + the live tmux set
+// to per-status counts over ONLINE agents (one entry per conv, keyed on
+// the most-recently-updated alive row — mirrors stateForConvIn /
+// FindSessionsByConvID so the tray and the dashboard agree on each
+// agent's status). Offline convs (no alive tmux row) are skipped: a dead
+// agent's hook status is frozen and would otherwise mislabel the icon.
+// Pure over its inputs so the counting can be unit-tested without tmux
+// or SQLite.
+func countAgentStates(rows []*db.SessionRow, alive map[string]struct{}) agentTrayCounts {
+	type pick struct {
+		status  string
+		updated time.Time
+	}
+	best := map[string]pick{}
+	for _, r := range rows {
+		if r.ConvID == "" || r.TmuxSession == "" {
+			continue
+		}
+		if _, ok := alive[r.TmuxSession]; !ok {
+			continue
+		}
+		if cur, seen := best[r.ConvID]; !seen || r.UpdatedAt.After(cur.updated) {
+			best[r.ConvID] = pick{status: r.Status, updated: r.UpdatedAt}
+		}
+	}
+	var c agentTrayCounts
+	for _, p := range best {
+		// online counts only rows in a recognized LIVE status. An alive
+		// tmux session whose status is exited/empty/unknown (e.g.
+		// SessionEnd fired but tmux hasn't torn the session down yet) is
+		// deliberately NOT counted: it must not tip the icon to the
+		// "all idle" yellow when the agent isn't actually idle.
+		switch p.status {
+		case session.StatusWorking, session.StatusMainAgentIdle:
+			c.busy++
+			c.online++
+		case session.StatusIdle:
+			c.idle++
+			c.online++
+		case session.StatusAwaitingPermission, session.StatusAwaitingInput:
+			c.awaiting++
+			c.online++
+		case session.StatusError:
+			c.errored++
+			c.online++
+		}
+	}
+	return c
+}
+
+// snapshotAgentTrayState is the IO shell over countAgentStates: it takes
+// one `tmux ls` (the live session set) plus the session rows and reduces
+// them to the aggregate the tray colours off. Any error collapses to a
+// zero aggregate (online == 0 → green) — a transient tmux/SQLite hiccup
+// shouldn't strobe the icon. Called on the poller's slow sub-cadence
+// (agentRefreshEvery) so the `tmux ls` subprocess isn't spawned 5×/sec.
+func snapshotAgentTrayState() agentTrayCounts {
+	alive, err := session.LiveTmuxSessions()
+	if err != nil {
+		return agentTrayCounts{}
+	}
+	rows, err := db.ListSessions()
+	if err != nil {
+		return agentTrayCounts{}
+	}
+	return countAgentStates(rows, alive)
 }
 
 // snapshotSudoTrayState polls db.ListAllActiveSudoGrants and returns
