@@ -250,7 +250,8 @@ func TestSandboxDocCrossReferencesConsistent(t *testing.T) {
 	root := findRepoRoot(t)
 	base := filepath.Base(sandboxHardeningDocPath) // sandbox-hardening.md
 	for _, ref := range []string{
-		filepath.Join("docs", "plans", "agentd.md"),
+		// docs/plans/ was removed (#253 — planning moved to Linear); only the
+		// surviving in-repo docs are cross-checked now.
 		filepath.Join("docs", "index.md"),
 	} {
 		body, err := os.ReadFile(filepath.Join(root, ref))
