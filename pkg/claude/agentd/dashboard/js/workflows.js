@@ -26,19 +26,28 @@ export async function renderWorkflowsTab() {
     return;
   }
   paintList();
-  // Keep an open drill-down honest across reloads: re-sync it from the server
-  // if the run is still listed, otherwise clear the now-stale detail panel.
+  // Keep an open drill-down honest across reloads. A vanished run is cleared;
+  // an in-flight run is live-re-synced (this is what drives live progress under
+  // the auto-poll); a finished run is left stable so the user can inspect it
+  // (its script panel / scroll position survive the poll).
   if (selectedRunId) {
-    const stillListed = (listData.runs || []).some((r) => r.runId === selectedRunId);
-    if (stillListed) {
-      loadDetail(selectedRunId, { silent: true });
-    } else {
+    const sel = (listData.runs || []).find((r) => r.runId === selectedRunId);
+    if (!sel) {
       selectedRunId = null;
       detailData = null;
       const det = $('#workflows-detail');
       if (det) det.innerHTML = '';
+    } else if (sel.status === 'running') {
+      loadDetail(selectedRunId, { silent: true });
     }
   }
+}
+
+// workflowsTabActive reports whether the Workflows tab is the visible one — the
+// gate for auto-polling (no background fetches when the tab/page is hidden).
+function workflowsTabActive() {
+  const sec = $('#tab-workflows');
+  return !!sec && sec.classList.contains('active') && document.visibilityState === 'visible';
 }
 
 function fmtTimeMs(ms) {
@@ -234,6 +243,20 @@ export function bindWorkflowsTab() {
   // Load (and re-load) when the Workflows nav tab is clicked.
   const tabBtn = document.querySelector('nav button[data-tab="workflows"]');
   if (tabBtn) tabBtn.addEventListener('click', () => renderWorkflowsTab());
+
+  // Live progress: poll while the tab is the active, visible one. Matches the
+  // dashboard's ~2s snapshot cadence but stays decoupled (its own timer that
+  // no-ops when hidden) — the journal is the only live signal, so this is a
+  // poll, and an in-flight open run re-syncs each tick (see renderWorkflowsTab).
+  // `polling` skips a tick while the previous one is still in flight so slow
+  // fetches (e.g. a large machine-wide scan) can't stack up into a herd.
+  const POLL_MS = 2000;
+  let polling = false;
+  setInterval(() => {
+    if (polling || !workflowsTabActive()) return;
+    polling = true;
+    renderWorkflowsTab().finally(() => { polling = false; });
+  }, POLL_MS);
 
   const section = $('#tab-workflows');
   if (!section) return;
