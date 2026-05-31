@@ -206,9 +206,24 @@ func handleAgentWindows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := runWindowOp(direction, scope, groupName, universe, body.Convs)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// runWindowOp applies one window direction (focus|unfocus) to the agents
+// in `universe`, narrowed by the modal's explicit `convs` selection
+// (empty → the whole universe). It resolves each selected conv to its
+// live tmux session, dispatches the per-agent op in parallel, and folds
+// the per-agent outcomes into the summary the dashboard renders.
+//
+// Pure over its inputs and the two per-agent seams. The dashboard HTTP
+// handler calls it after parsing/validating the request; the tray's
+// "Unfocus all agents" item calls it via unfocusAllAgentWindows without
+// an HTTP round-trip, since the tray runs inside agentd.
+func runWindowOp(direction, scope, group string, universe, convs []string) agentWindowsResp {
 	// Narrow the scope to the modal's explicit selection when one is
-	// provided; an entry outside the freshly-resolved scope is dropped.
-	targets := selectWindowTargets(universe, body.Convs)
+	// provided; an entry outside the resolved universe is dropped.
+	targets := selectWindowTargets(universe, convs)
 
 	// Resolve each selected conv to its live tmux session. Offline
 	// agents have neither a session to focus nor a window to detach, so
@@ -245,7 +260,7 @@ func handleAgentWindows(w http.ResponseWriter, r *http.Request) {
 	resp := agentWindowsResp{
 		Direction: direction,
 		Scope:     scope,
-		Group:     groupName,
+		Group:     group,
 		Targeted:  len(outcomes),
 		Agents:    outcomes,
 	}
@@ -261,7 +276,27 @@ func handleAgentWindows(w http.ResponseWriter, r *http.Request) {
 			resp.Failed++
 		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
+}
+
+// unfocusAllAgentWindows detaches the terminal windows of every active
+// agent on the dashboard roster — the in-process twin of POST
+// /api/agent-windows with {"direction":"unfocus","scope":"all"}. The
+// tray's "Unfocus all agents" item calls it directly: the tray runs
+// inside agentd, so it needs no socket round-trip. Window-only — no
+// agent process is stopped, and every detached window can be brought
+// back with focus. Returns the per-agent outcome summary, or an error
+// when the active-agent roster can't be read.
+func unfocusAllAgentWindows() (agentWindowsResp, error) {
+	agents, err := db.ListActiveAgents()
+	if err != nil {
+		return agentWindowsResp{}, err
+	}
+	universe := make([]string, 0, len(agents))
+	for _, a := range agents {
+		universe = append(universe, a.ConvID)
+	}
+	return runWindowOp("unfocus", "all", "", universe, nil), nil
 }
 
 // selectWindowTargets resolves the set of conv-ids the bulk op acts

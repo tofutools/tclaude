@@ -165,6 +165,19 @@ func SetDetachAgentWindowsForTest(fn func(*db.SessionRow) (int, error)) func() {
 	return func() { detachAgentWindows = prev }
 }
 
+// UnfocusAllAgentWindowsForTest drives the in-process unfocus-all path
+// the tray's "Unfocus all agents" item triggers, returning the outcome
+// counts. The detach seam (SetDetachAgentWindowsForTest) is honoured, so
+// a flow test can assert which agents were detached — and that they keep
+// running — without real tmux.
+func UnfocusAllAgentWindowsForTest() (targeted, detached, noWindow, failed int, err error) {
+	resp, err := unfocusAllAgentWindows()
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return resp.Targeted, resp.Detached, resp.NoWindow, resp.Failed, nil
+}
+
 // SetGitInfoResolverForTest swaps the git/gh resolver behind the
 // dashboard's branch-link enrichment with a deterministic fake. The
 // fake is handed a (repoDir, branch) pair and returns the repo's
