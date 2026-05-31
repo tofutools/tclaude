@@ -230,12 +230,72 @@ function paintDetail() {
   }
   html += '</div>';
 
+  // Mermaid phase-sequence (collapsed — the tree above stays the primary view,
+  // per the slice contract). Inside: a light native flow render of the same
+  // phase → agent tree, plus the portable mermaid source the server generated
+  // (identical to `tclaude workflows show <id> --mermaid`) to copy or open in
+  // mermaid.live. No mermaid library is bundled; the source is the artifact.
+  if (d.mermaid) {
+    html += '<details class="wf-mermaid"><summary>Mermaid phase-sequence</summary>';
+    html += renderFlowDiagram(phases, agents);
+    html += '<div class="wf-mermaid-tools">' +
+      '<button class="tool" data-wf-copy-mermaid title="Copy the mermaid source to the clipboard">⧉ copy mermaid</button> ' +
+      '<a class="wf-mermaid-link" href="https://mermaid.live" target="_blank" rel="noopener noreferrer">open mermaid.live ↗</a>' +
+      '<span class="wf-dim wf-mermaid-hint"> — paste the copied diagram, or drop it in any GitHub markdown</span>' +
+      '</div>';
+    html += `<pre class="wf-mermaid-src" data-wf-mermaid-src>${esc(d.mermaid)}</pre>`;
+    html += '</details>';
+  }
+
   // Script (collapsed).
   if (d.script) {
     html += `<details class="wf-script"><summary>Script</summary><pre>${esc(d.script)}</pre></details>`;
   }
 
   el.innerHTML = html;
+}
+
+// renderFlowDiagram lays out the phase → agent fan-out as a compact static
+// flow: phase blocks stacked in sequence (↓ between them), each showing its
+// agents as status-coloured chips. It is a presentation of the SAME phases /
+// agents the tree consumes (no parallel data path) — the in-tab render that
+// accompanies the portable mermaid source.
+function renderFlowDiagram(phases, agents) {
+  const byPhase = new Map();
+  for (const a of agents) {
+    const k = a.phaseIndex ?? -1;
+    if (!byPhase.has(k)) byPhase.set(k, []);
+    byPhase.get(k).push(a);
+  }
+  const chip = (a) => {
+    const label = a.label || shortId(a.id || '');
+    const tip = [a.state, a.model, a.tokens ? a.tokens.toLocaleString() + ' tok' : '']
+      .filter(Boolean).join(' · ');
+    const approx = a.labelConfident === false ? '~ ' : '';
+    return `<span class="wf-flow-agent wf-state-${esc(a.state || '')}" title="${esc(tip)}">${approx}${esc(label)}</span>`;
+  };
+  const phaseBlock = (titleHtml, statusHtml, ags) => {
+    let s = '<div class="wf-flow-phase">' +
+      `<div class="wf-flow-phase-head">${statusHtml}<span class="wf-flow-phase-title">${titleHtml}</span></div>`;
+    if (ags && ags.length) s += '<div class="wf-flow-agents">' + ags.map(chip).join('') + '</div>';
+    return s + '</div>';
+  };
+
+  let out = '<div class="wf-flow">';
+  phases.forEach((p, i) => {
+    if (i > 0) out += '<div class="wf-flow-arrow">↓</div>';
+    const status = `<span class="wf-pill wf-state-${esc(p.status || '')}">${esc(p.status || '—')}</span> `;
+    out += phaseBlock(`Phase ${p.index}: ${esc(p.title)}`, status, byPhase.get(p.index));
+    byPhase.delete(p.index);
+  });
+  // Agents not mapped to a known phase (mirrors the tree's "Unassigned" bucket).
+  const orphans = [];
+  for (const list of byPhase.values()) orphans.push(...list);
+  if (orphans.length) {
+    if (phases.length) out += '<div class="wf-flow-arrow">↓</div>';
+    out += phaseBlock('Unassigned', '', orphans);
+  }
+  return out + '</div>';
 }
 
 // bindWorkflowsTab installs the tab's delegated listeners once. Called at init.
@@ -263,6 +323,20 @@ export function bindWorkflowsTab() {
 
   // Run-row click → drill in; close button → clear the detail.
   section.addEventListener('click', (e) => {
+    // Copy the mermaid source (sibling <pre>) to the clipboard.
+    const copyBtn = e.target.closest('[data-wf-copy-mermaid]');
+    if (copyBtn) {
+      const pre = copyBtn.closest('.wf-mermaid')?.querySelector('[data-wf-mermaid-src]');
+      const text = pre ? pre.textContent : '';
+      if (text && navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => {
+          const prev = copyBtn.textContent;
+          copyBtn.textContent = '✓ copied';
+          setTimeout(() => { copyBtn.textContent = prev; }, 1200);
+        }).catch(() => { /* clipboard denied — the source is still visible to select */ });
+      }
+      return;
+    }
     if (e.target.closest('[data-wf-close]')) {
       selectedRunId = null;
       detailData = null;

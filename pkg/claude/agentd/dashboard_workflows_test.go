@@ -99,6 +99,10 @@ func TestDashboardWorkflowDetail_Tree(t *testing.T) {
 	assert.Contains(t, got.Script, "export const meta")
 	// Join carries the session id.
 	assert.Equal(t, got.Join.SessionID, "11111111-1111-1111-1111-111111111111")
+	// The mermaid projection is computed server-side from the same RunState.
+	assert.Contains(t, got.Mermaid, "flowchart TD")
+	assert.Contains(t, got.Mermaid, `P1["Phase 1: Scout"]`)
+	assert.Contains(t, got.Mermaid, "P1 --> P2")
 }
 
 func TestDashboardWorkflowDetail_LiveBestEffort(t *testing.T) {

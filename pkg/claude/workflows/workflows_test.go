@@ -175,6 +175,31 @@ func TestRunShow_Script(t *testing.T) {
 	}
 }
 
+func TestRunShow_Mermaid(t *testing.T) {
+	setupHome(t)
+	var out, errb bytes.Buffer
+	if code := RunShow(&ShowParams{RunID: "wf_213c457c-3ac", Mermaid: true}, &out, &errb); code != 0 {
+		t.Fatalf("code = %d, stderr=%s", code, errb.String())
+	}
+	s := out.String()
+	for _, want := range []string{
+		"flowchart TD",
+		`P1["Phase 1: Scout"]`,
+		`P2["Phase 2: Fan"]`,
+		"P1 --> P2",
+		"scout:alpha", "fan:bravo", "fan:charlie",
+		"classDef done",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("--mermaid output missing %q:\n%s", want, s)
+		}
+	}
+	// One-shot dump must end with a newline (so it pipes cleanly).
+	if !strings.HasSuffix(s, "\n") {
+		t.Errorf("--mermaid output should end with a newline")
+	}
+}
+
 func TestRunShow_JSON(t *testing.T) {
 	setupHome(t)
 	var out, errb bytes.Buffer
