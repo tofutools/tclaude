@@ -3,8 +3,12 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,4 +244,332 @@ func TestWorkflowV1_SpawnIntoNodeAuthz(t *testing.T) {
 	work, _ = db.GetWorkflowNode(id, "work")
 	assert.Equal(t, "running", work.Status, "the owner's spawn moved the node to running")
 	assert.NotEmpty(t, work.Assignee, "spawned worker recorded as assignee")
+}
+
+// Scenario (JOH-15 B2a — the --context seed channel): the driver's spawn-into-node
+// folds its --context seed into the spawned worker's startup brief, ADDITIVE to the
+// node's task prompt. This is how an agent-engine driver routes an upstream AI
+// node's output to a downstream worker (the daemon does NOT auto-handoff in agent
+// mode; the driver owns data routing — the B1 contract).
+func TestWorkflowV1_SpawnIntoNodeSeedsContext(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	g := f.HaveGroup("squad")
+	const driver = "drvr-aaaa-bbbb-cccc-5555"
+	f.HaveConvWithTitle(driver, "engine-driver")
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, driver, "human"), "AddAgentGroupOwner")
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "seedctx",
+		"name: seedctx\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:seedctx", "squad")
+	startPath := "/v1/workflows/" + strconv.FormatInt(id, 10) + "/nodes/work/start"
+
+	const seed = "Upstream investigate node found: the bug is in parser.go:42"
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, startPath, map[string]any{"context": seed}), driver))
+	require.Equal(t, http.StatusOK, rec.Code, "driver spawns with --context; body=%s", rec.Body.String())
+	var startResp struct {
+		Assignee string `json:"assignee"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &startResp))
+	require.NotEmpty(t, startResp.Assignee, "spawned worker conv recorded as assignee")
+
+	// The spawned worker's startup brief (an inbox message) carries BOTH the node's
+	// task prompt AND the driver's seed, under the driver-context delimiter.
+	msgs, err := db.ListAgentMessagesForConv(startResp.Assignee, 10)
+	require.NoError(t, err)
+	var brief string
+	for _, m := range msgs {
+		if strings.Contains(m.Body, "do the work") {
+			brief = m.Body
+		}
+	}
+	require.NotEmpty(t, brief, "spawned worker received a startup brief carrying the node task")
+	assert.Contains(t, brief, seed, "the --context seed is folded into the worker's brief")
+	assert.Contains(t, brief, "Context from the workflow driver:", "seed sits under the driver-context delimiter")
+}
+
+// Scenario (JOH-15 B2a — per-node max_visits holds on the driver spawn path): the
+// per-node execution cap (JOH-39) is a substrate guarantee in BOTH engine modes, so
+// the manual/driver spawn-into-node path must enforce it exactly as the engine's own
+// claimNextAINode does — else an agent-engine driver could re-spawn a looped-back ai
+// node past its cap. A node that has already used its full visit budget (looped back
+// to ready) refuses a fresh driver spawn with a 409, and the refused spawn bumps
+// nothing.
+func TestWorkflowV1_SpawnIntoNodeEnforcesMaxVisits(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+	t.Cleanup(agentd.SetWorkflowMaxVisitsForTest(2)) // small default cap
+
+	g := f.HaveGroup("squad")
+	const driver = "drvr-aaaa-bbbb-cccc-2222"
+	f.HaveConvWithTitle(driver, "engine-driver")
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, driver, "human"), "AddAgentGroupOwner")
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "capspawn",
+		"name: capspawn\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:capspawn", "squad")
+	startPath := "/v1/workflows/" + strconv.FormatInt(id, 10) + "/nodes/work/start"
+
+	// Simulate a node that looped back to ready having already spent its full visit
+	// budget — the engine bumps Visits on each spawn, and a back-edge re-readies it
+	// WITHOUT resetting Visits. The cap check must now refuse a fresh driver spawn.
+	atCap := int64(2)
+	ready := db.WorkflowNodeStatusReady
+	_, err := db.UpdateWorkflowNode(id, "work", db.WorkflowNodePatch{Status: &ready, Visits: &atCap})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, startPath, nil), driver))
+	assert.Equal(t, http.StatusConflict, rec.Code, "over-cap driver spawn is refused; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "max_visits", "the refusal names the cap")
+
+	// The refused spawn did no work: node still ready, unassigned, Visits not bumped
+	// past the cap (the spawn path cannot exceed max_visits in agent mode).
+	work, _ := db.GetWorkflowNode(id, "work")
+	require.NotNil(t, work)
+	assert.Equal(t, "ready", work.Status, "refused spawn leaves the node ready")
+	assert.Empty(t, work.Assignee, "no worker assigned by a refused spawn")
+	assert.Equal(t, int64(2), work.Visits, "Visits not bumped past the cap by the refused spawn")
+}
+
+// Scenario (JOH-15 B2a — `workflow drive` anchoring): anchoring a driver spawns a
+// fresh agent into the instance's bound group, grants it group-OWNERSHIP (its F2
+// drive authority), and briefs it to run the workflow-engine skill against this
+// instance. A second anchor warns (the one-driver-per-instance v1 contract).
+func TestWorkflowV1_DriveAnchorsOwnerDriver(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	g := f.HaveGroup("squad")
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "drivable",
+		"name: drivable\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:drivable", "squad")
+	drivePath := "/v1/workflows/" + strconv.FormatInt(id, 10) + "/drive"
+
+	// Human anchors the driver.
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, drivePath, nil)))
+	require.Equal(t, http.StatusOK, rec.Code, "human anchors a driver; body=%s", rec.Body.String())
+	var resp struct {
+		DriverConv string `json:"driver_conv"`
+		Group      string `json:"group"`
+		Warning    string `json:"warning"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.DriverConv, "anchored driver conv-id returned")
+	assert.Equal(t, "squad", resp.Group)
+	assert.Empty(t, resp.Warning, "no live agent-owner before the first driver → no warning")
+
+	// The driver is a group OWNER — that ownership is its drive authority (F2).
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	require.NoError(t, err)
+	var isOwner bool
+	for _, o := range owners {
+		if o.ConvID == resp.DriverConv {
+			isOwner = true
+		}
+	}
+	assert.True(t, isOwner, "the anchored driver %q is a group owner", resp.DriverConv)
+
+	// Its kickoff brief points at the workflow-engine skill and names the instance.
+	msgs, err := db.ListAgentMessagesForConv(resp.DriverConv, 10)
+	require.NoError(t, err)
+	var brief string
+	for _, m := range msgs {
+		if strings.Contains(m.Body, "workflow-engine") {
+			brief = m.Body
+		}
+	}
+	require.NotEmpty(t, brief, "driver briefed to run the workflow-engine skill")
+	assert.Contains(t, brief, "instance "+strconv.FormatInt(id, 10), "brief names the instance it drives")
+
+	// A SECOND anchor warns: the first driver is now a live agent-owner of the group.
+	rec2 := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, drivePath, nil)))
+	require.Equal(t, http.StatusOK, rec2.Code, "second drive still succeeds (warn, not block); body=%s", rec2.Body.String())
+	var resp2 struct {
+		Warning string `json:"warning"`
+	}
+	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &resp2))
+	assert.NotEmpty(t, resp2.Warning, "a second anchor warns about the one-driver-per-instance contract")
+}
+
+// Scenario: `workflow drive` refuses a system-mode instance — the deterministic
+// engine already drives it, so a driver would only double-spawn. The driver verb is
+// strictly for engine:agent instances.
+func TestWorkflowV1_DriveRefusesSystemMode(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	f.HaveGroup("squad")
+
+	root := t.TempDir()
+	// No `engine:` line → default system mode.
+	writeToolTemplate(t, root, "sysmode",
+		"name: sysmode\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:sysmode", "squad")
+	inst, _ := db.GetWorkflowInstance(id)
+	require.Equal(t, "system", inst.EngineMode, "instance is system-mode")
+
+	drivePath := "/v1/workflows/" + strconv.FormatInt(id, 10) + "/drive"
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, drivePath, nil)))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "drive refuses a system-mode instance; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "engine:agent", "the refusal explains drive is for engine:agent instances")
+}
+
+// blockingSpawner wraps a base Spawner and stalls SpawnNew until released, letting a
+// test hold a spawn "in flight" and observe what runs concurrently. SpawnResume
+// passes straight through. The first SpawnNew closes `entered` (signalling the spawn
+// is in flight) then blocks on `release`.
+type blockingSpawner struct {
+	base    agentd.Spawner
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingSpawner) SpawnNew(label, cwd, effort string) error {
+	b.once.Do(func() { close(b.entered) })
+	<-b.release
+	return b.base.SpawnNew(label, cwd, effort)
+}
+
+func (b *blockingSpawner) SpawnResume(convID, cwd string) error {
+	return b.base.SpawnResume(convID, cwd)
+}
+
+// Scenario (JOH-15 B2a — the off-lock spawn fix): a driver's spawn-into-node holds
+// NO per-instance lock across the ~30s conv-id handshake, so a concurrent engine
+// tick on that instance is never stalled behind it. We block the spawn mid-flight
+// (after the claim released the lock, before the conv-id materialises) and prove an
+// engine tick still completes promptly — the regression test for B1's lock-held
+// carry-over. Run under -race: the claim/settle and the concurrent tick touch the
+// same node + per-instance lock from different goroutines.
+func TestWorkflowEngine_StartSpawnRunsOffInstanceLock(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	// Shadow the sim spawner with a blocking wrapper so SpawnNew stalls until we
+	// release. newFlow installed agentd.Spawn = simSpawner and registered the cleanup
+	// that restores the production original; this re-assignment rides that cleanup.
+	blk := &blockingSpawner{base: agentd.Spawn, entered: make(chan struct{}), release: make(chan struct{})}
+	agentd.Spawn = blk
+	// Always release the blocked spawn, even on a failed assertion, so the background
+	// /v1 goroutine can't leak past the test.
+	var releaseOnce sync.Once
+	releaseSpawn := func() { releaseOnce.Do(func() { close(blk.release) }) }
+	t.Cleanup(releaseSpawn)
+
+	g := f.HaveGroup("squad")
+	const driver = "drvr-aaaa-bbbb-cccc-7777"
+	f.HaveConvWithTitle(driver, "engine-driver")
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, driver, "human"), "AddAgentGroupOwner")
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "offlock",
+		"name: offlock\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:offlock", "squad")
+
+	// Build the request on the test goroutine (JSONRequest may t.Fatal), then fire
+	// the /v1 spawn-into-node in the background. It claims the node under the lock,
+	// RELEASES the lock, then blocks inside executeSpawn (our blockingSpawner) — the
+	// spawn is now in flight with no lock held.
+	startPath := "/v1/workflows/" + strconv.FormatInt(id, 10) + "/nodes/work/start"
+	startReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, startPath, nil), driver)
+	startDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { startDone <- testharness.Serve(f.Mux, startReq) }()
+
+	// Wait until the spawn is actually in flight (claim done, lock released).
+	select {
+	case <-blk.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("spawn never reached executeSpawn — the claim phase stalled")
+	}
+
+	// Mid-flight the node is claimed running (the off-lock claim landed and freed the
+	// lock before the spawn began blocking).
+	work, _ := db.GetWorkflowNode(id, "work")
+	require.NotNil(t, work)
+	assert.Equal(t, "running", work.Status, "node claimed running while the spawn is in flight")
+
+	// THE ASSERTION: with the spawn in flight, a concurrent engine tick must NOT
+	// stall. The tick takes the SAME per-instance lock every pass; under B1's
+	// lock-held spawn it would block until release. Off-lock, it returns at once.
+	tickDone := make(chan struct{})
+	go func() {
+		agentd.RunWorkflowEngineTickForTest()
+		close(tickDone)
+	}()
+	select {
+	case <-tickDone:
+		// PASS — the tick ran while the spawn held no lock.
+	case <-time.After(5 * time.Second):
+		t.Fatal("engine tick stalled while a /v1 start's spawn was in flight — the " +
+			"per-instance lock is held across executeSpawn (off-lock fix regressed)")
+	}
+
+	// Release the spawn; the /v1 call finishes and the node settles to the real
+	// conv-id (sentinel swapped) with its visit counted.
+	releaseSpawn()
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-startDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the /v1 start never returned after the spawn was released")
+	}
+	require.Equal(t, http.StatusOK, rec.Code, "start completes after release; body=%s", rec.Body.String())
+	var startResp struct {
+		Status   string `json:"status"`
+		Assignee string `json:"assignee"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &startResp))
+	require.NotEmpty(t, startResp.Assignee, "spawned worker conv recorded as assignee")
+
+	work, _ = db.GetWorkflowNode(id, "work")
+	assert.Equal(t, "running", work.Status, "node still running, now driven by the live worker")
+	assert.Equal(t, startResp.Assignee, work.Assignee, "the engine sentinel was swapped for the real conv-id on settle")
+	assert.Equal(t, int64(1), work.Visits, "the spawn counted one execution (settleAISpawn bumps Visits)")
 }

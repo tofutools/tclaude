@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -138,6 +139,94 @@ func TestRunNode_UnknownActionAndBadID(t *testing.T) {
 	}
 	if rc := runNode(&nodeParams{Instance: "x", Node: "impl", Action: "start"}, &out, &errBuf); rc != rcInvalidArg {
 		t.Errorf("bad id rc=%d, want %d", rc, rcInvalidArg)
+	}
+}
+
+func TestRunSpawn_ContextShape(t *testing.T) {
+	var path string
+	var body any
+	captureBody(t, &path, &body, spawnNodeResp{NodeID: "work", Status: "running", ConvID: "c-1234", AttachCmd: "tclaude session attach spwn-x"})
+	var out, errBuf bytes.Buffer
+	if rc := runSpawn(&spawnNodeParams{Instance: "4", Node: "work", Context: "upstream said: ship it"}, &out, &errBuf); rc != rcOK {
+		t.Fatalf("runSpawn rc=%d stderr=%s", rc, errBuf.String())
+	}
+	if path != "POST /v1/workflows/4/nodes/work/start" {
+		t.Errorf("spawn hit %q", path)
+	}
+	m := asMap(t, body)
+	if m["context"] != "upstream said: ship it" {
+		t.Errorf("spawn body = %v, want context seed", m)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("spawned c-1234 into node work")) {
+		t.Errorf("spawn output should report the spawned conv + node\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("attach: tclaude session attach spwn-x")) {
+		t.Errorf("spawn output should surface the attach cmd\n%s", out.String())
+	}
+}
+
+func TestRunSpawn_NoContextOmitsBody(t *testing.T) {
+	var body any = "sentinel"
+	captureBody(t, nil, &body, spawnNodeResp{NodeID: "work", Status: "running", ConvID: "c-9"})
+	var out, errBuf bytes.Buffer
+	if rc := runSpawn(&spawnNodeParams{Instance: "4", Node: "work"}, &out, &errBuf); rc != rcOK {
+		t.Fatalf("runSpawn rc=%d stderr=%s", rc, errBuf.String())
+	}
+	// No --context → no body at all (matches the dashboard start: seeds nothing).
+	if body != nil {
+		t.Errorf("spawn without --context must send a nil body, got %#v", body)
+	}
+}
+
+func TestRunSpawn_ContextAndFileMutuallyExclusive(t *testing.T) {
+	called := false
+	daemonStub(t, nil, func(_, _ string, _ any) (any, error) { called = true; return nil, nil })
+	var out, errBuf bytes.Buffer
+	if rc := runSpawn(&spawnNodeParams{Instance: "4", Node: "work", Context: "a", ContextFile: "b.txt"}, &out, &errBuf); rc != rcInvalidArg {
+		t.Fatalf("both context flags rc=%d, want %d", rc, rcInvalidArg)
+	}
+	if called {
+		t.Error("--context + --context-file together must be rejected before any daemon call")
+	}
+}
+
+func TestRunSpawn_ContextFile(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/seed.txt"
+	if err := os.WriteFile(file, []byte("  multi\nline\nseed  \n"), 0o644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	var body any
+	captureBody(t, nil, &body, spawnNodeResp{NodeID: "work", Status: "running", ConvID: "c-7"})
+	var out, errBuf bytes.Buffer
+	if rc := runSpawn(&spawnNodeParams{Instance: "4", Node: "work", ContextFile: file}, &out, &errBuf); rc != rcOK {
+		t.Fatalf("runSpawn rc=%d stderr=%s", rc, errBuf.String())
+	}
+	m := asMap(t, body)
+	if m["context"] != "multi\nline\nseed" {
+		t.Errorf("context-file seed = %q, want trimmed file contents", m["context"])
+	}
+}
+
+func TestRunDrive_Shape(t *testing.T) {
+	var path string
+	captureBody(t, &path, nil, driveResp{
+		OK: true, Instance: 7, DriverConv: "drv-1234", Group: "squad",
+		AttachCmd: "tclaude session attach spwn-y", Warning: "already has 1 live agent-owner(s)",
+	})
+	var out, errBuf bytes.Buffer
+	if rc := runDrive(&driveParams{Instance: "7"}, &out, &errBuf); rc != rcOK {
+		t.Fatalf("runDrive rc=%d stderr=%s", rc, errBuf.String())
+	}
+	if path != "POST /v1/workflows/7/drive" {
+		t.Errorf("drive hit %q", path)
+	}
+	s := out.String()
+	if !bytes.Contains([]byte(s), []byte("anchored driver drv-1234 for instance 7")) {
+		t.Errorf("drive output should report the anchored driver\n%s", s)
+	}
+	if !bytes.Contains([]byte(s), []byte("warning: already has 1 live agent-owner(s)")) {
+		t.Errorf("drive output should surface the existing-driver warning\n%s", s)
 	}
 }
 

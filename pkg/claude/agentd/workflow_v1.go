@@ -154,6 +154,12 @@ func handleV1WorkflowsByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_status": db.WorkflowStatusCancelled})
+	case parts[1] == "drive" && len(parts) == 2:
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method", "POST only on /v1/workflows/{id}/drive")
+			return
+		}
+		handleV1WorkflowDrive(w, inst, caller, isHuman)
 	case parts[1] == "nodes" && len(parts) == 3 && parts[2] != "":
 		// parts[2] is "{nodeId}" (PATCH) or "{nodeId}/start" (the driver's
 		// spawn-into-node verb). Node ids are mermaid ids (no slashes), so the
@@ -255,12 +261,166 @@ func handleV1WorkflowNodeStart(w http.ResponseWriter, r *http.Request, inst *db.
 			"only the human or the bound-group owner may spawn a worker into node "+nodeID)
 		return
 	}
-	res, fail := spawnWorkerIntoNodeCore(inst.ID, nodeID)
+	// Optional driver seed context (JOH-15 B2a `--context`): the agent-engine driver
+	// folds the upstream AI outputs it routed in into the spawned worker's brief
+	// (additive to the worker's own `workflow where`/`status` self-view). The body is
+	// optional — an empty/absent body seeds nothing, matching the dashboard start.
+	var body struct {
+		Context string `json:"context"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "bad JSON: "+err.Error())
+			return
+		}
+	}
+	res, fail := spawnWorkerIntoNodeCore(inst.ID, nodeID, body.Context)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// handleV1WorkflowDrive is the agent-engine anchoring verb (JOH-15 B2a): POST
+// /v1/workflows/{id}/drive spawns a fresh driver agent into the instance's bound
+// group, grants it group-OWNERSHIP (the F2 drive authority — the same authority
+// that settles any node + spawns workers via /v1), and briefs it to run the
+// `workflow-engine` skill against this instance. On-demand, not at create (Q3): a
+// driver is anchored only when a human/owner asks, and a dead driver falls out of
+// the always-on JOH-41 stuck sweep for free.
+//
+// Schema-free (no driver_conv column): nothing structurally prevents anchoring a
+// SECOND driver (a one-driver-per-instance v1 usage contract, not a hard guard —
+// the shared node-PATCH guards bound the damage). We cheaply warn when the bound
+// group already has a live agent-owner that might already be driving; the hard
+// guard waits for the driver_conv designation (a later slice).
+//
+// Authorised for the human or the instance's bound-group owner — the same gate as
+// spawn-into-node and cancel (zero new authz surface).
+func handleV1WorkflowDrive(w http.ResponseWriter, inst *db.WorkflowInstance, caller string, isHuman bool) {
+	if !isHuman && !callerOwnsInstanceGroup(caller, inst) {
+		writeError(w, http.StatusForbidden, "forbidden",
+			"only the human or the bound-group owner may anchor a driver for this workflow")
+		return
+	}
+	if inst.Status != db.WorkflowStatusRunning {
+		writeError(w, http.StatusConflict, "conflict",
+			"instance is "+inst.Status+"; only a running instance can be driven")
+		return
+	}
+	// Driving a system-mode instance is a no-op-to-harmful confusion: the daemon
+	// already advances it, and a second driver racing the engine would double-spawn.
+	// Refuse loudly — `engine: agent` is what hands judgment to a driver.
+	if inst.EngineMode != string(workflow.EngineAgent) {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"instance engine is "+strconv.Quote(inst.EngineMode)+"; `workflow drive` applies only to engine:agent "+
+				"instances (the deterministic system engine drives system-mode instances itself)")
+		return
+	}
+	g, fail := boundGroupOrFail(inst)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+
+	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
+	if cwdErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "resolve group cwd: "+cwdErr.Error())
+		return
+	}
+
+	// Cheap existing-driver heuristic (Q3 — warn, don't block): a bound-group owner
+	// with a live CC session is a candidate driver. It can't tell a driver from any
+	// other owner-agent (the human owner has no running conv-session, so it won't
+	// match), so it's advisory, surfaced in the response — not a hard guard.
+	var warning string
+	if owners, oerr := db.ListAgentGroupOwners(g.ID); oerr == nil {
+		live := 0
+		for _, o := range owners {
+			if o.ConvID != "" && convHasRunningSession(o.ConvID) {
+				live++
+			}
+		}
+		if live > 0 {
+			warning = "the bound group already has " + strconv.Itoa(live) + " live agent-owner(s); " +
+				"if one is already driving this instance, anchoring another violates the one-driver-per-instance v1 contract"
+		}
+	}
+
+	// The driver's identity = the granter of its ownership. A human caller grants as
+	// "human"; an owner-agent caller grants under its own conv-id.
+	granter := caller
+	if granter == "" {
+		granter = "human"
+	}
+
+	outcome, sfail := executeSpawn(g, spawnParams{
+		Name:           "workflow-engine",
+		Role:           "workflow-engine",
+		Descr:          "engine driver · workflow " + strconv.FormatInt(inst.ID, 10),
+		InitialMessage: buildDriverBrief(inst.ID),
+		Cwd:            cwd,
+		GroupContext:   g.DefaultContext,
+		ReplyToConv:    caller,
+		SpawnedByConv:  caller,
+	})
+	if sfail != nil {
+		writeError(w, sfail.Status, sfail.Kind, sfail.Msg)
+		return
+	}
+
+	// Grant the spawned driver group-ownership — its drive authority (F2). Best is
+	// to fail loudly if this can't be recorded: a member-only driver would 403 on
+	// every /v1 drive call, so a silent skip would leave a useless agent running.
+	if err := db.AddAgentGroupOwner(g.ID, outcome.ConvID, granter); err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"spawned driver "+outcome.ConvID+" but failed to grant it group-ownership: "+err.Error())
+		return
+	}
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
+		InstanceID: inst.ID, Kind: db.WorkflowEventNodeStarted,
+		Message: "anchored engine driver " + outcome.ConvID + " (group owner) for engine:agent instance",
+	})
+
+	resp := map[string]any{
+		"ok": true, "instance": inst.ID, "driver_conv": outcome.ConvID,
+		"group": g.Name, "label": outcome.Label, "tmux_session": outcome.TmuxSession,
+		"attach_cmd": "tclaude session attach " + outcome.Label,
+	}
+	if warning != "" {
+		resp["warning"] = warning
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// buildDriverBrief composes the kickoff inbox briefing handed to a freshly-anchored
+// engine driver (JOH-15 B2a). It points the driver at the `workflow-engine` skill
+// for the full reflect→decide→spawn/settle→repeat loop, and inlines the essential
+// contract so the driver can act even before opening the skill: it owns data
+// routing (the daemon does NOT auto-handoff in agent mode), it spawns workers with
+// `workflow spawn --context`, it settles via the node-PATCH gate, and it holds no
+// authoritative state so it can reincarnate and resume from `workflow status`.
+func buildDriverBrief(instanceID int64) string {
+	id := strconv.FormatInt(instanceID, 10)
+	return "You are the ENGINE (driver) for workflow instance " + id + ", which runs in " +
+		"engine:agent mode: the daemon will NOT auto-spawn workers or auto-advance — YOU supply " +
+		"the judgment and drive it to a terminal state.\n\n" +
+		"Use the `workflow-engine` skill for the full loop. In short, repeat until the instance " +
+		"is completed or failed:\n" +
+		"1. Read the whole graph: `tclaude workflow status " + id + " --json` (node statuses, " +
+		"outcomes, captured outputs, vars, events).\n" +
+		"2. For each ready ai node, spawn a worker and seed it the upstream outputs it needs — YOU " +
+		"own data routing (the daemon does not auto-handoff in agent mode):\n" +
+		"   `tclaude workflow spawn " + id + " <node> --context \"<concise upstream summary>\"`.\n" +
+		"3. When a worker reports done (watch your inbox), settle + advance via the node gate:\n" +
+		"   `tclaude workflow node " + id + " <node> done --outcome <outcome>` (or `fail`).\n" +
+		"4. The daemon still runs mechanical tool/program nodes and enforces guards (max_visits, " +
+		"approval gates) — you cannot bypass them; let them work.\n" +
+		"5. Re-read status each loop and hold no authoritative state, so you can reincarnate and " +
+		"resume mid-flight.\n\n" +
+		"You are a group OWNER of this instance's bound group — that ownership is your authority " +
+		"for every drive call above. One driver per instance: do not anchor a second."
 }
 
 // handleV1WorkflowWhere is the first-person reflection endpoint: "which
