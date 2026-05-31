@@ -71,14 +71,19 @@ func RunPruneIndex(params *PruneIndexParams, stdout, stderr, stdin *os.File) int
 		return 0
 	}
 
-	// Compute dangling entries per dir (dry-run read; nothing written yet).
+	// Compute dangling entries per dir (dry-run read; nothing written yet). A
+	// MEMORY.md we cannot even read (e.g. permissions) is a planFailure: we
+	// must not report success without having inspected it, so it forces a
+	// non-zero exit on every path below — including --dry-run and "nothing
+	// dangling".
 	var plans []indexPrunePlan
-	total := 0
+	total, planFailures := 0, 0
 	for _, pd := range res.dirs {
 		memDir := filepath.Join(pd, "memory")
 		entries, perr := pruneIndexFile(memDir, nil, true, true) // treat absent-on-disk as gone; dry-run read
 		if perr != nil {
 			fmt.Fprintf(stderr, "Error reading %s: %v\n", filepath.Join(memDir, memoryIndexFile), perr)
+			planFailures++
 			continue
 		}
 		if len(entries) > 0 {
@@ -88,6 +93,10 @@ func RunPruneIndex(params *PruneIndexParams, stdout, stderr, stdin *os.File) int
 	}
 
 	if total == 0 {
+		if planFailures > 0 {
+			fmt.Fprintf(stderr, "Failed to inspect %d index file(s).\n", planFailures)
+			return 1
+		}
 		fmt.Fprintf(stdout, "No dangling MEMORY.md entries found across %d project dir(s).\n", len(res.dirs))
 		return 0
 	}
@@ -97,6 +106,10 @@ func RunPruneIndex(params *PruneIndexParams, stdout, stderr, stdin *os.File) int
 
 	if params.DryRun {
 		fmt.Fprintf(stdout, "\nDry run — no entries pruned.\n")
+		if planFailures > 0 {
+			fmt.Fprintf(stderr, "Failed to inspect %d index file(s).\n", planFailures)
+			return 1
+		}
 		return 0
 	}
 
@@ -129,8 +142,13 @@ func RunPruneIndex(params *PruneIndexParams, stdout, stderr, stdin *os.File) int
 	// Report files actually rewritten, not merely planned — on a partial
 	// write failure those numbers diverge.
 	fmt.Fprintf(stdout, "Pruned %s from %d index file(s).\n", nEntries(pruned), prunedFiles)
-	if failed > 0 {
-		fmt.Fprintf(stderr, "Failed to prune %d index file(s).\n", failed)
+	if failed > 0 || planFailures > 0 {
+		if failed > 0 {
+			fmt.Fprintf(stderr, "Failed to prune %d index file(s).\n", failed)
+		}
+		if planFailures > 0 {
+			fmt.Fprintf(stderr, "Failed to inspect %d index file(s).\n", planFailures)
+		}
 		return 1
 	}
 	return 0

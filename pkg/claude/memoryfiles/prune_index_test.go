@@ -3,6 +3,7 @@ package memoryfiles
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -96,6 +97,31 @@ func TestRunPruneIndex_ConfirmYesPrunes(t *testing.T) {
 	assert.Contains(t, readStream(t, stdout), "Pruned 2 entries")
 	got, _ := os.ReadFile(filepath.Join(projects, encoded, "memory", "MEMORY.md"))
 	assert.NotContains(t, string(got), "gone.md")
+}
+
+func TestRunPruneIndex_UnreadableIndexFailsExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0000 read-blocking is unreliable on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permission checks")
+	}
+	target := "/work/proj"
+	encoded := convops.PathToProjectDir(target)
+	projects := memEnv(t, target, []memFileSpec{{encoded, "MEMORY.md"}})
+	idx := filepath.Join(projects, encoded, "memory", "MEMORY.md")
+	require.NoError(t, os.Chmod(idx, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(idx, 0o644) })
+
+	// An index that exists but can't be read must NOT report success — even on
+	// the "nothing dangling" path, where there is no later write to surface it.
+	stdout := tmpStream(t, "")
+	stderr := tmpStream(t, "")
+	code := RunPruneIndex(&PruneIndexParams{Dir: target, Yes: true}, stdout, stderr, tmpStream(t, ""))
+
+	assert.Equal(t, 1, code)
+	assert.Contains(t, readStream(t, stderr), "Error reading")
+	assert.NotContains(t, readStream(t, stdout), "No dangling")
 }
 
 func TestRunPruneIndex_NoMatchingProjectDirs(t *testing.T) {

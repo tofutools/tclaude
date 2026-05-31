@@ -157,12 +157,13 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 	// deleted (not the intended set — a failed os.Remove must not orphan its
 	// still-present file from the index), with treatMissingAsGone=false so we
 	// only drop entries for files clean removed, leaving any pre-existing stale
-	// entries for prune-index.
+	// entries for prune-index. We do NOT pre-skip dirs whose MEMORY.md was
+	// targeted for deletion: pruneIndexFile is missing-safe (a deleted index
+	// just yields no entries), and intent-based skipping would wrongly leave a
+	// MEMORY.md whose OWN deletion FAILED still holding its deleted siblings'
+	// stale entries.
 	prunedEntries := 0
 	for memDir, set := range deletedByDir {
-		if indexDeletedByDir[memDir] {
-			continue // the index file itself was deleted — nothing to tidy
-		}
 		removed, perr := pruneIndexFile(memDir, set, false, false)
 		if perr != nil {
 			fmt.Fprintf(stderr, "Error pruning %s: %v\n", filepath.Join(memDir, memoryIndexFile), perr)
