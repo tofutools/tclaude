@@ -36,6 +36,12 @@ const (
 type AdvanceResult struct {
 	Ready   []string // pending successors that should become ready now
 	Skipped []string // pending branches that are no longer reachable
+	// Reentry holds settled nodes a taken back-edge loops into — a node that is
+	// an ANCESTOR of settledID (settledID is forward-reachable from it). The
+	// engine resets each one + its loop body (see LoopBody) and re-arms it,
+	// visit-capped; this pure helper only REPORTS them, it never mutates. Empty
+	// for a plain forward advance. (JOH-39)
+	Reentry []string
 }
 
 // Advance computes the successor/skip transitions after settledID settles with
@@ -67,11 +73,14 @@ type AdvanceResult struct {
 // target or a join still fed by a live path, and it transitively abandons a
 // whole dead sub-branch, not just its first node.
 //
-// Advance is single-step and does not re-enter loops: a target already past
-// pending (live/settled) is left alone, so a loop-back into an already-run node
-// is a no-op here. Re-running a node across a loop iteration (visit counting,
-// status reset) is the Step 6 engine's job; this helper computes one settle's
-// immediate consequences.
+// Advance is single-step. A taken edge into a still-LIVE target is left alone
+// (it will fire on its own). A taken edge into a SETTLED target that is an
+// ancestor of settledID is a back-edge: it is reported in res.Reentry — the
+// engine resets that node + its loop body and re-arms it (visit counting,
+// status reset, MaxVisits guard live in the engine; JOH-39). A taken edge into
+// a settled FORWARD node (e.g. a JoinAny that already fired, now reached by a
+// late predecessor) is NOT a loop and is ignored. This helper only computes one
+// settle's immediate consequences and never mutates.
 func Advance(t *Template, settledID, outcome string, state map[string]NodeRunState) AdvanceResult {
 	res := AdvanceResult{Ready: []string{}, Skipped: []string{}}
 	if t == nil {
@@ -102,18 +111,34 @@ func Advance(t *Template, settledID, outcome string, state map[string]NodeRunSta
 		}
 	}
 
-	// 1. Taken edges → ready successors, in chart order, deduped, join-gated.
+	// 1. Taken edges → ready successors (pending) or loop-back re-entry (settled
+	//    ancestor), in chart order, deduped, join-gated.
 	readySet := map[string]bool{}
+	reentrySet := map[string]bool{}
 	for _, e := range t.OutEdges(settledID) {
-		if !EdgeTaken(e, outcome) || readySet[e.To] {
+		if !EdgeTaken(e, outcome) {
 			continue
 		}
-		if st(e.To) != NodePending {
-			continue // already live/settled — leave it be (loop-back / re-entry)
-		}
-		if joinReady(t, e.To, settledID, liveNodes, out) {
-			readySet[e.To] = true
-			res.Ready = append(res.Ready, e.To)
+		switch st(e.To) {
+		case NodePending:
+			if readySet[e.To] {
+				continue
+			}
+			if joinReady(t, e.To, settledID, liveNodes, out) {
+				readySet[e.To] = true
+				res.Ready = append(res.Ready, e.To)
+			}
+		case NodeSettled:
+			// A taken edge into a settled node is a loop-back ONLY when the target
+			// is an ANCESTOR of settledID (settledID forward-reachable from it) — a
+			// genuine back-edge. A taken edge into a settled FORWARD node (a JoinAny
+			// that already fired, now reached by a late predecessor) must NOT re-run.
+			if !reentrySet[e.To] && reachable([]string{e.To}, out)[settledID] {
+				reentrySet[e.To] = true
+				res.Reentry = append(res.Reentry, e.To)
+			}
+		case NodeLive:
+			// ready/running/awaiting — leave it; it fires on its own.
 		}
 	}
 
@@ -140,6 +165,50 @@ func EdgeTaken(e Edge, outcome string) bool {
 		return outcome == OutcomePass
 	}
 	return e.Label == outcome
+}
+
+// LoopBody returns the set of nodes that re-run when a back-edge re-enters
+// target from backEdgeSource: target itself plus every node both forward-
+// reachable FROM target AND able to reach backEdgeSource — i.e. the nodes on
+// some path target→…→backEdgeSource, the region the back-edge closes. The
+// engine resets these (settled → pending; target → ready) so the iteration
+// re-runs; nodes outside the set (e.g. the loop's break/exit branch) are
+// untouched. Both endpoints are always included (target reaches backEdgeSource
+// for a real loop, so each lies in both reachable sets).
+func (t *Template) LoopBody(target, backEdgeSource string) map[string]bool {
+	out := map[string][]string{}
+	in := map[string][]string{}
+	for _, e := range t.Edges {
+		out[e.From] = append(out[e.From], e.To)
+		in[e.To] = append(in[e.To], e.From)
+	}
+	fwd := reachable([]string{target}, out)         // target + its descendants
+	back := reachable([]string{backEdgeSource}, in) // backEdgeSource + its ancestors
+	body := map[string]bool{target: true}
+	for id := range fwd {
+		if back[id] {
+			body[id] = true
+		}
+	}
+	return body
+}
+
+// EffectiveMaxVisits resolves a node's configured MaxVisits against the engine
+// default cap (JOH-39): 0 → defaultCap (fail-safe — an autonomous engine never
+// loops unbounded merely by omission), -1 → unbounded (an explicit power-user
+// escape hatch), >0 → that value. Returns the cap and whether it is unbounded.
+func EffectiveMaxVisits(n *Node, defaultCap int) (cap int, unbounded bool) {
+	if n == nil {
+		return defaultCap, false
+	}
+	switch {
+	case n.MaxVisits < 0:
+		return 0, true
+	case n.MaxVisits == 0:
+		return defaultCap, false
+	default:
+		return n.MaxVisits, false
+	}
 }
 
 // joinReady reports whether target may become ready now that settledID has

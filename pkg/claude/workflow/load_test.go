@@ -199,3 +199,22 @@ func TestParam_IsRequired(t *testing.T) {
 	assert.False(t, Param{Name: "a", Required: &no}.IsRequired()) // explicit
 	assert.False(t, Param{Name: "a", Required: &no, Default: ""}.IsRequired())
 }
+
+// JOH-39: max_visits: -1 is the explicit unbounded escape hatch and must LOAD;
+// any value below -1 is meaningless and is rejected.
+func TestLoad_MaxVisitsUnboundedEscapeHatchLoads(t *testing.T) {
+	fsys := tmplFS("name: x\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: tool\n  run: echo a\nmax_visits: -1\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	_, err := LoadFS(fsys, "x", SourceUser, "")
+	require.NoError(t, err, "max_visits: -1 (unbounded) must load")
+}
+
+func TestLoad_MaxVisitsBelowMinusOneRejected(t *testing.T) {
+	problems := loadProblems(t, "name: x\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: tool\n  run: echo a\nmax_visits: -2\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	assertAnyContains(t, problems, "max_visits")
+}

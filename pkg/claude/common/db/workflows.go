@@ -44,6 +44,8 @@ const (
 	WorkflowEventNodeRejected       = "node_rejected"        // human-verify gate: rejected (recorded, no advance)
 	WorkflowEventNodeAwaitingVerify = "node_awaiting_verify" // ai-verify: executor done, judge round-trip pending
 	WorkflowEventHandoff            = "handoff"              // engine delivered a predecessor's output to a bound successor's inbox (JOH-40)
+	WorkflowEventNodeRetry          = "node_retry"          // engine re-armed a node for an in-place retry after its verify failed (JOH-39)
+	WorkflowEventNodeReentry        = "node_reentry"        // engine re-armed a node + its loop body via a back-edge loop-back (JOH-39)
 )
 
 // WorkflowInstance is a row in workflow_instances — one instantiation of

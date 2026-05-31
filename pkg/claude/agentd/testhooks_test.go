@@ -197,6 +197,15 @@ func SetWorkflowAINodeSLAForTest(d time.Duration) func() {
 // can stamp it to simulate an engine-claimed (vs human-driven) running node.
 func WorkflowEngineAssigneeForTest() string { return engineAssignee }
 
+// SetWorkflowMaxVisitsForTest overrides the engine default max-visits cap so a
+// loop test can drive the runaway-loop guard with a small deterministic bound.
+// Returns a restore function for t.Cleanup. (JOH-39)
+func SetWorkflowMaxVisitsForTest(n int) func() {
+	prev := workflowMaxVisits
+	workflowMaxVisits = n
+	return func() { workflowMaxVisits = prev }
+}
+
 // ReapOrphanedEngineNodesForTest runs the startup orphan-node recovery so a flow
 // test can assert that a tool/program node left `running` by a "crashed" daemon
 // is reset to `ready`. Independent of the engine gate (reaping is always safe).

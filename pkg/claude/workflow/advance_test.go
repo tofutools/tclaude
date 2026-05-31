@@ -286,3 +286,88 @@ func TestRebuildFromSnapshot_RecomputesEntry(t *testing.T) {
 		t.Error("chart node c missing after rebuild")
 	}
 }
+
+// --- JOH-39: loop re-entry, loop-body, max-visits ---
+
+// A taken back-edge into a settled ancestor is reported as Reentry, not Ready.
+func TestAdvance_BackEdgeReportsReentry(t *testing.T) {
+	// implement --> test; test -->|fail| implement (loop); test -->|pass| done
+	mmd := "flowchart TD\n implement --> test\n test -->|fail| implement\n test -->|pass| done\n"
+	tmpl := build(t, mmd, map[string]*Node{
+		"implement": {OnFail: OnFailContinue},
+		"test":      {OnFail: OnFailContinue},
+	})
+	// implement already ran (done), test just settled fail.
+	res := Advance(tmpl, "test", OutcomeFail, map[string]NodeRunState{
+		"implement": NodeSettled, "test": NodeSettled, "done": NodePending,
+	})
+	assertSet(t, "ready", res.Ready, nil)
+	assertSet(t, "reentry", res.Reentry, []string{"implement"})
+	// done is on the not-taken (pass) branch this iteration → skipped this settle,
+	// but it's pending+reachable-from-nothing-live here; assert it's not readied.
+	assertSet(t, "no spurious ready", res.Ready, nil)
+}
+
+// test -->|pass| done takes the forward edge; no reentry.
+func TestAdvance_PassBreaksLoop(t *testing.T) {
+	mmd := "flowchart TD\n implement --> test\n test -->|fail| implement\n test -->|pass| done\n"
+	tmpl := build(t, mmd, map[string]*Node{"test": {OnFail: OnFailContinue}})
+	res := Advance(tmpl, "test", OutcomePass, map[string]NodeRunState{
+		"implement": NodeSettled, "test": NodeSettled, "done": NodePending,
+	})
+	assertSet(t, "ready", res.Ready, []string{"done"})
+	assertSet(t, "reentry", res.Reentry, nil)
+}
+
+// A taken edge into an already-settled FORWARD node (late JoinAny predecessor)
+// is NOT a loop-back: it must not be reported as Reentry.
+func TestAdvance_LateForwardEdgeIsNotReentry(t *testing.T) {
+	// a --> j, b --> j (j is JoinAny). j already fired off a; now b settles.
+	mmd := "flowchart TD\n a --> j\n b --> j\n j --> done\n"
+	tmpl := build(t, mmd, map[string]*Node{"j": {Join: JoinAny}})
+	res := Advance(tmpl, "b", OutcomePass, map[string]NodeRunState{
+		"a": NodeSettled, "j": NodeSettled, "done": NodeLive,
+	})
+	assertSet(t, "reentry", res.Reentry, nil) // j is downstream of b, not an ancestor
+	assertSet(t, "ready", res.Ready, nil)
+}
+
+func TestLoopBody_BetweenTargetAndBackEdgeSource(t *testing.T) {
+	// implement --> review --> test; test -->|fail| implement; test -->|pass| done
+	mmd := "flowchart TD\n implement --> review\n review --> test\n" +
+		" test -->|fail| implement\n test -->|pass| done\n"
+	tmpl := build(t, mmd, map[string]*Node{"test": {OnFail: OnFailContinue}})
+	body := tmpl.LoopBody("implement", "test")
+	got := []string{}
+	for id := range body {
+		got = append(got, id)
+	}
+	assertSet(t, "loop body", got, []string{"implement", "review", "test"})
+	if body["done"] {
+		t.Errorf("done (the break branch) must not be in the loop body")
+	}
+}
+
+func TestEffectiveMaxVisits(t *testing.T) {
+	cases := []struct {
+		max       int
+		def       int
+		wantCap   int
+		wantUnbnd bool
+	}{
+		{0, 20, 20, false}, // 0 → default cap
+		{-1, 20, 0, true},  // -1 → unbounded
+		{5, 20, 5, false},  // explicit
+		{1, 20, 1, false},  // explicit minimal
+	}
+	for _, c := range cases {
+		cap, unb := EffectiveMaxVisits(&Node{MaxVisits: c.max}, c.def)
+		if cap != c.wantCap || unb != c.wantUnbnd {
+			t.Errorf("EffectiveMaxVisits(max=%d, def=%d) = (%d,%v), want (%d,%v)",
+				c.max, c.def, cap, unb, c.wantCap, c.wantUnbnd)
+		}
+	}
+	if cap, unb := EffectiveMaxVisits(nil, 7); cap != 7 || unb {
+		t.Errorf("nil node: got (%d,%v), want (7,false)", cap, unb)
+	}
+}

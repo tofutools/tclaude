@@ -224,8 +224,11 @@ func (t *Template) validateNode(id string, n *Node, add func(string, ...any)) {
 	if n.Retries < 0 {
 		add("node %q: retries must be >= 0", id)
 	}
-	if n.MaxVisits < 0 {
-		add("node %q: max_visits must be >= 0", id)
+	// max_visits: 0 = engine default cap, a positive N = that cap, and -1 = the
+	// explicit truly-unbounded escape hatch (JOH-39 — see EffectiveMaxVisits). Any
+	// other negative is meaningless.
+	if n.MaxVisits < -1 {
+		add("node %q: max_visits must be >= 0 (or -1 for unbounded)", id)
 	}
 
 	// Edge-label consistency: every labeled outgoing edge must name a valid
