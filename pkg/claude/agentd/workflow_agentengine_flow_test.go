@@ -299,6 +299,58 @@ func TestWorkflowV1_SpawnIntoNodeSeedsContext(t *testing.T) {
 	assert.Contains(t, brief, "Context from the workflow driver:", "seed sits under the driver-context delimiter")
 }
 
+// Scenario (JOH-15 B2a — per-node max_visits holds on the driver spawn path): the
+// per-node execution cap (JOH-39) is a substrate guarantee in BOTH engine modes, so
+// the manual/driver spawn-into-node path must enforce it exactly as the engine's own
+// claimNextAINode does — else an agent-engine driver could re-spawn a looped-back ai
+// node past its cap. A node that has already used its full visit budget (looped back
+// to ready) refuses a fresh driver spawn with a 409, and the refused spawn bumps
+// nothing.
+func TestWorkflowV1_SpawnIntoNodeEnforcesMaxVisits(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+	t.Cleanup(agentd.SetWorkflowMaxVisitsForTest(2)) // small default cap
+
+	g := f.HaveGroup("squad")
+	const driver = "drvr-aaaa-bbbb-cccc-2222"
+	f.HaveConvWithTitle(driver, "engine-driver")
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, driver, "human"), "AddAgentGroupOwner")
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "capspawn",
+		"name: capspawn\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:capspawn", "squad")
+	startPath := "/v1/workflows/" + strconv.FormatInt(id, 10) + "/nodes/work/start"
+
+	// Simulate a node that looped back to ready having already spent its full visit
+	// budget — the engine bumps Visits on each spawn, and a back-edge re-readies it
+	// WITHOUT resetting Visits. The cap check must now refuse a fresh driver spawn.
+	atCap := int64(2)
+	ready := db.WorkflowNodeStatusReady
+	_, err := db.UpdateWorkflowNode(id, "work", db.WorkflowNodePatch{Status: &ready, Visits: &atCap})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, startPath, nil), driver))
+	assert.Equal(t, http.StatusConflict, rec.Code, "over-cap driver spawn is refused; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "max_visits", "the refusal names the cap")
+
+	// The refused spawn did no work: node still ready, unassigned, Visits not bumped
+	// past the cap (the spawn path cannot exceed max_visits in agent mode).
+	work, _ := db.GetWorkflowNode(id, "work")
+	require.NotNil(t, work)
+	assert.Equal(t, "ready", work.Status, "refused spawn leaves the node ready")
+	assert.Empty(t, work.Assignee, "no worker assigned by a refused spawn")
+	assert.Equal(t, int64(2), work.Visits, "Visits not bumped past the cap by the refused spawn")
+}
+
 // Scenario (JOH-15 B2a — `workflow drive` anchoring): anchoring a driver spawns a
 // fresh agent into the instance's bound group, grants it group-OWNERSHIP (its F2
 // drive authority), and briefs it to run the workflow-engine skill against this

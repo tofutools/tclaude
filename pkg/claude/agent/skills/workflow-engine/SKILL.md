@@ -170,6 +170,48 @@ When `status` shows the instance `completed` (or `failed` / `cancelled`):
   fresh successor re-reads `status` and continues. (See the `agent-lifecycle`
   skill for managing your own context.)
 
+## End-to-end walkthrough (also the manual-test recipe)
+
+To drive — or manually verify — a real `engine: agent` instance from scratch:
+
+```bash
+# 0. A minimal engine:agent template (project-local: ./.tclaude/workflows/demo.yaml).
+#    Two ai nodes so the driver actually routes data between them, then a tool node.
+#      name: demo
+#      engine: agent           # <-- this is what hands you the wheel
+#      entry: investigate
+#      flowchart TD
+#        investigate --> fix
+#        fix --> verify
+#      investigate: { executor: { kind: ai, agent: worker, prompt: "Find the bug" } }
+#      fix:         { executor: { kind: ai, agent: worker, prompt: "Fix the bug" } }
+#      verify:      { executor: { kind: tool, run: "echo verified" } }
+
+# 1. Instantiate it, bound to an agent group you own.
+tclaude workflow new project:demo --group my-squad
+
+# 2. Anchor a driver (a human/owner does this once; or you ARE the driver, briefed in).
+tclaude workflow drive <instance>
+
+# 3. The driver loop (you), until terminal:
+tclaude workflow status <instance> --json          # investigate is `ready`
+tclaude workflow spawn <instance> investigate      # spawn its worker (no upstream yet)
+#   … worker reports done; read its --output from status …
+tclaude workflow node <instance> investigate done --outcome pass
+tclaude workflow status <instance> --json          # fix is now `ready`
+tclaude workflow spawn <instance> fix --context "investigate found: <its output>"   # YOU route the data
+tclaude workflow node <instance> fix done --outcome pass
+#   verify is a tool node → the daemon runs it mechanically; you just watch status
+tclaude workflow status <instance> --json          # instance → completed
+```
+
+**What a passing manual verify looks like:** the daemon never auto-spawns the ai
+nodes (they sit `ready` until you `spawn`); each worker you spawn joins the bound
+group and receives your `--context`; settling advances the frontier; the trailing
+tool node runs without you; the instance ends `completed`. If you drive a looping
+graph past a node's `max_visits`, the next `spawn` is refused with a 409 — the cap
+holds even though you're the engine.
+
 ## Prerequisites & errors
 
 - **Daemon must be running.** Every verb here talks to `tclaude agentd` over its

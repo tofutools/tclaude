@@ -953,6 +953,21 @@ func claimManualAISpawn(instanceID int64, nodeID, seedContext string) (*aiNodeCl
 		def = *tmpl.Nodes[nodeID]
 	}
 
+	// Per-node max_visits (JOH-39) is a SUBSTRATE guarantee that must hold in BOTH
+	// engine modes: the engine's claimNextAINode enforces it at claim time, and so
+	// must this manual/driver path. Otherwise an agent-engine driver could re-spawn a
+	// looping ai node past its cap — a back-edge settle re-arms the node to `ready`
+	// with no cap check (same as system mode), and Visits would then climb unbounded
+	// through this path. (This is the per-node execution cap, NOT the daemon-side
+	// driver-iteration cap, which is separately deferred.) Unlike the engine — which
+	// force-fails + halts an UNATTENDED runaway — a deliberate driver/human start gets
+	// a typed refusal and the node is left `ready` for the caller to decide.
+	if cap, unbounded := workflow.EffectiveMaxVisits(&def, workflowMaxVisits); !unbounded && node.Visits >= int64(cap) {
+		return nil, &spawnFailure{http.StatusConflict, "conflict",
+			"node " + nodeID + " has reached its max_visits cap (" + strconv.Itoa(cap) +
+				"); refusing to spawn another worker into it"}
+	}
+
 	// Interpolate the task prompt against the instance scope (params + captures) so a
 	// brief referencing {{param}} / {{upstream.output}} resolves — the same the
 	// engine's auto-spawn does. Unresolved refs are left visible (logged), not
