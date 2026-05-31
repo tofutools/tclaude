@@ -1876,6 +1876,12 @@ body.slop #agent-spawn-submit.slop-pull-active {
 .wf-mermaid { margin: 10px 0; }
 .wf-mermaid summary { cursor: pointer; color: #58a6ff; }
 .wf-mermaid-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 6px; }
+.wf-mermaid-tools button.tool {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.wf-mermaid-tools button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
 .wf-mermaid-link { color: #58a6ff; text-decoration: none; font-size: 12px; }
 .wf-mermaid-link:hover { text-decoration: underline; }
 .wf-mermaid-hint { font-size: 12px; }
