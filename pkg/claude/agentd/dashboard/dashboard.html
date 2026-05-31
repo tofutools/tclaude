@@ -35,6 +35,7 @@
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
   <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
+  <button data-tab="workflows">Workflows</button>
   <button data-tab="config">Config</button>
 </nav>
 <main>
@@ -310,6 +311,17 @@
       <button class="tool" data-act="msg-clear" title="Delete every message that has been marked read">🧹 clear read</button>
     </div>
     <div id="messages-list"></div>
+  </section>
+  <section id="tab-workflows">
+    <div class="filter-bar">
+      <input id="filter-workflows" type="text" placeholder="Filter (run id / workflow / status / session / launched-by)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-workflows-count"></span>
+      <button class="clear-filter" id="filter-workflows-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="workflows-refresh" class="tool" title="Reload runs + saved templates">↻ refresh</button>
+    </div>
+    <div id="workflows-list"></div>
+    <div id="workflows-detail"></div>
   </section>
 </main>
 <div class="modal-overlay" id="confirm-modal">
