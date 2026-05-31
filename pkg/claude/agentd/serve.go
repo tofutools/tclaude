@@ -161,6 +161,8 @@ func runServe(p *serveParams) error {
 	workflowAIPerInstanceCap = defaultWorkflowAIPerInstanceCap
 	workflowAIGlobalCap = defaultWorkflowAIGlobalCap
 	workflowMaxVisits = defaultWorkflowMaxVisits
+	workflowNodeSLA = defaultWorkflowNodeSLA
+	workflowHumanNodeSLA = defaultWorkflowHumanNodeSLA
 	if cfg != nil && cfg.Agent != nil {
 		workflowEngineEnabled = cfg.Agent.WorkflowEngine
 		if c := cfg.Agent.WorkflowAIPerInstance; c != nil && *c > 0 {
@@ -172,10 +174,16 @@ func runServe(p *serveParams) error {
 		if c := cfg.Agent.WorkflowMaxVisits; c != nil && *c > 0 {
 			workflowMaxVisits = *c
 		}
+		if d, ok := parsePositiveDuration(cfg.Agent.WorkflowNodeSLA, "agent.workflow_node_sla"); ok {
+			workflowNodeSLA = d
+		}
+		if d, ok := parsePositiveDuration(cfg.Agent.WorkflowHumanNodeSLA, "agent.workflow_human_node_sla"); ok {
+			workflowHumanNodeSLA = d
+		}
 	}
 	slog.Info("workflows execution engine", "enabled", workflowEngineEnabled,
 		"ai_per_instance_cap", workflowAIPerInstanceCap, "ai_global_cap", workflowAIGlobalCap,
-		"max_visits", workflowMaxVisits)
+		"max_visits", workflowMaxVisits, "node_sla", workflowNodeSLA, "human_node_sla", workflowHumanNodeSLA)
 
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
@@ -379,6 +387,28 @@ func parseCloneCooldown(value, source string) (time.Duration, bool) {
 	}
 	if d < 0 {
 		slog.Warn("negative "+source+"; ignoring", "value", value)
+		return 0, false
+	}
+	return d, true
+}
+
+// parsePositiveDuration parses a config duration that must be strictly positive
+// (a workflow SLA threshold). Empty → not set (ok=false, no warning); an
+// unparseable or non-positive value is warned about and falls through to the
+// caller's default. Config validation already rejects a bad value loudly; this
+// is the defensive runtime fallback so a slipped-through bad value degrades to
+// the engine default rather than disabling the safety net (T<=0 == never-stuck).
+func parsePositiveDuration(value, source string) (time.Duration, bool) {
+	if value == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		slog.Warn("invalid "+source+"; using default", "value", value, "error", err)
+		return 0, false
+	}
+	if d <= 0 {
+		slog.Warn("non-positive "+source+"; using default", "value", value)
 		return 0, false
 	}
 	return d, true

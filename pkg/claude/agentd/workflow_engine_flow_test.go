@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -782,7 +783,7 @@ func TestWorkflowEngine_StuckRunningWorkerSwept(t *testing.T) {
 	f := newFlow(t)
 	_ = f.HaveGroup("squad")
 	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
-	t.Cleanup(agentd.SetWorkflowAINodeSLAForTest(0)) // any idle node with no live agent is stuck
+	t.Cleanup(agentd.SetWorkflowNodeSLAForTest(time.Nanosecond)) // any idle node with no live agent is past terminal
 
 	root := t.TempDir()
 	writeToolTemplate(t, root, "stuckworker",
@@ -819,7 +820,7 @@ func TestWorkflowEngine_ParkedNeverJudgedSwept(t *testing.T) {
 	f := newFlow(t)
 	_ = f.HaveGroup("squad")
 	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
-	t.Cleanup(agentd.SetWorkflowAINodeSLAForTest(0))
+	t.Cleanup(agentd.SetWorkflowNodeSLAForTest(time.Nanosecond))
 	t.Cleanup(agentd.SetWorkflowAICapsForTest(0, 0)) // no judge can ever spawn (cap starved)
 
 	root := t.TempDir()

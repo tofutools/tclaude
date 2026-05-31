@@ -46,6 +46,7 @@ const (
 	WorkflowEventHandoff            = "handoff"              // engine delivered a predecessor's output to a bound successor's inbox (JOH-40)
 	WorkflowEventNodeRetry          = "node_retry"          // engine re-armed a node for an in-place retry after its verify failed (JOH-39)
 	WorkflowEventNodeReentry        = "node_reentry"        // engine re-armed a node + its loop body via a back-edge loop-back (JOH-39)
+	WorkflowEventNodeEscalation     = "node_escalation"     // stuck-node sweep fired an escalation rung (warn/escalate/terminal); Message is the at-most-once marker (JOH-41)
 )
 
 // WorkflowInstance is a row in workflow_instances — one instantiation of
@@ -623,4 +624,20 @@ func scanWorkflowNode(s rowScanner) (*WorkflowNode, error) {
 	n.FinishedAt = parseTimeOrZero(finished)
 	n.UpdatedAt = parseTimeOrZero(updated)
 	return &n, nil
+}
+
+// SetWorkflowNodeUpdatedAtForTest back-dates a node's updated_at directly,
+// bypassing the normal "stamp now" path, so a test can place a node at a precise
+// idle age and exercise the escalation sweep's tier bands (warn / escalate /
+// terminal) deterministically rather than racing wall-clock milliseconds. Stored
+// in the same RFC3339 form the production writes use. Must only be called from
+// tests.
+func SetWorkflowNodeUpdatedAtForTest(instanceID int64, nodeID string, t time.Time) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE workflow_nodes SET updated_at = ? WHERE instance_id = ? AND node_id = ?`,
+		t.UTC().Format(time.RFC3339), instanceID, nodeID)
+	return err
 }

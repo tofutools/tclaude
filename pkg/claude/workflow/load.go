@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -229,6 +230,17 @@ func (t *Template) validateNode(id string, n *Node, add func(string, ...any)) {
 	// other negative is meaningless.
 	if n.MaxVisits < -1 {
 		add("node %q: max_visits must be >= 0 (or -1 for unbounded)", id)
+	}
+	// sla: the stuck/escalation threshold (JOH-41). Empty means the engine class
+	// default; a value must be a positive Go duration ("15m", "2h"). The engine
+	// degrades a bad value to the class default at runtime, but reject it here so
+	// a typo surfaces at load instead of silently disabling the per-node override.
+	if n.SLA != "" {
+		if d, err := time.ParseDuration(n.SLA); err != nil {
+			add("node %q: sla %q is not a valid duration (e.g. \"15m\", \"2h\")", id, n.SLA)
+		} else if d <= 0 {
+			add("node %q: sla %q must be a positive duration", id, n.SLA)
+		}
 	}
 
 	// Edge-label consistency: every labeled outgoing edge must name a valid
