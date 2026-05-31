@@ -122,10 +122,11 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 		}
 	}
 
-	deleted := 0
+	deleted, failed := 0, 0
 	for _, f := range toDelete {
 		if err := os.Remove(f.abs); err != nil {
 			fmt.Fprintf(stderr, "Error deleting %s: %v\n", f.abs, err)
+			failed++
 			continue
 		}
 		deleted++
@@ -138,6 +139,13 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 		fmt.Fprintf(stdout, ", removed %d empty memory dir(s)", removedDirs)
 	}
 	fmt.Fprintf(stdout, ".\n")
+
+	// Surface partial failure to scripted callers: a clean that couldn't
+	// remove everything it listed should not look like a success.
+	if failed > 0 {
+		fmt.Fprintf(stderr, "Failed to delete %d file(s).\n", failed)
+		return 1
+	}
 	return 0
 }
 

@@ -188,13 +188,27 @@ func resolveProjectDirs(targetDir string, mode scanMode) (scanResult, error) {
 			}
 		} else {
 			seen := map[string]bool{}
-			for _, p := range paths {
-				dir := filepath.Join(projectsDir, convops.PathToProjectDir(p))
+			add := func(dir string) {
 				if !seen[dir] && isDir(dir) {
 					seen[dir] = true
 					res.dirs = append(res.dirs, dir)
 				}
 			}
+			// git worktree list reports git's view of each worktree ROOT
+			// (a canonical/real path). In normal usage — a project tree not
+			// living under a symlinked prefix — that equals the path Claude
+			// saw, so the encodings match.
+			for _, p := range paths {
+				add(filepath.Join(projectsDir, convops.PathToProjectDir(p)))
+			}
+			// Always include the dir the user actually named. git only
+			// reports worktree roots, so when the target is a SUBDIR of the
+			// repo (e.g. repo/sub, where Claude stored memory under
+			// ...-repo-sub) its own dir is not in `paths` and would
+			// otherwise be silently dropped. Encoded via Abs to match how
+			// the exact/prefix modes — and Claude — name the dir, so the
+			// named target is covered regardless of symlink canonicalization.
+			add(filepath.Join(projectsDir, encoded))
 		}
 	case scanPrefix:
 		// Refuse a degenerate target whose encoded form is empty or all
@@ -242,7 +256,11 @@ func gitWorktreePaths(targetDir string) ([]string, error) {
 	for _, line := range strings.Split(string(out), "\n") {
 		// Each worktree block starts with: "worktree <abs-path>".
 		if p, ok := strings.CutPrefix(line, "worktree "); ok {
-			if p = strings.TrimSpace(p); p != "" {
+			// git emits forward slashes on every platform; convert to the
+			// OS separator so PathToProjectDir (which splits on
+			// filepath.Separator) encodes Windows paths the same way Claude
+			// does. No-op on Unix.
+			if p = filepath.FromSlash(strings.TrimSpace(p)); p != "" {
 				paths = append(paths, p)
 			}
 		}

@@ -96,6 +96,24 @@ func TestRunClean_PrefixStrategySweepsNonWorktreeSiblings(t *testing.T) {
 	assert.False(t, exists(filepath.Join(projects, encBak, "memory")), "--prefix should also remove the -bak sibling")
 }
 
+func TestRunClean_WorktreesIncludesExactSubdirTarget(t *testing.T) {
+	home, repo, _ := initRepoWithWorktree(t)
+	projects := filepath.Join(home, ".claude", "projects")
+
+	sub := filepath.Join(repo, "frontend")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	encSub := convops.PathToProjectDir(sub)
+	seedMemory(t, projects, encSub)
+
+	// `git worktree list` only reports worktree ROOTS, so the subdir's own
+	// memory dir (...-repo-frontend) is not among them. The default
+	// strategy must still include the dir the user actually named, or it
+	// would silently skip the memory for the location they're cleaning.
+	code := RunClean(&CleanParams{Dir: sub, Yes: true}, tmpStream(t, ""), tmpStream(t, ""), tmpStream(t, ""))
+	assert.Equal(t, 0, code)
+	assert.False(t, exists(filepath.Join(projects, encSub, "memory")), "subdir target's own memory should be deleted, not skipped")
+}
+
 func TestRunClean_WorktreesFallbackWhenNotGitRepo(t *testing.T) {
 	// A non-git target under an isolated HOME: the default strategy can't
 	// list worktrees, so it falls back to the exact dir and emits a note.
