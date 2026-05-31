@@ -32,7 +32,7 @@ func TestRunLs_ListsTopLevelMarkdownOnly(t *testing.T) {
 	assert.Contains(t, out, "Total: 2 file(s) across 1 project dir(s)")
 }
 
-func TestRunLs_IncludesSiblingsByDefault(t *testing.T) {
+func TestRunLs_PrefixIncludesSiblings(t *testing.T) {
 	target := "/work/proj"
 	encoded := convops.PathToProjectDir(target)
 	memEnv(t, target, []memFileSpec{
@@ -41,7 +41,7 @@ func TestRunLs_IncludesSiblingsByDefault(t *testing.T) {
 	})
 
 	stdout := tmpStream(t, "")
-	assert.Equal(t, 0, RunLs(&LsParams{Dir: target}, stdout, tmpStream(t, "")))
+	assert.Equal(t, 0, RunLs(&LsParams{Dir: target, Prefix: true}, stdout, tmpStream(t, "")))
 	assert.Contains(t, readStream(t, stdout), "Total: 2 file(s) across 2 project dir(s)")
 }
 

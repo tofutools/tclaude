@@ -13,7 +13,8 @@ import (
 // LsParams configures `memory-files ls`.
 type LsParams struct {
 	Dir        string `pos:"true" optional:"true" help:"Project directory whose memory files to list (defaults to current directory)"`
-	NoSiblings bool   `long:"no-siblings" help:"List only the exact project dir; skip worktree-sibling project dirs that share its encoded prefix."`
+	Prefix     bool   `long:"prefix" help:"Scan sibling project dirs by encoded-name prefix instead of git worktrees (may over-match child dirs / dotted siblings)."`
+	NoSiblings bool   `long:"no-siblings" help:"List only the exact project dir; ignore worktrees and prefix siblings. Takes precedence over --prefix."`
 }
 
 // LsCmd returns the `memory-files ls` subcommand.
@@ -22,10 +23,11 @@ func LsCmd() *cobra.Command {
 		Use:     "ls",
 		Aliases: []string{"list"},
 		Short:   "List a project's memory files (and its worktree siblings')",
-		Long: "List the top-level .md memory files for a project directory and, by\n" +
-			"default, every worktree-sibling project dir sharing its encoded prefix\n" +
-			"(pass --no-siblings to restrict to the exact dir). Shows each file's size\n" +
-			"and last-modified time, grouped by project dir.",
+		Long: "List the top-level .md memory files for a project directory and its\n" +
+			"sibling project dirs. By default siblings are the target repo's live git\n" +
+			"worktrees; --prefix scans by encoded-name prefix instead, and --no-siblings\n" +
+			"restricts to the exact dir. Shows each file's size and last-modified time,\n" +
+			"grouped by project dir.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *LsParams, _ *cobra.Command, _ []string) {
 			if code := RunLs(params, os.Stdout, os.Stderr); code != 0 {
@@ -43,19 +45,22 @@ func RunLs(params *LsParams, stdout, stderr *os.File) int {
 		return 1
 	}
 
-	projectDirs, encoded, err := resolveProjectDirs(targetDir, !params.NoSiblings)
+	res, err := resolveProjectDirs(targetDir, scanModeFrom(params.NoSiblings, params.Prefix))
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
-	if len(projectDirs) == 0 {
-		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, encoded)
+	if res.note != "" {
+		fmt.Fprintf(stderr, "Note: %s\n", res.note)
+	}
+	if len(res.dirs) == 0 {
+		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, res.encoded)
 		return 0
 	}
 
-	files := listMemoryMD(projectDirs)
+	files := listMemoryMD(res.dirs)
 	if len(files) == 0 {
-		fmt.Fprintf(stdout, "No memory files found under %d matched project dir(s).\n", len(projectDirs))
+		fmt.Fprintf(stdout, "No memory files found under %d matched project dir(s).\n", len(res.dirs))
 		return 0
 	}
 

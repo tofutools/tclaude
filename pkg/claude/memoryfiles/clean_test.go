@@ -59,28 +59,28 @@ func TestResolveProjectDirs_ExactAndSiblings(t *testing.T) {
 	// also a stray file (not a dir) sharing the prefix — must be ignored
 	require.NoError(t, os.WriteFile(filepath.Join(projects, encoded+"-stray.txt"), []byte("x"), 0o644))
 
-	withSiblings, gotEncoded, err := resolveProjectDirs(target, true)
+	withSiblings, err := resolveProjectDirs(target, scanPrefix)
 	require.NoError(t, err)
-	assert.Equal(t, encoded, gotEncoded)
+	assert.Equal(t, encoded, withSiblings.encoded)
 	assert.Equal(t, []string{
 		filepath.Join(projects, encoded),
 		filepath.Join(projects, encoded+"-feature"),
 		filepath.Join(projects, encoded+"-joh-1-fix"),
-	}, withSiblings)
+	}, withSiblings.dirs)
 
-	exactOnly, _, err := resolveProjectDirs(target, false)
+	exactOnly, err := resolveProjectDirs(target, scanExact)
 	require.NoError(t, err)
-	assert.Equal(t, []string{filepath.Join(projects, encoded)}, exactOnly)
+	assert.Equal(t, []string{filepath.Join(projects, encoded)}, exactOnly.dirs)
 }
 
-func TestResolveProjectDirs_RejectsDegenerateTarget(t *testing.T) {
+func TestResolveProjectDirs_RejectsDegenerateTargetInPrefixMode(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755))
 
 	// "/" encodes to "-"; matching siblings on "--" (or worse) would
 	// sweep a huge chunk of ~/.claude/projects, so it must error out.
-	_, _, err := resolveProjectDirs("/", true)
+	_, err := resolveProjectDirs("/", scanPrefix)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "degenerate")
 }
@@ -236,7 +236,7 @@ func TestRunClean_OnlyTopLevelMarkdownNoSubdirs(t *testing.T) {
 	assert.True(t, exists(memDir))
 }
 
-func TestRunClean_IncludesSiblingsByDefault(t *testing.T) {
+func TestRunClean_PrefixIncludesSiblings(t *testing.T) {
 	target := "/work/proj"
 	encoded := convops.PathToProjectDir(target)
 	projects := memEnv(t, target, []memFileSpec{
@@ -245,7 +245,7 @@ func TestRunClean_IncludesSiblingsByDefault(t *testing.T) {
 		{encoded + "2", "MEMORY.md"}, // distinct project, must be untouched
 	})
 
-	code := RunClean(&CleanParams{Dir: target, Yes: true}, tmpStream(t, ""), tmpStream(t, ""), tmpStream(t, ""))
+	code := RunClean(&CleanParams{Dir: target, Prefix: true, Yes: true}, tmpStream(t, ""), tmpStream(t, ""), tmpStream(t, ""))
 	assert.Equal(t, 0, code)
 
 	assert.False(t, exists(filepath.Join(projects, encoded, "memory")))

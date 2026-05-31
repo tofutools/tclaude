@@ -27,7 +27,8 @@ type CleanParams struct {
 	Yes    bool `short:"y" long:"yes" help:"Skip the confirmation prompt and delete."`
 	DryRun bool `short:"n" long:"dry-run" help:"Show what would be deleted and kept, without deleting anything."`
 
-	NoSiblings bool `long:"no-siblings" help:"Clean only the exact project dir; skip worktree-sibling project dirs that share its encoded prefix."`
+	Prefix     bool `long:"prefix" help:"Scan sibling project dirs by encoded-name prefix instead of git worktrees. Catches leftover memory from removed worktrees, but may also match child dirs (<dir>/sub) and dotted siblings (<dir>.bak)."`
+	NoSiblings bool `long:"no-siblings" help:"Clean only the exact project dir; ignore worktrees and prefix siblings. Takes precedence over --prefix."`
 }
 
 // CleanCmd returns the `memory-files clean` subcommand.
@@ -36,15 +37,18 @@ func CleanCmd() *cobra.Command {
 		Use:   "clean",
 		Short: "Delete memory files for a project (and its worktree siblings)",
 		Long: "Delete Claude Code memory files for a project directory.\n\n" +
-			"Resolves <dir> to its encoded ~/.claude/projects/<dir> directory and, by\n" +
-			"default, every worktree-sibling project dir sharing that encoded prefix\n" +
-			"(pass --no-siblings to restrict to the exact dir). Only top-level .md files\n" +
-			"directly in each memory/ dir are considered — subdirectories (e.g. a stray\n" +
-			".idea/) are never traversed. Those .md files are classified using --include\n" +
-			"/ --exclude globs: a file is deleted when it matches an --include (or none\n" +
-			"were given, meaning all) AND no --exclude. The full to-delete / to-keep\n" +
-			"split is printed before anything is removed; without --dry-run or --yes you\n" +
-			"are asked to confirm.",
+			"Sibling scan strategy (which ~/.claude/projects dirs are touched):\n" +
+			"  default      the target repo's live git worktrees (precise).\n" +
+			"  --prefix     every dir whose encoded name is prefixed by the target's\n" +
+			"               (catches removed-worktree leftovers; may over-match child\n" +
+			"               dirs / dotted siblings).\n" +
+			"  --no-siblings  only the exact project dir.\n\n" +
+			"Only top-level .md files directly in each memory/ dir are considered —\n" +
+			"subdirectories (e.g. a stray .idea/) are never traversed. Those .md files\n" +
+			"are classified using --include / --exclude globs: a file is deleted when it\n" +
+			"matches an --include (or none were given, meaning all) AND no --exclude. The\n" +
+			"full to-delete / to-keep split is printed before anything is removed;\n" +
+			"without --dry-run or --yes you are asked to confirm.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *CleanParams, _ *cobra.Command, _ []string) {
 			if code := RunClean(params, os.Stdout, os.Stderr, os.Stdin); code != 0 {
@@ -64,23 +68,26 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 		return 1
 	}
 
-	projectDirs, encoded, err := resolveProjectDirs(targetDir, !params.NoSiblings)
+	res, err := resolveProjectDirs(targetDir, scanModeFrom(params.NoSiblings, params.Prefix))
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
-	if len(projectDirs) == 0 {
-		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, encoded)
+	if res.note != "" {
+		fmt.Fprintf(stderr, "Note: %s\n", res.note)
+	}
+	if len(res.dirs) == 0 {
+		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, res.encoded)
 		return 0
 	}
 
-	files := gatherMemoryFiles(projectDirs, params.Include, params.Exclude)
+	files := gatherMemoryFiles(res.dirs, params.Include, params.Exclude)
 	if len(files) == 0 {
-		fmt.Fprintf(stdout, "No memory files found under %d matched project dir(s).\n", len(projectDirs))
+		fmt.Fprintf(stdout, "No memory files found under %d matched project dir(s).\n", len(res.dirs))
 		return 0
 	}
 
-	printPreview(stdout, files, !params.NoSiblings)
+	printPreview(stdout, files)
 
 	toDelete := selectForDeletion(files)
 	if len(toDelete) == 0 {
@@ -115,7 +122,7 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 		deleted++
 	}
 
-	removedDirs := pruneEmptyMemoryDirs(projectDirs)
+	removedDirs := pruneEmptyMemoryDirs(res.dirs)
 
 	fmt.Fprintf(stdout, "Deleted %d file(s)", deleted)
 	if removedDirs > 0 {
@@ -175,7 +182,7 @@ func selectForDeletion(files []memFile) []memFile {
 
 // printPreview prints the to-delete / to-keep split grouped by project
 // dir, followed by a summary line.
-func printPreview(w *os.File, files []memFile, withSiblings bool) {
+func printPreview(w *os.File, files []memFile) {
 	byDir := map[string][]memFile{}
 	var order []string
 	for _, f := range files {
@@ -185,11 +192,7 @@ func printPreview(w *os.File, files []memFile, withSiblings bool) {
 		byDir[f.projectDir] = append(byDir[f.projectDir], f)
 	}
 
-	siblingNote := ""
-	if withSiblings {
-		siblingNote = " (incl. worktree siblings)"
-	}
-	fmt.Fprintf(w, "Memory files across %d project dir(s)%s:\n", len(order), siblingNote)
+	fmt.Fprintf(w, "Memory files across %d project dir(s):\n", len(order))
 
 	var delCount, keepCount int
 	for _, pd := range order {

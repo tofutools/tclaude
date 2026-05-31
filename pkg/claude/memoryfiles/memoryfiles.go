@@ -11,6 +11,7 @@ package memoryfiles
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -113,59 +114,141 @@ func resolveTargetDir(dir string) (string, error) {
 	return os.Getwd()
 }
 
+// scanMode selects how a target project dir is expanded into the set of
+// Claude projects dirs to operate on.
+type scanMode int
+
+const (
+	// scanWorktrees (default) maps the target to its repo's live git
+	// worktrees and operates on each worktree's projects dir. Precise:
+	// no child-dir / dotted-sibling false positives. Does NOT find
+	// memory orphaned by worktrees that were already removed.
+	scanWorktrees scanMode = iota
+	// scanPrefix matches every projects dir whose encoded name equals
+	// or is prefixed by "<encoded>-". Greedy: catches leftover memory
+	// from deleted worktrees, but because PathToProjectDir collapses
+	// '/' and '.' to '-' it can also match child dirs (<target>/sub) and
+	// dotted siblings (<target>.bak). Opt in with --prefix.
+	scanPrefix
+	// scanExact operates only on the target's own projects dir.
+	scanExact
+)
+
+// scanModeFrom derives the strategy from the shared flags. --no-siblings
+// (exact) takes precedence over --prefix; otherwise the default is the
+// git-worktrees strategy.
+func scanModeFrom(noSiblings, prefix bool) scanMode {
+	switch {
+	case noSiblings:
+		return scanExact
+	case prefix:
+		return scanPrefix
+	default:
+		return scanWorktrees
+	}
+}
+
+// scanResult is the outcome of resolving a target to projects dirs.
+type scanResult struct {
+	dirs    []string // matched ~/.claude/projects/<encoded...> dirs (sorted, existing)
+	encoded string   // the target's encoded name (handy when nothing matched)
+	note    string   // optional human-facing note (e.g. non-repo fallback)
+}
+
 // resolveProjectDirs maps a real project directory to the matching
-// Claude projects dir(s) on disk. The exact dir is always included if
-// present; when includeSiblings is true, worktree-sibling dirs are too.
-//
-// Claude encodes an absolute path by replacing each '/' and '.' with
-// '-' and dropping ':' (see convops.PathToProjectDir). A worktree that
-// `tclaude worktree add` creates at <repo>-<branch> therefore encodes
-// to <encoded-repo>-<branch>. So the siblings are exactly the projects
-// dir entries whose name equals the encoded target OR begins with the
-// encoded target followed by '-'. The trailing '-' guard keeps a
-// distinct project like "<repo>2" (encodes to "<encoded>2", no dash)
-// from matching, while still catching every real worktree.
-//
-// It returns the matched absolute dirs (sorted) and the encoded name
-// used for matching (handy for diagnostics when nothing matched).
-func resolveProjectDirs(targetDir string, includeSiblings bool) ([]string, string, error) {
+// Claude projects dirs on disk, per the chosen scan mode. Claude encodes
+// an absolute path by replacing each '/' and '.' with '-' and dropping
+// ':' (see convops.PathToProjectDir).
+func resolveProjectDirs(targetDir string, mode scanMode) (scanResult, error) {
 	abs, err := filepath.Abs(targetDir)
 	if err != nil {
 		abs = targetDir
 	}
 	encoded := convops.PathToProjectDir(abs)
-
-	// Refuse a degenerate target whose encoded form is empty or all
-	// dashes (e.g. "/", which encodes to "-"): its sibling prefix would
-	// match a huge swath of ~/.claude/projects. No real project path
-	// encodes this short.
-	if strings.Trim(encoded, "-") == "" {
-		return nil, encoded, fmt.Errorf("refusing to operate on root/degenerate target %q (encoded %q)", targetDir, encoded)
-	}
+	res := scanResult{encoded: encoded}
 
 	projectsDir := convops.ClaudeProjectsDir()
 	if projectsDir == "" {
-		return nil, encoded, fmt.Errorf("could not determine Claude projects directory (no home dir?)")
+		return res, fmt.Errorf("could not determine Claude projects directory (no home dir?)")
 	}
 
-	entries, err := os.ReadDir(projectsDir)
+	switch mode {
+	case scanExact:
+		if dir := filepath.Join(projectsDir, encoded); isDir(dir) {
+			res.dirs = []string{dir}
+		}
+	case scanWorktrees:
+		paths, gitErr := gitWorktreePaths(abs)
+		if gitErr != nil {
+			// Not a git repo (or git unavailable): operate on the exact
+			// dir only, and point the user at --prefix for a broader scan.
+			res.note = fmt.Sprintf("%s is not a git worktree (or git is unavailable); scanning the exact project dir only — use --prefix to scan sibling dirs by encoded-name prefix.", targetDir)
+			if dir := filepath.Join(projectsDir, encoded); isDir(dir) {
+				res.dirs = []string{dir}
+			}
+		} else {
+			seen := map[string]bool{}
+			for _, p := range paths {
+				dir := filepath.Join(projectsDir, convops.PathToProjectDir(p))
+				if !seen[dir] && isDir(dir) {
+					seen[dir] = true
+					res.dirs = append(res.dirs, dir)
+				}
+			}
+		}
+	case scanPrefix:
+		// Refuse a degenerate target whose encoded form is empty or all
+		// dashes (e.g. "/", which encodes to "-"): its sibling prefix
+		// would match a huge swath of ~/.claude/projects. No real
+		// project path encodes this short.
+		if strings.Trim(encoded, "-") == "" {
+			return res, fmt.Errorf("refusing to operate on root/degenerate target %q (encoded %q)", targetDir, encoded)
+		}
+		entries, readErr := os.ReadDir(projectsDir)
+		if readErr != nil {
+			return res, fmt.Errorf("reading %s: %w", projectsDir, readErr)
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == encoded || strings.HasPrefix(name, encoded+"-") {
+				res.dirs = append(res.dirs, filepath.Join(projectsDir, name))
+			}
+		}
+	}
+
+	sort.Strings(res.dirs)
+	return res, nil
+}
+
+// isDir reports whether path exists and is a directory.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// gitWorktreePaths returns the absolute root paths of every worktree of
+// the git repo containing targetDir, via `git worktree list`. It errors
+// when targetDir is not inside a git repo or git is unavailable.
+func gitWorktreePaths(targetDir string) ([]string, error) {
+	cmd := exec.Command("git", "-C", targetDir, "worktree", "list", "--porcelain")
+	out, err := cmd.Output()
 	if err != nil {
-		return nil, encoded, fmt.Errorf("reading %s: %w", projectsDir, err)
+		return nil, err
 	}
-
-	var dirs []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		switch {
-		case name == encoded:
-			dirs = append(dirs, filepath.Join(projectsDir, name))
-		case includeSiblings && strings.HasPrefix(name, encoded+"-"):
-			dirs = append(dirs, filepath.Join(projectsDir, name))
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		// Each worktree block starts with: "worktree <abs-path>".
+		if p, ok := strings.CutPrefix(line, "worktree "); ok {
+			if p = strings.TrimSpace(p); p != "" {
+				paths = append(paths, p)
+			}
 		}
 	}
-	sort.Strings(dirs)
-	return dirs, encoded, nil
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no worktrees reported for %s", targetDir)
+	}
+	return paths, nil
 }

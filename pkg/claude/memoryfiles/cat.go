@@ -17,7 +17,8 @@ const memoryIndexFile = "MEMORY.md"
 // CatParams configures `memory-files cat`.
 type CatParams struct {
 	Dir        string `pos:"true" optional:"true" help:"Project directory whose memory files to print (defaults to current directory)"`
-	NoSiblings bool   `long:"no-siblings" help:"Print only the exact project dir; skip worktree-sibling project dirs that share its encoded prefix."`
+	Prefix     bool   `long:"prefix" help:"Scan sibling project dirs by encoded-name prefix instead of git worktrees (may over-match child dirs / dotted siblings)."`
+	NoSiblings bool   `long:"no-siblings" help:"Print only the exact project dir; ignore worktrees and prefix siblings. Takes precedence over --prefix."`
 }
 
 // CatCmd returns the `memory-files cat` subcommand.
@@ -26,8 +27,9 @@ func CatCmd() *cobra.Command {
 		Use:   "cat",
 		Short: "Print a project's memory files (MEMORY.md first), with separators",
 		Long: "Print the full contents of the top-level .md memory files for a project\n" +
-			"directory and, by default, every worktree-sibling project dir sharing its\n" +
-			"encoded prefix (pass --no-siblings to restrict to the exact dir).\n\n" +
+			"directory and its sibling project dirs. By default siblings are the target\n" +
+			"repo's live git worktrees; --prefix scans by encoded-name prefix instead,\n" +
+			"and --no-siblings restricts to the exact dir.\n\n" +
 			"MEMORY.md (the index) is printed first within each project dir, followed by\n" +
 			"the rest alphabetically. Each file is introduced by a separator banner\n" +
 			"naming it, so the concatenated output stays readable.",
@@ -48,19 +50,22 @@ func RunCat(params *CatParams, stdout, stderr *os.File) int {
 		return 1
 	}
 
-	projectDirs, encoded, err := resolveProjectDirs(targetDir, !params.NoSiblings)
+	res, err := resolveProjectDirs(targetDir, scanModeFrom(params.NoSiblings, params.Prefix))
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
-	if len(projectDirs) == 0 {
-		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, encoded)
+	if res.note != "" {
+		fmt.Fprintf(stderr, "Note: %s\n", res.note)
+	}
+	if len(res.dirs) == 0 {
+		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, res.encoded)
 		return 0
 	}
 
-	files := listMemoryMD(projectDirs)
+	files := listMemoryMD(res.dirs)
 	if len(files) == 0 {
-		fmt.Fprintf(stdout, "No memory files found under %d matched project dir(s).\n", len(projectDirs))
+		fmt.Fprintf(stdout, "No memory files found under %d matched project dir(s).\n", len(res.dirs))
 		return 0
 	}
 	orderMemoryIndexFirst(files)
