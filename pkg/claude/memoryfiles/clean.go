@@ -62,6 +62,15 @@ func CleanCmd() *cobra.Command {
 // process exit code and writes all user-facing output through the
 // provided streams so tests can drive it without touching os.Std*.
 func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
+	// Validate globs up front, before touching anything: matchesAny
+	// treats a non-matching and a *malformed* pattern identically, so a
+	// typo'd --exclude (meant to keep files) would otherwise silently
+	// fail to protect them and they'd be deleted.
+	if err := validateGlobs(params.Include, params.Exclude); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+
 	targetDir, err := resolveTargetDir(params.Dir)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
@@ -159,7 +168,9 @@ func classify(name string, includes, excludes []string) bool {
 }
 
 // matchesAny reports whether name matches any of the glob patterns
-// (filepath.Match semantics, against the bare file name).
+// (filepath.Match semantics, against the bare file name). It assumes the
+// patterns were already vetted by validateGlobs, so a discarded
+// ErrBadPattern here is unreachable in practice.
 func matchesAny(patterns []string, name string) bool {
 	for _, p := range patterns {
 		if ok, _ := filepath.Match(p, name); ok {
@@ -167,6 +178,21 @@ func matchesAny(patterns []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// validateGlobs returns an error if any pattern is not a valid
+// filepath.Match glob (e.g. an unclosed "[" character class). filepath.
+// Match reports such patterns with ErrBadPattern; we surface it instead
+// of letting matchesAny silently treat the pattern as non-matching.
+func validateGlobs(groups ...[]string) error {
+	for _, g := range groups {
+		for _, p := range g {
+			if _, err := filepath.Match(p, "x"); err != nil {
+				return fmt.Errorf("invalid glob pattern %q: %w", p, err)
+			}
+		}
+	}
+	return nil
 }
 
 // selectForDeletion returns the subset of files classified for deletion.

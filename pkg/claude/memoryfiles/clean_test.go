@@ -236,6 +236,26 @@ func TestRunClean_OnlyTopLevelMarkdownNoSubdirs(t *testing.T) {
 	assert.True(t, exists(memDir))
 }
 
+func TestRunClean_RejectsMalformedGlobWithoutDeleting(t *testing.T) {
+	target := "/work/proj"
+	encoded := convops.PathToProjectDir(target)
+	projects := memEnv(t, target, []memFileSpec{
+		{encoded, "MEMORY.md"},
+		{encoded, "keep_me.md"},
+	})
+
+	// A malformed --exclude (unclosed char class) must abort before any
+	// deletion — otherwise it would silently fail to protect keep_me.md.
+	stderr := tmpStream(t, "")
+	code := RunClean(&CleanParams{Dir: target, Exclude: []string{"keep_[me.md"}, Yes: true}, tmpStream(t, ""), stderr, tmpStream(t, ""))
+
+	assert.Equal(t, 1, code)
+	assert.Contains(t, readStream(t, stderr), "invalid glob pattern")
+	// Nothing was deleted.
+	assert.True(t, exists(filepath.Join(projects, encoded, "memory", "MEMORY.md")))
+	assert.True(t, exists(filepath.Join(projects, encoded, "memory", "keep_me.md")))
+}
+
 func TestRunClean_PrefixIncludesSiblings(t *testing.T) {
 	target := "/work/proj"
 	encoded := convops.PathToProjectDir(target)
