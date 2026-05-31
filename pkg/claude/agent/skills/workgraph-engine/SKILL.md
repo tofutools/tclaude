@@ -1,6 +1,6 @@
 ---
 name: workgraph-engine
-description: BE the engine for a tclaude `engine: agent` workgraph instance — drive the WHOLE graph with judgment via `tclaude workgraph`. Use when you've been anchored as a workgraph driver (spawned by `tclaude workgraph drive <instance>`, or briefed that you are "the engine / driver for workgraph instance N"): read the whole graph, decide which ai nodes to spawn workers into, seed each worker the upstream outputs it needs, settle nodes to advance the graph, and loop until the instance is terminal. This is the WHOLE-graph counterpart to the `workgraph-node` skill (which drives a single assigned node). NOT the Claude Code harness `Workgraph` tool / `/workgraphs` — this is the daemon-backed `tclaude workgraph` CLI.
+description: BE the engine for a tclaude `engine: agent` workgraph instance — drive the WHOLE graph with judgment via `tclaude workgraph`. Use when you've been anchored as a workgraph driver (spawned by `tclaude workgraph drive <instance>`, or briefed that you are "the engine / driver for workgraph instance N"): read the whole graph, decide which ai nodes to spawn workers into, seed each worker the upstream outputs it needs, settle nodes to advance the graph, and loop until the instance is terminal. This is the WHOLE-graph counterpart to the `workgraph-node` skill (which drives a single assigned node). NOT the Claude Code harness `Workflow` tool / `/workflows` — this is the daemon-backed `tclaude workgraph` CLI.
 ---
 
 # workgraph-engine: drive a whole `engine: agent` workgraph
@@ -12,7 +12,7 @@ settle). An **`engine: agent`** instance is different: the daemon deliberately
 steps back and **YOU supply the judgment** — which worker to spawn, what to
 hand it, which branch to take, when to advance. You are the engine.
 
-> Not the Claude Code harness `Workgraph` tool or the `/workgraphs` command (the
+> Not the Claude Code harness `Workflow` tool or the `/workflows` command (the
 > in-process JS orchestrator). This skill wraps the `tclaude workgraph` CLI, a
 > thin client over a running `tclaude agentd`.
 

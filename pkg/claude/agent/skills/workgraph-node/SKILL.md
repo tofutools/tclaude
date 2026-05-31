@@ -1,6 +1,6 @@
 ---
 name: workgraph-node
-description: Self-orient and drive your assigned tclaude workgraph node from the terminal via `tclaude workgraph`. Use when you're an agent that has been spawned onto (or assigned to) a workgraph node and need to find out which instance/node you are, what context and inputs it carries, and what outcome is expected — then report your node running / done / failed so the engine advances the graph. Triggered by being placed in a group bound to a workgraph, an initial message that mentions a workgraph node, or the user asking you to check / drive a tclaude workgraph. NOT the Claude Code harness `Workgraph` tool / `/workgraphs` — this is the daemon-backed `tclaude workgraph` CLI.
+description: Self-orient and drive your assigned tclaude workgraph node from the terminal via `tclaude workgraph`. Use when you're an agent that has been spawned onto (or assigned to) a workgraph node and need to find out which instance/node you are, what context and inputs it carries, and what outcome is expected — then report your node running / done / failed so the engine advances the graph. Triggered by being placed in a group bound to a workgraph, an initial message that mentions a workgraph node, or the user asking you to check / drive a tclaude workgraph. NOT the Claude Code harness `Workflow` tool / `/workflows` — this is the daemon-backed `tclaude workgraph` CLI.
 ---
 
 # workgraph-node: drive your assigned workgraph node
@@ -11,7 +11,7 @@ points) an agent at that node and waits for the agent to settle it. If
 that's you, this skill is your manual: **orient** (which node am I, what's
 expected?), do the work, then **settle** the node so the graph advances.
 
-> Not the Claude Code harness `Workgraph` tool or the `/workgraphs` command
+> Not the Claude Code harness `Workflow` tool or the `/workflows` command
 > (the in-process JS orchestrator). This skill wraps the `tclaude workgraph`
 > CLI, a thin client over a running `tclaude agentd`.
 
