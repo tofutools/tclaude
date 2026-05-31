@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/workflow"
 )
 
 // workflow_v1.go is the peer-cred /v1/workflows* socket surface — the CLI-facing
@@ -272,8 +273,9 @@ func handleV1WorkflowWhere(w http.ResponseWriter, r *http.Request) {
 			}
 			tmpl, _ := rebuildInstanceTemplate(inst)
 			assignments = append(assignments, map[string]any{
-				"instance": instanceDetailJSON(inst),
-				"node":     nodeToJSON(n, tmpl),
+				"instance":  instanceDetailJSON(inst),
+				"node":      nodeToJSON(n, tmpl),
+				"self_view": workflowNodeSelfView(inst, n, tmpl),
 			})
 		}
 	}
@@ -282,6 +284,89 @@ func handleV1WorkflowWhere(w http.ResponseWriter, r *http.Request) {
 		"caller":      caller,
 		"assignments": assignments,
 	})
+}
+
+// workflowSelfView is the JOH-15 Slice-A self-view: everything an agent embedded
+// in a node needs to do its node WITHOUT parsing the mermaid chart or
+// re-resolving interpolation by hand. It is computed server-side from the
+// instance's live scope (params + captured vars) and the snapshotted template,
+// and attached to each `tclaude workflow where` assignment.
+type workflowSelfView struct {
+	// Task is the node's raw instruction by executor kind: an ai node's prompt,
+	// a human node's instructions, a tool/program node's run command.
+	Task string `json:"task"`
+	// TaskInterpolated is Task with {{param}} / {{captured}} / {{node.output}}
+	// refs resolved against the instance's current scope — the agent's actual,
+	// inputs-filled-in task. MissingRefs names any ref that did not resolve yet
+	// (e.g. an upstream output not produced), left verbatim in TaskInterpolated.
+	TaskInterpolated string   `json:"task_interpolated"`
+	MissingRefs      []string `json:"missing_refs"`
+	// AllowedOutcomes are the outcome labels this node may settle with (the enum
+	// values for an enum-verified node, else pass/fail), surfaced here so the
+	// agent need not guess what to pass to `node … done --outcome`.
+	AllowedOutcomes []string `json:"allowed_outcomes"`
+	// Successors maps each outcome to where the graph goes next, resolved
+	// server-side from the chart so the agent never parses mermaid.
+	Successors []workflowSuccessor `json:"successors"`
+}
+
+// workflowSuccessor is one outcome→target edge in the self-view.
+type workflowSuccessor struct {
+	Outcome string `json:"outcome"`  // the outcome that takes this edge ("pass" for an unlabeled/default edge)
+	To      string `json:"to"`       // successor node id
+	ToLabel string `json:"to_label"` // successor's display label (falls back to its id)
+}
+
+// workflowNodeSelfView builds the self-view for one assigned node. A nil template
+// (a corrupt snapshot) degrades to just the raw task, so `where` never fails.
+func workflowNodeSelfView(inst *db.WorkflowInstance, n *db.WorkflowNode, tmpl *workflow.Template) workflowSelfView {
+	sv := workflowSelfView{MissingRefs: []string{}, AllowedOutcomes: []string{}, Successors: []workflowSuccessor{}}
+	if tmpl == nil {
+		return sv
+	}
+	def := tmpl.Nodes[n.NodeID]
+	sv.Task = nodeTaskText(def)
+	// Interpolate against the live scope (params, shadowed by captured vars) — the
+	// same scope the engine uses to run the node. Interpolate already returns the
+	// unresolved refs sorted + deduped.
+	interp, missing := instanceScope(inst).Interpolate(sv.Task)
+	sv.TaskInterpolated = interp
+	if len(missing) > 0 {
+		sv.MissingRefs = missing
+	}
+	if oc := tmpl.AllowedOutcomes(n.NodeID); len(oc) > 0 {
+		sv.AllowedOutcomes = oc
+	}
+	// Successors are the STATIC chart edges out of this node (outcome → target),
+	// NOT the Advance-computed runtime frontier: they answer "if I settle with
+	// outcome X, the flow heads toward Y", not join-gating / skip / reachability.
+	for _, e := range tmpl.OutEdges(n.NodeID) {
+		outcome := e.Label
+		if outcome == "" {
+			outcome = workflow.OutcomePass // an unlabeled edge is followed on pass
+		}
+		sv.Successors = append(sv.Successors, workflowSuccessor{
+			Outcome: outcome, To: e.To, ToLabel: tmpl.DisplayLabel(e.To),
+		})
+	}
+	return sv
+}
+
+// nodeTaskText returns a node's raw instruction by executor kind: the ai prompt,
+// the human instructions, or the tool/program run command.
+func nodeTaskText(def *workflow.Node) string {
+	if def == nil {
+		return ""
+	}
+	switch def.Executor.Kind {
+	case workflow.ExecAI:
+		return def.Executor.Prompt
+	case workflow.ExecHuman:
+		return def.Executor.Instructions
+	case workflow.ExecTool, workflow.ExecProgram:
+		return def.Executor.Run
+	}
+	return ""
 }
 
 // ----- authz helpers --------------------------------------------------

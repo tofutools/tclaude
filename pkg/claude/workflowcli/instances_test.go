@@ -192,6 +192,16 @@ func whereResp() wfWhere {
 			{ // live: running instance + running node
 				Instance: wfInstanceMeta{ID: 1, Title: "live wf", TemplateRef: "user:foo", Status: "running"},
 				Node:     wfNode{NodeID: "impl", Label: "Implement", Status: "running", AllowedOutcomes: []string{"pass", "fail"}},
+				SelfView: wfSelfView{
+					Task:             "Implement {{feature}} per {{spec}}",
+					TaskInterpolated: "Implement search per {{spec}}",
+					MissingRefs:      []string{"spec"},
+					AllowedOutcomes:  []string{"pass", "fail"},
+					Successors: []wfSuccessor{
+						{Outcome: "pass", To: "review", ToLabel: "Review"},
+						{Outcome: "fail", To: "triage", ToLabel: "Triage"},
+					},
+				},
 			},
 			{ // settled: done node in a completed instance
 				Instance: wfInstanceMeta{ID: 2, Title: "old wf", TemplateRef: "user:bar", Status: "completed"},
@@ -217,6 +227,16 @@ func TestRunWhere_DefaultLiveOnly(t *testing.T) {
 	}
 	if strings.Contains(s, "old wf") {
 		t.Error("where default should hide settled/completed assignments")
+	}
+	// The self-view renders: the interpolated task and the outcome→successor map.
+	if !strings.Contains(s, "Implement search") {
+		t.Errorf("where should render the interpolated task\n%s", s)
+	}
+	if !strings.Contains(s, `on "pass" → review`) || !strings.Contains(s, `on "fail" → triage`) {
+		t.Errorf("where should render the outcome→successor mapping\n%s", s)
+	}
+	if !strings.Contains(s, "unresolved inputs: spec") {
+		t.Errorf("where should render unresolved interpolation inputs\n%s", s)
 	}
 }
 

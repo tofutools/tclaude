@@ -309,6 +309,105 @@ func TestWorkflowV1_Where(t *testing.T) {
 	assert.Empty(t, humanResp.Assignments)
 }
 
+// selfViewTemplate lays down a template that exercises the JOH-15 Slice-A
+// self-view: a build node whose prompt interpolates a resolved param ({{target}})
+// and an unresolved ref ({{notes}}), with a default (pass) edge and a |fail| edge
+// so the node has two outcomes leading to two distinct successors.
+func selfViewTemplate(t *testing.T, name string) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, name)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "nodes"), 0o755))
+	write := func(rel, content string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644))
+	}
+	write("workflow.yaml", "name: "+name+"\nentry: build\nparams:\n  - name: target\n")
+	write("flow.mmd", "flowchart TD\n build --> ship\n build -->|fail| recover\n")
+	write("nodes/build.yaml", "label: Build\nexecutor:\n  kind: ai\n  agent: worker\n  prompt: \"Ship {{target}}; notes {{notes}}\"\non_fail: continue\n")
+	write("nodes/ship.yaml", "label: Ship\nexecutor:\n  kind: tool\n  run: echo shipped\n")
+	write("nodes/recover.yaml", "label: Recover\nexecutor:\n  kind: tool\n  run: echo recovered\n")
+	return root
+}
+
+// Scenario: /v1/workflows/where carries a server-resolved self_view (JOH-15
+// Slice A) — the agent's interpolated task, unresolved inputs, allowed outcomes,
+// and outcome→successor mapping, so an embedded agent needs neither to re-resolve
+// interpolation nor parse the mermaid chart.
+func TestWorkflowV1_WhereSelfView(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(selfViewTemplate(t, "selfview")))
+	const mine = "mine-aaaa-bbbb-cccc-7777"
+	f.HaveConvWithTitle(mine, "me")
+
+	// Create with target=prod so {{target}} resolves and {{notes}} stays missing.
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/workflows",
+		map[string]any{"template_ref": "project:selfview", "params": map[string]any{"target": "prod"}}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "create body=%s", rec.Body.String())
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+
+	asg := mine
+	_, err := db.UpdateWorkflowNode(created.ID, "build", db.WorkflowNodePatch{Assignee: &asg})
+	require.NoError(t, err)
+
+	r = agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/workflows/where", nil), mine)
+	rec = testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "where body=%s", rec.Body.String())
+
+	var resp struct {
+		Assignments []struct {
+			SelfView struct {
+				Task             string   `json:"task"`
+				TaskInterpolated string   `json:"task_interpolated"`
+				MissingRefs      []string `json:"missing_refs"`
+				AllowedOutcomes  []string `json:"allowed_outcomes"`
+				Successors       []struct {
+					Outcome string `json:"outcome"`
+					To      string `json:"to"`
+					ToLabel string `json:"to_label"`
+				} `json:"successors"`
+			} `json:"self_view"`
+		} `json:"assignments"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Assignments, 1)
+	sv := resp.Assignments[0].SelfView
+
+	assert.Equal(t, "Ship {{target}}; notes {{notes}}", sv.Task, "raw task is the node's prompt verbatim")
+	assert.Equal(t, "Ship prod; notes {{notes}}", sv.TaskInterpolated, "{{target}} resolves; the unresolved ref is left verbatim")
+	assert.Equal(t, []string{"notes"}, sv.MissingRefs, "the unresolved ref is reported")
+	assert.ElementsMatch(t, []string{"pass", "fail"}, sv.AllowedOutcomes, "a node with a |fail| edge offers pass + fail")
+
+	// Successors map each outcome to its target node, resolved from the chart.
+	got := map[string]string{}
+	labels := map[string]string{}
+	for _, s := range sv.Successors {
+		got[s.Outcome] = s.To
+		labels[s.Outcome] = s.ToLabel
+	}
+	assert.Equal(t, "ship", got["pass"], "the default edge is the pass successor")
+	assert.Equal(t, "recover", got["fail"], "the |fail| edge is the fail successor")
+	assert.Equal(t, "Ship", labels["pass"], "successor carries its display label")
+
+	// A terminal tool node: its task is the run command, and it has no successors.
+	cleared := ""
+	_, err = db.UpdateWorkflowNode(created.ID, "build", db.WorkflowNodePatch{Assignee: &cleared})
+	require.NoError(t, err)
+	_, err = db.UpdateWorkflowNode(created.ID, "ship", db.WorkflowNodePatch{Assignee: &asg})
+	require.NoError(t, err)
+	r = agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/workflows/where", nil), mine)
+	rec = testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Assignments, 1)
+	ship := resp.Assignments[0].SelfView
+	assert.Equal(t, "echo shipped", ship.Task, "a tool node's task is its run command")
+	assert.Empty(t, ship.Successors, "a terminal node has no successors")
+}
+
 // Scenario: an unidentified caller (no peer identity) is refused on the read
 // surface — authedCaller fails closed.
 func TestWorkflowV1_UnidentifiedRefused(t *testing.T) {
