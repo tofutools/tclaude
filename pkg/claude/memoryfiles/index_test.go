@@ -51,6 +51,40 @@ func TestTargetIsGone(t *testing.T) {
 	}
 }
 
+func TestTargetIsGone_SpacedAndWrappedDestinations(t *testing.T) {
+	dir := writeMemDir(t, "", "present.md", "my notes.md")
+
+	// A real title is stripped and the file resolves → kept.
+	assert.False(t, targetIsGone(dir, `present.md "Some Title"`, nil, true))
+	// A spaced filename with NO title must not be truncated at the space.
+	assert.False(t, targetIsGone(dir, "my notes.md", nil, true))
+	// Angle-bracket destination is unwrapped, then resolves → kept.
+	assert.False(t, targetIsGone(dir, "<my notes.md>", nil, true))
+	// A genuinely missing, title-bearing entry is still gone.
+	assert.True(t, targetIsGone(dir, `gone.md "Title"`, nil, true))
+}
+
+func TestTargetIsGone_CleanPathNoBasenameCollision(t *testing.T) {
+	dir := writeMemDir(t, "") // clean path: existence on disk irrelevant
+	del := map[string]bool{"notes.md": true}
+
+	// The deleted top-level file matches (and its ./ form).
+	assert.True(t, targetIsGone(dir, "notes.md", del, false))
+	assert.True(t, targetIsGone(dir, "./notes.md", del, false))
+	// A subpath entry sharing only the basename must NOT match.
+	assert.False(t, targetIsGone(dir, "archive/notes.md", del, false))
+}
+
+func TestPruneIndexContent_CleanKeepsSubpathSharingBasename(t *testing.T) {
+	dir := writeMemDir(t, "")
+	content := "- [Top](notes.md) — deleted\n- [Sub](archive/notes.md) — different file\n"
+
+	out, removed := pruneIndexContent(content, dir, map[string]bool{"notes.md": true}, false)
+	require.Len(t, removed, 1)
+	assert.Equal(t, "notes.md", removed[0].target)
+	assert.Contains(t, out, "archive/notes.md") // subpath entry survives
+}
+
 func TestPruneIndexContent_RemovesOnlyDanglingListItems(t *testing.T) {
 	dir := writeMemDir(t, "", "keep_me.md")
 

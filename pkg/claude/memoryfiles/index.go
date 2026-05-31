@@ -21,9 +21,20 @@ import (
 
 // indexEntryRe matches a markdown list item that carries a link, capturing
 // the FIRST link's target. It anchors on a list bullet (-, *, +) so headers,
-// prose, and blockquotes in MEMORY.md are never candidates for removal, and
-// the captured group is the target inside the first `[text](target)` — which
-// for a canonical one-link-per-entry index is the linked memory file.
+// prose, and (non-list) blockquotes in MEMORY.md are never candidates for
+// removal, and the captured group is the target inside the first
+// `[text](target)` — which for a canonical one-link-per-entry index is the
+// linked memory file.
+//
+// It is tuned for the canonical entry shape Claude writes —
+// `- [Title](slug.md) — hook` — not full CommonMark. Known, deliberate gaps
+// (all safe: they only ever cause an entry to be KEPT, never a non-entry line
+// removed — except a missing-file target containing a literal `(`):
+//   - destinations with an unescaped `(` are truncated at it ([^)]*), so a
+//     filename like `foo(1).md` is read wrong. Memory slugs never contain `(`.
+//   - blockquoted list items (`> - [x](f.md)`) aren't matched.
+//   - a GFM task item that also carries a link can match; pruning still only
+//     happens if that link's target is missing.
 var indexEntryRe = regexp.MustCompile(`^\s*[-*+]\s+.*?\[[^\]]*\]\(([^)]*)\)`)
 
 // danglingEntry is one index line slated for removal, kept for reporting.
@@ -46,14 +57,26 @@ type danglingEntry struct {
 //     treatMissingAsGone=true (and a nil alsoMissing).
 func targetIsGone(memDir, rawTarget string, alsoMissing map[string]bool, treatMissingAsGone bool) bool {
 	target := strings.TrimSpace(rawTarget)
-	// Drop an optional markdown link title: `(path "Title")`.
+	// Unwrap a CommonMark angle-bracket destination — `(<a b.md>)` — which is
+	// how markdown escapes a destination that contains spaces.
+	if len(target) >= 2 && strings.HasPrefix(target, "<") && strings.HasSuffix(target, ">") {
+		target = strings.TrimSpace(target[1 : len(target)-1])
+	}
+	// Drop an optional link title: `(path "Title")` / `(path 'Title')` /
+	// `(path (Title))`. A bare destination can't carry an unescaped space in
+	// valid markdown, so a space here means a title follows — but only strip
+	// when one actually does, so an (unusual) spaced filename isn't truncated
+	// into a wrong path that then reads as "missing" and gets pruned.
 	if i := strings.IndexAny(target, " \t"); i >= 0 {
-		target = target[:i]
+		if rest := strings.TrimLeft(target[i:], " \t"); strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "'") || strings.HasPrefix(rest, "(") {
+			target = target[:i]
+		}
 	}
 	// Drop any #fragment / ?query suffix.
 	if i := strings.IndexAny(target, "#?"); i >= 0 {
 		target = target[:i]
 	}
+	target = strings.TrimSpace(target)
 	if target == "" {
 		return false
 	}
@@ -61,8 +84,11 @@ func targetIsGone(memDir, rawTarget string, alsoMissing map[string]bool, treatMi
 	if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 		return false
 	}
-	base := filepath.Base(target)
-	if alsoMissing[base] || alsoMissing[target] {
+	// alsoMissing holds the flat top-level names clean is deleting. Resolve the
+	// target the way it sits next to MEMORY.md (`./x.md` == `x.md`) and match
+	// the WHOLE cleaned path — never a basename — so a subpath entry like
+	// `archive/x.md` is not wrongly matched by a deleted top-level `x.md`.
+	if alsoMissing[filepath.Clean(target)] {
 		return true
 	}
 	if !treatMissingAsGone {

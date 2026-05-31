@@ -112,7 +112,7 @@ func RunPruneIndex(params *PruneIndexParams, stdout, stderr, stdin *os.File) int
 		}
 	}
 
-	pruned, failed := 0, 0
+	pruned, prunedFiles, failed := 0, 0, 0
 	for _, p := range plans {
 		removed, perr := pruneIndexFile(p.memDir, nil, true, false) // treat absent-on-disk as gone; write
 		if perr != nil {
@@ -121,9 +121,14 @@ func RunPruneIndex(params *PruneIndexParams, stdout, stderr, stdin *os.File) int
 			continue
 		}
 		pruned += len(removed)
+		if len(removed) > 0 {
+			prunedFiles++
+		}
 	}
 
-	fmt.Fprintf(stdout, "Pruned %s from %d index file(s).\n", nEntries(pruned), len(plans))
+	// Report files actually rewritten, not merely planned — on a partial
+	// write failure those numbers diverge.
+	fmt.Fprintf(stdout, "Pruned %s from %d index file(s).\n", nEntries(pruned), prunedFiles)
 	if failed > 0 {
 		fmt.Fprintf(stderr, "Failed to prune %d index file(s).\n", failed)
 		return 1
