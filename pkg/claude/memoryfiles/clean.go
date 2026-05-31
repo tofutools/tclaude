@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -55,27 +54,14 @@ func CleanCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-// memFile is a single memory file and its delete/keep classification.
-type memFile struct {
-	projectDir string // ~/.claude/projects/<encoded...>
-	memoryDir  string // <projectDir>/memory
-	rel        string // path relative to memoryDir
-	abs        string // absolute path on disk
-	del        bool   // true => matches the delete filters
-}
-
 // RunClean is the testable core of `memory-files clean`. It returns a
 // process exit code and writes all user-facing output through the
 // provided streams so tests can drive it without touching os.Std*.
 func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
-	targetDir := params.Dir
-	if targetDir == "" {
-		var err error
-		targetDir, err = os.Getwd()
-		if err != nil {
-			fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
-			return 1
-		}
+	targetDir, err := resolveTargetDir(params.Dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
+		return 1
 	}
 
 	projectDirs, encoded, err := resolveProjectDirs(targetDir, !params.NoSiblings)
@@ -88,11 +74,7 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 		return 0
 	}
 
-	files, err := gatherMemoryFiles(projectDirs, params.Include, params.Exclude)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return 1
-	}
+	files := gatherMemoryFiles(projectDirs, params.Include, params.Exclude)
 	if len(files) == 0 {
 		fmt.Fprintf(stdout, "No memory files found under %d matched project dir(s).\n", len(projectDirs))
 		return 0
@@ -141,45 +123,16 @@ func RunClean(params *CleanParams, stdout, stderr, stdin *os.File) int {
 	return 0
 }
 
-// gatherMemoryFiles lists the top-level .md files directly inside each
-// project dir's memory/ subdir, classifying them with the
-// include/exclude globs. Subdirectories are NOT traversed (a stray
-// .idea/, for example, is ignored) and non-.md files are skipped, so
-// the only thing we ever touch is the markdown memory itself. Project
-// dirs without a readable memory/ subdir are skipped. The result is
-// sorted by (projectDir, name) for deterministic output.
-func gatherMemoryFiles(projectDirs, includes, excludes []string) ([]memFile, error) {
-	var out []memFile
-	for _, pd := range projectDirs {
-		memDir := filepath.Join(pd, "memory")
-		entries, err := os.ReadDir(memDir)
-		if err != nil {
-			continue // no memory/ dir here (or it's a file / unreadable)
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue // never descend into subdirs
-			}
-			name := e.Name()
-			if !strings.EqualFold(filepath.Ext(name), ".md") {
-				continue // .md files only
-			}
-			out = append(out, memFile{
-				projectDir: pd,
-				memoryDir:  memDir,
-				rel:        name,
-				abs:        filepath.Join(memDir, name),
-				del:        classify(name, includes, excludes),
-			})
-		}
+// gatherMemoryFiles lists the project dirs' top-level .md memory files
+// (see listMemoryMD) and tags each with the clean classification — a
+// file is marked for deletion when it matches an --include glob (or no
+// includes were given) and no --exclude glob.
+func gatherMemoryFiles(projectDirs, includes, excludes []string) []memFile {
+	files := listMemoryMD(projectDirs)
+	for i := range files {
+		files[i].del = classify(files[i].rel, includes, excludes)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].projectDir != out[j].projectDir {
-			return out[i].projectDir < out[j].projectDir
-		}
-		return out[i].rel < out[j].rel
-	})
-	return out, nil
+	return files
 }
 
 // classify reports whether a memory file (identified by its file name)

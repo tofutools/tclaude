@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -37,10 +38,79 @@ func Cmd() *cobra.Command {
 			"preview and prune those files for a project and, by default, its siblings.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
+			LsCmd(),
+			CatCmd(),
 			CleanCmd(),
 		},
 		// No RunFunc: invoking the bare group prints help (cobra default).
 	}.ToCobra()
+}
+
+// memFile is a single top-level .md memory file. `del` is only used by
+// `clean`, where it carries the include/exclude classification; `ls`
+// and `cat` ignore it.
+type memFile struct {
+	projectDir string    // ~/.claude/projects/<encoded...>
+	memoryDir  string    // <projectDir>/memory
+	rel        string    // file name (memory/ is treated as flat; we never recurse)
+	abs        string    // absolute path on disk
+	size       int64     // file size in bytes
+	modTime    time.Time // last-modified time
+	del        bool      // clean: true => matches the delete filters
+}
+
+// listMemoryMD returns the top-level .md files directly inside each
+// project dir's memory/ subdir. Subdirectories are NOT traversed (a
+// stray .idea/ that some editors drop into memory/ is ignored) and
+// non-.md files are skipped, so the only thing any subcommand ever
+// touches is the markdown memory itself. Project dirs without a
+// readable memory/ subdir are skipped. The result is sorted by
+// (projectDir, name) for deterministic output.
+func listMemoryMD(projectDirs []string) []memFile {
+	var out []memFile
+	for _, pd := range projectDirs {
+		memDir := filepath.Join(pd, "memory")
+		entries, err := os.ReadDir(memDir)
+		if err != nil {
+			continue // no memory/ dir here (or it's a file / unreadable)
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue // never descend into subdirs
+			}
+			name := e.Name()
+			if !strings.EqualFold(filepath.Ext(name), ".md") {
+				continue // .md files only
+			}
+			f := memFile{
+				projectDir: pd,
+				memoryDir:  memDir,
+				rel:        name,
+				abs:        filepath.Join(memDir, name),
+			}
+			if info, infoErr := e.Info(); infoErr == nil {
+				f.size = info.Size()
+				f.modTime = info.ModTime()
+			}
+			out = append(out, f)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].projectDir != out[j].projectDir {
+			return out[i].projectDir < out[j].projectDir
+		}
+		return out[i].rel < out[j].rel
+	})
+	return out
+}
+
+// resolveTargetDir returns dir, or the current working directory when
+// dir is empty (the positional arg is optional across the subcommands).
+func resolveTargetDir(dir string) (string, error) {
+	if dir != "" {
+		return dir, nil
+	}
+	return os.Getwd()
 }
 
 // resolveProjectDirs maps a real project directory to the matching
