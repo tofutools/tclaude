@@ -14,9 +14,11 @@ import (
 
 // ShowParams configures `workflows show`.
 type ShowParams struct {
-	RunID  string `pos:"true" help:"The run id (wf_...) to show."`
-	Script bool   `long:"script" help:"Print the workflow script behind the run instead of the tree."`
-	JSON   bool   `long:"json" help:"Emit the full run state as JSON."`
+	RunID    string  `pos:"true" help:"The run id (wf_...) to show."`
+	Script   bool    `long:"script" help:"Print the workflow script behind the run instead of the tree."`
+	JSON     bool    `long:"json" help:"Emit the full run state as JSON."`
+	Watch    bool    `long:"watch" help:"Follow an in-flight run: redraw the tree on a poll until it finishes (Ctrl-C to stop)."`
+	Interval float64 `long:"interval" help:"Watch poll interval in seconds (floor 0.5)." default:"2"`
 }
 
 // ShowCmd returns the `workflows show` subcommand.
@@ -26,10 +28,11 @@ func ShowCmd() *cobra.Command {
 		Short: "Show a run's phase/agent fan-out tree (or its script)",
 		Long: "Show a workflow run: overall status plus the phase → agent fan-out tree with\n" +
 			"each agent's state, model, and token usage. --script dumps the script behind\n" +
-			"the run; --json emits the full typed run state.\n\n" +
+			"the run; --json emits the full typed run state; --watch follows an in-flight run,\n" +
+			"redrawing the tree on a poll until it finishes (Ctrl-C to stop).\n\n" +
 			"For an in-flight run, agent labels/phases are recovered by correlating the live\n" +
 			"journal with the script's spawn order — best-effort for dynamic fan-out (marked\n" +
-			"with ~ in the tree).",
+			"with ~ in the tree); token usage is a live estimate the completed record finalises.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *ShowParams, _ *cobra.Command, _ []string) {
 			if code := RunShow(params, os.Stdout, os.Stderr); code != 0 {
@@ -45,6 +48,13 @@ func RunShow(params *ShowParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error: a run id is required (see `workflows ls`).")
 		return 2
 	}
+
+	// --watch follows the live tree; the one-shot --script/--json modes take
+	// precedence (there is nothing to follow in a single dump).
+	if params.Watch && !params.Script && !params.JSON {
+		return startWatch(params, stdout, stderr)
+	}
+
 	rs, ref, err := ccworkflows.FindRun(params.RunID)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

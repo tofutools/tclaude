@@ -281,6 +281,14 @@ func LoadRun(sessionDir, runID string) (*RunState, error) {
 		rs.ScriptPath = scriptPath
 		rs.Script = scriptText
 	}
+	// Live token accrual: the journal has no token data, so read each agent's
+	// transcript for a best-effort estimate (superseded by the completed record
+	// on finish). Also roll up the run total.
+	enrichLiveTokens(runJournalDir(sessionDir, runID), rs.Agents)
+	rs.TotalTokens = 0
+	for _, a := range rs.Agents {
+		rs.TotalTokens += a.Tokens
+	}
 	return rs, nil
 }
 

@@ -157,6 +157,10 @@ func TestRunShow_LiveBestEffortMarker(t *testing.T) {
 	if !strings.Contains(s, "build:a") {
 		t.Errorf("expected recovered label build:a:\n%s", s)
 	}
+	// Live token accrual surfaces in the tree (read from the agent transcript).
+	if !strings.Contains(s, "tokens=5600") {
+		t.Errorf("expected live token accrual tokens=5600:\n%s", s)
+	}
 }
 
 func TestRunShow_Script(t *testing.T) {

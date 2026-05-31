@@ -459,6 +459,116 @@ func TestLoadRunLiveFromJournal(t *testing.T) {
 	}
 }
 
+func TestLiveAgentTokens(t *testing.T) {
+	dir := filepath.Join(fixtureSessionDir(), "subagents/workflows/wf_11ab22cd-e01")
+	// Last usage turn: 100+200+5000+300 = 5600.
+	if got := LiveAgentTokens(dir, "a1110000aaaa1111b"); got != 5600 {
+		t.Errorf("a111 tokens = %d, want 5600", got)
+	}
+	// Single turn: 50+80+2000+0 = 2130.
+	if got := LiveAgentTokens(dir, "a2220000bbbb2222c"); got != 2130 {
+		t.Errorf("a222 tokens = %d, want 2130", got)
+	}
+	// Missing transcript → 0, no error.
+	if got := LiveAgentTokens(dir, "nosuchagent"); got != 0 {
+		t.Errorf("missing agent tokens = %d, want 0", got)
+	}
+}
+
+func TestLoadRunLiveEnrichesTokens(t *testing.T) {
+	rs, err := LoadRun(fixtureSessionDir(), "wf_11ab22cd-e01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Source != "journal" {
+		t.Fatalf("source = %q", rs.Source)
+	}
+	byID := map[string]Agent{}
+	for _, a := range rs.Agents {
+		byID[a.ID] = a
+	}
+	if got := byID["a1110000aaaa1111b"].Tokens; got != 5600 {
+		t.Errorf("done agent tokens = %d, want 5600 (live estimate)", got)
+	}
+	if got := byID["a2220000bbbb2222c"].Tokens; got != 2130 {
+		t.Errorf("running agent tokens = %d, want 2130", got)
+	}
+	if rs.TotalTokens != 7730 {
+		t.Errorf("run total tokens = %d, want 7730", rs.TotalTokens)
+	}
+}
+
+// TestLoadRunFinishMidTail simulates a run being watched live (journal only,
+// reported running) that then finishes as FAILED (its completed JSON lands):
+// LoadRun must flip from the journal view to the authoritative failed record.
+func TestLoadRunFinishMidTail(t *testing.T) {
+	session := t.TempDir()
+	rid := "wf_abcd1234-e99"
+	runDir := filepath.Join(session, "subagents", "workflows", rid)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// In-flight: two agents started, only the first has a result.
+	journal := `{"type":"started","key":"v2:a","agentId":"agentAAAA"}
+{"type":"started","key":"v2:b","agentId":"agentBBBB"}
+{"type":"result","key":"v2:a","agentId":"agentAAAA","result":"ok"}
+`
+	if err := os.WriteFile(filepath.Join(runDir, "journal.jsonl"), []byte(journal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Phase 1: journal only → running, second agent still running.
+	rs, err := LoadRun(session, rid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Status != RunRunning || rs.Source != "journal" {
+		t.Fatalf("pre-finish: status=%q source=%q, want running/journal", rs.Status, rs.Source)
+	}
+	var running int
+	for _, a := range rs.Agents {
+		if a.State == AgentRunning {
+			running++
+		}
+	}
+	if running != 1 {
+		t.Errorf("pre-finish: %d running agents, want 1", running)
+	}
+
+	// Phase 2: the completed record lands with status=failed.
+	wfDir := filepath.Join(session, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	completed := `{"runId":"` + rid + `","status":"failed","agentCount":2,
+	  "phases":[{"title":"Run","detail":"x"}],
+	  "workflowProgress":[
+	    {"type":"workflow_phase","index":1,"title":"Run"},
+	    {"type":"workflow_agent","index":1,"label":"a","phaseIndex":1,"phaseTitle":"Run","agentId":"agentAAAA","state":"done","tokens":10},
+	    {"type":"workflow_agent","index":2,"label":"b","phaseIndex":1,"phaseTitle":"Run","agentId":"agentBBBB","state":"failed","tokens":20}
+	  ],"totalTokens":30}`
+	if err := os.WriteFile(filepath.Join(wfDir, rid+".json"), []byte(completed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rs2, err := LoadRun(session, rid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs2.Status != RunFailed || rs2.Source != "completed-json" {
+		t.Fatalf("post-finish: status=%q source=%q, want failed/completed-json", rs2.Status, rs2.Source)
+	}
+	var failed int
+	for _, a := range rs2.Agents {
+		if a.State == AgentFailed {
+			failed++
+		}
+	}
+	if failed != 1 {
+		t.Errorf("post-finish: %d failed agents, want 1", failed)
+	}
+}
+
 func TestLoadRunNotFound(t *testing.T) {
 	_, err := LoadRun(fixtureSessionDir(), "wf_does-not-exist")
 	if err == nil {
