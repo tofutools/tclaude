@@ -184,13 +184,23 @@ func SetWorkflowAICapsForTest(perInstance, global int) func() {
 	}
 }
 
-// SetWorkflowAINodeSLAForTest overrides the stuck-node sweep's SLA window so a
-// flow test can drive sweepStuckAINodes deterministically (e.g. 0 → any idle
-// node with no live agent is immediately stuck). Returns a restore function.
-func SetWorkflowAINodeSLAForTest(d time.Duration) func() {
-	prev := workflowAINodeSLA
-	workflowAINodeSLA = d
-	return func() { workflowAINodeSLA = prev }
+// SetWorkflowNodeSLAForTest overrides the non-human stuck-node SLA window T so a
+// flow test can drive sweepStuckNodes deterministically (e.g. a tiny duration →
+// any idle node with no live agent is immediately past terminal). Returns a
+// restore function. (JOH-41)
+func SetWorkflowNodeSLAForTest(d time.Duration) func() {
+	prev := workflowNodeSLA
+	workflowNodeSLA = d
+	return func() { workflowNodeSLA = prev }
+}
+
+// SetWorkflowHumanNodeSLAForTest overrides the human-node SLA window T so a flow
+// test can drive the human-gate escalation rungs deterministically. Returns a
+// restore function. (JOH-41)
+func SetWorkflowHumanNodeSLAForTest(d time.Duration) func() {
+	prev := workflowHumanNodeSLA
+	workflowHumanNodeSLA = d
+	return func() { workflowHumanNodeSLA = prev }
 }
 
 // WorkflowEngineAssigneeForTest exposes the engine-owner sentinel so a flow test

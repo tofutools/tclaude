@@ -39,11 +39,11 @@ import (
 // running a template's shell commands is a real trust decision, so a fresh
 // daemon never does it implicitly — when disabled the tick is a pure no-op.
 //
-// NOT yet in scope (deferred): loop RE-ENTRY. workflow.Advance is single-step
-// and leaves an already-settled target alone, so a back-edge into a done node
-// is a no-op here — retries / max_visits / loop iteration (resetting a node +
-// bumping visits) are a later slice. A template with a retry loop won't loop
-// yet; it just runs each node once.
+// Loops/retries SHIPPED (JOH-39): an in-place retry re-arms a failed-verify node
+// to ready, and a back-edge loop-back resets the target + its body to ready/
+// pending; both re-run on the next tick, bounded by max_visits (EffectiveMaxVisits
+// + settleWorkflowNodeMaxVisits). Visits is bumped when the re-armed node is next
+// CLAIMED (tool) / SPAWNED (ai), so it counts real executions.
 //
 // Concurrency: a node is CLAIMED (ready→running) under lockWorkflowInstance(id)
 // — the SAME per-instance mutex the manual dashboard paths hold — the command
@@ -95,8 +95,8 @@ var workflowEngineEnabled = false
 // A `running` ai node (worker) and an `awaiting_verify` ai-verify node (judge)
 // both count toward the global cap and clear only when settled. An agent that
 // dies WITHOUT reporting would otherwise pin its node — and its cap slot —
-// forever; sweepStuckAINodes (the SLA sweep, below) is what releases such a slot,
-// so a few dead agents can no longer silently wedge auto-spawn.
+// forever; sweepStuckNodes (the SLA sweep, below) is what releases such a slot at
+// its terminal rung, so a few dead agents can no longer silently wedge auto-spawn.
 const (
 	defaultWorkflowAIPerInstanceCap = 1
 	defaultWorkflowAIGlobalCap      = 8
@@ -120,16 +120,29 @@ const defaultWorkflowMaxVisits = 20
 
 var workflowMaxVisits = defaultWorkflowMaxVisits
 
-// workflowAINodeSLA bounds how long an engine ai node may sit with NO progress
-// before sweepStuckAINodes fails it to release its cap slot. It is the MED-C
-// backstop: a worker whose agent crashed without reporting, a judge that died
-// mid-verdict, a node parked in awaiting_verify that the cap starved of a judge —
-// all stop advancing their updated_at, so once idle past this window AND with no
-// live responsible agent they are failed (routing on_fail / the |fail| edge).
-// Generous on purpose: it must not kill a legitimately slow-but-live agent (those
-// are exempted by the liveness check regardless), only reap genuinely stuck rows.
-// Tests shrink it via SetWorkflowAINodeSLAForTest.
-var workflowAINodeSLA = 15 * time.Minute
+// workflowNodeSLA / workflowHumanNodeSLA are the engine-default stuck thresholds
+// T for the escalation sweep (JOH-41), resolved per node by class: a NON-human
+// node (ai worker / ai-verify judge) defaults to workflowNodeSLA; a node a HUMAN
+// must action (executor.kind:human, or a verify.kind:human approve-gate) defaults
+// to the more patient workflowHumanNodeSLA. A node overrides its own T via the
+// `sla:` field (workflow.EffectiveSLA). A node idle past fractions of T climbs the
+// ladder: warn (ping the actor) -> escalate (notify the human) -> terminal. The
+// terminal rung fails ONLY a non-human node with no live actor — the original
+// MED-C backstop, releasing its cap slot (a worker whose agent crashed, a dead
+// judge, a cap-starved-never-judged node); a live agent's node and any human node
+// are never auto-failed, only notified. Non-human default exposes the previously
+// hardcoded 15m (no behavior regression). runServe sets both from config
+// (agent.workflow_node_sla / agent.workflow_human_node_sla); tests shrink them via
+// SetWorkflowNodeSLAForTest / SetWorkflowHumanNodeSLAForTest.
+const (
+	defaultWorkflowNodeSLA      = 15 * time.Minute
+	defaultWorkflowHumanNodeSLA = 60 * time.Minute
+)
+
+var (
+	workflowNodeSLA      = defaultWorkflowNodeSLA
+	workflowHumanNodeSLA = defaultWorkflowHumanNodeSLA
+)
 
 // startWorkflowEngine spins up the engine in its own goroutine, ticking every
 // workflowEngineTickInterval until stop closes. Mirrors startCronScheduler:
@@ -296,12 +309,13 @@ func processWorkflowInstance(ctx context.Context, instanceID int64) {
 	// nodes); (2) auto-spawn ready ai-executor nodes (workers); (3) spawn judges
 	// for nodes parked in awaiting_verify by an ai verify.kind; (4) deliver
 	// predecessor output to each bound successor's inbox (JOH-40); (5) sweep stuck
-	// nodes whose responsible agent is gone, freeing their cap slot.
+	// nodes — warn/escalate/notify, and fail a no-actor node to free its cap slot
+	// (JOH-41).
 	drainRunnableToolNodes(ctx, instanceID)
 	spawnReadyAINodes(instanceID)
 	spawnReadyVerifyJudges(instanceID)
 	deliverReadyHandoffs(instanceID)
-	sweepStuckAINodes(instanceID)
+	sweepStuckNodes(instanceID)
 }
 
 // drainRunnableToolNodes is the synchronous tool/program pass: each ready
@@ -883,26 +897,44 @@ func tailCapBytes(s string, max int) string {
 	return "[…truncated…]\n" + tail
 }
 
-// ----- stuck-node sweep (MED-C / JOH-8 #9) -----------------------------------
+// ----- stuck-node sweep + escalation (JOH-41 / JOH-8 #9) ----------------------
 
-// sweepStuckAINodes fails engine ai nodes that are wedged: a `running` ai
-// (worker) or an `awaiting_verify` ai-verify node (judge / parked-awaiting-judge)
-// that has had NO progress for workflowAINodeSLA AND has no live responsible
-// agent. Such a node would otherwise sit forever holding a parallelism-cap slot
-// — the MED-C hazard — so the sweep fails it (routing on_fail / the |fail| edge),
-// releasing the slot. It is the one rule covering every wedge mode: a crashed
-// worker, a judge that died mid-verdict, AND a node the cap starved of a judge
-// (empty assignee → trivially "no live agent") all stop advancing updated_at and
-// fall past the SLA.
+// sweepStuckNodes is the engine's active stuck-detector. Each node that is
+// waiting on someone — a running ai worker, an awaiting_verify ai-verify node, a
+// human approve-gate, an idle human-executor node — is given an effective SLA T
+// (workflow.EffectiveSLA: its own `sla:` field, else the class default), and as
+// its idle time crosses fractions of T it climbs a ladder:
 //
-// Two guards keep it from killing healthy work: a node with a spawn/claim in
-// flight (sentinel assignee) is skipped (its off-tick goroutine settles within
-// executeSpawn's timeout), and a node whose assignee still has a running session
-// is exempt — the engine never reaps a live agent's node, only one with no actor.
-// (A hung-but-online agent is therefore NOT auto-reaped; that remains an
-// operator cancel, by design.) Runs under the per-instance lock; the liveness
-// check is DB-only (convHasRunningSession) so no subprocess runs under the lock.
-func sweepStuckAINodes(instanceID int64) {
+//	warn (0.5T)      nudge whoever can act — the assignee agent if one is live
+//	                 (the JOH-40 inbox path), otherwise the human.
+//	escalate (0.8T)  raise it to the human via the human.notify channel.
+//	terminal (1.0T)  for a NON-human node with NO live actor: fail it (the
+//	                 original JOH-35 behavior — release its parallelism-cap slot,
+//	                 route on_fail / the |fail| edge); for a live agent's node or
+//	                 ANY human node: one final urgent notice, never an auto-fail.
+//
+// This GENERALIZES the old single-tier sweepStuckAINodes: that flip-to-failed is
+// now just the terminal rung, reached only after the two softer rungs. One
+// detector, not two competing ones.
+//
+// Idempotency / restart-safety mirror the JOH-40 handoff marker: each fired rung
+// writes a durable workflow_events(kind=node_escalation) row whose Message is an
+// at-most-once marker keyed on the node's UpdatedAt (the activation key). Within
+// one activation UpdatedAt is pinned (appending events / sending messages never
+// touches the node row), so a marker is stable and a rung fires once; a retry /
+// loop re-arm moves UpdatedAt, rotating the key so the next activation escalates
+// fresh. Because idle only grows within an activation, the crossed tier is
+// monotonic, so the sweep need only ever fire the single highest-crossed rung it
+// has not yet recorded — intermediate rungs skipped after downtime are correctly
+// subsumed by the higher one.
+//
+// Guards preserved from the old sweep: a node with a spawn/claim in flight
+// (sentinel assignee) is skipped; the terminal FAIL is gated on no-live-actor
+// (a hung-but-online agent stays an operator cancel). Runs under the per-instance
+// lock; the gating liveness check is DB-only (convHasRunningSession), and the warn
+// rung's assignee nudge shells out to tmux under the lock — the same lock-held
+// nudge deliverReadyHandoffs already does, fast and bounded.
+func sweepStuckNodes(instanceID int64) {
 	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
 
@@ -920,11 +952,8 @@ func sweepStuckAINodes(instanceID int64) {
 	}
 	now := time.Now()
 	for _, n := range nodes {
-		// Only engine ai nodes: a running ai-executor (worker) or an
-		// awaiting_verify ai-verify node (judge / parked-awaiting-judge).
-		isWorker := n.Status == db.WorkflowNodeStatusRunning && n.ExecutorKind == string(workflow.ExecAI)
-		isVerify := n.Status == db.WorkflowNodeStatusAwaitingVerify && nodeWantsAIVerify(tmpl, n.NodeID)
-		if !isWorker && !isVerify {
+		isHuman, ok := stuckClass(n, tmpl)
+		if !ok {
 			continue
 		}
 		// A spawn/claim is in flight (sentinel) — leave it; the off-tick goroutine
@@ -932,20 +961,263 @@ func sweepStuckAINodes(instanceID int64) {
 		if n.Assignee == engineAssignee {
 			continue
 		}
-		// Idle = time since the node last changed (claim / capture / park / assign).
-		if now.Sub(n.UpdatedAt) < workflowAINodeSLA {
+		T := workflow.EffectiveSLA(tmpl.Nodes[n.NodeID], isHuman, workflowNodeSLA, workflowHumanNodeSLA)
+		crossed := workflow.CrossedTier(now.Sub(n.UpdatedAt), T)
+		if crossed == workflow.TierNone {
 			continue
 		}
-		// Exempt a node whose responsible agent is still alive — never reap a
-		// working agent's node, only one with no live actor.
-		if n.Assignee != "" && convHasRunningSession(n.Assignee) {
+		// A live responsible agent never gets its node auto-failed (only nudged);
+		// an empty / dead / no-session assignee means no live actor.
+		hasLiveAgent := n.Assignee != "" && n.Assignee != engineAssignee && convHasRunningSession(n.Assignee)
+
+		// The terminal rung for a non-human node with no live actor FAILS it. That
+		// effect is self-idempotent — settleWorkflowNodeFailed flips status to
+		// failed, dropping the node from stuckClass next pass — so it deliberately
+		// does NOT use the at-most-once marker: writing a marker first and then
+		// crashing before the fail would suppress the fail FOREVER on restart (the
+		// marker is permanent, idle only grows), re-wedging the cap slot this sweep
+		// exists to free. So the fail just runs; a crash mid-fail simply retries it
+		// next tick, exactly like the pre-escalation sweep.
+		if crossed == workflow.TierTerminal &&
+			workflow.TerminalActionFor(isHuman, hasLiveAgent) == workflow.TermFail {
+			settleWorkflowNodeFailed(inst, n.NodeID, tmpl,
+				"node idle past SLA with no live agent (status "+n.Status+")", now)
+			slog.Warn("workflow engine: failed stuck node (terminal escalation)",
+				"instance", instanceID, "node", n.NodeID, "status", n.Status, "assignee", n.Assignee)
 			continue
 		}
-		settleWorkflowNodeFailed(inst, n.NodeID, tmpl,
-			"ai node idle past SLA with no live agent (status "+n.Status+")", now)
-		slog.Warn("workflow engine: failed stuck ai node",
-			"instance", instanceID, "node", n.NodeID, "status", n.Status, "assignee", n.Assignee)
+
+		// Every other rung is a NOTIFICATION (ping the assignee / notify the human),
+		// which has no natural idempotency, so it is gated by a durable at-most-once
+		// marker. The marker is keyed on BOTH the node's UpdatedAt (the activation
+		// clock) AND its Visits counter: UpdatedAt alone is stored at second
+		// granularity, so a sub-second per-node sla plus a same-second retry could
+		// collide; Visits bumps on every retry / loop re-arm, so the combination
+		// always rotates on a genuine re-activation while staying stable across a
+		// single idle window.
+		marker := escalationMarker(n.NodeID, n.UpdatedAt.UnixNano(), n.Visits, crossed)
+		fired := firedEscalationMarkers(instanceID, n.NodeID)
+		if fired == nil {
+			continue // read error already logged; skip so we never double-fire
+		}
+		if fired[marker] {
+			continue // this (activation, rung) already notified
+		}
+		// Marker first (at-most-once, like deliverReadyHandoffs): a crash between
+		// this and the send costs a recoverable missed nudge, never a duplicate.
+		if _, err := db.AppendWorkflowEvent(&db.WorkflowEvent{
+			InstanceID: instanceID, NodeID: n.NodeID,
+			Kind: db.WorkflowEventNodeEscalation, Message: marker,
+		}); err != nil {
+			slog.Warn("workflow engine: escalation marker write failed; skipping to avoid double-fire",
+				"instance", instanceID, "node", n.NodeID, "tier", crossed.String(), "error", err)
+			continue
+		}
+		notifyEscalation(inst, n, crossed, isHuman, hasLiveAgent, now)
 	}
+}
+
+// stuckClass reports whether a node is a stuck-escalation candidate and, if so,
+// whether we are waiting on a HUMAN (which picks the human SLA default and, at
+// the terminal rung, forbids auto-fail). Candidates, by what they wait on:
+//
+//	running ai worker             -> non-human (a crashed / slow agent)
+//	awaiting_verify ai-verify     -> non-human (judge round-trip / cap-starved)
+//	awaiting_verify human-verify  -> human     (dashboard approve gate left idle)
+//	ready/running human executor  -> human     (a person hasn't done + reported it)
+//
+// Everything else is excluded: a ready ai/tool/program node is about to auto-run
+// (not stuck), and a settled node has no actor to wait on.
+func stuckClass(n *db.WorkflowNode, tmpl *workflow.Template) (isHuman, ok bool) {
+	switch n.Status {
+	case db.WorkflowNodeStatusRunning:
+		switch n.ExecutorKind {
+		case string(workflow.ExecAI):
+			return false, true
+		case string(workflow.ExecHuman):
+			return true, true
+		}
+	case db.WorkflowNodeStatusReady:
+		// The engine never auto-runs a human node, so a ready one is waiting on a
+		// person. A ready ai/tool/program node is the engine's to run next tick.
+		if n.ExecutorKind == string(workflow.ExecHuman) {
+			return true, true
+		}
+	case db.WorkflowNodeStatusAwaitingVerify:
+		if nodeWantsAIVerify(tmpl, n.NodeID) {
+			return false, true
+		}
+		if nodeWantsHumanVerify(tmpl, n.NodeID) {
+			return true, true
+		}
+	}
+	return false, false
+}
+
+// nodeWantsHumanVerify reports whether a node's definition-of-done is a human
+// approve gate (verify.kind: human). A nil template / missing node → false.
+func nodeWantsHumanVerify(tmpl *workflow.Template, nodeID string) bool {
+	if tmpl == nil || tmpl.Nodes[nodeID] == nil {
+		return false
+	}
+	return tmpl.Nodes[nodeID].Verify.Kind == workflow.VerifyHuman
+}
+
+// escalationMarker is the at-most-once idempotency key for one (node, activation,
+// rung) notification, stored as the Message of a workflow_events(node_escalation)
+// row. The activation is identified by BOTH the node's UpdatedAt in nanoseconds
+// (the idle clock) AND its Visits counter: within one idle window both are stable
+// so a rung notifies once; a retry / loop re-arm bumps Visits (and usually
+// UpdatedAt) so a genuine re-activation rotates the key and escalates fresh —
+// robust even when a sub-second per-node sla and a same-second re-arm would leave
+// the second-granular UpdatedAt unchanged.
+func escalationMarker(nodeID string, activationNano int64, visits int64, tier workflow.EscalationTier) string {
+	return fmt.Sprintf("%s:%d:%d:%s", nodeID, activationNano, visits, tier.String())
+}
+
+// firedEscalationMarkers returns the set of escalation-marker strings already
+// recorded for one node, or nil on a read error (the caller then skips the node
+// rather than risk a double-fire — a missed nudge is recoverable, a duplicate
+// spams). A non-nil empty map means "nothing escalated yet".
+func firedEscalationMarkers(instanceID int64, nodeID string) map[string]bool {
+	events, err := db.ListWorkflowEvents(instanceID, nodeID)
+	if err != nil {
+		slog.Warn("workflow engine: escalation marker lookup failed; skipping to avoid double-fire",
+			"instance", instanceID, "node", nodeID, "error", err)
+		return nil
+	}
+	out := make(map[string]bool, len(events))
+	for _, e := range events {
+		if e.Kind == db.WorkflowEventNodeEscalation {
+			out[e.Message] = true
+		}
+	}
+	return out
+}
+
+// notifyEscalation performs the NOTIFICATION effect for one rung (the marker is
+// already written; the terminal-FAIL case is handled inline in the sweep, before
+// any marker, because it is self-idempotent). warn nudges the actor — the
+// assignee agent if one is live, else the human; escalate always goes to the
+// human; terminal here is only ever a live-agent or human node (the fail case
+// never reaches this point), so it sends a final urgent notice.
+func notifyEscalation(inst *db.WorkflowInstance, n *db.WorkflowNode,
+	tier workflow.EscalationTier, isHuman, hasLiveAgent bool, now time.Time) {
+	idle := now.Sub(n.UpdatedAt)
+	switch tier {
+	case workflow.TierWarn:
+		if hasLiveAgent {
+			pingAssigneeOverdue(inst, n, idle)
+			return
+		}
+		notifyHumanStuck(inst, n, tier, isHuman, idle)
+	default: // escalate, or terminal-for-a-live-agent/human (never the fail case)
+		notifyHumanStuck(inst, n, tier, isHuman, idle)
+	}
+}
+
+// pingAssigneeOverdue nudges a still-live assignee agent that its node has gone
+// past the warn threshold, over the JOH-40 inbox path (agent_message + tmux
+// nudge), sender = the <workflow-engine> sentinel.
+func pingAssigneeOverdue(inst *db.WorkflowInstance, n *db.WorkflowNode, idle time.Duration) {
+	label := nodeLabelOr(n)
+	subject := fmt.Sprintf("[workflow] node %q is overdue (%s, no progress)", label, roundIdle(idle))
+	body := fmt.Sprintf("Workflow %q (instance %d): you have been assigned node %q for %s without it settling. "+
+		"If you are still working it, carry on — this is just a heads-up that it has passed its SLA warn "+
+		"threshold. If you are stuck, report your result (done/fail or your verdict) or ask the group for help; "+
+		"otherwise it will be escalated to the human.",
+		inst.TemplateName, inst.ID, label, roundIdle(idle))
+	msgID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:      inst.GroupID,
+		FromConv:     workflowHandoffSender,
+		ToConv:       n.Assignee,
+		Subject:      subject,
+		Body:         body,
+		ToRecipients: []string{n.Assignee},
+	})
+	if err != nil {
+		slog.Warn("workflow engine: overdue assignee ping failed",
+			"instance", inst.ID, "node", n.NodeID, "conv", n.Assignee, "error", err)
+		return
+	}
+	nudgeIfAlive(msgID, n.Assignee)
+	slog.Info("workflow engine: pinged overdue assignee",
+		"instance", inst.ID, "node", n.NodeID, "conv", n.Assignee, "msg", msgID)
+}
+
+// notifyHumanStuck posts a stuck-node notice to the human.notify channel
+// (human_messages → the dashboard Messages tab), in-process — the engine is
+// trusted daemon code, so it bypasses the HTTP permission gate exactly as
+// deliverReadyHandoffs bypasses it for agent messages. Wording scales with the
+// rung: warn is a heads-up, escalate raises it, terminal is the final urgent
+// notice (used when the node is a human gate or still has a live agent — both
+// cases the engine must not auto-fail).
+func notifyHumanStuck(inst *db.WorkflowInstance, n *db.WorkflowNode,
+	tier workflow.EscalationTier, isHuman bool, idle time.Duration) {
+	label := nodeLabelOr(n)
+	who := "an assigned agent"
+	if isHuman {
+		who = "a person"
+	}
+	var subject, lead string
+	switch tier {
+	case workflow.TierWarn:
+		subject = fmt.Sprintf("[workflow] node %q is waiting (%s)", label, roundIdle(idle))
+		lead = "is waiting and has passed its warn threshold"
+	case workflow.TierEscalate:
+		subject = fmt.Sprintf("[workflow] node %q needs attention (stuck %s)", label, roundIdle(idle))
+		lead = "has made no progress and is now escalated to you"
+	default: // terminal
+		subject = fmt.Sprintf("[workflow] node %q still stuck after %s — your call", label, roundIdle(idle))
+		lead = "is still stuck at its SLA limit; the engine will NOT auto-fail it (a human gate or a live agent owns it)"
+	}
+	body := fmt.Sprintf("Workflow %q (instance %d), node %q [%s], waited on by %s, %s "+
+		"(idle %s). Act via the dashboard — approve/reject the gate, nudge or cancel the agent, "+
+		"or let it continue.",
+		inst.TemplateName, inst.ID, label, n.Status, who, lead, roundIdle(idle))
+	if _, err := db.InsertHumanMessage(&db.HumanMessage{
+		FromConv:  engineAssignee,
+		FromTitle: "workflow engine",
+		GroupName: engineInstanceGroupName(inst),
+		Subject:   subject,
+		Body:      body,
+		CreatedAt: time.Now(),
+	}); err != nil {
+		slog.Warn("workflow engine: human.notify (stuck node) failed",
+			"instance", inst.ID, "node", n.NodeID, "tier", tier.String(), "error", err)
+		return
+	}
+	slog.Info("workflow engine: escalated stuck node to human",
+		"instance", inst.ID, "node", n.NodeID, "tier", tier.String(), "status", n.Status)
+}
+
+// engineInstanceGroupName resolves an instance's linked group name for human
+// message attribution ("which project"), or "" when ungrouped / unresolvable.
+func engineInstanceGroupName(inst *db.WorkflowInstance) string {
+	if inst.GroupID == 0 {
+		return ""
+	}
+	if g, err := db.GetAgentGroupByID(inst.GroupID); err == nil && g != nil {
+		return g.Name
+	}
+	return ""
+}
+
+// nodeLabelOr returns a node's human label, falling back to its id.
+func nodeLabelOr(n *db.WorkflowNode) string {
+	if n.Label != "" {
+		return n.Label
+	}
+	return n.NodeID
+}
+
+// roundIdle renders an idle duration for a message, rounded to the second so a
+// notice reads "21m0s" rather than a noisy nanosecond tail.
+func roundIdle(d time.Duration) time.Duration {
+	if d < 0 {
+		return 0
+	}
+	return d.Round(time.Second)
 }
 
 // ----- handoffs as inbox messages (JOH-40) -----------------------------------

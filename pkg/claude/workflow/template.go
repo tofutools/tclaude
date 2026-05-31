@@ -111,6 +111,7 @@ type Node struct {
 	MaxVisits int      `yaml:"max_visits,omitempty"` // loop guard: max executions (0 = engine default cap; -1 = unbounded)
 	OnFail    string   `yaml:"on_fail,omitempty"`    // stop | continue
 	Join      string   `yaml:"join,omitempty"`       // all | any
+	SLA       string   `yaml:"sla,omitempty"`        // stuck/escalation threshold T (Go duration, e.g. "15m"); "" = engine class default (JOH-41)
 }
 
 // Param is a workflow instantiation parameter.

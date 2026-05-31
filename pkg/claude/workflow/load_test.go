@@ -218,3 +218,31 @@ func TestLoad_MaxVisitsBelowMinusOneRejected(t *testing.T) {
 	})
 	assertAnyContains(t, problems, "max_visits")
 }
+
+// JOH-41: a per-node sla override must be a positive Go duration; a valid one
+// loads, a malformed or non-positive one is a load problem (so a typo surfaces
+// up front instead of silently falling back to the class default at runtime).
+func TestLoad_SLAValidLoads(t *testing.T) {
+	fsys := tmplFS("name: x\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: tool\n  run: echo a\nsla: 30m\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	_, err := LoadFS(fsys, "x", SourceUser, "")
+	require.NoError(t, err, "sla: 30m (a valid duration) must load")
+}
+
+func TestLoad_SLAMalformedRejected(t *testing.T) {
+	problems := loadProblems(t, "name: x\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: tool\n  run: echo a\nsla: notaduration\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	assertAnyContains(t, problems, "sla")
+}
+
+func TestLoad_SLANonPositiveRejected(t *testing.T) {
+	problems := loadProblems(t, "name: x\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: tool\n  run: echo a\nsla: 0s\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	assertAnyContains(t, problems, "sla")
+}

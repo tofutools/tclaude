@@ -202,6 +202,22 @@ type AgentConfig struct {
 	// truly-unbounded (max_visits: -1). Exceeding the effective cap fails the
 	// node ("max_visits exceeded") and halts the instance. (JOH-39)
 	WorkflowMaxVisits *int `json:"workflow_max_visits,omitempty"`
+	// WorkflowNodeSLA is the engine default stuck/escalation threshold T for a
+	// NON-human workflow node — an ai worker or an ai-verify judge (default 15m
+	// when unset / unparseable; exposes the previously-hardcoded value). A node
+	// idle past fractions of T climbs the escalation ladder (warn -> escalate ->
+	// terminal); the terminal rung fails a non-human node that has no live actor,
+	// reclaiming its parallelism-cap slot. A node may override T with its own
+	// `sla:` field. Go-duration string ("15m", "1h"). (JOH-41)
+	WorkflowNodeSLA string `json:"workflow_node_sla,omitempty"`
+	// WorkflowHumanNodeSLA is the engine default stuck/escalation threshold T for
+	// a node a HUMAN must action — an executor.kind:human node or a verify.kind:
+	// human approve-gate (default 60m when unset / unparseable). Larger than the
+	// non-human default because a person reviewing is legitimately slower than a
+	// crashed lint, and a human node is NEVER auto-failed — it only escalates
+	// (warn -> escalate -> a final urgent notice) so the human is reminded without
+	// stranding the business process. Overridable per node via `sla:`. (JOH-41)
+	WorkflowHumanNodeSLA string `json:"workflow_human_node_sla,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"
@@ -555,6 +571,19 @@ func Validate(c *Config) []string {
 		}
 		if a.SpawnMaxPerHour != nil && *a.SpawnMaxPerHour < 0 {
 			errs = append(errs, "agent.spawn_max_per_hour must not be negative (0 = unlimited)")
+		}
+		for _, sla := range []struct{ key, val string }{
+			{"agent.workflow_node_sla", a.WorkflowNodeSLA},
+			{"agent.workflow_human_node_sla", a.WorkflowHumanNodeSLA},
+		} {
+			if sla.val == "" {
+				continue
+			}
+			if d, err := time.ParseDuration(sla.val); err != nil {
+				errs = append(errs, fmt.Sprintf("%s %q is not a valid duration (e.g. \"15m\", \"1h\")", sla.key, sla.val))
+			} else if d <= 0 {
+				errs = append(errs, fmt.Sprintf("%s must be a positive duration", sla.key))
+			}
 		}
 		if cn := a.ContextNudge; cn != nil {
 			// When the nudge is enabled, 0 is a footgun: Resolved()
