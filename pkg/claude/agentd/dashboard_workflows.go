@@ -866,34 +866,72 @@ func boundGroup(w http.ResponseWriter, inst *db.WorkflowInstance) (*db.AgentGrou
 }
 
 // spawnWorkerIntoNodeCore is the shared spawn-worker-into-node path behind both
-// the dashboard POST .../nodes/{id}/start and the /v1 socket twin (the agent-
-// engine driver's spawn verb, JOH-15 B1). It takes the (already authorised)
-// instance + node ids, locks the instance, re-reads fresh, enforces the start
-// preconditions (running instance, ready ai node, bound group), spawns a fresh
-// agent into the bound group via the shared executeSpawn core (the same path the
-// group spawn endpoint and the group-template instantiator use), and settles the
-// node to running assigned to the spawned conv-id. The node's snapshotted
-// executor def supplies the agent name/role hint (Executor.Agent) and task
-// prompt (Executor.Prompt → the agent's inbox briefing). Returns the JSON result
-// map on success or a typed *spawnFailure the caller maps onto its transport.
+// the dashboard POST .../nodes/{id}/start and the /v1 socket twin (the agent-engine
+// driver's spawn verb, JOH-15). It takes the (already authorised) instance + node
+// ids and an optional seedContext (the driver's per-spawn briefing addendum —
+// JOH-15 B2a `--context`), and runs the SAME claim → spawn-off-lock → settle shape
+// the engine's own auto-spawn path uses (claimNextAINode → executeSpawn →
+// settleAISpawn), so guards, state, and the spawned-into-group result are
+// byte-identical across all three surfaces. Returns the JSON result map on success
+// or a typed *spawnFailure the caller maps onto its transport.
 //
 // Authorisation is the CALLER's job (the dashboard cookie gate, or the /v1
 // group-owner check) — this core only enforces state correctness, mirroring
 // applyWorkflowNodePatch.
 //
-// KNOWN LIMITATION (lock-held across the spawn): this holds the per-instance lock
-// across executeSpawn, which polls for the new conv-id for up to ~30s. Because the
-// engine tick processes instances serially on a single goroutine and takes the
-// same per-instance lock in every pass, a slow spawn here can stall the engine's
-// progress on THIS instance (and thus the serial sweep behind it) for the spawn
-// duration. The engine's own auto-spawn path avoids this by spawning off-tick
-// (claimNextAINode → goBackground → settleAISpawn). This is pre-existing dashboard
-// behaviour (a manual start is rare), and B1 keeps the two surfaces in parity; the
-// synchronous lock-held spawn also keeps the conv-id result simple for the caller.
-// When B2's real agent-driver spawns workers programmatically (frequently), this
-// should move to a claim-under-lock → spawn-off-lock → settle-under-lock shape like
-// the engine path, so a driver's spawns never throttle the tick. Tracked for B2.
-func spawnWorkerIntoNodeCore(instanceID int64, nodeID string) (map[string]any, *spawnFailure) {
+// THE OFF-LOCK SHAPE (JOH-15 B2a, replacing B1's documented carry-over): the spawn
+// runs in THREE phases so the slow part holds no lock —
+//  1. CLAIM under the per-instance lock (claimManualAISpawn): re-read fresh, enforce
+//     the start preconditions (running instance, ready ai node, bound group), mark
+//     the node running + the engine sentinel, snapshot the spawn params.
+//  2. SPAWN with the lock RELEASED: executeSpawn polls up to ~30s for the new
+//     conv-id. Holding the per-instance lock across that poll (B1's behaviour) stalls
+//     a concurrent engine tick on THIS instance — the tick takes the same lock every
+//     pass — for the whole handshake. An agent-driver hammers this path, so the
+//     stall is real; the engine's own ai path already spawns off-lock (goBackground).
+//     This path stays SYNCHRONOUS (the caller wants the conv-id back) but no longer
+//     holds the lock across the handshake.
+//  3. SETTLE under the lock (settleAISpawn, shared with the engine): re-read fresh,
+//     validate the claim is still ours, swap the sentinel for the conv-id on success
+//     (else reset to ready), reporting a typed failure if the claim was invalidated
+//     mid-spawn.
+func spawnWorkerIntoNodeCore(instanceID int64, nodeID, seedContext string) (map[string]any, *spawnFailure) {
+	claim, fail := claimManualAISpawn(instanceID, nodeID, seedContext)
+	if fail != nil {
+		return nil, fail
+	}
+
+	// Lock released — executeSpawn's ~30s conv-id handshake runs off-lock so a
+	// concurrent engine tick on this instance is not stalled behind it.
+	outcome, spawnFail := executeSpawn(claim.group, claim.params)
+
+	// Settle under the lock (shared with the engine's auto-spawn path): a non-nil
+	// failure is a spawn error or a claim invalidated mid-spawn; nil means the
+	// sentinel→conv-id swap landed and the result map is safe to build from outcome.
+	if sf := settleAISpawn(instanceID, claim, outcome, spawnFail); sf != nil {
+		return nil, sf
+	}
+
+	return map[string]any{
+		"ok": true, "node_id": nodeID, "status": db.WorkflowNodeStatusRunning,
+		"assignee": outcome.ConvID, "conv_id": outcome.ConvID,
+		"label": outcome.Label, "tmux_session": outcome.TmuxSession,
+		"attach_cmd": "tclaude session attach " + outcome.Label,
+	}, nil
+}
+
+// claimManualAISpawn is the manual/driver twin of the engine's claimNextAINode
+// (JOH-15 B2a): it claims a SPECIFIC ready ai node for the dashboard-start / driver
+// spawn-into-node path under the per-instance lock and returns the snapshot to spawn
+// it OFF the lock. It differs from claimNextAINode in that it (a) targets an explicit
+// nodeID rather than scanning for the next ready one, (b) reports preconditions as
+// TYPED failures to the synchronous caller (the engine logs+skips; this path returns
+// an error the dashboard/CLI surfaces), and (c) does NOT apply the autonomous opt-in
+// / parallelism caps — a human or group-owner driver starting a node is an explicit,
+// deliberate action, not the daemon auto-driving. It SHARES the engine sentinel +
+// settleAISpawn so the two paths cannot drift, and folds the driver's seedContext
+// into the worker brief.
+func claimManualAISpawn(instanceID int64, nodeID, seedContext string) (*aiNodeClaim, *spawnFailure) {
 	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
 
@@ -905,58 +943,88 @@ func spawnWorkerIntoNodeCore(instanceID int64, nodeID string) (map[string]any, *
 	if fail != nil {
 		return nil, fail
 	}
+	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
+	if cwdErr != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "resolve group cwd: " + cwdErr.Error()}
+	}
 
 	var def workflow.Node
 	if tmpl, _ := rebuildInstanceTemplate(inst); tmpl != nil && tmpl.Nodes[nodeID] != nil {
 		def = *tmpl.Nodes[nodeID]
 	}
-	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
-	if cwdErr != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "resolve group cwd: " + cwdErr.Error()}
+
+	// Interpolate the task prompt against the instance scope (params + captures) so a
+	// brief referencing {{param}} / {{upstream.output}} resolves — the same the
+	// engine's auto-spawn does. Unresolved refs are left visible (logged), not
+	// blanked: a prompt is not shell, so the risk is prompt-injection, not execution.
+	initMsg, missing := instanceScope(inst).Interpolate(strings.TrimSpace(def.Executor.Prompt))
+	if len(missing) > 0 {
+		slog.Warn("workflow start: node prompt has unresolved refs",
+			"instance", instanceID, "node", nodeID, "missing", missing)
 	}
-	initMsg := strings.TrimSpace(def.Executor.Prompt)
+	// Fold the driver's --context seed in as an additive briefing section (JOH-15
+	// B2a): the prompt is the node's task; the seed is the upstream outputs the
+	// agent-engine driver routed in (additive to the worker's own `workflow
+	// where`/`status` self-view).
+	initMsg = foldSeedContext(initMsg, seedContext)
 	if initMsg != "" && !isValidInitialMessage(initMsg) {
-		slog.Warn("workflow start: node prompt is not a valid initial message; spawning without it",
+		slog.Warn("workflow start: node brief is not a valid initial message; spawning without it",
 			"instance", instanceID, "node", nodeID)
 		initMsg = ""
 	}
-	outcome, fail := executeSpawn(g, spawnParams{
-		Name:           def.Executor.Agent,
-		Role:           def.Executor.Agent,
-		Descr:          "workflow " + strconv.FormatInt(instanceID, 10) + " · " + node.Label,
-		InitialMessage: initMsg,
-		Cwd:            cwd,
-		GroupContext:   g.DefaultContext,
-	})
-	if fail != nil {
-		return nil, fail
-	}
 
-	now := time.Now()
-	st := db.WorkflowNodeStatusRunning
-	asg := outcome.ConvID
+	// Claim it: mark running + the engine sentinel (the SAME marker the engine uses),
+	// so a crash mid-spawn is recoverable by reapOrphanedEngineNodes (a sentinel-
+	// bearing running node resets to ready on daemon startup) and settleAISpawn can
+	// verify the claim is still ours before swapping in the conv-id.
+	running := db.WorkflowNodeStatusRunning
+	startedAt := time.Now()
+	owner := engineAssignee
 	if _, err := db.UpdateWorkflowNode(instanceID, nodeID,
-		db.WorkflowNodePatch{Status: &st, Assignee: &asg, StartedAt: &now}); err != nil {
-		return nil, &spawnFailure{http.StatusInternalServerError, "io", "update node: " + err.Error()}
+		db.WorkflowNodePatch{Status: &running, StartedAt: &startedAt, Assignee: &owner}); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "claim node: " + err.Error()}
 	}
-	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
-		InstanceID: instanceID, NodeID: nodeID, Kind: db.WorkflowEventNodeStarted,
-		Message: "spawned " + outcome.ConvID + " into group " + g.Name,
-	})
+	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: nodeID,
+		Kind: db.WorkflowEventNodeStarted, Message: "spawning agent for ai node"})
 
-	return map[string]any{
-		"ok": true, "node_id": nodeID, "status": db.WorkflowNodeStatusRunning,
-		"assignee": outcome.ConvID, "conv_id": outcome.ConvID,
-		"label": outcome.Label, "tmux_session": outcome.TmuxSession,
-		"attach_cmd": "tclaude session attach " + outcome.Label,
+	return &aiNodeClaim{
+		nodeID: nodeID,
+		group:  g,
+		params: spawnParams{
+			Name:           def.Executor.Agent,
+			Role:           def.Executor.Agent,
+			Descr:          "workflow " + strconv.FormatInt(instanceID, 10) + " · " + node.Label,
+			InitialMessage: initMsg,
+			Cwd:            cwd,
+			GroupContext:   g.DefaultContext,
+		},
 	}, nil
+}
+
+// foldSeedContext appends the workflow driver's --context seed (JOH-15 B2a) to a
+// node's task prompt as an additive, clearly-delimited briefing section. The task
+// prompt stays primary; the seed carries the upstream outputs the agent-engine
+// driver routed in. Either piece may be empty.
+func foldSeedContext(prompt, seed string) string {
+	prompt = strings.TrimSpace(prompt)
+	seed = strings.TrimSpace(seed)
+	switch {
+	case seed == "":
+		return prompt
+	case prompt == "":
+		return "Context from the workflow driver:\n\n" + seed
+	default:
+		return prompt + "\n\n---\nContext from the workflow driver:\n\n" + seed
+	}
 }
 
 // dashboardWorkflowNodeStart is the dashboard HTTP wrapper over
 // spawnWorkerIntoNodeCore — it maps a typed failure onto http.Error (matching the
-// dashboardWorkflowNodePatch twin) and writes the JSON result on success.
+// dashboardWorkflowNodePatch twin) and writes the JSON result on success. The
+// dashboard start button seeds no driver context (""); that channel is the
+// agent-engine driver's `--context`, surfaced on the /v1 twin.
 func dashboardWorkflowNodeStart(w http.ResponseWriter, inst *db.WorkflowInstance, nodeID string) {
-	res, fail := spawnWorkerIntoNodeCore(inst.ID, nodeID)
+	res, fail := spawnWorkerIntoNodeCore(inst.ID, nodeID, "")
 	if fail != nil {
 		http.Error(w, fail.Msg, fail.Status)
 		return

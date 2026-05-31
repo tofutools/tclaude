@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -447,7 +448,10 @@ func spawnReadyAINodes(instanceID int64) {
 		// ready, so it is retried on a later TICK, not in a tight loop.
 		goBackground(func() {
 			outcome, fail := executeSpawn(claim.group, claim.params)
-			settleAISpawn(instanceID, claim, outcome, fail)
+			// Fire-and-forget: the engine's auto-spawn pass discards the typed
+			// failure (an orphaned/failed spawn just logs + retries next tick); only
+			// the synchronous spawnWorkerIntoNodeCore consumes it.
+			_ = settleAISpawn(instanceID, claim, outcome, fail)
 		})
 	}
 }
@@ -602,17 +606,26 @@ func claimNextAINode(instanceID int64) *aiNodeClaim {
 	}
 }
 
-// settleAISpawn finishes an ai-node claim after executeSpawn ran (off the tick
-// goroutine). It re-acquires the instance lock, re-reads fresh, and applies the
-// result only if the claim is still valid (instance running, node still the
-// running one WE claimed — sentinel-assigned). On success it swaps the engine
-// sentinel for the spawned conv-id, leaving the node `running` for the live agent
-// to drive to completion. On spawn failure it resets the node to `ready` so a
-// later tick retries. If the claim was invalidated (a concurrent cancel/delete,
-// or the node moved) the spawned agent — if any — is now an orphan member of the
-// group: that is surfaced in a log, not torn down (we don't fight the human's
-// cancel).
-func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, fail *spawnFailure) {
+// settleAISpawn finishes an ai-node claim after executeSpawn ran. It re-acquires
+// the instance lock, re-reads fresh, and applies the result only if the claim is
+// still valid (instance running, node still the running one WE claimed —
+// sentinel-assigned). On success it swaps the engine sentinel for the spawned
+// conv-id, leaving the node `running` for the live agent to drive to completion. On
+// spawn failure it resets the node to `ready` so a later attempt retries. If the
+// claim was invalidated (a concurrent cancel/delete, or the node moved) the spawned
+// agent — if any — is now an orphan member of the group: that is surfaced in a log,
+// not torn down (we don't fight the human's cancel).
+//
+// Two callers share this settle (JOH-15 B2a — claim → spawn-off-lock → settle):
+//   - the engine's auto-spawn pass (spawnReadyAINodes) runs it FIRE-AND-FORGET off
+//     the tick goroutine (goBackground) and DISCARDS the return — an orphaned spawn
+//     just logs.
+//   - the synchronous spawn-worker-into-node core (spawnWorkerIntoNodeCore, behind
+//     the dashboard start + the /v1 driver verb) USES the return: a non-nil
+//     *spawnFailure is the typed error it reports to its caller (claim invalidated
+//     → conflict; spawn failed → the executeSpawn failure passed straight through),
+//     and nil means the swap landed so it can build the conv-id result map.
+func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, fail *spawnFailure) *spawnFailure {
 	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
 
@@ -622,7 +635,8 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 			slog.Warn("workflow engine: ai spawn finished after instance left running; agent orphaned in group",
 				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
 		}
-		return
+		return &spawnFailure{http.StatusConflict, "conflict",
+			"instance is no longer running; spawned worker " + orphanedConvDesc(outcome) + " orphaned in the group"}
 	}
 	node, err := db.GetWorkflowNode(instanceID, claim.nodeID)
 	if err != nil || node == nil || node.Status != db.WorkflowNodeStatusRunning || node.Assignee != engineAssignee {
@@ -631,22 +645,23 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 			slog.Warn("workflow engine: ai node moved during spawn; spawned agent orphaned in group",
 				"instance", instanceID, "node", claim.nodeID, "conv", outcome.ConvID)
 		}
-		return
+		return &spawnFailure{http.StatusConflict, "conflict",
+			"node " + claim.nodeID + " moved during spawn; spawned worker " + orphanedConvDesc(outcome) + " orphaned in the group"}
 	}
 
 	if fail != nil {
 		// Spawn failed — reset to ready (drop the sentinel + the premature start
-		// stamp) so a later tick retries rather than the node hanging running.
+		// stamp) so a later attempt retries rather than the node hanging running.
 		ready := db.WorkflowNodeStatusReady
 		cleared := ""
 		var noStart time.Time
 		_, _ = db.UpdateWorkflowNode(instanceID, claim.nodeID,
 			db.WorkflowNodePatch{Status: &ready, Assignee: &cleared, StartedAt: &noStart})
 		_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: claim.nodeID,
-			Kind: db.WorkflowEventNodeReady, Message: "engine: ai spawn failed, will retry: " + fail.Msg})
+			Kind: db.WorkflowEventNodeReady, Message: "ai spawn failed, reset to ready: " + fail.Msg})
 		slog.Warn("workflow engine: ai spawn failed; node reset to ready",
 			"instance", instanceID, "node", claim.nodeID, "error", fail.Msg)
-		return
+		return fail
 	}
 
 	// Success — hand the node to the live agent: swap the sentinel for its
@@ -661,10 +676,23 @@ func settleAISpawn(instanceID int64, claim *aiNodeClaim, outcome *spawnOutcome, 
 	if _, err := db.UpdateWorkflowNode(instanceID, claim.nodeID,
 		db.WorkflowNodePatch{Assignee: &convID, Visits: &visits}); err != nil {
 		slog.Warn("workflow engine: record ai assignee failed", "instance", instanceID, "node", claim.nodeID, "error", err)
-		return
+		return &spawnFailure{http.StatusInternalServerError, "io", "record ai assignee: " + err.Error()}
 	}
 	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{InstanceID: instanceID, NodeID: claim.nodeID,
-		Kind: db.WorkflowEventNodeStarted, Message: "engine: spawned " + convID + " into group " + claim.group.Name})
+		Kind: db.WorkflowEventNodeStarted, Message: "spawned " + convID + " into group " + claim.group.Name})
+	return nil
+}
+
+// orphanedConvDesc names the conv that a settle abandoned (the claim was
+// invalidated mid-spawn), for the typed-failure message the synchronous caller
+// surfaces. The engine caller discards the failure, so this is purely
+// caller-facing prose; an empty outcome (the spawn itself also failed) reads as
+// "(none)".
+func orphanedConvDesc(outcome *spawnOutcome) string {
+	if outcome == nil || outcome.ConvID == "" {
+		return "(none)"
+	}
+	return outcome.ConvID
 }
 
 // ----- ai-verify judge round-trip (JOH-35) -----------------------------------

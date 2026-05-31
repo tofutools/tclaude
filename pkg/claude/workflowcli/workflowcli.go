@@ -54,6 +54,8 @@ func Cmd() *cobra.Command {
 			whereCmd(),
 			newCmd(),
 			nodeCmd(),
+			spawnCmd(),
+			driveCmd(),
 			cancelCmd(),
 			rmCmd(),
 		},
