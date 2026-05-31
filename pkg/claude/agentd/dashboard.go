@@ -99,6 +99,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardEditRoutes(mux)
+	registerDashboardWorkflowsRoutes(mux)
 }
 
 // handleDashboardStatic serves the dashboard's static assets — the
