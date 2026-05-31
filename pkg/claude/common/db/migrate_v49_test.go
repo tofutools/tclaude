@@ -75,8 +75,8 @@ func TestMigrateV48toV49_AddsWorkflowTables(t *testing.T) {
 
 // TestMigrateV48toV49_FreshSchemaHasWorkflowTables builds a fresh DB
 // through the full migrate() chain and confirms the workflow accessors
-// work end to end. Carries the literal currentVersion pin — a tripwire
-// the next migration's author moves forward into their own v50 test.
+// work end to end. The literal currentVersion pin moved forward to the v50
+// test (TestMigrateV49toV50_AddsEngineMode) when engine_mode was added.
 func TestMigrateV48toV49_FreshSchemaHasWorkflowTables(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -85,7 +85,6 @@ func TestMigrateV48toV49_FreshSchemaHasWorkflowTables(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 49, currentVersion, "currentVersion is 49")
 
 	id, err := InsertWorkflowInstance(&WorkflowInstance{
 		TemplateRef:  "user:release",

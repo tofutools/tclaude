@@ -17,6 +17,7 @@ import (
 type templateMeta struct {
 	Name        string     `yaml:"name"`
 	Description string     `yaml:"description,omitempty"`
+	Engine      EngineMode `yaml:"engine,omitempty"` // system (default) | agent (JOH-15 B)
 	Params      []Param    `yaml:"params,omitempty"`
 	Entry       stringList `yaml:"entry,omitempty"`
 }
@@ -57,6 +58,12 @@ func LoadFS(fsys fs.FS, ref string, source Source, dir string) (*Template, error
 	}
 	t.Name = meta.Name
 	t.Description = meta.Description
+	// Default the engine to system when omitted; an unknown value is rejected in
+	// validate (so a typo surfaces at load rather than silently running system).
+	t.Engine = meta.Engine
+	if t.Engine == "" {
+		t.Engine = EngineSystem
+	}
 	t.Params = meta.Params
 	t.Entry = []string(meta.Entry)
 
@@ -115,6 +122,11 @@ func (t *Template) validate() []string {
 
 	if strings.TrimSpace(t.Name) == "" {
 		add("workflow.yaml: name is required")
+	}
+	// engine: system | agent (default system, applied in LoadFS). Reject any other
+	// value so a typo surfaces at load instead of silently driving the system engine.
+	if t.Engine != EngineSystem && t.Engine != EngineAgent {
+		add("workflow.yaml: engine %q must be %q or %q", t.Engine, EngineSystem, EngineAgent)
 	}
 	if len(t.MermaidNodes) == 0 {
 		add("flow.mmd: the chart declares no nodes")

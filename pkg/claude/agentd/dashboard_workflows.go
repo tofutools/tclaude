@@ -159,7 +159,8 @@ func createWorkflowInstance(body workflowCreateBody) (map[string]any, *spawnFail
 		Mermaid:      tmpl.Mermaid, // snapshot — later template edits never reshape this instance
 		Params:       string(paramsJSON),
 		Vars:         "{}",
-		GroupID:      groupID, // 0 = unbound
+		GroupID:      groupID,             // 0 = unbound
+		EngineMode:   string(tmpl.Engine), // snapshot system|agent — later template edits never re-home the engine (JOH-15 B1)
 	}
 	id, err := db.InsertWorkflowInstance(inst)
 	if err != nil {
@@ -789,84 +790,120 @@ func isManualDriveStatus(s string) bool {
 	}
 }
 
-// reloadReadyAINode re-reads (instance, node) fresh under the held instance lock
-// and enforces the shared start/attach preconditions: the instance is running,
-// the node exists, is an ai-executor node, and is `ready` (on the frontier). It
-// writes the matching 4xx/5xx and returns ok=false on any violation. The caller
-// MUST already hold lockWorkflowInstance(instID).
-func reloadReadyAINode(w http.ResponseWriter, instID int64, nodeID string) (*db.WorkflowInstance, *db.WorkflowNode, bool) {
+// readyAINodeOrFail re-reads (instance, node) fresh and enforces the shared
+// start/attach preconditions as TYPED failures (rather than writing HTTP): the
+// instance is running, the node exists, is an ai-executor node, and is `ready`
+// (on the frontier). The caller MUST already hold lockWorkflowInstance(instID).
+// Both the dashboard wrapper (reloadReadyAINode) and the /v1 spawn-into-node core
+// (spawnWorkerIntoNodeCore) wrap this so the precondition logic lives once.
+func readyAINodeOrFail(instID int64, nodeID string) (*db.WorkflowInstance, *db.WorkflowNode, *spawnFailure) {
 	inst, err := db.GetWorkflowInstance(instID)
 	if err != nil {
-		http.Error(w, "lookup: "+err.Error(), http.StatusInternalServerError)
-		return nil, nil, false
+		return nil, nil, &spawnFailure{http.StatusInternalServerError, "io", "lookup: " + err.Error()}
 	}
 	if inst == nil {
-		http.Error(w, "workflow not found", http.StatusNotFound)
-		return nil, nil, false
+		return nil, nil, &spawnFailure{http.StatusNotFound, "not_found", "workflow not found"}
 	}
 	if inst.Status != db.WorkflowStatusRunning {
-		http.Error(w, "instance is "+inst.Status+"; cannot start/attach a node", http.StatusConflict)
-		return nil, nil, false
+		return nil, nil, &spawnFailure{http.StatusConflict, "conflict", "instance is " + inst.Status + "; cannot start/attach a node"}
 	}
 	node, err := db.GetWorkflowNode(instID, nodeID)
 	if err != nil {
-		http.Error(w, "lookup node: "+err.Error(), http.StatusInternalServerError)
-		return nil, nil, false
+		return nil, nil, &spawnFailure{http.StatusInternalServerError, "io", "lookup node: " + err.Error()}
 	}
 	if node == nil {
-		http.Error(w, "node "+nodeID+" not found", http.StatusNotFound)
-		return nil, nil, false
+		return nil, nil, &spawnFailure{http.StatusNotFound, "not_found", "node " + nodeID + " not found"}
 	}
 	if node.ExecutorKind != string(workflow.ExecAI) {
-		http.Error(w, "start/attach apply only to ai-executor nodes (node "+nodeID+" is "+
-			strconv.Quote(node.ExecutorKind)+")", http.StatusBadRequest)
-		return nil, nil, false
+		return nil, nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"start/attach apply only to ai-executor nodes (node " + nodeID + " is " + strconv.Quote(node.ExecutorKind) + ")"}
 	}
 	if node.Status != db.WorkflowNodeStatusReady {
-		http.Error(w, "node "+nodeID+" is "+node.Status+
-			"; only a ready node can be started/attached", http.StatusConflict)
+		return nil, nil, &spawnFailure{http.StatusConflict, "conflict",
+			"node " + nodeID + " is " + node.Status + "; only a ready node can be started/attached"}
+	}
+	return inst, node, nil
+}
+
+// reloadReadyAINode is the dashboard's HTTP wrapper over readyAINodeOrFail: it
+// writes the matching 4xx/5xx and returns ok=false on any violation. The caller
+// MUST already hold lockWorkflowInstance(instID).
+func reloadReadyAINode(w http.ResponseWriter, instID int64, nodeID string) (*db.WorkflowInstance, *db.WorkflowNode, bool) {
+	inst, node, fail := readyAINodeOrFail(instID, nodeID)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return nil, nil, false
 	}
 	return inst, node, true
 }
 
-// boundGroup resolves the instance's bound agent group, or writes a 400 when the
-// instance is unbound / its group no longer exists.
-func boundGroup(w http.ResponseWriter, inst *db.WorkflowInstance) (*db.AgentGroup, bool) {
+// boundGroupOrFail resolves the instance's bound agent group as a TYPED failure
+// when the instance is unbound / its group no longer exists.
+func boundGroupOrFail(inst *db.WorkflowInstance) (*db.AgentGroup, *spawnFailure) {
 	if inst.GroupID == 0 {
-		http.Error(w, "instance has no bound group; bind one at create (POST /api/workflows {\"group\":\"<name>\"})",
-			http.StatusBadRequest)
-		return nil, false
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"instance has no bound group; bind one at create (POST /api/workflows {\"group\":\"<name>\"})"}
 	}
 	g, err := db.GetAgentGroupByID(inst.GroupID)
 	if err != nil {
-		http.Error(w, "lookup group: "+err.Error(), http.StatusInternalServerError)
-		return nil, false
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "lookup group: " + err.Error()}
 	}
 	if g == nil {
-		http.Error(w, "bound group (id "+strconv.FormatInt(inst.GroupID, 10)+") no longer exists", http.StatusBadRequest)
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"bound group (id " + strconv.FormatInt(inst.GroupID, 10) + ") no longer exists"}
+	}
+	return g, nil
+}
+
+// boundGroup is the dashboard's HTTP wrapper over boundGroupOrFail.
+func boundGroup(w http.ResponseWriter, inst *db.WorkflowInstance) (*db.AgentGroup, bool) {
+	g, fail := boundGroupOrFail(inst)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return nil, false
 	}
 	return g, true
 }
 
-// dashboardWorkflowNodeStart spawns a fresh ai agent for a ready node into the
-// instance's bound group, via the shared executeSpawn core (same path the group
-// spawn endpoint and the group-template instantiator use). The node's
-// snapshotted executor def supplies the agent name/role hint (Executor.Agent)
-// and task prompt (Executor.Prompt → the agent's inbox briefing). On success the
-// node goes running, assigned to the spawned conv-id.
-func dashboardWorkflowNodeStart(w http.ResponseWriter, inst *db.WorkflowInstance, nodeID string) {
-	unlock := lockWorkflowInstance(inst.ID)
+// spawnWorkerIntoNodeCore is the shared spawn-worker-into-node path behind both
+// the dashboard POST .../nodes/{id}/start and the /v1 socket twin (the agent-
+// engine driver's spawn verb, JOH-15 B1). It takes the (already authorised)
+// instance + node ids, locks the instance, re-reads fresh, enforces the start
+// preconditions (running instance, ready ai node, bound group), spawns a fresh
+// agent into the bound group via the shared executeSpawn core (the same path the
+// group spawn endpoint and the group-template instantiator use), and settles the
+// node to running assigned to the spawned conv-id. The node's snapshotted
+// executor def supplies the agent name/role hint (Executor.Agent) and task
+// prompt (Executor.Prompt → the agent's inbox briefing). Returns the JSON result
+// map on success or a typed *spawnFailure the caller maps onto its transport.
+//
+// Authorisation is the CALLER's job (the dashboard cookie gate, or the /v1
+// group-owner check) — this core only enforces state correctness, mirroring
+// applyWorkflowNodePatch.
+//
+// KNOWN LIMITATION (lock-held across the spawn): this holds the per-instance lock
+// across executeSpawn, which polls for the new conv-id for up to ~30s. Because the
+// engine tick processes instances serially on a single goroutine and takes the
+// same per-instance lock in every pass, a slow spawn here can stall the engine's
+// progress on THIS instance (and thus the serial sweep behind it) for the spawn
+// duration. The engine's own auto-spawn path avoids this by spawning off-tick
+// (claimNextAINode → goBackground → settleAISpawn). This is pre-existing dashboard
+// behaviour (a manual start is rare), and B1 keeps the two surfaces in parity; the
+// synchronous lock-held spawn also keeps the conv-id result simple for the caller.
+// When B2's real agent-driver spawns workers programmatically (frequently), this
+// should move to a claim-under-lock → spawn-off-lock → settle-under-lock shape like
+// the engine path, so a driver's spawns never throttle the tick. Tracked for B2.
+func spawnWorkerIntoNodeCore(instanceID int64, nodeID string) (map[string]any, *spawnFailure) {
+	unlock := lockWorkflowInstance(instanceID)
 	defer unlock()
 
-	inst, node, ok := reloadReadyAINode(w, inst.ID, nodeID)
-	if !ok {
-		return
+	inst, node, fail := readyAINodeOrFail(instanceID, nodeID)
+	if fail != nil {
+		return nil, fail
 	}
-	g, ok := boundGroup(w, inst)
-	if !ok {
-		return
+	g, fail := boundGroupOrFail(inst)
+	if fail != nil {
+		return nil, fail
 	}
 
 	var def workflow.Node
@@ -875,47 +912,56 @@ func dashboardWorkflowNodeStart(w http.ResponseWriter, inst *db.WorkflowInstance
 	}
 	cwd, cwdErr := resolveSpawnCwd(g.DefaultCwd)
 	if cwdErr != nil {
-		http.Error(w, "resolve group cwd: "+cwdErr.Error(), http.StatusBadRequest)
-		return
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "resolve group cwd: " + cwdErr.Error()}
 	}
 	initMsg := strings.TrimSpace(def.Executor.Prompt)
 	if initMsg != "" && !isValidInitialMessage(initMsg) {
 		slog.Warn("workflow start: node prompt is not a valid initial message; spawning without it",
-			"instance", inst.ID, "node", nodeID)
+			"instance", instanceID, "node", nodeID)
 		initMsg = ""
 	}
 	outcome, fail := executeSpawn(g, spawnParams{
 		Name:           def.Executor.Agent,
 		Role:           def.Executor.Agent,
-		Descr:          "workflow " + strconv.FormatInt(inst.ID, 10) + " · " + node.Label,
+		Descr:          "workflow " + strconv.FormatInt(instanceID, 10) + " · " + node.Label,
 		InitialMessage: initMsg,
 		Cwd:            cwd,
 		GroupContext:   g.DefaultContext,
 	})
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
+		return nil, fail
 	}
 
 	now := time.Now()
 	st := db.WorkflowNodeStatusRunning
 	asg := outcome.ConvID
-	if _, err := db.UpdateWorkflowNode(inst.ID, nodeID,
+	if _, err := db.UpdateWorkflowNode(instanceID, nodeID,
 		db.WorkflowNodePatch{Status: &st, Assignee: &asg, StartedAt: &now}); err != nil {
-		http.Error(w, "update node: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "update node: " + err.Error()}
 	}
 	_, _ = db.AppendWorkflowEvent(&db.WorkflowEvent{
-		InstanceID: inst.ID, NodeID: nodeID, Kind: db.WorkflowEventNodeStarted,
+		InstanceID: instanceID, NodeID: nodeID, Kind: db.WorkflowEventNodeStarted,
 		Message: "spawned " + outcome.ConvID + " into group " + g.Name,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"ok": true, "node_id": nodeID, "status": db.WorkflowNodeStatusRunning,
 		"assignee": outcome.ConvID, "conv_id": outcome.ConvID,
 		"label": outcome.Label, "tmux_session": outcome.TmuxSession,
 		"attach_cmd": "tclaude session attach " + outcome.Label,
-	})
+	}, nil
+}
+
+// dashboardWorkflowNodeStart is the dashboard HTTP wrapper over
+// spawnWorkerIntoNodeCore — it maps a typed failure onto http.Error (matching the
+// dashboardWorkflowNodePatch twin) and writes the JSON result on success.
+func dashboardWorkflowNodeStart(w http.ResponseWriter, inst *db.WorkflowInstance, nodeID string) {
+	res, fail := spawnWorkerIntoNodeCore(inst.ID, nodeID)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // dashboardWorkflowNodeAttach assigns an EXISTING member of the bound group to a

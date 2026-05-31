@@ -59,6 +59,20 @@ const (
 	ModeAutonomous  = "autonomous"
 )
 
+// EngineMode names WHO drives an instance's graph (JOH-15 Slice B). The default
+// system engine (agentd) advances nodes deterministically; the opt-in agent
+// engine hands the JUDGMENT passes (which worker to spawn, which branch, when to
+// advance) to a designated group-owner agent driving via /v1, while the trusted
+// daemon still mechanically runs tool/program nodes and the safety substrate
+// (persistence + JOH-41 escalation). It is a per-template field, snapshotted onto
+// the instance at create (workflow_instances.engine_mode).
+type EngineMode string
+
+const (
+	EngineSystem EngineMode = "system" // deterministic agentd engine (default)
+	EngineAgent  EngineMode = "agent"  // a group-owner agent supplies the judgment
+)
+
 // OnFail values.
 const (
 	OnFailStop     = "stop"     // a failed node halts the instance (default)
@@ -174,6 +188,7 @@ type Template struct {
 	Dir         string // absolute source dir ("" for the embedded example)
 	Name        string
 	Description string
+	Engine      EngineMode // who drives the graph: system (default) | agent (JOH-15 B)
 	Params      []Param
 	Entry       []string // node ids that start ready (computed if not declared)
 	Mermaid     string   // raw flow.mmd contents (rendered verbatim by the dashboard)

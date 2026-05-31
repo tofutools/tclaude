@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 49
+const currentVersion = 50
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -317,6 +317,36 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 50 {
+		if err := migrateV49toV50(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV49toV50 adds workflow_instances.engine_mode — WHO drives the
+// instance's graph (JOH-15 Slice B). Default 'system' is the deterministic
+// agentd engine (every existing row reads back 'system', so this is a pure
+// back-compat default); 'agent' is the opt-in mode where a designated
+// group-owner agent supplies the JUDGMENT passes (which worker to spawn, which
+// branch, when to advance) via /v1, while the daemon still mechanically runs
+// tool/program nodes and the safety substrate (persistence + escalation).
+//
+// Snapshotted from the template's `engine:` field at instance create, like
+// mermaid/params/vars — so a later edit to the on-disk template never re-homes a
+// running instance's engine. A plain column (not params-JSON) keeps it a
+// first-class, type-safe instance attribute the engine tick reads each pass.
+func migrateV49toV50(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE workflow_instances ADD COLUMN engine_mode TEXT NOT NULL DEFAULT 'system';
+
+		UPDATE schema_version SET version = 50;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v49→v50 (add workflow_instances.engine_mode): %w", err)
+	}
 	return nil
 }
 
