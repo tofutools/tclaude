@@ -68,10 +68,14 @@ type workflowsListView struct {
 }
 
 // workflowDetailView is the GET /api/workflows/{runId} response: the full typed
-// run state (phase/agent tree + script, flattened) plus the conv join.
+// run state (phase/agent tree + script, flattened) plus the conv join and the
+// mermaid projection. Mermaid is generated server-side from the SAME RunState
+// (via ccworkflows.Mermaid) so the dashboard never re-derives the graph — one
+// source of truth shared with the CLI's `workflows show --mermaid`.
 type workflowDetailView struct {
 	*ccworkflows.RunState
-	Join workflowConvJoin `json:"join"`
+	Join    workflowConvJoin `json:"join"`
+	Mermaid string           `json:"mermaid,omitempty"`
 }
 
 // joinConv resolves a session id to its conv_index identity (best-effort).
@@ -139,5 +143,6 @@ func handleDashboardWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workflowDetailView{
 		RunState: rs,
 		Join:     joinConv(ref.SessionID, ref.ProjectDir),
+		Mermaid:  ccworkflows.Mermaid(rs),
 	})
 }

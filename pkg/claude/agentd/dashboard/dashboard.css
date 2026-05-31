@@ -1871,3 +1871,20 @@ body.slop #agent-spawn-submit.slop-pull-active {
 .wf-script { margin: 10px 0; }
 .wf-script summary { cursor: pointer; color: #58a6ff; }
 .wf-script pre { background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; max-height: 420px; }
+
+/* Mermaid phase-sequence (secondary static view; the tree above is primary). */
+.wf-mermaid { margin: 10px 0; }
+.wf-mermaid summary { cursor: pointer; color: #58a6ff; }
+.wf-mermaid-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 6px; }
+.wf-mermaid-link { color: #58a6ff; text-decoration: none; font-size: 12px; }
+.wf-mermaid-link:hover { text-decoration: underline; }
+.wf-mermaid-hint { font-size: 12px; }
+.wf-mermaid-src { background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; max-height: 320px; }
+/* Native flow render: phase blocks stacked in sequence with agent chips. */
+.wf-flow { margin: 8px 0; }
+.wf-flow-phase { border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; }
+.wf-flow-phase-head { margin-bottom: 4px; }
+.wf-flow-phase-title { font-weight: 600; color: #adbac7; }
+.wf-flow-agents { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.wf-flow-agent { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; padding: 2px 8px; border-radius: 6px; border: 1px solid #2a3340; }
+.wf-flow-arrow { text-align: center; color: #7d8590; line-height: 1.2; margin: 2px 0; }
