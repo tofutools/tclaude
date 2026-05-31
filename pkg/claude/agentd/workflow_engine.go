@@ -334,6 +334,13 @@ func processWorkflowInstance(ctx context.Context, instanceID int64) {
 		spawnReadyAINodes(instanceID)
 		spawnReadyVerifyJudges(instanceID)
 		deliverReadyHandoffs(instanceID)
+	} else {
+		// Agent mode: the daemon doesn't auto-handoff (the driver owns routing), so
+		// the handoff pass's slot becomes the event-driven WAKE — nudge the live
+		// driver on a frontier change so it reflects+acts instead of polling (JOH-15
+		// B2b). The skill's slow rescue heartbeat + the JOH-41 sweep below are the
+		// backstops for a missed nudge / a dead driver.
+		nudgeDriverOnFrontierChange(instanceID)
 	}
 	sweepStuckNodes(instanceID)
 }
@@ -1523,6 +1530,211 @@ func buildHandoffMessage(inst *db.WorkflowInstance, pred, succ *db.WorkflowNode)
 		fmt.Fprintf(&b, "(node %s reported no captured output.)\n", pred.NodeID)
 	}
 	fmt.Fprintf(&b, "\nFull instance state: tclaude workflow show %s", id)
+	return subject, b.String()
+}
+
+// ----- agent-mode driver nudge (JOH-15 B2b — the event-driven wake) ----------
+
+// driverActionableStatus reports whether a node in this status is a frontier change
+// the agent-mode driver should WAKE for — something it must act on or observe now:
+// `ready` (spawn a worker into an ai node, or react to a freshly-readied node),
+// `awaiting_verify` (drive the verify — no auto-judge in agent mode), and the settled
+// `done`/`failed` (react, route, wrap up). `pending`/`running`/`skipped` are NOT
+// actionable (not on the frontier, already being worked, or a not-taken branch).
+func driverActionableStatus(status string) bool {
+	switch status {
+	case db.WorkflowNodeStatusReady, db.WorkflowNodeStatusAwaitingVerify,
+		db.WorkflowNodeStatusDone, db.WorkflowNodeStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// driverNudgeMarker is the at-most-once idempotency key for nudging ONE recipient
+// about one (node, activation) frontier change, stored as the Message of a
+// workflow_events(driver_nudge) row. The activation is (status, UpdatedAt-nanos,
+// Visits) — modeled on escalationMarker — so a node sitting in the same state across
+// ticks nudges exactly once, while a re-entry (a loop-back that re-readies the node,
+// a re-run that bumps Visits) rotates the key and nudges fresh. It is keyed per
+// RECIPIENT conv (the "@conv" suffix), exactly like handoffMarker: a driver that is
+// handed over / reincarnated comes back under a NEW conv, so the same still-pending
+// frontier reads as un-nudged FOR THE NEW CONV and re-nudges it — rather than being
+// suppressed by the predecessor's marker.
+func driverNudgeMarker(nodeID, status, conv string, activationNano, visits int64) string {
+	return fmt.Sprintf("%s:%s:%d:%d@%s", nodeID, status, activationNano, visits, conv)
+}
+
+// firedDriverNudgeMarkers returns the driver-nudge markers already recorded for the
+// instance (one instance-wide read; each marker embeds its node id so the set is
+// unambiguous across nodes), or nil on a read error — the caller then skips the tick
+// rather than risk re-nudging (a missed nudge is rescued by the slow heartbeat; a
+// duplicate spams every live owner).
+func firedDriverNudgeMarkers(instanceID int64) map[string]bool {
+	events, err := db.ListWorkflowEvents(instanceID)
+	if err != nil {
+		slog.Warn("workflow engine: driver-nudge marker lookup failed; skipping tick to avoid re-nudge",
+			"instance", instanceID, "error", err)
+		return nil
+	}
+	out := make(map[string]bool, len(events))
+	for _, e := range events {
+		if e.Kind == db.WorkflowEventDriverNudge {
+			out[e.Message] = true
+		}
+	}
+	return out
+}
+
+// resolveDriverTargets returns the conv-ids to nudge for an agent-mode instance: the
+// LIVE agent-owner(s) of the instance's bound group. Per the JOH-15 B2b decision
+// (Q3 keeps driver_conv deferred → B2b stays schema-free), the driver is identified
+// by its F2 authority — it IS a group owner — rather than a stored pointer. In the
+// normal one-driver-per-instance case this resolves to exactly the driver; if the
+// bound group happens to have OTHER live agent-owners they also receive the
+// (self-describing, ignorable) nudge — bounded, idempotent-safe noise. Precise
+// single-target nudging is part of the deferred driver_conv cluster (alongside the
+// hard double-anchor guard + precise dead-driver detection); THIS function is the
+// one-place seam that swaps in that precision when a concrete need arrives.
+func resolveDriverTargets(inst *db.WorkflowInstance) []string {
+	if inst.GroupID == 0 {
+		return nil
+	}
+	owners, err := db.ListAgentGroupOwners(inst.GroupID)
+	if err != nil {
+		slog.Warn("workflow engine: list owners failed (driver-nudge pass)", "instance", inst.ID, "error", err)
+		return nil
+	}
+	var targets []string
+	for _, o := range owners {
+		if o.ConvID != "" && convHasRunningSession(o.ConvID) {
+			targets = append(targets, o.ConvID)
+		}
+	}
+	return targets
+}
+
+// nudgeDriverOnFrontierChange is the agent-mode event-driven wake (JOH-15 B2b). It
+// takes the slot of the system-mode-only deliverReadyHandoffs (in agent mode the
+// driver owns data routing, so there is no auto-handoff): instead of delivering
+// output to successors, it wakes the DRIVER whenever the frontier changes, so the
+// driver reflects+acts on a real change rather than polling. This is the PRIMARY
+// wake path; the skill's slow rescue heartbeat + the always-on JOH-41 stuck sweep
+// are the backstops (F6).
+//
+// Each tick (post tool-drain, under the per-instance lock), for every node now in a
+// driver-actionable state not yet nudged about THIS activation, it writes a
+// per-(node,activation) marker and sends ONE batched nudge to each live agent-owner
+// (a durable inbox row + a tmux ping, via the same JOH-40 machinery). Marker-first
+// (like the handoff/escalation passes): a crash between marker and message costs a
+// recoverable missed nudge (the heartbeat catches up) — never a duplicate that spams
+// every live owner. A change sitting across ticks nudges once; a loop re-entry
+// rotates the marker and nudges fresh.
+func nudgeDriverOnFrontierChange(instanceID int64) {
+	unlock := lockWorkflowInstance(instanceID)
+	defer unlock()
+
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil || inst.Status != db.WorkflowStatusRunning {
+		return
+	}
+	if !engineMayAutoRun(inst, nil) {
+		return
+	}
+	// No live driver to wake → emit nothing AND record nothing, so a driver anchored
+	// later still reads the then-current frontier as new. Combined with the @conv
+	// marker keying, a driver handed over / reincarnated under a NEW conv is re-nudged
+	// by the event path for any still-pending frontier; the slow heartbeat is the
+	// backstop for a dropped nudge, and the JOH-41 sweep escalates a dead driver to
+	// the human (F6).
+	targets := resolveDriverTargets(inst)
+	if len(targets) == 0 {
+		return
+	}
+	nodes, err := db.ListWorkflowNodes(instanceID)
+	if err != nil {
+		slog.Warn("workflow engine: list nodes failed (driver-nudge pass)", "instance", instanceID, "error", err)
+		return
+	}
+	fired := firedDriverNudgeMarkers(instanceID)
+	if fired == nil {
+		return // read error already logged; skip to avoid re-nudging
+	}
+
+	// Per recipient: the changes new FOR THAT conv (markers are keyed @conv, so each
+	// live owner is tracked independently — a handed-over / reincarnated driver under
+	// a new conv re-nudges for a still-pending frontier rather than being suppressed
+	// by its predecessor's marker). Marker-first — record each before sending; on a
+	// marker-write failure, drop that change from this nudge so it retries next tick
+	// (favouring a recoverable miss over a duplicate, like deliverReadyHandoffs).
+	for _, toConv := range targets {
+		var changed []*db.WorkflowNode
+		for _, n := range nodes {
+			if !driverActionableStatus(n.Status) {
+				continue
+			}
+			marker := driverNudgeMarker(n.NodeID, n.Status, toConv, n.UpdatedAt.UnixNano(), n.Visits)
+			if fired[marker] {
+				continue
+			}
+			if _, err := db.AppendWorkflowEvent(&db.WorkflowEvent{
+				InstanceID: instanceID, NodeID: n.NodeID, Kind: db.WorkflowEventDriverNudge, Message: marker,
+			}); err != nil {
+				slog.Warn("workflow engine: driver-nudge marker write failed; skipping this change to avoid re-nudge",
+					"instance", instanceID, "node", n.NodeID, "conv", toConv, "error", err)
+				continue
+			}
+			changed = append(changed, n)
+		}
+		if len(changed) == 0 {
+			continue // this recipient is already current on the frontier
+		}
+		subject, body := buildDriverNudgeMessage(inst, changed)
+		msgID, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:      inst.GroupID,
+			FromConv:     workflowHandoffSender,
+			ToConv:       toConv,
+			Subject:      subject,
+			Body:         body,
+			ToRecipients: []string{toConv},
+		})
+		if err != nil {
+			slog.Warn("workflow engine: driver nudge insert failed",
+				"instance", instanceID, "conv", toConv, "error", err)
+			continue
+		}
+		nudgeIfAlive(msgID, toConv)
+		slog.Info("workflow engine: nudged driver on frontier change",
+			"instance", instanceID, "conv", toConv, "changes", len(changed), "msg", msgID)
+	}
+}
+
+// buildDriverNudgeMessage assembles the subject + body of a frontier-change nudge to
+// the live agent-owner(s). Self-describing (JOH-15 B2b refinement) so a stray
+// non-driver owner — possible under the live-agent-owner targeting — immediately
+// knows it's ignorable: a non-driver has no driving loop, so the worst case is one
+// ignored inbox line. Plain prose pointing the driver at `status` to reflect; it does
+// NOT inline outputs (the driver reads the full graph itself — it owns routing).
+func buildDriverNudgeMessage(inst *db.WorkflowInstance, changed []*db.WorkflowNode) (subject, body string) {
+	id := strconv.FormatInt(inst.ID, 10)
+	subject = fmt.Sprintf("[workflow %s] frontier changed", id)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Workflow #%s", id)
+	if name := strings.TrimSpace(inst.TemplateName); name != "" {
+		fmt.Fprintf(&b, " (%s)", name)
+	}
+	b.WriteString(" frontier changed.\n\n")
+	b.WriteString("If you are DRIVING this instance (the workflow-engine skill), reflect and act on " +
+		"the change below; otherwise ignore this message.\n\nNow actionable:\n")
+	for _, n := range changed {
+		label := n.Label
+		if label == "" {
+			label = n.NodeID
+		}
+		fmt.Fprintf(&b, "  - %s (%s): %s\n", n.NodeID, label, n.Status)
+	}
+	fmt.Fprintf(&b, "\nReflect: tclaude workflow status %s --json", id)
 	return subject, b.String()
 }
 

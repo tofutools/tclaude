@@ -47,6 +47,7 @@ const (
 	WorkflowEventNodeRetry          = "node_retry"          // engine re-armed a node for an in-place retry after its verify failed (JOH-39)
 	WorkflowEventNodeReentry        = "node_reentry"        // engine re-armed a node + its loop body via a back-edge loop-back (JOH-39)
 	WorkflowEventNodeEscalation     = "node_escalation"     // stuck-node sweep fired an escalation rung (warn/escalate/terminal); Message is the at-most-once marker (JOH-41)
+	WorkflowEventDriverNudge        = "driver_nudge"        // agent-mode: nudged the live driver(s) about a frontier change; Message is the at-most-once marker (JOH-15 B2b)
 )
 
 // WorkflowInstance is a row in workflow_instances — one instantiation of
