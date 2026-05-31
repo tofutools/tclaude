@@ -73,6 +73,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentReinstate(w, r, convID)
 	case "dir":
 		handleAgentDir(w, r, convID)
+	case "workflow-run":
+		handleAgentWorkflowRun(w, r, convID)
 	default:
 		writeError(w, http.StatusNotFound, "not_found",
 			"unknown verb "+verb+" for /v1/agent/{selector}/...")

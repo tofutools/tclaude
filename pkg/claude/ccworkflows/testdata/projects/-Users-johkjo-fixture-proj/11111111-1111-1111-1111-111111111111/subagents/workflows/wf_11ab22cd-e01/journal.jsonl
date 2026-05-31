@@ -1,0 +1,3 @@
+{"type":"started","key":"v2:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa7777bbbb8888","agentId":"a1110000aaaa1111b"}
+{"type":"started","key":"v2:bbbb1111cccc2222dddd3333eeee4444ffff5555aaaa6666bbbb7777cccc8888","agentId":"a2220000bbbb2222c"}
+{"type":"result","key":"v2:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa7777bbbb8888","agentId":"a1110000aaaa1111b","result":"Built component A"}

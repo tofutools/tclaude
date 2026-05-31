@@ -1,0 +1,26 @@
+{
+ "runId": "wf_fa11ed00-f01",
+ "timestamp": "2026-05-31T18:10:00.000Z",
+ "taskId": "synthfail1",
+ "script": "export const meta = { name: 'failing-probe', description: 'synthetic failed run', phases: [{ title: 'Run', detail: 'one agent fails' }] }\nphase('Run')\nawait agent('do thing', { label: 'run:thing', phase: 'Run' })",
+ "scriptPath": "/synthetic/workflows/scripts/failing-probe-wf_fa11ed00-f01.js",
+ "result": null,
+ "agentCount": 2,
+ "logs": [],
+ "durationMs": 4210,
+ "summary": "Synthetic failed-run fixture (NOT captured live — hand-authored to exercise failure-state parsing; field shape mirrors a real completed run with state:'failed' / status:'failed').",
+ "workflowName": "failing-probe",
+ "status": "failed",
+ "startTime": 1780250000000,
+ "phases": [
+  { "title": "Run", "detail": "one agent fails" }
+ ],
+ "defaultModel": "claude-opus-4-8",
+ "workflowProgress": [
+  { "type": "workflow_phase", "index": 1, "title": "Run" },
+  { "type": "workflow_agent", "index": 1, "label": "run:ok", "phaseIndex": 1, "phaseTitle": "Run", "agentId": "a0fa11ed0a0a0a0a0", "model": "claude-opus-4-8", "state": "done", "startedAt": 1780250000010, "queuedAt": 1780250000005, "attempt": 1, "promptPreview": "do thing one", "lastProgressAt": 1780250001000, "tokens": 1200, "toolCalls": 1, "durationMs": 990, "resultPreview": "ok" },
+  { "type": "workflow_agent", "index": 2, "label": "run:thing", "phaseIndex": 1, "phaseTitle": "Run", "agentId": "a0fa11ed0b0b0b0b0", "model": "claude-opus-4-8", "state": "failed", "startedAt": 1780250000010, "queuedAt": 1780250000005, "attempt": 2, "promptPreview": "do thing", "lastProgressAt": 1780250004100, "tokens": 800, "toolCalls": 0, "durationMs": 4090, "resultPreview": "Error: agent failed after 2 attempts" }
+ ],
+ "totalTokens": 2000,
+ "totalToolCalls": 1
+}

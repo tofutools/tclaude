@@ -1,0 +1,6 @@
+{"type":"started","key":"v2:098e5d0c6f48eddaab0f4ab86abdaef7ed3538786393c3cb4bca1e3e13fb69fa","agentId":"a401e61fc4bea3d6c"}
+{"type":"result","key":"v2:098e5d0c6f48eddaab0f4ab86abdaef7ed3538786393c3cb4bca1e3e13fb69fa","agentId":"a401e61fc4bea3d6c","result":"alpha"}
+{"type":"started","key":"v2:dc073bda897ecb561fb27170d032b15de1ffb8f478b99b5a088a231edc2ff4ca","agentId":"ad96fa3991bda873e"}
+{"type":"started","key":"v2:706fa5ba00a41ba2c05de74e6d99085fbea78c1d58b8be463d4ce8297339240a","agentId":"ad43fec09ccdc3eb7"}
+{"type":"result","key":"v2:dc073bda897ecb561fb27170d032b15de1ffb8f478b99b5a088a231edc2ff4ca","agentId":"ad96fa3991bda873e","result":"bravo"}
+{"type":"result","key":"v2:706fa5ba00a41ba2c05de74e6d99085fbea78c1d58b8be463d4ce8297339240a","agentId":"ad43fec09ccdc3eb7","result":"charlie"}

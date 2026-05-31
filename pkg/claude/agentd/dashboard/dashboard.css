@@ -1829,3 +1829,68 @@ body.slop #agent-spawn-submit.slop-pull-active {
   body.slop #agent-spawn-submit.slop-pull-active { animation: none; }
   .slop-trail-coin { display: none; animation: none; }
 }
+
+/* ── Workflows tab ──────────────────────────────────────────────── */
+.wf-section-title { margin: 16px 0 6px; font-weight: 600; color: #adbac7; }
+.wf-section-title:first-child { margin-top: 4px; }
+.wf-count { color: #7d8590; font-weight: 400; font-size: 12px; margin-left: 4px; }
+.wf-empty { color: #7d8590; padding: 8px 0; font-style: italic; }
+.wf-table { width: 100%; border-collapse: collapse; }
+.wf-table th { text-align: left; padding: 6px 12px; border-bottom: 1px solid #2a3340; color: #7d8590; font-weight: 500; font-size: 12px; }
+.wf-table td { padding: 6px 12px; border-bottom: 1px solid #21262d; vertical-align: top; }
+.wf-table tbody tr[data-wf-run] { cursor: pointer; }
+.wf-table tbody tr[data-wf-run]:hover { background: #161b22; }
+.wf-row-selected { background: #1c2433 !important; }
+.wf-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.wf-dim { color: #7d8590; }
+
+/* Status / state pills — shared shape, colour by class. */
+.wf-pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; line-height: 1.6; }
+.wf-status-completed, .wf-state-done { background: #16331f; color: #3fb950; }
+.wf-status-running, .wf-state-running { background: #16283f; color: #58a6ff; }
+.wf-status-failed, .wf-state-failed { background: #3a1a1a; color: #f85149; }
+.wf-state-queued { background: #332a16; color: #d29922; }
+.wf-status-unknown, .wf-pill:not([class*="wf-status-"]):not([class*="wf-state-"]) { background: #21262d; color: #7d8590; }
+
+/* Run drill-down. */
+.wf-detail-head { display: flex; align-items: center; gap: 8px; margin: 18px 0 4px; padding-top: 12px; border-top: 1px solid #2a3340; }
+.wf-detail-id { font-size: 13px; }
+.wf-detail-name { color: #adbac7; }
+.wf-close { margin-left: auto; background: none; border: 1px solid #2a3340; color: #7d8590; border-radius: 6px; cursor: pointer; padding: 2px 8px; }
+.wf-close:hover { color: #f85149; border-color: #f85149; }
+.wf-detail-meta { color: #7d8590; font-size: 12px; margin-bottom: 6px; }
+.wf-detail-summary { color: #adbac7; margin-bottom: 8px; }
+.wf-note { color: #d29922; font-size: 12px; margin: 4px 0 8px; }
+.wf-tree { margin: 8px 0; }
+.wf-phase { margin: 0 0 10px; border-left: 2px solid #2a3340; padding-left: 12px; }
+.wf-phase-head { margin-bottom: 4px; }
+.wf-phase-title { font-weight: 600; color: #adbac7; }
+.wf-agent { padding: 2px 0 2px 12px; font-size: 13px; }
+.wf-agent-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #c9d1d9; }
+.wf-approx { color: #d29922; font-weight: 700; }
+.wf-script { margin: 10px 0; }
+.wf-script summary { cursor: pointer; color: #58a6ff; }
+.wf-script pre { background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; max-height: 420px; }
+
+/* Mermaid phase-sequence (secondary static view; the tree above is primary). */
+.wf-mermaid { margin: 10px 0; }
+.wf-mermaid summary { cursor: pointer; color: #58a6ff; }
+.wf-mermaid-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 6px; }
+.wf-mermaid-tools button.tool {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.wf-mermaid-tools button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+.wf-mermaid-link { color: #58a6ff; text-decoration: none; font-size: 12px; }
+.wf-mermaid-link:hover { text-decoration: underline; }
+.wf-mermaid-hint { font-size: 12px; }
+.wf-mermaid-src { background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; max-height: 320px; }
+/* Native flow render: phase blocks stacked in sequence with agent chips. */
+.wf-flow { margin: 8px 0; }
+.wf-flow-phase { border: 1px solid #2a3340; border-radius: 6px; padding: 8px 10px; background: #0d1117; }
+.wf-flow-phase-head { margin-bottom: 4px; }
+.wf-flow-phase-title { font-weight: 600; color: #adbac7; }
+.wf-flow-agents { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.wf-flow-agent { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; padding: 2px 8px; border-radius: 6px; border: 1px solid #2a3340; }
+.wf-flow-arrow { text-align: center; color: #7d8590; line-height: 1.2; margin: 2px 0; }
