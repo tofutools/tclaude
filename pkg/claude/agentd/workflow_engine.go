@@ -311,11 +311,50 @@ func processWorkflowInstance(ctx context.Context, instanceID int64) {
 	// predecessor output to each bound successor's inbox (JOH-40); (5) sweep stuck
 	// nodes — warn/escalate/notify, and fail a no-actor node to free its cap slot
 	// (JOH-41).
+	//
+	// Engine mode (JOH-15 B1) splits these into three bands:
+	//   - (1) mechanical tool/program execution ALWAYS runs — per F1(i) the
+	//     trusted daemon owns mechanical execution even when an agent drives the
+	//     judgment, so the agent never shells arbitrary template commands.
+	//   - (2)-(4) the JUDGMENT passes (auto-spawn workers, auto-spawn judges,
+	//     auto-handoff) run ONLY in system mode. In an engine:agent instance a
+	//     group-owner agent-driver makes those calls via /v1, so the daemon stays
+	//     out of them. Crucially the handoff is OFF too: in agent mode the driver
+	//     seeds each worker's context at spawn (it owns data routing), and the
+	//     worker self-orients via `workflow where` (interpolated inputs) +
+	//     `workflow status` (peer outputs) — Slice A's self-view. A daemon handoff
+	//     would be a redundant third channel that muddies the agent-as-engine seam.
+	//     (B2's driver skill MUST honour this seeding contract.)
+	//   - (5) the safety substrate (persistence + the JOH-41 stuck/escalation
+	//     sweep) ALWAYS runs — a dead/slow agent-driver must still escalate to the
+	//     human (F6), and settles persist regardless of who drove them.
 	drainRunnableToolNodes(ctx, instanceID)
-	spawnReadyAINodes(instanceID)
-	spawnReadyVerifyJudges(instanceID)
-	deliverReadyHandoffs(instanceID)
+	if engineAutoDrivesJudgment(instanceID) {
+		spawnReadyAINodes(instanceID)
+		spawnReadyVerifyJudges(instanceID)
+		deliverReadyHandoffs(instanceID)
+	}
 	sweepStuckNodes(instanceID)
+}
+
+// engineAutoDrivesJudgment reports whether the DAEMON should auto-drive an
+// instance's judgment passes (auto-spawn workers/judges + auto-handoff). True for
+// the default system engine; FALSE for an engine:agent instance (JOH-15 B1),
+// where a group-owner agent-driver supplies those decisions via /v1 and the
+// daemon must not auto-spawn.
+//
+// engine_mode is snapshotted onto the instance at create and immutable
+// thereafter, so a lock-free read is safe. A read error / missing row degrades to
+// the system default (true): the judgment passes each re-validate under the
+// per-instance lock and no-op on a vanished or non-running instance, so defaulting
+// true can never spawn into a gone instance — it only preserves existing system
+// behaviour on a transient read blip.
+func engineAutoDrivesJudgment(instanceID int64) bool {
+	inst, err := db.GetWorkflowInstance(instanceID)
+	if err != nil || inst == nil {
+		return true
+	}
+	return inst.EngineMode != string(workflow.EngineAgent)
 }
 
 // drainRunnableToolNodes is the synchronous tool/program pass: each ready

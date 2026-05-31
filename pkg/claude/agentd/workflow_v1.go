@@ -155,7 +155,22 @@ func handleV1WorkflowsByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_status": db.WorkflowStatusCancelled})
 	case parts[1] == "nodes" && len(parts) == 3 && parts[2] != "":
-		handleV1WorkflowNodePatch(w, r, inst, caller, isHuman, parts[2])
+		// parts[2] is "{nodeId}" (PATCH) or "{nodeId}/start" (the driver's
+		// spawn-into-node verb). Node ids are mermaid ids (no slashes), so the
+		// first "/" cleanly separates the node from its sub-action.
+		nodeID, sub, _ := strings.Cut(parts[2], "/")
+		if nodeID == "" {
+			writeError(w, http.StatusNotFound, "not_found", "expected /v1/workflows/{id}/nodes/{nodeId}")
+			return
+		}
+		switch sub {
+		case "":
+			handleV1WorkflowNodePatch(w, r, inst, caller, isHuman, nodeID)
+		case "start":
+			handleV1WorkflowNodeStart(w, r, inst, caller, isHuman, nodeID)
+		default:
+			writeError(w, http.StatusNotFound, "not_found", "unknown node subpath "+strconv.Quote(sub))
+		}
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "unknown path under /v1/workflows/"+strconv.FormatInt(id, 10))
 	}
@@ -210,6 +225,37 @@ func handleV1WorkflowNodePatch(w http.ResponseWriter, r *http.Request, inst *db.
 		return
 	}
 	res, fail := applyWorkflowNodePatch(inst.ID, nodeID, body)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleV1WorkflowNodeStart is the agent-engine driver's spawn-worker-into-node
+// verb (JOH-15 B1): POST /v1/workflows/{id}/nodes/{nodeId}/start spawns a fresh
+// agent into the instance's bound group for a ready ai node, reusing the same
+// spawnWorkerIntoNodeCore the dashboard start path uses (so guards, state, and
+// the spawned-into-group result are byte-identical across the two surfaces).
+//
+// Authorised for the instance's group-OWNER (a human bypasses): the driver of an
+// engine:agent instance is a group-owner, which ALREADY carries graph-level drive
+// authority (callerOwnsInstanceGroup — the same authority that settles any node
+// via the PATCH gate, cancels, and deletes), so this adds NO new authz surface —
+// only a new verb behind the existing owner gate (F2). A bare node assignee is
+// deliberately NOT enough: spawning a worker into a node is a graph-drive action,
+// not settling one's own assigned node.
+func handleV1WorkflowNodeStart(w http.ResponseWriter, r *http.Request, inst *db.WorkflowInstance, caller string, isHuman bool, nodeID string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only on /v1/workflows/{id}/nodes/{nodeId}/start")
+		return
+	}
+	if !isHuman && !callerOwnsInstanceGroup(caller, inst) {
+		writeError(w, http.StatusForbidden, "forbidden",
+			"only the human or the bound-group owner may spawn a worker into node "+nodeID)
+		return
+	}
+	res, fail := spawnWorkerIntoNodeCore(inst.ID, nodeID)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return

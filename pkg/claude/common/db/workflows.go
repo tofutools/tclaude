@@ -69,6 +69,7 @@ type WorkflowInstance struct {
 	Params       string // JSON
 	Vars         string // JSON captured vars
 	GroupID      int64  // 0 = no linked group
+	EngineMode   string // who drives the graph: "system" (default) | "agent" (JOH-15 B); snapshotted at create
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	CompletedAt  time.Time // zero value → not yet terminal
@@ -137,10 +138,11 @@ func InsertWorkflowInstance(w *WorkflowInstance) (int64, error) {
 	}
 	res, err := d.Exec(`INSERT INTO workflow_instances
 		(template_ref, template_name, title, status, mermaid, params, vars,
-		 group_id, created_at, updated_at, completed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
+		 group_id, engine_mode, created_at, updated_at, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
 		w.TemplateRef, w.TemplateName, w.Title, status, w.Mermaid,
-		jsonOrEmptyObject(w.Params), jsonOrEmptyObject(w.Vars), w.GroupID, now, now)
+		jsonOrEmptyObject(w.Params), jsonOrEmptyObject(w.Vars), w.GroupID,
+		engineModeOrDefault(w.EngineMode), now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -154,7 +156,7 @@ func GetWorkflowInstance(id int64) (*WorkflowInstance, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`SELECT id, template_ref, template_name, title, status,
-		mermaid, params, vars, group_id, created_at, updated_at, completed_at
+		mermaid, params, vars, group_id, engine_mode, created_at, updated_at, completed_at
 		FROM workflow_instances WHERE id = ?`, id)
 	w, err := scanWorkflowInstance(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -170,7 +172,7 @@ func ListWorkflowInstances() ([]*WorkflowInstance, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`SELECT id, template_ref, template_name, title, status,
-		mermaid, params, vars, group_id, created_at, updated_at, completed_at
+		mermaid, params, vars, group_id, engine_mode, created_at, updated_at, completed_at
 		FROM workflow_instances ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -588,6 +590,17 @@ func nodeStatusOrDefault(s string) string {
 	return s
 }
 
+// engineModeOrDefault defaults a blank engine mode to "system" so the column
+// never holds an empty value (mirroring the migration's DEFAULT 'system'). The
+// DB layer is deliberately ignorant of the valid set — the workflow loader
+// validates system|agent; here we only guard against a blank write.
+func engineModeOrDefault(s string) string {
+	if s == "" {
+		return "system"
+	}
+	return s
+}
+
 // timeOrEmpty formats a timestamp as RFC3339 UTC, or "" for the zero
 // value (the "unset" sentinel the started_at/finished_at columns use).
 func timeOrEmpty(t time.Time) string {
@@ -601,7 +614,7 @@ func scanWorkflowInstance(s rowScanner) (*WorkflowInstance, error) {
 	var w WorkflowInstance
 	var created, updated, completed string
 	err := s.Scan(&w.ID, &w.TemplateRef, &w.TemplateName, &w.Title, &w.Status,
-		&w.Mermaid, &w.Params, &w.Vars, &w.GroupID, &created, &updated, &completed)
+		&w.Mermaid, &w.Params, &w.Vars, &w.GroupID, &w.EngineMode, &created, &updated, &completed)
 	if err != nil {
 		return nil, err
 	}

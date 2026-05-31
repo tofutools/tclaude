@@ -246,3 +246,35 @@ func TestLoad_SLANonPositiveRejected(t *testing.T) {
 	})
 	assertAnyContains(t, problems, "sla")
 }
+
+// JOH-15 B1: the workflow.yaml `engine:` field is system|agent, default system.
+// An omitted value defaults to system; an explicit `agent` loads as agent; any
+// other value is a load problem (so a typo surfaces up front instead of silently
+// driving the system engine).
+func TestLoad_EngineDefaultsToSystem(t *testing.T) {
+	fsys := tmplFS("name: x\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: tool\n  run: echo a\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	tmpl, err := LoadFS(fsys, "x", SourceUser, "")
+	require.NoError(t, err, "an omitted engine must load")
+	assert.Equal(t, EngineSystem, tmpl.Engine, "engine defaults to system when omitted")
+}
+
+func TestLoad_EngineAgentLoads(t *testing.T) {
+	fsys := tmplFS("name: x\nengine: agent\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: ai\n  agent: worker\n  prompt: do it\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	tmpl, err := LoadFS(fsys, "x", SourceUser, "")
+	require.NoError(t, err, "engine: agent must load")
+	assert.Equal(t, EngineAgent, tmpl.Engine, "engine: agent is parsed")
+}
+
+func TestLoad_EngineUnknownRejected(t *testing.T) {
+	problems := loadProblems(t, "name: x\nengine: robot\n", "flowchart TD\n a --> b\n", map[string]string{
+		"a": "executor:\n  kind: tool\n  run: echo a\n",
+		"b": "executor:\n  kind: tool\n  run: echo b\n",
+	})
+	assertAnyContains(t, problems, "engine")
+}
