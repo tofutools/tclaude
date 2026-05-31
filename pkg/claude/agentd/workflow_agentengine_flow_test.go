@@ -452,6 +452,213 @@ func TestWorkflowV1_DriveRefusesSystemMode(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "engine:agent", "the refusal explains drive is for engine:agent instances")
 }
 
+// Scenario (JOH-15 B2b — the event-driven driver wake): in agent mode the daemon
+// nudges the live driver on a frontier change (taking the slot of the suppressed
+// handoff pass), and does so IDEMPOTENTLY — once per distinct change, not every tick.
+// A node sitting ready across ticks nudges once; a real advance (settle → a new node
+// readies) produces exactly one more nudge.
+func TestWorkflowEngine_AgentModeNudgesDriverOnFrontierChange(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	f.HaveGroup("squad")
+
+	root := t.TempDir()
+	// Two ai nodes so settling the first READIES the second (instance stays running —
+	// a clean, non-terminal frontier change) before the trailing tool node.
+	writeToolTemplate(t, root, "nudgegraph",
+		"name: nudgegraph\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> review\n review --> done\n",
+		map[string]string{
+			"work":   "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"review": "executor:\n  kind: ai\n  agent: reviewer\n  prompt: review it\n",
+			"done":   "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:nudgegraph", "squad")
+	idStr := strconv.FormatInt(id, 10)
+
+	// Anchor a LIVE driver (spawns a live owner-agent into the bound group — the
+	// resolveDriverTargets heuristic resolves to exactly this driver).
+	driveRec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/workflows/"+idStr+"/drive", nil)))
+	require.Equal(t, http.StatusOK, driveRec.Code, "anchor driver; body=%s", driveRec.Body.String())
+	var drv struct {
+		DriverConv string `json:"driver_conv"`
+	}
+	require.NoError(t, json.Unmarshal(driveRec.Body.Bytes(), &drv))
+	require.NotEmpty(t, drv.DriverConv)
+
+	countFrontierNudges := func() int {
+		msgs, err := db.ListAgentMessagesForConv(drv.DriverConv, 50)
+		require.NoError(t, err)
+		n := 0
+		for _, m := range msgs {
+			if strings.Contains(m.Subject, "frontier changed") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Tick 1: the entry node `work` is ready → the driver is nudged once.
+	agentd.RunWorkflowEngineTickForTest()
+	assert.Equal(t, 1, countFrontierNudges(), "driver nudged once when the entry node became ready")
+
+	// Ticks 2–3: frontier unchanged → NO additional nudge (idempotent, not per-tick).
+	agentd.RunWorkflowEngineTickForTest()
+	agentd.RunWorkflowEngineTickForTest()
+	assert.Equal(t, 1, countFrontierNudges(), "no re-nudge while the frontier is unchanged")
+
+	// Driver advances the frontier: spawn a worker into `work` (→ running, not an
+	// actionable state, so no nudge), then settle it done → `review` becomes ready.
+	startRec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/workflows/"+idStr+"/nodes/work/start", nil), drv.DriverConv))
+	require.Equal(t, http.StatusOK, startRec.Code, "driver spawns into work; body=%s", startRec.Body.String())
+	patchRec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/workflows/"+idStr+"/nodes/work", map[string]any{"status": "done"}), drv.DriverConv))
+	require.Equal(t, http.StatusOK, patchRec.Code, "driver settles work done; body=%s", patchRec.Body.String())
+
+	// Tick: `review` is now ready (and `work` is done) — a NEW frontier → exactly one
+	// more nudge (both changes batch into a single wake). Instance stays running.
+	agentd.RunWorkflowEngineTickForTest()
+	assert.Equal(t, 2, countFrontierNudges(), "a real frontier change produces exactly one more nudge")
+	inst, _ := db.GetWorkflowInstance(id)
+	assert.Equal(t, "running", inst.Status, "instance still running (review is ready, not terminal)")
+}
+
+// Scenario (JOH-15 B2b — the daemon-side rescue half of the hybrid wake): with NO
+// live driver, the nudge pass emits nothing AND records no marker, so the frontier
+// is NOT permanently "consumed". When a driver is later anchored (or returns from
+// reincarnation), the still-current frontier reads as new and nudges it. This is the
+// daemon-side complement to the skill's slow heartbeat — together they ensure a
+// momentarily-absent driver never misses the frontier. (The driver's own slow
+// heartbeat self-poll is skill-level and is covered by the manual verify recipe.)
+func TestWorkflowEngine_AgentModeFrontierSurvivesAbsentDriver(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	g := f.HaveGroup("squad")
+	// An owner with no running session — present but NOT live, so it's not a nudge
+	// target (the human owner, or a driver that has died, looks like this).
+	const dead = "dead-aaaa-bbbb-cccc-0000"
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, dead, "human"), "AddAgentGroupOwner")
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "absentdrv",
+		"name: absentdrv\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:absentdrv", "squad")
+	idStr := strconv.FormatInt(id, 10)
+
+	// Ticks with no LIVE driver: no nudge fires, and crucially NO marker is burned —
+	// so the frontier isn't silently consumed.
+	for range 3 {
+		agentd.RunWorkflowEngineTickForTest()
+	}
+	events, err := db.ListWorkflowEvents(id)
+	require.NoError(t, err)
+	for _, e := range events {
+		assert.NotEqual(t, db.WorkflowEventDriverNudge, e.Kind, "no driver-nudge marker written without a live driver")
+	}
+
+	// Anchor a live driver now. The still-ready entry frontier must nudge it — proof
+	// the earlier absence didn't permanently consume the change.
+	driveRec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/workflows/"+idStr+"/drive", nil)))
+	require.Equal(t, http.StatusOK, driveRec.Code, "anchor driver; body=%s", driveRec.Body.String())
+	var drv struct {
+		DriverConv string `json:"driver_conv"`
+	}
+	require.NoError(t, json.Unmarshal(driveRec.Body.Bytes(), &drv))
+
+	agentd.RunWorkflowEngineTickForTest()
+	msgs, err := db.ListAgentMessagesForConv(drv.DriverConv, 50)
+	require.NoError(t, err)
+	var nudged bool
+	for _, m := range msgs {
+		if strings.Contains(m.Subject, "frontier changed") {
+			nudged = true
+		}
+	}
+	assert.True(t, nudged, "a newly-anchored driver is nudged about the still-current frontier")
+}
+
+// Scenario (JOH-15 B2b — per-recipient nudge markers): the idempotency marker is
+// keyed per recipient conv (like handoffMarker's @conv), so a driver that joins —
+// or is handed over / reincarnated under a NEW conv — AFTER an earlier driver was
+// already nudged still gets nudged for the same still-pending frontier, while the
+// earlier one is NOT re-nudged. This is the daemon-side guarantee that a driver
+// handover doesn't drop the frontier (the reincarnation-robustness the marker keying
+// buys).
+func TestWorkflowEngine_AgentModeNudgesNewlyJoinedDriver(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	t.Cleanup(agentd.SetWorkflowEngineEnabledForTest(true))
+
+	f.HaveGroup("squad")
+
+	root := t.TempDir()
+	writeToolTemplate(t, root, "joindrv",
+		"name: joindrv\nengine: agent\nentry: work\n",
+		"flowchart TD\n work --> done\n",
+		map[string]string{
+			"work": "executor:\n  kind: ai\n  agent: worker\n  prompt: do the work\n",
+			"done": "executor:\n  kind: tool\n  run: echo shipped\n",
+		})
+	t.Cleanup(agentd.SetWorkflowProjectDirsForTest(root))
+
+	id := v1Create(t, f, "project:joindrv", "squad")
+	idStr := strconv.FormatInt(id, 10)
+	drivePath := "/v1/workflows/" + idStr + "/drive"
+
+	frontierNudges := func(conv string) int {
+		msgs, err := db.ListAgentMessagesForConv(conv, 50)
+		require.NoError(t, err)
+		n := 0
+		for _, m := range msgs {
+			if strings.Contains(m.Subject, "frontier changed") {
+				n++
+			}
+		}
+		return n
+	}
+	anchor := func() string {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, drivePath, nil)))
+		require.Equal(t, http.StatusOK, rec.Code, "anchor driver; body=%s", rec.Body.String())
+		var r struct {
+			DriverConv string `json:"driver_conv"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &r))
+		require.NotEmpty(t, r.DriverConv)
+		return r.DriverConv
+	}
+
+	// Driver A anchored; tick → A nudged about the ready entry node.
+	driverA := anchor()
+	agentd.RunWorkflowEngineTickForTest()
+	require.Equal(t, 1, frontierNudges(driverA), "A nudged about the ready entry node")
+
+	// Driver B joins later (a handover/reincarnation stand-in: a NEW live owner conv).
+	driverB := anchor()
+	require.NotEqual(t, driverA, driverB)
+
+	// Tick: the SAME entry node is still ready. Per-conv markers → B is nudged for it
+	// (its @conv marker is fresh), while A is NOT re-nudged (already current).
+	agentd.RunWorkflowEngineTickForTest()
+	assert.Equal(t, 1, frontierNudges(driverB), "the newly-joined driver is nudged about the still-pending frontier")
+	assert.Equal(t, 1, frontierNudges(driverA), "the earlier driver is not re-nudged for the unchanged frontier")
+}
+
 // blockingSpawner wraps a base Spawner and stalls SpawnNew until released, letting a
 // test hold a spawn "in flight" and observe what runs concurrently. SpawnResume
 // passes straight through. The first SpawnNew closes `entered` (signalling the spawn

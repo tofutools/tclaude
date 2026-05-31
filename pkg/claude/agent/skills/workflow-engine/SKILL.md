@@ -129,23 +129,44 @@ If a worker already settled its own node (a `workflow-node` worker does this),
 you don't re-settle it — you just observe it `done` in `status` and move on to
 the newly-ready nodes.
 
-### 4. Waking up (self-paced for now)
+### 4. Waking up (hybrid: event-driven + slow rescue poll)
 
-You only act when something changes (a worker finishes, a tool node completes).
-How you learn of a change is a **pluggable wake mechanism**; the v1 default is
-**self-paced**:
+You only act when something changes. The wake model is **hybrid** — an
+event-driven nudge is the primary path, with a slow poll as a rescue backstop:
 
-- **Watch your inbox** — read messages from workers ("done with node X") and
-  the human. A `[system: new agent message #…]` line means fetch it.
-- **Poll `status`** on a modest cadence when you're waiting on a node — schedule
-  a periodic self-check with `tclaude agent cron add` (the `agent-schedule`
-  skill) or run this drive check on a `/loop`, e.g. every ~30–60s. Re-read
-  `status`, act on any newly-`done`/`ready` node, then wait again.
+- **PRIMARY — the daemon nudges you on a frontier change.** In agent mode the
+  daemon watches the instance and, whenever the frontier changes — a node becomes
+  `ready`, parks in `awaiting_verify`, or settles `done`/`failed` (incl. a tool
+  node it just ran) — it drops a `[workflow N] frontier changed` message in your
+  inbox and pings you. So your steady-state loop is: **wake on the nudge → read
+  `status --json` → act → go idle.** Near-zero idle cost, immediate latency. Each
+  distinct change nudges once (it's de-duplicated daemon-side), so you won't get
+  spammed for a node sitting in the same state.
+  - One gap to know: the nudge fires only while the instance is *running*, so the
+    **final** settle that flips the whole instance to `completed`/`failed` is NOT
+    event-nudged — you learn of completion on your next `status` read (the rescue
+    poll below). So treat a quiet inbox plus a poll showing a terminal status as
+    your wrap-up signal; don't wait for a "done" nudge that won't come.
+  - Heads-up on targeting: the nudge goes to the **live agent-owner(s)** of the
+    instance's bound group (that's you — your drive authority is group-ownership).
+    If the group happens to have another live agent-owner, they get the same
+    message; it's self-describing ("if you are driving this instance… otherwise
+    ignore"), so a non-driver just ignores one inbox line. (Precise single-target
+    nudging is a deferred refinement — see the note at the end.)
+- **RESCUE — a slow self-poll**, in case a nudge is ever missed (a dropped ping, a
+  race, a worker that died without emitting a settle). Schedule a *slow* periodic
+  self-check — `tclaude agent cron add` (the `agent-schedule` skill) or a `/loop`
+  — on the order of **every few minutes (~2–5 min), NOT seconds.** The event path
+  owns the fast cadence; this is only a safety net that re-reads `status` and
+  catches up on anything the nudge missed. A tight poll here just burns tokens —
+  keep it slow on purpose.
+- **Also watch your inbox** for direct messages from workers ("done with node X")
+  and the human, alongside the frontier nudges.
 
-Don't busy-spin: a tight poll just burns tokens. Pace yourself to how fast the
-nodes actually complete. (A future enhancement will have the daemon nudge you
-the instant the frontier changes, so you can stop polling — but until then,
-self-pace.)
+If you (the driver) are down when a change happens — mid-reincarnation, say — the
+nudge finds no live target, and the slow rescue poll catches up when you're back;
+if you stay dead, the daemon's stuck-node sweep escalates the idle instance to the
+human. So you don't have to guarantee you're always awake — the backstops do.
 
 ## Reaching a terminal state
 
@@ -169,6 +190,16 @@ When `status` shows the instance `completed` (or `failed` / `cancelled`):
 - You can be **reincarnated** safely: you hold no authoritative state, so a
   fresh successor re-reads `status` and continues. (See the `agent-lifecycle`
   skill for managing your own context.)
+
+> **Note — deferred precise targeting (`driver_conv`).** v1 has no stored "this
+> conv is THE driver" pointer, so both the frontier nudge (above) and the
+> existing-driver warning use the **live-agent-owner** heuristic. That's
+> deliberate and schema-free: it resolves to exactly the driver in the normal
+> one-driver case, and the rescue heartbeat + stuck-node escalation already give
+> the robustness. A future `driver_conv` designation would add *precision* —
+> exact single-target nudges, a hard double-anchor guard, and precise dead-driver
+> detection — as one cluster, if a real multi-owner-noise need shows up. Until
+> then, just honour the one-driver-per-instance contract.
 
 ## End-to-end walkthrough (also the manual-test recipe)
 
@@ -206,11 +237,16 @@ tclaude workflow status <instance> --json          # instance → completed
 ```
 
 **What a passing manual verify looks like:** the daemon never auto-spawns the ai
-nodes (they sit `ready` until you `spawn`); each worker you spawn joins the bound
-group and receives your `--context`; settling advances the frontier; the trailing
-tool node runs without you; the instance ends `completed`. If you drive a looping
-graph past a node's `max_visits`, the next `spawn` is refused with a 409 — the cap
-holds even though you're the engine.
+nodes (they sit `ready` until you `spawn`); **a `[workflow N] frontier changed`
+nudge lands in your inbox each time the frontier moves** (a node settles, a
+successor readies) so you wake on the change rather than polling; each worker you
+spawn joins the bound group and receives your `--context`; settling advances the
+frontier; the trailing tool node runs without you; the instance ends `completed`
+(which you see on your next `status` read — the terminal flip itself isn't nudged).
+If you drive a looping graph past a node's `max_visits`,
+the next `spawn` is refused with a 409 — the cap holds even though you're the
+engine. (Step 3 above shows the calls explicitly; in a live run the nudges are what
+trigger each iteration.)
 
 ## Prerequisites & errors
 
