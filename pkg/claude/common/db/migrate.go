@@ -326,7 +326,7 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
-// migrateV49toV50 adds workflow_instances.engine_mode — WHO drives the
+// migrateV49toV50 adds workgraph_instances.engine_mode — WHO drives the
 // instance's graph (JOH-15 Slice B). Default 'system' is the deterministic
 // agentd engine (every existing row reads back 'system', so this is a pure
 // back-compat default); 'agent' is the opt-in mode where a designated
@@ -340,12 +340,12 @@ func migrate(db *sql.DB) error {
 // first-class, type-safe instance attribute the engine tick reads each pass.
 func migrateV49toV50(db *sql.DB) error {
 	_, err := db.Exec(`
-		ALTER TABLE workflow_instances ADD COLUMN engine_mode TEXT NOT NULL DEFAULT 'system';
+		ALTER TABLE workgraph_instances ADD COLUMN engine_mode TEXT NOT NULL DEFAULT 'system';
 
 		UPDATE schema_version SET version = 50;
 	`)
 	if err != nil {
-		return fmt.Errorf("migrate v49→v50 (add workflow_instances.engine_mode): %w", err)
+		return fmt.Errorf("migrate v49→v50 (add workgraph_instances.engine_mode): %w", err)
 	}
 	return nil
 }
@@ -381,12 +381,12 @@ func migrateV47toV48(db *sql.DB) error {
 	return nil
 }
 
-// migrateV48toV49 adds the three Workflows tables — the persistence
-// layer behind the (future) workflow engine + dashboard tab. Templates
+// migrateV48toV49 adds the three Workgraphs tables — the persistence
+// layer behind the (future) workgraph engine + dashboard tab. Templates
 // stay on disk (parsed mermaid); only INSTANCES and per-node state live
-// in SQLite. See the Workflows epic on Linear (JOH-9).
+// in SQLite. See the Workgraphs epic on Linear (JOH-9).
 //
-// workflow_instances — one row per instantiation. The mermaid chart,
+// workgraph_instances — one row per instantiation. The mermaid chart,
 // params and captured vars are SNAPSHOTTED here at instantiation, so a
 // later edit to the on-disk template never reshapes a running instance.
 // status walks running → completed|failed|cancelled. group_id is the
@@ -394,7 +394,7 @@ func migrateV47toV48(db *sql.DB) error {
 // a foreign key, because a group can be deleted out from under a finished
 // instance without orphaning its history.
 //
-// workflow_nodes — one row per node per instance, keyed by the synthetic
+// workgraph_nodes — one row per node per instance, keyed by the synthetic
 // id but uniquely identified by (instance_id, node_id) so the engine can
 // address a node by its mermaid id. status walks pending → ready →
 // running → awaiting_verify → done (or → failed, or → skipped for a
@@ -403,7 +403,7 @@ func migrateV47toV48(db *sql.DB) error {
 // running it; visits counts loop re-entries. The row cascade-deletes with
 // its instance.
 //
-// workflow_events — append-only audit/timeline, one row per state
+// workgraph_events — append-only audit/timeline, one row per state
 // transition or note. Backs the per-node "open audit data" context-menu
 // action and the instance timeline. node_id is ” for instance-level
 // events. Cascade-deletes with its instance.
@@ -412,7 +412,7 @@ func migrateV47toV48(db *sql.DB) error {
 // queries; the parent needs none beyond its primary key.
 func migrateV48toV49(db *sql.DB) error {
 	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS workflow_instances (
+		CREATE TABLE IF NOT EXISTS workgraph_instances (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			template_ref  TEXT NOT NULL,
 			template_name TEXT NOT NULL,
@@ -427,9 +427,9 @@ func migrateV48toV49(db *sql.DB) error {
 			completed_at  TEXT NOT NULL DEFAULT ''
 		);
 
-		CREATE TABLE IF NOT EXISTS workflow_nodes (
+		CREATE TABLE IF NOT EXISTS workgraph_nodes (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
-			instance_id   INTEGER NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+			instance_id   INTEGER NOT NULL REFERENCES workgraph_instances(id) ON DELETE CASCADE,
 			node_id       TEXT NOT NULL,
 			label         TEXT NOT NULL DEFAULT '',
 			executor_kind TEXT NOT NULL DEFAULT '',
@@ -444,21 +444,21 @@ func migrateV48toV49(db *sql.DB) error {
 			updated_at    TEXT NOT NULL,
 			UNIQUE(instance_id, node_id)
 		);
-		CREATE INDEX IF NOT EXISTS idx_workflow_nodes_instance ON workflow_nodes(instance_id);
+		CREATE INDEX IF NOT EXISTS idx_workgraph_nodes_instance ON workgraph_nodes(instance_id);
 
-		CREATE TABLE IF NOT EXISTS workflow_events (
+		CREATE TABLE IF NOT EXISTS workgraph_events (
 			id           INTEGER PRIMARY KEY AUTOINCREMENT,
-			instance_id  INTEGER NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+			instance_id  INTEGER NOT NULL REFERENCES workgraph_instances(id) ON DELETE CASCADE,
 			node_id      TEXT NOT NULL DEFAULT '',
 			kind         TEXT NOT NULL,
 			message      TEXT NOT NULL DEFAULT '',
 			at           TEXT NOT NULL
 		);
-		CREATE INDEX IF NOT EXISTS idx_workflow_events_instance ON workflow_events(instance_id);
+		CREATE INDEX IF NOT EXISTS idx_workgraph_events_instance ON workgraph_events(instance_id);
 
 		UPDATE schema_version SET version = 49;
 	`); err != nil {
-		return fmt.Errorf("migrate v48→v49 (add workflow tables): %w", err)
+		return fmt.Errorf("migrate v48→v49 (add workgraph tables): %w", err)
 	}
 	return nil
 }

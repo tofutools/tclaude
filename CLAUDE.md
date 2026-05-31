@@ -125,6 +125,6 @@ setup, and keep the board current as work ships.
 
 ## Design & planning
 
-**Linear is the planning tool.** Planning and design live on the **Linear board** (team JOH, project `tclaude`) — epics, roadmap, North Star, and per-step tickets. The Workflows feature's canonical home is the **JOH-9 epic**; agent-platform work is under **JOH-10**, dashboard/UI under **JOH-11**.
+**Linear is the planning tool.** Planning and design live on the **Linear board** (team JOH, project `tclaude`) — epics, roadmap, North Star, and per-step tickets. The Workgraphs feature's canonical home is the **JOH-9 epic**; agent-platform work is under **JOH-10**, dashboard/UI under **JOH-11**.
 
 The in-repo `docs/plans/` directory was **removed** (2026-05-30, Linear-only). The original design docs (`workflows.md`, `agentd.md`, `agent-coord.md`, `testharness-v2.md`) are preserved in **git history** if you need the original rationale; otherwise the code + this file + the Linear tickets are the working reference.

@@ -10,12 +10,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestMigrateV48toV49_AddsWorkflowTables seeds a bare v48 DB, runs the
-// v49 migration, and asserts the three workflow tables land and are
+// TestMigrateV48toV49_AddsWorkgraphTables seeds a bare v48 DB, runs the
+// v49 migration, and asserts the three workgraph tables land and are
 // writable. Plain CREATE TABLE migration — no pre-existing-row concern.
 // foreign_keys is enabled on the raw handle so the CASCADE the schema
 // declares is exercised exactly as production runs it.
-func TestMigrateV48toV49_AddsWorkflowTables(t *testing.T) {
+func TestMigrateV48toV49_AddsWorkgraphTables(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v48.sqlite")
 	d, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
 	require.NoError(t, err, "open raw sqlite")
@@ -34,7 +34,7 @@ func TestMigrateV48toV49_AddsWorkflowTables(t *testing.T) {
 	assert.Equal(t, 49, ver, "schema_version after migration")
 
 	// Instance row with all-default JSON/status columns accepted.
-	res, err := d.Exec(`INSERT INTO workflow_instances
+	res, err := d.Exec(`INSERT INTO workgraph_instances
 		(template_ref, template_name, created_at, updated_at)
 		VALUES ('example:demo', 'demo', '2026-05-28T00:00:00Z', '2026-05-28T00:00:00Z')`)
 	require.NoError(t, err, "insert instance with defaulted columns")
@@ -43,41 +43,41 @@ func TestMigrateV48toV49_AddsWorkflowTables(t *testing.T) {
 
 	var status, params, vars string
 	require.NoError(t, d.QueryRow(
-		`SELECT status, params, vars FROM workflow_instances WHERE id = ?`, instID).
+		`SELECT status, params, vars FROM workgraph_instances WHERE id = ?`, instID).
 		Scan(&status, &params, &vars))
 	assert.Equal(t, "running", status, "status defaults to running")
 	assert.Equal(t, "{}", params, "params defaults to {}")
 	assert.Equal(t, "{}", vars, "vars defaults to {}")
 
 	// A node + an event for that instance.
-	_, err = d.Exec(`INSERT INTO workflow_nodes
+	_, err = d.Exec(`INSERT INTO workgraph_nodes
 		(instance_id, node_id, updated_at) VALUES (?, 'n1', '2026-05-28T00:00:00Z')`, instID)
 	require.NoError(t, err, "insert node")
-	_, err = d.Exec(`INSERT INTO workflow_events
+	_, err = d.Exec(`INSERT INTO workgraph_events
 		(instance_id, kind, at) VALUES (?, 'instance_created', '2026-05-28T00:00:00Z')`, instID)
 	require.NoError(t, err, "insert event")
 
 	// UNIQUE(instance_id, node_id): a second node with the same node_id fails.
-	_, err = d.Exec(`INSERT INTO workflow_nodes
+	_, err = d.Exec(`INSERT INTO workgraph_nodes
 		(instance_id, node_id, updated_at) VALUES (?, 'n1', '2026-05-28T00:00:00Z')`, instID)
 	require.Error(t, err, "(instance_id, node_id) is unique")
 
 	// ON DELETE CASCADE: deleting the instance clears its nodes + events.
-	_, err = d.Exec(`DELETE FROM workflow_instances WHERE id = ?`, instID)
+	_, err = d.Exec(`DELETE FROM workgraph_instances WHERE id = ?`, instID)
 	require.NoError(t, err, "delete instance")
 
 	var nodeCount, eventCount int
-	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM workflow_nodes WHERE instance_id = ?`, instID).Scan(&nodeCount))
-	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM workflow_events WHERE instance_id = ?`, instID).Scan(&eventCount))
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM workgraph_nodes WHERE instance_id = ?`, instID).Scan(&nodeCount))
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM workgraph_events WHERE instance_id = ?`, instID).Scan(&eventCount))
 	assert.Zero(t, nodeCount, "nodes cascade-deleted with instance")
 	assert.Zero(t, eventCount, "events cascade-deleted with instance")
 }
 
-// TestMigrateV48toV49_FreshSchemaHasWorkflowTables builds a fresh DB
-// through the full migrate() chain and confirms the workflow accessors
+// TestMigrateV48toV49_FreshSchemaHasWorkgraphTables builds a fresh DB
+// through the full migrate() chain and confirms the workgraph accessors
 // work end to end. The literal currentVersion pin moved forward to the v50
 // test (TestMigrateV49toV50_AddsEngineMode) when engine_mode was added.
-func TestMigrateV48toV49_FreshSchemaHasWorkflowTables(t *testing.T) {
+func TestMigrateV48toV49_FreshSchemaHasWorkgraphTables(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "Open")
@@ -86,27 +86,27 @@ func TestMigrateV48toV49_FreshSchemaHasWorkflowTables(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
 
-	id, err := InsertWorkflowInstance(&WorkflowInstance{
+	id, err := InsertWorkgraphInstance(&WorkgraphInstance{
 		TemplateRef:  "user:release",
 		TemplateName: "release",
 		Title:        "Release 1.0",
 	})
-	require.NoError(t, err, "InsertWorkflowInstance on a fresh schema")
-	got, err := GetWorkflowInstance(id)
-	require.NoError(t, err, "GetWorkflowInstance")
+	require.NoError(t, err, "InsertWorkgraphInstance on a fresh schema")
+	got, err := GetWorkgraphInstance(id)
+	require.NoError(t, err, "GetWorkgraphInstance")
 	require.NotNil(t, got)
 	assert.Equal(t, "release", got.TemplateName)
-	assert.Equal(t, WorkflowStatusRunning, got.Status)
+	assert.Equal(t, WorkgraphStatusRunning, got.Status)
 }
 
 // TestMigrateV47throughV49_ChainAppliesInOrder pins the ordering of the
 // two adjacent migrations that collided when main (sessions.effort_level,
-// v48) was merged into the workflows branch (workflow tables, renumbered
+// v48) was merged into the workgraphs branch (workgraph tables, renumbered
 // to v49). It seeds a DB at v47 — the state of a real user DB just before
 // this branch's two steps — and runs them in production order:
 //
 //	v47 → migrateV47toV48 (main, ALTER sessions ADD effort_level)
-//	    → migrateV48toV49 (ours, CREATE workflow_* tables)
+//	    → migrateV48toV49 (ours, CREATE workgraph_* tables)
 //
 // and asserts each step lands its own artifact and bumps schema_version,
 // and that the two coexist at the end — in particular that effort_level
@@ -140,16 +140,16 @@ func TestMigrateV47throughV49_ChainAppliesInOrder(t *testing.T) {
 	_, err = d.Exec(`UPDATE sessions SET effort_level = 'high' WHERE id = 's1'`)
 	require.NoError(t, err, "sessions.effort_level exists after the v48 step")
 
-	// Step 2: v48 → v49 (our workflow tables), applied AFTER effort_level.
+	// Step 2: v48 → v49 (our workgraph tables), applied AFTER effort_level.
 	require.NoError(t, migrateV48toV49(d), "migrateV48toV49")
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, 49, ver, "schema_version after the v49 step")
 
 	// Both migrations' artifacts coexist on the upgraded DB.
-	_, err = d.Exec(`INSERT INTO workflow_instances
+	_, err = d.Exec(`INSERT INTO workgraph_instances
 		(template_ref, template_name, created_at, updated_at)
 		VALUES ('x:y', 'y', '2026-05-28T00:00:00Z', '2026-05-28T00:00:00Z')`)
-	require.NoError(t, err, "workflow_instances usable after the chain")
+	require.NoError(t, err, "workgraph_instances usable after the chain")
 	var effort string
 	require.NoError(t, d.QueryRow(`SELECT effort_level FROM sessions WHERE id = 's1'`).Scan(&effort))
 	assert.Equal(t, "high", effort, "sessions.effort_level survives the v49 step")

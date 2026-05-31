@@ -153,37 +153,37 @@ func runServe(p *serveParams) error {
 	}
 	slog.Info("branch-history PR enrichment", "enabled", branchHistoryPREnrichment)
 
-	// Workflows execution engine — off by default (auto-running a template's
+	// Workgraphs execution engine — off by default (auto-running a template's
 	// shell commands is an explicit operator opt-in). Reset before the
 	// conditional so a config without an `agent` section can't leave a stale
 	// value from an earlier resolve.
-	workflowEngineEnabled = false
-	workflowAIPerInstanceCap = defaultWorkflowAIPerInstanceCap
-	workflowAIGlobalCap = defaultWorkflowAIGlobalCap
-	workflowMaxVisits = defaultWorkflowMaxVisits
-	workflowNodeSLA = defaultWorkflowNodeSLA
-	workflowHumanNodeSLA = defaultWorkflowHumanNodeSLA
+	workgraphEngineEnabled = false
+	workgraphAIPerInstanceCap = defaultWorkgraphAIPerInstanceCap
+	workgraphAIGlobalCap = defaultWorkgraphAIGlobalCap
+	workgraphMaxVisits = defaultWorkgraphMaxVisits
+	workgraphNodeSLA = defaultWorkgraphNodeSLA
+	workgraphHumanNodeSLA = defaultWorkgraphHumanNodeSLA
 	if cfg != nil && cfg.Agent != nil {
-		workflowEngineEnabled = cfg.Agent.WorkflowEngine
-		if c := cfg.Agent.WorkflowAIPerInstance; c != nil && *c > 0 {
-			workflowAIPerInstanceCap = *c
+		workgraphEngineEnabled = cfg.Agent.WorkgraphEngine
+		if c := cfg.Agent.WorkgraphAIPerInstance; c != nil && *c > 0 {
+			workgraphAIPerInstanceCap = *c
 		}
-		if c := cfg.Agent.WorkflowAIGlobal; c != nil && *c > 0 {
-			workflowAIGlobalCap = *c
+		if c := cfg.Agent.WorkgraphAIGlobal; c != nil && *c > 0 {
+			workgraphAIGlobalCap = *c
 		}
-		if c := cfg.Agent.WorkflowMaxVisits; c != nil && *c > 0 {
-			workflowMaxVisits = *c
+		if c := cfg.Agent.WorkgraphMaxVisits; c != nil && *c > 0 {
+			workgraphMaxVisits = *c
 		}
-		if d, ok := parsePositiveDuration(cfg.Agent.WorkflowNodeSLA, "agent.workflow_node_sla"); ok {
-			workflowNodeSLA = d
+		if d, ok := parsePositiveDuration(cfg.Agent.WorkgraphNodeSLA, "agent.workgraph_node_sla"); ok {
+			workgraphNodeSLA = d
 		}
-		if d, ok := parsePositiveDuration(cfg.Agent.WorkflowHumanNodeSLA, "agent.workflow_human_node_sla"); ok {
-			workflowHumanNodeSLA = d
+		if d, ok := parsePositiveDuration(cfg.Agent.WorkgraphHumanNodeSLA, "agent.workgraph_human_node_sla"); ok {
+			workgraphHumanNodeSLA = d
 		}
 	}
-	slog.Info("workflows execution engine", "enabled", workflowEngineEnabled,
-		"ai_per_instance_cap", workflowAIPerInstanceCap, "ai_global_cap", workflowAIGlobalCap,
-		"max_visits", workflowMaxVisits, "node_sla", workflowNodeSLA, "human_node_sla", workflowHumanNodeSLA)
+	slog.Info("workgraphs execution engine", "enabled", workgraphEngineEnabled,
+		"ai_per_instance_cap", workgraphAIPerInstanceCap, "ai_global_cap", workgraphAIGlobalCap,
+		"max_visits", workgraphMaxVisits, "node_sla", workgraphNodeSLA, "human_node_sla", workgraphHumanNodeSLA)
 
 	// Terminal preference. claude.go's PersistentPreRun already applied
 	// the config file's `terminal` field (tier 2); the --terminal flag
@@ -204,12 +204,12 @@ func runServe(p *serveParams) error {
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
 
-	// Workflows execution engine (JOH-8). Autonomously advances running
-	// workflow instances — runs ready tool/program nodes, verifies, and
+	// Workgraphs execution engine (JOH-8). Autonomously advances running
+	// workgraph instances — runs ready tool/program nodes, verifies, and
 	// advances the graph — mirroring the cron tick. Shares the daemon-wide
 	// stop channel. Stateless/resumable: it re-derives work from SQLite each
 	// tick, so a restart resumes in-flight instances.
-	startWorkflowEngine(cronStop)
+	startWorkgraphEngine(cronStop)
 
 	// Session reaper. Sweeps for sessions whose tmux session + process
 	// are gone and stamps status=exited — a crashed or kill -9'd agent
@@ -393,7 +393,7 @@ func parseCloneCooldown(value, source string) (time.Duration, bool) {
 }
 
 // parsePositiveDuration parses a config duration that must be strictly positive
-// (a workflow SLA threshold). Empty → not set (ok=false, no warning); an
+// (a workgraph SLA threshold). Empty → not set (ok=false, no warning); an
 // unparseable or non-positive value is warned about and falls through to the
 // caller's default. Config validation already rejects a bad value loudly; this
 // is the defensive runtime fallback so a slipped-through bad value degrades to
@@ -464,7 +464,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo", handleSudo)
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
-	registerWorkflowV1Routes(mux)
+	registerWorkgraphV1Routes(mux)
 	return logRequest(mux)
 }
 

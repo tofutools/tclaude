@@ -29,7 +29,7 @@
 <nav>
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="templates">Templates</button>
-  <button data-tab="workflows">Workflows</button>
+  <button data-tab="workgraphs">Workgraphs</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
   <button data-tab="links">Links</button>
@@ -86,13 +86,13 @@
     </div>
     <div id="templates-list"></div>
   </section>
-  <section id="tab-workflows">
+  <section id="tab-workgraphs">
     <div class="filter-bar">
-      <input id="filter-workflows" type="text" placeholder="Filter (instance title / template / status / group)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-workflows-count"></span>
-      <button class="clear-filter" id="filter-workflows-clear" title="Clear filter">×</button>
+      <input id="filter-workgraphs" type="text" placeholder="Filter (instance title / template / status / group)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-workgraphs-count"></span>
+      <button class="clear-filter" id="filter-workgraphs-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
-      <button id="wf-new-open" class="primary" title="Instantiate a workflow from a template">+ new instance</button>
+      <button id="wf-new-open" class="primary" title="Instantiate a workgraph from a template">+ new instance</button>
     </div>
     <div class="wf-layout">
       <div class="wf-col wf-templates-col">
@@ -1028,7 +1028,7 @@
 </div>
 <div class="modal-overlay" id="wf-instantiate-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="wf-instantiate-modal-title">
-    <h3 id="wf-instantiate-modal-title">Instantiate a workflow</h3>
+    <h3 id="wf-instantiate-modal-title">Instantiate a workgraph</h3>
     <label class="cron-create-row">
       <span class="cron-create-label">Template</span>
       <select id="wf-instantiate-template"></select>

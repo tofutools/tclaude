@@ -1884,7 +1884,7 @@ func isConvOnline(convID string) bool {
 // convHasRunningSession is a DB-ONLY liveness signal: it reports whether any
 // session row for convID is still status=running. Unlike isConvOnline it does
 // NOT shell out to tmux (no `has-session` subprocess), so it is safe to call
-// while holding a lock — the workflow engine's stuck-node sweep uses it under
+// while holding a lock — the workgraph engine's stuck-node sweep uses it under
 // the per-instance lock. The trade-off is freshness: a crashed agent reads
 // `running` until the session reaper marks it exited, so this lags real tmux
 // liveness by up to a reaper tick. That lag is immaterial to the sweep, which is

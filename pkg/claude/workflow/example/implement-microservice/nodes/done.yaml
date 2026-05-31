@@ -1,4 +1,0 @@
-label: Done
-executor:
-  kind: human
-  instructions: "{{service_name}} is live in {{env}}. Workflow complete."

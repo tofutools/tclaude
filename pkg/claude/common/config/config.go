@@ -172,52 +172,52 @@ type AgentConfig struct {
 	SpawnGroupRestriction     *bool               `json:"spawn_group_restriction,omitempty"`
 	SpawnAllowedGroups        []string            `json:"spawn_allowed_groups,omitempty"`
 	SpawnMaxPerHour           *int                `json:"spawn_max_per_hour,omitempty"`
-	// WorkflowEngine opts into the autonomous workflow execution engine —
-	// the background loop that auto-runs `ready` tool/program workflow nodes
+	// WorkgraphEngine opts into the autonomous workgraph execution engine —
+	// the background loop that auto-runs `ready` tool/program workgraph nodes
 	// (shelling out their `run` command) and advances the graph without a
 	// human. Off by default: auto-executing a template's shell commands is a
 	// real trust decision, so a fresh daemon never does it until the operator
 	// turns it on. When false the engine goroutine still starts but every tick
 	// is a no-op. Manual node-driving via the dashboard is unaffected either way.
-	WorkflowEngine bool `json:"workflow_engine,omitempty"`
-	// WorkflowAIPerInstance caps how many `ai` workflow nodes the engine
+	WorkgraphEngine bool `json:"workgraph_engine,omitempty"`
+	// WorkgraphAIPerInstance caps how many `ai` workgraph nodes the engine
 	// will auto-spawn concurrently within a SINGLE instance (default 1 when
 	// unset / <= 0). A linear template never fans out past 1, but a graph with
 	// parallel ai branches would otherwise spawn an agent per branch at once;
 	// this bounds that. The dashboard start path is not gated by it — a human
 	// can always start a node manually.
-	WorkflowAIPerInstance *int `json:"workflow_ai_per_instance,omitempty"`
-	// WorkflowAIGlobal caps how many `ai` workflow nodes the engine will
+	WorkgraphAIPerInstance *int `json:"workgraph_ai_per_instance,omitempty"`
+	// WorkgraphAIGlobal caps how many `ai` workgraph nodes the engine will
 	// auto-spawn concurrently across ALL instances (default 8 when unset /
 	// <= 0), so many running instances can't collectively spawn a swarm of
 	// agents. Like the per-instance cap, it gates only the engine's
 	// auto-spawn, never the manual dashboard start.
-	WorkflowAIGlobal *int `json:"workflow_ai_global,omitempty"`
-	// WorkflowMaxVisits is the engine default cap on how many times a single
-	// workflow node may execute across loop iterations + in-place retries
+	WorkgraphAIGlobal *int `json:"workgraph_ai_global,omitempty"`
+	// WorkgraphMaxVisits is the engine default cap on how many times a single
+	// workgraph node may execute across loop iterations + in-place retries
 	// (default 20 when unset / 0). It backs a node whose own `max_visits` is 0
 	// (unspecified): for an autonomous engine that auto-runs shell + spawns
 	// agents, an omitted loop bound must be fail-safe, not unbounded. A node may
 	// still opt into a different finite cap (max_visits: N) or, deliberately,
 	// truly-unbounded (max_visits: -1). Exceeding the effective cap fails the
 	// node ("max_visits exceeded") and halts the instance. (JOH-39)
-	WorkflowMaxVisits *int `json:"workflow_max_visits,omitempty"`
-	// WorkflowNodeSLA is the engine default stuck/escalation threshold T for a
-	// NON-human workflow node — an ai worker or an ai-verify judge (default 15m
+	WorkgraphMaxVisits *int `json:"workgraph_max_visits,omitempty"`
+	// WorkgraphNodeSLA is the engine default stuck/escalation threshold T for a
+	// NON-human workgraph node — an ai worker or an ai-verify judge (default 15m
 	// when unset / unparseable; exposes the previously-hardcoded value). A node
 	// idle past fractions of T climbs the escalation ladder (warn -> escalate ->
 	// terminal); the terminal rung fails a non-human node that has no live actor,
 	// reclaiming its parallelism-cap slot. A node may override T with its own
 	// `sla:` field. Go-duration string ("15m", "1h"). (JOH-41)
-	WorkflowNodeSLA string `json:"workflow_node_sla,omitempty"`
-	// WorkflowHumanNodeSLA is the engine default stuck/escalation threshold T for
+	WorkgraphNodeSLA string `json:"workgraph_node_sla,omitempty"`
+	// WorkgraphHumanNodeSLA is the engine default stuck/escalation threshold T for
 	// a node a HUMAN must action — an executor.kind:human node or a verify.kind:
 	// human approve-gate (default 60m when unset / unparseable). Larger than the
 	// non-human default because a person reviewing is legitimately slower than a
 	// crashed lint, and a human node is NEVER auto-failed — it only escalates
 	// (warn -> escalate -> a final urgent notice) so the human is reminded without
 	// stranding the business process. Overridable per node via `sla:`. (JOH-41)
-	WorkflowHumanNodeSLA string `json:"workflow_human_node_sla,omitempty"`
+	WorkgraphHumanNodeSLA string `json:"workgraph_human_node_sla,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"
@@ -573,8 +573,8 @@ func Validate(c *Config) []string {
 			errs = append(errs, "agent.spawn_max_per_hour must not be negative (0 = unlimited)")
 		}
 		for _, sla := range []struct{ key, val string }{
-			{"agent.workflow_node_sla", a.WorkflowNodeSLA},
-			{"agent.workflow_human_node_sla", a.WorkflowHumanNodeSLA},
+			{"agent.workgraph_node_sla", a.WorkgraphNodeSLA},
+			{"agent.workgraph_human_node_sla", a.WorkgraphHumanNodeSLA},
 		} {
 			if sla.val == "" {
 				continue
