@@ -97,10 +97,29 @@ type wfDetail struct {
 	Warnings []string        `json:"warnings"`
 }
 
+// wfSelfView mirrors agentd's workflowSelfView (JOH-15 Slice A): the embedded
+// agent's task with inputs interpolated, its allowed outcomes, and where each
+// outcome leads — resolved server-side so the agent never parses mermaid.
+type wfSelfView struct {
+	Task             string        `json:"task"`
+	TaskInterpolated string        `json:"task_interpolated"`
+	MissingRefs      []string      `json:"missing_refs"`
+	AllowedOutcomes  []string      `json:"allowed_outcomes"`
+	Successors       []wfSuccessor `json:"successors"`
+}
+
+// wfSuccessor is one outcome→target edge in the self-view.
+type wfSuccessor struct {
+	Outcome string `json:"outcome"`
+	To      string `json:"to"`
+	ToLabel string `json:"to_label"`
+}
+
 // wfAssignment / wfWhere are GET /v1/workflows/where.
 type wfAssignment struct {
 	Instance wfInstanceMeta `json:"instance"`
 	Node     wfNode         `json:"node"`
+	SelfView wfSelfView     `json:"self_view"`
 }
 
 type wfWhere struct {
@@ -473,8 +492,23 @@ func renderAssignment(a wfAssignment, w io.Writer) {
 	fmt.Fprintf(w, "instance #%d  %s  [%s]\n", a.Instance.ID, a.Instance.Title, a.Instance.Status)
 	fmt.Fprintf(w, "  template: %s\n", refOrName(a.Instance.TemplateRef, a.Instance.TemplateName))
 	fmt.Fprintf(w, "  node:     %s  %q  [%s]\n", a.Node.NodeID, a.Node.Label, a.Node.Status)
+	sv := a.SelfView
+	if task := sv.TaskInterpolated; task != "" {
+		fmt.Fprintf(w, "  task:     %s\n", task)
+	}
+	if len(sv.MissingRefs) > 0 {
+		fmt.Fprintf(w, "  unresolved inputs: %s\n", strings.Join(sv.MissingRefs, ", "))
+	}
 	if len(a.Node.AllowedOutcomes) > 0 {
 		fmt.Fprintf(w, "  outcomes: %s\n", strings.Join(a.Node.AllowedOutcomes, ", "))
+	}
+	for _, s := range sv.Successors {
+		toLabel := s.ToLabel
+		if toLabel == "" || toLabel == s.To {
+			fmt.Fprintf(w, "  on %q → %s\n", s.Outcome, s.To)
+		} else {
+			fmt.Fprintf(w, "  on %q → %s (%s)\n", s.Outcome, s.To, toLabel)
+		}
 	}
 	if a.Node.Output != "" {
 		fmt.Fprintf(w, "  output:   %s\n", a.Node.Output)

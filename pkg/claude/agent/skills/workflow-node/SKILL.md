@@ -52,21 +52,42 @@ tclaude workflow where --json          # machine-readable (pipe to jq)
 ```
 
 For each assignment it prints the instance (id, title, status), the
-template ref, and your node — its id, label, status, and crucially its
-**allowed outcomes** and any **output** already attached:
+template ref, and a **self-view** of your node resolved server-side — so you
+have everything to do the node without reading the template or the chart:
 
 ```
 instance #7  release-cut  [running]
   template: user:release
   node:     build  "Build the release artifact"  [running]
+  task:     Build the release artifact for v2.3.1 from ./src
+  unresolved inputs: changelog
   outcomes: ok, flaky, fail
+  on "ok" → test (Run the test suite)
+  on "flaky" → retry
+  on "fail" → rollback
   output:   prior attempt left ./out stale
 ```
 
-Those `outcomes:` are the exact values `node ... done --outcome` will
-accept (see settling, below) — a node's declared outcomes always
-include `fail`, which you reach with the `fail` action rather than
-`done --outcome fail`. If `where` prints *"(no caller identity …)"*
+What each self-view line gives you:
+
+- **`task:`** — your node's instruction with its `{{param}}` / `{{node.output}}`
+  inputs already **interpolated** from the instance's live scope. This is your
+  actual task, inputs filled in — you don't re-resolve placeholders yourself.
+- **`unresolved inputs:`** (only if any) — refs that did *not* resolve yet (an
+  upstream node hasn't produced them). They're left verbatim in `task:`; if your
+  task depends on one, the predecessor isn't done — re-check `status` before
+  proceeding.
+- **`outcomes:`** — the exact values `node ... done --outcome` will accept (see
+  settling, below). A node's declared outcomes always include `fail`, which you
+  reach with the `fail` action rather than `done --outcome fail`.
+- **`on "<outcome>" → <node>`** — where the graph goes for each outcome,
+  resolved from the chart for you, so you can see the consequence of your
+  decision without parsing the mermaid flow.
+
+Add `--json` for the same self-view as structured fields (`self_view.task`,
+`self_view.task_interpolated`, `self_view.missing_refs`,
+`self_view.allowed_outcomes`, `self_view.successors[]`). If `where` prints
+*"(no caller identity …)"*
 you're running without an agent identity — a human should use
 `tclaude workflow ls` / `status` instead. If it prints *"(you are not
 assigned to any live workflow node)"*, nothing is waiting on you; try
