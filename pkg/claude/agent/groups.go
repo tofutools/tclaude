@@ -177,10 +177,17 @@ type GroupsCreateParams struct {
 	Descr       string   `long:"descr" short:"d" optional:"true" help:"Optional description"`
 	Context     string   `long:"context" optional:"true" help:"Shared startup context delivered to the inbox of agents spawned into this group. For multi-line context use --context-file."`
 	ContextFile string   `long:"context-file" optional:"true" help:"Read the group startup context from this file (alternative to --context)."`
-	Members     []string `long:"member" optional:"true" help:"Bootstrap a team member: comma-separated key=value pairs (name=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'name' is required (it becomes the new agent's conversation title); 'cwd' defaults to caller's cwd. Values cannot contain commas or '='; for richer descriptions use 'groups update-member' afterwards."`
+	// Members is registered manually as a non-splitting StringArray in
+	// groupsCreateCmd's InitFuncCtx — see there for the boa/StringSlice why.
+	Members     []string `long:"member" optional:"true"`
 	MaxMembers  int      `long:"max-members" optional:"true" help:"Hard cap on the group's member count (0 = unlimited, the default). A spawn that would exceed it is refused. Change later with 'groups set-max-members'."`
 	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
+
+// memberFlagHelp documents the repeatable `--member` flag. It lives here (not
+// in a struct tag) because the flag is registered manually as a StringArray —
+// see GroupsCreateParams.Members and groupsCreateCmd's InitFuncCtx.
+const memberFlagHelp = "Bootstrap a team member: comma-separated key=value pairs (name=NAME,role=TAG,descr=TEXT,cwd=PATH). Repeatable. 'name' is required (it becomes the new agent's conversation title); 'cwd' defaults to caller's cwd. Values cannot contain commas (a value may contain '='); for richer descriptions use 'groups update-member' afterwards."
 
 func groupsCreateCmd() *cobra.Command {
 	return boa.CmdT[GroupsCreateParams]{
@@ -193,9 +200,19 @@ func groupsCreateCmd() *cobra.Command {
 			"the new agent's conversation title. Member spawn requires `groups.spawn` " +
 			"(default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
-		InitFuncCtx: func(ctx *boa.HookContext, p *GroupsCreateParams, _ *cobra.Command) error {
+		InitFuncCtx: func(ctx *boa.HookContext, p *GroupsCreateParams, cmd *cobra.Command) error {
 			// `Name` is brand-new on create; no value-completion to offer.
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			// Register `--member` as a non-splitting StringArray. boa maps a
+			// []string field to pflag's StringSlice, which CSV-splits each
+			// flag value on commas at parse time; parseMemberSpec ALSO splits
+			// on commas, so the two collide and it only ever sees the first
+			// "name=..." fragment (every later pair arrives as its own
+			// nameless member). SetNoFlag suppresses boa's own registration,
+			// then StringArrayVar binds --member directly into the shared
+			// params struct so the whole spec reaches parseMemberSpec intact.
+			boa.GetParamT(ctx, &p.Members).SetNoFlag(true)
+			cmd.Flags().StringArrayVar(&p.Members, "member", nil, memberFlagHelp)
 			return nil
 		},
 		RunFunc: func(p *GroupsCreateParams, _ *cobra.Command, _ []string) {
