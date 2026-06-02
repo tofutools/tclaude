@@ -1003,14 +1003,24 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, text).Run(); err != nil {
 		return fmt.Errorf("send-keys text: %w", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(injectSettleDelay)
 	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run(); err != nil {
 		return fmt.Errorf("send-keys submit: %w", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(injectSettleDelay)
 	_ = clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run()
 	return nil
 }
+
+// injectSettleDelay is the gap injectTextAndSubmit leaves between its
+// send-keys calls (see that function for why 500 ms in production). It
+// is a package var, not a constant, so flow tests can shrink it to
+// ~nothing: the simulator processes keystrokes synchronously and needs
+// no settle window, yet a hardcoded 500 ms made every injection-driven
+// flow test (soft /exit, /rename, welcome, nudge) sit on ~1 s of real
+// sleeps. Overridden via SetInjectSettleDelayForTest in the flow
+// harness setup; production keeps the 500 ms safety margin.
+var injectSettleDelay = 500 * time.Millisecond
 
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC
 // pane. Permission-gated on `self.rename`.

@@ -58,6 +58,18 @@ func SetWaitTimingsForTest(aliveTimeout, readyDelay time.Duration) func() {
 	}
 }
 
+// SetInjectSettleDelayForTest shrinks injectTextAndSubmit's per-send-keys
+// settle gap for the duration of a test. The simulator processes
+// keystrokes synchronously, so the production 500 ms window is pure dead
+// wait in flow tests — every soft /exit, /rename, welcome and nudge pays
+// ~1 s of it. Flow setup calls this so the whole suite stops sleeping.
+// Returns a restore closure for t.Cleanup.
+func SetInjectSettleDelayForTest(d time.Duration) func() {
+	prev := injectSettleDelay
+	injectSettleDelay = d
+	return func() { injectSettleDelay = prev }
+}
+
 // AsHumanPeer attaches a synthetic peer context that classify() resolves
 // to the human operator (classHuman) — modelling a CLI caller holding a
 // valid operator token. All permission gates pass.
@@ -291,6 +303,16 @@ func SetRetireWorktreeFnForTest(
 	prev := removeWorktreeBranchFn
 	removeWorktreeBranchFn = remove
 	return func() { removeWorktreeBranchFn = prev }
+}
+
+// SetRetireWorktreeGraceForTest shrinks the deferred retire cleanup's
+// exit-grace window so a flow test can exercise the grace-timeout branch
+// (agent never exits → worktree kept → human notice) without waiting the
+// production 60s. Returns a restore func for t.Cleanup.
+func SetRetireWorktreeGraceForTest(grace time.Duration) func() {
+	prev := retireWorktreeExitGrace
+	retireWorktreeExitGrace = grace
+	return func() { retireWorktreeExitGrace = prev }
 }
 
 // StartConvMonitorForTest starts the live conv_index fsnotify monitor

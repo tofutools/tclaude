@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -206,15 +207,15 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
 	})
 
-	// Make /exit take long enough that the agent is still alive when the
+	// Make /exit take a moment so the agent is still alive when the
 	// retire handler decides what to do — forcing the deferred path
-	// rather than the inline (already-offline) one. The injector that
-	// delivers /exit (injectTextAndSubmit) itself blocks ~1s on real
-	// send-keys sleeps, so the delay must comfortably outlast that for
-	// the agent to still be alive when stopOneConv returns.
+	// rather than the inline (already-offline) one. With the flow
+	// harness shrinking injectTextAndSubmit's settle gap to ~nothing,
+	// stopOneConv returns in milliseconds, so a short delay is plenty of
+	// margin for the handler's liveness check.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	cc.SetCommandDelay("/exit", 2*time.Second)
+	cc.SetCommandDelay("/exit", 200*time.Millisecond)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
@@ -227,16 +228,97 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 	assert.False(t, fw.wasRemoved(cwd), "removal must wait until the agent exits")
 
 	// Drain the background waiter; it polls until the pane goes offline,
-	// then removes the worktree and posts the outcome.
+	// then removes the worktree.
 	agentd.WaitForBackgroundForTest()
 
 	assert.True(t, fw.wasRemoved(cwd), "the worktree must be removed after the agent exits")
 	require.Contains(t, fw.branchRemoved, "feat")
 
-	// The deferred outcome is surfaced to the human (Messages tab).
+	// A SUCCESSFUL deferred delete is silent — it matches the optimistic
+	// toast, so it must NOT post a Messages-tab notice (no success noise).
 	msgs, err := db.ListHumanMessages()
 	require.NoError(t, err)
-	require.NotEmpty(t, msgs, "the deferred cleanup must post a human-facing notice")
-	assert.Contains(t, msgs[0].Body, "feat",
-		"the notice should name the removed worktree/branch; body=%q", msgs[0].Body)
+	assert.Empty(t, msgs, "a successful deferred delete must not post a human notice; got %+v", msgs)
+}
+
+// Scenario: a DEFERRED delete that FAILS (git removal errors) DOES post
+// a human notice — the optimistic toast already fired, so the human must
+// learn the promise wasn't kept.
+func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "rwfa-1111-2222-3333-4444"
+	const cwd = "/tmp/rw-fail"
+	f.HaveConvWithTitle(conv, "fail-worker")
+	f.HaveAliveSession(conv, "spwn-rwfa", "tmux-rwfa", cwd)
+	f.HaveEnrolledAgent(conv)
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+	fw.removeErr = errors.New("git worktree remove: permission denied")
+
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "no CCSim registered for %s", conv)
+	cc.SetCommandDelay("/exit", 200*time.Millisecond)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "scheduled", resp.Worktree.Action)
+
+	agentd.WaitForBackgroundForTest()
+
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.NotEmpty(t, msgs, "a FAILED deferred delete must post a human notice")
+	assert.Contains(t, msgs[0].Subject, "failed")
+	assert.Contains(t, msgs[0].Body, "permission denied",
+		"the notice should carry the failure reason; body=%q", msgs[0].Body)
+}
+
+// Scenario: a DEFERRED delete where the agent never honours /exit within
+// the grace window keeps the worktree and posts an actionable notice —
+// the human asked for a delete that couldn't happen.
+func TestRetire_DeleteWorktreeAgentWontExitPostsKeptNotice(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	// Shrink the grace so the timeout branch fires fast instead of after
+	// the production 60s.
+	t.Cleanup(agentd.SetRetireWorktreeGraceForTest(150 * time.Millisecond))
+	f := newFlow(t)
+
+	const conv = "rwhe-1111-2222-3333-4444"
+	const cwd = "/tmp/rw-hung"
+	f.HaveConvWithTitle(conv, "hung-worker")
+	f.HaveAliveSession(conv, "spwn-rwhe", "tmux-rwhe", cwd)
+	f.HaveEnrolledAgent(conv)
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	// Hung agent: it ignores /exit and never goes offline, so the
+	// deferred waiter times out on the (shrunken) grace.
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "no CCSim registered for %s", conv)
+	cc.OnInput("/exit", func(c *testharness.CCSim, line string) bool {
+		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
+		return true // consume — never MarkDead
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "scheduled", resp.Worktree.Action)
+
+	agentd.WaitForBackgroundForTest()
+
+	assert.False(t, fw.wasRemoved(cwd),
+		"a worktree must never be removed under a still-running agent")
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.NotEmpty(t, msgs, "a kept (agent-never-exited) outcome must post a human notice")
+	assert.Contains(t, msgs[0].Subject, "kept")
+	assert.Contains(t, msgs[0].Body, "did not exit")
 }

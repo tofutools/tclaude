@@ -16,8 +16,9 @@ import (
 // removes the worktree. CC's /exit can take a few seconds (it finishes
 // the current turn, flushes, then closes); 60s is generous headroom.
 // An agent that outlives the window keeps its worktree — reported, not
-// force-removed out from under a still-live process.
-const retireWorktreeExitGrace = 60 * time.Second
+// force-removed out from under a still-live process. A var, not a const,
+// so flow tests can shrink it to exercise the grace-timeout branch.
+var retireWorktreeExitGrace = 60 * time.Second
 
 // worktree_cleanup.go is the worktree-removal side of agent deletion.
 // When the human deletes an agent — via the per-row delete button or
@@ -179,32 +180,37 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 // WHEN to run this — for a live agent it is deferred until the pane
 // exits (see scheduleRetireWorktreeCleanup), since the agent's cwd is
 // the worktree being removed.
-func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) string {
+//
+// ok reports whether the cleanup succeeded (or had nothing to do): it is
+// false ONLY when the git removal actually errored. The deferred path
+// uses it to decide whether to bother the human — a successful delete is
+// silent, a failure is surfaced.
+func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note string, ok bool) {
 	if !requested {
-		return ""
+		return "", true
 	}
 	switch {
 	case wt.Kind == "none":
-		return "" // no worktree — nothing to report
+		return "", true // no worktree — nothing to report
 	case wt.Kind == "main":
-		return "worktree kept (main repo)"
+		return "worktree kept (main repo)", true
 	case wt.Shared:
-		return "worktree kept (shared with another agent)"
+		return "worktree kept (shared with another agent)", true
 	}
 	removed, branchDeleted, err := removeWorktreeBranchFn(wt.Path, wt.Branch, true)
 	switch {
 	case err != nil:
-		return "worktree removal failed: " + err.Error()
+		return "worktree removal failed: " + err.Error(), false
 	case removed && branchDeleted:
-		return "worktree + branch " + wt.Branch + " removed"
+		return "worktree + branch " + wt.Branch + " removed", true
 	case removed && wt.Branch != "" && !isProtectedBranchName(wt.Branch):
 		// Removed the dir but the branch survived (already gone, or git
 		// refused) — say so rather than implying a clean sweep.
-		return "worktree removed (branch " + wt.Branch + " kept)"
+		return "worktree removed (branch " + wt.Branch + " kept)", true
 	case removed:
-		return "worktree removed"
+		return "worktree removed", true
 	default:
-		return "worktree already gone"
+		return "worktree already gone", true
 	}
 }
 
@@ -258,9 +264,12 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 		return retireWorktreePlan{Action: "kept", Detail: "worktree kept (shared with another agent)"}
 	}
 
-	// Already offline → safe to remove right now, inline.
+	// Already offline → safe to remove right now, inline. The outcome
+	// (success or failure) rides back in the HTTP response and toast, so
+	// the inline path needs no separate human-message notice.
 	if pickAliveSession(convID) == nil {
-		return retireWorktreePlan{Action: "removed", Detail: applyRetireWorktreeCleanup(wt, true)}
+		note, _ := applyRetireWorktreeCleanup(wt, true)
+		return retireWorktreePlan{Action: "removed", Detail: note}
 	}
 
 	// Still alive but the human declined shutdown — leave the worktree
@@ -274,17 +283,19 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	// Shutdown was requested: a /exit is in flight. Wait for the pane to
 	// die, then remove. Background so the HTTP response returns now. The
 	// HTTP response (and toast) already fired with the optimistic
-	// "will be removed after the agent exits", so the deferred outcome —
-	// success, partial, or "the agent never exited, worktree kept" — is
-	// surfaced to the human via the dashboard Messages tab, not just the
-	// daemon log: that "kept" non-result silently contradicts the toast
-	// otherwise.
+	// "will be removed after the agent exits", so the human is told again
+	// ONLY when that promise is NOT kept — the git removal failed, or the
+	// agent never exited so the worktree is still there. A clean delete
+	// matches the toast and stays silent (no Messages-tab noise).
 	title := agent.FreshTitle(convID)
 	goBackground(func() {
 		if waitForConvOffline(convID, retireWorktreeExitGrace) {
-			note := applyRetireWorktreeCleanup(wt, true)
-			slog.Info("retire: worktree cleanup after exit", "conv", convID, "detail", note)
-			postRetireWorktreeNotice(title, "Retire worktree cleanup", note)
+			note, ok := applyRetireWorktreeCleanup(wt, true)
+			slog.Info("retire: worktree cleanup after exit", "conv", convID, "detail", note, "ok", ok)
+			if !ok {
+				// Only a real removal failure reaches the human.
+				postRetireWorktreeNotice(title, "Retire worktree cleanup failed", note)
+			}
 		} else {
 			note := "worktree kept — agent did not exit within " + retireWorktreeExitGrace.String() +
 				"; remove " + wt.Path + " manually"
@@ -297,13 +308,14 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 		Detail: "worktree + branch will be removed after the agent exits"}
 }
 
-// postRetireWorktreeNotice records the result of a DEFERRED retire
-// worktree cleanup in the dashboard Messages tab. The inline path
-// reports its outcome in the HTTP response (and the toast); the deferred
-// path completes seconds later, so without this its result — most
-// importantly a "kept, the agent never exited" non-result that
-// contradicts the optimistic toast — would only reach the daemon log.
-// Best-effort: a failed insert is logged, never bubbled.
+// postRetireWorktreeNotice records a FAILED deferred retire worktree
+// cleanup in the dashboard Messages tab. The deferred path fires its
+// optimistic toast ("will be removed after the agent exits") long before
+// the removal runs, so when it does NOT succeed — the git removal
+// errored, or the agent never exited and the worktree is still there —
+// the human needs a signal that the promise wasn't kept; the daemon log
+// alone is invisible. A successful delete matches the toast and is never
+// posted here. Best-effort: a failed insert is logged, never bubbled.
 func postRetireWorktreeNotice(agentTitle, subject, detail string) {
 	body := detail
 	if agentTitle != "" && agentTitle != agent.UnknownTitle {

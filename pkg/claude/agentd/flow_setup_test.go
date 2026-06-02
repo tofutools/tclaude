@@ -39,6 +39,11 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// for. Without this, every /clear flow scenario sits on the 1s
 	// production ready-delay.
 	t.Cleanup(session.SetClearInjectTimingsForTest(300*time.Millisecond, 20*time.Millisecond))
+	// And the agentd-side injectTextAndSubmit settle gap (500ms × 2 per
+	// call). The simulator processes keystrokes synchronously, so this is
+	// pure dead wait — every soft /exit, /rename, welcome and nudge paid
+	// ~1s of it. 1ms keeps the two send-keys ordered without the sleep.
+	t.Cleanup(agentd.SetInjectSettleDelayForTest(time.Millisecond))
 
 	w := testharness.New(t)
 	m := w.DefaultMocks(t)

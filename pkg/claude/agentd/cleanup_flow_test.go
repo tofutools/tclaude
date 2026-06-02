@@ -217,6 +217,9 @@ type fakeWorktrees struct {
 	// in lockstep — empty entries for delete-path removals.
 	removed       []string
 	branchRemoved []string
+	// removeErr, when set, makes the retire (branch-aware) seam report a
+	// git failure — lets a flow test drive the failure-notice path.
+	removeErr error
 }
 
 func (f *fakeWorktrees) inspect(dir string) worktree.WorktreeStatus {
@@ -239,6 +242,9 @@ func (f *fakeWorktrees) remove(root string, _ bool) (bool, error) {
 func (f *fakeWorktrees) removeBranch(root, branch string, _ bool) (bool, bool, error) {
 	f.removed = append(f.removed, root)
 	f.branchRemoved = append(f.branchRemoved, branch)
+	if f.removeErr != nil {
+		return false, false, f.removeErr
+	}
 	deleted := branch != "" && strings.ToLower(branch) != "main" && strings.ToLower(branch) != "master"
 	return true, deleted, nil
 }
