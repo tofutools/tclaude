@@ -272,18 +272,50 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	}
 
 	// Shutdown was requested: a /exit is in flight. Wait for the pane to
-	// die, then remove. Background so the HTTP response returns now.
+	// die, then remove. Background so the HTTP response returns now. The
+	// HTTP response (and toast) already fired with the optimistic
+	// "will be removed after the agent exits", so the deferred outcome —
+	// success, partial, or "the agent never exited, worktree kept" — is
+	// surfaced to the human via the dashboard Messages tab, not just the
+	// daemon log: that "kept" non-result silently contradicts the toast
+	// otherwise.
+	title := agent.FreshTitle(convID)
 	goBackground(func() {
 		if waitForConvOffline(convID, retireWorktreeExitGrace) {
 			note := applyRetireWorktreeCleanup(wt, true)
 			slog.Info("retire: worktree cleanup after exit", "conv", convID, "detail", note)
+			postRetireWorktreeNotice(title, "Retire worktree cleanup", note)
 		} else {
+			note := "worktree kept — agent did not exit within " + retireWorktreeExitGrace.String() +
+				"; remove " + wt.Path + " manually"
 			slog.Warn("retire: worktree kept — agent did not exit within grace",
 				"conv", convID, "path", wt.Path, "grace", retireWorktreeExitGrace)
+			postRetireWorktreeNotice(title, "Retire worktree kept", note)
 		}
 	})
 	return retireWorktreePlan{Action: "scheduled",
 		Detail: "worktree + branch will be removed after the agent exits"}
+}
+
+// postRetireWorktreeNotice records the result of a DEFERRED retire
+// worktree cleanup in the dashboard Messages tab. The inline path
+// reports its outcome in the HTTP response (and the toast); the deferred
+// path completes seconds later, so without this its result — most
+// importantly a "kept, the agent never exited" non-result that
+// contradicts the optimistic toast — would only reach the daemon log.
+// Best-effort: a failed insert is logged, never bubbled.
+func postRetireWorktreeNotice(agentTitle, subject, detail string) {
+	body := detail
+	if agentTitle != "" && agentTitle != agent.UnknownTitle {
+		body = agentTitle + ": " + detail
+	}
+	if _, err := db.InsertHumanMessage(&db.HumanMessage{
+		FromTitle: "retire cleanup",
+		Subject:   subject,
+		Body:      body,
+	}); err != nil {
+		slog.Warn("retire: failed to post worktree cleanup notice", "error", err)
+	}
 }
 
 // resolveRetireWorktree resolves the worktree view the retire cleanup

@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -184,4 +186,57 @@ func TestRetire_NoDeleteWorktreeLeavesWorktreeUntouched(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	assert.Nil(t, resp.Worktree, "no delete_worktree → no worktree outcome reported")
 	assert.False(t, fw.wasRemoved(cwd), "the worktree must be untouched without delete_worktree")
+}
+
+// Scenario: the DEFERRED path — the agent is still alive when retire
+// runs (its /exit takes a moment), so the response reports "scheduled"
+// and the worktree is removed by a background waiter once the pane
+// exits. The deferred outcome is also surfaced in the dashboard
+// Messages tab, since the optimistic toast already fired.
+func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "rwdf-1111-2222-3333-4444"
+	const cwd = "/tmp/rw-deferred"
+	f.HaveConvWithTitle(conv, "slow-exit-worker")
+	f.HaveAliveSession(conv, "spwn-rwdf", "tmux-rwdf", cwd)
+	f.HaveEnrolledAgent(conv)
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	// Make /exit take long enough that the agent is still alive when the
+	// retire handler decides what to do — forcing the deferred path
+	// rather than the inline (already-offline) one. The injector that
+	// delivers /exit (injectTextAndSubmit) itself blocks ~1s on real
+	// send-keys sleeps, so the delay must comfortably outlast that for
+	// the agent to still be alive when stopOneConv returns.
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "no CCSim registered for %s", conv)
+	cc.SetCommandDelay("/exit", 2*time.Second)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "scheduled", resp.Worktree.Action,
+		"a still-alive agent defers the removal; detail=%s", resp.Worktree.Detail)
+	// At response time the worktree must NOT yet be removed — the agent
+	// is still exiting.
+	assert.False(t, fw.wasRemoved(cwd), "removal must wait until the agent exits")
+
+	// Drain the background waiter; it polls until the pane goes offline,
+	// then removes the worktree and posts the outcome.
+	agentd.WaitForBackgroundForTest()
+
+	assert.True(t, fw.wasRemoved(cwd), "the worktree must be removed after the agent exits")
+	require.Contains(t, fw.branchRemoved, "feat")
+
+	// The deferred outcome is surfaced to the human (Messages tab).
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.NotEmpty(t, msgs, "the deferred cleanup must post a human-facing notice")
+	assert.Contains(t, msgs[0].Body, "feat",
+		"the notice should name the removed worktree/branch; body=%q", msgs[0].Body)
 }
