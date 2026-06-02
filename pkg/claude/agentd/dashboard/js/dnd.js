@@ -6,10 +6,10 @@
 
 import { $, $$ } from './helpers.js';
 import { renderGroupsTab } from './tabs.js';
-// refresh()/toast()/confirmModal/retireConfirm live in refresh.js;
+// refresh()/toast()/confirmModal/retireConfirm/retireToast live in refresh.js;
 // lastSnapshot is dashboard.js's shared state (read-only here).
 // Deliberate benign cycles (see render.js); TDZ-safe.
-import { refresh, toast, confirmModal, retireConfirm } from './refresh.js';
+import { refresh, toast, confirmModal, retireConfirm, retireToast } from './refresh.js';
 import { lastSnapshot } from './dashboard.js';
 
 // Drag-and-drop: move a member row from group A onto group B's
@@ -488,13 +488,14 @@ async function runDndRemoveFromGroup(payload) {
 // button.
 async function runDndRetire(payload) {
   const {conv, label} = payload;
-  const choice = await retireConfirm({ label });
+  const choice = await retireConfirm({ label, conv });
   if (!choice) {
     await refresh(); // undo the optimistic dragend state
     return;
   }
   try {
-    const q = choice.shutdown ? '?shutdown=1' : '?shutdown=0';
+    const q = `?shutdown=${choice.shutdown ? 1 : 0}`
+      + (choice.deleteWorktree ? '&delete_worktree=1' : '');
     const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
       method: 'POST', credentials: 'same-origin',
     });
@@ -502,9 +503,9 @@ async function runDndRetire(payload) {
       toast(`retire ${label} failed: ${await r.text()}`, true);
       return;
     }
-    toast(choice.shutdown
-      ? `retired ${label} — demoted + session stopped`
-      : `retired ${label} — demoted to a conversation`);
+    let retireResp = null;
+    try { retireResp = await r.json(); } catch (_) {}
+    toast(retireToast(label, choice, retireResp));
   } catch (err) {
     toast(`retire failed: ${err && err.message || err}`, true);
   } finally {
