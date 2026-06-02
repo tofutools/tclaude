@@ -305,6 +305,16 @@ func SetRetireWorktreeFnForTest(
 	return func() { removeWorktreeBranchFn = prev }
 }
 
+// SetRetireWorktreeGraceForTest shrinks the deferred retire cleanup's
+// exit-grace window so a flow test can exercise the grace-timeout branch
+// (agent never exits → worktree kept → human notice) without waiting the
+// production 60s. Returns a restore func for t.Cleanup.
+func SetRetireWorktreeGraceForTest(grace time.Duration) func() {
+	prev := retireWorktreeExitGrace
+	retireWorktreeExitGrace = grace
+	return func() { retireWorktreeExitGrace = prev }
+}
+
 // StartConvMonitorForTest starts the live conv_index fsnotify monitor
 // against the current test HOME's ~/.claude/projects, with the debounce
 // shrunk to `debounce` so a test does not have to wait the production
