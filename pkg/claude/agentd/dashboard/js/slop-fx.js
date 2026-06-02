@@ -36,6 +36,7 @@ import { lastSnapshot } from './dashboard.js';
 //   'coin'      — a click coin-spray landed
 //   'spin'      — a slot machine's reels started a manual pull
 //   'stop'      — a manual pull settled on a non-winning combo
+//   'lever'     — the side pull-lever was yanked (slop-spectacle.js)
 //   'win-pull'  — a manual pull hit 7-7-7
 //   'win-spawn' — the spawn-modal jackpot banner fired
 //   'win-idle'  — an agent really transitioned working → idle
@@ -85,6 +86,16 @@ function spawnCoin(x, y, fromEmojis, spread, dy) {
   el.style.animationDuration = (0.7 + Math.random() * 0.5) + 's';
   document.body.appendChild(el);
   el.addEventListener('animationend', () => el.remove(), { once: true });
+}
+
+// slopCoinBurst erupts `n` coins upward from (x, y). Exported so
+// slop-spectacle's lever pull has an obvious on-brand visual right at
+// the lever — every pull spits coins even when the machines it spins are
+// on a hidden tab. Caller-gated (isSlopActive / reducedMotion); the
+// coins' CSS is reduced-motion gated too.
+export function slopCoinBurst(x, y, n) {
+  const count = n || 14;
+  for (let i = 0; i < count; i++) spawnCoin(x, y, COIN_EMOJIS, 140, -140);
 }
 
 // shouldEmitFor decides whether a click should trigger a coin spray.

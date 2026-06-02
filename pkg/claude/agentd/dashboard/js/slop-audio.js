@@ -31,20 +31,26 @@ import { isSlopActive } from './slop.js';
 
 const STORAGE_KEY = 'tclaude.slop.sound';
 
-let enabled = true; // master on/off — mirrors the toggle + localStorage
 let ctx = null;      // AudioContext, built lazily inside a user gesture
 let master = null;   // master gain node — volume + an instant kill switch
 let lastCoinAt = 0;  // rate-limit guard for the dense click-coin tick
 
 // prefersEnabled defaults to ON when the key was never set — slop sound
 // is part of the casino, opt-out rather than opt-in. An explicit '0'
-// (the user muted) is honoured.
+// (the user muted) is honoured. (Function declaration → hoisted, so the
+// `enabled` initializer below can call it.)
 function prefersEnabled() {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
     return v === null ? true : v === '1';
   } catch { return true; }
 }
+
+// Master on/off, mirroring the toggle + localStorage. Initialized at
+// module load (not just in bindSlopAudio) so isSlopSoundEnabled() is
+// correct regardless of bootstrap call order — vegas.js reads it to gate
+// the radio and must not depend on bindSlopAudio() running first.
+let enabled = prefersEnabled();
 function persist(on) {
   try { localStorage.setItem(STORAGE_KEY, on ? '1' : '0'); } catch { /* private mode / blocked — fine */ }
 }
@@ -153,6 +159,15 @@ function fanfare(big) {
     noiseBurst(0.36, 0.5, 3000, 1.5, 0.05);
   }
 }
+function leverPull() {
+  // The big side lever being yanked: a meaty mechanical ka-CHUNK (low
+  // thunk + noise body) followed by the reels taking off (a longer
+  // whir). Louder/longer than a single machine's 'spin' so a deliberate
+  // lever pull feels like a bigger event.
+  noiseBurst(0, 0.09, 180, 0.6, 0.24);
+  tone(110, 0, 0.12, 'square', 0.16);
+  noiseBurst(0.11, 0.55, 850, 0.8, 0.12);
+}
 
 // play turns one `fx` name into a sound. Silently no-ops when muted or
 // when Web Audio is unavailable.
@@ -171,6 +186,7 @@ function play(fx) {
     }
     case 'spin':      reelWhir(); break;
     case 'stop':      clunk(); break;
+    case 'lever':     leverPull(); break;
     case 'win-pull':
     case 'win-spawn': fanfare(false); break;
     case 'win-idle':  chaChing(); break;

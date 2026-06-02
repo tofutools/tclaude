@@ -2008,7 +2008,24 @@ body.slop #slop-lever {
   line-height: 1;
 }
 body.slop #slop-lever:hover .slop-lever-track { box-shadow: 0 0 16px rgba(255, 215, 0, 0.7); }
-body.slop #slop-lever.slop-lever-pulled .slop-lever-stick { top: 44px; }
+/* The yank: the stick slams down then springs back, and the track flares
+   gold — a keyframe (not a transition) so it plays the full down-and-up
+   regardless of when slop-spectacle.js removes the class. */
+body.slop #slop-lever.slop-lever-pulled .slop-lever-stick {
+  animation: slop-lever-yank-stick 0.5s ease-out;
+}
+@keyframes slop-lever-yank-stick {
+  0%   { top: 6px; }
+  30%  { top: 46px; }
+  100% { top: 6px; }
+}
+body.slop #slop-lever.slop-lever-pulled .slop-lever-track {
+  animation: slop-lever-flash 0.5s ease-out;
+}
+@keyframes slop-lever-flash {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 215, 0, 0.35); }
+  40%      { box-shadow: 0 0 22px rgba(255, 215, 0, 0.95); border-color: #ffe88c; }
+}
 .slop-lever-label {
   color: #ffe88c;
   font-size: 10px;
@@ -2037,6 +2054,10 @@ body.slop #slop-lever.slop-lever-pulled .slop-lever-stick { top: 44px; }
   0%   { transform: translate(0, 0) rotate(0deg); opacity: 0.95; }
   100% { transform: translate(var(--dx, 0px), var(--dy, 600px)) rotate(var(--rot, 360deg)); opacity: 0; }
 }
+/* Note: a transform on <body> makes body the containing block for its
+   position:fixed descendants for the ~600ms it runs, so the lever,
+   confetti and jackpot banner shake along with the page (intended). A
+   modal open during a Konami mega would shake too — harmless and rare. */
 body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 @keyframes slop-shake {
   0%, 100% { transform: translate(0, 0); }
@@ -2053,7 +2074,8 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
    confetti is hidden outright since it's nothing but motion. */
 @media (prefers-reduced-motion: reduce) {
   .slop-credits.slop-credits-bump { animation: none; }
-  body.slop #slop-lever.slop-lever-pulled .slop-lever-stick { transition: none; }
+  body.slop #slop-lever.slop-lever-pulled .slop-lever-stick,
+  body.slop #slop-lever.slop-lever-pulled .slop-lever-track { animation: none; transition: none; }
   .slop-confetti { display: none; animation: none; }
   body.slop-shake { animation: none; }
 }

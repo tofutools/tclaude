@@ -19,7 +19,7 @@
 // bus. No new emit kinds are invented here.
 
 import { isSlopActive } from './slop.js';
-import { showJackpotBanner, pullAllMachines, emitSlopFx } from './slop-fx.js';
+import { showJackpotBanner, pullAllMachines, emitSlopFx, slopCoinBurst } from './slop-fx.js';
 
 // reducedMotion mirrors slop-fx.js's guard (kept local to avoid a
 // cross-module import of a private helper). Read at call time — the OS
@@ -112,6 +112,15 @@ export function bindSlopLever() {
       lever.classList.remove('slop-lever-pulled');
       leverBusy = false;
     }, LEVER_YANK_MS);
+    // Unmistakable feedback on EVERY pull — independent of whether a
+    // machine wins, and of which tab the spun machines live on: a coin
+    // fountain out of the lever, a confetti sprinkle, and the mechanical
+    // ka-chunk sound. A win (if pullAllMachines rolls one) layers its
+    // banner + fanfare on top.
+    const r = lever.getBoundingClientRect();
+    slopCoinBurst(r.left + r.width / 2, r.top + 8, 16);
+    confetti(24);
+    emitSlopFx('lever');
     pullAllMachines();
   });
 }

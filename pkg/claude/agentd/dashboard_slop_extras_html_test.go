@@ -83,6 +83,15 @@ func TestDashboardHTML_SlopExtras(t *testing.T) {
 	must("@keyframes slop-confetti-fall", "the confetti fall keyframes ship")
 	must("body.slop-shake", "the mega-jackpot screen-shake styles ship")
 
+	// Every lever pull must give obvious feedback regardless of a win:
+	// a coin fountain (slopCoinBurst), the 'lever' sound, and a punchy
+	// yank animation. Pin all three so a refactor can't quietly make the
+	// lever feel dead again.
+	must("export function slopCoinBurst", "slop-fx exports the lever coin fountain")
+	must("emitSlopFx('lever')", "the lever pull announces itself on the bus")
+	must("case 'lever'", "slop-audio plays the lever ka-chunk")
+	must("@keyframes slop-lever-yank-stick", "the punchy lever yank keyframes ship")
+
 	// ─── Slop-only chrome stays out of the plain dashboard ──────────
 	// The HUD + lever must not leak into the non-slop dashboard.
 	must(".slop-hud { display: none; }", "the HUD is hidden in the plain dashboard")
