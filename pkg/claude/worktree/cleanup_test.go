@@ -89,3 +89,80 @@ func TestRemoveLinkedWorktree_ForceClearsDirtyTree(t *testing.T) {
 	require.NoError(t, err, "force removal must clear a dirty worktree")
 	assert.True(t, removed)
 }
+
+func TestRemoveLinkedWorktreeAndBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-x", "", "")
+	require.NoError(t, err)
+
+	// The retire path removes the directory AND the branch.
+	removed, branchDeleted, err := RemoveLinkedWorktreeAndBranch(linkedPath, "feature-x", true)
+	require.NoError(t, err)
+	assert.True(t, removed, "linked worktree should be removed")
+	assert.True(t, branchDeleted, "branch should be deleted")
+	_, statErr := os.Stat(linkedPath)
+	assert.True(t, os.IsNotExist(statErr), "worktree dir should be gone")
+	assert.False(t, branchExistsIn(repoPath, "feature-x"),
+		"branch must be gone after RemoveLinkedWorktreeAndBranch")
+}
+
+func TestRemoveLinkedWorktreeAndBranch_ForceDeletesUnmergedBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-unmerged", "", "")
+	require.NoError(t, err)
+
+	// Commit work on the feature branch that never lands on the trunk —
+	// a safe `git branch -d` would refuse this; the force path must not.
+	require.NoError(t, os.WriteFile(filepath.Join(linkedPath, "new.txt"),
+		[]byte("unmerged work\n"), 0o644))
+	_, err = gitIn(linkedPath, "add", ".")
+	require.NoError(t, err)
+	_, err = gitIn(linkedPath, "commit", "-m", "unmerged commit")
+	require.NoError(t, err)
+
+	removed, branchDeleted, err := RemoveLinkedWorktreeAndBranch(linkedPath, "feature-unmerged", true)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.True(t, branchDeleted, "force delete must remove an unmerged branch")
+	assert.False(t, branchExistsIn(repoPath, "feature-unmerged"))
+}
+
+func TestRemoveLinkedWorktreeAndBranch_NeverDeletesProtectedBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-y", "", "")
+	require.NoError(t, err)
+
+	// Even if asked to delete a branch literally named "main"/"master",
+	// the worktree goes but the protected branch is kept.
+	for _, protected := range []string{"main", "master", "Main", "MASTER"} {
+		removed, branchDeleted, derr := removeLinkedWorktree(linkedPath, protected, true)
+		// Only the first iteration actually removes the (now-once) dir;
+		// the point is the protected branch is never deleted.
+		_ = removed
+		require.NoError(t, derr)
+		assert.False(t, branchDeleted, "%q must never be deleted", protected)
+		assert.True(t, branchExistsIn(repoPath, "main"),
+			"the trunk branch must survive a request to delete %q", protected)
+		// Recreate the worktree for the next iteration.
+		if removed {
+			linkedPath, err = AddWorktreeIn(repoPath, "feature-y", "", "")
+			require.NoError(t, err)
+		}
+	}
+}
+
+func TestRemoveLinkedWorktreeAndBranch_IdempotentOnGoneBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-z", "", "")
+	require.NoError(t, err)
+
+	// Delete the branch out from under the call; removal should still
+	// succeed for the directory and report branchDeleted=false rather
+	// than erroring on the missing branch.
+	removed, branchDeleted, err := RemoveLinkedWorktreeAndBranch(linkedPath, "no-such-branch", true)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.False(t, branchDeleted, "a missing branch is a silent no-op")
+	assert.True(t, branchExistsIn(repoPath, "feature-z"),
+		"the real branch is untouched when a wrong name is passed")
+}

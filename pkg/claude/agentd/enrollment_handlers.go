@@ -93,6 +93,18 @@ func retireShouldShutdown(r *http.Request) bool {
 	return err != nil || on
 }
 
+// retireShouldDeleteWorktree reports whether a retire request should
+// also remove the agent's git worktree and delete its local branch.
+// Unlike shutdown, this defaults OFF: only the dashboard's retire modal
+// — which has already probed for a removable worktree — sends the flag.
+// A bare CLI `retire`, or any caller that omits it, must never nuke a
+// worktree by accident. ?delete_worktree=1 (or =true) opts in.
+func retireShouldDeleteWorktree(r *http.Request) bool {
+	v := strings.TrimSpace(r.URL.Query().Get("delete_worktree"))
+	on, err := strconv.ParseBool(v)
+	return err == nil && on
+}
+
 // handleAgentRetire serves POST /v1/agent/{selector}/retire.
 //
 // Unless ?shutdown=0 is passed, a successful retire also soft-exits
@@ -130,11 +142,32 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 		"conv_id": convID,
 		"outcome": outcome,
 	}
+
+	shutdown := retireShouldShutdown(r)
+	deleteWorktree := retireShouldDeleteWorktree(r)
+
+	// Resolve the worktree BEFORE issuing the shutdown: the deferred
+	// removal waits on the pane exiting, and the shared-worktree check
+	// reads sibling sessions that the soft-stop will start tearing down.
+	var wt agentWorktreeView
+	if deleteWorktree {
+		wt = resolveRetireWorktree(convID)
+	}
+
 	// Shutdown after the demotion: the agent is already a plain
 	// conversation by the time it processes /exit. Soft only — a
 	// retired agent's pane should close gracefully, not be killed.
-	if retireShouldShutdown(r) {
+	if shutdown {
 		resp["shutdown"] = stopOneConv(convID, false /* soft exit */)
+	}
+
+	// Worktree+branch cleanup runs only after the agent's process exits
+	// (its cwd is the worktree). scheduleRetireWorktreeCleanup removes
+	// inline when the agent is already offline, defers to a background
+	// waiter when a /exit is in flight, and keeps the worktree when the
+	// session is left running.
+	if deleteWorktree {
+		resp["worktree"] = scheduleRetireWorktreeCleanup(convID, wt, shutdown)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

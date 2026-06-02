@@ -281,6 +281,18 @@ func SetWorktreeFnsForTest(
 	}
 }
 
+// SetRetireWorktreeFnForTest swaps the retire-time worktree+branch
+// removal seam (removeWorktreeBranchFn), so retire flow tests can
+// exercise worktree+branch cleanup without real git repos. Returns a
+// restore func for t.Cleanup.
+func SetRetireWorktreeFnForTest(
+	remove func(root, branch string, force bool) (bool, bool, error),
+) func() {
+	prev := removeWorktreeBranchFn
+	removeWorktreeBranchFn = remove
+	return func() { removeWorktreeBranchFn = prev }
+}
+
 // StartConvMonitorForTest starts the live conv_index fsnotify monitor
 // against the current test HOME's ~/.claude/projects, with the debounce
 // shrunk to `debounce` so a test does not have to wait the production

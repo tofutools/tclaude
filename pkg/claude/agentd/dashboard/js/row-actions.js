@@ -23,7 +23,7 @@ import {
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
-  resumeAgentReq, retireConfirm, shutdownConfirm, stopAgentReq, termDirModal,
+  resumeAgentReq, retireConfirm, retireToast, shutdownConfirm, stopAgentReq, termDirModal,
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 
@@ -332,15 +332,18 @@ function bindRowActions() {
           break;
         }
         case 'retire-agent': {
-          const choice = await retireConfirm({ label });
+          const choice = await retireConfirm({ label, conv });
           if (!choice) return;
-          const q = choice.shutdown ? '?shutdown=1' : '?shutdown=0';
+          const q = `?shutdown=${choice.shutdown ? 1 : 0}`
+            + (choice.deleteWorktree ? '&delete_worktree=1' : '');
           const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
             method: 'POST', credentials: 'same-origin',
           });
           ok = r.ok;
           if (!ok) { toast(`Retire failed: ${await r.text()}`, true); break; }
-          toast(choice.shutdown ? `retired + session stopped: ${label}` : `retired: ${label}`);
+          let retireResp = null;
+          try { retireResp = await r.json(); } catch (_) {}
+          toast(retireToast(label, choice, retireResp));
           break;
         }
         case 'reinstate-agent': {

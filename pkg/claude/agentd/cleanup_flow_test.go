@@ -211,8 +211,12 @@ func TestCleanup_Group_UnknownGroupReturns404(t *testing.T) {
 // canned WorktreeStatus per directory, remove records every removal so
 // a test can assert which worktrees were (and were not) touched.
 type fakeWorktrees struct {
-	byDir   map[string]worktree.WorktreeStatus
-	removed []string
+	byDir map[string]worktree.WorktreeStatus
+	// removed records every root passed to either remove seam (delete or
+	// retire). branchRemoved is the branch arg the retire seam received,
+	// in lockstep — empty entries for delete-path removals.
+	removed       []string
+	branchRemoved []string
 }
 
 func (f *fakeWorktrees) inspect(dir string) worktree.WorktreeStatus {
@@ -224,7 +228,19 @@ func (f *fakeWorktrees) inspect(dir string) worktree.WorktreeStatus {
 
 func (f *fakeWorktrees) remove(root string, _ bool) (bool, error) {
 	f.removed = append(f.removed, root)
+	f.branchRemoved = append(f.branchRemoved, "")
 	return true, nil
+}
+
+// removeBranch is the retire-path (branch-aware) seam. It records the
+// branch it was asked to delete and reports branchDeleted for any
+// non-empty, non-protected branch — mirroring the real helper's
+// main/master guard so a flow test can assert the trunk is never swept.
+func (f *fakeWorktrees) removeBranch(root, branch string, _ bool) (bool, bool, error) {
+	f.removed = append(f.removed, root)
+	f.branchRemoved = append(f.branchRemoved, branch)
+	deleted := branch != "" && strings.ToLower(branch) != "main" && strings.ToLower(branch) != "master"
+	return true, deleted, nil
 }
 
 func (f *fakeWorktrees) wasRemoved(root string) bool {
@@ -236,13 +252,16 @@ func (f *fakeWorktrees) wasRemoved(root string) bool {
 	return false
 }
 
-// installFakeWorktrees swaps the agentd worktree seam for the test so
+// installFakeWorktrees swaps the agentd worktree seams for the test so
 // worktree cleanup runs without real git repos. byDir maps an agent's
-// cwd → the worktree status the fake reports for it.
+// cwd → the worktree status the fake reports for it. Both the delete
+// (remove) and retire (removeBranch) seams are wired so either flow can
+// use the same helper.
 func installFakeWorktrees(t *testing.T, byDir map[string]worktree.WorktreeStatus) *fakeWorktrees {
 	t.Helper()
 	fw := &fakeWorktrees{byDir: byDir}
 	t.Cleanup(agentd.SetWorktreeFnsForTest(fw.inspect, fw.remove))
+	t.Cleanup(agentd.SetRetireWorktreeFnForTest(fw.removeBranch))
 	return fw
 }
 

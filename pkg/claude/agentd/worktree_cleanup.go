@@ -1,12 +1,23 @@
 package agentd
 
 import (
+	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
+
+// retireWorktreeExitGrace bounds how long the deferred retire cleanup
+// waits for a soft-stopped agent's pane to actually exit before it
+// removes the worktree. CC's /exit can take a few seconds (it finishes
+// the current turn, flushes, then closes); 60s is generous headroom.
+// An agent that outlives the window keeps its worktree — reported, not
+// force-removed out from under a still-live process.
+const retireWorktreeExitGrace = 60 * time.Second
 
 // worktree_cleanup.go is the worktree-removal side of agent deletion.
 // When the human deletes an agent — via the per-row delete button or
@@ -27,6 +38,11 @@ import (
 var (
 	inspectWorktreeFn = worktree.InspectWorktree
 	removeWorktreeFn  = worktree.RemoveLinkedWorktree
+	// removeWorktreeBranchFn is the retire-time variant: it removes the
+	// worktree AND deletes its local branch (main/master always kept).
+	// Delete keeps the branch (removeWorktreeFn); retire cleans up the
+	// agent's whole git footprint.
+	removeWorktreeBranchFn = worktree.RemoveLinkedWorktreeAndBranch
 )
 
 // agentWorktreeView is the cleanup-oriented view of the git worktree
@@ -148,4 +164,135 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 	default:
 		return "worktree already gone"
 	}
+}
+
+// applyRetireWorktreeCleanup is the retire-flow sibling of
+// applyWorktreeCleanup: it removes wt's worktree AND force-deletes its
+// local branch (main/master are always kept — worktree.go's
+// protected-branch guard). Retiring an agent that owns a throwaway
+// feature branch should leave no git footprint behind, where a plain
+// delete keeps the branch.
+//
+// Same safety rules and never-errors contract as applyWorktreeCleanup:
+// a removal failure is reported in the returned note, never propagated,
+// so it can't undo the retire that already happened. The caller decides
+// WHEN to run this — for a live agent it is deferred until the pane
+// exits (see scheduleRetireWorktreeCleanup), since the agent's cwd is
+// the worktree being removed.
+func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) string {
+	if !requested {
+		return ""
+	}
+	switch {
+	case wt.Kind == "none":
+		return "" // no worktree — nothing to report
+	case wt.Kind == "main":
+		return "worktree kept (main repo)"
+	case wt.Shared:
+		return "worktree kept (shared with another agent)"
+	}
+	removed, branchDeleted, err := removeWorktreeBranchFn(wt.Path, wt.Branch, true)
+	switch {
+	case err != nil:
+		return "worktree removal failed: " + err.Error()
+	case removed && branchDeleted:
+		return "worktree + branch " + wt.Branch + " removed"
+	case removed && wt.Branch != "" && !isProtectedBranchName(wt.Branch):
+		// Removed the dir but the branch survived (already gone, or git
+		// refused) — say so rather than implying a clean sweep.
+		return "worktree removed (branch " + wt.Branch + " kept)"
+	case removed:
+		return "worktree removed"
+	default:
+		return "worktree already gone"
+	}
+}
+
+// isProtectedBranchName mirrors worktree.isProtectedBranch for the
+// note-phrasing above (that helper is unexported). main/master are
+// never deleted, so a "branch kept" note for them would be misleading.
+func isProtectedBranchName(branch string) bool {
+	switch strings.ToLower(strings.TrimSpace(branch)) {
+	case "main", "master":
+		return true
+	}
+	return false
+}
+
+// retireWorktreePlan is the synchronous descriptor the retire handler
+// returns for a requested worktree cleanup. Because the removal must
+// wait until the agent's pane exits (its cwd is the worktree), the HTTP
+// response often reports a *plan* ("scheduled"), not a finished result.
+type retireWorktreePlan struct {
+	// Action is one of: "none" (no worktree), "kept" (main/shared/still-
+	// running), "removed" (done inline — agent was already offline), or
+	// "scheduled" (removal deferred until the soft-stopped pane exits).
+	Action string `json:"action"`
+	Detail string `json:"detail"`
+}
+
+// scheduleRetireWorktreeCleanup arranges the worktree+branch removal the
+// retire ?delete_worktree option asked for, honouring the hard rule
+// that it must run AFTER the agent's process exits — the agent's cwd is
+// the very worktree being removed.
+//
+//   - No removable worktree (none / main / shared) → reported kept now.
+//   - Agent already offline → removed inline, synchronously.
+//   - Agent soft-stopped this retire (shutdownRequested) → deferred to a
+//     background goroutine that waits up to retireWorktreeExitGrace for
+//     the pane to die, then removes. An agent that never exits keeps its
+//     worktree (logged).
+//   - Agent still live and shutdown was declined → kept; we never yank a
+//     worktree out from under a running agent.
+//
+// wt must be resolved by the caller BEFORE any shutdown is issued (the
+// shared-worktree check reads sibling sessions, and the agent's recorded
+// location must still be intact).
+func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdownRequested bool) retireWorktreePlan {
+	switch {
+	case wt.Kind == "none" || wt.Path == "":
+		return retireWorktreePlan{Action: "none", Detail: "no worktree"}
+	case wt.Kind == "main":
+		return retireWorktreePlan{Action: "kept", Detail: "worktree kept (main repo)"}
+	case wt.Shared:
+		return retireWorktreePlan{Action: "kept", Detail: "worktree kept (shared with another agent)"}
+	}
+
+	// Already offline → safe to remove right now, inline.
+	if pickAliveSession(convID) == nil {
+		return retireWorktreePlan{Action: "removed", Detail: applyRetireWorktreeCleanup(wt, true)}
+	}
+
+	// Still alive but the human declined shutdown — leave the worktree
+	// alone; removing it under a running agent is exactly what the
+	// "after the agent exits" rule forbids.
+	if !shutdownRequested {
+		return retireWorktreePlan{Action: "kept",
+			Detail: "worktree kept — session still running (retire without shutdown)"}
+	}
+
+	// Shutdown was requested: a /exit is in flight. Wait for the pane to
+	// die, then remove. Background so the HTTP response returns now.
+	goBackground(func() {
+		if waitForConvOffline(convID, retireWorktreeExitGrace) {
+			note := applyRetireWorktreeCleanup(wt, true)
+			slog.Info("retire: worktree cleanup after exit", "conv", convID, "detail", note)
+		} else {
+			slog.Warn("retire: worktree kept — agent did not exit within grace",
+				"conv", convID, "path", wt.Path, "grace", retireWorktreeExitGrace)
+		}
+	})
+	return retireWorktreePlan{Action: "scheduled",
+		Detail: "worktree + branch will be removed after the agent exits"}
+}
+
+// resolveRetireWorktree resolves the worktree view the retire cleanup
+// acts on, including the shared-with-another-agent check. Split out so
+// the handler can resolve it BEFORE issuing the shutdown that the
+// deferred removal then waits on.
+func resolveRetireWorktree(convID string) agentWorktreeView {
+	wt := inspectAgentWorktree(convID)
+	wt.Shared = wt.Path != "" &&
+		otherAgentWorktreeRoots(map[string]bool{convID: true})[wt.Path]
+	return wt
 }

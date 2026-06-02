@@ -822,29 +822,81 @@ function openWindowModal(scope, groupName) {
 }
 
 // retireConfirm pops the retire confirmation: the same explanatory
-// copy as the old confirmModal-based prompt, plus an "also shut down
-// the running session" checkbox (checked by default). Resolves to
-// {shutdown: bool} on Retire, null on Cancel / outside-click /
-// Escape. Shared by the per-row retire button and the drag-onto-
-// Retired gesture so both ask the same question.
-function retireConfirm({label}) {
+// copy as the old confirmModal-based prompt, plus two checkboxes —
+// "also shut down the running session" (checked by default) and "also
+// delete the git worktree + branch" (checked by default when the agent
+// has a removable worktree). The worktree status is fetched async from
+// /api/agents/{conv}/worktree, mirroring deleteAgentModal: a removable
+// worktree gets an enabled, checked box; a main-repo or shared one a
+// disabled, greyed box explaining why it's kept; an agent with no
+// worktree shows no row at all.
+//
+// Deleting the worktree requires the session to stop first (the agent's
+// cwd IS the worktree, and removal happens only after it exits), so the
+// worktree box is coupled to the shutdown box: unticking shutdown
+// disables + unticks it. Resolves to {shutdown, deleteWorktree} on
+// Retire, null on Cancel / outside-click / Escape. Shared by the
+// per-row retire button and the drag-onto-Retired gesture so both ask
+// the same question.
+function retireConfirm({label, conv}) {
   return new Promise(resolve => {
     const overlay = $('#retire-modal');
     const okBtn = $('#retire-ok');
     const cancelBtn = $('#retire-cancel');
     const shutdownCb = $('#retire-shutdown');
+    const wtRow = $('#retire-wt-row');
+    const wtCb = $('#retire-wt');
+    const wtLabel = $('#retire-wt-label');
     $('#retire-meta').textContent = label || '';
     $('#retire-meta').style.display = label ? 'block' : 'none';
     shutdownCb.checked = true; // default ON on every open
+    // Worktree row hidden until the fetch tells us there is one.
+    wtRow.style.display = 'none';
+    wtRow.classList.remove('disabled');
+    wtCb.checked = false;
+    wtCb.disabled = false;
+
+    // wtInfo is the probe result once it lands; null until then (and for
+    // a main/shared/absent worktree, where deletion is never offered).
+    // renderWtRow paints the row from wtInfo + the shutdown state, so it
+    // is re-run whenever shutdown toggles.
+    let wtInfo = null;
+    const renderWtRow = () => {
+      if (!wtInfo || !wtInfo.removable) return; // non-removable rows are painted once, by the probe
+      const pathTxt = wtInfo.path + (wtInfo.branch ? ' · ' + wtInfo.branch : '');
+      if (shutdownCb.checked) {
+        wtCb.disabled = false;
+        wtCb.checked = true; // default ON when removable + shutting down
+        wtRow.classList.remove('disabled');
+        wtLabel.innerHTML = 'Also delete the git worktree + branch '
+          + `<span class="wt-note">${esc(pathTxt)} — removed after the agent exits</span>`;
+      } else {
+        wtCb.disabled = true;
+        wtCb.checked = false;
+        wtRow.classList.add('disabled');
+        wtLabel.innerHTML = 'Delete the git worktree + branch '
+          + `<span class="wt-note">${esc(pathTxt)} — requires shutting down the session first</span>`;
+      }
+    };
+
+    // active guards the background worktree fetch: once the modal closes
+    // (and possibly reopens for another agent) a late response must not
+    // mutate the now-foreign modal DOM.
+    let active = true;
     const cleanup = (result) => {
+      active = false;
       overlay.classList.remove('show');
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlay);
       document.removeEventListener('keydown', onKey);
+      shutdownCb.removeEventListener('change', renderWtRow);
       resolve(result);
     };
-    const onOk = () => cleanup({ shutdown: shutdownCb.checked });
+    const onOk = () => cleanup({
+      shutdown: shutdownCb.checked,
+      deleteWorktree: wtCb.checked && !wtCb.disabled,
+    });
     const onCancel = () => cleanup(null);
     const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
     const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
@@ -852,9 +904,51 @@ function retireConfirm({label}) {
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlay);
     document.addEventListener('keydown', onKey);
+    shutdownCb.addEventListener('change', renderWtRow);
     overlay.classList.add('show');
     okBtn.focus();
+
+    // Resolve the worktree in the background — the modal is already
+    // usable (retire works) before this lands. If the human clicks
+    // through before it resolves the worktree is simply kept, the safe
+    // default. conv may be absent for callers that don't pass it; then
+    // no worktree row is shown.
+    if (!conv) return;
+    fetch(`/api/agents/${encodeURIComponent(conv)}/worktree`, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(wt => {
+        if (!active) return;
+        if (!wt || wt.kind === 'none' || !wt.path) return;
+        wtInfo = wt;
+        wtRow.style.display = '';
+        const pathTxt = wt.path + (wt.branch ? ' · ' + wt.branch : '');
+        if (wt.removable) {
+          renderWtRow(); // checked/enabled, coupled to the shutdown box
+        } else {
+          wtCb.checked = false;
+          wtCb.disabled = true;
+          wtRow.classList.add('disabled');
+          const why = wt.kind === 'main' ? 'the repo’s main worktree, never removed'
+            : wt.shared ? 'shared with another agent'
+            : 'not removable';
+          wtLabel.innerHTML = 'Git worktree kept '
+            + `<span class="wt-note">${esc(pathTxt)} — ${esc(why)}</span>`;
+        }
+      })
+      .catch(() => {});
   });
+}
+
+// retireToast builds the post-retire toast from the human's choices and
+// the daemon's response. The worktree outcome is reported from the
+// response's `worktree.detail` (scheduled / removed / kept) rather than
+// guessed, since the removal is deferred until the agent exits. Shared
+// by the per-row retire button and the drag-onto-Retired gesture.
+function retireToast(label, choice, resp) {
+  let msg = choice.shutdown ? `retired + session stopped: ${label}` : `retired: ${label}`;
+  const detail = choice.deleteWorktree && resp && resp.worktree && resp.worktree.detail;
+  if (detail) msg += ` · ${detail}`;
+  return msg;
 }
 
 // shutdownConfirm pops a 3-button confirm: Soft exit (default),
@@ -1997,7 +2091,7 @@ async function stopAgentReq(conv, label, force) {
 
 export {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
-  shutdownScope, powerOnScope, openWindowModal, retireConfirm, shutdownConfirm,
+  shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };
