@@ -16,6 +16,15 @@
   <span class="meta" id="meta">loading…</span>
   <span class="meta" style="margin-left:auto" id="usage"></span>
   <span class="meta" id="status"></span>
+  <!-- Slop-mode HUD — a running credits counter + the casino sound-FX
+       toggle. CSS-hidden unless body.slop (see dashboard.css); fed by
+       slop-credits.js / slop-audio.js. Always in the DOM so flipping slop
+       in-place doesn't need a re-render. Not aria-hidden: it holds the
+       interactive sound button, which must stay reachable when shown. -->
+  <span class="slop-hud" id="slop-hud">
+    <span class="slop-credits" id="slop-credits" title="Slop credits — climbs on every jackpot this session">🪙 0</span>
+    <button class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
+  </span>
   <button id="window-all-btn" data-act="window-modal-all" aria-label="Focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way.">🪟 windows…</button>
   <button id="power-on-all-btn" data-act="power-on-all" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on all</button>
   <button id="shutdown-all-btn" data-act="shutdown-all" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown all</button>
@@ -327,8 +336,22 @@
     <p class="vegas-intro">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
     <div id="vegas-player"></div>
     <p class="vegas-hint">Music plays as long as slop mode is on — leave the mode (click the 🎰 in the header) to stop it.</p>
+    <!-- High-rollers leaderboard — slop-credits.js renders agent jackpot
+         rankings (this session) in here, with a 🔥 on any agent on a
+         hot streak. Empty placeholder until the first jackpot lands. -->
+    <div id="vegas-leaderboard" class="vegas-leaderboard"></div>
   </section>
 </main>
+<!-- Slop-mode side pull-lever — a casino lever pinned to the right edge,
+     CSS-hidden unless body.slop. slop-spectacle.js wires the click to
+     spin every live slot machine at once (pullAllMachines). aria-hidden —
+     pure flair; the per-row machines remain the keyboard-reachable path. -->
+<div id="slop-lever" aria-hidden="true" title="Pull the lever — spin every machine at once">
+  <div class="slop-lever-track">
+    <div class="slop-lever-stick"><span class="slop-lever-knob">🔴</span></div>
+  </div>
+  <div class="slop-lever-label">PULL</div>
+</div>
 <div class="modal-overlay" id="confirm-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
     <h3 id="confirm-title"></h3>

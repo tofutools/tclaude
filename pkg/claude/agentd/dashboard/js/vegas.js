@@ -14,8 +14,15 @@
 // dispatches on every apply/toggle ({ detail: { active } }), rather than
 // reaching into slop.js's internals. Companion to slop.js (the theme
 // toggle) and slop-fx.js (the visual flair).
+//
+// The radio is also governed by the master sound switch slop-audio.js
+// owns (the 🔇/🔊 button in the header): we only auto-start when sound
+// is enabled, and we start/stop in response to its `tclaude:slopsound`
+// event so one button mutes both the FX and the music. The <audio
+// controls> here remains a finer play/volume control when sound is on.
 
 import { isSlopActive } from './slop.js';
+import { isSlopSoundEnabled } from './slop-audio.js';
 
 // The station. SomaFM is listener-supported and genuinely commercial-
 // free; "Illinois Street Lounge" is its vintage cocktail / Rat-Pack
@@ -157,17 +164,30 @@ export function bindVegasMusic() {
     const active = !!(e.detail && e.detail.active);
     if (active) {
       // Reached from a toggle click → we're inside that gesture's call
-      // stack, so autoplay-with-sound is granted.
-      startMusic();
+      // stack, so autoplay-with-sound is granted. Only start when the
+      // master sound switch is on — a muted user entering slop shouldn't
+      // get the radio.
+      if (isSlopSoundEnabled()) startMusic();
     } else {
       stopMusic();
       leaveVegasTabIfActive();
     }
   });
+  // The master sound switch (slop-audio.js's header button) toggled. Mute
+  // → stop the stream; unmute → start it if we're in slop mode. This is
+  // what makes the one header button govern the music as well as the FX.
+  document.addEventListener('tclaude:slopsound', (e) => {
+    const on = !!(e.detail && e.detail.enabled);
+    if (on) {
+      if (isSlopActive()) startMusic();
+    } else {
+      stopMusic();
+    }
+  });
   // Page loaded already in slop mode (e.g. `--slop` → ?slop=1). The
   // initial tclaude:slop fired from applySlopThemeIfRequested() before
-  // this binder existed, so kick the player off here. startMusic handles
-  // the gestureless autoplay block by starting muted and unmuting on the
-  // first interaction.
-  if (isSlopActive()) startMusic();
+  // this binder existed, so kick the player off here — unless sound is
+  // muted. startMusic handles the gestureless autoplay block by starting
+  // muted and unmuting on the first interaction.
+  if (isSlopActive() && isSlopSoundEnabled()) startMusic();
 }

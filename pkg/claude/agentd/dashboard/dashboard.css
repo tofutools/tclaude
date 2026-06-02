@@ -1871,3 +1871,211 @@ body.slop #agent-spawn-submit.slop-pull-active {
   body.slop #agent-spawn-submit.slop-pull-active { animation: none; }
   .slop-trail-coin { display: none; animation: none; }
 }
+
+/* ─── Slop HUD: credits counter + sound toggle (body.slop) ──────────
+   A small header cluster — a 🪙 credits tally (slop-credits.js) and the
+   casino sound-FX mute toggle (slop-audio.js). Hidden in the plain
+   dashboard; revealed only in slop mode, like the Vegas tab. */
+.slop-hud { display: none; }
+body.slop .slop-hud {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+}
+.slop-credits {
+  color: #ffe88c;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
+  white-space: nowrap;
+}
+/* A quick pop each time the tally climbs — slop-credits.js re-adds the
+   class (after a reflow) to restart the keyframes. */
+.slop-credits.slop-credits-bump { animation: slop-credits-bump 0.4s ease-out; }
+@keyframes slop-credits-bump {
+  0%   { transform: scale(1);    color: #ffe88c; }
+  35%  { transform: scale(1.35); color: #fff; text-shadow: 0 0 14px rgba(255, 215, 0, 0.95); }
+  100% { transform: scale(1);    color: #ffe88c; }
+}
+.slop-hud-btn {
+  background: #2a0808;
+  border: 1px solid #ffd700;
+  color: #ffe88c;
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.slop-hud-btn:hover { background: #4a0a0a; }
+
+/* ─── High-rollers leaderboard (Vegas tab, slop-credits.js) ─────────
+   Renders under the radio player. Same oxblood-and-gold card treatment
+   as #vegas-player so the tab reads as one unit. */
+.vegas-leaderboard {
+  max-width: 720px;
+  margin: 20px auto 0;
+  padding: 18px 22px;
+  background: linear-gradient(180deg, #1a0606 0%, #2a0808 100%);
+  border: 1px solid #ffd700;
+  border-radius: 10px;
+  box-shadow: 0 0 18px rgba(255, 215, 0, 0.2);
+}
+.vegas-leaderboard-title {
+  margin: 0 0 12px;
+  text-align: center;
+  color: #ffe88c;
+  font-size: 16px;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
+}
+.vegas-leaderboard-sub { color: #c9a86b; font-size: 12px; font-weight: 400; }
+.vegas-leaderboard-empty { text-align: center; color: #c9a86b; font-size: 13px; }
+.vegas-leaderboard-list { list-style: none; margin: 0; padding: 0; }
+.vegas-leaderboard-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.12);
+  color: #ffe88c;
+  font-size: 14px;
+}
+.vegas-leaderboard-list li:last-child { border-bottom: none; }
+.vegas-leaderboard-list .rank {
+  width: 1.6em;
+  text-align: center;
+  color: #c9a86b;
+  font-weight: 700;
+}
+.vegas-leaderboard-list .who {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vegas-leaderboard-list .wins { color: #ffd700; font-weight: 700; white-space: nowrap; }
+.vegas-leaderboard-list li.hot .who {
+  color: #ff9f1c;
+  text-shadow: 0 0 8px rgba(255, 159, 28, 0.6);
+}
+
+/* ─── Side pull-lever (body.slop, slop-spectacle.js) ────────────────
+   A casino lever pinned to the right edge. Hidden in the plain
+   dashboard. The gold stick drops on .slop-lever-pulled (added for the
+   yank's duration) then springs back. */
+#slop-lever { display: none; }
+body.slop #slop-lever {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: fixed;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 9997;
+  cursor: pointer;
+  user-select: none;
+}
+.slop-lever-track {
+  width: 14px;
+  height: 90px;
+  background: linear-gradient(180deg, #3a0a0a 0%, #1a0606 100%);
+  border: 2px solid #ffd700;
+  border-radius: 9px;
+  position: relative;
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.35);
+}
+.slop-lever-stick {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  width: 6px;
+  height: 40px;
+  background: linear-gradient(180deg, #ffe88c 0%, #d4a017 100%);
+  border-radius: 3px;
+  transform: translateX(-50%);
+  transition: top 0.12s ease;
+}
+.slop-lever-knob {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 18px;
+  line-height: 1;
+}
+body.slop #slop-lever:hover .slop-lever-track { box-shadow: 0 0 16px rgba(255, 215, 0, 0.7); }
+/* The yank: the stick slams down then springs back, and the track flares
+   gold — a keyframe (not a transition) so it plays the full down-and-up
+   regardless of when slop-spectacle.js removes the class. */
+body.slop #slop-lever.slop-lever-pulled .slop-lever-stick {
+  animation: slop-lever-yank-stick 0.5s ease-out;
+}
+@keyframes slop-lever-yank-stick {
+  0%   { top: 6px; }
+  30%  { top: 46px; }
+  100% { top: 6px; }
+}
+body.slop #slop-lever.slop-lever-pulled .slop-lever-track {
+  animation: slop-lever-flash 0.5s ease-out;
+}
+@keyframes slop-lever-flash {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 215, 0, 0.35); }
+  40%      { box-shadow: 0 0 22px rgba(255, 215, 0, 0.95); border-color: #ffe88c; }
+}
+.slop-lever-label {
+  color: #ffe88c;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-shadow: 0 0 5px rgba(255, 215, 0, 0.5);
+}
+
+/* ─── Confetti + mega-jackpot shake (slop-spectacle.js) ─────────────
+   Confetti: coloured pieces raining on a big win; background colour set
+   inline per piece, fall path from --dx/--dy/--rot. z-index above the
+   jackpot banner so it rains over it. Self-cleans on animationend.
+   Shake: a brief whole-page wobble on the Konami mega-jackpot. */
+.slop-confetti {
+  position: fixed;
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 10001;
+  opacity: 0.95;
+  animation: slop-confetti-fall 1.8s ease-in forwards;
+  will-change: transform, opacity;
+}
+@keyframes slop-confetti-fall {
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 0.95; }
+  100% { transform: translate(var(--dx, 0px), var(--dy, 600px)) rotate(var(--rot, 360deg)); opacity: 0; }
+}
+/* Note: a transform on <body> makes body the containing block for its
+   position:fixed descendants for the ~600ms it runs, so the lever,
+   confetti and jackpot banner shake along with the page (intended). A
+   modal open during a Konami mega would shake too — harmless and rare. */
+body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
+@keyframes slop-shake {
+  0%, 100% { transform: translate(0, 0); }
+  15% { transform: translate(-8px, 4px) rotate(-0.4deg); }
+  30% { transform: translate(7px, -5px) rotate(0.4deg); }
+  45% { transform: translate(-6px, 6px); }
+  60% { transform: translate(6px, -3px) rotate(0.3deg); }
+  75% { transform: translate(-4px, 3px); }
+}
+
+/* prefers-reduced-motion — kill the new motion. Each effect's JS gate
+   already short-circuits, but mirror slop's belt-and-suspenders CSS
+   layer. The HUD / leaderboard / lever stay visible (they're not motion);
+   confetti is hidden outright since it's nothing but motion. */
+@media (prefers-reduced-motion: reduce) {
+  .slop-credits.slop-credits-bump { animation: none; }
+  body.slop #slop-lever.slop-lever-pulled .slop-lever-stick,
+  body.slop #slop-lever.slop-lever-pulled .slop-lever-track { animation: none; transition: none; }
+  .slop-confetti { display: none; animation: none; }
+  body.slop-shake { animation: none; }
+}
