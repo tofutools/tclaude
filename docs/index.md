@@ -28,23 +28,68 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 
 ## Installation
 
-After installing tclaude, run the setup command:
+### Prerequisites
+
+- [Go](https://go.dev/dl/) 1.26+ (for `go install`)
+- [tmux](https://github.com/tmux/tmux) — required for session management. `tclaude setup` offers to install it for you on macOS (via Homebrew) and prints package-manager hints on Linux.
+
+### 1. Install the binary
+
+=== "go install"
+
+    ```bash
+    go install github.com/tofutools/tclaude@latest
+    ```
+
+=== "Prebuilt binary"
+
+    Download the archive for your platform from the
+    [Releases page](https://github.com/tofutools/tclaude/releases). The Linux builds are
+    named `tclaude-no-cgo_linux_<arch>` and the macOS build `tclaude-darwin_darwin_arm64`.
+    Extract it (the `tclaude` binary sits in a versioned subdirectory) and move it onto
+    your `PATH`:
+
+    ```bash
+    tar -xzf tclaude-*.tar.gz
+    sudo mv tclaude*/tclaude /usr/local/bin/
+    ```
+
+### 2. Run setup
 
 ```bash
-# Install tclaude
-go install github.com/tofutools/tclaude@latest
-
-# Set up Claude integration (hooks, notifications, protocol handler)
-tclaude setup
+# Baseline setup + the two extras most users want
+tclaude setup --install-agent-skills --install-default-agent-permissions
 ```
 
-This will:
-- Check that tmux is installed (required for session management)
-- Install hooks in `~/.claude/settings.json` for status tracking
-- Install the status bar for Claude Code's statusline
-- Check for notification tools (terminal-notifier on macOS, xdotool on Linux)
-- Register the protocol handler for clickable notifications (WSL)
-- Ask if you want to enable desktop notifications
+The **baseline** always runs (you can't turn it off) and:
+
+- Checks that tmux is installed (offers to install it on macOS)
+- Installs hooks in `~/.claude/settings.json` for status tracking
+- Installs the status bar for Claude Code's statusline
+- Sets up clickable notifications for your platform (terminal-notifier on macOS, D-Bus + xdotool/kdotool on Linux, the `tclaude://` protocol handler on WSL)
+- Asks if you want to enable desktop notifications
+
+### Optional extras
+
+The `--install-*` flags add extras **on top of** the baseline — they don't replace it. All are idempotent, so re-running `tclaude setup` with different flags is safe.
+
+| Flag | Adds | When you want it |
+|------|------|------------------|
+| `--install-agent-skills` | Materialises the bundled `agent-*` skills into `~/.claude/skills/` so agents know about the coordination commands. | Using [Agent Coordination](agent.md) |
+| `--install-default-agent-permissions` | Grants the `self.*` permission slugs those skills exercise (`self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`) as agent defaults. | Using [Agent Coordination](agent.md) |
+| `--install-sandbox-hardening` | Adds the `sandbox.*` / `permissions.deny` entries that deny agents direct access to agentd's state. Append-only and idempotent. | Only if you run agents inside the [Claude Code sandbox](sandbox-hardening.md) |
+| `--install-all` | Every extra above. | You want it all |
+
+!!! note "Agent coordination needs the daemon running"
+    The two agent extras only install skills and permissions. To actually use the
+    coordination features you also run `tclaude agentd serve` in a non-sandboxed shell —
+    see [Agent Coordination](agent.md) for the full picture.
+
+### Verify
+
+```bash
+tclaude setup --check
+```
 
 ## Quick Start 🚀
 
