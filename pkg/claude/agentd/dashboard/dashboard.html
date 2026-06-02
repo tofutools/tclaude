@@ -36,6 +36,9 @@
   <button data-tab="slugs">Slug registry</button>
   <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
   <button data-tab="config">Config</button>
+  <!-- Vegas — the slop-mode soundtrack tab. CSS-hidden unless body.slop
+       is set (see dashboard.css); vegas.js owns the player inside it. -->
+  <button data-tab="vegas">🎰 Vegas</button>
 </nav>
 <main>
   <section id="tab-groups" class="active">
@@ -310,6 +313,15 @@
       <button class="tool" data-act="msg-clear" title="Delete every message that has been marked read">🧹 clear read</button>
     </div>
     <div id="messages-list"></div>
+  </section>
+  <!-- Vegas tab — appears after Config only in slop mode. vegas.js
+       injects a lounge-radio <audio> player into #vegas-player when slop
+       turns on and tears it down when slop turns off, so the music stops
+       the moment you leave the mode. -->
+  <section id="tab-vegas">
+    <p class="vegas-intro">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
+    <div id="vegas-player"></div>
+    <p class="vegas-hint">Music plays as long as slop mode is on — leave the mode (click the 🎰 in the header) to stop it.</p>
   </section>
 </main>
 <div class="modal-overlay" id="confirm-modal">

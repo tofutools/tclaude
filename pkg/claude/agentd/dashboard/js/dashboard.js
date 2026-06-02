@@ -5,6 +5,7 @@ import {
   bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
   bindSlopCursorTrail, bindSlopMarquee,
 } from './slop-fx.js';
+import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
   refresh,
@@ -90,5 +91,10 @@ bindSlopMachineClicks();
 bindSlopStatusWatch();
 bindSlopCursorTrail();
 bindSlopMarquee();
+// Vegas-mode soundtrack — the "Vegas" tab + lounge-radio player, started
+// and stopped with slop mode (listens for the tclaude:slop event slop.js
+// dispatches). Must bind after applySlopThemeIfRequested() above so an
+// already-slop page is handled by its initial-state check.
+bindVegasMusic();
 refresh();
 setInterval(refresh, 2000);
