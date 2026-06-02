@@ -36,6 +36,34 @@ type Config struct {
 	// performed by the agentd daemon. Absent block / absent keys fall
 	// back to the built-in defaults — see ResolvedLogRotation.
 	LogRotation *LogRotationConfig `json:"log_rotation,omitempty"`
+
+	// Focus configures window-focus behavior. Absent → defaults (focus
+	// raises an existing window and opens a fresh one when none is open).
+	Focus *FocusConfig `json:"focus,omitempty"`
+}
+
+// FocusConfig holds window-focus behavior knobs.
+//
+// RaiseOnly, when true, makes window-focus RAISE an existing terminal
+// window only — it never opens a fresh one as a side effect. Default
+// (false) keeps the historical behavior: focusing an agent that has no
+// attached client opens a new terminal running `tclaude session attach`
+// (what macOS does too). Opt-in for permissive compositors where the
+// open-on-focus fallback pops up / raises a window unexpectedly on every
+// dashboard "show" that resolves to a detached agent. The explicit
+// dashboard "open window" action opens a console regardless of this flag.
+type FocusConfig struct {
+	RaiseOnly bool `json:"raise_only,omitempty"`
+}
+
+// RaiseOnlyFocus reports whether window focus should be raise-only (raise
+// an existing window but never open a fresh one). Nil-safe so callers
+// need no guard; the absent default is false (open-on-focus).
+func (c *Config) RaiseOnlyFocus() bool {
+	if c == nil || c.Focus == nil {
+		return false
+	}
+	return c.Focus.RaiseOnly
 }
 
 // LogRotationConfig holds the agentd log-rotation knobs. agentd caps

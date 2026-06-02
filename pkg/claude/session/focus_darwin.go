@@ -38,13 +38,29 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 		fmt.Printf("[debug] Target tty: %s\n", tty)
 	}
 
+	raiseOnly := focusRaiseOnlyFn()
+
 	// No client attached and we know the session ID → spawn a new terminal
 	// that attaches via `tclaude session attach <id>` so the wrapper sets
-	// TCLAUDE_SESSION_ID + window title before execing tmux.
-	if tty == "" && sessionID != "" {
+	// TCLAUDE_SESSION_ID + window title before execing tmux. Skipped when
+	// focus.raise_only is configured: the user has opted out of the
+	// open-on-focus side effect (use the explicit "open window" action).
+	if !raiseOnly && tty == "" && sessionID != "" {
 		if openTerminalAttachingSession(sessionID, debug) {
 			return true
 		}
+	}
+
+	// Raise-only with no attached client: there is no window for THIS
+	// session to raise, and we won't open one — so stop here rather than
+	// falling through to detectAnyRunningTerminal + activate, which would
+	// raise an arbitrary unrelated terminal (the very pop-up raise_only
+	// exists to suppress). Mirrors the Linux focusLinuxNoClients arm.
+	if raiseOnly && tty == "" {
+		if debug {
+			fmt.Println("[debug] raise_only and no attached client; nothing to raise")
+		}
+		return false
 	}
 
 	// Get the terminal app

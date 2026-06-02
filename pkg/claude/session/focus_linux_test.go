@@ -401,6 +401,12 @@ func TestTryFocusAttachedSessionWithID_Native(t *testing.T) {
 			isWSLFn = func() bool { return false }
 			t.Cleanup(func() { isWSLFn = prevWSL })
 
+			// Pin the default (open-on-focus) behavior; raise-only is
+			// covered by TestTryFocusAttachedSessionWithID_RaiseOnly.
+			prevRaise := focusRaiseOnlyFn
+			focusRaiseOnlyFn = func() bool { return false }
+			t.Cleanup(func() { focusRaiseOnlyFn = prevRaise })
+
 			// Swap the dispatch seam to return the chosen result.
 			prevFn := focusLinuxTmuxSessionFn
 			focusLinuxTmuxSessionFn = func(string) focusLinuxResult { return tc.result }
@@ -433,5 +439,43 @@ func TestTryFocusAttachedSessionWithID_Native(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTryFocusAttachedSessionWithID_RaiseOnly pins the focus.raise_only
+// opt-in: when set, the no-client case must NOT open a fresh terminal —
+// focus raises an existing window or no-ops, and opening a console is the
+// explicit "open window" action's job. This is the default-off behavior
+// Yorz needs under a permissive compositor where the open-on-focus
+// fallback popped a konsole on every "show" that hit a detached agent.
+func TestTryFocusAttachedSessionWithID_RaiseOnly(t *testing.T) {
+	// Force the native-Linux branch even on a WSL2 dev host.
+	prevWSL := isWSLFn
+	isWSLFn = func() bool { return false }
+	t.Cleanup(func() { isWSLFn = prevWSL })
+
+	// raise_only ON.
+	prevRaise := focusRaiseOnlyFn
+	focusRaiseOnlyFn = func() bool { return true }
+	t.Cleanup(func() { focusRaiseOnlyFn = prevRaise })
+
+	// No clients attached — the case that would spawn under the default.
+	prevFn := focusLinuxTmuxSessionFn
+	focusLinuxTmuxSessionFn = func(string) focusLinuxResult { return focusLinuxNoClients }
+	t.Cleanup(func() { focusLinuxTmuxSessionFn = prevFn })
+
+	var spawnArgs []string
+	prevOpen := linuxOpenTerminal
+	linuxOpenTerminal = func(cmd string) error {
+		spawnArgs = append(spawnArgs, cmd)
+		return nil
+	}
+	t.Cleanup(func() { linuxOpenTerminal = prevOpen })
+
+	TryFocusAttachedSessionWithID("tmux-label", "4d01388a")
+
+	if len(spawnArgs) != 0 {
+		t.Fatalf("raise_only set: expected NO terminal spawn on no-client, got %d (%v)",
+			len(spawnArgs), spawnArgs)
 	}
 }

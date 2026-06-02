@@ -249,6 +249,17 @@ function bindRowActions() {
           toast(`terminal opened: ${info.dir || label}`);
           return;
         }
+        case 'open-window': {
+          // Open a terminal attached to the agent's live session — the
+          // explicit way to get a console. Non-destructive, changes no
+          // dashboard state, so skip the refresh.
+          const r = await fetch(`/api/open-window/${encodeURIComponent(conv)}`, {
+            method: 'POST', credentials: 'same-origin',
+          });
+          if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
+          toast(`window opened: ${label}`);
+          return;
+        }
         case 'term-dir': {
           // Click on a CWD path cell — the cell already names one
           // specific directory, so open a terminal there straight

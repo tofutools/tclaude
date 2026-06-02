@@ -275,6 +275,56 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"dir": dir, "which": which})
 }
 
+// handleDashboardOpenWindowAPI opens a fresh terminal window ATTACHED to
+// an agent's live tclaude session — the explicit way to get a console for
+// a headless/detached agent, independent of the focus.raise_only setting
+// (which, when on, makes plain focus a no-op for a windowless agent).
+// Reuses the same openTerminal + openAttachCmd shape as spawn auto-focus.
+// Wired in from registerDashboardEditRoutes.
+//
+//	POST /api/open-window/{conv}
+//
+// Same threat model as the rest of /api/* — the dashboard cookie + Origin
+// pin is the human-consent layer (see dashboard_edit.go).
+func handleDashboardOpenWindowAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/open-window/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "expected /api/open-window/{conv}", http.StatusNotFound)
+		return
+	}
+	if len(parts) > 1 && parts[1] != "" {
+		http.Error(w, "unknown subpath /api/open-window/{conv}/"+parts[1], http.StatusNotFound)
+		return
+	}
+	convSelector := parts[0]
+	if u, err := url.PathUnescape(convSelector); err == nil {
+		convSelector = u
+	}
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	sess := pickAliveSession(res.ConvID)
+	if sess == nil {
+		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
+		return
+	}
+	if err := openTerminal(openAttachCmd(sess.ID)); err != nil {
+		http.Error(w, "open window: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "label": sess.ID})
+}
+
 // openTerminal is the seam for spawning a terminal window. Production
 // uses terminal.OpenWithCommand (platform-specific); flow tests swap
 // in a recorder so they can assert which dir would have been opened
