@@ -42,6 +42,10 @@ func TryFocusAttachedSession(tmuxSession string) {
 func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 	slog.Debug(fmt.Sprintf("TryFocusAttachedSessionWithID called for tmux=%s id=%s", tmuxSession, sessionID), "module", "focus")
 
+	// raiseOnly gates the open-a-fresh-window fallbacks below. Default
+	// false (open-on-focus); the focus.raise_only config opt-in flips it.
+	raiseOnly := focusRaiseOnlyFn()
+
 	if isWSLFn() {
 		slog.Debug("WSL detected, focusing by title pattern", "module", "focus")
 		// Skip the wsl.exe parent-tree walk (which is anchored at OUR
@@ -51,8 +55,10 @@ func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 		if sessionID != "" && focusWindowByTitlePattern(sessionID) {
 			return
 		}
-		// Fallback to opening a new WT window attached to the session.
-		if sessionID != "" {
+		// Fallback to opening a new WT window attached to the session —
+		// unless raise-only is configured, in which case there is no
+		// existing window to raise and we stop here.
+		if !raiseOnly && sessionID != "" {
 			focusWTTabByCycling(sessionID)
 		}
 		return
@@ -66,12 +72,18 @@ func TryFocusAttachedSessionWithID(tmuxSession, sessionID string) {
 	case focusLinuxFocused:
 		return
 	case focusLinuxNoClients:
-		// Genuinely nothing to focus — WSL's focusWTTabByCycling does
-		// the same: open a fresh terminal that runs `tclaude session
-		// attach` so the human gets a window without having to launch
-		// one by hand. (This is the case yamzz's friend hit and PR
-		// #201 added the fallback for.)
-		if sessionID != "" {
+		// Genuinely nothing to focus. By default we open a fresh terminal
+		// that runs `tclaude session attach` so the human gets a window
+		// without launching one by hand (the no-client case PR #201 added
+		// the fallback for). With focus.raise_only configured we stop here
+		// instead — there is no existing window to raise, and the user has
+		// opted out of the open-on-focus side effect (use the explicit
+		// dashboard "open window" action to get a console).
+		switch {
+		case raiseOnly:
+			slog.Debug("no client window to raise; focus.raise_only set, not opening a new terminal",
+				"tmux", tmuxSession, "id", sessionID, "module", "focus")
+		case sessionID != "":
 			openLinuxAttachTerminal(sessionID)
 		}
 	case focusLinuxTryFailed:

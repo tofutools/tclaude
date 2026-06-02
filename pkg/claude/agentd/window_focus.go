@@ -22,9 +22,12 @@ import (
 //
 // Two directions, picked by the request body:
 //   - "focus"   — raise the OS terminal window attached to each agent's
-//                 tmux session, opening a fresh window when none is
-//                 open. The same per-agent call POST /api/jump/{conv}
-//                 makes, applied in bulk.
+//                 tmux session, opening a fresh window when none is open
+//                 (unless focus.raise_only is configured, in which case
+//                 it raises an existing window only and is a no-op for a
+//                 windowless agent — use the explicit "open window"
+//                 action then). The same per-agent call POST
+//                 /api/jump/{conv} makes, applied in bulk.
 //   - "unfocus" — detach every tmux client from each agent's session,
 //                 so the windows go away and the desktop is
 //                 decluttered. The agent process keeps running; the
@@ -67,7 +70,7 @@ import (
 // Per-agent outcome strings. Stable wire values — the dashboard reads
 // them back into the result toast.
 const (
-	windowFocused  = "focused"   // focus dispatched (raised or opened a window)
+	windowFocused  = "focused"   // focus dispatched (raised, or opened a window unless raise_only)
 	windowDetached = "detached"  // unfocus detached >=1 tmux client (window dismissed)
 	windowNoWindow = "no_window" // unfocus ran but the agent had no window open — a no-op
 	windowFailed   = "failed"    // the underlying tmux op errored
@@ -97,9 +100,10 @@ type agentWindowsResp struct {
 }
 
 // focusAgentWindow raises — or, when none is open, opens — the OS
-// terminal window attached to one agent's tmux session. It is the
-// per-agent unit the bulk endpoint dispatches for direction "focus",
-// the same call POST /api/jump/{conv} makes for a single agent.
+// terminal window attached to one agent's tmux session (raise-only, no
+// open, when focus.raise_only is configured). It is the per-agent unit
+// the bulk endpoint dispatches for direction "focus", the same call POST
+// /api/jump/{conv} makes for a single agent.
 //
 // Seam: production focuses for real via
 // session.TryFocusAttachedSessionWithID (per-platform: AppleScript /

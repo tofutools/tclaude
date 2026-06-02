@@ -158,6 +158,36 @@ func TestDir_DashboardTermButton(t *testing.T) {
 	assert.Contains(t, gotCmd, currentDir, "dashboard term should cd into current_dir")
 }
 
+// Scenario: the human clicks the per-row "open window" cog item.
+//
+// Expected: POST /api/open-window/{conv} resolves the agent and opens a
+// terminal ATTACHED to its live session (`tclaude session attach
+// <label>`), 200.
+func TestDir_DashboardOpenWindowButton(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "dirow-aaaa-bbbb-cccc-dddd"
+	const label = "lbl-dirow"
+	const startDir = "/home/u/git"
+
+	f.HaveConvWithTitle(conv, "dash-open-window")
+	f.HaveAliveSession(conv, label, "tclaude-dirow", startDir)
+
+	var gotCmd string
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
+		gotCmd = cmd
+		return nil
+	}))
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(dash, testharness.JSONRequest(t,
+		http.MethodPost, "/api/open-window/"+conv, nil))
+	require.Equal(t, http.StatusOK, rec.Code, "open-window: body=%s", rec.Body.String())
+	assert.Contains(t, gotCmd, "session attach", "open-window should attach to the live session")
+	assert.Contains(t, gotCmd, label, "open-window should attach by the session label")
+}
+
 // Scenario: an agent is editing files deep inside a git worktree.
 //
 // Expected: worktree_dir is the git working-tree root containing

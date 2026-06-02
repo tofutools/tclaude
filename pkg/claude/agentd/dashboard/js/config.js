@@ -151,6 +151,7 @@ function populateConfigForm(cfg) {
   $('#cfg-autocompact-enabled').checked = acp != null;
   $('#cfg-autocompact-pct').value = acp != null ? acp : '';
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
+  $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
 
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
@@ -205,6 +206,15 @@ function assembleConfig() {
   if ($('#cfg-autocompact-enabled').checked) cfg.auto_compact_percent = cfgInt('cfg-autocompact-pct', 80);
   else delete cfg.auto_compact_percent;
   cfg.record_hooks = $('#cfg-record-hooks').checked;
+
+  // focus is an optional block. Clone the existing one so a future
+  // sub-field with no widget round-trips, set the one form-owned key, and
+  // drop the block when raise_only is off and nothing else remains — an
+  // empty {} would marshal as a spurious diff against a config that simply
+  // had no focus key.
+  const fc = (cfg.focus && typeof cfg.focus === 'object') ? cfg.focus : {};
+  if ($('#cfg-focus-raiseonly').checked) fc.raise_only = true; else delete fc.raise_only;
+  if (Object.keys(fc).length) cfg.focus = fc; else delete cfg.focus;
 
   // log_rotation is an optional block. Clone the existing one so a
   // future sub-field with no widget round-trips, then set the two

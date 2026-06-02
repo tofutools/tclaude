@@ -154,6 +154,11 @@
         <span class="cfg-hint">Terminal emulator the dashboard's spawn auto-focus / shell-attach opens. Empty = auto-detect.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Window focus</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-focus-raiseonly" /> raise existing windows only (never open a fresh one)</label>
+        <span class="cfg-hint">When on, focusing an agent that has no open window does nothing, instead of opening a new terminal attached to it. Use a row's "open window" action to open one explicitly. Off (default) = open-on-focus.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Auto-compact</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-autocompact-enabled" /> enabled</label>
         <input type="number" id="cfg-autocompact-pct" min="1" max="100" placeholder="80" aria-label="Auto-compact percent" />

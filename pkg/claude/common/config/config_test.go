@@ -266,3 +266,32 @@ func TestValidate_AcceptsLogRotation(t *testing.T) {
 		assert.Emptyf(t, Validate(c), "log_rotation %+v should validate", lr)
 	}
 }
+
+// RaiseOnlyFocus must be nil-safe and default to false (open-on-focus):
+// a nil Config, an absent focus block, and an explicit false all mean the
+// historical open-on-focus behavior; only focus.raise_only: true flips it.
+func TestRaiseOnlyFocus(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.RaiseOnlyFocus(), "nil config → false")
+	assert.False(t, (&Config{}).RaiseOnlyFocus(), "no focus block → false")
+	assert.False(t, (&Config{Focus: &FocusConfig{}}).RaiseOnlyFocus(), "focus block, raise_only unset → false")
+	assert.True(t, (&Config{Focus: &FocusConfig{RaiseOnly: true}}).RaiseOnlyFocus(), "raise_only true → true")
+}
+
+// focus.raise_only round-trips through the config file, and an absent
+// block stays absent (omitempty) so it never shows as a spurious diff.
+func TestFocusConfig_RoundTrips(t *testing.T) {
+	in := &Config{Focus: &FocusConfig{RaiseOnly: true}}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"raise_only":true`)
+
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.True(t, out.RaiseOnlyFocus())
+
+	// A default config marshals without a focus key at all.
+	none, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(none), "focus")
+}

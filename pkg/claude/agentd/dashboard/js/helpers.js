@@ -369,7 +369,7 @@ function roleCell(m) {
 // remove-from-group) is collected behind the ⚙ options cog so the row
 // stays uncluttered. The cog is always present and enabled.
 function memberActions(g, m) {
-  const menu = termButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+  const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
     + permMemberButton(m) + cronMemberButton(m) + removeMemberButton(g, m);
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
@@ -421,6 +421,17 @@ function cronMemberButton(m) {
 function termButton(m) {
   const label = m.title || m.conv_id;
   return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
+}
+
+// openWindowButton renders the explicit "open a terminal attached to
+// this agent's live session" affordance — distinct from `term` (a shell
+// in the working dir), this lands you inside the agent's running Claude
+// Code TUI. The explicit way to get a console — works regardless of the
+// focus.raise_only config (which, when on, makes plain focus a no-op for
+// a windowless agent). Needs the agent online (404s without a live session).
+function openWindowButton(m) {
+  const label = m.title || m.conv_id;
+  return `<button data-act="open-window" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal window attached to this agent's live session (its Claude Code TUI)">open window</button>`;
 }
 
 // Eye glyphs for the focus / hide window buttons — an open eye for
@@ -514,7 +525,7 @@ function removeMemberButton(g, m) {
 // dot's job; renaming is the click-to-edit name cell. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m) {
-  const menu = termButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+  const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + sudoMemberButton(m) + permMemberButton(m) + cronMemberButton(m)
     + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
