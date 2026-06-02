@@ -15,10 +15,40 @@
 // functions install listeners at the document root once at boot; the
 // body-class check inside each handler is what actually gates the
 // effect, so toggling slop mid-session needs no re-binding.
+//
+// slop-fx also owns the `tclaude:slopfx` event bus — a one-way
+// CustomEvent (sibling of slop.js's `tclaude:slop` and refresh.js's
+// `tclaude:snapshot`) that announces "an effect just happened" so
+// optional feature modules can react without slop-fx importing them.
+// Subscribers today: slop-audio.js (turns each fx into a synthesized
+// sound), slop-credits.js (counts the wins), and slop-spectacle.js
+// (confetti on the big ones). slop-fx fires it for the effects it owns;
+// slop-spectacle.js reuses the exported emitSlopFx() for its Konami
+// mega-jackpot so that, too, flows through one bus. The flat `fx` string
+// in detail names what happened; each subscriber filters for what it
+// cares about.
 
 import { isSlopActive } from './slop.js';
 import { SLOP_SYMBOLS } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
+
+// emitSlopFx fires the shared bus. `fx` is the flat effect name:
+//   'coin'      — a click coin-spray landed
+//   'spin'      — a slot machine's reels started a manual pull
+//   'stop'      — a manual pull settled on a non-winning combo
+//   'win-pull'  — a manual pull hit 7-7-7
+//   'win-spawn' — the spawn-modal jackpot banner fired
+//   'win-idle'  — an agent really transitioned working → idle
+//   'win-mega'  — the Konami mega-jackpot (slop-spectacle.js calls this)
+// `conv` carries the owning agent's conv-id when the effect belongs to
+// one row (wins/pulls), so credits can attribute it. Subscribers that
+// don't care about attribution ignore it. Exported so slop-spectacle.js
+// can route its mega-jackpot through the same bus.
+export function emitSlopFx(fx, conv) {
+  document.dispatchEvent(new CustomEvent('tclaude:slopfx', {
+    detail: { fx: fx, conv: conv || '' },
+  }));
+}
 
 const COIN_EMOJIS = ['🪙', '💰', '⭐', '🍒', '🔔', '7️⃣'];
 const JACKPOT_EMOJIS = ['🪙', '💰', '⭐', '🍒', '🔔', '7️⃣', '🎰', '💎'];
@@ -100,6 +130,7 @@ export function bindSlopClickFx() {
     const n = 4 + Math.floor(Math.random() * 3);
     // Negative dy → coins arc upward out of the click point.
     for (let i = 0; i < n; i++) spawnCoin(x, y, COIN_EMOJIS, 80, -70);
+    emitSlopFx('coin');
   }, true);
 }
 
@@ -115,9 +146,20 @@ export function slopJackpot() {
   // the new conv lands in the next refresh), so we record only the
   // time. The status-transition path notes a per-agent jackpot.
   lastJackpotAt = Date.now();
+  showJackpotBanner('🎰 JACKPOT! 🎰');
+  emitSlopFx('win-spawn');
+}
+
+// showJackpotBanner is the bare visual — a centred flash banner plus a
+// top-edge coin shower — with no gating and no event emit. slopJackpot
+// (spawn) wraps it with the gate + 'win-spawn'; slop-spectacle.js reuses
+// it for the Konami mega-jackpot with its own louder text. Exported so
+// the spectacle module doesn't have to re-implement the shower math.
+// Callers own the gate (isSlopActive / reducedMotion) and any event.
+export function showJackpotBanner(text) {
   const banner = document.createElement('div');
   banner.className = 'slop-jackpot';
-  banner.textContent = '🎰 JACKPOT! 🎰';
+  banner.textContent = text;
   banner.setAttribute('aria-hidden', 'true');
   document.body.appendChild(banner);
   banner.addEventListener('animationend', () => banner.remove(), { once: true });
@@ -167,29 +209,47 @@ function pullReelHTML() {
   return `<span class="slop-reel slop-pull-reel"><span class="slop-strip">${inner}</span></span>`;
 }
 
-function manualPull(machine) {
+// randomCombo picks an ending combo, biased ≈1-in-12 toward 7-7-7 — high
+// enough that a curious puller eventually wins, low enough that the
+// celebration stays special. Extracted so the global lever pull can
+// force outcomes (see pullAllMachines) without duplicating the bias.
+function randomCombo() {
+  if (Math.random() < 1 / 12) return ['7️⃣', '7️⃣', '7️⃣'];
+  return [0, 1, 2].map(() => SLOP_SYMBOLS[Math.floor(Math.random() * SLOP_SYMBOLS.length)]);
+}
+
+// randomLosingCombo never lands 7-7-7 — used for the also-ran machines
+// in a global lever pull so only the one chosen winner can pop a banner.
+function randomLosingCombo() {
+  let c;
+  do { c = [0, 1, 2].map(() => SLOP_SYMBOLS[Math.floor(Math.random() * SLOP_SYMBOLS.length)]); }
+  while (c.every(g => g === '7️⃣'));
+  return c;
+}
+
+// manualPull spins one machine, then settles it on `opts.combo` (or a
+// fresh randomCombo()). A 7-7-7 settle shows the full-screen banner
+// unless `opts.banner === false` — the global lever pull suppresses the
+// banner on its also-ran machines so only its single chosen winner pops
+// one (a per-machine banner each would be a flood).
+function manualPull(machine, opts) {
   if (pullingNodes.has(machine)) return;
   pullingNodes.add(machine);
+  opts = opts || {};
+  const showBanner = opts.banner !== false;
   // Stash the original state so we can restore the live cell after
   // the pull. If refresh() rebuilds the whole row before we get there
   // the restore is a no-op (the node is detached).
   const originalHTML = machine.innerHTML;
   const originalStatus = machine.getAttribute('data-status') || '';
-  // Pick a random ending combo. Bias slightly toward 7-7-7 for fun.
-  // 1-in-12 (≈8 %) is high enough that a curious user who pulls a
-  // few times will eventually win, but low enough that the
-  // celebration doesn't become routine.
-  let combo;
-  if (Math.random() < 1 / 12) {
-    combo = ['7️⃣', '7️⃣', '7️⃣'];
-  } else {
-    combo = [0, 1, 2].map(() => SLOP_SYMBOLS[Math.floor(Math.random() * SLOP_SYMBOLS.length)]);
-  }
+  const combo = opts.combo || randomCombo();
   // Rebuild the cell as three independently-spinning reels. We can't
   // tween a CSS keyframe to a stop on a chosen offset, so the
   // animation is a fast spin followed by a snap-replace.
+  const conv = machine.getAttribute('data-conv') || '';
   machine.setAttribute('data-status', 'pull-spinning');
   machine.innerHTML = pullReelHTML() + pullReelHTML() + pullReelHTML();
+  emitSlopFx('spin', conv);
   setTimeout(() => {
     if (!machine.isConnected) { pullingNodes.delete(machine); return; }
     machine.setAttribute('data-status', 'pull-stopped');
@@ -197,9 +257,16 @@ function manualPull(machine) {
     const isJackpot = combo.every(g => g === '7️⃣');
     if (isJackpot) {
       machine.classList.add('slop-pull-win');
-      slopJackpot();
+      // A manual 7-7-7 is a real per-agent win: attribute it to this
+      // row (marquee + credits), show the banner, and announce it as
+      // 'win-pull' — not slopJackpot()'s 'win-spawn', which would lose
+      // the conv-id and miscredit a hand-pulled win as a spawn.
+      noteAgentJackpot(conv);
+      if (showBanner) showJackpotBanner('🎰 JACKPOT! 🎰');
+      emitSlopFx('win-pull', conv);
     } else {
       rowBurst(machine);
+      emitSlopFx('stop', conv);
     }
     setTimeout(() => {
       if (machine.isConnected) {
@@ -212,6 +279,16 @@ function manualPull(machine) {
   }, PULL_SPIN_MS);
 }
 
+// pullableMachine guards both the single-click pull and the global
+// lever pull: never respin an offline / crashed / exited row — the cell
+// means "this agent isn't there", and animating it would misrepresent
+// state at a glance.
+function pullableMachine(machine) {
+  if (!machine) return false;
+  const status = machine.getAttribute('data-status') || '';
+  return status !== 'offline' && status !== 'crashed' && status !== 'exited';
+}
+
 // bindSlopMachineClicks — delegated click listener for manual pulls.
 // Bound once at boot; no-ops while slop is off.
 export function bindSlopMachineClicks() {
@@ -219,13 +296,34 @@ export function bindSlopMachineClicks() {
     if (!isSlopActive()) return;
     if (reducedMotion()) return;
     const machine = e.target.closest('.slop-machine');
-    if (!machine) return;
-    // Don't pull on an offline / crashed / exited row — the cell
-    // means "this agent isn't there", and respinning it would
-    // misrepresent state at a glance.
-    const status = machine.getAttribute('data-status') || '';
-    if (status === 'offline' || status === 'crashed' || status === 'exited') return;
-    manualPull(machine);
+    if (pullableMachine(machine)) manualPull(machine);
+  });
+}
+
+// pullAllMachines yanks every live row at once — the slop-spectacle.js
+// side lever calls this. One global jackpot roll decides the outcome
+// (≈1-in-6, a touch kinder than the per-machine 1/12 so heaving the big
+// lever feels worth it): on a win, one randomly chosen machine lands
+// 7-7-7 and pops a single banner while the rest settle on forced losing
+// combos; otherwise every machine settles random-but-losing. Suppressing
+// the per-machine banner on the also-rans is why manualPull takes
+// `banner:false` — N simultaneous full-screen banners would be a mess.
+// Caller-gated like the rest, but we re-check here so a direct call is
+// safe too.
+export function pullAllMachines() {
+  if (!isSlopActive() || reducedMotion()) return;
+  const machines = Array.from(document.querySelectorAll('.slop-machine[data-conv]'))
+    .filter(pullableMachine);
+  if (!machines.length) return;
+  const winnerIdx = Math.random() < 1 / 6
+    ? Math.floor(Math.random() * machines.length)
+    : -1;
+  machines.forEach((m, i) => {
+    if (i === winnerIdx) {
+      manualPull(m, { combo: ['7️⃣', '7️⃣', '7️⃣'], banner: true });
+    } else {
+      manualPull(m, { combo: randomLosingCombo(), banner: false });
+    }
   });
 }
 
@@ -270,6 +368,7 @@ function scanStatusTransitions() {
           if (m.isConnected) m.classList.remove('slop-transition-flash');
         }, 1400);
         noteAgentJackpot(conv);
+        emitSlopFx('win-idle', conv);
       }
     }
     prevStatusByConv.set(conv, status);

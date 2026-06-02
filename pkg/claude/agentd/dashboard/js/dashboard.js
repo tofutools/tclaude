@@ -5,6 +5,9 @@ import {
   bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
   bindSlopCursorTrail, bindSlopMarquee,
 } from './slop-fx.js';
+import { bindSlopAudio } from './slop-audio.js';
+import { bindSlopCredits } from './slop-credits.js';
+import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
@@ -91,6 +94,13 @@ bindSlopMachineClicks();
 bindSlopStatusWatch();
 bindSlopCursorTrail();
 bindSlopMarquee();
+// Slop-mode extras, all hung off the tclaude:slopfx bus slop-fx emits:
+// synthesized casino sound (default-muted, header toggle), a credits
+// counter + high-rollers leaderboard, and the Konami mega-jackpot / side
+// pull-lever / confetti spectacle. Each no-ops while slop is off.
+bindSlopAudio();
+bindSlopCredits();
+bindSlopSpectacle();
 // Vegas-mode soundtrack — the "Vegas" tab + lounge-radio player, started
 // and stopped with slop mode (listens for the tclaude:slop event slop.js
 // dispatches). Must bind after applySlopThemeIfRequested() above so an
