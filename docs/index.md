@@ -43,13 +43,15 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 
 === "Prebuilt binary"
 
-    Download the archive for your platform (Linux amd64/arm64, macOS arm64) from the
-    [Releases page](https://github.com/tofutools/tclaude/releases), extract the `tclaude`
-    binary, and put it on your `PATH`:
+    Download the archive for your platform from the
+    [Releases page](https://github.com/tofutools/tclaude/releases). The Linux builds are
+    named `tclaude-no-cgo_linux_<arch>` and the macOS build `tclaude-darwin_darwin_arm64`.
+    Extract it (the `tclaude` binary sits in a versioned subdirectory) and move it onto
+    your `PATH`:
 
     ```bash
     tar -xzf tclaude-*.tar.gz
-    sudo mv tclaude /usr/local/bin/
+    sudo mv tclaude*/tclaude /usr/local/bin/
     ```
 
 ### 2. Run setup
