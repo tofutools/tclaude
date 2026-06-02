@@ -206,15 +206,15 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
 	})
 
-	// Make /exit take long enough that the agent is still alive when the
+	// Make /exit take a moment so the agent is still alive when the
 	// retire handler decides what to do — forcing the deferred path
-	// rather than the inline (already-offline) one. The injector that
-	// delivers /exit (injectTextAndSubmit) itself blocks ~1s on real
-	// send-keys sleeps, so the delay must comfortably outlast that for
-	// the agent to still be alive when stopOneConv returns.
+	// rather than the inline (already-offline) one. With the flow
+	// harness shrinking injectTextAndSubmit's settle gap to ~nothing,
+	// stopOneConv returns in milliseconds, so a short delay is plenty of
+	// margin for the handler's liveness check.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	cc.SetCommandDelay("/exit", 2*time.Second)
+	cc.SetCommandDelay("/exit", 200*time.Millisecond)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
