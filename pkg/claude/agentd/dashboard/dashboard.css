@@ -1653,6 +1653,48 @@ body.slop .slop-machine[data-status="exited"] {
   .slop-coin, .slop-jackpot { display: none; animation: none; }
 }
 
+/* ─── Vegas tab (body.slop) ────────────────────────────────────────
+   The casino-music tab that appears after Config when slop mode is on.
+   The nav button is CSS-hidden otherwise so it never shows in the
+   plain dashboard; the section follows the normal tab show/hide rules
+   (section.active). vegas.js injects the YouTube <iframe> into
+   #vegas-player on slop-enable and removes it on disable. */
+nav button[data-tab="vegas"] { display: none; }
+body.slop nav button[data-tab="vegas"] { display: block; }
+.vegas-intro {
+  text-align: center;
+  color: #ffe88c;
+  font-size: 15px;
+  margin: 4px 0 16px;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
+}
+.vegas-hint {
+  text-align: center;
+  color: #c9a86b;
+  font-size: 12px;
+  margin-top: 12px;
+}
+#vegas-player {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 22px;
+  background: linear-gradient(180deg, #1a0606 0%, #2a0808 100%);
+  border: 1px solid #ffd700;
+  border-radius: 10px;
+  box-shadow: 0 0 24px rgba(255, 215, 0, 0.25);
+  text-align: center;
+}
+.vegas-nowplaying {
+  color: #ffe88c;
+  font-size: 14px;
+  margin-bottom: 14px;
+  letter-spacing: 0.4px;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
+}
+#vegas-player audio { width: 100%; }
+.vegas-error { color: #ffb3b3; font-size: 13px; }
+.vegas-error a { color: #ffe88c; }
+
 /* ─── Slop marquee ticker ──────────────────────────────────────────
    A casino-style scrolling ticker bar that slides in under the header
    in slop mode. The track holds a single span (rotated by slop-fx.js

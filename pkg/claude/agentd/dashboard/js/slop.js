@@ -74,6 +74,12 @@ function renderState() {
   if (restNode) restNode.nodeValue = ' ' + (isSlop ? SLOP_REST : original.rest);
   const link = document.querySelector('link[rel="icon"]');
   if (link) link.setAttribute('href', isSlop ? SLOP_FAVICON : original.favicon);
+  // Broadcast the current slop state so feature modules can react
+  // without importing slop.js internals — vegas.js starts/stops the
+  // background music off this. Fired on every apply/toggle; listeners
+  // that care about edges diff for themselves. One-way, like the
+  // `tclaude:snapshot` event refresh.js emits.
+  document.dispatchEvent(new CustomEvent('tclaude:slop', { detail: { active: isSlop } }));
 }
 
 function toggleSlop() {
