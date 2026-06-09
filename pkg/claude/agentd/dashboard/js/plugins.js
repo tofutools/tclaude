@@ -49,7 +49,7 @@ function cmdCell(cmd) {
 // its command — possibly a minutes-long docker pull — is still
 // running. renderPluginCard re-disables any button whose key is here.
 const busyActions = new Set();
-const busyKey = (act, name, idx) => `${act}:${name}:${idx || ''}`;
+const busyKey = (act, name, idx) => `${act}:${name}:${idx ?? ''}`;
 
 // busyAttrs renders the disabled state + busy label for a button that
 // has an in-flight action, or the normal label otherwise.
@@ -130,6 +130,14 @@ function pluginMatches(p, needle) {
 
 export function renderPluginsTab() {
   if (!lastSnapshot) return;
+  // A broken plugins.json arrives as plugins_error with an empty list —
+  // show the real failure instead of pretending nothing is installed.
+  if (lastSnapshot.plugins_error) {
+    $('#plugins-list').innerHTML =
+      `<div class="empty">⚠ plugin registry unreadable: <code>${esc(lastSnapshot.plugins_error)}</code> — fix or delete ~/.tclaude/plugins.json</div>`;
+    $('#filter-plugins-count').textContent = '';
+    return;
+  }
   const q = ($('#filter-plugins').value || '').toLowerCase();
   const all = lastSnapshot.plugins || [];
   const catalog = lastSnapshot.plugins_catalog || [];

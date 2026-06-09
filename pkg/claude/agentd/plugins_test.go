@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,31 @@ func decodePluginView(t *testing.T, w *httptest.ResponseRecorder) dashboardPlugi
 	return v
 }
 
+// catalogEntry finds a catalog plugin by name — assertions must not
+// couple to catalog ordering.
+func catalogEntry(t *testing.T, name string) Plugin {
+	t.Helper()
+	for _, p := range pluginCatalog() {
+		if p.Name == name {
+			return p
+		}
+	}
+	t.Fatalf("no catalog entry named %s", name)
+	return Plugin{}
+}
+
+// installedPlugin finds an installed plugin by name in a list response.
+func installedPlugin(t *testing.T, list pluginsListResponse, name string) dashboardPlugin {
+	t.Helper()
+	for _, p := range list.Plugins {
+		if p.Name == name {
+			return p
+		}
+	}
+	t.Fatalf("no installed plugin named %s", name)
+	return dashboardPlugin{}
+}
+
 func TestPlugins_CRUDAndCatalog(t *testing.T) {
 	setupPluginsTest(t)
 
@@ -64,10 +90,9 @@ func TestPlugins_CRUDAndCatalog(t *testing.T) {
 	list := decodePluginsList(t, w)
 	assert.Empty(t, list.Plugins)
 	require.NotEmpty(t, list.Catalog)
-	assert.Equal(t, "excalidraw-mcp", list.Catalog[0].Name)
 	// The catalog's flagship entry models the two-process setup: a
 	// long-running canvas container + the claude-mcp registration.
-	require.Len(t, list.Catalog[0].Steps, 2)
+	require.Len(t, catalogEntry(t, "excalidraw-mcp").Steps, 2)
 
 	// Create.
 	w = servePlugins(t, http.MethodPost, "/api/plugins",
@@ -137,7 +162,8 @@ func TestPlugins_CheckStatuses(t *testing.T) {
 
 	// Before any check runs, the snapshot reads "unknown" and raises
 	// no warning — never-checked must not light the badge.
-	plugins, warn := collectPluginsSnapshot()
+	plugins, warn, err := collectPluginsSnapshot()
+	require.NoError(t, err)
 	require.Len(t, plugins, 1)
 	assert.Equal(t, "unknown", plugins[0].Status)
 	assert.Equal(t, 0, warn)
@@ -157,7 +183,8 @@ func TestPlugins_CheckStatuses(t *testing.T) {
 
 	// The "installed but not active" warning now drives the badge
 	// count the snapshot carries.
-	_, warn = collectPluginsSnapshot()
+	_, warn, err = collectPluginsSnapshot()
+	require.NoError(t, err)
 	assert.Equal(t, 1, warn)
 
 	// Fix the definition so every check passes; check-all flips the
@@ -244,6 +271,73 @@ func TestPlugins_Validation(t *testing.T) {
 	}
 }
 
+// TestPlugins_OutputCappedWhileStreaming guards the bounded-tail
+// capture: a noisy command must come back tail-truncated without the
+// daemon ever buffering the full stream (tailBuffer caps in Write).
+func TestPlugins_OutputCappedWhileStreaming(t *testing.T) {
+	setupPluginsTest(t)
+	out, ok := runPluginShell("head -c 9000 /dev/zero | tr '\\0' x; echo END", pluginCheckTimeout)
+	assert.True(t, ok)
+	assert.LessOrEqual(t, len(out), pluginOutputMax+len("…"))
+	assert.True(t, strings.HasPrefix(out, "…"), "truncated output is marked")
+	assert.True(t, strings.HasSuffix(out, "END"), "the tail — where errors land — is what survives")
+
+	// The writer itself: small writes never truncate, overflow keeps
+	// the tail and flags it.
+	tb := &tailBuffer{max: 8}
+	_, _ = tb.Write([]byte("abc"))
+	assert.Equal(t, "abc", tb.String())
+	_, _ = tb.Write([]byte("defghijk"))
+	assert.Equal(t, "…defghijk", tb.String())
+	assert.True(t, tb.truncated)
+}
+
+// TestPlugins_BrokenRegistrySurfaces guards that an unreadable
+// plugins.json is reported as an error — not rendered as "no plugins
+// installed": 500 on the sync endpoints, error value on the snapshot
+// path (which the dashboard shows as a banner via plugins_error).
+func TestPlugins_BrokenRegistrySurfaces(t *testing.T) {
+	setupPluginsTest(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(pluginsPath()), 0o755))
+	require.NoError(t, os.WriteFile(pluginsPath(), []byte("{not json"), 0o644))
+
+	w := servePlugins(t, http.MethodGet, "/api/plugins", "")
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	w = servePlugins(t, http.MethodPost, "/api/plugins/check", "")
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	_, _, err := collectPluginsSnapshot()
+	require.Error(t, err)
+}
+
+// TestPlugins_StaleCacheRejected guards the race where a sweep working
+// from an old plugins.json publishes results after the definition
+// changed: pluginView must only trust a cached slot produced for the
+// step's CURRENT check command.
+func TestPlugins_StaleCacheRejected(t *testing.T) {
+	setupPluginsTest(t)
+	p := Plugin{Name: "svc", Steps: []PluginStep{{Name: "probe", Check: "true"}}}
+	require.NoError(t, savePlugins([]Plugin{p}))
+	checkPlugin(p)
+	v := pluginView(p)
+	require.True(t, v.Steps[0].Checked)
+
+	// The definition changes (same name, same index, different check) —
+	// the cached verdict is for the OLD command and must be ignored.
+	edited := Plugin{Name: "svc", Steps: []PluginStep{{Name: "probe", Check: "false"}}}
+	require.NoError(t, savePlugins([]Plugin{edited}))
+	v = pluginView(edited)
+	assert.False(t, v.Steps[0].Checked, "stale verdict for a different command must not surface")
+	assert.Equal(t, "unknown", v.Status)
+
+	// A fresh check of the edited definition repopulates honestly.
+	checkPlugin(edited)
+	v = pluginView(edited)
+	assert.True(t, v.Steps[0].Checked)
+	assert.False(t, v.Steps[0].OK)
+	assert.Equal(t, "warn", v.Status)
+}
+
 func TestPlugins_AuthRequired(t *testing.T) {
 	setupPluginsTest(t)
 	mux := http.NewServeMux()
@@ -265,7 +359,7 @@ func TestPlugins_InstallFromCatalog(t *testing.T) {
 	runPluginShell = func(string, time.Duration) (string, bool) { return "stubbed", false }
 	t.Cleanup(func() { runPluginShell = prevRun })
 
-	def, err := json.Marshal(pluginCatalog()[0])
+	def, err := json.Marshal(catalogEntry(t, "excalidraw-mcp"))
 	require.NoError(t, err)
 	w := servePlugins(t, http.MethodPost, "/api/plugins", string(def))
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
@@ -273,6 +367,5 @@ func TestPlugins_InstallFromCatalog(t *testing.T) {
 	w = servePlugins(t, http.MethodGet, "/api/plugins", "")
 	list := decodePluginsList(t, w)
 	require.Len(t, list.Plugins, 1)
-	assert.Equal(t, "excalidraw-mcp", list.Plugins[0].Name)
-	require.Len(t, list.Plugins[0].Steps, 2)
+	require.Len(t, installedPlugin(t, list, "excalidraw-mcp").Steps, 2)
 }

@@ -369,6 +369,10 @@ type snapshotPayload struct {
 	Plugins        []dashboardPlugin `json:"plugins"`
 	PluginsCatalog []Plugin          `json:"plugins_catalog"`
 	PluginsWarn    int               `json:"plugins_warn"`
+	// PluginsError carries a plugins.json read/parse failure so the tab
+	// shows "registry broken: …" instead of a silently empty list. The
+	// poll itself stays 200 — one bad file must not take down every tab.
+	PluginsError string `json:"plugins_error,omitempty"`
 	PopupBase      string            `json:"popup_base"` // for tray-shareable display
 }
 
@@ -948,7 +952,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Usage = collectUsageSnapshot()
 	out.Templates = collectTemplatesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
-	out.Plugins, out.PluginsWarn = collectPluginsSnapshot()
+	var pluginsErr error
+	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()
+	if pluginsErr != nil {
+		out.PluginsError = pluginsErr.Error()
+	}
 	out.PluginsCatalog = pluginCatalog()
 
 	writeJSON(w, http.StatusOK, out)

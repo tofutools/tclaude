@@ -182,8 +182,13 @@ func pluginCatalog() []Plugin {
 
 // pluginStepResult is the cached outcome of one step's last check.
 // The zero value means "never checked" (no check command, or the sweep
-// hasn't reached it yet).
+// hasn't reached it yet). Check records the command the verdict is FOR:
+// a sweep works from a point-in-time load of plugins.json, so a result
+// can land after the definition changed — pluginView only trusts a
+// cached result whose Check matches the step's current command, which
+// rejects those stale writes without a generation counter.
 type pluginStepResult struct {
+	Check     string
 	OK        bool
 	Output    string
 	CheckedAt time.Time
@@ -197,10 +202,40 @@ var pluginStatusCache = struct {
 	byPlugin map[string][]pluginStepResult
 }{byPlugin: map[string][]pluginStepResult{}}
 
+// tailBuffer is an io.Writer that retains only the last `max` bytes
+// written, so a noisy plugin command can't grow the daemon's memory —
+// the tail is kept because the end of the output is where errors land.
+// No locking needed: it is assigned to BOTH Stdout and Stderr of the
+// same exec.Cmd, and os/exec documents that when the two are the same
+// writer at most one goroutine calls Write at a time.
+type tailBuffer struct {
+	max       int
+	buf       []byte
+	truncated bool
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > t.max {
+		copy(t.buf, t.buf[len(t.buf)-t.max:])
+		t.buf = t.buf[:t.max]
+		t.truncated = true
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	if t.truncated {
+		return "…" + string(t.buf)
+	}
+	return string(t.buf)
+}
+
 // runPluginShell runs one plugin command through the user's shell with
-// a timeout, returning combined output (tail-truncated to
-// pluginOutputMax) and whether it exited 0. executil kills the whole
-// process group on timeout so a hung docker/claude child can't leak.
+// a timeout, returning combined output (tail-capped at pluginOutputMax
+// WHILE streaming, never buffered whole) and whether it exited 0.
+// executil kills the whole process group on timeout so a hung
+// docker/claude child can't leak.
 //
 // A package var so tests exercising real catalog entries can stub the
 // exec — running an actual `docker inspect` in a unit test would be
@@ -209,13 +244,13 @@ var runPluginShell = func(command string, timeout time.Duration) (string, bool) 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := executil.CommandContext(ctx, "sh", "-c", command)
-	out, err := cmd.CombinedOutput()
-	s := string(out)
+	out := &tailBuffer{max: pluginOutputMax}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err := cmd.Run()
+	s := out.String()
 	if ctx.Err() == context.DeadlineExceeded {
 		s += "\n(timed out after " + timeout.String() + ")"
-	}
-	if len(s) > pluginOutputMax {
-		s = "…" + s[len(s)-pluginOutputMax:]
 	}
 	return strings.TrimSpace(s), err == nil
 }
@@ -230,7 +265,7 @@ func checkPlugin(p Plugin) []pluginStepResult {
 			continue
 		}
 		out, ok := runPluginShell(s.Check, pluginCheckTimeout)
-		results[i] = pluginStepResult{OK: ok, Output: out, CheckedAt: time.Now()}
+		results[i] = pluginStepResult{Check: s.Check, OK: ok, Output: out, CheckedAt: time.Now()}
 	}
 	pluginStatusCache.Lock()
 	pluginStatusCache.byPlugin[p.Name] = results
@@ -247,9 +282,7 @@ func checkAllPlugins() {
 		return
 	}
 	var wg sync.WaitGroup
-	names := map[string]bool{}
 	for _, p := range plugins {
-		names[p.Name] = true
 		wg.Add(1)
 		go func(p Plugin) {
 			defer wg.Done()
@@ -257,6 +290,19 @@ func checkAllPlugins() {
 		}(p)
 	}
 	wg.Wait()
+	// Prune cache entries for deleted plugins against a FRESH load,
+	// not the sweep's own point-in-time snapshot: a plugin created
+	// while the sweep ran must not have its just-written first status
+	// thrown away. (A residual window remains if a create lands right
+	// here — the next sweep self-heals it within a minute.)
+	fresh, err := loadPlugins()
+	if err != nil {
+		return
+	}
+	names := map[string]bool{}
+	for _, p := range fresh {
+		names[p.Name] = true
+	}
 	pluginStatusCache.Lock()
 	for name := range pluginStatusCache.byPlugin {
 		if !names[name] {
@@ -328,7 +374,10 @@ func pluginView(p Plugin) dashboardPlugin {
 		step := dashboardPluginStep{Name: s.Name, Check: s.Check, Run: s.Run}
 		if s.Check != "" {
 			anyCheck = true
-			if i < len(results) && !results[i].CheckedAt.IsZero() {
+			// Trust a cached slot only when it was produced FOR this
+			// command — an in-flight sweep racing an edit can publish
+			// results for a previous definition under the same name.
+			if i < len(results) && !results[i].CheckedAt.IsZero() && results[i].Check == s.Check {
 				r := results[i]
 				step.Checked = true
 				step.OK = r.OK
@@ -354,13 +403,15 @@ func pluginView(p Plugin) dashboardPlugin {
 
 // collectPluginsSnapshot builds the Plugins tab's snapshot rows from
 // the definitions file + the status cache — no subprocess spawns, so
-// it is safe on the 2s poll. Returns the rows plus the count of
-// plugins in "warn", which drives the nav-button badge.
-func collectPluginsSnapshot() ([]dashboardPlugin, int) {
+// it is safe on the 2s poll. Returns the rows, the count of plugins in
+// "warn" (drives the nav-button badge), and any read/parse error on
+// plugins.json — an unreadable registry must surface as an error, not
+// masquerade as "no plugins installed".
+func collectPluginsSnapshot() ([]dashboardPlugin, int, error) {
 	out := []dashboardPlugin{}
 	plugins, err := loadPlugins()
 	if err != nil {
-		return out, 0
+		return out, 0, err
 	}
 	warn := 0
 	for _, p := range plugins {
@@ -370,7 +421,7 @@ func collectPluginsSnapshot() ([]dashboardPlugin, int) {
 		}
 		out = append(out, v)
 	}
-	return out, warn
+	return out, warn, nil
 }
 
 // -- validation ---------------------------------------------------------
@@ -468,13 +519,21 @@ type pluginsListResponse struct {
 	Warn    int               `json:"warn"`
 }
 
-func currentPluginsResponse() pluginsListResponse {
-	plugins, warn := collectPluginsSnapshot()
-	return pluginsListResponse{Plugins: plugins, Catalog: pluginCatalog(), Warn: warn}
+// writeCurrentPlugins writes the full list response, or a 500 when the
+// registry file is unreadable — the synchronous endpoints must report
+// a broken plugins.json, not an innocent-looking empty list. (The
+// snapshot poll instead degrades gracefully via PluginsError.)
+func writeCurrentPlugins(w http.ResponseWriter) {
+	plugins, warn, err := collectPluginsSnapshot()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, pluginsListResponse{Plugins: plugins, Catalog: pluginCatalog(), Warn: warn})
 }
 
 func handlePluginsList(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, currentPluginsResponse())
+	writeCurrentPlugins(w)
 }
 
 // decodePluginBody parses a request body into a Plugin and validates
@@ -597,7 +656,7 @@ func handlePluginsDelete(w http.ResponseWriter, r *http.Request) {
 // human pressed "check now" and wants the verdict in the response.
 func handlePluginsCheckAll(w http.ResponseWriter, _ *http.Request) {
 	checkAllPlugins()
-	writeJSON(w, http.StatusOK, currentPluginsResponse())
+	writeCurrentPlugins(w)
 }
 
 // findPlugin resolves {name} against the definitions file. Writes the
