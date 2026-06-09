@@ -383,6 +383,43 @@ func TestRunHookCallback_PendingConvHookStillProcessed(t *testing.T) {
 		"the announced conv-id may advance the row (the retry path)")
 }
 
+// PostCompact is exempt from the foreign-process guard: it may
+// legitimately arrive carrying a rotated conv-id (compaction can
+// rotate the conversation before the SessionStart(compact) is
+// processed), and all it does is reset per-env-session compact state —
+// it returns before any status or conv mutation. The observable proof
+// it passed the guard: compact_pending is zeroed.
+func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "pc-sess",
+		ConvID: "conv-pc",
+		Status: StatusWorking,
+	}))
+	claimed, err := db.TryClaimCompact("pc-sess")
+	require.NoError(t, err)
+	require.True(t, claimed, "precondition: compact_pending claimed")
+
+	feedHook(t, "pc-sess", map[string]any{
+		"session_id":      "conv-pc-rotated",
+		"hook_event_name": "PostCompact",
+		"cwd":             dir,
+	})
+
+	_, pending, err := db.GetCompactState("pc-sess")
+	require.NoError(t, err)
+	assert.Zero(t, pending,
+		"PostCompact with a rotated conv-id must still reset compact state")
+
+	got, err := LoadSessionState("pc-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-pc", got.ConvID,
+		"PostCompact must not advance the conv-id (its case returns early)")
+}
+
 // A SessionStart carrying agent_id fired inside a subagent. Subagents
 // share the main session's conv-id, so the foreign-process guard can't
 // catch them — agent_id is the discriminator. It must not flip a

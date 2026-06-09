@@ -95,6 +95,15 @@ func sessionEndIsExit(reason string) bool {
 // compaction). A SessionStart with source "startup" (or none) and a
 // mismatched conv-id is a different claude PROCESS booting in this
 // session's pane env — a foreign event, not a transition.
+//
+// Known gap: a one-shot child started with `claude -p --resume <id>` /
+// `--continue` also reports source=resume, so it passes as a
+// transition and can still drive the conv-advance below. Conv-id
+// matching cannot tell that child from the host's own /resume switch —
+// discriminating would need process identity (PID/PPID), which hook
+// inputs don't carry. Accepted residual: plain one-shots (`claude -p`,
+// `claude mcp …`, source=startup) are the case observed in production;
+// resumed one-shots inside an agent's pane are rare and deliberate.
 func isConvTransitionStart(input HookCallbackInput) bool {
 	if input.HookEventName != "SessionStart" {
 		return false
@@ -129,14 +138,16 @@ func isConvTransitionStart(input HookCallbackInput) bool {
 // false). The predicate IS the retry condition — no extra bookkeeping
 // needed.
 //
-// Why this tells a /clear apart from a /resume without keying on the
-// hook source: an env-keyed tclaude session's conv-id only ever rotates
-// mid-life via /clear. A resume is always a fresh `tclaude session`
-// with its own TCLAUDE_SESSION_ID, so its first hook records the
-// conv-id from scratch (oldConv == "" — not a rotation). The
-// newConv-not-already-an-agent guard is belt-and-braces against a
-// future in-session conversation switch landing on a conv that already
-// owns an identity.
+// On rotation causes: a `tclaude agent resume` is always a fresh
+// `tclaude session` with its own TCLAUDE_SESSION_ID, so its first hook
+// records the conv-id from scratch (oldConv == "" — not a rotation).
+// Mid-life rotations that reach this predicate are the transition
+// SessionStarts the foreign-process guard admits (source clear /
+// resume / compact — see isConvTransitionStart); an interactive
+// /resume switch onto a conv that already owns an identity is covered
+// by the newConv-not-already-an-agent guard, and one onto a plain conv
+// migrates identity along — the agent follows its operator across the
+// switch.
 func needsIdentityMigration(oldConv, newConv string) (bool, error) {
 	oldEnr, err := db.EnrollmentState(oldConv)
 	if err != nil {
@@ -462,7 +473,11 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			// Announce the rotation. Persisted immediately (not via the
 			// SaveSessionState at the end of this call) so a crash or
 			// migration failure mid-call still leaves the announcement
-			// for the retry on the next hook.
+			// for the retry on the next hook. If THIS write fails too,
+			// the retry hooks get dropped as foreign and the rotation
+			// only converges at the next transition SessionStart —
+			// accepted: it takes two correlated SQLite faults in one
+			// call to get there.
 			if err := db.SetSessionPendingConv(state.ID, input.ConvID); err != nil {
 				slog.Warn("failed to record pending conv", "error", err, "module", "hooks")
 			}
@@ -474,9 +489,8 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 					"event", input.HookEventName, "foreign_conv", input.ConvID,
 					"tracked_conv", state.ConvID, "session_id", state.ID, "module", "hooks")
 			}
-			if err := db.UpdateSessionLastHook(state.ID, time.Now()); err != nil {
-				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
-			}
+			// Deliberately NOT stamping last_hook: a foreign process's
+			// event is no evidence the host session itself is alive.
 			return nil
 		}
 	}
