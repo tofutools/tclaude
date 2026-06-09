@@ -319,11 +319,45 @@ func (c *CCSim) clear() {
 
 	// SessionStart on the NEW conv-id — the first hook carrying the
 	// rotated conv-id, where the daemon's identity migration triggers.
+	// source=clear is what real CC sends; the foreign-process guard
+	// keys on it to tell this announced transition apart from a
+	// different claude process's hooks.
 	_ = session.ApplyHook(session.HookCallbackInput{
 		ConvID:        newConv,
 		HookEventName: "SessionStart",
+		Source:        "clear",
 		Cwd:           cwd,
 	}, sessionID)
+}
+
+// RunForeignOneShot models a one-shot headless claude invocation
+// (`claude -p`, `claude mcp get`, …) launched from inside this
+// session's pane — e.g. by the agent's own Bash tool. The child
+// process inherits TCLAUDE_SESSION_ID, so its hooks land on the
+// PARENT's session row, but they carry the child's own throwaway
+// conv-id. The child fires SessionEnd(reason=other) on exit (observed
+// against real CC 2.1.170: `claude mcp get` fires only SessionEnd, no
+// SessionStart). It is NOT the parent exiting, and it must not be read
+// as a /clear-style conv rotation either — production bite: agentd's
+// per-minute plugin probes retired live agents as "superseded by
+// <probe-conv> (clear)" and fired an "Exited" notification per run.
+//
+// Returns the child's conv-id so tests can assert nothing latched
+// onto it.
+func (c *CCSim) RunForeignOneShot() string {
+	c.mu.Lock()
+	cwd := c.Cwd
+	sessionID := c.SessionID
+	c.mu.Unlock()
+
+	foreignConv := generateConvID()
+	_ = session.ApplyHook(session.HookCallbackInput{
+		ConvID:        foreignConv,
+		HookEventName: "SessionEnd",
+		Reason:        "other",
+		Cwd:           cwd,
+	}, sessionID)
+	return foreignConv
 }
 
 // OnInput registers a handler. Newer registrations win over older

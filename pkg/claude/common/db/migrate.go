@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 48
+const currentVersion = 49
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -311,6 +311,12 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 49 {
+		if err := migrateV48toV49(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -341,6 +347,40 @@ func migrateV47toV48(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v47→v48 (add sessions.effort_level): %w", err)
+	}
+	return nil
+}
+
+// migrateV48toV49 adds sessions.pending_conv — the conv-id a
+// SessionStart hook with a transition source (clear / resume / compact)
+// announced as this env-keyed session's NEXT conversation, recorded
+// before the row's conv_id actually advances.
+//
+// Why it exists: hook callbacks key on TCLAUDE_SESSION_ID, which every
+// subprocess of the session's pane inherits — including one-shot
+// headless claude runs (`claude -p`, `claude mcp get`, …) an agent
+// executes via its Bash tool. Those children fire hooks carrying their
+// own throwaway conv-ids against the PARENT's session row, which the
+// conv-rotation logic used to read as a /clear and migrate the agent's
+// identity onto the throwaway conv (observed in production: a live
+// agent retired as "superseded by <conv> (clear)" where <conv> was a
+// 2-second plugin probe). pending_conv lets the hook callback tell the
+// two apart: a mismatched conv-id is honoured only when a transition
+// SessionStart announced it; anything else is a foreign process's
+// event and is ignored.
+//
+// Defaults to '' — no announced transition. Overwritten by each new
+// announcement; never read once the row's conv_id has advanced past it
+// (conv-ids are UUIDs, so a stale value can't collide with a future
+// foreign conv).
+func migrateV48toV49(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN pending_conv TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 49;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v48→v49 (add sessions.pending_conv): %w", err)
 	}
 	return nil
 }

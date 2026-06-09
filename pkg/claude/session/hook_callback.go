@@ -34,7 +34,8 @@ type HookCallbackInput struct {
 	PermissionMode       string          `json:"permission_mode,omitempty"`
 	HookEventName        string          `json:"hook_event_name"`
 	NotificationType     string          `json:"notification_type,omitempty"`
-	Reason               string          `json:"reason,omitempty"` // SessionEnd: clear | logout | prompt_input_exit | other
+	Reason               string          `json:"reason,omitempty"` // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
+	Source               string          `json:"source,omitempty"` // SessionStart: startup | resume | clear | compact
 	Message              string          `json:"message,omitempty"`
 	Prompt               string          `json:"prompt,omitempty"`
 	StopHookActive       bool            `json:"stop_hook_active,omitempty"`
@@ -84,6 +85,25 @@ func HookCallbackCmd() *cobra.Command {
 // "idle".
 func sessionEndIsExit(reason string) bool {
 	return reason != "clear" && reason != "resume"
+}
+
+// isConvTransitionStart reports whether a hook is a SessionStart that
+// announces an in-process conversation transition — the only events
+// allowed to carry a conv-id different from the one an env-keyed
+// session row tracks. `source` names the transition: "clear" (/clear),
+// "resume" (interactive /resume switch), "compact" (auto or manual
+// compaction). A SessionStart with source "startup" (or none) and a
+// mismatched conv-id is a different claude PROCESS booting in this
+// session's pane env — a foreign event, not a transition.
+func isConvTransitionStart(input HookCallbackInput) bool {
+	if input.HookEventName != "SessionStart" {
+		return false
+	}
+	switch input.Source {
+	case "clear", "resume", "compact":
+		return true
+	}
+	return false
 }
 
 // needsIdentityMigration reports whether a conv-id rotation on an
@@ -406,6 +426,61 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 	slog.Info("session found", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 
+	// Foreign-process guard. An env-keyed session's hooks normally all
+	// carry the conversation its row tracks. A hook carrying a DIFFERENT
+	// conv-id is one of two things:
+	//
+	//   - an in-process conversation transition (/clear, an interactive
+	//     /resume switch, compaction) — always announced by a
+	//     SessionStart whose `source` names the transition; or
+	//   - a FOREIGN process's event: a one-shot headless claude run
+	//     (`claude -p`, `claude mcp get`, …) launched from this
+	//     session's own Bash, inheriting TCLAUDE_SESSION_ID, firing
+	//     hooks for its own throwaway conv against OUR row.
+	//
+	// Foreign events must be dropped wholesale: processing one flips the
+	// live session's status (a notified "Exited" for a 2-second `claude
+	// mcp get`; an idle stamp from the child's Stop that can trigger
+	// auto-compact mid-turn), and the conv-advance logic below would
+	// read the rotation as a /clear and migrate the agent's identity
+	// onto the throwaway conv — observed in production as a live agent
+	// retired "superseded by <conv> (clear)" where <conv> was a plugin
+	// probe's conv-id.
+	//
+	// A transition SessionStart records its new conv-id as pending_conv
+	// BEFORE the row advances, so the migration-failure retry keeps
+	// working: post-/clear hooks carry the announced conv-id and pass
+	// this guard via the pending_conv match, while a foreign conv-id
+	// was never announced and cannot match. PostCompact is exempt — it
+	// only resets per-env-session compact state and returns before any
+	// status or conv mutation, and it may legitimately arrive carrying
+	// a rotated conv-id.
+	if envSessionID != "" && state.ConvID != "" && input.ConvID != "" &&
+		input.ConvID != state.ConvID &&
+		input.HookEventName != "PostCompact" {
+		if isConvTransitionStart(input) {
+			// Announce the rotation. Persisted immediately (not via the
+			// SaveSessionState at the end of this call) so a crash or
+			// migration failure mid-call still leaves the announcement
+			// for the retry on the next hook.
+			if err := db.SetSessionPendingConv(state.ID, input.ConvID); err != nil {
+				slog.Warn("failed to record pending conv", "error", err, "module", "hooks")
+			}
+		} else if pending, err := db.GetSessionPendingConv(state.ID); err != nil || pending != input.ConvID {
+			if err != nil {
+				slog.Warn("failed to read pending conv; dropping mismatched-conv hook", "error", err, "module", "hooks")
+			} else {
+				slog.Info("ignoring hook from foreign claude process",
+					"event", input.HookEventName, "foreign_conv", input.ConvID,
+					"tracked_conv", state.ConvID, "session_id", state.ID, "module", "hooks")
+			}
+			if err := db.UpdateSessionLastHook(state.ID, time.Now()); err != nil {
+				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
+			}
+			return nil
+		}
+	}
+
 	// Capture previous status for notification
 	prevStatus := state.Status
 
@@ -508,6 +583,19 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		)
 
 	case "SessionStart":
+		// A SessionStart carrying agent_id fired from inside a subagent
+		// (subagents share the main session's conv-id, so the foreign-
+		// process guard above can't catch them; agent_id is the
+		// documented discriminator). It is not the main conversation
+		// (re)starting — flipping a working session to idle here, or
+		// clearing a recorded exit reason, would misreport the main
+		// thread's state.
+		if input.AgentID != "" {
+			if err := db.UpdateSessionLastHook(state.ID, time.Now()); err != nil {
+				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
+			}
+			return nil
+		}
 		// Session started or resumed - update ConvID and set to idle
 		state.Status = StatusIdle
 		state.StatusDetail = ""
@@ -552,9 +640,10 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		state.Status = StatusExited
 		state.StatusDetail = ""
 		// Record the graceful-exit reason (logout / prompt_input_exit /
-		// resume / bypass_permissions_disabled / other) so the dashboard
-		// can tell this clean exit from an unexpected death — for which
-		// no SessionEnd fires and the session reaper stamps 'unexpected'.
+		// bypass_permissions_disabled / other — clear and resume never
+		// reach here, see sessionEndIsExit) so the dashboard can tell
+		// this clean exit from an unexpected death — for which no
+		// SessionEnd fires and the session reaper stamps 'unexpected'.
 		if err := db.SetSessionExitReason(state.ID, input.Reason); err != nil {
 			slog.Warn("failed to record exit reason", "error", err, "module", "hooks")
 		}
