@@ -185,6 +185,12 @@ func runServe(p *serveParams) error {
 	// channel. See logrotate.go.
 	startLogRotation(cronStop, common.ActiveLogRotator(), cfg)
 
+	// Plugin status checker. Re-probes every plugins.json step-check
+	// each minute and caches the results, so the dashboard's Plugins
+	// tab + warning badge stay fresh without the 2s snapshot poll ever
+	// spawning a subprocess. Shares the daemon-wide stop channel.
+	startPluginChecker(cronStop)
+
 	// Subscription-usage poller. Keeps the SQLite usage_cache row fresh
 	// so the dashboard's top-bar 5h/7d readout stays current even when
 	// no Claude Code statusbar is running to populate it. Side-effect

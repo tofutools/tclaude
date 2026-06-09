@@ -2079,3 +2079,36 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   .slop-confetti { display: none; animation: none; }
   body.slop-shake { animation: none; }
 }
+
+/* === Plugins tab ====================================================== */
+/* The nav badge reuses .tab-badge (red, from Messages); .warn re-tints
+   it amber — "needs attention", not "new thing to read". */
+.tab-badge.warn { background: #9e6a03; }
+.plugin-card {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 10px;
+}
+.plugin-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plugin-head .spacer, .plugin-step-edit-head .spacer { flex: 1; }
+.plugin-head .muted { font-size: 13px; }
+.plugin-steps { margin-top: 8px; }
+.plugin-steps th { font-weight: 500; }
+.plugin-cmd {
+  font-size: 12px; color: #7d8590; background: #0d1117;
+  padding: 1px 6px; border-radius: 4px; word-break: break-all;
+}
+.plugin-out { font-size: 12px; }
+.plugin-dot-fail { color: #f85149; }
+.plugins-section-head { margin: 20px 0 8px; font-size: 14px; color: #7d8590; }
+.plugin-catalog-card { border-style: dashed; }
+.plugin-catalog-steps { margin: 8px 0 0; padding-left: 22px; font-size: 13px; }
+.plugin-catalog-steps li { margin: 3px 0; }
+/* Modal step blocks — one fieldset per step, visually separated so a
+   multi-step definition stays scannable. */
+.plugin-step-edit {
+  border: 1px solid #2a3340; border-radius: 6px;
+  padding: 8px 10px; margin: 8px 0;
+}
+.plugin-step-edit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+#plugin-modal .cron-create-modal { max-width: 720px; }
+#plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
