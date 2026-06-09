@@ -67,14 +67,23 @@ func HookCallbackCmd() *cobra.Command {
 }
 
 // sessionEndIsExit reports whether a SessionEnd hook's `reason` means
-// the Claude Code process is actually going away. A /clear ends the
-// conversation but keeps the process alive (a fresh SessionStart
-// follows immediately), so it is NOT an exit. Every other reason
-// (logout, prompt_input_exit, other) is. An empty reason is treated as
-// an exit — better to over-report "exited" (the reaper / next hook
-// will correct a live session) than to leave a dead one as "idle".
+// the Claude Code process is actually going away. Two reasons end the
+// conversation but keep the process alive, so they are NOT exits:
+//   - "clear": a /clear — a fresh SessionStart(source=clear) follows
+//     immediately.
+//   - "resume": an interactive /resume switching to another
+//     conversation — a SessionStart(source=resume) for the new conv
+//     follows immediately. (Claude Code 2.1.79 started firing
+//     SessionEnd for this; treating it as an exit produced a spurious
+//     "Exited" notification on every conversation switch.)
+//
+// Every other reason (logout, prompt_input_exit,
+// bypass_permissions_disabled, other) is an exit. An empty reason is
+// treated as an exit — better to over-report "exited" (the reaper /
+// next hook will correct a live session) than to leave a dead one as
+// "idle".
 func sessionEndIsExit(reason string) bool {
-	return reason != "clear"
+	return reason != "clear" && reason != "resume"
 }
 
 // needsIdentityMigration reports whether a conv-id rotation on an
@@ -516,11 +525,24 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	case "SessionEnd":
 		// Claude Code is shutting down this conversation. The `reason`
-		// field tells a real process exit apart from a /clear, which
-		// ends the conversation but keeps the process alive and fires a
-		// fresh SessionStart immediately after — so /clear must NOT mark
-		// the session exited. logout / prompt_input_exit / other all
-		// mean the process is going away.
+		// field tells a real process exit apart from a /clear or an
+		// interactive /resume switch, both of which end the conversation
+		// but keep the process alive and fire a fresh SessionStart
+		// immediately after — so neither must mark the session exited.
+		// logout / prompt_input_exit / other all mean the process is
+		// going away.
+		//
+		// A SessionEnd carrying agent_id was fired from inside a
+		// subagent (the docs call agent_id THE discriminator for
+		// "subagent hook call vs main-thread call") — whatever ended
+		// there, it was not the main process, so it must not flip this
+		// session to exited or fire an "Exited" notification.
+		if input.AgentID != "" {
+			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
+				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
+			}
+			return nil
+		}
 		if !sessionEndIsExit(input.Reason) {
 			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
 				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
@@ -807,6 +829,21 @@ func getOrCreateSessionState(input HookCallbackInput, envSessionID string) (*Ses
 	}
 	if state != nil {
 		return state, nil
+	}
+
+	// Never auto-register a session from its own SessionEnd: a conv we
+	// have never tracked that is already ending is a one-shot headless
+	// claude invocation (`claude -p`, `claude mcp get`, …) — such CLI
+	// runs fire a SessionEnd(other) on exit with a fresh conv-id each
+	// time. Registering it would create a row only to instantly mark it
+	// exited, firing a spurious "Exited" notification per run (and the
+	// per-session notify cooldown can never catch repeats, since every
+	// run is a new id). The agentd plugin checker's per-minute `claude
+	// mcp get` probes did exactly that.
+	if input.HookEventName == "SessionEnd" {
+		slog.Info("ignoring SessionEnd for untracked conversation",
+			"conv_id", input.ConvID, "reason", input.Reason, "module", "hooks")
+		return nil, nil
 	}
 
 	return autoRegisterSessionFromHook(input), nil

@@ -292,6 +292,19 @@ func TestPlugins_OutputCappedWhileStreaming(t *testing.T) {
 	assert.True(t, tb.truncated)
 }
 
+// TestPlugins_ShellSuppressesTclaudeHooks guards that everything a
+// plugin step runs sees TCLAUDE_IGNORE_HOOKS=1. Steps routinely invoke
+// `claude` itself (the catalog's `claude mcp get` probes run every
+// checker sweep); without the suppression those one-shot runs execute
+// the user's installed tclaude hooks and each probe fired a spurious
+// "Exited" desktop notification — once per minute.
+func TestPlugins_ShellSuppressesTclaudeHooks(t *testing.T) {
+	setupPluginsTest(t)
+	out, ok := runPluginShell(`printf %s "$TCLAUDE_IGNORE_HOOKS"`, pluginCheckTimeout)
+	assert.True(t, ok)
+	assert.Equal(t, "1", out, "plugin step subprocesses must run with TCLAUDE_IGNORE_HOOKS=1")
+}
+
 // TestPlugins_BrokenRegistrySurfaces guards that an unreadable
 // plugins.json is reported as an error — not rendered as "no plugins
 // installed": 500 on the sync endpoints, error value on the snapshot

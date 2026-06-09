@@ -244,6 +244,13 @@ var runPluginShell = func(command string, timeout time.Duration) (string, bool) 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := executil.CommandContext(ctx, "sh", "-c", command)
+	// Plugin steps routinely invoke `claude` itself (e.g. the catalog's
+	// `claude mcp get` probes, every checker sweep). Those one-shot runs
+	// execute the user's globally-installed tclaude hooks, feeding
+	// throwaway sessions into the status pipeline — which fired an
+	// "Exited" desktop notification per probe. Hook callbacks honour
+	// TCLAUDE_IGNORE_HOOKS, so set it for everything a plugin step runs.
+	cmd.Env = append(os.Environ(), "TCLAUDE_IGNORE_HOOKS=1")
 	out := &tailBuffer{max: pluginOutputMax}
 	cmd.Stdout = out
 	cmd.Stderr = out
