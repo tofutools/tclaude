@@ -74,9 +74,10 @@ func TestIsValidRenameTitle(t *testing.T) {
 }
 
 // sessionEndIsExit decides whether a SessionEnd hook means the process
-// is going away. Only an exact "clear" (the /clear command, which keeps
-// the process alive) is a non-exit; everything else — including an
-// empty reason — counts as an exit.
+// is going away. Exactly "clear" (the /clear command) and "resume" (an
+// interactive /resume switching conversations) keep the process alive
+// and are non-exits; everything else — including an empty reason —
+// counts as an exit.
 func TestSessionEndIsExit(t *testing.T) {
 	cases := []struct {
 		reason string
@@ -84,10 +85,13 @@ func TestSessionEndIsExit(t *testing.T) {
 	}{
 		{"", true},
 		{"clear", false},
+		{"resume", false},
 		{"logout", true},
 		{"prompt_input_exit", true},
+		{"bypass_permissions_disabled", true},
 		{"other", true},
-		{"Clear", true}, // case-sensitive: only exact "clear" is the no-op
+		{"Clear", true},  // case-sensitive: only exact "clear" is the no-op
+		{"Resume", true}, // same for "resume"
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, sessionEndIsExit(c.reason), "reason=%q", c.reason)
@@ -169,6 +173,101 @@ func TestRunHookCallback_SessionEndClearKeepsStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", reason,
 		"a /clear is not a real exit — it must not record an exit reason")
+}
+
+// A SessionEnd hook fired by an interactive /resume switching to
+// another conversation must NOT mark the session exited — the process
+// survives the switch and a SessionStart(source=resume) follows.
+// Claude Code 2.1.79 started firing SessionEnd for this; before the
+// reason was added to sessionEndIsExit's allow-list, every /resume
+// produced a spurious "Exited" desktop notification.
+func TestRunHookCallback_SessionEndResumeKeepsStatus(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "resume-sess",
+		ConvID: "conv-old",
+		Status: StatusIdle,
+	}))
+
+	feedHook(t, "resume-sess", map[string]any{
+		"session_id":      "conv-old",
+		"hook_event_name": "SessionEnd",
+		"reason":          "resume",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("resume-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusIdle, got.Status,
+		"SessionEnd(resume) keeps the process alive — status must not flip to exited")
+	reason, err := db.GetSessionExitReason("resume-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "", reason,
+		"a /resume switch is not a real exit — it must not record an exit reason")
+}
+
+// A SessionEnd hook carrying agent_id was fired from inside a subagent
+// (per the hooks docs, agent_id is "present only when the hook fires
+// inside a subagent call"). Whatever ended there, the main process is
+// still running — the session must not flip to exited.
+func TestRunHookCallback_SessionEndFromSubagentIgnored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "sub-sess",
+		ConvID: "conv-sub",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "sub-sess", map[string]any{
+		"session_id":      "conv-sub",
+		"hook_event_name": "SessionEnd",
+		"reason":          "other",
+		"agent_id":        "agent-abc123",
+		"agent_type":      "Explore",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("sub-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, got.Status,
+		"a subagent-context SessionEnd must not mark the main session exited")
+	reason, err := db.GetSessionExitReason("sub-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "", reason,
+		"a subagent-context SessionEnd must not record an exit reason")
+}
+
+// A SessionEnd for a conversation tclaude has never tracked must not
+// auto-register a session row. One-shot headless claude invocations
+// (`claude -p`, `claude mcp get`, …) fire SessionEnd(other) with a
+// fresh conv-id per run; registering them created instant exited rows
+// and fired an "Exited" notification per run — the agentd plugin
+// checker's per-minute probes notified the user every 60 seconds.
+func TestRunHookCallback_SessionEndUntrackedConvNotRegistered(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	feedHook(t, "", map[string]any{
+		"session_id":      "deadbeef-0355-4e23-9283-4af96443a58f",
+		"hook_event_name": "SessionEnd",
+		"reason":          "other",
+		"cwd":             dir,
+	})
+
+	state, err := FindSessionByConvID("deadbeef-0355-4e23-9283-4af96443a58f")
+	require.NoError(t, err)
+	assert.Nil(t, state,
+		"a never-tracked conv's SessionEnd must not auto-register a session row")
+	exists, err := SessionExists("deadbeef")
+	require.NoError(t, err)
+	assert.False(t, exists, "no row may be created under the truncated conv-id either")
 }
 
 // A SessionEnd hook with a real exit reason records that reason so the
