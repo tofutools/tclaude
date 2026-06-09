@@ -361,7 +361,19 @@ type snapshotPayload struct {
 	// MessagesUnread is the count of unread ones, driving the tab badge.
 	Messages       []dashboardHumanMessage `json:"messages"`
 	MessagesUnread int                     `json:"messages_unread"`
-	PopupBase      string                  `json:"popup_base"` // for tray-shareable display
+	// Plugins are the human-managed external integrations on the
+	// Plugins tab, with their cached step-check statuses (the snapshot
+	// never runs the checks itself — see plugins.go). PluginsCatalog is
+	// the built-in set offered for one-click install; PluginsWarn
+	// counts plugins with a failing check and drives the nav badge.
+	Plugins        []dashboardPlugin `json:"plugins"`
+	PluginsCatalog []Plugin          `json:"plugins_catalog"`
+	PluginsWarn    int               `json:"plugins_warn"`
+	// PluginsError carries a plugins.json read/parse failure so the tab
+	// shows "registry broken: …" instead of a silently empty list. The
+	// poll itself stays 200 — one bad file must not take down every tab.
+	PluginsError string `json:"plugins_error,omitempty"`
+	PopupBase      string            `json:"popup_base"` // for tray-shareable display
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -940,6 +952,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Usage = collectUsageSnapshot()
 	out.Templates = collectTemplatesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
+	var pluginsErr error
+	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()
+	if pluginsErr != nil {
+		out.PluginsError = pluginsErr.Error()
+	}
+	out.PluginsCatalog = pluginCatalog()
 
 	writeJSON(w, http.StatusOK, out)
 }

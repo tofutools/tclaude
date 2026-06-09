@@ -41,6 +41,7 @@
   <button data-tab="cron">Cron</button>
   <button data-tab="sudo">Sudo</button>
   <button data-tab="links">Links</button>
+  <button data-tab="plugins">Plugins<span id="plugins-badge" class="tab-badge warn" hidden></span></button>
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
   <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
@@ -126,6 +127,17 @@
       <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
     </div>
     <div id="links-list"></div>
+  </section>
+  <section id="tab-plugins">
+    <div class="filter-bar">
+      <input id="filter-plugins" type="text" placeholder="Filter (name / descr / step name / command)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-plugins-count"></span>
+      <button class="clear-filter" id="filter-plugins-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="plugins-check-now" class="tool" title="Re-run every plugin's check commands right now (the daemon also re-checks once a minute)">⟳ check all now</button>
+      <button id="plugin-create-open" class="primary" title="Define a new plugin — a named list of check/run shell-command steps">+ new plugin</button>
+    </div>
+    <div id="plugins-list"></div>
   </section>
   <section id="tab-permissions"></section>
   <section id="tab-slugs"></section>
@@ -865,6 +877,29 @@
       <button id="group-context-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="group-context-submit" class="primary" type="button">Save</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="plugin-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
+    <h3 id="plugin-modal-title">New plugin</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Name</span>
+      <input id="plugin-modal-name" type="text" placeholder="e.g. excalidraw-mcp" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Descr</span>
+      <textarea id="plugin-modal-descr" rows="2" placeholder="optional — what this plugin provides" spellcheck="false"></textarea>
+    </label>
+    <div id="plugin-modal-steps"></div>
+    <div class="modal-buttons">
+      <button id="plugin-modal-add-step" type="button" class="tool" title="Append another check/run step">+ add step</button>
+    </div>
+    <div class="cron-create-error" id="plugin-modal-error"></div>
+    <div class="modal-buttons">
+      <button id="plugin-modal-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="plugin-modal-submit" class="primary" type="button">Create plugin</button>
     </div>
   </div>
 </div>

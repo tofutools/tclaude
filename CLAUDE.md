@@ -71,10 +71,11 @@ Two layers, both run under bare `go test ./...`:
 - **Unit tests** sit next to the code they cover and exercise individual functions / handlers / DB ops in isolation.
 - **Flow tests** live in `pkg/claude/agentd/*_flow_test.go` and exercise multi-step coordination (spawn → /rename → resume, reincarnate-of-r-N, clone title derivation, delete cleanup) via the daemon's HTTP mux. The daemon, conv, agent, session — all production code paths run unchanged. Only the two subprocess boundaries are mocked.
 
-**The two boundaries** (and only two) are interface vars in production source:
+**The subprocess boundaries** (and only these) are swappable vars in production source:
 
 - `clcommon.Default Tmux` — the tmux command builder. `LiveTmux{}` runs real `tmux -L tclaude …`; tests assign a `*testharness.TmuxSim` that routes `send-keys` to a simulated CC instance.
 - `agentd.Spawn Spawner` — `tclaude session new` invocations. `LiveSpawner{}` forks the real subprocess; tests assign a `simSpawner` that builds a `CCSim` + writes the SessionRow the production hook callback would have written.
+- `agentd.runPluginShell` — the Plugins tab's step executor (`sh -c <check/run>`). Production runs the human's own shell commands; tests stub it only when a test would otherwise execute real external tools (e.g. the catalog's `docker`/`claude` probes) — hermetic commands like `true`/`touch` go through the real path.
 
 Tests swap these in `flow_setup_test.go` with `t.Cleanup` restoration:
 
