@@ -50,8 +50,8 @@ func TestMigrateV47toV48_AddsEffortColumn(t *testing.T) {
 // TestMigrateV47toV48_FreshSchemaHasEffortColumn builds a fresh DB through
 // the full migrate() chain and confirms sessions.effort_level exists and
 // the UpdateSessionEffort / GetContextSnapshot accessors work end to end.
-// Carries the literal currentVersion pin — a tripwire the next
-// migration's author moves forward into their own v49 test.
+// (The literal currentVersion tripwire pin lives in the newest
+// migration's test — see migrate_v49_test.go.)
 func TestMigrateV47toV48_FreshSchemaHasEffortColumn(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -60,7 +60,6 @@ func TestMigrateV47toV48_FreshSchemaHasEffortColumn(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 48, currentVersion, "currentVersion is 48")
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "s1", Status: "idle"}), "SaveSession")
 	require.NoError(t, UpdateSessionEffort("s1", "high"), "UpdateSessionEffort on a fresh schema")

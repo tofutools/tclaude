@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"testing"
 
@@ -268,6 +269,186 @@ func TestRunHookCallback_SessionEndUntrackedConvNotRegistered(t *testing.T) {
 	exists, err := SessionExists("deadbeef")
 	require.NoError(t, err)
 	assert.False(t, exists, "no row may be created under the truncated conv-id either")
+}
+
+// Hooks from a FOREIGN claude process — a one-shot headless run
+// (`claude -p`, `claude mcp get`, …) launched from the session's own
+// Bash, inheriting TCLAUDE_SESSION_ID but carrying its own throwaway
+// conv-id — must be dropped wholesale: no status flip, no exit reason,
+// no conv-id advance (the conv-advance path is what migrated agent
+// identity onto plugin-probe convs in production).
+func TestRunHookCallback_ForeignProcessHooksIgnored(t *testing.T) {
+	for _, event := range []struct {
+		name    string
+		payload map[string]any
+	}{
+		{"SessionEnd", map[string]any{"hook_event_name": "SessionEnd", "reason": "other"}},
+		{"Stop", map[string]any{"hook_event_name": "Stop"}},
+		{"UserPromptSubmit", map[string]any{"hook_event_name": "UserPromptSubmit"}},
+		{"SessionStart(startup)", map[string]any{"hook_event_name": "SessionStart", "source": "startup"}},
+	} {
+		t.Run(event.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			db.ResetForTest()
+
+			require.NoError(t, SaveSessionState(&SessionState{
+				ID:     "host-sess",
+				ConvID: "conv-host",
+				Status: StatusWorking,
+			}))
+
+			payload := map[string]any{"session_id": "conv-foreign", "cwd": dir}
+			maps.Copy(payload, event.payload)
+			feedHook(t, "host-sess", payload)
+
+			got, err := LoadSessionState("host-sess")
+			require.NoError(t, err)
+			assert.Equal(t, StatusWorking, got.Status,
+				"a foreign process's %s must not change the host session's status", event.name)
+			assert.Equal(t, "conv-host", got.ConvID,
+				"a foreign process's %s must not advance the host session's conv-id", event.name)
+			reason, err := db.GetSessionExitReason("host-sess")
+			require.NoError(t, err)
+			assert.Equal(t, "", reason, "no exit reason from a foreign process's %s", event.name)
+		})
+	}
+}
+
+// The announced-transition path: a SessionStart whose source names an
+// in-process conversation transition (clear/resume/compact) IS allowed
+// to carry a new conv-id — it records the announcement and the session
+// row advances. Later hooks carrying the announced conv-id pass the
+// guard too (the migration-failure retry depends on that), while a
+// conv-id that was never announced stays blocked.
+func TestRunHookCallback_AnnouncedTransitionAdvancesConv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "trans-sess",
+		ConvID: "conv-before",
+		Status: StatusIdle,
+	}))
+
+	feedHook(t, "trans-sess", map[string]any{
+		"session_id":      "conv-after",
+		"hook_event_name": "SessionStart",
+		"source":          "clear",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("trans-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-after", got.ConvID,
+		"SessionStart(source=clear) must advance the tracked conv-id")
+
+	pending, err := db.GetSessionPendingConv("trans-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-after", pending,
+		"the transition must be recorded as pending_conv for the retry path")
+}
+
+// The migration-retry seam: when the session row could NOT advance at
+// the transition SessionStart (e.g. a transient migration failure), a
+// later ordinary hook carrying the ANNOUNCED conv-id must still be
+// processed — pending_conv is what tells it apart from a foreign
+// process's conv-id.
+func TestRunHookCallback_PendingConvHookStillProcessed(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "retry-sess",
+		ConvID: "conv-old",
+		Status: StatusIdle,
+	}))
+	// The transition was announced, but the row never advanced —
+	// modeling a failed migration on the SessionStart hook.
+	require.NoError(t, db.SetSessionPendingConv("retry-sess", "conv-new"))
+
+	feedHook(t, "retry-sess", map[string]any{
+		"session_id":      "conv-new",
+		"hook_event_name": "UserPromptSubmit",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("retry-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, got.Status,
+		"a hook carrying the announced conv-id must be processed, not dropped")
+	assert.Equal(t, "conv-new", got.ConvID,
+		"the announced conv-id may advance the row (the retry path)")
+}
+
+// PostCompact is exempt from the foreign-process guard: it may
+// legitimately arrive carrying a rotated conv-id (compaction can
+// rotate the conversation before the SessionStart(compact) is
+// processed), and all it does is reset per-env-session compact state —
+// it returns before any status or conv mutation. The observable proof
+// it passed the guard: compact_pending is zeroed.
+func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "pc-sess",
+		ConvID: "conv-pc",
+		Status: StatusWorking,
+	}))
+	claimed, err := db.TryClaimCompact("pc-sess")
+	require.NoError(t, err)
+	require.True(t, claimed, "precondition: compact_pending claimed")
+
+	feedHook(t, "pc-sess", map[string]any{
+		"session_id":      "conv-pc-rotated",
+		"hook_event_name": "PostCompact",
+		"cwd":             dir,
+	})
+
+	_, pending, err := db.GetCompactState("pc-sess")
+	require.NoError(t, err)
+	assert.Zero(t, pending,
+		"PostCompact with a rotated conv-id must still reset compact state")
+
+	got, err := LoadSessionState("pc-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-pc", got.ConvID,
+		"PostCompact must not advance the conv-id (its case returns early)")
+}
+
+// A SessionStart carrying agent_id fired inside a subagent. Subagents
+// share the main session's conv-id, so the foreign-process guard can't
+// catch them — agent_id is the discriminator. It must not flip a
+// working main session to idle, and must not clear a recorded exit
+// reason.
+func TestRunHookCallback_SessionStartFromSubagentIgnored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "substart-sess",
+		ConvID: "conv-substart",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "substart-sess", map[string]any{
+		"session_id":      "conv-substart",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"agent_id":        "agent-xyz",
+		"agent_type":      "Explore",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("substart-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, got.Status,
+		"a subagent-context SessionStart must not flip the main session to idle")
 }
 
 // A SessionEnd hook with a real exit reason records that reason so the

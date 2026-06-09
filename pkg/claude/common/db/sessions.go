@@ -342,8 +342,9 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 }
 
 // SetSessionExitReason records why a session ended — the `reason` from
-// a graceful SessionEnd hook (logout / prompt_input_exit / resume /
-// bypass_permissions_disabled / other). It is row-scoped: the SessionEnd
+// a graceful SessionEnd hook (logout / prompt_input_exit /
+// bypass_permissions_disabled / other; clear and resume are non-exits
+// and never recorded). It is row-scoped: the SessionEnd
 // hook resolves the exact row whose process exited, and SaveSession
 // bumps that row's updated_at so stateForConv picks it. It is also
 // authoritative — a real SessionEnd overrides any 'unexpected' a reaper
@@ -394,6 +395,41 @@ func GetSessionExitReason(id string) (string, error) {
 		return "", err
 	}
 	return reason.String, nil
+}
+
+// SetSessionPendingConv records the conv-id a transition SessionStart
+// (source clear / resume / compact) announced as the session's next
+// conversation. The hook callback consults it to tell an announced
+// conv rotation apart from a foreign process's hooks (a one-shot
+// headless claude run inheriting the pane's TCLAUDE_SESSION_ID) — see
+// migrateV48toV49. Overwritten by each new announcement; deliberately
+// never cleared (a stale UUID can't collide with a future foreign
+// conv-id).
+func SetSessionPendingConv(id, convID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE sessions SET pending_conv = ? WHERE id = ?`, convID, id)
+	return err
+}
+
+// GetSessionPendingConv returns the last announced next-conv for a
+// session, or "" when no transition has been announced.
+func GetSessionPendingConv(id string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var conv string
+	err = d.QueryRow(`SELECT pending_conv FROM sessions WHERE id = ?`, id).Scan(&conv)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return conv, nil
 }
 
 // UpdateContextPct stores the latest context window usage percentage for a session.
