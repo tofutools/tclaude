@@ -6,6 +6,7 @@ import {
   bindSlopCursorTrail, bindSlopMarquee,
 } from './slop-fx.js';
 import { bindSlopAudio } from './slop-audio.js';
+import { bindSlopVolume } from './slop-volume.js';
 import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
@@ -104,6 +105,11 @@ bindSlopMarquee();
 bindSlopAudio();
 bindSlopCredits();
 bindSlopSpectacle();
+// The volume mixer (header 🎚️ popover) — persistent music/FX sliders
+// backed by /api/slop/volumes (the "slop" block of config.json). Must
+// bind after applySlopThemeIfRequested() so an already-slop page load
+// is caught by its initial-state check.
+bindSlopVolume();
 // Vegas-mode soundtrack — the "Vegas" tab + lounge-radio player, started
 // and stopped with slop mode (listens for the tclaude:slop event slop.js
 // dispatches). Must bind after applySlopThemeIfRequested() above so an

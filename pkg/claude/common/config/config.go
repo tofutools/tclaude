@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/common"
@@ -40,6 +41,49 @@ type Config struct {
 	// Focus configures window-focus behavior. Absent → defaults (focus
 	// raises an existing window and opens a fresh one when none is open).
 	Focus *FocusConfig `json:"focus,omitempty"`
+
+	// Slop holds the dashboard's slop-mode ("The Slop Machine") audio
+	// volumes. Absent block / absent keys mean full volume — see
+	// ResolvedSlopVolumes.
+	Slop *SlopConfig `json:"slop,omitempty"`
+}
+
+// SlopConfig holds the slop-mode audio knobs. Both volumes are percent
+// (0–100) of the mode's built-in full level: MusicVolume scales the
+// Vegas lounge radio, EffectsVolume scales the synthesized casino FX.
+// Pointers so "absent" (default 100) is distinguishable from an
+// explicit 0 (silent but not muted — the master 🔇/🔊 switch is a
+// separate localStorage-persisted preference in the browser).
+//
+// Written by the dashboard's volume sliders via POST /api/slop/volumes;
+// also round-trips through the Config tab like any other field.
+type SlopConfig struct {
+	MusicVolume   *int `json:"music_volume,omitempty"`
+	EffectsVolume *int `json:"effects_volume,omitempty"`
+}
+
+// defaultSlopVolume is the effective volume for an absent slop volume
+// key: 100% — entering slop mode is opting in to the full casino.
+const defaultSlopVolume = 100
+
+// ResolvedSlopVolumes returns the effective (music, effects) volumes in
+// percent, defaulting each absent value to 100. A hand-edited
+// out-of-range value is clamped to 0–100 — Validate reports it to the
+// Config tab, but readers must still get a usable volume rather than
+// handing 500% to the browser. Nil-safe on the receiver so callers
+// need no guard.
+func (c *Config) ResolvedSlopVolumes() (music, effects int) {
+	music, effects = defaultSlopVolume, defaultSlopVolume
+	if c == nil || c.Slop == nil {
+		return music, effects
+	}
+	if c.Slop.MusicVolume != nil {
+		music = min(100, max(0, *c.Slop.MusicVolume))
+	}
+	if c.Slop.EffectsVolume != nil {
+		effects = min(100, max(0, *c.Slop.EffectsVolume))
+	}
+	return music, effects
 }
 
 // FocusConfig holds window-focus behavior knobs.
@@ -452,13 +496,54 @@ func Normalize(c *Config) {
 	}
 }
 
+// saveMu serializes config-file writes within this process. Save's
+// atomic rename prevents torn files, but not lost updates: two
+// concurrent load→modify→save sequences would silently drop one
+// writer's change. Update holds this mutex across the whole
+// read-modify-write; Save holds it for the write so a direct Save can
+// never land inside an Update's critical section. Cross-process races
+// remain possible (any tclaude command may Save) but in practice all
+// concurrent writers live in the agentd daemon.
+var saveMu sync.Mutex
+
+// Update performs a serialized read-modify-write of the config file:
+// load, hand the result (plus any load error) to mutate, then save —
+// all under saveMu, so concurrent Updates can't drop each other's
+// changes and a plain Save can't interleave. mutate receives the load
+// error rather than Update swallowing it, because callers differ on
+// how to treat a corrupt file (refuse vs. overwrite); returning a
+// non-nil error from mutate aborts without writing and is returned
+// as-is, so callers can use sentinel errors to pick a response.
+// Returns the saved config on success.
+func Update(mutate func(cfg *Config, loadErr error) error) (*Config, error) {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	cfg, loadErr := Load()
+	if err := mutate(cfg, loadErr); err != nil {
+		return nil, err
+	}
+	if err := saveLocked(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 // Save writes the config to ~/.tclaude/config.json atomically: the
 // bytes go to a sibling temp file which is then renamed over the
 // target. A crash, power loss or disk-full partway through must never
 // leave a truncated config.json — the next Load would silently degrade
 // to DefaultConfig and revert every persisted setting. Rename within a
 // directory is atomic on POSIX and replace-existing on Windows.
+//
+// For read-modify-write sequences use Update instead — a bare
+// Load→Save can drop a concurrent writer's change.
 func Save(config *Config) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	return saveLocked(config)
+}
+
+func saveLocked(config *Config) error {
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -572,6 +657,15 @@ func Validate(c *Config) []string {
 			}
 		}
 		errs = append(errs, validateSudo(a.Sudo)...)
+	}
+
+	if s := c.Slop; s != nil {
+		if s.MusicVolume != nil && (*s.MusicVolume < 0 || *s.MusicVolume > 100) {
+			errs = append(errs, fmt.Sprintf("slop.music_volume %d is out of range (0–100)", *s.MusicVolume))
+		}
+		if s.EffectsVolume != nil && (*s.EffectsVolume < 0 || *s.EffectsVolume > 100) {
+			errs = append(errs, fmt.Sprintf("slop.effects_volume %d is out of range (0–100)", *s.EffectsVolume))
+		}
 	}
 
 	if lr := c.LogRotation; lr != nil {

@@ -35,6 +35,21 @@ let ctx = null;      // AudioContext, built lazily inside a user gesture
 let master = null;   // master gain node — volume + an instant kill switch
 let lastCoinAt = 0;  // rate-limit guard for the dense click-coin tick
 
+// FX_HEADROOM is the historical full level of the master gain —
+// individual sounds stay well under 1.0 on top of it. The persisted
+// effects volume (slop-volume.js) scales it: 100% = this value.
+const FX_HEADROOM = 0.5;
+let effectsVolume = 100; // percent, 0–100; applied to master below
+
+// setEffectsVolume applies the persisted FX volume (percent). Owned by
+// slop-volume.js, which loads it from /api/slop/volumes and calls this
+// on load and on every slider move. Takes effect immediately on a live
+// ctx and is baked into ensureCtx for one built later.
+export function setEffectsVolume(pct) {
+  effectsVolume = Math.min(100, Math.max(0, Number(pct) || 0));
+  if (master) master.gain.value = FX_HEADROOM * (effectsVolume / 100);
+}
+
 // prefersEnabled defaults to ON when the key was never set — slop sound
 // is part of the casino, opt-out rather than opt-in. An explicit '0'
 // (the user muted) is honoured. (Function declaration → hoisted, so the
@@ -76,7 +91,7 @@ function ensureCtx() {
   if (!AC) return null;
   ctx = new AC();
   master = ctx.createGain();
-  master.gain.value = 0.5; // headroom — individual sounds stay well under 1.0
+  master.gain.value = FX_HEADROOM * (effectsVolume / 100);
   master.connect(ctx.destination);
   return ctx;
 }

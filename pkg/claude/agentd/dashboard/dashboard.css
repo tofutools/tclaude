@@ -1911,6 +1911,46 @@ body.slop .slop-hud {
 }
 .slop-hud-btn:hover { background: #4a0a0a; }
 
+/* ─── Slop volume mixer (header HUD popover, slop-volume.js) ────────
+   The 🎚️ button next to the master mute opens a small oxblood-and-gold
+   panel with the two persisted sliders. Anchored to its wrapper so it
+   drops down under the header; high z-index so it floats over the
+   marquee and tab content. */
+.slop-volume-wrap { position: relative; display: inline-flex; align-items: center; }
+#slop-volume-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #1a0606 0%, #2a0808 100%);
+  border: 1px solid #ffd700;
+  border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 215, 0, 0.25);
+}
+#slop-volume-pop.open { display: flex; }
+.slop-vol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.slop-vol-ico { font-size: 13px; }
+.slop-vol-row input[type="range"] {
+  width: 130px;
+  accent-color: #ffd700;
+}
+.slop-vol-val {
+  color: #ffe88c;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  width: 4ch;
+  text-align: right;
+}
+
 /* ─── High-rollers leaderboard (Vegas tab, slop-credits.js) ─────────
    Renders under the radio player. Same oxblood-and-gold card treatment
    as #vegas-player so the tab reads as one unit. */

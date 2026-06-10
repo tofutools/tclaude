@@ -42,6 +42,22 @@ const VEGAS_STREAM = {
   home: 'https://somafm.com/illstreet/',
 };
 
+// musicVolume is the persisted radio volume in percent (0–100), owned
+// by slop-volume.js (loaded from /api/slop/volumes). Applied to the
+// <audio> element when it is built and on every setter call.
+let musicVolume = 100;
+
+// setMusicVolume applies the persisted music volume (percent) to a live
+// player and remembers it for the next startMusic. Called by
+// slop-volume.js on load and on every slider move.
+export function setMusicVolume(pct) {
+  musicVolume = Math.min(100, Math.max(0, Number(pct) || 0));
+  const audio = document.querySelector('#vegas-player audio');
+  if (audio && Math.round(audio.volume * 100) !== musicVolume) {
+    audio.volume = musicVolume / 100;
+  }
+}
+
 // cancelUnmuteArm tears down a pending "unmute on first gesture" arming
 // (see playWithSound). Held at module scope so stopMusic / a rebuild can
 // cancel a still-waiting arm instead of leaking listeners that reference
@@ -69,9 +85,21 @@ function startMusic() {
   audio.controls = true;
   audio.preload = 'auto';
   audio.setAttribute('aria-label', VEGAS_STREAM.label);
+  audio.volume = musicVolume / 100;
   // A dead/unreachable stream should explain itself rather than sit as a
   // silent broken control.
   audio.addEventListener('error', () => showStreamError(host), { once: true });
+  // The native <audio controls> volume slider is a second way to set the
+  // same value — surface its changes so slop-volume.js can mirror them
+  // onto the popover slider and persist. volumechange also fires for
+  // muted-flips and for our own setMusicVolume writes; the listener
+  // de-dupes by value, so those are harmless no-ops.
+  audio.addEventListener('volumechange', () => {
+    const pct = Math.round(audio.volume * 100);
+    if (pct === musicVolume) return;
+    musicVolume = pct;
+    document.dispatchEvent(new CustomEvent('tclaude:slopmusicvol', { detail: { volume: pct } }));
+  });
 
   host.appendChild(label);
   host.appendChild(audio);

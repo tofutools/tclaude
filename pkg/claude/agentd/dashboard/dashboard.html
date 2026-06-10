@@ -24,6 +24,25 @@
   <span class="slop-hud" id="slop-hud">
     <span class="slop-credits" id="slop-credits" title="Slop credits — climbs on every jackpot this session">🪙 0</span>
     <button class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
+    <!-- The mixer — persistent music/FX volume sliders in a popover,
+         anchored next to the master mute so all sound control lives in
+         one spot. slop-volume.js owns it; values persist to
+         ~/.tclaude/config.json via /api/slop/volumes. -->
+    <span class="slop-volume-wrap">
+      <button class="slop-hud-btn" id="slop-volume-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="slop-volume-pop" title="Volume — music &amp; FX sliders (saved to tclaude config)">🎚️</button>
+      <div id="slop-volume-pop" role="group" aria-label="Slop volume sliders">
+        <label class="slop-vol-row" title="Music volume — the Vegas lounge radio">
+          <span class="slop-vol-ico">🎵</span>
+          <input id="slop-vol-music" type="range" min="0" max="100" step="1" value="100" aria-label="Music volume">
+          <span class="slop-vol-val" id="slop-vol-music-val">100%</span>
+        </label>
+        <label class="slop-vol-row" title="Effects volume — the casino sound FX (coins, reels, jackpots)">
+          <span class="slop-vol-ico">🔔</span>
+          <input id="slop-vol-fx" type="range" min="0" max="100" step="1" value="100" aria-label="Effects volume">
+          <span class="slop-vol-val" id="slop-vol-fx-val">100%</span>
+        </label>
+      </div>
+    </span>
   </span>
   <button id="window-all-btn" data-act="window-modal-all" aria-label="Focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way.">🪟 windows…</button>
   <button id="power-on-all-btn" data-act="power-on-all" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on all</button>
