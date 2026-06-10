@@ -256,6 +256,167 @@ func TestPlugins_RunStep(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// TestPlugins_ActivateDeactivate covers the whole-plugin toggle: a
+// two-step plugin with marker-file state and an order log. Activate
+// runs the steps forward (skipping satisfied ones), deactivate runs
+// the stop commands in reverse and persists Disabled — which flips the
+// status semantics to "off is expected".
+func TestPlugins_ActivateDeactivate(t *testing.T) {
+	setupPluginsTest(t)
+	dir := t.TempDir()
+	m1, m2 := filepath.Join(dir, "m1"), filepath.Join(dir, "m2")
+	logFile := filepath.Join(dir, "log")
+	readLog := func() []string {
+		data, err := os.ReadFile(logFile)
+		if err != nil {
+			return nil
+		}
+		return strings.Fields(strings.TrimSpace(string(data)))
+	}
+	require.NoError(t, savePlugins([]Plugin{{
+		Name: "svc",
+		Steps: []PluginStep{
+			{
+				Name:  "first",
+				Check: "test -f '" + m1 + "'",
+				Run:   "touch '" + m1 + "' && echo run-first >> '" + logFile + "'",
+				Stop:  "rm -f '" + m1 + "' && echo stop-first >> '" + logFile + "'",
+			},
+			{
+				Name:  "second",
+				Check: "test -f '" + m2 + "'",
+				Run:   "touch '" + m2 + "' && echo run-second >> '" + logFile + "'",
+				Stop:  "rm -f '" + m2 + "' && echo stop-second >> '" + logFile + "'",
+			},
+		},
+	}}))
+
+	// Deactivating an already-down plugin executes nothing (every check
+	// already fails) but still records the intent: status reads "off",
+	// not "warn", and the badge stays dark.
+	w := servePlugins(t, http.MethodPost, "/api/plugins/svc/deactivate", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var res pluginRunResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	assert.False(t, res.Ran, "nothing was active, so no stop command ran")
+	assert.True(t, res.OK)
+	assert.True(t, res.Plugin.Disabled)
+	assert.Equal(t, "off", res.Plugin.Status)
+	_, warn, err := collectPluginsSnapshot()
+	require.NoError(t, err)
+	assert.Equal(t, 0, warn, "a deactivated, down plugin must not light the badge")
+
+	// Activate: both steps run, in order, and the flag clears.
+	w = servePlugins(t, http.MethodPost, "/api/plugins/svc/activate", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	res = pluginRunResponse{} // disabled is omitempty — reset between decodes
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	assert.True(t, res.Ran)
+	assert.True(t, res.OK)
+	assert.False(t, res.Plugin.Disabled)
+	assert.Equal(t, "ok", res.Plugin.Status)
+	assert.Equal(t, []string{"run-first", "run-second"}, readLog())
+
+	// Re-activating a healthy plugin is a no-op: every check passes, so
+	// no run command executes again.
+	w = servePlugins(t, http.MethodPost, "/api/plugins/svc/activate", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	res = pluginRunResponse{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	assert.False(t, res.Ran, "already satisfied — nothing should re-run")
+	assert.Equal(t, []string{"run-first", "run-second"}, readLog())
+
+	// Deactivate: stop commands run in REVERSE order, markers vanish,
+	// the flag persists in plugins.json.
+	w = servePlugins(t, http.MethodPost, "/api/plugins/svc/deactivate", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	res = pluginRunResponse{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	assert.True(t, res.Ran)
+	assert.True(t, res.OK)
+	assert.Equal(t, "off", res.Plugin.Status)
+	assert.Equal(t, []string{"run-first", "run-second", "stop-second", "stop-first"}, readLog())
+	_, err = os.Stat(m1)
+	assert.True(t, os.IsNotExist(err))
+	stored, err := loadPlugins()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.True(t, stored[0].Disabled, "the deactivation intent is persisted")
+
+	// A disabled plugin whose stoppable step is somehow active again
+	// (here: the marker reappears behind tclaude's back) warns —
+	// "deactivated but still running" is the inverse of the tab's
+	// usual "installed but not started" signal.
+	require.NoError(t, os.WriteFile(m1, nil, 0o644))
+	w = servePlugins(t, http.MethodPost, "/api/plugins/svc/check", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	v := decodePluginView(t, w)
+	assert.True(t, v.Disabled)
+	assert.Equal(t, "warn", v.Status)
+	_, warn, err = collectPluginsSnapshot()
+	require.NoError(t, err)
+	assert.Equal(t, 1, warn)
+
+	// Unknown plugin → 404 on both verbs.
+	w = servePlugins(t, http.MethodPost, "/api/plugins/ghost/activate", "")
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	w = servePlugins(t, http.MethodPost, "/api/plugins/ghost/deactivate", "")
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestPlugins_StopStep covers the per-step stop button: it executes
+// the step's stop command and re-checks, and a step without one is a
+// 400 — mirroring the run-step guard rails.
+func TestPlugins_StopStep(t *testing.T) {
+	setupPluginsTest(t)
+	marker := filepath.Join(t.TempDir(), "started")
+	require.NoError(t, savePlugins([]Plugin{{
+		Name: "svc",
+		Steps: []PluginStep{
+			{Name: "service up", Check: "test -f '" + marker + "'", Run: "touch '" + marker + "'", Stop: "rm -f '" + marker + "'"},
+			{Name: "no stop", Check: "true"},
+		},
+	}}))
+	require.NoError(t, os.WriteFile(marker, nil, 0o644))
+
+	w := servePlugins(t, http.MethodPost, "/api/plugins/svc/steps/0/stop", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var res pluginRunResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	assert.True(t, res.Ran)
+	assert.True(t, res.OK)
+	_, err := os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "the stop command actually executed")
+	// Stopping a single step does NOT flip the plugin-level Disabled
+	// intent — the plugin is still enabled, so the dead check warns.
+	assert.False(t, res.Plugin.Disabled)
+	assert.Equal(t, "warn", res.Plugin.Status)
+
+	w = servePlugins(t, http.MethodPost, "/api/plugins/svc/steps/1/stop", "")
+	assert.Equal(t, http.StatusBadRequest, w.Code, "a step without a stop command is refused")
+}
+
+// TestPlugins_UpdatePreservesDisabled guards the edit path: the modal
+// PUT body never carries the Disabled flag, so the handler must keep
+// the stored intent instead of silently re-enabling the plugin.
+func TestPlugins_UpdatePreservesDisabled(t *testing.T) {
+	setupPluginsTest(t)
+	require.NoError(t, savePlugins([]Plugin{{
+		Name:     "svc",
+		Disabled: true,
+		Steps:    []PluginStep{{Name: "probe", Check: "true"}},
+	}}))
+	w := servePlugins(t, http.MethodPut, "/api/plugins/svc",
+		`{"name":"svc","steps":[{"name":"probe","check":"true","stop":"true"}]}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	bgWG.Wait()
+	stored, err := loadPlugins()
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.True(t, stored[0].Disabled, "an edit must not re-enable a deactivated plugin")
+	assert.Equal(t, "true", stored[0].Steps[0].Stop, "the stop command round-trips through PUT")
+}
+
 func TestPlugins_Validation(t *testing.T) {
 	setupPluginsTest(t)
 	for name, body := range map[string]string{

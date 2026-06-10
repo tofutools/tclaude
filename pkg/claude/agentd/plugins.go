@@ -28,6 +28,8 @@ import (
 //     MCP registered, …). Optional; a step without one is run-only.
 //   - run:   performs the step (docker run, claude mcp add, …).
 //     Optional; a step without one is check-only.
+//   - stop:  undoes the step (docker stop, claude mcp remove, …).
+//     Optional; powers the plugin-level deactivate.
 //
 // That's enough to express "install X" (one-shot run, check = is it
 // registered) and "keep Y running" (run = start it, check = is it up)
@@ -35,6 +37,13 @@ import (
 // ships ready-made definitions (currently the Excalidraw MCP) that the
 // human can install — i.e. copy into their own plugins.json — and then
 // edit freely.
+//
+// A plugin can be deactivated on demand: deactivate runs every step's
+// stop command in reverse order and records the intent as a persisted
+// Disabled flag; activate clears the flag and runs the steps forward
+// (skipping ones whose check already passes). Disabled flips the
+// status semantics — failing checks are then the EXPECTED state ("off")
+// and only a stoppable step that is still active warns.
 //
 // Definitions persist in ~/.tclaude/plugins.json. Step statuses live
 // only in memory: a background sweep re-checks every plugin each
@@ -50,18 +59,25 @@ import (
 // route to create or run plugins.
 
 // PluginStep is one step of a plugin definition. See the file comment
-// for the check/run semantics. At least one of the two must be set.
+// for the check/run/stop semantics. At least one of check/run must be
+// set; stop is always optional.
 type PluginStep struct {
 	Name  string `json:"name"`
 	Check string `json:"check,omitempty"`
 	Run   string `json:"run,omitempty"`
+	Stop  string `json:"stop,omitempty"`
 }
 
 // Plugin is one plugin definition, as persisted in plugins.json.
+// Disabled records the human's intent after a deactivate: checks keep
+// running, but a failing check is then the expected state, not a
+// warning. Only the activate/deactivate endpoints flip it — the edit
+// modal's PUT preserves whatever is stored.
 type Plugin struct {
-	Name  string       `json:"name"`
-	Descr string       `json:"descr,omitempty"`
-	Steps []PluginStep `json:"steps"`
+	Name     string       `json:"name"`
+	Descr    string       `json:"descr,omitempty"`
+	Disabled bool         `json:"disabled,omitempty"`
+	Steps    []PluginStep `json:"steps"`
 }
 
 // pluginsFile is the on-disk shape of ~/.tclaude/plugins.json. Wrapped
@@ -164,6 +180,9 @@ func pluginCatalog() []Plugin {
 					Check: "docker inspect -f '{{.State.Running}}' mcp-excalidraw-canvas 2>/dev/null | grep -q true",
 					Run: "docker start mcp-excalidraw-canvas 2>/dev/null || " +
 						"docker run -d -p 3000:3000 --name mcp-excalidraw-canvas ghcr.io/yctimlin/mcp_excalidraw-canvas:latest",
+					// stop, not rm — the container survives so the next
+					// activate is a fast `docker start`.
+					Stop: "docker stop mcp-excalidraw-canvas",
 				},
 				{
 					Name:  "claude mcp registration (user scope)",
@@ -172,6 +191,7 @@ func pluginCatalog() []Plugin {
 						"docker run -i --rm --add-host=host.docker.internal:host-gateway " +
 						"-e EXPRESS_SERVER_URL=http://host.docker.internal:3000 -e ENABLE_CANVAS_SYNC=true " +
 						"ghcr.io/yctimlin/mcp_excalidraw:latest",
+					Stop: "claude mcp remove excalidraw --scope user",
 				},
 			},
 		},
@@ -346,6 +366,7 @@ type dashboardPluginStep struct {
 	Name  string `json:"name"`
 	Check string `json:"check,omitempty"`
 	Run   string `json:"run,omitempty"`
+	Stop  string `json:"stop,omitempty"`
 	// Checked: a check command exists AND has run at least once —
 	// only then are OK/Output/CheckedAt meaningful.
 	Checked   bool   `json:"checked"`
@@ -355,16 +376,26 @@ type dashboardPluginStep struct {
 }
 
 // dashboardPlugin is the snapshot/API view of one plugin. Status is
-// the aggregate the tab's pill + the nav badge key off:
+// the aggregate the tab's pill + the nav badge key off. Enabled:
 //
 //	warn    — ≥1 check has run and failed ("installed but not active")
 //	ok      — every check has run and passed (and there is ≥1)
 //	unknown — no checks defined, or none have run yet
+//
+// Disabled (deactivated on purpose) inverts the alarm: failing checks
+// are the expected state —
+//
+//	off  — nothing unexpected is active
+//	warn — a step WITH a stop command still passes its check, i.e.
+//	       deactivation didn't take (steps without a stop command are
+//	       exempt: prerequisites like "docker installed" legitimately
+//	       stay satisfied while the plugin is off)
 type dashboardPlugin struct {
-	Name   string                `json:"name"`
-	Descr  string                `json:"descr,omitempty"`
-	Status string                `json:"status"`
-	Steps  []dashboardPluginStep `json:"steps"`
+	Name     string                `json:"name"`
+	Descr    string                `json:"descr,omitempty"`
+	Disabled bool                  `json:"disabled,omitempty"`
+	Status   string                `json:"status"`
+	Steps    []dashboardPluginStep `json:"steps"`
 }
 
 // pluginView merges a definition with its cached check results into
@@ -375,10 +406,10 @@ func pluginView(p Plugin) dashboardPlugin {
 	results := pluginStatusCache.byPlugin[p.Name]
 	pluginStatusCache.Unlock()
 
-	v := dashboardPlugin{Name: p.Name, Descr: p.Descr, Status: "unknown", Steps: make([]dashboardPluginStep, len(p.Steps))}
-	anyFailed, anyUnchecked, anyCheck := false, false, false
+	v := dashboardPlugin{Name: p.Name, Descr: p.Descr, Disabled: p.Disabled, Status: "unknown", Steps: make([]dashboardPluginStep, len(p.Steps))}
+	anyFailed, anyUnchecked, anyCheck, stoppableActive := false, false, false, false
 	for i, s := range p.Steps {
-		step := dashboardPluginStep{Name: s.Name, Check: s.Check, Run: s.Run}
+		step := dashboardPluginStep{Name: s.Name, Check: s.Check, Run: s.Run, Stop: s.Stop}
 		if s.Check != "" {
 			anyCheck = true
 			// Trust a cached slot only when it was produced FOR this
@@ -393,6 +424,9 @@ func pluginView(p Plugin) dashboardPlugin {
 				if !r.OK {
 					anyFailed = true
 				}
+				if r.OK && s.Stop != "" {
+					stoppableActive = true
+				}
 			} else {
 				anyUnchecked = true
 			}
@@ -400,6 +434,10 @@ func pluginView(p Plugin) dashboardPlugin {
 		v.Steps[i] = step
 	}
 	switch {
+	case p.Disabled && stoppableActive:
+		v.Status = "warn" // deactivated, yet something stoppable still runs
+	case p.Disabled:
+		v.Status = "off"
 	case anyFailed:
 		v.Status = "warn"
 	case anyCheck && !anyUnchecked:
@@ -460,7 +498,7 @@ func validatePlugin(p Plugin) error {
 		if strings.TrimSpace(s.Check) == "" && strings.TrimSpace(s.Run) == "" {
 			return fmt.Errorf("step %d (%s): needs a check command, a run command, or both", i+1, s.Name)
 		}
-		if len(s.Check) > pluginCommandMax || len(s.Run) > pluginCommandMax {
+		if len(s.Check) > pluginCommandMax || len(s.Run) > pluginCommandMax || len(s.Stop) > pluginCommandMax {
 			return fmt.Errorf("step %d (%s): command exceeds %d characters", i+1, s.Name, pluginCommandMax)
 		}
 	}
@@ -476,6 +514,7 @@ func normalizePlugin(p Plugin) Plugin {
 		p.Steps[i].Name = strings.TrimSpace(p.Steps[i].Name)
 		p.Steps[i].Check = strings.TrimSpace(p.Steps[i].Check)
 		p.Steps[i].Run = strings.TrimSpace(p.Steps[i].Run)
+		p.Steps[i].Stop = strings.TrimSpace(p.Steps[i].Stop)
 	}
 	return p
 }
@@ -491,7 +530,10 @@ func normalizePlugin(p Plugin) Plugin {
 //	DELETE /api/plugins/{name}                → delete a plugin
 //	POST   /api/plugins/check                 → re-check all plugins now (sync)
 //	POST   /api/plugins/{name}/check          → re-check one plugin now (sync)
-//	POST   /api/plugins/{name}/steps/{idx}/run → run one step's run command (sync)
+//	POST   /api/plugins/{name}/activate       → run steps forward + clear Disabled (sync)
+//	POST   /api/plugins/{name}/deactivate     → run stop commands in reverse + set Disabled (sync)
+//	POST   /api/plugins/{name}/steps/{idx}/run  → run one step's run command (sync)
+//	POST   /api/plugins/{name}/steps/{idx}/stop → run one step's stop command (sync)
 //
 // Dashboard-only, like /api/config: there is deliberately no /v1 twin,
 // so agents cannot reach these. The literal `check` segment outranks
@@ -505,7 +547,10 @@ func registerDashboardPluginRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/plugins/{name}", dashboardPluginRoute(handlePluginsDelete))
 	mux.HandleFunc("POST /api/plugins/check", dashboardPluginRoute(handlePluginsCheckAll))
 	mux.HandleFunc("POST /api/plugins/{name}/check", dashboardPluginRoute(handlePluginsCheckOne))
+	mux.HandleFunc("POST /api/plugins/{name}/activate", dashboardPluginRoute(handlePluginsActivate))
+	mux.HandleFunc("POST /api/plugins/{name}/deactivate", dashboardPluginRoute(handlePluginsDeactivate))
 	mux.HandleFunc("POST /api/plugins/{name}/steps/{idx}/run", dashboardPluginRoute(handlePluginsRunStep))
+	mux.HandleFunc("POST /api/plugins/{name}/steps/{idx}/stop", dashboardPluginRoute(handlePluginsStopStep))
 }
 
 // dashboardPluginRoute applies the dashboard cookie/Origin auth, same
@@ -615,6 +660,10 @@ func handlePluginsUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no plugin named "+oldName, http.StatusNotFound)
 		return
 	}
+	// Enablement is owned by the activate/deactivate endpoints — an
+	// edit (whose modal doesn't carry the flag) must not silently
+	// re-enable a deactivated plugin.
+	p.Disabled = plugins[idx].Disabled
 	plugins[idx] = p
 	if err := savePlugins(plugins); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -692,9 +741,12 @@ func handlePluginsCheckOne(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pluginView(p))
 }
 
-// pluginRunResponse is the run-step body: the run command's own
+// pluginRunResponse is the body of every command-executing endpoint
+// (run-step, stop-step, activate, deactivate): the commands' own
 // outcome plus the plugin's freshly re-checked state, so the UI can
-// show "ran OK, and the check now passes" in one round-trip.
+// show "ran OK, and the check now passes" in one round-trip. Ran is
+// false when nothing needed executing (e.g. activate of an
+// already-satisfied plugin just clears the Disabled flag).
 type pluginRunResponse struct {
 	Ran    bool            `json:"ran"`
 	OK     bool            `json:"ok"`
@@ -702,7 +754,11 @@ type pluginRunResponse struct {
 	Plugin dashboardPlugin `json:"plugin"`
 }
 
-func handlePluginsRunStep(w http.ResponseWriter, r *http.Request) {
+// handlePluginsStepCommand is the shared run-step/stop-step body:
+// resolve {name}/{idx}, pick the step's command via sel, execute it,
+// re-probe the whole plugin (one step's run often flips a later step's
+// check — start container → registration check can connect).
+func handlePluginsStepCommand(w http.ResponseWriter, r *http.Request, verb string, sel func(PluginStep) string) {
 	p, ok := findPlugin(w, r.PathValue("name"))
 	if !ok {
 		return
@@ -713,13 +769,137 @@ func handlePluginsRunStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	step := p.Steps[idx]
-	if step.Run == "" {
-		http.Error(w, "step "+step.Name+" has no run command", http.StatusBadRequest)
+	cmd := sel(step)
+	if cmd == "" {
+		http.Error(w, "step "+step.Name+" has no "+verb+" command", http.StatusBadRequest)
 		return
 	}
-	out, runOK := runPluginShell(step.Run, pluginRunTimeout)
-	// Re-probe the whole plugin: one step's run often flips a later
-	// step's check (start container → registration check can connect).
+	out, runOK := runPluginShell(cmd, pluginRunTimeout)
 	checkPlugin(p)
 	writeJSON(w, http.StatusOK, pluginRunResponse{Ran: true, OK: runOK, Output: out, Plugin: pluginView(p)})
+}
+
+func handlePluginsRunStep(w http.ResponseWriter, r *http.Request) {
+	handlePluginsStepCommand(w, r, "run", func(s PluginStep) string { return s.Run })
+}
+
+func handlePluginsStopStep(w http.ResponseWriter, r *http.Request) {
+	handlePluginsStepCommand(w, r, "stop", func(s PluginStep) string { return s.Stop })
+}
+
+// setPluginDisabled persists the Disabled flag for one plugin under
+// the registry mutex and returns the updated definition. Kept separate
+// from the slow command execution so the lock is never held across a
+// shell run.
+func setPluginDisabled(name string, disabled bool) (Plugin, error) {
+	pluginsMu.Lock()
+	defer pluginsMu.Unlock()
+	plugins, err := loadPlugins()
+	if err != nil {
+		return Plugin{}, err
+	}
+	for i := range plugins {
+		if plugins[i].Name == name {
+			plugins[i].Disabled = disabled
+			if err := savePlugins(plugins); err != nil {
+				return Plugin{}, err
+			}
+			return plugins[i], nil
+		}
+	}
+	return Plugin{}, fmt.Errorf("no plugin named %s", name)
+}
+
+// appendStepOutput accumulates one executed step's output into the
+// combined response body, prefixed with the step name so a multi-step
+// activate/deactivate stays readable.
+func appendStepOutput(b *strings.Builder, stepName, out string) {
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString("[")
+	b.WriteString(stepName)
+	b.WriteString("] ")
+	if out == "" {
+		out = "(no output)"
+	}
+	b.WriteString(out)
+}
+
+// handlePluginsActivate brings a plugin up on demand: clear the
+// Disabled flag, then walk the steps IN ORDER running each one whose
+// check doesn't already pass (steps may depend on their predecessors,
+// so the walk aborts on the first failed run). Skipping satisfied
+// steps makes activate cheap and idempotent — re-activating a healthy
+// plugin executes nothing.
+func handlePluginsActivate(w http.ResponseWriter, r *http.Request) {
+	p, err := setPluginDisabled(r.PathValue("name"), false)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.HasPrefix(err.Error(), "no plugin named") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	var combined strings.Builder
+	ran, allOK := false, true
+	for _, s := range p.Steps {
+		if s.Run == "" {
+			continue
+		}
+		if s.Check != "" {
+			if _, ok := runPluginShell(s.Check, pluginCheckTimeout); ok {
+				continue // already satisfied
+			}
+		}
+		out, ok := runPluginShell(s.Run, pluginRunTimeout)
+		ran = true
+		appendStepOutput(&combined, s.Name, out)
+		if !ok {
+			allOK = false
+			break // later steps likely depend on this one
+		}
+	}
+	checkPlugin(p)
+	writeJSON(w, http.StatusOK, pluginRunResponse{Ran: ran, OK: allOK, Output: strings.TrimSpace(combined.String()), Plugin: pluginView(p)})
+}
+
+// handlePluginsDeactivate takes a plugin down on demand: set the
+// Disabled flag (so the badge stops nagging even while commands run),
+// then walk the steps IN REVERSE running each stop command whose check
+// still passes. Teardown is best-effort — a failing stop doesn't abort
+// the walk, it just flips the response's OK so the human looks at the
+// output.
+func handlePluginsDeactivate(w http.ResponseWriter, r *http.Request) {
+	p, err := setPluginDisabled(r.PathValue("name"), true)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.HasPrefix(err.Error(), "no plugin named") {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	var combined strings.Builder
+	ran, allOK := false, true
+	for i := len(p.Steps) - 1; i >= 0; i-- {
+		s := p.Steps[i]
+		if s.Stop == "" {
+			continue
+		}
+		if s.Check != "" {
+			if _, ok := runPluginShell(s.Check, pluginCheckTimeout); !ok {
+				continue // already down
+			}
+		}
+		out, ok := runPluginShell(s.Stop, pluginRunTimeout)
+		ran = true
+		appendStepOutput(&combined, s.Name, out)
+		if !ok {
+			allOK = false
+		}
+	}
+	checkPlugin(p)
+	writeJSON(w, http.StatusOK, pluginRunResponse{Ran: ran, OK: allOK, Output: strings.TrimSpace(combined.String()), Plugin: pluginView(p)})
 }
