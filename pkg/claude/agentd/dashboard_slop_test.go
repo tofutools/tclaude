@@ -78,6 +78,24 @@ func TestDashboardSlopVolumes_PostPersistsAndMerges(t *testing.T) {
 	assert.Equal(t, 0, *resp.EffectsVolume, "an explicit 0 is a valid (silent) volume")
 }
 
+func TestDashboardSlopVolumes_GetClampsHandEditedValues(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	// A hand-edited out-of-range value parses fine (it's an int);
+	// Validate flags it in the Config tab, but GET must still hand the
+	// browser a usable 0–100 — otherwise the mixer shows "500%" and
+	// every subsequent POST echoing it back is rejected.
+	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.WriteFile(config.ConfigPath(),
+		[]byte(`{"slop":{"music_volume":500,"effects_volume":-3}}`), 0o644))
+
+	w, resp := serveSlopVolumes(t, http.MethodGet, "")
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.Equal(t, 100, *resp.MusicVolume, "out-of-range high clamps to 100")
+	assert.Equal(t, 0, *resp.EffectsVolume, "out-of-range low clamps to 0")
+}
+
 func TestDashboardSlopVolumes_PostRejectsBadInput(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

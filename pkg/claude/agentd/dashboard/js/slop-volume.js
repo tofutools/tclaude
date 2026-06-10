@@ -33,6 +33,7 @@ let effects = 100; // percent, 0–100
 let lastPersisted = null; // "music/effects" key of the last server write
 let persistTimer = null;
 let loaded = false; // GET /api/slop/volumes done (or in flight)
+let touched = false; // a local change happened — a late GET must not clobber it
 
 // apply pushes the current values into the two audio owners and the
 // slider widgets (which may have been the source — setting .value to
@@ -64,7 +65,12 @@ function schedulePersist() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ music_volume: music, effects_volume: effects }),
       });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!r.ok) {
+        // Surface the server's explanation (e.g. the corrupt-config
+        // 409) rather than a bare status code.
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || ('HTTP ' + r.status));
+      }
       lastPersisted = key;
     } catch (e) {
       // The volume still applied locally — only the persistence failed.
@@ -82,8 +88,12 @@ async function loadVolumes() {
     const r = await fetch('/api/slop/volumes', { credentials: 'same-origin' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
-    if (Number.isFinite(d.music_volume)) music = d.music_volume;
-    if (Number.isFinite(d.effects_volume)) effects = d.effects_volume;
+    // The user moved a slider while this GET was in flight — their
+    // change wins; overwriting it (and lastPersisted) here would both
+    // snap the slider back and cancel the pending persist.
+    if (touched) return;
+    if (Number.isFinite(d.music_volume)) music = Math.min(100, Math.max(0, d.music_volume));
+    if (Number.isFinite(d.effects_volume)) effects = Math.min(100, Math.max(0, d.effects_volume));
     lastPersisted = music + '/' + effects;
     apply();
   } catch {
@@ -116,17 +126,19 @@ export function bindSlopVolume() {
     setPopoverOpen(false);
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') setPopoverOpen(false);
+    if (e.key === 'Escape' && pop.classList.contains('open')) setPopoverOpen(false);
   });
 
   const m = document.getElementById('slop-vol-music');
   const f = document.getElementById('slop-vol-fx');
   if (m) m.addEventListener('input', () => {
+    touched = true;
     music = Math.min(100, Math.max(0, parseInt(m.value, 10) || 0));
     apply();
     schedulePersist();
   });
   if (f) f.addEventListener('input', () => {
+    touched = true;
     effects = Math.min(100, Math.max(0, parseInt(f.value, 10) || 0));
     apply();
     schedulePersist();
@@ -137,6 +149,7 @@ export function bindSlopVolume() {
   document.addEventListener('tclaude:slopmusicvol', (e) => {
     const v = e.detail && e.detail.volume;
     if (!Number.isFinite(v)) return;
+    touched = true;
     music = Math.min(100, Math.max(0, v));
     apply();
     schedulePersist();

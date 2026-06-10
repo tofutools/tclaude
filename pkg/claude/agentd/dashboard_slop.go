@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -73,27 +74,41 @@ func handleDashboardSlopVolumesPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cfg, loadErr := config.Load()
-	if loadErr != nil {
-		// Load fell back to defaults, so a save here would replace the
-		// corrupt file with defaults-plus-volumes — silently discarding
-		// whatever it held. Refuse; the Config tab owns that recovery.
+	// config.Update serializes the whole load-merge-save against other
+	// in-process config writers (the Config tab, permission defaults,
+	// a second dashboard tab's slider) so a slider drag can never
+	// resurrect a stale config over a concurrent save.
+	cfg, err := config.Update(func(cfg *config.Config, loadErr error) error {
+		if loadErr != nil {
+			// Load fell back to defaults, so a save here would replace
+			// the corrupt file with defaults-plus-volumes — silently
+			// discarding whatever it held. Refuse; the Config tab owns
+			// that recovery.
+			return errSlopConfigMalformed
+		}
+		if cfg.Slop == nil {
+			cfg.Slop = &config.SlopConfig{}
+		}
+		if body.MusicVolume != nil {
+			cfg.Slop.MusicVolume = body.MusicVolume
+		}
+		if body.EffectsVolume != nil {
+			cfg.Slop.EffectsVolume = body.EffectsVolume
+		}
+		return nil
+	})
+	if errors.Is(err, errSlopConfigMalformed) {
 		writeError(w, http.StatusConflict, "malformed_target",
 			"config.json on disk is corrupt — fix or replace it via the Config tab before changing volumes")
 		return
 	}
-	if cfg.Slop == nil {
-		cfg.Slop = &config.SlopConfig{}
-	}
-	if body.MusicVolume != nil {
-		cfg.Slop.MusicVolume = body.MusicVolume
-	}
-	if body.EffectsVolume != nil {
-		cfg.Slop.EffectsVolume = body.EffectsVolume
-	}
-	if err := config.Save(cfg); err != nil {
+	if err != nil {
 		http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeSlopVolumes(w, cfg)
 }
+
+// errSlopConfigMalformed aborts the Update when the on-disk file is
+// corrupt — mapped to the 409 above rather than a 500.
+var errSlopConfigMalformed = errors.New("config.json is malformed")
