@@ -40,6 +40,46 @@ type Config struct {
 	// Focus configures window-focus behavior. Absent → defaults (focus
 	// raises an existing window and opens a fresh one when none is open).
 	Focus *FocusConfig `json:"focus,omitempty"`
+
+	// Slop holds the dashboard's slop-mode ("The Slop Machine") audio
+	// volumes. Absent block / absent keys mean full volume — see
+	// ResolvedSlopVolumes.
+	Slop *SlopConfig `json:"slop,omitempty"`
+}
+
+// SlopConfig holds the slop-mode audio knobs. Both volumes are percent
+// (0–100) of the mode's built-in full level: MusicVolume scales the
+// Vegas lounge radio, EffectsVolume scales the synthesized casino FX.
+// Pointers so "absent" (default 100) is distinguishable from an
+// explicit 0 (silent but not muted — the master 🔇/🔊 switch is a
+// separate localStorage-persisted preference in the browser).
+//
+// Written by the dashboard's volume sliders via POST /api/slop/volumes;
+// also round-trips through the Config tab like any other field.
+type SlopConfig struct {
+	MusicVolume   *int `json:"music_volume,omitempty"`
+	EffectsVolume *int `json:"effects_volume,omitempty"`
+}
+
+// defaultSlopVolume is the effective volume for an absent slop volume
+// key: 100% — entering slop mode is opting in to the full casino.
+const defaultSlopVolume = 100
+
+// ResolvedSlopVolumes returns the effective (music, effects) volumes in
+// percent, defaulting each absent value to 100. Nil-safe on the
+// receiver so callers need no guard.
+func (c *Config) ResolvedSlopVolumes() (music, effects int) {
+	music, effects = defaultSlopVolume, defaultSlopVolume
+	if c == nil || c.Slop == nil {
+		return music, effects
+	}
+	if c.Slop.MusicVolume != nil {
+		music = *c.Slop.MusicVolume
+	}
+	if c.Slop.EffectsVolume != nil {
+		effects = *c.Slop.EffectsVolume
+	}
+	return music, effects
 }
 
 // FocusConfig holds window-focus behavior knobs.
@@ -572,6 +612,15 @@ func Validate(c *Config) []string {
 			}
 		}
 		errs = append(errs, validateSudo(a.Sudo)...)
+	}
+
+	if s := c.Slop; s != nil {
+		if s.MusicVolume != nil && (*s.MusicVolume < 0 || *s.MusicVolume > 100) {
+			errs = append(errs, fmt.Sprintf("slop.music_volume %d is out of range (0–100)", *s.MusicVolume))
+		}
+		if s.EffectsVolume != nil && (*s.EffectsVolume < 0 || *s.EffectsVolume > 100) {
+			errs = append(errs, fmt.Sprintf("slop.effects_volume %d is out of range (0–100)", *s.EffectsVolume))
+		}
 	}
 
 	if lr := c.LogRotation; lr != nil {
