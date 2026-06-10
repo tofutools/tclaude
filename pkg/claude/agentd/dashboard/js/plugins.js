@@ -2,12 +2,19 @@
 // create/edit modal.
 //
 // A plugin is a human-defined bundle of steps; each step is a `check`
-// shell command (exit 0 = satisfied) and/or a `run` shell command that
-// performs the step (see plugins.go). The tab renders one card per
-// installed plugin with per-step status, plus a catalog section of
-// built-in definitions ready for one-click install. The nav button
-// carries a warning badge when any plugin has a failing check —
-// "installed but not active" at a glance from any tab.
+// shell command (exit 0 = satisfied), a `run` shell command that
+// performs the step, and/or a `stop` command that undoes it (see
+// plugins.go). The tab renders one card per installed plugin, plus a
+// catalog section of built-in definitions ready for one-click install.
+//
+// Power control mirrors the Groups tab's agent dot: the status lamps
+// ARE the buttons. The card-level lamp toggles the whole plugin
+// (activate = run steps forward, skipping satisfied ones; deactivate =
+// run stop commands in reverse and persist the off intent); each
+// step's lamp runs or stops that one step. The nav button carries a
+// warning badge when any enabled plugin has a failing check —
+// "installed but not active" at a glance from any tab — or when a
+// DISABLED plugin still has a stoppable step running.
 
 import { $, esc, relTime } from './helpers.js';
 // lastSnapshot lives in dashboard.js; refresh()/toast/confirmModal in
@@ -20,20 +27,88 @@ import { refresh, toast, confirmModal, bindBackdropDiscard } from './refresh.js'
 // pluginStatusPill colorises the aggregate plugin status from the
 // snapshot (see dashboardPlugin in plugins.go for the semantics).
 // Reuses the cron pill palette so status reads the same dashboard-wide.
-function pluginStatusPill(status) {
-  if (status === 'ok') return '<span class="state-pill state-working" title="every check passes">active</span>';
-  if (status === 'warn') return '<span class="state-pill state-awaiting" title="at least one check fails — run the failing step(s) below">not active</span>';
+// A disabled plugin reads "off" — its failing checks are intentional —
+// and only warns when deactivation didn't take.
+function pluginStatusPill(p) {
+  if (p.disabled) {
+    return p.status === 'warn'
+      ? '<span class="state-pill state-awaiting" title="deactivated, but a stoppable step still passes its check — click the lamp to retry the teardown">still active</span>'
+      : '<span class="state-pill state-offline" title="deactivated on purpose — click the lamp to bring it back">off</span>';
+  }
+  if (p.status === 'ok') return '<span class="state-pill state-working" title="every check passes — click the lamp to deactivate">active</span>';
+  if (p.status === 'warn') return '<span class="state-pill state-awaiting" title="at least one check fails — click the lamp to activate">not active</span>';
   return '<span class="state-pill state-offline" title="no check has run yet (or no steps define one)">unknown</span>';
 }
 
-// stepStatusDot is the per-step ●/○ in the steps table.
-function stepStatusDot(s) {
-  if (!s.check) return '<span class="muted" title="no check command — run-only step">—</span>';
-  if (!s.checked) return '<span class="offline" title="not checked yet">○</span>';
-  const when = s.checked_at ? ' (checked ' + relTime(s.checked_at) + ')' : '';
-  return s.ok
-    ? `<span class="online" title="check passes${esc(when)}">●</span>`
-    : `<span class="plugin-dot-fail" title="check fails${esc(when)}">●</span>`;
+// lampAttrs renders a status-lamp button's glyph, or the in-flight
+// marker + disabled state while its action runs (same busyActions
+// machinery as the text buttons, so the 2s re-render can't resurrect
+// a clickable lamp mid-command).
+function lampAttrs(act, name, idx, glyph) {
+  return busyActions.has(busyKey(act, name, idx))
+    ? 'disabled>◐'
+    : `>${glyph}`;
+}
+
+// pluginLamp is the card-level power lamp — like the agent dot on the
+// Groups tab, the light IS the toggle. It shows the plugin's actual
+// aggregate state and one click moves it toward the obvious desired
+// state: green (active) → deactivate; everything else → activate,
+// except a deactivated plugin that is STILL running, where the click
+// retries the teardown.
+function pluginLamp(p) {
+  let glyph, cls, verb, tip;
+  if (p.disabled) {
+    if (p.status === 'warn') {
+      glyph = '●'; cls = 'status-dot-warn'; verb = 'deactivate';
+      tip = 'deactivated, but a stoppable step still passes its check — click to run the stop commands again';
+    } else {
+      glyph = '○'; cls = 'status-dot-offline'; verb = 'activate';
+      tip = 'off — click to activate (runs each step in order, skipping satisfied ones)';
+    }
+  } else if (p.status === 'ok') {
+    glyph = '●'; cls = 'status-dot-online'; verb = 'deactivate';
+    tip = "active — click to deactivate (runs each step's stop command in reverse order and marks the plugin off)";
+  } else if (p.status === 'warn') {
+    glyph = '●'; cls = 'status-dot-warn'; verb = 'activate';
+    tip = 'not active — click to activate (runs each step in order, skipping satisfied ones)';
+  } else {
+    glyph = '○'; cls = 'status-dot-offline'; verb = 'activate';
+    tip = 'status unknown — click to activate (runs each step in order, skipping satisfied ones)';
+  }
+  return `<button type="button" class="status-dot ${cls}" data-act="plugin-toggle" data-name="${esc(p.name)}"` +
+    ` data-verb="${verb}" title="${esc(tip)}" aria-label="${esc(tip)}" ${lampAttrs('plugin-toggle', p.name, '', glyph)}</button>`;
+}
+
+// stepLamp is the per-step ●/○ in the steps table — clickable when
+// the step has something to do from its current state: a passing step
+// with a stop command stops on click, a failing/unchecked one with a
+// run command runs on click. Steps with nothing applicable render a
+// plain (non-clickable) dot, same glyphs as before.
+function stepLamp(p, s, i) {
+  const when = (s.check && s.checked && s.checked_at) ? ' (checked ' + relTime(s.checked_at) + ')' : '';
+  const active = !!(s.check && s.checked && s.ok);
+  let glyph, cls, state;
+  if (active) {
+    glyph = '●'; cls = 'status-dot-online'; state = 'check passes' + when;
+  } else if (s.check && s.checked) {
+    // A failing check on a deactivated plugin is the intended state —
+    // grey, not alarm-red.
+    if (p.disabled) { glyph = '○'; cls = 'status-dot-offline'; state = 'check fails (plugin is off)' + when; }
+    else { glyph = '●'; cls = 'plugin-dot-fail'; state = 'check fails' + when; }
+  } else if (s.check) {
+    glyph = '○'; cls = 'status-dot-offline'; state = 'not checked yet';
+  } else {
+    glyph = '—'; cls = 'status-dot-offline'; state = 'no check command — state unknown';
+  }
+  const verb = active ? (s.stop ? 'stop' : '') : (s.run ? 'run' : '');
+  if (!verb) {
+    return `<span class="${cls}" title="${esc(state)}">${glyph}</span>`;
+  }
+  const cmd = verb === 'stop' ? s.stop : s.run;
+  const tip = `${state} — click to ${verb}:\n${cmd}`;
+  return `<button type="button" class="status-dot ${cls}" data-act="plugin-step-toggle" data-name="${esc(p.name)}"` +
+    ` data-idx="${i}" data-verb="${verb}" title="${esc(tip)}" aria-label="${esc(tip)}" ${lampAttrs('plugin-step-toggle', p.name, i, glyph)}</button>`;
 }
 
 // cmdCell renders a shell command, truncated with the full text on
@@ -61,26 +136,24 @@ function busyAttrs(act, name, idx, label, busyLabel) {
 
 function renderPluginCard(p) {
   const steps = (p.steps || []).map((s, i) => {
-    const runBtn = s.run
-      ? `<button data-act="plugin-run-step" data-name="${esc(p.name)}" data-idx="${i}" title="Run this step's command now:\n${esc(s.run)}" ${busyAttrs('plugin-run-step', p.name, i, 'run', 'running…')}</button>`
-      : '';
     const out = s.output
       ? `<span class="muted plugin-out" title="${esc(s.output)}">${esc(s.output.split('\n')[0].slice(0, 60))}</span>`
       : '';
     return `
       <tr>
-        <td>${stepStatusDot(s)}</td>
+        <td>${stepLamp(p, s, i)}</td>
         <td><span class="rowname">${esc(s.name)}</span></td>
         <td>${cmdCell(s.check)}</td>
         <td>${cmdCell(s.run)}</td>
+        <td>${cmdCell(s.stop)}</td>
         <td>${out}</td>
-        <td><div class="row-actions">${runBtn}</div></td>
       </tr>`;
   }).join('');
   return `
     <div class="plugin-card">
       <div class="plugin-head">
-        ${pluginStatusPill(p.status)}
+        ${pluginLamp(p)}
+        ${pluginStatusPill(p)}
         <span class="rowname">${esc(p.name)}</span>
         ${p.descr ? `<span class="muted">${esc(p.descr)}</span>` : ''}
         <span class="spacer"></span>
@@ -91,7 +164,7 @@ function renderPluginCard(p) {
         </div>
       </div>
       <table class="plugin-steps">
-        <thead><tr><th></th><th>step</th><th>check</th><th>run</th><th>last output</th><th></th></tr></thead>
+        <thead><tr><th></th><th>step</th><th>check</th><th>run</th><th>stop</th><th>last output</th></tr></thead>
         <tbody>${steps}</tbody>
       </table>
     </div>`;
@@ -125,7 +198,8 @@ function pluginMatches(p, needle) {
   return (p.steps || []).some(s =>
     ((s.name || '').toLowerCase().includes(needle)) ||
     ((s.check || '').toLowerCase().includes(needle)) ||
-    ((s.run || '').toLowerCase().includes(needle)));
+    ((s.run || '').toLowerCase().includes(needle)) ||
+    ((s.stop || '').toLowerCase().includes(needle)));
 }
 
 export function renderPluginsTab() {
@@ -192,10 +266,15 @@ function addStepRow(step) {
     <label class="cron-create-row">
       <span class="cron-create-label">Run</span>
       <textarea data-step-run rows="2" placeholder="shell command that performs the step (optional)" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Stop</span>
+      <textarea data-step-stop rows="2" placeholder="shell command that undoes the step — powers deactivate (optional)" spellcheck="false"></textarea>
     </label>`;
   wrap.querySelector('[data-step-name]').value = step.name || '';
   wrap.querySelector('[data-step-check]').value = step.check || '';
   wrap.querySelector('[data-step-run]').value = step.run || '';
+  wrap.querySelector('[data-step-stop]').value = step.stop || '';
   wrap.querySelector('[data-step-remove]').addEventListener('click', () => {
     wrap.remove();
     renumberStepRows();
@@ -236,6 +315,7 @@ function collectPluginModal() {
     name: row.querySelector('[data-step-name]').value.trim(),
     check: row.querySelector('[data-step-check]').value.trim(),
     run: row.querySelector('[data-step-run]').value.trim(),
+    stop: row.querySelector('[data-step-stop]').value.trim(),
   }));
   return {
     name: $('#plugin-modal-name').value.trim(),
@@ -354,14 +434,33 @@ export function bindPluginsUI() {
           refresh();
           break;
         }
-        case 'plugin-run-step': {
+        case 'plugin-step-toggle': {
           const idx = btn.getAttribute('data-idx');
-          await withBusy(busyKey(act, name, idx), btn, 'running…', async () => {
-            const r = await fetch(`/api/plugins/${encodeURIComponent(name)}/steps/${encodeURIComponent(idx)}/run`, { method: 'POST', credentials: 'same-origin' });
-            if (!r.ok) { toast('run failed: ' + ((await r.text()) || r.status), true); return; }
+          const verb = btn.getAttribute('data-verb'); // run | stop
+          await withBusy(busyKey(act, name, idx), btn, '◐', async () => {
+            const r = await fetch(`/api/plugins/${encodeURIComponent(name)}/steps/${encodeURIComponent(idx)}/${encodeURIComponent(verb)}`, { method: 'POST', credentials: 'same-origin' });
+            if (!r.ok) { toast(verb + ' failed: ' + ((await r.text()) || r.status), true); return; }
             const res = await r.json();
             const firstLine = (res.output || '').split('\n')[0].slice(0, 120);
-            toast(res.ok ? `step ran OK${firstLine ? ': ' + firstLine : ''}` : `step FAILED${firstLine ? ': ' + firstLine : ''}`, !res.ok);
+            toast(res.ok ? `step ${verb} OK${firstLine ? ': ' + firstLine : ''}` : `step ${verb} FAILED${firstLine ? ': ' + firstLine : ''}`, !res.ok);
+            refresh();
+          });
+          break;
+        }
+        case 'plugin-toggle': {
+          const verb = btn.getAttribute('data-verb'); // activate | deactivate
+          await withBusy(busyKey(act, name, ''), btn, '◐', async () => {
+            const r = await fetch(`/api/plugins/${encodeURIComponent(name)}/${encodeURIComponent(verb)}`, { method: 'POST', credentials: 'same-origin' });
+            if (!r.ok) { toast(verb + ' failed: ' + ((await r.text()) || r.status), true); return; }
+            const res = await r.json();
+            const firstLine = (res.output || '').split('\n')[0].slice(0, 120);
+            if (!res.ok) {
+              toast(`${name} ${verb} had failures${firstLine ? ': ' + firstLine : ''} — see step outputs`, true);
+            } else if (!res.ran) {
+              toast(`${name} ${verb}d (nothing to ${verb === 'activate' ? 'run — all steps already satisfied' : 'stop — nothing was active'})`);
+            } else {
+              toast(`${name} ${verb}d`);
+            }
             refresh();
           });
           break;
@@ -376,7 +475,7 @@ export function bindPluginsUI() {
               body: JSON.stringify(def),
             });
             if (!r.ok) { toast('install failed: ' + ((await r.text()) || r.status), true); return; }
-            toast(`plugin ${name} installed — run its steps to activate it`);
+            toast(`plugin ${name} installed — click its lamp to bring it up`);
             refresh();
           });
           break;

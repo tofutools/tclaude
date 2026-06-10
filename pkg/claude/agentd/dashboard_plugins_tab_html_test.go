@@ -44,6 +44,8 @@ func TestDashboardHTML_PluginsTab(t *testing.T) {
 	present("function renderPluginsBadge(", "the badge renderer in plugins.js")
 	present("lastSnapshot.plugins_catalog", "renderer reads the catalog snapshot field")
 	present("data.plugins_warn", "refresh feeds the badge from the snapshot")
-	present(`data-act="plugin-run-step"`, "the per-step run button")
+	present(`data-act="plugin-step-toggle"`, "the per-step run/stop lamp")
+	present(`data-act="plugin-toggle"`, "the whole-plugin activate/deactivate lamp")
+	present(`data-step-stop`, "the modal's per-step stop command field")
 	present(`data-act="plugin-install"`, "the catalog install button")
 }

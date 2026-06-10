@@ -2089,6 +2089,15 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   padding: 10px 14px; margin-bottom: 10px;
 }
 .plugin-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* .row-actions is skinned for table rows: dimmed to 0.4 and brightened
+   by tr:hover. Plugin cards have no <tr> around the head's cluster, so
+   without this override those buttons sat permanently dim. Keep them
+   full-strength and a notch lighter — same end state as a hovered row. */
+.plugin-card .row-actions { opacity: 1; }
+.plugin-card .row-actions button { color: #adbac7; }
+/* The amber "needs attention" lamp state (enabled-but-not-active, or
+   deactivated-but-still-running) — same hue as the warn badge. */
+.status-dot-warn { color: #d29922; }
 .plugin-head .spacer, .plugin-step-edit-head .spacer { flex: 1; }
 .plugin-head .muted { font-size: 13px; }
 .plugin-steps { margin-top: 8px; }
