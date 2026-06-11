@@ -65,6 +65,13 @@ type SpawnRequest struct {
 	// contract stays single-sourced.
 	Effort string `json:"effort,omitempty"`
 
+	// Model picks the Claude model the spawned agent runs on. It is
+	// forwarded to the new agent's `tclaude session new --model <alias>`
+	// (and on to `claude`). Empty omits the flag so claude uses its own
+	// default; a non-empty value must be one of clcommon.ValidModels.
+	// Same single-sourced wire contract as Effort above.
+	Model string `json:"model,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -122,10 +129,12 @@ type SpawnParams struct {
 	AutoFocus      bool `long:"auto-focus" help:"Open a terminal window attached to the new agent once it spawns (default: off — CLI spawns are usually programmatic; the dashboard's modal defaults this on)"`
 	NoGroupContext bool `long:"no-group-context" help:"Do not deliver the group's shared startup context to the new agent (default: the group context is included, same as every other spawn path)"`
 
-	// Effort is declared last so boa's short-flag enricher (which
-	// assigns the first free letter in field order) cannot steal a short
-	// from any existing field. No explicit short — `--effort` only.
+	// Effort and Model are declared last so boa's short-flag enricher
+	// (which assigns the first free letter in field order) cannot steal
+	// a short from any existing field. No explicit shorts — `--effort`
+	// and `--model` only.
 	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
+	Model  string `long:"model" optional:"true" help:"Claude model for the new agent: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku. Unset = claude's own default (no flag passed)"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -233,6 +242,12 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Same fail-fast treatment for --model.
+	model, err := clcommon.ValidateModel(p.Model)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	cwd := p.Cwd
 	if cwd == "" {
 		if wd, err := os.Getwd(); err == nil {
@@ -250,6 +265,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		TimeoutSeconds: timeoutSeconds,
 		AutoFocus:      p.AutoFocus,
 		Effort:         effort,
+		Model:          model,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the

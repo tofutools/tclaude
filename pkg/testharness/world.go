@@ -21,13 +21,15 @@ type World struct {
 	Tmux    *TmuxSim
 	CCs     *CCRegistry
 
-	// spawnEfforts records the effort string each simSpawner.SpawnNew
-	// received, keyed by the new conv-id, so a flow test can assert what
-	// effort the spawn path threaded end-to-end. The unset case ("") is
-	// recorded too. Guarded by spawnMu — spawns are sequential in flow
-	// tests, but the post-init goroutines make the mutex cheap insurance.
+	// spawnEfforts / spawnModels record the effort and model strings
+	// each simSpawner.SpawnNew received, keyed by the new conv-id, so a
+	// flow test can assert what the spawn path threaded end-to-end. The
+	// unset case ("") is recorded too. Guarded by spawnMu — spawns are
+	// sequential in flow tests, but the post-init goroutines make the
+	// mutex cheap insurance.
 	spawnMu      sync.Mutex
 	spawnEfforts map[string]string
+	spawnModels  map[string]string
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -48,6 +50,7 @@ func New(t *testing.T) *World {
 		Tmux:         newTmuxSim(),
 		CCs:          newCCRegistry(),
 		spawnEfforts: map[string]string{},
+		spawnModels:  map[string]string{},
 	}
 }
 
@@ -67,6 +70,24 @@ func (w *World) SpawnEffort(convID string) (string, bool) {
 	defer w.spawnMu.Unlock()
 	e, ok := w.spawnEfforts[convID]
 	return e, ok
+}
+
+// RecordSpawnModel captures the model a simSpawner.SpawnNew received,
+// keyed by the new conv-id, so a flow test can assert what model the
+// spawn path threaded through. The unset case ("") is recorded too.
+func (w *World) RecordSpawnModel(convID, model string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnModels[convID] = model
+}
+
+// SpawnModel returns the model recorded for a spawned conv-id and
+// whether a spawn for that conv was observed.
+func (w *World) SpawnModel(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	m, ok := w.spawnModels[convID]
+	return m, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the

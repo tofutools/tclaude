@@ -33,6 +33,12 @@ type NewParams struct {
 	// validated against clcommon.ValidEffortLevels in runNew.
 	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
 
+	// Model picks the Claude model for the session via `claude --model
+	// <alias>`. Empty (the default) omits the flag so claude uses its
+	// own default; a non-empty value is normalised and validated
+	// against clcommon.ValidModels in runNew.
+	Model string `long:"model" optional:"true" help:"Claude model: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku. Unset = claude's own default (no flag passed)"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -115,6 +121,14 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Effort = effort
+
+	// Same treatment for --model: normalise + validate up front, empty
+	// stays empty → the flag is omitted entirely.
+	model, err := clcommon.ValidateModel(params.Model)
+	if err != nil {
+		return err
+	}
+	params.Model = model
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -236,7 +250,7 @@ func runNew(params *NewParams) error {
 	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
-	claudeCmd := buildClaudeCmd(envExports, fullConvID, effort, extraArgs)
+	claudeCmd := buildClaudeCmd(envExports, fullConvID, effort, model, extraArgs)
 
 	// Create tmux session with claude
 	// Use tmux new-session -d to create detached
@@ -298,12 +312,13 @@ func runNew(params *NewParams) error {
 
 // buildClaudeCmd assembles the `claude` invocation runNew runs inside
 // tmux: env exports + the claude binary, an optional --resume, an
-// optional --effort (appended only when a level was chosen — empty
-// leaves claude on its own default), then any post-`--` passthrough
-// args. effort is a validated single token, so it needs no quoting;
-// the passthrough args are shell-quoted individually. Kept pure so the
-// "unset omits --effort" guarantee is unit-testable without tmux.
-func buildClaudeCmd(envExports, fullConvID, effort string, extraArgs []string) string {
+// optional --effort and --model (each appended only when an explicit
+// value was chosen — empty leaves claude on its own default), then any
+// post-`--` passthrough args. effort and model are validated single
+// tokens, but everything is shell-quoted anyway; the passthrough args
+// are shell-quoted individually. Kept pure so the "unset omits the
+// flag" guarantee is unit-testable without tmux.
+func buildClaudeCmd(envExports, fullConvID, effort, model string, extraArgs []string) string {
 	claudeCmd := envExports + "claude"
 	if fullConvID != "" {
 		claudeCmd += " --resume " + fullConvID
@@ -314,6 +329,12 @@ func buildClaudeCmd(envExports, fullConvID, effort string, extraArgs []string) s
 		// safety local here rather than trusting every caller to have
 		// validated first. For a clean level it is a no-op.
 		claudeCmd += " --effort " + clcommon.ShellQuoteArg(effort)
+	}
+	if model != "" {
+		// Quoting is load-bearing here, not just defensive: the `[1m]`
+		// aliases contain brackets, which sh would otherwise treat as a
+		// glob pattern.
+		claudeCmd += " --model " + clcommon.ShellQuoteArg(model)
 	}
 	if len(extraArgs) > 0 {
 		quoted := make([]string, len(extraArgs))

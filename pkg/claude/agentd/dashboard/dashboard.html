@@ -983,6 +983,19 @@
         <option value="max">max</option>
       </select>
     </label>
+    <label class="cron-create-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window. Default leaves claude on its own setting (no --model passed).">
+      <span class="cron-create-label">Model</span>
+      <select id="agent-spawn-model">
+        <option value="">Default (claude's own)</option>
+        <option value="fable">fable</option>
+        <option value="fable[1m]">fable[1m]</option>
+        <option value="opus">opus</option>
+        <option value="opus[1m]">opus[1m]</option>
+        <option value="sonnet">sonnet</option>
+        <option value="sonnet[1m]">sonnet[1m]</option>
+        <option value="haiku">haiku</option>
+      </select>
+    </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
       <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 chars)" spellcheck="false"></textarea>

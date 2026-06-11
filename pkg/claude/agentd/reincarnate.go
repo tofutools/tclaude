@@ -293,13 +293,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	cwd := oldSess.Cwd
 
 	// 2. Spawn a fresh tclaude session in the same cwd. The trailing
-	// "" is the effort: reincarnation deliberately does NOT carry the
-	// predecessor's --effort, because effort is a launch-time claude
-	// flag that isn't persisted on the session (JOH-36 MVP is
-	// spawn-time pass-through; inheritance is a tracked follow-up). The
-	// successor therefore comes up on claude's own default.
+	// ""s are effort and model: reincarnation deliberately does NOT
+	// carry the predecessor's --effort / --model, because both are
+	// launch-time claude flags that aren't persisted on the session
+	// (JOH-36 MVP is spawn-time pass-through; inheritance is a tracked
+	// follow-up). The successor therefore comes up on claude's own
+	// defaults.
 	label := generateSpawnLabel()
-	if err := SpawnDetachedTclaudeNew(label, cwd, ""); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, cwd, "", ""); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return
