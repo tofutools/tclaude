@@ -348,18 +348,29 @@ func migrate(db *sql.DB) error {
 // next statusline tick — and retired sessions, which will never tick
 // again, aren't silently dropped from the new table. Cost accrued
 // before this migration therefore all lands on the migration day.
+//
+// The whole migration runs in one transaction, with IF NOT EXISTS /
+// OR IGNORE guards on top: an interrupted run must not strand the DB
+// in a half-migrated state where schema_version is still 50 but the
+// table already exists — every later startup would then fail on the
+// bare CREATE TABLE.
 func migrateV50toV51(db *sql.DB) error {
-	_, err := db.Exec(`
-		CREATE TABLE session_cost_daily (
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v50→v51: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS session_cost_daily (
 			session_id TEXT NOT NULL,
 			day        TEXT NOT NULL,
 			conv_id    TEXT NOT NULL DEFAULT '',
 			cost_usd   REAL NOT NULL DEFAULT 0,
 			PRIMARY KEY (session_id, day)
 		);
-		CREATE INDEX idx_session_cost_daily_day ON session_cost_daily(day);
+		CREATE INDEX IF NOT EXISTS idx_session_cost_daily_day ON session_cost_daily(day);
 
-		INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+		INSERT OR IGNORE INTO session_cost_daily (session_id, day, conv_id, cost_usd)
 			SELECT id, date('now', 'localtime'), conv_id, cost_usd
 			FROM sessions WHERE cost_usd > 0;
 
@@ -367,6 +378,9 @@ func migrateV50toV51(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v50→v51 (add session_cost_daily): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v50→v51: commit: %w", err)
 	}
 	return nil
 }

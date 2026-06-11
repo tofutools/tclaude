@@ -14,6 +14,10 @@ import (
 // case), the baseline resets between sessions, and a dip-and-recover
 // sequence (the /clear edge) never produces a negative day or double
 // counts the recovery.
+//
+// The fixture and its totals are shared verbatim with the db package's
+// TestSumCostSinceDay — the SQL closed form behind the top bar must
+// agree with this walk, or the headline drifts from the Costs tab.
 func TestCostDeltasFromRows(t *testing.T) {
 	rows := []db.CostDailyRow{
 		// Session a (conv-1): plain growth across three days.

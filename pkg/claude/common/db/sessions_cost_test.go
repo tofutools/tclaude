@@ -77,6 +77,70 @@ func TestCostDaily_SurvivesSessionDeletion(t *testing.T) {
 	assert.Equal(t, "conv-dcost-gone", row.ConvID, "conv attribution preserved")
 }
 
+// TestUpdateSessionCost_UnknownSessionWritesNothing pins the
+// INSERT…SELECT guard: a cost write keyed to a session id with no
+// sessions row (a stale hook, a pruned session) must not mint an
+// orphan, attributionless daily row.
+func TestUpdateSessionCost_UnknownSessionWritesNothing(t *testing.T) {
+	setupTestDB(t)
+
+	require.NoError(t, UpdateSessionCost("ghost", 1.23), "UpdateSessionCost on unknown session")
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err, "AllCostDailyRows")
+	assert.Empty(t, rows, "no daily row for a session that doesn't exist")
+}
+
+// TestSumCostSinceDay pins the DB-side windowed aggregate (the top
+// bar's month-to-date read) to the SAME fixture and totals as agentd's
+// TestCostDeltasFromRows — the SQL closed form (windowed peak minus
+// prior high-water, clamped at zero) and the Go day-by-day delta walk
+// must agree, or the top-bar headline drifts from the Costs tab.
+func TestSumCostSinceDay(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	for _, r := range []CostDailyRow{
+		// Session a (conv-1): plain growth across three days.
+		{SessionID: "a", Day: "2026-06-01", ConvID: "conv-1", CostUSD: 1.00},
+		{SessionID: "a", Day: "2026-06-02", ConvID: "conv-1", CostUSD: 1.00}, // ticked, spent nothing
+		{SessionID: "a", Day: "2026-06-03", ConvID: "conv-1", CostUSD: 2.50},
+		// Session b (conv-1, e.g. a reincarnation): cumulative restarts at 0.
+		{SessionID: "b", Day: "2026-06-03", ConvID: "conv-1", CostUSD: 0.40},
+		// Session c (conv-2): dips after /clear, then recovers past the max.
+		{SessionID: "c", Day: "2026-06-01", ConvID: "conv-2", CostUSD: 3.00},
+		{SessionID: "c", Day: "2026-06-02", ConvID: "conv-2", CostUSD: 1.00}, // dip — never negative
+		{SessionID: "c", Day: "2026-06-03", ConvID: "conv-2", CostUSD: 3.50}, // only the rise above 3.00 counts
+	} {
+		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+			VALUES (?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD)
+		require.NoError(t, err, "seed %s/%s", r.SessionID, r.Day)
+	}
+
+	total, err := SumCostSinceDay("2026-06-01")
+	require.NoError(t, err)
+	assert.InDelta(t, 6.40, total, 1e-9, "whole history — matches sumCostDeltas unbounded")
+
+	total, err = SumCostSinceDay("2026-06-02")
+	require.NoError(t, err)
+	assert.InDelta(t, 2.40, total, 1e-9,
+		"windowed: a grows 1.50 over its 06-01 baseline, b starts at 0.40, c's dip clamps to its 0.50 recovery")
+
+	total, err = SumCostSinceDay("2026-06-04")
+	require.NoError(t, err)
+	assert.Zero(t, total, "no snapshots in window sums to 0")
+}
+
+// TestSumCostSinceDay_EmptyDB pins the zero state: no rows at all must
+// read back 0, not a NULL scan failure — this is every
+// subscription-only install on the 2s snapshot tick.
+func TestSumCostSinceDay_EmptyDB(t *testing.T) {
+	setupTestDB(t)
+	total, err := SumCostSinceDay("2026-06-01")
+	require.NoError(t, err)
+	assert.Zero(t, total)
+}
+
 // TestAllCostDailyRows_OrderAndEmpty pins the (session_id, day)
 // ordering the delta aggregation depends on, and the clean empty
 // state (a subscription-only install has no daily rows at all).

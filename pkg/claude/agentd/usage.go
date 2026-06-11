@@ -113,21 +113,24 @@ func collectUsageSnapshot() dashboardUsage {
 }
 
 // monthToDateCost sums the recorded API cost since the start of the
-// current calendar month (local time), through the same
-// session_cost_daily aggregation the Costs tab uses — so the top-bar
-// headline always matches the tab's "this month" total. A read
+// current calendar month (local time). The aggregation runs DB-side
+// (SumCostSinceDay) because this sits on the 2s snapshot tick — but it
+// is the closed form of the same delta walk the Costs tab performs, so
+// the top-bar headline always matches the tab's "this month" total —
+// TestCostDeltasFromRows and TestSumCostSinceDay pin both sides to one
+// shared fixture. A read
 // failure degrades to 0 — the dashboard simply shows no cost token —
 // since this is a display-only figure on the same snapshot path that
 // already tolerates missing subscription data.
 func monthToDateCost() float64 {
-	rows, err := db.AllCostDailyRows()
-	if err != nil {
-		slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", err)
-		return 0
-	}
 	now := time.Now()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	return sumCostDeltas(costDeltasFromRows(rows), monthStart.Format(costDayKey), "")
+	total, err := db.SumCostSinceDay(monthStart.Format(costDayKey))
+	if err != nil {
+		slog.Debug("usage snapshot: sum daily costs failed; omitting cost readout", "error", err)
+		return 0
+	}
+	return total
 }
 
 // usageWindowFor converts a cached bucket into the wire shape, or nil

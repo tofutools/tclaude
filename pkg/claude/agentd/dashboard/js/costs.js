@@ -22,6 +22,10 @@ const SPANS = [
 
 let currentSpan = 'month';
 let lastFetchedAt = 0;
+// Monotonic fetch counter: rapid span flips (or a tab click racing a
+// span change) can land responses out of order, and a stale response
+// must never repaint the UI for a span the user has already left.
+let loadSeq = 0;
 
 // While the tab sits open, refresh this often off the snapshot tick —
 // slow enough to stay negligible, fast enough that a day boundary or
@@ -171,18 +175,29 @@ function renderTable(data) {
 }
 
 async function loadCosts() {
+  const seq = ++loadSeq;
+  const span = currentSpan;
+  // Stamped at request start — deliberately also throttling after a
+  // failure, so a broken endpoint is retried at the slow re-poll
+  // cadence rather than on every 2s snapshot tick.
   lastFetchedAt = Date.now();
   try {
-    const from = dayKey(spanFromDate(currentSpan));
+    const from = dayKey(spanFromDate(span));
     const r = await fetch('/api/costs?from=' + encodeURIComponent(from),
       { credentials: 'same-origin' });
     if (!r.ok) throw new Error(await r.text() || r.status);
     const data = await r.json();
-    const proj = currentSpan === 'month' ? monthProjection(data) : null;
+    if (seq !== loadSeq) return; // superseded by a newer load
+    const proj = span === 'month' ? monthProjection(data) : null;
     renderSummary(data, proj);
     renderChart(data, proj);
     renderTable(data);
   } catch (e) {
+    if (seq !== loadSeq) return;
+    // Clear the sibling panes too — a stale summary/table next to the
+    // error banner would read as current data for the failed span.
+    $('#costs-summary').textContent = '';
+    $('#costs-table').innerHTML = '';
     $('#costs-chart').innerHTML =
       `<div class="empty">Failed to load costs: ${esc(e.message || e)}</div>`;
   }
