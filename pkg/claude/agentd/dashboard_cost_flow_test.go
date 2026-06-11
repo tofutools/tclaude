@@ -13,13 +13,13 @@ import (
 // dollar cost — written to the sessions row by the statusline hook
 // (UpdateSessionCost, fed from Claude Code's cost.total_cost_usd, only
 // when the statusline input carries no subscription rate-limit
-// buckets). It must surface on /api/snapshot so the dashboard's status
-// column can show a "$0.42" badge next to the state pill. Rides on the
-// same row read as the context meter; no new poller, no new data
-// source.
+// buckets). It must surface on /api/snapshot so the dashboard can
+// append a "$0.42" token to the per-agent harness/model line
+// ("CC · O4.8 1M high $0.42"). Rides on the same row read as the
+// context meter; no new poller, no new data source.
 //
 // Asserts the cost appears on BOTH the Agents[] roster and the group
-// Members[] row (the two places memberRowHTML draws the status column).
+// Members[] row (the two places memberRowHTML draws the harness line).
 func TestDashboardSnapshot_CostSurfaced(t *testing.T) {
 	const conv = "cost-1111-2222-3333-4444"
 	const label = "spwn-cost"
@@ -49,8 +49,8 @@ func TestDashboardSnapshot_CostSurfaced(t *testing.T) {
 // Scenario: a subscription-plan agent (rate-limit buckets present in
 // every statusline render) never gets an UpdateSessionCost write, as
 // does a fresh agent whose statusbar hasn't ticked. /api/snapshot must
-// report a clean zero — the JS costBadge treats 0 as "no cost data"
-// and renders nothing, so the status column looks exactly as before.
+// report a clean zero — harnessLine treats 0 as "no cost data" and
+// emits no cost token, so the line looks exactly as before.
 func TestDashboardSnapshot_CostZeroWhenNotReported(t *testing.T) {
 	const conv = "cosu-1111-2222-3333-4444"
 	const label = "spwn-cosu"

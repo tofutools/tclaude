@@ -5,7 +5,7 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, costBadge, slopMachine, contextMeter,
+  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline,
 } from './helpers.js';
@@ -46,7 +46,6 @@ function memberRowHTML(m, ctx) {
                 <td class="state-cell">
                   ${contextMeter(state)}
                   ${statePill(state, m.online)}
-                  ${costBadge(state)}
                   ${slopMachine(state, m.online, m.conv_id)}
                   ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
                 </td>

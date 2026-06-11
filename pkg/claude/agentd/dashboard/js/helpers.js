@@ -137,20 +137,34 @@ function harnessLine(m) {
   // and is omitted entirely when absent (model without effort support, or
   // not ticked yet) so the line degrades to just "CC · O4.8 1M".
   const effort = (m && m.state && m.state.effort_level) || '';
+  // Cumulative API cost, recorded by the statusline hook on the same row
+  // — but only for sessions on API/enterprise pricing (the hook writes it
+  // solely when the input carries no subscription rate-limit buckets), so
+  // subscription agents stay at 0 and show no cost token. Trails the
+  // effort — "CC · O4.8 1M high $0.42". Costs that round below a cent
+  // show as "<1¢" rather than a lying "$0.00". A nonzero cost implies a
+  // statusline tick, which always records the model too — so the
+  // model-gate above never hides a real cost. Like the model, the cost
+  // survives an agent's exit — what a dead agent cost is still useful.
+  const cost = Number((m && m.state && m.state.cost_usd) || 0);
   let tip = `Harness: ${HARNESS_LONG} — Model: ${model}`;
   if (effort) tip += ` — Effort: ${effort}`;
-  // One continuous string — "CC · O4.8 1M high" — no chip/box around the
-  // harness. The spans exist only for typographic emphasis (the harness
-  // prefix and the middot sit a shade dimmer than the model; the effort
-  // token a shade brighter).
+  if (cost > 0) tip += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
+  // One continuous string — "CC · O4.8 1M high $0.42" — no chip/box
+  // around the harness. The spans exist only for typographic emphasis
+  // (the harness prefix and the middot sit a shade dimmer than the
+  // model; the effort and cost tokens a shade brighter).
   const effortEl = effort
     ? `<span class="harness-effort">${esc(effort)}</span>`
+    : '';
+  const costEl = cost > 0
+    ? `<span class="harness-cost">${esc(cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢')}</span>`
     : '';
   return `<div class="agent-harness" title="${esc(tip)}">`
     + `<span class="harness-name">${esc(HARNESS_SHORT)}</span>`
     + `<span class="harness-sep">·</span>`
     + `<span class="harness-model">${esc(shortModel(model))}</span>`
-    + effortEl + `</div>`;
+    + effortEl + costEl + `</div>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so
@@ -194,22 +208,6 @@ function statePill(state, online) {
   if (s && detail) label = `${s}: ${detail}`;
   const cls = statusPillClass(s);
   return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
-}
-
-// costBadge renders the agent's cumulative API cost — "$0.42" — in the
-// status column, right of the state pill. state.cost_usd is only ever
-// nonzero for a session on API/enterprise pricing (the statusline hook
-// records it solely when the input carries no subscription rate-limit
-// buckets), so subscription agents and never-ticked rows return '' and
-// the column looks exactly as before. Costs that round below a cent
-// show as "<1¢" rather than a lying "$0.00". Like the model, the cost
-// survives an agent's exit — what a dead agent cost is still useful.
-function costBadge(state) {
-  const cost = Number((state && state.cost_usd) || 0);
-  if (!(cost > 0)) return '';
-  const txt = cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢';
-  const tip = `API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
-  return `<span class="cost-badge" title="${esc(tip)}">${esc(txt)}</span>`;
 }
 
 // === Slop slot-machine widget — the slop-mode replacement for statePill ===
@@ -686,7 +684,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, costBadge, slopMachine, contextMeter,
+  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,
