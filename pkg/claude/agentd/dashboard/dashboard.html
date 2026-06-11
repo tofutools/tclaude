@@ -86,6 +86,7 @@
         </div>
       </div>
       <span class="spacer"></span>
+      <span id="user-default-model" class="user-default-model unset" data-act="set-user-default-model" data-model="" title="User-level default Claude model (~/.claude/settings.json) — click to edit">🧠 …</span>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
       <div class="filter-bar-cog">
         <button class="cog-btn" type="button" data-act="filter-bar-menu" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, from template" aria-label="More group actions">⚙︎</button>
@@ -1001,7 +1002,7 @@
         <option value="max">max</option>
       </select>
     </label>
-    <label class="cron-create-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window. Default leaves claude on its own setting (no --model passed).">
+    <label class="cron-create-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window; opusplan runs Opus in plan mode and Sonnet otherwise. Default passes no --model, so the spawn inherits the group's default model, then the user-level settings.json model, then claude's own default — the Default label shows what that resolves to.">
       <span class="cron-create-label">Model</span>
       <select id="agent-spawn-model">
         <option value="">Default (claude's own)</option>
@@ -1012,6 +1013,7 @@
         <option value="sonnet">sonnet</option>
         <option value="sonnet[1m]">sonnet[1m]</option>
         <option value="haiku">haiku</option>
+        <option value="opusplan">opusplan</option>
       </select>
     </label>
     <label class="cron-create-row">
@@ -1134,6 +1136,21 @@
     </div>
   </div>
 </div>
+<!-- Shared model-alias suggestions for the inline model editors (the
+     group 🧠 chip and the user-level 🧠 chip). A datalist rather than a
+     <select> so a full model ID (e.g. claude-fable-5[1m]) can be typed
+     freely while the curated aliases stay one click away. Keep in sync
+     with ValidModels in pkg/claude/common/model.go. -->
+<datalist id="model-alias-list">
+  <option value="fable"></option>
+  <option value="fable[1m]"></option>
+  <option value="opus"></option>
+  <option value="opus[1m]"></option>
+  <option value="sonnet"></option>
+  <option value="sonnet[1m]"></option>
+  <option value="haiku"></option>
+  <option value="opusplan"></option>
+</datalist>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
 <script type="module" src="/static/js/dashboard.js"></script>

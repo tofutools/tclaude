@@ -61,9 +61,8 @@ func TestMigrateV50toV51_CreatesDailyTableAndBackfills(t *testing.T) {
 
 // TestMigrateV50toV51_FreshSchemaWritesDaily builds a fresh DB through
 // the full migrate() chain and confirms the UpdateSessionCost sibling
-// write lands in session_cost_daily end to end. Carries the literal
-// currentVersion pin — a tripwire the next migration's author moves
-// forward into their own v52 test.
+// write lands in session_cost_daily end to end. The currentVersion pin
+// moved forward into the v52 test (migrate_v52_test.go).
 func TestMigrateV50toV51_FreshSchemaWritesDaily(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -72,7 +71,6 @@ func TestMigrateV50toV51_FreshSchemaWritesDaily(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 51, currentVersion, "currentVersion is 51")
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "s1", ConvID: "conv-1", Status: "idle"}), "SaveSession")
 	require.NoError(t, UpdateSessionCost("s1", 0.42), "UpdateSessionCost on a fresh schema")

@@ -285,6 +285,7 @@ function renderGroups(groups) {
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
+        <span class="group-default-model${g.default_model ? '' : ' unset'}" data-act="set-group-model" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-model="${esc(g.default_model || '')}" title="${g.default_model ? 'Default model for agents spawned into this group: ' + esc(g.default_model) + ' — click to edit' : 'No group default model — spawns inherit ' + esc(userDefaultModelLabel()) + '. Click to set one.'}">🧠 ${g.default_model ? esc(g.default_model) : 'no default model'}</span>
       </summary>
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
@@ -568,7 +569,34 @@ function renderUsage(u) {
   }
 }
 
+// userDefaultModelLabel describes what a spawn with no model anywhere
+// (no explicit pick, no group default) actually runs on: the
+// user-level settings.json model when set, else claude's own built-in
+// default. Used by the group chip / spawn modal so "default" is never
+// a mystery.
+function userDefaultModelLabel() {
+  const m = (lastSnapshot && lastSnapshot.user_default_model) || '';
+  return m ? `the user default (${m})` : "claude's own default";
+}
+
+// renderUserDefaultModel paints the groups-tab chip showing the
+// user-level default model (~/.claude/settings.json "model"). The chip
+// is click-to-edit (set-user-default-model in row-actions.js); the
+// data-model attr carries the raw current value for the editor.
+function renderUserDefaultModel(model) {
+  const el = $('#user-default-model');
+  if (!el) return;
+  const m = model || '';
+  el.classList.toggle('unset', !m);
+  el.setAttribute('data-model', m);
+  el.textContent = '🧠 ' + (m ? m : 'no user default model');
+  el.title = (m
+    ? `User-level default Claude model: ${m} — what agents spawned without a model pick run on (unless their group sets its own default). Stored as the "model" key in ~/.claude/settings.json.`
+    : 'No user-level default model — claude picks its own. Stored as the "model" key in ~/.claude/settings.json.')
+    + ' Click to edit; empty clears it.';
+}
+
 export {
   renderGroups, renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderMessagesTab, renderUsage,
+  renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
 };

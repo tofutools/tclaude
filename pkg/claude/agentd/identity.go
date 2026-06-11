@@ -287,6 +287,11 @@ const (
 	PermTemplatesManage   = "templates.manage"
 	PermTemplatesUse      = "templates.instantiate"
 	PermHumanNotify       = "human.notify"
+	// PermSettingsDefaultModel gates writing the user-level default
+	// model into ~/.claude/settings.json — a file in the human's home
+	// that also carries hooks and permission config, so not
+	// default-granted (effectively human-only).
+	PermSettingsDefaultModel = "settings.default-model"
 )
 
 // permResolution is the verdict of the non-interactive permission

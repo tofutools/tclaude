@@ -8,7 +8,7 @@ import { $, $$, esc, shortId, relTime } from './helpers.js';
 import { cycleSort } from './sort.js';
 import {
   renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderMessagesTab, renderUsage,
+  renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
 } from './render.js';
 import {
   renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
@@ -256,6 +256,7 @@ export async function refresh() {
     renderMessagesTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
+    renderUserDefaultModel(data.user_default_model || '');
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

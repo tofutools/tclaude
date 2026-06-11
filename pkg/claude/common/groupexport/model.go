@@ -82,9 +82,13 @@ type Export struct {
 type Group struct {
 	Descr          string `json:"descr"`
 	DefaultContext string `json:"default_context"`
-	MaxMembers     int    `json:"max_members"`
-	CreatedAt      string `json:"created_at"`
-	ArchivedAt     string `json:"archived_at"`
+	// DefaultModel is portable (a model alias / ID, not a path), so —
+	// unlike default_cwd — it survives export/import. Absent in
+	// pre-default_model archives, which decodes to "" (unset).
+	DefaultModel string `json:"default_model,omitempty"`
+	MaxMembers   int    `json:"max_members"`
+	CreatedAt    string `json:"created_at"`
+	ArchivedAt   string `json:"archived_at"`
 }
 
 // Member is an agent_group_members row (the group_id is implicit).

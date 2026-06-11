@@ -1867,8 +1867,11 @@ type groupSummary struct {
 	Online  int    `json:"online"`
 	// MaxMembers is the group's hard member cap (agent_groups.max_members);
 	// 0 = unlimited. A spawn that would exceed it is refused.
-	MaxMembers int  `json:"max_members,omitempty"`
-	Archived   bool `json:"archived,omitempty"`
+	MaxMembers int `json:"max_members,omitempty"`
+	// DefaultModel is the model substituted into spawns that leave
+	// model blank; "" = none (claude's own default resolution).
+	DefaultModel string `json:"default_model,omitempty"`
+	Archived     bool   `json:"archived,omitempty"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -1944,12 +1947,13 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			out = append(out, groupSummary{
-				Name:       g.Name,
-				Descr:      g.Descr,
-				Members:    len(members),
-				Online:     online,
-				MaxMembers: g.MaxMembers,
-				Archived:   g.IsArchived(),
+				Name:         g.Name,
+				Descr:        g.Descr,
+				Members:      len(members),
+				Online:       online,
+				MaxMembers:   g.MaxMembers,
+				DefaultModel: g.DefaultModel,
+				Archived:     g.IsArchived(),
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -1963,6 +1967,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			Descr          string `json:"descr,omitempty"`
 			DefaultCwd     string `json:"default_cwd,omitempty"`
 			DefaultContext string `json:"default_context,omitempty"`
+			DefaultModel   string `json:"default_model,omitempty"`
 			// MaxMembers is the group's hard member cap; 0 = unlimited.
 			// A negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
 			MaxMembers int `json:"max_members,omitempty"`
@@ -1995,6 +2000,11 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
+		groupModel, err := clcommon.ValidateModel(body.DefaultModel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_model", err.Error())
+			return
+		}
 		// Fold newlines out of the description on the create path too,
 		// not just update — the one-line header invariant must hold
 		// however the descr first arrives (see normalizeGroupDescr).
@@ -2022,6 +2032,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if groupContext != "" {
 			if _, err := db.SetAgentGroupDefaultContext(body.Name, groupContext); err != nil {
 				slog.Warn("groups create: failed to set default context",
+					"group", body.Name, "error", err)
+			}
+		}
+		if groupModel != "" {
+			if _, err := db.SetAgentGroupDefaultModel(body.Name, groupModel); err != nil {
+				slog.Warn("groups create: failed to set default model",
 					"group", body.Name, "error", err)
 			}
 		}
@@ -2200,22 +2216,26 @@ func normalizeGroupDescr(s string) string {
 //   - default_context — a block of shared startup guidance delivered
 //     to the inbox of agents spawned into the group (see
 //     handleGroupSpawn).
+//   - default_model — the Claude model substituted server-side into a
+//     spawn request that leaves model blank (see executeSpawn), so a
+//     group can default its whole team onto e.g. "sonnet".
 //   - max_members — the group's hard member cap (0 = unlimited); a
 //     spawn that would exceed it is refused by the spawn-guardrail
 //     layer. See checkSpawnGuardrails.
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
 // fields present (non-nil) in the body are touched. descr / default_cwd
-// / default_context are *string so a caller can clear any of them by
-// sending "" — distinct from omitting it; max_members is *int and
-// clears to "unlimited" with 0. An empty body (no field) is a 400.
+// / default_context / default_model are *string so a caller can clear
+// any of them by sending "" — distinct from omitting it; max_members is
+// *int and clears to "unlimited" with 0. An empty body (no field) is a
+// 400.
 //
 // Permission: groups.rename. Setting a group's description / default
-// cwd / context / member cap is the same class of human-curated group
-// config as renaming it (the blast radius is a dashboard label / UI
-// prefill / spawn-time injection / spawn refusal, strictly lower than
-// a rename), so it rides the existing slug rather than minting a new
-// one. Default human-only.
+// cwd / context / model / member cap is the same class of human-curated
+// group config as renaming it (the blast radius is a dashboard label /
+// UI prefill / spawn-time injection / spawn refusal, strictly lower
+// than a rename), so it rides the existing slug rather than minting a
+// new one. Default human-only.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if _, ok := requirePermission(w, r, PermGroupsRename); !ok {
 		return
@@ -2227,6 +2247,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		Descr          *string `json:"descr,omitempty"`
 		DefaultCwd     *string `json:"default_cwd,omitempty"`
 		DefaultContext *string `json:"default_context,omitempty"`
+		DefaultModel   *string `json:"default_model,omitempty"`
 		// MaxMembers is the group's hard member cap; 0 = unlimited. A
 		// negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
 		MaxMembers *int `json:"max_members,omitempty"`
@@ -2235,9 +2256,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.MaxMembers == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultModel == nil && body.MaxMembers == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context and/or max_members)")
+			"nothing to update (expected descr, default_cwd, default_context, default_model and/or max_members)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -2306,6 +2327,27 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		resp["default_context"] = ctx
+	}
+
+	if body.DefaultModel != nil {
+		// Normalise + validate against the known aliases / full-ID
+		// pattern. Empty stays empty — that clears the group default
+		// (spawns then fall back to claude's own model resolution).
+		model, err := clcommon.ValidateModel(*body.DefaultModel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_model", err.Error())
+			return
+		}
+		n, err := db.SetAgentGroupDefaultModel(g.Name, model)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["default_model"] = model
 	}
 
 	if body.MaxMembers != nil {

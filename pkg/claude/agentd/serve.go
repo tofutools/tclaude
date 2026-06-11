@@ -394,6 +394,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/templates/from-group", handleTemplateFromGroup)
 	mux.HandleFunc("POST /v1/templates/{name}/instantiate", handleTemplateInstantiate)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
+	mux.HandleFunc("/v1/claude-settings/default-model", handleClaudeDefaultModel)
 	mux.HandleFunc("/v1/links", handleLinksAll)
 	mux.HandleFunc("/v1/can-message", handleCanMessage)
 	mux.HandleFunc("/v1/permissions", handlePermissions)
