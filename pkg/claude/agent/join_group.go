@@ -48,12 +48,18 @@ func RunJoinGroup(params *session.NewParams) error {
 	if err != nil {
 		return err
 	}
+	// Same treatment for --model.
+	model, err := clcommon.ValidateModel(params.Model)
+	if err != nil {
+		return err
+	}
 	req := SpawnRequest{
 		Name:           params.Name,
 		Role:           params.Role,
 		Descr:          params.Descr,
 		Cwd:            cwd,
 		Effort:         effort,
+		Model:          model,
 		TimeoutSeconds: 30,
 	}
 	var resp SpawnResponse

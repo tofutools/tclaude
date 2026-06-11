@@ -64,7 +64,7 @@ func NewFlow(
 // concrete type satisfying agentd.Spawner satisfies this too, so a
 // flow_setup_test.go can do `agentd.Spawn = mocks.Spawner` directly.
 type SpawnerLike interface {
-	SpawnNew(label, cwd, effort string) error
+	SpawnNew(label, cwd, effort, model string) error
 	SpawnResume(convID, cwd string) error
 }
 
@@ -104,7 +104,7 @@ type simSpawner struct {
 	w *World
 }
 
-func (s *simSpawner) SpawnNew(label, cwd, effort string) error {
+func (s *simSpawner) SpawnNew(label, cwd, effort, model string) error {
 	cc := NewCCSim(s.t, s.w.HomeDir, cwd)
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
 	// stable key the hook callback tracks conv-id rotations against.
@@ -112,10 +112,11 @@ func (s *simSpawner) SpawnNew(label, cwd, effort string) error {
 	if err := cc.Start(); err != nil {
 		return err
 	}
-	// Capture the effort the spawn path threaded through, keyed by the
-	// new conv-id, so a flow test can assert it — the same way the cwd
-	// is observable via the SessionRow written below.
+	// Capture the effort and model the spawn path threaded through,
+	// keyed by the new conv-id, so a flow test can assert them — the
+	// same way the cwd is observable via the SessionRow written below.
 	s.w.RecordSpawnEffort(cc.ConvID, effort)
+	s.w.RecordSpawnModel(cc.ConvID, model)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
 	// with the .jsonl's actual on-disk location. Otherwise an empty
 	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
