@@ -7,9 +7,10 @@
 //      erupts: a "MEGA JACKPOT" banner, a screen shake, a confetti
 //      storm, and a 'win-mega' on the bus (so slop-audio plays the big
 //      fanfare and slop-credits pays out 777).
-//   2. Side pull-lever — a casino lever pinned to the right edge. Yank
-//      it (click) to spin every live slot machine on the page at once
-//      via slop-fx's pullAllMachines(); one machine may land 7-7-7.
+//   2. Side pull-lever — a casino lever pinned to the left edge,
+//      visible only on the Groups tab (CSS). Yank it (click) to spin
+//      every live slot machine on the page at once via slop-fx's
+//      pullAllMachines(); one machine may land 7-7-7.
 //   3. Confetti on big wins — a colourful burst layered over the coin
 //      shower whenever a 'win-pull' or 'win-mega' crosses the bus.
 //
@@ -92,7 +93,8 @@ export function bindKonami() {
 }
 
 // ─── Side pull-lever ───────────────────────────────────────────────
-// A casino lever fixed to the right edge (slop-only via CSS). Clicking
+// A casino lever fixed to the left edge (slop-only, Groups tab only —
+// both gates live in the CSS, not here). Clicking
 // it animates a yank and spins every live machine. The element lives in
 // dashboard.html so it's part of the static page; we just wire the
 // click. Pulls are debounced for the yank's duration so a mashing user
