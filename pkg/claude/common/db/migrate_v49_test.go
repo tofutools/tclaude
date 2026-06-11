@@ -50,8 +50,8 @@ func TestMigrateV48toV49_AddsPendingConvColumn(t *testing.T) {
 // TestMigrateV48toV49_FreshSchemaHasPendingConvColumn builds a fresh DB
 // through the full migrate() chain and confirms sessions.pending_conv
 // exists and the Set/GetSessionPendingConv accessors work end to end.
-// Carries the literal currentVersion pin — a tripwire the next
-// migration's author moves forward into their own v50 test.
+// (The literal currentVersion tripwire pin lives in the latest
+// migration's test — see migrate_v50_test.go.)
 func TestMigrateV48toV49_FreshSchemaHasPendingConvColumn(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -60,7 +60,6 @@ func TestMigrateV48toV49_FreshSchemaHasPendingConvColumn(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 49, currentVersion, "currentVersion is 49")
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "s1", Status: "idle"}), "SaveSession")
 	require.NoError(t, SetSessionPendingConv("s1", "11111111-2222-3333-4444-555555555555"),

@@ -104,6 +104,15 @@ table tr:hover { background: #161b22; }
    offline, but not the red of a live error. */
 .state-crashed   { background: #3a2a05; color: #e3b341; border-color: #5c4611; }
 .state-detail { color: #7d8590; font-size: 11px; margin-left: 6px; }
+/* Per-agent API cost ("$0.42") in the status column, right of the
+   state pill. Only rendered when the session reported nonzero cost on
+   API/enterprise pricing (costBadge returns '' otherwise), so
+   subscription rows never carry it. Muted money-green, monospace to
+   match the pill. */
+.cost-badge {
+  color: #6e9c7d; font-size: 11px; margin-left: 6px;
+  font-family: ui-monospace, monospace; white-space: nowrap;
+}
 /* The STATE column cell. The context meter leads the cell (fixed
    horizontal position, independent of how long the state string is),
    then the state pill, then the subagent detail. nowrap keeps all

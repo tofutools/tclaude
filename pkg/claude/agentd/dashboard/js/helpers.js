@@ -196,6 +196,22 @@ function statePill(state, online) {
   return `<span class="state-pill ${cls}" title="${esc(label)}">${esc(label)}</span>`;
 }
 
+// costBadge renders the agent's cumulative API cost — "$0.42" — in the
+// status column, right of the state pill. state.cost_usd is only ever
+// nonzero for a session on API/enterprise pricing (the statusline hook
+// records it solely when the input carries no subscription rate-limit
+// buckets), so subscription agents and never-ticked rows return '' and
+// the column looks exactly as before. Costs that round below a cent
+// show as "<1¢" rather than a lying "$0.00". Like the model, the cost
+// survives an agent's exit — what a dead agent cost is still useful.
+function costBadge(state) {
+  const cost = Number((state && state.cost_usd) || 0);
+  if (!(cost > 0)) return '';
+  const txt = cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢';
+  const tip = `API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
+  return `<span class="cost-badge" title="${esc(tip)}">${esc(txt)}</span>`;
+}
+
 // === Slop slot-machine widget — the slop-mode replacement for statePill ===
 //
 // In slop mode (body.slop) the state pill is hidden via CSS and this
@@ -670,7 +686,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
+  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, costBadge, slopMachine, contextMeter,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,

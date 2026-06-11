@@ -548,6 +548,13 @@ type agentState struct {
 	// lacks reasoning-effort support; the dashboard appends it to the
 	// per-agent model line ("CC · O4.8 1M high") and omits it when empty.
 	EffortLevel string `json:"effort_level,omitempty"`
+	// CostUSD is the agent's cumulative API cost in USD, recorded by the
+	// statusline hook on the same row — but only when the session runs
+	// on API/enterprise pricing (no subscription rate-limit data). 0
+	// means "no cost data" (subscription plan, or no tick yet) and the
+	// dashboard renders no cost badge for it. Surfaced regardless of
+	// liveness, like Model — what a dead agent cost is still informative.
+	CostUSD float64 `json:"cost_usd,omitempty"`
 	// ExitReason is why a now-offline agent's session ended: a graceful
 	// SessionEnd `reason`, or 'unexpected' when the process died with no
 	// clean shutdown (reaper-stamped). Only populated for an offline
@@ -615,6 +622,7 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		out.ContextWindowSize = snap.ContextWindowSize
 		out.Model = snap.Model
 		out.EffortLevel = snap.EffortLevel
+		out.CostUSD = snap.CostUSD
 	}
 	// No live tmux session — the agent's process is gone. Report it as
 	// exited rather than letting the frozen hook status (typically
