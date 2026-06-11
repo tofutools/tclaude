@@ -73,6 +73,18 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
   el.replaceWith(input);
   input.focus();
   input.select();
+  // Datalist-backed editor: pop the suggestion list open right away —
+  // the click that opened the editor is the user reaching for a value,
+  // so make them visible without hunting for the input's tiny arrow.
+  // showPicker() needs transient user activation (the opening click
+  // provides it) and isn't supported everywhere; failure just means
+  // the list opens on typing/arrow-down as before. Typing afterwards
+  // keeps filtering the list normally. Note Chromium filters the list
+  // against the current value, so a chip with an existing value shows
+  // the matching subset until the text is replaced.
+  if (listId) {
+    try { input.showPicker(); } catch (_) { /* no activation / unsupported — fine */ }
+  }
   // phase: editing → committing (during the await) → done. Guards
   // against a blur firing mid-commit and against a double Enter.
   let phase = 'editing';
@@ -873,6 +885,9 @@ function bindRowActions() {
           chip.replaceWith(input);
           input.focus();
           input.select();
+          // Pop the suggestion list open on edit-start, same as
+          // inlineEdit's listId path — best-effort, typing still works.
+          try { input.showPicker(); } catch (_) { /* unsupported — fine */ }
           // Settled flips once on the first commit/restore — the
           // deferred-Enter and datalist-pick paths below can both fire
           // for one acceptance, and the second must be a no-op.
