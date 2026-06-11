@@ -527,6 +527,22 @@ details[open] > summary .spawn-btn { opacity: 1; }
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; width: 6em;
 }
+/* 🧠 default-model chips — the per-group one in each <summary> and the
+   user-level one in the groups filter bar. Same look + inline-edit
+   affordance as the other group-header chips (.group-default-cwd). */
+.group-default-model, .user-default-model {
+  font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
+  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.group-default-model:hover, .user-default-model:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-default-model.unset, .user-default-model.unset { color: #484f58; font-style: italic; }
+.group-default-model.unset:hover, .user-default-model.unset:hover { color: #d4d4d4; }
+.group-default-model-input, .user-default-model-input {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 1px 6px; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 11px; min-width: 12em;
+}
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #0d1117; border: 1px solid #30363d; border-radius: 3px;

@@ -50,7 +50,7 @@ let renameEditing = false;
 // (rename-group, set-group-dir / -descr / -max-members) predate it and
 // still hand-roll the same pattern — migrating them is a deliberate
 // follow-up, kept out of this rename-focused change.
-function inlineEdit({ el, value, type = 'text', inputClass, placeholder, onSave }) {
+function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId, onSave }) {
   const prevSnapshot = lastSnapshot;
   renameEditing = true;
   // Park the host row's drag source while the input is open — an
@@ -65,11 +65,26 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, onSave 
   if (inputClass) input.className = inputClass;
   input.value = value;
   if (placeholder) input.placeholder = placeholder;
+  // Optional <datalist> suggestions (e.g. the model-alias list) —
+  // free text stays allowed, the list is just one click away.
+  if (listId) input.setAttribute('list', listId);
   input.spellcheck = false;
   input.autocomplete = 'off';
   el.replaceWith(input);
   input.focus();
   input.select();
+  // Datalist-backed editor: pop the suggestion list open right away —
+  // the click that opened the editor is the user reaching for a value,
+  // so make them visible without hunting for the input's tiny arrow.
+  // showPicker() needs transient user activation (the opening click
+  // provides it) and isn't supported everywhere; failure just means
+  // the list opens on typing/arrow-down as before. Typing afterwards
+  // keeps filtering the list normally. Note Chromium filters the list
+  // against the current value, so a chip with an existing value shows
+  // the matching subset until the text is replaced.
+  if (listId) {
+    try { input.showPicker(); } catch (_) { /* no activation / unsupported — fine */ }
+  }
   // phase: editing → committing (during the await) → done. Guards
   // against a blur firing mid-commit and against a double Enter.
   let phase = 'editing';
@@ -103,9 +118,34 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, onSave 
     }
   };
   input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-    else if (ev.key === 'Escape') { ev.preventDefault(); revert(); }
+    if (ev.key === 'Enter') {
+      // Datalist-backed editor: this Enter may be ACCEPTING a
+      // highlighted suggestion — the browser applies the replacement
+      // as the keydown's default action, i.e. after this handler. So
+      // don't preventDefault (that can cancel the acceptance) and
+      // commit on the next tick, once the final value is in place.
+      // One Enter then both accepts and saves. The phase guard inside
+      // commit() absorbs the case where the pick's `input` event
+      // below already committed.
+      if (listId) { setTimeout(commit, 0); return; }
+      ev.preventDefault(); commit();
+    } else if (ev.key === 'Escape') { ev.preventDefault(); revert(); }
   });
+  // Picking a datalist suggestion with the MOUSE saves immediately —
+  // the user clicked a concrete choice, and requiring a follow-up
+  // Enter reads as the click not working. Typed edits keep the
+  // explicit-Enter contract: a pick arrives as an `input` event whose
+  // inputType is 'insertReplacementText' (Chromium) or undefined
+  // (Firefox/Safari), never the per-keystroke 'insertText' — and only
+  // counts when the value matches one of the list's options exactly.
+  if (listId) {
+    const list = document.getElementById(listId);
+    input.addEventListener('input', (ev) => {
+      const picked = ev.inputType === undefined || ev.inputType === 'insertReplacementText';
+      if (!picked || !list) return;
+      if ([...list.options].some(o => o.value === input.value)) commit();
+    });
+  }
   // Blur cancels rather than commits — explicit Enter to save, same
   // contract as the group-header chips.
   input.addEventListener('blur', revert);
@@ -779,6 +819,138 @@ function bindRowActions() {
             else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
           });
           input.addEventListener('blur', () => {
+            if (renameEditing) restore();
+          });
+          return; // Skip the default refresh; commit() / restore() handle it.
+        }
+        case 'set-group-model': {
+          // Inline edit of the group's default model (the 🧠 chip)
+          // via the canonical inlineEdit primitive, with the shared
+          // model-alias datalist for suggestions (full model IDs can
+          // be typed freely). Empty clears the default; the daemon
+          // validates against the known aliases / full-ID pattern.
+          const modelEl = btn.classList.contains('group-default-model')
+            ? btn
+            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-model'));
+          if (!modelEl) {
+            toast('default model: could not locate the model element', true);
+            return;
+          }
+          const oldModel = modelEl.getAttribute('data-model') || '';
+          inlineEdit({
+            el: modelEl,
+            value: oldModel,
+            inputClass: 'group-default-model-input',
+            placeholder: 'alias or model ID — empty clears',
+            listId: 'model-alias-list',
+            onSave: async (raw) => {
+              const newModel = raw.trim();
+              if (newModel === oldModel) return 'revert';
+              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+                method: 'PATCH', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ default_model: newModel }),
+              });
+              if (!r.ok) {
+                toast(`set default model failed: ${await r.text()}`, true);
+                return 'revert';
+              }
+              toast(newModel ? `${group}: default model → ${newModel}` : `${group}: default model cleared`);
+              return 'saved';
+            },
+          });
+          return; // inlineEdit owns the refresh / restore lifecycle.
+        }
+        case 'set-user-default-model': {
+          // Inline edit of the USER-level default model — the "model"
+          // key in ~/.claude/settings.json, surfaced as the 🧠 chip in
+          // the groups filter bar. Unlike the per-group chips this
+          // element is static HTML (not rebuilt by the groups-list
+          // re-render), so on success the original chip element must
+          // be restored by hand before refresh() repaints its text —
+          // inlineEdit's saved-path relies on a re-render that never
+          // happens here. Hence the hand-rolled variant.
+          const chip = btn;
+          const prevSnapshot = lastSnapshot;
+          renameEditing = true;
+          const oldModel = chip.getAttribute('data-model') || '';
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'user-default-model-input';
+          input.value = oldModel;
+          input.placeholder = 'alias or model ID — empty clears';
+          input.setAttribute('list', 'model-alias-list');
+          input.spellcheck = false;
+          input.autocomplete = 'off';
+          chip.replaceWith(input);
+          input.focus();
+          input.select();
+          // Pop the suggestion list open on edit-start, same as
+          // inlineEdit's listId path — best-effort, typing still works.
+          try { input.showPicker(); } catch (_) { /* unsupported — fine */ }
+          // Settled flips once on the first commit/restore — the
+          // deferred-Enter and datalist-pick paths below can both fire
+          // for one acceptance, and the second must be a no-op.
+          // teardown is the unguarded inner cleanup commit/restore
+          // share once they hold the settled flag.
+          let settled = false;
+          const teardown = () => {
+            if (input.parentNode) input.replaceWith(chip);
+            renameEditing = false;
+            setLastSnapshot(prevSnapshot);
+          };
+          const restore = () => {
+            if (settled) return;
+            settled = true;
+            teardown();
+          };
+          const commit = async () => {
+            if (settled) return;
+            settled = true;
+            const newModel = input.value.trim();
+            if (newModel === oldModel) {
+              teardown();
+              return;
+            }
+            const r = await fetch('/api/claude-settings/default-model', {
+              method: 'PUT', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: newModel }),
+            });
+            if (!r.ok) {
+              toast(`set user default model failed: ${await r.text()}`, true);
+              teardown();
+              return;
+            }
+            // Put the chip back first — refresh() repaints its text
+            // from the fresh snapshot.
+            if (input.parentNode) input.replaceWith(chip);
+            renameEditing = false;
+            toast(newModel ? `user default model → ${newModel}` : 'user default model cleared (claude decides)');
+            refresh();
+          };
+          input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+              // Enter may be ACCEPTING a highlighted datalist
+              // suggestion — the browser applies the replacement as
+              // the keydown's default action, after this handler. So
+              // no preventDefault (it can cancel the acceptance), and
+              // commit on the next tick with the final value: one
+              // Enter both accepts and saves. Same contract as
+              // inlineEdit's listId path.
+              setTimeout(commit, 0);
+            } else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+          });
+          // Datalist pick by MOUSE = immediate save, same contract as
+          // inlineEdit's listId path above.
+          const aliasList = document.getElementById('model-alias-list');
+          input.addEventListener('input', (ev) => {
+            const picked = ev.inputType === undefined || ev.inputType === 'insertReplacementText';
+            if (!picked || !aliasList) return;
+            if ([...aliasList.options].some(o => o.value === input.value)) commit();
+          });
+          input.addEventListener('blur', () => {
+            // Blur cancels (like the group chips) — explicit Enter to save.
             if (renameEditing) restore();
           });
           return; // Skip the default refresh; commit() / restore() handle it.

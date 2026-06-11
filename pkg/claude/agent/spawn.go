@@ -134,7 +134,7 @@ type SpawnParams struct {
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
 	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
-	Model  string `long:"model" optional:"true" help:"Claude model for the new agent: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku. Unset = claude's own default (no flag passed)"`
+	Model  string `long:"model" optional:"true" help:"Claude model for the new agent: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan, or a full model ID (e.g. claude-fable-5). Unset = the group's default model, else claude's own default"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing

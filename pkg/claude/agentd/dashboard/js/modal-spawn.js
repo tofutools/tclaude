@@ -42,6 +42,28 @@ function groupDefaultCwd(groupName) {
   return (g && g.default_cwd) || '';
 }
 
+// updateSpawnModelDefaultLabel rewrites the Model dropdown's "Default"
+// option so it names the model an omitted pick actually resolves to —
+// the daemon substitutes the group's default_model into a blank spawn,
+// and claude itself falls back to the user-level settings.json model —
+// instead of an opaque "Default". Called on modal open and whenever
+// the group <select> changes.
+function updateSpawnModelDefaultLabel(groupName) {
+  const opt = $('#agent-spawn-model').querySelector('option[value=""]');
+  if (!opt) return;
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  const g = groups.find(x => x.name === groupName);
+  const groupModel = (g && g.default_model) || '';
+  const userModel = (lastSnapshot && lastSnapshot.user_default_model) || '';
+  if (groupModel) {
+    opt.textContent = `Default (${groupModel} — group default)`;
+  } else if (userModel) {
+    opt.textContent = `Default (${userModel} — user settings)`;
+  } else {
+    opt.textContent = "Default (claude's own)";
+  }
+}
+
 // spawnAutoFocusPref reads the persisted "auto focus" checkbox state
 // for the spawn modal. Defaults to true: a freshly-spawned agent runs
 // detached with no window, so the common case is wanting one opened.
@@ -161,6 +183,9 @@ function openAgentSpawnModal(opts) {
   // Show the "include group default context" checkbox iff the
   // selected group carries a startup context.
   updateSpawnGroupContextRow(select.value);
+  // Name what "Default" in the Model dropdown resolves to for this
+  // group (group default → user settings → claude's own).
+  updateSpawnModelDefaultLabel(select.value);
   $('#agent-spawn-wt-branch').value = '';
   // The worktree picker targets a separate "Worktree repo" field.
   // It mirrors CWD until the human edits it; for a monorepo CWD the
@@ -201,9 +226,12 @@ async function submitAgentSpawn() {
   // agent_messages row), not typed into its pane — so newlines are
   // preserved. Send the textarea verbatim; the daemon trims it.
   const initMsg = $('#agent-spawn-init-msg').value;
-  // Empty value = the "Default" option → omit effort/model entirely so
-  // claude uses its own defaults; a chosen value rides along in the
-  // POST body.
+  // Empty value = the "Default" option → omit effort/model entirely.
+  // For model that means the daemon substitutes the group's
+  // default_model, and failing that claude resolves its own default
+  // (user settings.json, then built-in) — exactly what the Default
+  // option's label promises. A chosen value rides along in the POST
+  // body.
   const effort = $('#agent-spawn-effort').value;
   const model = $('#agent-spawn-model').value;
   const cwd = $('#agent-spawn-cwd').value.trim();
@@ -286,6 +314,7 @@ function bindAgentSpawnModal() {
   $('#agent-spawn-group').addEventListener('change', (e) => {
     prefillSpawnCwd(e.target.value, false);
     updateSpawnGroupContextRow(e.target.value);
+    updateSpawnModelDefaultLabel(e.target.value);
     if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
     spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
   });

@@ -374,7 +374,13 @@ type snapshotPayload struct {
 	// shows "registry broken: …" instead of a silently empty list. The
 	// poll itself stays 200 — one bad file must not take down every tab.
 	PluginsError string `json:"plugins_error,omitempty"`
-	PopupBase      string            `json:"popup_base"` // for tray-shareable display
+	// UserDefaultModel is the "model" key from the user-level
+	// ~/.claude/settings.json — what every claude launched without
+	// --model falls back to. "" = unset (claude's built-in default).
+	// Shown in the Groups tab header and used by the spawn modal to
+	// label what "Default" actually resolves to.
+	UserDefaultModel string `json:"user_default_model"`
+	PopupBase        string `json:"popup_base"` // for tray-shareable display
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -428,6 +434,7 @@ type dashboardGroup struct {
 	Descr          string            `json:"descr"`
 	DefaultCwd     string            `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
 	DefaultContext string            `json:"default_context"` // shared startup context injected into spawned agents; "" = none
+	DefaultModel   string            `json:"default_model"`   // model substituted into spawns that leave model blank; "" = none
 	MaxMembers     int               `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
 	Members        []dashboardMember `json:"members"`
 	Online         int               `json:"online"`
@@ -706,8 +713,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := snapshotPayload{
-		GeneratedAt: time.Now().Format(time.RFC3339),
-		PopupBase:   popupBaseURL,
+		GeneratedAt:      time.Now().Format(time.RFC3339),
+		PopupBase:        popupBaseURL,
+		UserDefaultModel: readUserDefaultModel(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},
@@ -723,7 +731,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, MaxMembers: g.MaxMembers, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultModel: g.DefaultModel, MaxMembers: g.MaxMembers, Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.

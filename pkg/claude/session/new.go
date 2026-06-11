@@ -37,7 +37,7 @@ type NewParams struct {
 	// <alias>`. Empty (the default) omits the flag so claude uses its
 	// own default; a non-empty value is normalised and validated
 	// against clcommon.ValidModels in runNew.
-	Model string `long:"model" optional:"true" help:"Claude model: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku. Unset = claude's own default (no flag passed)"`
+	Model string `long:"model" optional:"true" help:"Claude model: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan, or a full model ID (e.g. claude-fable-5). Unset = claude's own default (no flag passed)"`
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's

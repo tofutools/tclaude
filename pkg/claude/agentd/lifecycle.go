@@ -518,7 +518,9 @@ type spawnParams struct {
 	// new session's `tclaude session new --effort`, or "" to omit it.
 	Effort string
 	// Model is the validated Claude model alias to forward to the new
-	// session's `tclaude session new --model`, or "" to omit it.
+	// session's `tclaude session new --model`. "" falls back to the
+	// group's default_model inside executeSpawn; if that is unset too,
+	// the flag is omitted entirely.
 	Model string
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
@@ -574,13 +576,26 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		timeout = 30 * time.Second
 	}
 
+	// When the request leaves model blank, fall back to the group's
+	// default_model (set via the dashboard's model chip or `groups
+	// set-default-model`). Living here — not in the HTTP handler —
+	// makes the default reach every spawn path, including the
+	// group-template instantiator. The stored value was validated by
+	// the write path (handleGroupUpdate); an empty default keeps the
+	// prior behaviour of omitting --model so claude resolves its own
+	// default (user settings.json, then built-in).
+	model := p.Model
+	if model == "" {
+		model = g.DefaultModel
+	}
+
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
 	// random hex; we mirror that with a "spwn-" prefix so these
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, p.Model); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}

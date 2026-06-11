@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 51
+const currentVersion = 52
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -329,6 +329,32 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 52 {
+		if err := migrateV51toV52(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV51toV52 adds agent_groups.default_model — the Claude model
+// alias (or full model ID) substituted into a spawn request that
+// leaves model blank, so a group can run its whole team on e.g.
+// "sonnet" without every spawn surface having to say so. Sibling to
+// default_cwd (v27) / default_context (v29): an optional per-group
+// spawn default, '' = unset (spawns then omit --model and claude
+// falls back to the user-level settings.json model, then its own
+// default).
+func migrateV51toV52(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_groups ADD COLUMN default_model TEXT NOT NULL DEFAULT '';
+
+		UPDATE schema_version SET version = 52;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v51→v52 (add agent_groups.default_model): %w", err)
+	}
 	return nil
 }
 
