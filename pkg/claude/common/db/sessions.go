@@ -548,8 +548,69 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE sessions SET cost_usd = ? WHERE id = ?`, costUSD, sessionID)
+	if _, err := db.Exec(`UPDATE sessions SET cost_usd = ? WHERE id = ?`, costUSD, sessionID); err != nil {
+		return err
+	}
+	// Sibling write: snapshot the cumulative figure onto today's
+	// session_cost_daily row, so the Costs tab can recover per-day
+	// spend as deltas between consecutive days. MAX keeps the row
+	// monotonic within the day (cumulative cost never decreases inside
+	// a session, but a stale render must never lower a recorded
+	// value). conv_id is denormalised in from the sessions row at
+	// write time — the daily history must survive the sessions row
+	// being deleted later (session kill, agent delete).
+	_, err = db.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+		VALUES (?, ?, COALESCE((SELECT conv_id FROM sessions WHERE id = ?), ''), ?)
+		ON CONFLICT(session_id, day) DO UPDATE SET
+			cost_usd = MAX(cost_usd, excluded.cost_usd),
+			conv_id  = excluded.conv_id`,
+		sessionID, time.Now().Format(costDayFormat), sessionID, costUSD)
 	return err
+}
+
+// costDayFormat is the session_cost_daily.day key — a local-time
+// calendar date. Local because the human reads the Costs chart in
+// their own day boundaries, matching the migration backfill's
+// date('now','localtime').
+const costDayFormat = "2006-01-02"
+
+// CostDailyRow is one (session, day) snapshot from session_cost_daily:
+// the highest cumulative cost the session had reported as of that
+// local day. ConvID groups sessions into agents; it's denormalised at
+// write time so it survives the sessions row's deletion.
+type CostDailyRow struct {
+	SessionID string
+	Day       string // local "2006-01-02"
+	ConvID    string
+	CostUSD   float64 // cumulative within the session as of that day
+}
+
+// AllCostDailyRows returns every session_cost_daily row ordered by
+// (session_id, day) — the order the cost aggregation walks to turn
+// cumulative snapshots into per-day deltas. The table stays small
+// (sessions × active days, API-priced sessions only), so callers read
+// it whole and aggregate in Go rather than encoding the windowed
+// delta logic in SQL.
+func AllCostDailyRows() ([]CostDailyRow, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd
+		FROM session_cost_daily ORDER BY session_id, day`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []CostDailyRow
+	for rows.Next() {
+		var r CostDailyRow
+		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ContextSnapshot is the full context-window state for a session.

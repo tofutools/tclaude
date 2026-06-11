@@ -525,21 +525,42 @@ function usageWindowHTML(label, win) {
     + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';
 }
 
-// renderUsage paints the top-bar readout from snapshot.usage. When
-// usage data is unavailable it degrades to a muted "usage: n/a"
-// rather than a broken or error state.
+// costTokenHTML renders the month-to-date API cost as one top-bar
+// token, mirroring the per-agent harness-line format: "$0.42", with
+// sub-cent totals as "<1¢" rather than a lying "$0.00".
+function costTokenHTML(cost) {
+  const amt = cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢';
+  return '<span class="uw ucost"><span class="ulabel">api</span>'
+    + '<span class="ucost-amt">' + esc(amt) + '</span>'
+    + ' <span class="urem">(mtd)</span></span>';
+}
+
+// renderUsage paints the top-bar readout from snapshot.usage:
+// subscription windows when available, plus the month-to-date API
+// cost summed across agent sessions when any was recorded — an
+// API-billing account has cost but no windows, so the cost token
+// replaces "usage: n/a" there; an account with both shows them side
+// by side. Only when neither exists does it degrade to a muted
+// "usage: n/a" rather than a broken or error state.
 function renderUsage(u) {
   const el = $('#usage');
   if (!el) return;
   const wins = [];
+  const titles = [];
   if (u && u.available) {
     if (u.five_hour) wins.push(usageWindowHTML('5h', u.five_hour));
     if (u.seven_day) wins.push(usageWindowHTML('7d', u.seven_day));
+    if (wins.length) titles.push('Subscription usage limits — 5-hour and 7-day rolling windows');
+  }
+  const cost = Number((u && u.total_cost_usd) || 0);
+  if (cost > 0) {
+    wins.push(costTokenHTML(cost));
+    titles.push(`API cost month-to-date: $${cost.toFixed(4)}, summed across agent sessions recorded in tclaude's DB`);
   }
   if (wins.length) {
     el.classList.remove('na');
     el.innerHTML = wins.join('');
-    el.title = 'Subscription usage limits — 5-hour and 7-day rolling windows';
+    el.title = titles.join(' · ');
   } else {
     el.classList.add('na');
     el.textContent = 'usage: n/a';

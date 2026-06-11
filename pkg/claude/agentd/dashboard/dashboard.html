@@ -64,6 +64,7 @@
   <button data-tab="permissions">Permissions</button>
   <button data-tab="slugs">Slug registry</button>
   <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
+  <button data-tab="costs">Costs</button>
   <button data-tab="config">Config</button>
   <!-- Vegas — the slop-mode soundtrack tab. CSS-hidden unless body.slop
        is set (see dashboard.css); vegas.js owns the player inside it. -->
@@ -347,6 +348,23 @@
       <button type="button" id="cfg-reload">Reload</button>
       <button type="button" id="cfg-save" class="primary">Save changes…</button>
     </div>
+  </section>
+  <!-- Costs tab — per-day API cost bar chart (with a weekday-based
+       month projection on the "This month" span) followed by a
+       per-agent breakdown. Rendered by costs.js from /api/costs,
+       fetched on tab activation / span change rather than the 2s
+       snapshot tick. -->
+  <section id="tab-costs">
+    <div class="filter-bar" id="costs-spans">
+      <button class="tool active" data-span="month" title="Calendar month to date — the only span with a projection">This month</button>
+      <button class="tool" data-span="7d" title="Trailing 7 days">Last 7d</button>
+      <button class="tool" data-span="30d" title="Trailing 30 days">Last 30d</button>
+      <button class="tool" data-span="90d" title="Trailing 90 days">Last 90d</button>
+      <span class="spacer"></span>
+      <span id="costs-summary"></span>
+    </div>
+    <div id="costs-chart"></div>
+    <div id="costs-table"></div>
   </section>
   <section id="tab-messages">
     <div class="filter-bar">

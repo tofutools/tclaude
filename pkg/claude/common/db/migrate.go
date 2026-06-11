@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 50
+const currentVersion = 51
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -323,6 +323,51 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 51 {
+		if err := migrateV50toV51(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV50toV51 adds session_cost_daily — a per-day snapshot of each
+// session's cumulative API cost, written by the statusline hook
+// alongside sessions.cost_usd (v50). One row per (session, local day)
+// holding the highest cumulative figure seen that day, plus the
+// session's conv_id denormalised in at write time so cost history
+// survives the sessions row being deleted (session kill, agent
+// delete) — the whole point of the table is that the Costs tab keeps
+// showing what retired agents spent. A day's spend is recovered as
+// the delta against the session's previous day's row.
+//
+// The backfill seeds today's row from every sessions row that already
+// carries cost, so the daily series starts agreeing with the existing
+// month-to-date sum immediately instead of waiting for each session's
+// next statusline tick — and retired sessions, which will never tick
+// again, aren't silently dropped from the new table. Cost accrued
+// before this migration therefore all lands on the migration day.
+func migrateV50toV51(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE session_cost_daily (
+			session_id TEXT NOT NULL,
+			day        TEXT NOT NULL,
+			conv_id    TEXT NOT NULL DEFAULT '',
+			cost_usd   REAL NOT NULL DEFAULT 0,
+			PRIMARY KEY (session_id, day)
+		);
+		CREATE INDEX idx_session_cost_daily_day ON session_cost_daily(day);
+
+		INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+			SELECT id, date('now', 'localtime'), conv_id, cost_usd
+			FROM sessions WHERE cost_usd > 0;
+
+		UPDATE schema_version SET version = 51;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v50→v51 (add session_cost_daily): %w", err)
+	}
 	return nil
 }
 

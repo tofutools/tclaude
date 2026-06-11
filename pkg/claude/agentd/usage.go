@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
 
@@ -34,6 +35,14 @@ type dashboardUsage struct {
 	Available bool         `json:"available"`
 	FiveHour  *usageWindow `json:"five_hour,omitempty"`
 	SevenDay  *usageWindow `json:"seven_day,omitempty"`
+	// TotalCostUSD is the month-to-date API cost summed across every
+	// session row in the DB (sessions.cost_usd — recorded only for
+	// API/enterprise-priced sessions, so subscription accounts stay at
+	// 0). Independent of Available: an API-billing account has cost but
+	// no rolling windows, and the dashboard then shows this figure
+	// instead of "usage: n/a". 0 means "no cost data" and renders
+	// nothing.
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
 }
 
 // usageWindow is one rolling-limit bucket: percent consumed plus the
@@ -87,16 +96,38 @@ func refreshUsage() {
 // "n/a" state — when the cache is missing, carries no rolling-limit
 // buckets (e.g. an API-billing account), or has gone stale.
 func collectUsageSnapshot() dashboardUsage {
+	out := dashboardUsage{TotalCostUSD: monthToDateCost()}
 	cached := usageapi.Peek()
 	if cached == nil || cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > usageStaleAfter {
-		return dashboardUsage{Available: false}
+		return out
 	}
 	fh := usageWindowFor(cached.FiveHour)
 	sd := usageWindowFor(cached.SevenDay)
 	if fh == nil && sd == nil {
-		return dashboardUsage{Available: false}
+		return out
 	}
-	return dashboardUsage{Available: true, FiveHour: fh, SevenDay: sd}
+	out.Available = true
+	out.FiveHour = fh
+	out.SevenDay = sd
+	return out
+}
+
+// monthToDateCost sums the recorded API cost since the start of the
+// current calendar month (local time), through the same
+// session_cost_daily aggregation the Costs tab uses — so the top-bar
+// headline always matches the tab's "this month" total. A read
+// failure degrades to 0 — the dashboard simply shows no cost token —
+// since this is a display-only figure on the same snapshot path that
+// already tolerates missing subscription data.
+func monthToDateCost() float64 {
+	rows, err := db.AllCostDailyRows()
+	if err != nil {
+		slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", err)
+		return 0
+	}
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	return sumCostDeltas(costDeltasFromRows(rows), monthStart.Format(costDayKey), "")
 }
 
 // usageWindowFor converts a cached bucket into the wire shape, or nil
