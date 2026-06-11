@@ -53,17 +53,9 @@ func TestMigrateV49toV50_AddsCostUSDColumn(t *testing.T) {
 // exists and the UpdateSessionCost / GetContextSnapshot accessors work
 // end to end — including the <=0 no-op guard that keeps empty renders
 // and subscription sessions from ever blanking a recorded cost.
-// Carries the literal currentVersion pin — a tripwire the next
-// migration's author moves forward into their own v51 test.
+// (The literal currentVersion pin moved forward into the v51 test.)
 func TestMigrateV49toV50_FreshSchemaHasCostUSDColumn(t *testing.T) {
 	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-
-	var ver int
-	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 50, currentVersion, "currentVersion is 50")
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "s1", Status: "idle"}), "SaveSession")
 

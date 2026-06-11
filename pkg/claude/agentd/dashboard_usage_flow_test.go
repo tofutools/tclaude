@@ -18,6 +18,11 @@ type dashUsage struct {
 	Available bool          `json:"available"`
 	FiveHour  *dashUsageWin `json:"five_hour"`
 	SevenDay  *dashUsageWin `json:"seven_day"`
+	// TotalCostUSD is the month-to-date API cost summed from the
+	// session_cost_daily table — independent of Available, so an
+	// API-billing account shows a dollar figure where "usage: n/a"
+	// would sit.
+	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
 // dashUsageWin mirrors agentd.usageWindow — one rolling-limit window.
@@ -118,4 +123,73 @@ func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
 	seedUsageCache(t, usageapi.CachedUsage{FetchedAt: now, LastAttemptAt: now})
 	snap = fetchDashSnapshot(t, mux)
 	assert.False(t, snap.Usage.Available, "unavailable for an account with no rolling-limit windows")
+}
+
+// seedCostSession writes one sessions row carrying a recorded API
+// cost, through the production write path: SaveSession (the
+// state-tracking hooks' upsert) + UpdateSessionCost (the statusline
+// hook's API-pricing write).
+func seedCostSession(t *testing.T, id, status string, cost float64) {
+	t.Helper()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          id,
+		TmuxSession: "tmux-" + id,
+		ConvID:      "conv-" + id,
+		Cwd:         "/tmp/" + id,
+		Status:      status,
+	}), "SaveSession %s", id)
+	if cost > 0 {
+		require.NoError(t, db.UpdateSessionCost(id, cost), "UpdateSessionCost %s", id)
+	}
+}
+
+// Scenario: an API/enterprise-billing account — agents accrue dollar
+// cost (sessions.cost_usd via the statusline hook) but the usage API
+// reports no rolling-limit windows, so the subscription readout is
+// unavailable. The snapshot must still carry the month-to-date cost
+// total so the dashboard top bar can show "$1.75 (mtd)" where
+// "usage: n/a" would otherwise sit. Exited sessions keep their rows
+// (nothing auto-prunes them), so a retired agent's cost stays in the
+// sum.
+func TestDashboardUsage_TotalCostSurfacedWithoutSubscription(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t)
+
+	seedCostSession(t, "tcost-live", "idle", 1.25)
+	seedCostSession(t, "tcost-retired", "exited", 0.50)
+	seedCostSession(t, "tcost-sub", "idle", 0) // subscription session: contributes nothing
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	assert.False(t, snap.Usage.Available, "no subscription windows on an API-billing account")
+	assert.InDelta(t, 1.75, snap.Usage.TotalCostUSD, 1e-9,
+		"live + retired session costs summed on the snapshot")
+}
+
+// Scenario: both data sources present — fresh subscription windows in
+// the usage cache AND recorded API cost on a session row (e.g. a mixed
+// fleet, or a subscription account that ran an API-keyed agent). The
+// snapshot carries both so the dashboard renders the cost token next
+// to the 5h/7d bars.
+func TestDashboardUsage_TotalCostAlongsideSubscription(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t)
+
+	now := time.Now()
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 17, ResetsAt: now.Add(2 * time.Hour)},
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+	seedCostSession(t, "bcost-live", "idle", 0.42)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	require.True(t, snap.Usage.Available, "subscription windows available")
+	require.NotNil(t, snap.Usage.FiveHour, "5h window present")
+	assert.InDelta(t, 0.42, snap.Usage.TotalCostUSD, 1e-9, "cost total rides alongside the windows")
 }
