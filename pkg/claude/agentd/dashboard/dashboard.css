@@ -309,6 +309,12 @@ tr:hover .row-actions { opacity: 1; }
    brighter than the surrounding harness text so the eye catches the
    current effort level. */
 .agent-harness .harness-effort { color: #d2a8ff; margin-left: 5px; }
+/* Per-agent API cost ("$0.42") trailing the harness/model line —
+   "CC · O4.8 1M high $0.42". Only rendered when the session reported
+   nonzero cost on API/enterprise pricing (harnessLine omits the token
+   otherwise), so subscription rows never carry it. Muted money-green,
+   a shade brighter than the harness text, like the effort token. */
+.agent-harness .harness-cost { color: #6e9c7d; margin-left: 5px; }
 tr:hover .agent-harness { color: #c9d1d9; }
 /* focus / hide are icon buttons (eye / slashed-eye) — same chip frame
    as the text buttons, just a centred SVG that inherits the button's

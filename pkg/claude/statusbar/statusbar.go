@@ -389,6 +389,17 @@ func run() error {
 	// Cost only shown on API plan (no rate limit buckets available)
 	if !hasLimits && input.Cost.TotalCostUSD > 0 {
 		line2 = append(line2, fmt.Sprintf("$%.2f", input.Cost.TotalCostUSD))
+		// Persist it on the same gate, keyed by the stable tclaude
+		// session id (the sessions-row id the dashboard reads back via
+		// GetContextSnapshot — same keying as UpdateSessionModel), so the
+		// dashboard's status column can show the per-agent cost. On a
+		// subscription plan hasLimits is true and this never fires: the
+		// column stays 0 and the dashboard renders no cost badge.
+		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+			if err := db.UpdateSessionCost(sessionID, input.Cost.TotalCostUSD); err != nil {
+				slog.Warn("status-bar: failed to update session cost", "error", err, "module", "hooks")
+			}
+		}
 	}
 
 	// Reasoning-effort level (🧠 high) trails the first line, far right.

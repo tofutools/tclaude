@@ -524,6 +524,34 @@ func UpdateSessionEffort(sessionID, level string) error {
 	return err
 }
 
+// UpdateSessionCost stores the session's cumulative API cost in USD —
+// Claude Code's cost.total_cost_usd from the statusline input. The
+// statusbar hook records it here keyed by the tclaude session id, the
+// sibling write to UpdateSessionModel — but ONLY when the session runs
+// on API/enterprise pricing (no subscription rate-limit buckets in the
+// statusline input), mirroring the statusbar's own display gate. On a
+// subscription plan this is never called, so the column stays 0 and
+// every surface renders "no cost data".
+//
+// A zero/negative cost is a no-op, mirroring UpdateSessionModel: cost
+// is cumulative within a conversation so a real value never decreases,
+// and the empty renders before a turn's first API response carry 0 —
+// writing that would blank a good value for one poll. After a /clear
+// the last pre-clear cost therefore lingers until the new conversation
+// accrues its first nonzero cost, which is benign for a display-only
+// field (and arguably right: the money was still spent).
+func UpdateSessionCost(sessionID string, costUSD float64) error {
+	if costUSD <= 0 {
+		return nil
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET cost_usd = ? WHERE id = ?`, costUSD, sessionID)
+	return err
+}
+
 // ContextSnapshot is the full context-window state for a session.
 // Zero values mean "not populated yet" — caller should fall back to
 // the percentage-only display.
@@ -543,6 +571,12 @@ type ContextSnapshot struct {
 	// the statusbar has ticked, or when the model lacks reasoning-effort
 	// support. Rides on the same row read as Model.
 	EffortLevel string
+	// CostUSD is the session's cumulative API cost in USD, recorded by
+	// the statusline hook only on API/enterprise pricing (no
+	// subscription rate-limit data). 0 means "no cost data" — a
+	// subscription-plan session, or a statusbar that hasn't ticked —
+	// and surfaces render nothing for it. Rides on the same row read.
+	CostUSD float64
 }
 
 // GetContextSnapshot reads the full context-window state for a
@@ -554,9 +588,9 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	}
 	var s ContextSnapshot
 	err = db.QueryRow(
-		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model, effort_level
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model, effort_level, cost_usd
 		 FROM sessions WHERE id = ?`, sessionID).
-		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model, &s.EffortLevel)
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model, &s.EffortLevel, &s.CostUSD)
 	return s, err
 }
 

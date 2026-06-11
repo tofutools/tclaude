@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 49
+const currentVersion = 50
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -317,6 +317,37 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 50 {
+		if err := migrateV49toV50(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV49toV50 adds sessions.cost_usd — the session's cumulative API
+// cost in USD (Claude Code's cost.total_cost_usd), recorded by the
+// statusline hook ONLY when the session runs on API/enterprise pricing.
+// On a subscription plan the statusline carries rate-limit buckets and
+// the hook never writes cost, so the column stays 0 — which every
+// surface (dashboard status column, statusbar) treats as "no cost data,
+// render nothing". A sibling column to sessions.model (v47) and
+// sessions.effort_level (v48): a single display-only value written on
+// the statusline cadence, read back via GetContextSnapshot.
+//
+// Defaults to 0 — rows from before this migration, subscription-plan
+// sessions, and sessions whose statusbar hasn't ticked yet all read
+// back "no cost data".
+func migrateV49toV50(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE sessions ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0;
+
+		UPDATE schema_version SET version = 50;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v49→v50 (add sessions.cost_usd): %w", err)
+	}
 	return nil
 }
 
