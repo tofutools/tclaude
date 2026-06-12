@@ -115,9 +115,15 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 	}
 	// Also raise a desktop notification (off the request goroutine — a
 	// platform send can spawn a subprocess). Self-gates on config, so this
-	// is a no-op unless the human opted in.
+	// is a no-op unless the human opted in. The per-agent / per-group
+	// notification filters apply here too: a muted sender's ping still
+	// lands in the Messages tab (with the unread badge), it just skips
+	// the OS banner. Checked outside the seam so flow tests observe it.
 	senderSession := notifyHumanSenderSessionID(callerConv)
 	goBackground(func() {
+		if !notify.AllowedForConv(callerConv) {
+			return
+		}
 		humanMsgNotify(senderSession, fromTitle, groupName, body.Subject, body.Body)
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})

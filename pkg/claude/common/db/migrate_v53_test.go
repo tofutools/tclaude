@@ -82,7 +82,6 @@ func TestMigrateV52toV53_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 53, currentVersion, "currentVersion is 53")
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "s1", ConvID: "conv-1", Status: "idle"}), "SaveSession")
 	require.NoError(t, UpdateSessionCost("s1", 0.42), "UpdateSessionCost on a fresh schema")

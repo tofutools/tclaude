@@ -381,6 +381,10 @@ type snapshotPayload struct {
 	// label what "Default" actually resolves to.
 	UserDefaultModel string `json:"user_default_model"`
 	PopupBase        string `json:"popup_base"` // for tray-shareable display
+	// NotificationsEnabled mirrors config.notifications.enabled — the
+	// master OS-notification switch above the per-group / per-agent
+	// filters. Drives the top-bar bell toggle.
+	NotificationsEnabled bool `json:"notifications_enabled"`
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -436,6 +440,7 @@ type dashboardGroup struct {
 	DefaultContext string            `json:"default_context"` // shared startup context injected into spawned agents; "" = none
 	DefaultModel   string            `json:"default_model"`   // model substituted into spawns that leave model blank; "" = none
 	MaxMembers     int               `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
+	NotifyEnabled  bool              `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	Members        []dashboardMember `json:"members"`
 	Online         int               `json:"online"`
 }
@@ -460,6 +465,11 @@ type dashboardMember struct {
 	Online bool       `json:"online"`
 	Owner  bool       `json:"owner,omitempty"`
 	State  agentState `json:"state"`
+	// Notify is the per-agent override ("on"/"off", "" = inherit);
+	// NotifyEffective folds the agent + group levels together (the
+	// global switch is separate — snapshot.notifications_enabled).
+	Notify          string `json:"notify,omitempty"`
+	NotifyEffective bool   `json:"notify_effective"`
 }
 
 type dashboardAgent struct {
@@ -477,6 +487,11 @@ type dashboardAgent struct {
 	OwnedGroups []string             `json:"owned_groups"`          // subset of Groups the agent owns; UI tags these distinctly
 	Effective   []string             `json:"effective"`             // perms = union(defaults, per-conv grants)
 	ActiveSudo  []dashboardSudoEntry `json:"active_sudo,omitempty"` // current sudo grants (slug + id + remaining); empty when none
+	// Notify is the per-agent override ("on"/"off", "" = inherit);
+	// NotifyEffective folds the agent + group levels together (the
+	// global switch is separate — snapshot.notifications_enabled).
+	Notify          string `json:"notify,omitempty"`
+	NotifyEffective bool   `json:"notify_effective"`
 }
 
 // dashboardConversation is the snapshot view of one non-enrolled
@@ -689,6 +704,33 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// agentRows: union of (every group member) + (every conv-id with
 	// explicit grants). Keyed by conv-id so members appearing in
 	// multiple groups dedupe naturally.
+	// Notification-filter state: the per-agent overrides plus the set
+	// of convs sitting in at least one muted (non-archived) group.
+	// notifyEffective mirrors notify.AllowedForConv — agent pref wins,
+	// else any muted group silences — so the bells the dashboard
+	// renders agree with what the notify path will actually do.
+	notifyPrefs, _ := db.ListConvNotifyPrefs()
+	inMutedGroup := map[string]bool{}
+	for _, g := range groups {
+		if g.IsArchived() || g.NotifyEnabled {
+			continue
+		}
+		if members, err := db.ListAgentGroupMembers(g.ID); err == nil {
+			for _, m := range members {
+				inMutedGroup[m.ConvID] = true
+			}
+		}
+	}
+	notifyEffective := func(convID string) bool {
+		switch notifyPrefs[convID] {
+		case db.NotifyPrefOn:
+			return true
+		case db.NotifyPrefOff:
+			return false
+		}
+		return !inMutedGroup[convID]
+	}
+
 	agentRows := map[string]*dashboardAgent{}
 	addAgent := func(convID string) *dashboardAgent {
 		if existing, ok := agentRows[convID]; ok {
@@ -704,18 +746,21 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			State:             stateForConvIn(convID, aliveSessions),
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
-			Groups:      []string{},
-			OwnedGroups: []string{},
-			Effective:   []string{},
+			Groups:          []string{},
+			OwnedGroups:     []string{},
+			Effective:       []string{},
+			Notify:          notifyPrefs[convID],
+			NotifyEffective: notifyEffective(convID),
 		}
 		agentRows[convID] = a
 		return a
 	}
 
 	out := snapshotPayload{
-		GeneratedAt:      time.Now().Format(time.RFC3339),
-		PopupBase:        popupBaseURL,
-		UserDefaultModel: readUserDefaultModel(),
+		GeneratedAt:          time.Now().Format(time.RFC3339),
+		PopupBase:            popupBaseURL,
+		UserDefaultModel:     readUserDefaultModel(),
+		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},
@@ -731,7 +776,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultModel: g.DefaultModel, MaxMembers: g.MaxMembers, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultModel: g.DefaultModel, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.
@@ -756,6 +801,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				Online:            online,
 				Owner:             ownerSet[m.ConvID],
 				State:             stateForConvIn(m.ConvID, aliveSessions),
+				Notify:            notifyPrefs[m.ConvID],
+				NotifyEffective:   notifyEffective(m.ConvID),
 			})
 			if online {
 				dg.Online++
@@ -784,6 +831,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				Online:            online,
 				Owner:             true,
 				State:             stateForConvIn(ownerConv, aliveSessions),
+				Notify:            notifyPrefs[ownerConv],
+				NotifyEffective:   notifyEffective(ownerConv),
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so

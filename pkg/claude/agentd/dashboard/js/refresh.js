@@ -9,6 +9,7 @@ import { cycleSort } from './sort.js';
 import {
   renderPermissions, renderSlugs, showStatus,
   renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
+  renderNotifyGlobal,
 } from './render.js';
 import {
   renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
@@ -257,6 +258,7 @@ export async function refresh() {
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
     renderUserDefaultModel(data.user_default_model || '');
+    renderNotifyGlobal(!!data.notifications_enabled);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

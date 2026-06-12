@@ -15,12 +15,13 @@ import (
 // without importing the unexported type. Adding fields here is cheap
 // when more assertions need them.
 type dashSnapshot struct {
-	Groups        []dashGroup        `json:"groups"`
-	Agents        []dashAgent        `json:"agents"`
-	Ungrouped     []dashAgent        `json:"ungrouped"`
-	Conversations []dashConversation `json:"conversations"`
-	Retired       []dashRetired      `json:"retired"`
-	Usage         dashUsage          `json:"usage"`
+	Groups               []dashGroup        `json:"groups"`
+	Agents               []dashAgent        `json:"agents"`
+	Ungrouped            []dashAgent        `json:"ungrouped"`
+	Conversations        []dashConversation `json:"conversations"`
+	Retired              []dashRetired      `json:"retired"`
+	Usage                dashUsage          `json:"usage"`
+	NotificationsEnabled bool               `json:"notifications_enabled"`
 }
 
 // dashConversation mirrors agentd.dashboardConversation.
@@ -40,25 +41,28 @@ type dashRetired struct {
 }
 
 type dashGroup struct {
-	Name       string       `json:"name"`
-	Descr      string       `json:"descr"`
-	MaxMembers int          `json:"max_members"`
-	Members    []dashMember `json:"members"`
+	Name          string       `json:"name"`
+	Descr         string       `json:"descr"`
+	MaxMembers    int          `json:"max_members"`
+	NotifyEnabled bool         `json:"notify_enabled"`
+	Members       []dashMember `json:"members"`
 }
 
 type dashMember struct {
-	ConvID        string    `json:"conv_id"`
-	Title         string    `json:"title"`
-	Branch        string    `json:"branch,omitempty"`
-	StartupDir    string    `json:"startup_dir,omitempty"`
-	StartupBranch string    `json:"startup_branch,omitempty"`
-	CurrentDir    string    `json:"current_dir,omitempty"`
-	BranchURL     string    `json:"branch_url,omitempty"`
-	BranchPRNum   int       `json:"branch_pr_number,omitempty"`
-	BranchPRURL   string    `json:"branch_pr_url,omitempty"`
-	BranchPRState string    `json:"branch_pr_state,omitempty"`
-	Online        bool      `json:"online"`
-	State         dashState `json:"state"`
+	ConvID          string    `json:"conv_id"`
+	Title           string    `json:"title"`
+	Branch          string    `json:"branch,omitempty"`
+	StartupDir      string    `json:"startup_dir,omitempty"`
+	StartupBranch   string    `json:"startup_branch,omitempty"`
+	CurrentDir      string    `json:"current_dir,omitempty"`
+	BranchURL       string    `json:"branch_url,omitempty"`
+	BranchPRNum     int       `json:"branch_pr_number,omitempty"`
+	BranchPRURL     string    `json:"branch_pr_url,omitempty"`
+	BranchPRState   string    `json:"branch_pr_state,omitempty"`
+	Online          bool      `json:"online"`
+	Notify          string    `json:"notify,omitempty"`
+	NotifyEffective bool      `json:"notify_effective"`
+	State           dashState `json:"state"`
 }
 
 type dashAgent struct {
@@ -71,10 +75,12 @@ type dashAgent struct {
 	BranchURL     string    `json:"branch_url,omitempty"`
 	BranchPRNum   int       `json:"branch_pr_number,omitempty"`
 	BranchPRURL   string    `json:"branch_pr_url,omitempty"`
-	BranchPRState string    `json:"branch_pr_state,omitempty"`
-	Online        bool      `json:"online"`
-	Groups        []string  `json:"groups"`
-	State         dashState `json:"state"`
+	BranchPRState   string    `json:"branch_pr_state,omitempty"`
+	Online          bool      `json:"online"`
+	Groups          []string  `json:"groups"`
+	Notify          string    `json:"notify,omitempty"`
+	NotifyEffective bool      `json:"notify_effective"`
+	State           dashState `json:"state"`
 }
 
 // dashState mirrors the relevant fields of agentd.agentState.

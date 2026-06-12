@@ -15,6 +15,11 @@
   <h1>🤝 tclaude agent dashboard</h1>
   <span class="meta" id="meta">loading…</span>
   <span class="meta" style="margin-left:auto" id="usage"></span>
+  <!-- Master OS-notification bell — mirrors config.notifications.enabled
+       (the switch ABOVE the per-group / per-agent filters). Painted from
+       snapshot.notifications_enabled on every poll; click toggles via
+       POST /api/notifications. -->
+  <button class="notify-bell" id="notify-global" type="button" data-act="toggle-global-notify" data-enabled="0" hidden title="OS notifications"></button>
   <span class="meta" id="status"></span>
   <!-- Slop-mode HUD — a running credits counter + the casino sound-FX
        toggle. CSS-hidden unless body.slop (see dashboard.css); fed by
