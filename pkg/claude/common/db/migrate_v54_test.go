@@ -50,6 +50,55 @@ func TestMigrateV53toV54_AddsNotifyFilters(t *testing.T) {
 	assert.Error(t, err, "the mode CHECK rejects unknown values")
 }
 
+// TestMigrateV53toV54_HealsHalfAppliedRun reproduces the field wedge:
+// an earlier interrupted attempt added notify_enabled to agent_groups
+// but never bumped schema_version, so every later startup re-ran the
+// migration and died on "duplicate column name" — taking the whole DB
+// (and the dashboard's Groups tab, which swallows ListAgentGroups
+// errors into an empty list) down with it. The guarded migration must
+// converge: skip the ALTER, finish the rest, land on version 54 with
+// the group data untouched.
+func TestMigrateV53toV54_HealsHalfAppliedRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v53-half.sqlite")
+	d, err := sql.Open("sqlite", path)
+	require.NoError(t, err, "open raw sqlite")
+	defer func() { _ = d.Close() }()
+
+	// The half-applied state: column already there (with a non-default
+	// value to prove the re-run doesn't recreate/reset anything),
+	// version still 53, prefs table absent.
+	_, err = d.Exec(`
+		CREATE TABLE schema_version (version INTEGER NOT NULL);
+		INSERT INTO schema_version (version) VALUES (53);
+		CREATE TABLE agent_groups (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			name           TEXT NOT NULL UNIQUE,
+			descr          TEXT NOT NULL DEFAULT '',
+			created_at     TEXT NOT NULL,
+			notify_enabled INTEGER NOT NULL DEFAULT 1
+		);
+		INSERT INTO agent_groups (name, descr, created_at, notify_enabled) VALUES ('team', '', '2026-06-01T00:00:00Z', 0);
+	`)
+	require.NoError(t, err, "seed half-applied v53 schema")
+
+	require.NoError(t, migrateV53toV54(d), "re-run must converge, not fail on duplicate column")
+
+	var ver int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
+	assert.Equal(t, 54, ver, "schema_version finally lands on 54")
+
+	var enabled int
+	require.NoError(t, d.QueryRow(`SELECT notify_enabled FROM agent_groups WHERE name = 'team'`).Scan(&enabled))
+	assert.Equal(t, 0, enabled, "existing column data survives the healing run")
+
+	_, err = d.Exec(`INSERT INTO agent_notify_prefs (conv_id, mode, updated_at) VALUES ('c1', 'off', '2026-06-01T00:00:00Z')`)
+	assert.NoError(t, err, "the prefs table got created by the healing run")
+
+	// And a second run on the now-complete schema is a clean no-op
+	// path through migrate(): version matches, nothing executes.
+	require.NoError(t, migrate(d), "migrate() on the healed DB")
+}
+
 // TestMigrateV53toV54_FreshSchemaRoundTrips builds a fresh DB through
 // the full migrate() chain and round-trips the group switch and the
 // per-agent prefs through the production helpers. Carries the literal
