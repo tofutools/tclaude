@@ -1102,7 +1102,7 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
       overlay.removeEventListener('click', onOverlay);
       autoEl.removeEventListener('change', onAuto);
       permsBtn.removeEventListener('click', onPerms);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       resolve(result);
     };
     const onSave = () => {
@@ -1142,7 +1142,12 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
       // While the Permissions editor is stacked on top (it opens from
       // this modal's Permissions… button), it owns the keyboard — let
       // its own Esc / inputs handle the event, so an Esc up there can't
-      // also tear THIS modal down underneath it.
+      // also tear THIS modal down underneath it. The guard MUST see the
+      // perm modal still open at the instant Esc fires, so this handler
+      // is registered in the CAPTURE phase (below): capture runs before
+      // the perm editor's bubble-phase dismiss removes its .show, so we
+      // read the true "is it stacked?" state rather than a state the
+      // perm dismiss has already torn down one handler earlier.
       if ($('#perm-edit-modal').classList.contains('show')) return;
       if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
       // Ctrl/Cmd+Enter saves from anywhere in the modal so power
@@ -1156,7 +1161,11 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
     overlay.addEventListener('click', onOverlay);
     autoEl.addEventListener('change', onAuto);
     permsBtn.addEventListener('click', onPerms);
-    document.addEventListener('keydown', onKey);
+    // Capture phase (see onKey) so the stacked-perm-editor guard reads
+    // accurate state. We never stopPropagation here — this is the
+    // BOTTOM modal, so it must not swallow keys destined for overlays
+    // above it.
+    document.addEventListener('keydown', onKey, true);
     overlay.classList.add('show');
     // The role cell's click-to-edit lands here on the Role field; the
     // ⚙ "edit" button lands on Title (the broader edit).

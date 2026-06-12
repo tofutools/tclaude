@@ -223,6 +223,7 @@ details[open] > summary::before { content: "▼ "; }
 .role-edit { cursor: pointer; }
 .role-edit:hover { text-decoration: underline; }
 .role-add {
+  display: inline-block; white-space: nowrap;
   color: #6e7681; border: 1px dashed #3a3f46; border-radius: 4px;
   padding: 0 6px; font-size: 11px;
 }
