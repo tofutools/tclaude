@@ -221,6 +221,16 @@ function bindCostsTab() {
   document.addEventListener('tclaude:snapshot', () => {
     if (costsTabActive() && Date.now() - lastFetchedAt > REPOLL_MS) loadCosts();
   });
+  // The top-bar "api" cost token (render.js) carries data-goto-tab=
+  // "costs". Clicking it opens this tab exactly as the nav button does:
+  // the synthetic .click() fires both handlers bound on that button —
+  // the tab-switch (bindTabs) and the load-on-activation above.
+  // Delegated so it survives the token's re-render on every snapshot.
+  document.addEventListener('click', e => {
+    if (e.target.closest('[data-goto-tab="costs"]')) {
+      $('nav button[data-tab="costs"]').click();
+    }
+  });
 }
 
 export { bindCostsTab };

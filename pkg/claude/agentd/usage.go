@@ -43,6 +43,12 @@ type dashboardUsage struct {
 	// instead of "usage: n/a". 0 means "no cost data" and renders
 	// nothing.
 	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
+	// TodayCostUSD is the API cost recorded so far on the current local
+	// calendar day — the same delta walk as TotalCostUSD, windowed to
+	// today. Always ≤ TotalCostUSD. The top bar shows it as a "(today)"
+	// figure beside the "(mtd)" headline; 0 (nothing spent today, or a
+	// subscription account) renders no today figure.
+	TodayCostUSD float64 `json:"today_cost_usd,omitempty"`
 }
 
 // usageWindow is one rolling-limit bucket: percent consumed plus the
@@ -96,7 +102,7 @@ func refreshUsage() {
 // "n/a" state — when the cache is missing, carries no rolling-limit
 // buckets (e.g. an API-billing account), or has gone stale.
 func collectUsageSnapshot() dashboardUsage {
-	out := dashboardUsage{TotalCostUSD: monthToDateCost()}
+	out := dashboardUsage{TotalCostUSD: monthToDateCost(), TodayCostUSD: todayCost()}
 	cached := usageapi.Peek()
 	if cached == nil || cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > usageStaleAfter {
 		return out
@@ -128,6 +134,23 @@ func monthToDateCost() float64 {
 	total, err := db.SumCostSinceDay(monthStart.Format(costDayKey))
 	if err != nil {
 		slog.Debug("usage snapshot: sum daily costs failed; omitting cost readout", "error", err)
+		return 0
+	}
+	return total
+}
+
+// todayCost sums the API spend recorded so far on the current local
+// calendar day — the same DB-side windowed delta as monthToDateCost,
+// with the window opening at midnight today instead of the first of the
+// month. It is always ≤ monthToDateCost and equals the Costs tab's
+// today bar. Shares monthToDateCost's rationale: it rides the 2s
+// snapshot tick, so the aggregation runs DB-side, and a read failure
+// degrades to 0 (the top bar simply shows no "(today)" figure) since
+// this is display-only.
+func todayCost() float64 {
+	total, err := db.SumCostSinceDay(time.Now().Format(costDayKey))
+	if err != nil {
+		slog.Debug("usage snapshot: sum today's costs failed; omitting today readout", "error", err)
 		return 0
 	}
 	return total

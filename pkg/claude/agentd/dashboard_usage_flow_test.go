@@ -23,6 +23,9 @@ type dashUsage struct {
 	// API-billing account shows a dollar figure where "usage: n/a"
 	// would sit.
 	TotalCostUSD float64 `json:"total_cost_usd"`
+	// TodayCostUSD is the same aggregate windowed to the current local
+	// day — the top bar's "(today)" figure beside "(mtd)".
+	TodayCostUSD float64 `json:"today_cost_usd"`
 }
 
 // dashUsageWin mirrors agentd.usageWindow — one rolling-limit window.
@@ -166,6 +169,54 @@ func TestDashboardUsage_TotalCostSurfacedWithoutSubscription(t *testing.T) {
 	assert.False(t, snap.Usage.Available, "no subscription windows on an API-billing account")
 	assert.InDelta(t, 1.75, snap.Usage.TotalCostUSD, 1e-9,
 		"live + retired session costs summed on the snapshot")
+	// UpdateSessionCost only ever writes today's session_cost_daily row,
+	// so every dollar above was spent today — month-to-date and today
+	// coincide here, and both must surface.
+	assert.InDelta(t, 1.75, snap.Usage.TodayCostUSD, 1e-9,
+		"today's cost surfaced alongside the month-to-date total")
+}
+
+// Scenario: spend straddles a day boundary — a session that spent on an
+// earlier day and again today. The month-to-date headline must include
+// the earlier spend while the "(today)" figure is windowed to just
+// today's delta, so the top bar can show the two distinct figures. This
+// is the bit production's UpdateSessionCost write path can't exercise
+// (it only ever stamps today), so the earlier row is seeded directly.
+func TestDashboardUsage_TodayCostWindowsToToday(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t)
+
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+
+	d, err := db.Open()
+	require.NoError(t, err, "open db")
+	// One session, cumulative cost growing across two days: $1.00 by end
+	// of yesterday, $1.60 by today — so today's spend is the $0.60 delta.
+	for _, r := range []struct {
+		day  string
+		cost float64
+	}{
+		{yesterday, 1.00},
+		{today, 1.60},
+	} {
+		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+			VALUES (?, ?, ?, ?)`, "straddle", r.day, "conv-straddle", r.cost)
+		require.NoError(t, err, "seed cost row for %s", r.day)
+	}
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	// Today is the $0.60 rise over yesterday's high-water mark —
+	// calendar-robust (the windowed delta never reaches back past
+	// yesterday) on every day, including the first of a month.
+	assert.InDelta(t, 0.60, snap.Usage.TodayCostUSD, 1e-9,
+		"today's cost is the delta over yesterday, not the cumulative total")
+	assert.LessOrEqual(t, snap.Usage.TodayCostUSD, snap.Usage.TotalCostUSD,
+		"today's cost can never exceed month-to-date")
 }
 
 // Scenario: both data sources present — fresh subscription windows in
