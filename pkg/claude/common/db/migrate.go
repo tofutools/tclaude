@@ -363,19 +363,38 @@ func migrate(db *sql.DB) error {
 // Both default to "everything notifies" so existing setups see no
 // behaviour change.
 //
-// Runs in one transaction (the migrateV50toV51 convention): SQLite has
-// no ALTER TABLE ... ADD COLUMN IF NOT EXISTS, so an interrupted run
-// that added the column but never bumped schema_version would wedge
-// every later startup on the duplicate column.
+// Runs in one transaction (the migrateV50toV51 convention) AND guards
+// the column add: SQLite has no ALTER TABLE ... ADD COLUMN IF NOT
+// EXISTS, and a half-applied earlier attempt (a pre-merge build of the
+// non-transactional cut, or a write interrupted between statements)
+// can leave the column behind with schema_version still 53 — at which
+// point a bare re-run fails on "duplicate column name" forever, and
+// the whole DB (groups tab included) is wedged behind the failing
+// migrate. Probing pragma_table_info first makes the re-run converge
+// instead: skip the ALTER, let the IF-NOT-EXISTS / UPDATE finish the
+// job, and the DB self-heals on the next start.
 func migrateV53toV54(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("migrate v53→v54 (notification filters): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(`
-		ALTER TABLE agent_groups ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 1;
 
+	var haveCol int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = 'notify_enabled'`,
+	).Scan(&haveCol); err != nil {
+		return fmt.Errorf("migrate v53→v54 (notification filters): probe column: %w", err)
+	}
+	if haveCol == 0 {
+		if _, err := tx.Exec(
+			`ALTER TABLE agent_groups ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 1`,
+		); err != nil {
+			return fmt.Errorf("migrate v53→v54 (notification filters): add column: %w", err)
+		}
+	}
+
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS agent_notify_prefs (
 			conv_id    TEXT PRIMARY KEY,
 			mode       TEXT NOT NULL CHECK (mode IN ('on', 'off')),
