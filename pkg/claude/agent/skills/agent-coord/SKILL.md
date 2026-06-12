@@ -213,7 +213,8 @@ when you need to compact or reincarnate yourself, not this one.
   subcommands (`groups create|rm|add|remove|update-member`) are
   permission-gated. By default agents can't run them. Humans bypass
   the gate. Slugs: `groups.create`, `groups.rm`, `groups.stop`,
-  `groups.resume`, `member.add`, `member.remove`, `member.redesignate`.
+  `groups.resume`, `groups.retire`, `member.add`, `member.remove`,
+  `member.redesignate`.
 
   Permissions live in two places:
   - **Defaults** — `agent.default_permissions` in

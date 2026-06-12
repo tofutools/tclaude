@@ -2071,6 +2071,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 //
 //	POST   /v1/groups/{name}/stop            → stop every member
 //	POST   /v1/groups/{name}/resume          → resume every member
+//	POST   /v1/groups/{name}/retire          → retire every other member
 //	POST   /v1/groups/{name}/spawn           → spawn a session into the group
 //	POST   /v1/groups/{name}/archive         → soft-delete (archive)
 //	POST   /v1/groups/{name}/unarchive       → restore an archived group
@@ -2097,6 +2098,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 func registerV1GroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/groups/{name}/stop", v1GroupRoute(handleGroupStop))
 	mux.HandleFunc("POST /v1/groups/{name}/resume", v1GroupRoute(handleGroupResume))
+	mux.HandleFunc("POST /v1/groups/{name}/retire", v1GroupRoute(handleGroupRetire))
 	mux.HandleFunc("POST /v1/groups/{name}/spawn", v1GroupRoute(handleGroupSpawn))
 	mux.HandleFunc("POST /v1/groups/{name}/archive", v1GroupRoute(handleGroupArchive))
 	mux.HandleFunc("POST /v1/groups/{name}/unarchive", v1GroupRoute(handleGroupUnarchive))

@@ -242,6 +242,7 @@ tclaude agent groups unarchive <group>                    # reverse an archive
 tclaude agent groups clone <source> [new-name]            # fork every member into a brand-new group
 tclaude agent groups stop <group> [--force]                # soft /exit (or hard kill-session) every member
 tclaude agent groups resume <group>                        # spawn a session for every offline member
+tclaude agent groups retire <group> [--no-shutdown]        # retire (soft-delete) every OTHER member; bulk parallel of `agent retire`
 tclaude agent groups export <group> [--out FILE]           # export the group (DB rows + members' .jsonl) to a portable .zip
 tclaude agent groups import <file.zip> --into <dir>        # recreate an exported group on this machine
 tclaude agent groups transfers                             # the group export / import audit log
@@ -487,7 +488,7 @@ gate group, messaging, template, and permission administration.
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule` |
 | `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire` |
-| `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
+| `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |

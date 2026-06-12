@@ -79,6 +79,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Resume a group's offline members (tclaude agent groups resume)",
 	},
 	{
+		Slug:        PermGroupsRetire,
+		Description: "Retire (soft-delete) every other member of a group in one shot — the bulk parallel of agent.retire (tclaude agent groups retire). Demotes each member to a plain conversation: drops its group memberships and revokes its permission/sudo grants, leaving the conversation intact and reinstatable. The caller's own conv is always skipped. NOT default-granted; retiring agents is a sensitive cleanup the human normally drives.",
+	},
+	{
 		Slug:        PermGroupsSpawn,
 		Description: "Spawn a fresh CC session and add it to a group (tclaude agent spawn)",
 	},
