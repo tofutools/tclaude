@@ -366,14 +366,38 @@ function contextMeter(state) {
 // roleCell renders the role column for a member row. Mirrors the CLI:
 // members who are also owners get an "owner" badge; pure-owners
 // (role==="owner" set by the daemon) show the badge alone.
-function roleCell(m) {
-  if (m.owner) {
-    if (!m.role || m.role === 'owner') {
-      return '<span class="owner-badge">owner</span>';
-    }
-    return `${esc(m.role)} <span class="owner-badge">owner</span>`;
+//
+// In a REAL group (g passed) the whole cell is a click-to-edit
+// affordance (data-act="edit-role") — clicking opens the edit-member
+// modal focused on the role field, where the role text, the
+// group-owner checkbox and a Permissions… button all live. An empty
+// role renders a discrete "+ role" hint rather than a blank cell, so
+// the affordance stays discoverable. In the virtual Ungrouped group
+// (no g) the cell is non-interactive — an ungrouped agent has no
+// group-membership row to carry a role.
+function roleCell(m, g) {
+  const ownerBadge = '<span class="owner-badge">owner</span>';
+  const hasRole = m.role && m.role !== 'owner';
+  // A pure-owner row — an owner of the group that is NOT a member — is
+  // surfaced by the daemon with the literal role sentinel "owner" and
+  // has no membership row, so it carries no editable role/descr (a
+  // PATCH /members/{conv} would 404). Render the badge alone,
+  // non-interactive, exactly as before; ownership/perms for such a row
+  // stay reachable via the ⚙ menu. (A real member who is also an owner
+  // keeps their own role — empty or otherwise — and IS editable.)
+  const pureOwner = m.owner && m.role === 'owner';
+  if (!g || pureOwner) {
+    if (m.owner) return hasRole ? `${esc(m.role)} ${ownerBadge}` : ownerBadge;
+    return esc(m.role || '');
   }
-  return esc(m.role || '');
+  const attrs = `data-act="edit-role" data-group="${esc(g.name)}"`
+    + ` data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}"`
+    + ` data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}"`
+    + ` data-descr="${esc(m.descr || '')}" data-owner="${m.owner ? '1' : '0'}"`;
+  const inner = hasRole
+    ? `${esc(m.role)}${m.owner ? ' ' + ownerBadge : ''}`
+    : (m.owner ? ownerBadge : '<span class="role-add">+ role</span>');
+  return `<span class="role-edit" ${attrs} title="Edit role, ownership and permissions">${inner}</span>`;
 }
 
 // memberActions renders the per-row action cell for a real group
@@ -518,7 +542,7 @@ function actionCog(act, items) {
 // its group role and its group description. data-current carries the
 // title so the modal opens pre-filled.
 function editMemberButton(g, m) {
-  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" title="Edit this agent — title, role, description">edit</button>`;
+  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" data-owner="${m.owner ? '1' : '0'}" title="Edit this agent — title, role, description, ownership, permissions">edit</button>`;
 }
 function ownerToggleButton(g, m) {
   return m.owner

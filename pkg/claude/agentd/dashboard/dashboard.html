@@ -478,6 +478,9 @@
     <div class="field">
       <label for="edit-member-role">Role</label>
       <input id="edit-member-role" type="text" autocomplete="off" spellcheck="false" />
+      <label class="edit-member-owner-row" title="Group owners gain the implicit power to manage other members of this group — message, reincarnate, compact, rename, clone — without a per-slug grant.">
+        <input id="edit-member-owner" type="checkbox" /> Group owner
+      </label>
     </div>
     <div class="field">
       <label for="edit-member-descr">Description</label>
@@ -485,6 +488,8 @@
     </div>
     <div class="cron-create-error" id="edit-member-error"></div>
     <div class="modal-buttons">
+      <button id="edit-member-perms" type="button" title="Open the permanent-permission editor for this agent (grant / deny / inherit per slug)">Permissions…</button>
+      <span class="spacer"></span>
       <button id="edit-member-cancel">Cancel</button>
       <button id="edit-member-save">Save</button>
     </div>

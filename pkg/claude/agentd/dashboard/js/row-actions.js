@@ -418,18 +418,26 @@ function bindRowActions() {
           refresh();
           return;
         }
+        case 'edit-role':
         case 'edit-member': {
           // The single per-agent edit panel: title (incl. the "auto"
-          // self-rename), group role, group description. The modal
-          // yields up to two independent edits — a rename (conv title,
-          // injected via tmux) and a membership PATCH (role / descr).
-          // They hit different endpoints, so apply each on its own:
-          // one failing must not silently swallow the other.
+          // self-rename), group role, group description, the group-owner
+          // toggle, and a Permissions… button. The same panel backs two
+          // entry points: the ⚙ "edit" button (focuses Title) and the
+          // click-to-edit role cell (data-act="edit-role", focuses Role).
+          // The modal yields up to THREE independent edits — a rename
+          // (conv title, injected via tmux), a membership PATCH (role /
+          // descr), and an owner grant/revoke. They hit different
+          // endpoints, so apply each on its own: one failing must not
+          // silently swallow the others.
           const result = await editMemberModal({
             label: `${label} → ${group}`,
             title: btn.getAttribute('data-current') || '',
             role: btn.getAttribute('data-role') || '',
             descr: btn.getAttribute('data-descr') || '',
+            owner: btn.getAttribute('data-owner') === '1',
+            focusRole: act === 'edit-role',
+            openPerms: () => openPermEditModal(conv, label),
           });
           if (result === null) return; // cancelled
           if (result === 'noop') {
@@ -466,6 +474,31 @@ function bindRowActions() {
               toast(`updated ${label}`);
             } else {
               toast(`edit failed: ${await r.text()}`, true);
+            }
+          }
+          if ('owner' in result) {
+            // Owner is structural, not a membership column — route the
+            // toggle to the owners grant (POST) / revoke (DELETE)
+            // endpoints, the same ones the ⚙ make/revoke-owner buttons
+            // use. Unlike the cog's revoke button there's no extra
+            // confirm here: ticking the box + clicking Save IS the
+            // deliberate gesture.
+            const r = result.owner
+              ? await fetch(`/api/groups/${encodeURIComponent(group)}/owners`, {
+                  method: 'POST', credentials: 'same-origin',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ conv }),
+                })
+              : await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(conv)}`, {
+                  method: 'DELETE', credentials: 'same-origin',
+                });
+            if (r.ok) {
+              anyOk = true;
+              toast(result.owner
+                ? `${label} is now an owner of ${group}`
+                : `${label} is no longer an owner of ${group}`);
+            } else {
+              toast(`owner change failed: ${await r.text()}`, true);
             }
           }
           if (anyOk) refresh();
