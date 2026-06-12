@@ -84,13 +84,18 @@ func AllowedForConv(convID string) bool {
 	if convID == "" {
 		return true
 	}
-	if mode, err := db.GetConvNotifyPref(convID); err == nil {
-		switch mode {
-		case db.NotifyPrefOff:
-			return false
-		case db.NotifyPrefOn:
-			return true
-		}
+	mode, err := db.GetConvNotifyPref(convID)
+	if err != nil {
+		// Fail open right here: falling through to the group check
+		// could return false on a muted group even though the human
+		// may have set a (now unreadable) 'on' override.
+		return true
+	}
+	switch mode {
+	case db.NotifyPrefOff:
+		return false
+	case db.NotifyPrefOn:
+		return true
 	}
 	groups, err := db.ListGroupsForConv(convID)
 	if err != nil {

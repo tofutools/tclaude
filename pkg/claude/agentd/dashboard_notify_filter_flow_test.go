@@ -118,6 +118,11 @@ func TestNotificationFilters_GroupAndAgentBells(t *testing.T) {
 	assert.False(t, agentOff.Groups[0].Members[0].NotifyEffective, "agent off wins over an unmuted group")
 	assert.False(t, notified(t, "sess-aoff", conv), "per-agent off suppresses")
 
+	// An unknown mode is a client error — 400, not a mislabelled 500.
+	r = testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/notify",
+		map[string]any{"mode": "bogus"})
+	require.Equal(t, http.StatusBadRequest, testharness.Serve(mux, r).Code, "invalid mode rejected")
+
 	// Inherit clears the override.
 	r = testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/notify",
 		map[string]any{"mode": "inherit"})

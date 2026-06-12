@@ -362,8 +362,18 @@ func migrate(db *sql.DB) error {
 //
 // Both default to "everything notifies" so existing setups see no
 // behaviour change.
+//
+// Runs in one transaction (the migrateV50toV51 convention): SQLite has
+// no ALTER TABLE ... ADD COLUMN IF NOT EXISTS, so an interrupted run
+// that added the column but never bumped schema_version would wedge
+// every later startup on the duplicate column.
 func migrateV53toV54(db *sql.DB) error {
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v53→v54 (notification filters): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`
 		ALTER TABLE agent_groups ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 1;
 
 		CREATE TABLE IF NOT EXISTS agent_notify_prefs (
@@ -376,6 +386,9 @@ func migrateV53toV54(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate v53→v54 (notification filters): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v53→v54 (notification filters): commit: %w", err)
 	}
 	return nil
 }

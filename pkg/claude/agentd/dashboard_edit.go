@@ -1024,17 +1024,21 @@ func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelecto
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := db.SetConvNotifyPref(res.ConvID, strings.TrimSpace(body.Mode)); err != nil {
-		http.Error(w, "set notify pref: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	mode, err := db.GetConvNotifyPref(res.ConvID)
-	if err != nil {
-		http.Error(w, "read back notify pref: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if mode == "" {
+	// Validate here so a bad mode is a 400 while a failed DB write
+	// below stays a 500 — collapsing both into 400 would mislabel
+	// lock/I-O failures as client bugs.
+	mode := strings.TrimSpace(body.Mode)
+	switch mode {
+	case "", db.NotifyPrefInherit:
 		mode = db.NotifyPrefInherit
+	case db.NotifyPrefOn, db.NotifyPrefOff:
+	default:
+		http.Error(w, "invalid notify mode "+mode+" (want on, off or inherit)", http.StatusBadRequest)
+		return
+	}
+	if err := db.SetConvNotifyPref(res.ConvID, mode); err != nil {
+		http.Error(w, "set notify pref: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "mode": mode})
 }
