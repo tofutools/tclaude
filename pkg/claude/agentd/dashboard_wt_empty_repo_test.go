@@ -19,10 +19,12 @@ func TestDashboardHTML_EmptyRepoOrphanHintWired(t *testing.T) {
 		}
 	}
 
-	// Both worktree-bearing modals carry the orphan hint the picker
-	// reveals when the repo has no commits.
-	must(`id="agent-spawn-wt-orphan-hint"`, "spawn modal orphan hint exists")
-	must(`id="clone-agent-wt-orphan-hint"`, "clone modal orphan hint exists")
+	// Both worktree-bearing modals carry the orphan warning the picker
+	// reveals when the repo has no commits, styled as the amber callout.
+	must(`id="agent-spawn-wt-orphan-hint"`, "spawn modal orphan warning exists")
+	must(`id="clone-agent-wt-orphan-hint"`, "clone modal orphan warning exists")
+	must(`class="wt-orphan-warn"`, "orphan warning uses the callout class")
+	must(".wt-orphan-warn {", "orphan warning callout is styled")
 
 	// The picker stamps the no-commits flag from the API response and
 	// reads it back when toggling the "+ create" rows.

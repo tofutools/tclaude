@@ -1435,6 +1435,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .cfg-field input[type=checkbox] { cursor: pointer; }
 .cfg-hint { font-size: 11px; color: #7d8590; flex-basis: 100%; padding-left: 177px; }
+/* Amber heads-up callout for the spawn/clone worktree picker when it
+   lands on a repo with no commits yet — informational ("this is what
+   will happen"), not an error, so amber rather than the red danger box. */
+.wt-orphan-warn {
+  border: 1px solid #9e6a03; background: #2a1f06; border-radius: 6px;
+  color: #e3b341; font-size: 12px; padding: 8px 12px; margin: 4px 0;
+  line-height: 1.5; flex-basis: 100%;
+}
 .cfg-list { display: flex; flex-direction: column; gap: 5px; width: 100%; padding-left: 177px; }
 .cfg-list-row { display: flex; gap: 6px; align-items: center; }
 .cfg-list-row input[type=text] { flex: 1; min-width: 80px; }

@@ -1044,8 +1044,11 @@
       <span class="cron-create-label">Base branch</span>
       <select id="agent-spawn-wt-base"></select>
     </label>
-    <p class="cfg-hint" id="agent-spawn-wt-orphan-hint" style="display:none; padding-left:0">
-      Repo has no commits yet — the new worktree starts on an orphan branch (no base).
+    <p class="wt-orphan-warn" id="agent-spawn-wt-orphan-hint" style="display:none">
+      ⚠ This repo has no commits yet, so the worktree will be cut as an
+      <strong>orphan branch</strong> (no base to branch off). That's fine for
+      bootstrapping a fresh repo — once you make the first commit, later
+      worktrees branch off it normally.
     </p>
     <label class="cron-create-enabled" id="agent-spawn-focus-row" title="After the agent spawns, open a terminal window attached to its tclaude session. A detached spawn has no window of its own — this lets you watch and talk to the new agent right away.">
       <input id="agent-spawn-focus" type="checkbox" checked /> Auto focus — open a terminal attached to the new agent
@@ -1084,8 +1087,11 @@
       <span class="cron-create-label">Base branch</span>
       <select id="clone-agent-wt-base"></select>
     </label>
-    <p class="cfg-hint" id="clone-agent-wt-orphan-hint" style="display:none; padding-left:0">
-      Repo has no commits yet — the new worktree starts on an orphan branch (no base).
+    <p class="wt-orphan-warn" id="clone-agent-wt-orphan-hint" style="display:none">
+      ⚠ This repo has no commits yet, so the worktree will be cut as an
+      <strong>orphan branch</strong> (no base to branch off). That's fine for
+      bootstrapping a fresh repo — once you make the first commit, later
+      worktrees branch off it normally.
     </p>
     <div class="cron-create-error" id="clone-agent-error"></div>
     <div class="modal-buttons">
