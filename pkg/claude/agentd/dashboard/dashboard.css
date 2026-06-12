@@ -266,10 +266,13 @@ details[open] > summary::before { content: "▼ "; }
 #usage .ubar-empty { color: #30363d; }
 #usage .upct { color: #c9d1d9; }
 #usage .urem { color: #6e7681; }
-/* Month-to-date API cost token; the amount matches .harness-cost's
-   money-green so the figure reads as the same kind of data as the
-   per-agent cost tokens below it. */
+/* Month-to-date (and, when distinct, today's) API cost token; the
+   amount matches .harness-cost's money-green so the figure reads as the
+   same kind of data as the per-agent cost tokens below it. The token
+   links to the Costs tab, so it gets a pointer + hover affordance. */
 #usage .ucost-amt { color: #6e9c7d; }
+#usage .ucost { cursor: pointer; }
+#usage .ucost:hover .ucost-amt { text-decoration: underline; }
 
 /* -- Costs tab ------------------------------------------------------
    Per-day spend bars in the same money-green as the cost tokens.

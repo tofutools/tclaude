@@ -526,14 +526,28 @@ function usageWindowHTML(label, win) {
     + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';
 }
 
-// costTokenHTML renders the month-to-date API cost as one top-bar
-// token, mirroring the per-agent harness-line format: "$0.42", with
-// sub-cent totals as "<1¢" rather than a lying "$0.00".
-function costTokenHTML(cost) {
-  const amt = cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢';
-  return '<span class="uw ucost"><span class="ulabel">api</span>'
-    + '<span class="ucost-amt">' + esc(amt) + '</span>'
-    + ' <span class="urem">(mtd)</span></span>';
+// fmtCost renders a dollar amount the way the per-agent harness line
+// does: "$0.42", with sub-cent totals as "<1¢" rather than a lying
+// "$0.00".
+function fmtCost(cost) {
+  return cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢';
+}
+
+// costTokenHTML renders the API cost as one top-bar token. It always
+// carries the month-to-date headline ("$0.42 (mtd)") and, when today's
+// spend is a distinct slice of it, today's figure too ("$0.12 (today)
+// $0.42 (mtd)"). The today figure is suppressed when it would equal the
+// mtd within a cent — a month whose whole spend is today's would
+// otherwise print the same number twice. The token links to the Costs
+// tab (data-goto-tab, wired in costs.js).
+function costTokenHTML(today, mtd) {
+  const amt = (v, label) => '<span class="ucost-amt">' + esc(fmtCost(v)) + '</span>'
+    + ' <span class="urem">(' + label + ')</span>';
+  const parts = [];
+  if (today > 0 && mtd - today >= 0.005) parts.push(amt(today, 'today'));
+  parts.push(amt(mtd, 'mtd'));
+  return '<span class="uw ucost" data-goto-tab="costs">'
+    + '<span class="ulabel">api</span>' + parts.join(' ') + '</span>';
 }
 
 // renderUsage paints the top-bar readout from snapshot.usage:
@@ -553,10 +567,13 @@ function renderUsage(u) {
     if (u.seven_day) wins.push(usageWindowHTML('7d', u.seven_day));
     if (wins.length) titles.push('Subscription usage limits — 5-hour and 7-day rolling windows');
   }
-  const cost = Number((u && u.total_cost_usd) || 0);
-  if (cost > 0) {
-    wins.push(costTokenHTML(cost));
-    titles.push(`API cost month-to-date: $${cost.toFixed(4)}, summed across agent sessions recorded in tclaude's DB`);
+  const mtd = Number((u && u.total_cost_usd) || 0);
+  const today = Number((u && u.today_cost_usd) || 0);
+  if (mtd > 0) {
+    wins.push(costTokenHTML(today, mtd));
+    let t = `API cost month-to-date: $${mtd.toFixed(4)}, summed across agent sessions recorded in tclaude's DB`;
+    if (today > 0) t += ` · today: $${today.toFixed(4)}`;
+    titles.push(t + ' · click to open the Costs tab');
   }
   if (wins.length) {
     el.classList.remove('na');
