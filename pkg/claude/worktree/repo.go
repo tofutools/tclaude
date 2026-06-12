@@ -159,12 +159,29 @@ func branchExistsIn(dir, branch string) bool {
 	return err == nil
 }
 
+// HasCommitsIn reports whether the repo containing dir has at least one
+// commit. A freshly `git init`-ed repo has an unborn HEAD — a current
+// branch ref (e.g. main) that points at no commit yet. Such a repo has
+// no commit to base a worktree on, so callers branch on this to create
+// an orphan-branch worktree instead of `git worktree add … <base>`.
+func HasCommitsIn(dir string) bool {
+	_, err := gitIn(dir, "rev-parse", "--verify", "--quiet", "HEAD")
+	return err == nil
+}
+
 // AddWorktreeIn creates a git worktree for branch in the repo
 // containing repoPath, and returns the absolute path of the new
 // worktree. If branch already exists it is checked out; otherwise a
 // new branch is created from fromBranch (defaults to the repo's
 // default branch). path, when non-empty, overrides the default
 // `../<repo>-<branch>` location.
+//
+// A repo with no commits yet (a freshly `git init`-ed repo with an
+// unborn HEAD) has nothing to base a worktree on, so `git worktree add
+// … <base>` fails. There the new worktree is cut as an orphan branch
+// instead — fromBranch is irrelevant and ignored — so spawning into a
+// brand-new repo still lands the agent in its own worktree. (Needs git
+// ≥ 2.42 for `worktree add --orphan`.)
 //
 // This is the non-printing, repo-anchored core of RunAdd — RunAdd
 // stays as the chatty CLI front door; the agentd worktree endpoint
@@ -180,9 +197,12 @@ func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 	}
 
 	branchExists := branchExistsIn(repoRoot, branch)
+	// No commits ⇒ unborn HEAD ⇒ no branch can resolve, so branchExists
+	// is necessarily false here; we cut an orphan branch below.
+	hasCommits := HasCommitsIn(repoRoot)
 
 	baseBranch := strings.TrimSpace(fromBranch)
-	if !branchExists {
+	if !branchExists && hasCommits {
 		if baseBranch == "" {
 			baseBranch, err = DefaultBranchIn(repoRoot)
 			if err != nil {
@@ -211,12 +231,21 @@ func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 	}
 
 	var args []string
-	if branchExists {
+	switch {
+	case branchExists:
 		args = []string{"worktree", "add", worktreePath, branch}
-	} else {
+	case !hasCommits:
+		// Empty repo: no commit to base on. Cut an orphan branch so the
+		// agent still gets its own worktree to bootstrap the repo in.
+		args = []string{"worktree", "add", "--orphan", "-b", branch, worktreePath}
+	default:
 		args = []string{"worktree", "add", "-b", branch, worktreePath, baseBranch}
 	}
 	if _, err := gitIn(repoRoot, args...); err != nil {
+		if !hasCommits {
+			return "", fmt.Errorf("failed to create worktree in a repo with no commits "+
+				"(needs git ≥ 2.42 for orphan worktrees, or make an initial commit first): %w", err)
+		}
 		return "", fmt.Errorf("failed to create worktree: %w", err)
 	}
 	return worktreePath, nil

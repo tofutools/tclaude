@@ -166,10 +166,16 @@ function bindLinkModal() {
 
 const WT_NEW = '__new__';
 
-// wtToggleNew shows/hides the new-branch + base-branch rows.
+// wtToggleNew shows/hides the new-branch + base-branch rows. In a repo
+// with no commits yet (dataset.hasCommits === '0') the base-branch
+// dropdown is meaningless — "+ create" cuts an orphan branch — so it's
+// swapped for an explanatory hint.
 function wtToggleNew(prefix, show) {
+  const empty = $(`#${prefix}-worktree`).dataset.hasCommits === '0';
   $(`#${prefix}-wt-new-row`).style.display = show ? '' : 'none';
-  $(`#${prefix}-wt-base-row`).style.display = show ? '' : 'none';
+  $(`#${prefix}-wt-base-row`).style.display = (show && !empty) ? '' : 'none';
+  const hint = document.getElementById(`${prefix}-wt-orphan-hint`);
+  if (hint) hint.style.display = (show && empty) ? '' : 'none';
 }
 
 // wtRefresh repopulates the worktree <select> for `repo`. A missing
@@ -181,6 +187,7 @@ async function wtRefresh(prefix, repo, noneLabel) {
   wtToggleNew(prefix, false);
   repo = (repo || '').trim();
   select.dataset.repoRoot = '';
+  select.dataset.hasCommits = '1'; // assume commits until told otherwise
   if (!repo) {
     select.innerHTML = '<option value="">(enter a CWD to enable worktrees)</option>';
     select.disabled = true;
@@ -209,6 +216,9 @@ async function wtRefresh(prefix, repo, noneLabel) {
     return;
   }
   select.dataset.repoRoot = data.repo_root || '';
+  // A freshly-init'd repo (unborn HEAD) has no commit to base on — the
+  // picker hides the base dropdown and "+ create" cuts an orphan branch.
+  select.dataset.hasCommits = data.has_commits === false ? '0' : '1';
   const opts = [`<option value="">${esc(noneLabel || '(no worktree)')}</option>`];
   (data.worktrees || []).forEach(wt => {
     const br = wt.branch || '(detached)';
