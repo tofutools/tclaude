@@ -29,15 +29,22 @@ func IsEnabled() bool {
 }
 
 // OnStateTransition is called when a session changes state.
-// It checks cooldown via the database and sends a notification if appropriate.
-// convTitle is optional - pass empty string if not available.
-func OnStateTransition(sessionID, from, to, cwd, convTitle string) {
+// It checks the global toggle, the per-agent/per-group filters
+// (AllowedForConv) and the cooldown via the database, and sends a
+// notification if appropriate. convID identifies the agent for the
+// filter lookup; convTitle is optional - pass empty string if not
+// available.
+func OnStateTransition(sessionID, convID, from, to, cwd, convTitle string) {
 	cfg, err := config.Load()
 	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled {
 		return
 	}
 
 	if !cfg.Notifications.MatchesTransition(from, to) {
+		return
+	}
+
+	if !AllowedForConv(convID) {
 		return
 	}
 
@@ -53,6 +60,48 @@ func OnStateTransition(sessionID, from, to, cwd, convTitle string) {
 
 	// Record notification time
 	_ = db.SetNotifyTime(sessionID)
+}
+
+// AllowedForConv evaluates the per-agent / per-group notification
+// filters for an agent (conv-id). The decision ladder:
+//
+//  1. A per-agent pref (agent_notify_prefs) wins outright: 'off'
+//     silences the agent, 'on' forces notifications even when a
+//     containing group is muted.
+//  2. Otherwise the agent inherits from its groups: if ANY active
+//     (non-archived) group containing it has notify_enabled = false,
+//     the agent is silenced — muting a group reliably silences its
+//     members.
+//  3. No pref, no muted group (including "not an agent at all") →
+//     allowed.
+//
+// The global config.notifications.enabled master switch sits ABOVE
+// this and is checked by the caller (OnStateTransition) — a per-agent
+// 'on' does not override a globally-off config. Fails open: a DB error
+// or an empty convID never suppresses a notification, so filtering
+// degrades to the historical notify-everything behaviour.
+func AllowedForConv(convID string) bool {
+	if convID == "" {
+		return true
+	}
+	if mode, err := db.GetConvNotifyPref(convID); err == nil {
+		switch mode {
+		case db.NotifyPrefOff:
+			return false
+		case db.NotifyPrefOn:
+			return true
+		}
+	}
+	groups, err := db.ListGroupsForConv(convID)
+	if err != nil {
+		return true
+	}
+	for _, g := range groups {
+		if !g.IsArchived() && !g.NotifyEnabled {
+			return false
+		}
+	}
+	return true
 }
 
 // formatStatus returns a human-readable status string.

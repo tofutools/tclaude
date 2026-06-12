@@ -59,6 +59,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/permissions", handleDashboardPermissionsAPI)
 	mux.HandleFunc("/api/config", handleDashboardConfigAPI)
+	mux.HandleFunc("/api/notifications", handleDashboardNotificationsAPI)
 	mux.HandleFunc("/api/claude-settings/default-model", handleDashboardClaudeDefaultModel)
 	mux.HandleFunc("/api/slop/volumes", handleDashboardSlopVolumesAPI)
 	mux.HandleFunc("/api/cleanup/", handleDashboardCleanup)
@@ -314,6 +315,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		case "promote", "retire", "reinstate":
 			dashboardEnrollmentVerb(w, r, convSelector, parts[1])
+			return
+		case "notify":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardSetAgentNotify(w, r, convSelector)
 			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
@@ -997,6 +1005,77 @@ func dashboardResumeAgent(w http.ResponseWriter, convSelector string) {
 	out := resumeOneConv(res.ConvID)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// dashboardSetAgentNotify sets (or clears) the per-agent OS-notification
+// override: POST /api/agents/{conv}/notify, body {mode}, where mode is
+// "on" (notify even when a containing group is muted), "off" (always
+// silent) or "inherit" (drop the override — follow group/global).
+func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := db.SetConvNotifyPref(res.ConvID, strings.TrimSpace(body.Mode)); err != nil {
+		http.Error(w, "set notify pref: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	mode, err := db.GetConvNotifyPref(res.ConvID)
+	if err != nil {
+		http.Error(w, "read back notify pref: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if mode == "" {
+		mode = db.NotifyPrefInherit
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "mode": mode})
+}
+
+// handleDashboardNotificationsAPI is the master OS-notification switch:
+// GET returns {enabled}, POST {enabled} flips config.notifications.enabled
+// in ~/.tclaude/config.json — the same key the Config tab edits, exposed
+// as a one-click bell in the top bar. Sits above the per-group and
+// per-agent filters: off means nothing notifies, anywhere.
+func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": cfg.Notifications != nil && cfg.Notifications.Enabled})
+	case http.MethodPost:
+		var body struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Enabled == nil {
+			http.Error(w, "expected body {enabled: bool}", http.StatusBadRequest)
+			return
+		}
+		if cfg.Notifications == nil {
+			cfg.Notifications = config.DefaultConfig().Notifications
+		}
+		cfg.Notifications.Enabled = *body.Enabled
+		if err := config.Save(cfg); err != nil {
+			http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": *body.Enabled})
+	default:
+		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+	}
 }
 
 // dashboardAddMember is the cookie-auth twin of POST

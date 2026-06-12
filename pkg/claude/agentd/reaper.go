@@ -62,7 +62,7 @@ func newSessionReaper() *sessionReaper {
 // so a clean exit already announced by the SessionEnd hook is not
 // double-notified when the reaper's next sweep observes the same exit.
 func defaultReaperNotify(st *session.SessionState, prevStatus string) {
-	notify.OnStateTransition(st.ID, prevStatus, session.StatusExited, st.Cwd, agent.FreshTitle(st.ConvID))
+	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusExited, st.Cwd, agent.FreshTitle(st.ConvID))
 }
 
 // startSessionReaper runs the reaper in its own goroutine, ticking

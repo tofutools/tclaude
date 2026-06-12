@@ -56,6 +56,7 @@ func groupsCmd() *cobra.Command {
 			groupsSetDefaultModelCmd(),
 			groupsSetContextCmd(),
 			groupsSetMaxMembersCmd(),
+			groupsSetNotificationsCmd(),
 			groupsCloneCmd(),
 			groupsLinkCmd(),
 			groupsLinksAllCmd(),
@@ -98,6 +99,7 @@ type groupSummary struct {
 	MaxMembers   int    `json:"max_members,omitempty"`   // hard member cap; 0 = unlimited
 	DefaultModel string `json:"default_model,omitempty"` // model for spawns that leave model blank; "" = claude's own default
 	Archived     bool   `json:"archived,omitempty"`
+	NotifyMuted  bool   `json:"notify_muted,omitempty"` // OS notifications switched off for this group's agents
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
@@ -153,6 +155,9 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 			// Visually mark archived rows so the listing distinguishes
 			// them from live groups when --archived is on.
 			name += " (archived)"
+		}
+		if g.NotifyMuted {
+			name += " 🔕"
 		}
 		// Show the member count against the cap (e.g. "3/10") when the
 		// group has one; a bare count when it's unlimited.
@@ -1504,6 +1509,79 @@ func runGroupsSetMaxMembers(p *groupsSetMaxMembersParams, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "%s: member cap cleared (unlimited)\n", resp.Group)
 	} else {
 		fmt.Fprintf(stdout, "%s: member cap set to %d\n", resp.Group, resp.MaxMembers)
+	}
+	return rcOK
+}
+
+type groupsSetNotificationsParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Mode     string `pos:"true" help:"on = OS notifications for member agents (the default); off = mute the whole group (a per-agent 'on' override still notifies)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetNotificationsCmd() *cobra.Command {
+	return boa.CmdT[groupsSetNotificationsParams]{
+		Use:   "set-notifications",
+		Short: "Mute or unmute OS notifications for a group's agents",
+		Long: "Flip the group's OS-notification switch. `off` mutes " +
+			"state-transition desktop notifications for every member agent; " +
+			"`on` restores the default. A per-agent override (set from the " +
+			"dashboard) still wins either way, and the global " +
+			"notifications.enabled config toggle sits above both. Gated on " +
+			"the `groups.rename` permission (default human-only).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetNotificationsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Mode).SetAlternatives([]string{"on", "off"})
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetNotificationsParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetNotifications(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetNotifications(p *groupsSetNotificationsParams, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	var enabled bool
+	switch strings.ToLower(strings.TrimSpace(p.Mode)) {
+	case "on":
+		enabled = true
+	case "off":
+		enabled = false
+	default:
+		fmt.Fprintf(stderr, "Error: invalid mode %q: expected on or off\n", p.Mode)
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group         string `json:"group"`
+		NotifyEnabled bool   `json:"notify_enabled"`
+	}
+	body := map[string]any{"notify_enabled": enabled}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.NotifyEnabled {
+		fmt.Fprintf(stdout, "%s: OS notifications on\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s: OS notifications muted\n", resp.Group)
 	}
 	return rcOK
 }

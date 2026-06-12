@@ -246,6 +246,49 @@ function bindRowActions() {
           if (!ok) toast(`Grant owner failed: ${await r.text()}`, true);
           break;
         }
+        case 'toggle-group-notify': {
+          // The group-header bell: flip agent_groups.notify_enabled.
+          // Non-destructive and instantly reversible — no confirm.
+          const cur = btn.getAttribute('data-enabled') === '1';
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+            method: 'PATCH', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notify_enabled: !cur }),
+          });
+          if (!r.ok) { toast(`Notification toggle failed: ${await r.text()}`, true); return; }
+          toast(cur ? `${group}: notifications muted 🔕` : `${group}: notifications on 🔔`);
+          refresh();
+          return;
+        }
+        case 'toggle-agent-notify': {
+          // The member-row bell: cycle the per-agent override
+          // inherit → off → on → inherit (mirrors the offline-view
+          // cycle pattern, but persisted daemon-side).
+          const cur = btn.getAttribute('data-mode') || 'inherit';
+          const next = cur === 'inherit' ? 'off' : cur === 'off' ? 'on' : 'inherit';
+          const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/notify`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: next }),
+          });
+          if (!r.ok) { toast(`Notification toggle failed: ${await r.text()}`, true); return; }
+          toast(`${label}: notifications ${next === 'inherit' ? 'inherit from group' : next}`);
+          refresh();
+          return;
+        }
+        case 'toggle-global-notify': {
+          // The top-bar master bell: flip config.notifications.enabled.
+          const cur = btn.getAttribute('data-enabled') === '1';
+          const r = await fetch('/api/notifications', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: !cur }),
+          });
+          if (!r.ok) { toast(`Notification toggle failed: ${await r.text()}`, true); return; }
+          toast(cur ? 'OS notifications OFF (everything muted)' : 'OS notifications ON');
+          refresh();
+          return;
+        }
         case 'jump': {
           // Non-destructive; no confirm modal, just fire-and-toast.
           const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {

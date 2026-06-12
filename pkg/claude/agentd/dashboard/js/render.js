@@ -27,6 +27,25 @@ import { sudoByConv } from './refresh.js';
 //     toggle / remove-from-group).
 //   - {ungrouped: true}    — a row in the virtual Ungrouped group:
 //     tagged as an ungrouped drag source; agent-level actions only.
+// memberNotifyBell renders the per-agent notification bell. Three
+// states cycle on click (inherit → off → on → inherit):
+//   - inherit: dimmed bell, glyph follows the EFFECTIVE state (🔕 when
+//     a containing group is muted, 🔔 otherwise);
+//   - off: solid 🔕 — the agent is muted no matter what;
+//   - on: solid 🔔 — notifies even when its group is muted.
+// The global master switch (top-bar bell) sits above all of this.
+function memberNotifyBell(m) {
+  const label = m.title || m.conv_id;
+  const mode = m.notify || 'inherit';
+  const effective = !!m.notify_effective;
+  const glyph = (mode === 'off' || (mode === 'inherit' && !effective)) ? '🔕' : '🔔';
+  let tip;
+  if (mode === 'off') tip = `notifications muted for ${label} — click to force ON (overrides a group mute)`;
+  else if (mode === 'on') tip = `notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`;
+  else tip = `notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`;
+  return `<button class="notify-bell${mode === 'inherit' ? ' inherit' : ''}" data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${glyph}</button>`;
+}
+
 function memberRowHTML(m, ctx) {
   const state = m.state || {};
   const subagents = state.subagent_count || 0;
@@ -38,7 +57,7 @@ function memberRowHTML(m, ctx) {
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}</td>
+                <td><div class="agent-ctl">${agentStatusDot(m)}${memberNotifyBell(m)}${actions}</div>${harnessLine(m)}</td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
                 <td class="name-cell">
                   <div class="rowname"><span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${esc(m.title || '(unnamed)')}</span>${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
@@ -286,6 +305,7 @@ function renderGroups(groups) {
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
         <span class="group-default-model${g.default_model ? '' : ' unset'}" data-act="set-group-model" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-model="${esc(g.default_model || '')}" title="${g.default_model ? 'Default model for agents spawned into this group: ' + esc(g.default_model) + ' — click to edit' : 'No group default model — spawns inherit ' + esc(userDefaultModelLabel()) + '. Click to set one.'}">🧠 ${g.default_model ? esc(g.default_model) : 'no default model'}</span>
+        <span class="group-notify${g.notify_enabled ? '' : ' muted'}" data-act="toggle-group-notify" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-enabled="${g.notify_enabled ? '1' : '0'}" title="${g.notify_enabled ? 'OS notifications on for this group’s agents — click to mute the whole group (a per-agent 🔔 override still notifies)' : 'OS notifications MUTED for this group’s agents — click to unmute (members with a per-agent 🔔 override notify anyway)'}">${g.notify_enabled ? '🔔' : '🔕 muted'}</span>
       </summary>
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
@@ -635,6 +655,23 @@ function renderUsage(u) {
   }
 }
 
+// renderNotifyGlobal paints the top-bar master notification bell from
+// snapshot.notifications_enabled (config.notifications.enabled). The
+// button stays hidden until the first snapshot so it never flashes a
+// wrong state; data-enabled carries the current value for the
+// toggle-global-notify click handler.
+function renderNotifyGlobal(enabled) {
+  const el = $('#notify-global');
+  if (!el) return;
+  el.hidden = false;
+  el.classList.toggle('muted', !enabled);
+  el.setAttribute('data-enabled', enabled ? '1' : '0');
+  el.textContent = enabled ? '🔔' : '🔕';
+  el.title = enabled
+    ? 'OS notifications on (config.notifications.enabled) — click to turn ALL tclaude notifications off'
+    : 'OS notifications OFF (config.notifications.enabled) — nothing notifies, regardless of group/agent bells. Click to turn on.';
+}
+
 // userDefaultModelLabel describes what a spawn with no model anywhere
 // (no explicit pick, no group default) actually runs on: the
 // user-level settings.json model when set, else claude's own built-in
@@ -666,4 +703,5 @@ export {
   renderGroups, renderPermissions, renderSlugs, showStatus,
   renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
   toggleMessageCollapse,
+  renderNotifyGlobal,
 };

@@ -1,0 +1,180 @@
+package agentd_test
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+// enableNotificationsForTest writes a tclaude config (into the flow
+// world's temp HOME) with OS notifications enabled and the delivery
+// routed to a harmless cross-platform command, so OnStateTransition
+// runs the full production path without popping real desktop
+// notifications on the machine running the tests.
+func enableNotificationsForTest(t *testing.T) {
+	t.Helper()
+	cfg, err := config.Load()
+	require.NoError(t, err, "load default config")
+	cfg.Notifications.Enabled = true
+	cfg.Notifications.NotificationCommand = []string{"go", "version"}
+	require.NoError(t, config.Save(cfg), "save test config")
+}
+
+// notified reports whether a full OnStateTransition pass for the given
+// session actually fired: the send path's last step records the
+// cooldown stamp via db.SetNotifyTime, so its presence is the
+// observable "a notification went out" marker — and its absence the
+// "filtered out" one. Each assertion uses a fresh session ID so the
+// 5s cooldown never bleeds between steps.
+func notified(t *testing.T, sessionID, convID string) bool {
+	t.Helper()
+	notify.OnStateTransition(sessionID, convID, "working", "idle", "/tmp/x", "worker")
+	_, found, err := db.GetNotifyTime(sessionID)
+	require.NoError(t, err, "GetNotifyTime(%s)", sessionID)
+	return found
+}
+
+// Scenario: the notification-filter ladder end to end — the dashboard
+// bells' write endpoints, the snapshot fields they re-render from, and
+// the actual notify.OnStateTransition suppression each state implies:
+//
+//   - baseline: enabled config, unmuted group → member notifies;
+//   - PATCH /api/groups/{name} {notify_enabled:false} → member muted;
+//   - POST /api/agents/{conv}/notify {mode:"on"} → overrides the mute;
+//   - {mode:"off"} → silent even in an unmuted group;
+//   - {mode:"inherit"} → back to following the group;
+//   - POST /api/notifications {enabled:false} → everything silent,
+//     including agents with a forced-on pref.
+func TestNotificationFilters_GroupAndAgentBells(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	enableNotificationsForTest(t)
+
+	const conv = "noti-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveAliveSession(conv, "spwn-noti", "tmux-noti", "/tmp/x")
+	f.HaveEnrolledAgent(conv)
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", conv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Baseline: everything on → the member notifies and the snapshot
+	// says so.
+	pre := fetchDashSnapshot(t, mux)
+	require.True(t, pre.NotificationsEnabled, "config enabled → snapshot.notifications_enabled")
+	require.Len(t, pre.Groups, 1)
+	assert.True(t, pre.Groups[0].NotifyEnabled, "fresh group notifies")
+	require.Len(t, pre.Groups[0].Members, 1)
+	assert.True(t, pre.Groups[0].Members[0].NotifyEffective, "member effective on")
+	assert.Empty(t, pre.Groups[0].Members[0].Notify, "no per-agent override yet")
+	assert.True(t, notified(t, "sess-base", conv), "baseline notification fires")
+
+	// Mute the group via the header bell's PATCH.
+	r := testharness.JSONRequest(t, http.MethodPatch, "/api/groups/alpha",
+		map[string]any{"notify_enabled": false})
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "PATCH notify_enabled body=%s", rec.Body.String())
+
+	muted := fetchDashSnapshot(t, mux)
+	assert.False(t, muted.Groups[0].NotifyEnabled, "group muted in snapshot")
+	assert.False(t, muted.Groups[0].Members[0].NotifyEffective, "member effective off via group")
+	assert.False(t, notified(t, "sess-gmute", conv), "group mute suppresses")
+
+	// Force the agent ON via the member bell — overrides the mute.
+	r = testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/notify",
+		map[string]any{"mode": "on"})
+	rec = testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "POST notify on body=%s", rec.Body.String())
+
+	forced := fetchDashSnapshot(t, mux)
+	assert.Equal(t, "on", forced.Groups[0].Members[0].Notify, "pref surfaces on the member row")
+	assert.True(t, forced.Groups[0].Members[0].NotifyEffective, "forced-on beats the group mute")
+	agentRow := findAgent(forced.Agents, conv)
+	require.NotNil(t, agentRow, "agent row present")
+	assert.Equal(t, "on", agentRow.Notify, "pref surfaces on the agents view too")
+	assert.True(t, notified(t, "sess-forceon", conv), "forced-on notifies despite group mute")
+
+	// Per-agent OFF: silent even after the group is unmuted again.
+	r = testharness.JSONRequest(t, http.MethodPatch, "/api/groups/alpha",
+		map[string]any{"notify_enabled": true})
+	require.Equal(t, http.StatusOK, testharness.Serve(mux, r).Code)
+	r = testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/notify",
+		map[string]any{"mode": "off"})
+	require.Equal(t, http.StatusOK, testharness.Serve(mux, r).Code)
+
+	agentOff := fetchDashSnapshot(t, mux)
+	assert.True(t, agentOff.Groups[0].NotifyEnabled, "group unmuted again")
+	assert.Equal(t, "off", agentOff.Groups[0].Members[0].Notify)
+	assert.False(t, agentOff.Groups[0].Members[0].NotifyEffective, "agent off wins over an unmuted group")
+	assert.False(t, notified(t, "sess-aoff", conv), "per-agent off suppresses")
+
+	// Inherit clears the override.
+	r = testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/notify",
+		map[string]any{"mode": "inherit"})
+	require.Equal(t, http.StatusOK, testharness.Serve(mux, r).Code)
+	inherit := fetchDashSnapshot(t, mux)
+	assert.Empty(t, inherit.Groups[0].Members[0].Notify, "override dropped")
+	assert.True(t, inherit.Groups[0].Members[0].NotifyEffective, "back to inheriting the unmuted group")
+	assert.True(t, notified(t, "sess-inherit", conv), "inherit + unmuted group notifies")
+
+	// The master switch: off silences everything — even a forced-on
+	// agent (the global toggle sits ABOVE the per-agent prefs).
+	r = testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/notify",
+		map[string]any{"mode": "on"})
+	require.Equal(t, http.StatusOK, testharness.Serve(mux, r).Code)
+	r = testharness.JSONRequest(t, http.MethodPost, "/api/notifications",
+		map[string]any{"enabled": false})
+	rec = testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "POST /api/notifications body=%s", rec.Body.String())
+
+	globalOff := fetchDashSnapshot(t, mux)
+	assert.False(t, globalOff.NotificationsEnabled, "snapshot reflects the master off")
+	assert.False(t, notified(t, "sess-globaloff", conv), "master off silences a forced-on agent")
+
+	// And back on via the same endpoint (the GET answers the bell's
+	// current state).
+	r = testharness.JSONRequest(t, http.MethodPost, "/api/notifications",
+		map[string]any{"enabled": true})
+	require.Equal(t, http.StatusOK, testharness.Serve(mux, r).Code)
+	r = testharness.JSONRequest(t, http.MethodGet, "/api/notifications", nil)
+	rec = testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"enabled":true`)
+	assert.True(t, notified(t, "sess-globalon", conv), "master back on notifies again")
+}
+
+// Scenario: the CLI verb's transport — PATCH /v1/groups/{name} with
+// {notify_enabled} (what `tclaude agent groups set-notifications`
+// sends) flips the switch for a human-authenticated caller, and the
+// muted state surfaces in GET /v1/groups as notify_muted (what
+// `groups ls` renders as 🔕).
+func TestNotificationFilters_V1GroupPatch(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("beta")
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/groups/beta", map[string]any{"notify_enabled": false}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "PATCH /v1/groups/beta body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"notify_enabled":false`)
+
+	g, err := db.GetAgentGroupByName("beta")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.False(t, g.NotifyEnabled, "mute persisted via /v1")
+
+	r = agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/groups", nil))
+	rec = testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"notify_muted":true`, "groups ls surfaces the mute")
+}

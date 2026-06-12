@@ -17,6 +17,7 @@ type AgentGroup struct {
 	DefaultContext string // shared startup context delivered to the inbox of agents spawned into this group; "" = none
 	DefaultModel   string // model substituted into spawns that leave model blank; "" = none (claude's own default)
 	MaxMembers     int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
+	NotifyEnabled  bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
 	CreatedAt      time.Time
 	ArchivedAt     time.Time // zero = active; non-zero = archived (soft-deleted)
 }
@@ -413,6 +414,23 @@ func SetAgentGroupMaxMembers(name string, max int) (int64, error) {
 	return res.RowsAffected()
 }
 
+// SetAgentGroupNotifyEnabled flips the group's OS-notification switch.
+// false mutes state-transition notifications for every member agent
+// (a per-agent 'on' pref in agent_notify_prefs still overrides the
+// mute). Returns the number of rows affected — 0 means no group by
+// that name, so the caller can answer 404.
+func SetAgentGroupNotifyEnabled(name string, enabled bool) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET notify_enabled = ? WHERE name = ?`, enabled, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeleteAgentGroup removes a group by name. Cascades to membership +
 // ownership rows (ON DELETE CASCADE in schema) and, within the same
 // transaction, rewrites the group's messages to group_id = 0 so the
@@ -456,7 +474,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -471,7 +489,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -485,7 +503,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, created_at, archived_at FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, notify_enabled, created_at, archived_at FROM agent_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +552,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRow(
-		`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, created_at, archived_at FROM agent_groups WHERE name = ?`,
+		`SELECT id, name, descr, default_cwd, default_context, default_model, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`,
 		oldName)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -747,6 +765,7 @@ type AgentDeletionCounts struct {
 	ConvIndex      int64 `json:"conv_index"`
 	Sessions       int64 `json:"sessions"`
 	Enrollment     int64 `json:"enrollment"`
+	NotifyPrefs    int64 `json:"notify_prefs"`
 }
 
 // DeleteAgentByConvID purges every row that references convID across
@@ -767,6 +786,7 @@ type AgentDeletionCounts struct {
 //   - conv_index
 //   - sessions
 //   - agent_enrollment
+//   - agent_notify_prefs
 //
 // Filesystem state (the .jsonl in ~/.claude/projects/... and the
 // ~/.claude/session-env/<convID> file) is the caller's
@@ -808,6 +828,7 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
 		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
 		{`DELETE FROM agent_enrollment WHERE conv_id = ?`, &c.Enrollment},
+		{`DELETE FROM agent_notify_prefs WHERE conv_id = ?`, &c.NotifyPrefs},
 	}
 	for _, s := range steps {
 		res, err := tx.Exec(s.stmt, convID)
@@ -873,7 +894,7 @@ func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_model, g.max_members, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_model, g.max_members, g.notify_enabled, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.conv_id = ?
@@ -930,7 +951,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_model, g.max_members, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_model, g.max_members, g.notify_enabled, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.conv_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.conv_id = ?
@@ -1524,7 +1545,7 @@ type rowScanner interface {
 func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultModel, &g.MaxMembers, &createdAt, &archivedAt); err != nil {
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultModel, &g.MaxMembers, &g.NotifyEnabled, &createdAt, &archivedAt); err != nil {
 		return nil, err
 	}
 	g.CreatedAt = parseTimeOrZero(createdAt)

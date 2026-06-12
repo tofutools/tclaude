@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 53
+const currentVersion = 54
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -341,6 +341,42 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 54 {
+		if err := migrateV53toV54(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV53toV54 adds the notification-filter knobs:
+//
+//   - agent_groups.notify_enabled — per-group OS-notification switch
+//     (1 = notify, the historical behaviour). Muting a group silences
+//     state-transition notifications for every member agent.
+//   - agent_notify_prefs — per-agent tri-state override keyed by
+//     conv-id: 'off' silences the agent, 'on' forces notifications
+//     even when a containing group is muted, no row = inherit from
+//     the group/global level.
+//
+// Both default to "everything notifies" so existing setups see no
+// behaviour change.
+func migrateV53toV54(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE agent_groups ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 1;
+
+		CREATE TABLE IF NOT EXISTS agent_notify_prefs (
+			conv_id    TEXT PRIMARY KEY,
+			mode       TEXT NOT NULL CHECK (mode IN ('on', 'off')),
+			updated_at TEXT NOT NULL
+		);
+
+		UPDATE schema_version SET version = 54;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v53→v54 (notification filters): %w", err)
+	}
 	return nil
 }
 
@@ -381,7 +417,7 @@ func migrateV52toV53(db *sql.DB) error {
 // leaves model blank, so a group can run its whole team on e.g.
 // "sonnet" without every spawn surface having to say so. Sibling to
 // default_cwd (v27) / default_context (v29): an optional per-group
-// spawn default, '' = unset (spawns then omit --model and claude
+// spawn default, ” = unset (spawns then omit --model and claude
 // falls back to the user-level settings.json model, then its own
 // default).
 func migrateV51toV52(db *sql.DB) error {
@@ -488,7 +524,7 @@ func migrateV49toV50(db *sql.DB) error {
 // model, so a plain column keeps it type-safe and consistent with how
 // the model is already stored and surfaced.
 //
-// Defaults to '' — rows from before this migration, sessions whose
+// Defaults to ” — rows from before this migration, sessions whose
 // statusbar hasn't ticked yet, and models without reasoning-effort
 // support all read back empty, which both surfaces render as "no effort
 // token" (the statusbar omits it; the dashboard line shows just the
@@ -523,7 +559,7 @@ func migrateV47toV48(db *sql.DB) error {
 // SessionStart announced it; anything else is a foreign process's
 // event and is ignored.
 //
-// Defaults to '' — no announced transition. Overwritten by each new
+// Defaults to ” — no announced transition. Overwritten by each new
 // announcement; never read once the row's conv_id has advanced past it
 // (conv-ids are UUIDs, so a stale value can't collide with a future
 // foreign conv).
@@ -550,7 +586,7 @@ func migrateV48toV49(db *sql.DB) error {
 // every render, including before a turn's first API response), not
 // gated on the all-zero context guard.
 //
-// Defaults to '' — rows from before this migration, or sessions whose
+// Defaults to ” — rows from before this migration, or sessions whose
 // statusbar hasn't ticked yet, read back empty, which the dashboard
 // renders as "model not reported yet" (no harness line).
 func migrateV46toV47(db *sql.DB) error {
@@ -949,7 +985,7 @@ func migrateV37toV38(db *sql.DB) error {
 // .jsonl scan, so a pending name written here is stable — it survives
 // every snapshot refresh until the real /rename supersedes it.
 //
-// Existing rows backfill to '' (no pending name) — they are agents that
+// Existing rows backfill to ” (no pending name) — they are agents that
 // have long since been named, so the read path resolves their title
 // from conv_index as before.
 func migrateV36toV37(db *sql.DB) error {

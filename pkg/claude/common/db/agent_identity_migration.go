@@ -14,6 +14,7 @@ type AgentIdentityMigration struct {
 	Ownerships   int64  // agent_group_owners rows rekeyed
 	Permissions  int64  // agent_permissions rows rekeyed
 	CronJobs     int64  // agent_cron_jobs rows whose owner/target ref moved
+	NotifyPrefs  int64  // agent_notify_prefs rows rekeyed
 	CarriedName  string // the agent's display name, carried onto newConv
 	Items        []string
 }
@@ -30,6 +31,7 @@ func (m *AgentIdentityMigration) summarize() {
 	add("permissions", m.Permissions)
 	add("ownerships", m.Ownerships)
 	add("cron_jobs", m.CronJobs)
+	add("notify_prefs", m.NotifyPrefs)
 }
 
 // resolveCarriedName returns the agent's display name to carry across a
@@ -53,6 +55,7 @@ func resolveCarriedName(oldConv string) string {
 //   - agent_group_owners   — group ownerships
 //   - agent_permissions    — per-conv permission overrides (grant AND deny)
 //   - agent_cron_jobs      — owner/target conv refs
+//   - agent_notify_prefs   — per-agent notification override
 //
 // Within the same transaction it records the succession edge
 // (agent_conv_succession: old → new, so stale references resolve
@@ -170,6 +173,17 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 		return out, fmt.Errorf("MigrateAgentIdentity: rekey cron jobs: %w", err)
 	}
 	out.CronJobs, _ = cronRes.RowsAffected()
+
+	// notify pref: a human's "mute this agent" (or "keep it loud")
+	// choice follows the agent across the rotation, same as its
+	// permissions do.
+	npRes, err := tx.Exec(
+		`UPDATE OR REPLACE agent_notify_prefs SET conv_id = ? WHERE conv_id = ?`,
+		newConv, oldConv)
+	if err != nil {
+		return out, fmt.Errorf("MigrateAgentIdentity: rekey notify prefs: %w", err)
+	}
+	out.NotifyPrefs, _ = npRes.RowsAffected()
 
 	// --- succession edge old → new ---
 	// Mirrors db.RecordConvSuccession. Powers db.ResolveLatestConv, so a

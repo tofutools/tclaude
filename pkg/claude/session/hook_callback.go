@@ -834,7 +834,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	// Notify on state transition (handles cooldown internally)
 	if input.HookEventName != "SessionStart" {
-		notify.OnStateTransition(state.ID, prevStatus, state.Status, state.Cwd, convTitle)
+		notify.OnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle)
 	}
 
 	return nil

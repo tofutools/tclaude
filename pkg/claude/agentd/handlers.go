@@ -1872,6 +1872,10 @@ type groupSummary struct {
 	// model blank; "" = none (claude's own default resolution).
 	DefaultModel string `json:"default_model,omitempty"`
 	Archived     bool   `json:"archived,omitempty"`
+	// NotifyMuted flags a group whose OS notifications are switched
+	// off (agent_groups.notify_enabled = false). omitempty: only the
+	// exceptional muted state is serialized.
+	NotifyMuted bool `json:"notify_muted,omitempty"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -1954,6 +1958,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				MaxMembers:   g.MaxMembers,
 				DefaultModel: g.DefaultModel,
 				Archived:     g.IsArchived(),
+				NotifyMuted:  !g.NotifyEnabled,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -2253,14 +2258,18 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// MaxMembers is the group's hard member cap; 0 = unlimited. A
 		// negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
 		MaxMembers *int `json:"max_members,omitempty"`
+		// NotifyEnabled is the group's OS-notification switch; false
+		// mutes state-transition notifications for every member agent
+		// (a per-agent 'on' pref still overrides).
+		NotifyEnabled *bool `json:"notify_enabled,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultModel == nil && body.MaxMembers == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultModel == nil && body.MaxMembers == nil && body.NotifyEnabled == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_model and/or max_members)")
+			"nothing to update (expected descr, default_cwd, default_context, default_model, max_members and/or notify_enabled)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -2370,6 +2379,19 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			stored = 0
 		}
 		resp["max_members"] = stored
+	}
+
+	if body.NotifyEnabled != nil {
+		n, err := db.SetAgentGroupNotifyEnabled(g.Name, *body.NotifyEnabled)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["notify_enabled"] = *body.NotifyEnabled
 	}
 
 	writeJSON(w, http.StatusOK, resp)
