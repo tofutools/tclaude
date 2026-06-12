@@ -6,6 +6,7 @@
 
 import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
 import { renderGroupsTab, renderSudoTab } from './tabs.js';
+import { toggleMessageCollapse } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
@@ -1262,6 +1263,33 @@ function bindRowActions() {
           const res = await r.json().catch(() => ({}));
           toast(`cleared ${res.deleted || 0} read message(s)`);
           refresh();
+          return;
+        }
+        case 'msg-delete': {
+          // Per-message delete — read OR unread, the single-row
+          // complement to "clear read". Confirm before the hard delete.
+          const id = btn.getAttribute('data-id');
+          const confirmed = await confirmModal({
+            title: 'Delete this message?',
+            body: 'Permanently deletes this one message, read or unread. This cannot be undone.',
+            meta: `#${id}`,
+            okLabel: 'Delete',
+          });
+          if (!confirmed) return;
+          const r = await fetch('/api/human-messages/delete', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: parseInt(id, 10) }),
+          });
+          if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
+          toast('message deleted');
+          refresh();
+          return;
+        }
+        case 'msg-toggle': {
+          // Pure client-side view state — expand/collapse one card. No
+          // daemon round-trip; the override survives the 2s re-render.
+          toggleMessageCollapse(btn.getAttribute('data-id'));
           return;
         }
         case 'row-menu':

@@ -295,3 +295,41 @@ func handleDashboardHumanMessagesClear(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
+
+// handleDashboardHumanMessagesDelete serves POST /api/human-messages/delete
+// — hard-deletes one message by id ({"id": N}), read or unread. The
+// per-message delete control on the tab, distinct from the bulk
+// "clear read" sweep. Cookie-authed (dashboard-only).
+func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	// Tiny {"id":N} envelope — cap the body well below anything
+	// legitimate so a stray huge POST cannot be buffered.
+	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)
+	var body struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if body.ID <= 0 {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	deleted, err := db.DeleteHumanMessage(body.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	n := 0
+	if deleted {
+		n = 1
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}

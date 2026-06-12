@@ -231,6 +231,70 @@ func TestHumanMessages_DashboardClear(t *testing.T) {
 	assert.Equal(t, "still unread", msgs[0].Body)
 }
 
+// Scenario: the per-message delete endpoint removes one message by id,
+// read state irrelevant — it deletes an UNREAD message and leaves the
+// others (read and unread) untouched, distinct from the bulk clear.
+func TestHumanMessages_DashboardDeleteOne(t *testing.T) {
+	newFlow(t)
+	dash := dashHandlerForTest(t)
+
+	keepID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: "c", Body: "keep me"})
+	require.NoError(t, err)
+	dropID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: "c", Body: "delete me"})
+	require.NoError(t, err)
+	// The to-delete message is left UNREAD on purpose — proving the
+	// per-message delete ignores read state, unlike the /clear sweep
+	// (which only removes already-read rows).
+	before, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, before, 2)
+	for _, m := range before {
+		require.False(t, m.IsRead(), "both messages start unread")
+	}
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/human-messages/delete", map[string]any{"id": dropID}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Deleted int `json:"deleted"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	assert.Equal(t, 1, resp.Deleted, "exactly one row removed")
+
+	msgs, _ := db.ListHumanMessages()
+	require.Len(t, msgs, 1, "only the untouched message survives")
+	assert.Equal(t, keepID, msgs[0].ID)
+	assert.Equal(t, "keep me", msgs[0].Body)
+}
+
+// Scenario: deleting an id that doesn't exist is a clean no-op — 200
+// with deleted:0, not a 404 or 500. Mirrors the idempotent DB layer.
+func TestHumanMessages_DashboardDeleteMissing(t *testing.T) {
+	newFlow(t)
+	dash := dashHandlerForTest(t)
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/human-messages/delete", map[string]any{"id": 999999}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Deleted int `json:"deleted"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	assert.Equal(t, 0, resp.Deleted, "no row matched")
+}
+
+// Scenario: the delete endpoint rejects a missing/zero id with 400 —
+// the client must name a message, there is no "delete all" via this
+// route (that's /clear).
+func TestHumanMessages_DashboardDeleteRequiresID(t *testing.T) {
+	newFlow(t)
+	dash := dashHandlerForTest(t)
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/human-messages/delete", map[string]any{}))
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
 // Scenario: the server stores an agent-supplied subject/body VERBATIM —
 // it does NOT escape on the way in. This pins the XSS contract for the
 // Messages tab: the dashboard JS `esc()` helper is the SINGLE source of
