@@ -57,9 +57,8 @@ func notifiedTransition(t *testing.T, sessionID, convID, from, to string) bool {
 //     wildcard {from:"*", to:"idle"} rule matched the idle→idle re-stamp
 //     and the human got a duplicate "Idle" banner a minute after the
 //     real one (the cooldown, default 5s, was long expired);
-//   - the session reaper re-observing an exit already announced by the
-//     SessionEnd hook (exited→exited), where the sweep lands well past
-//     the cooldown window.
+//   - a late SessionEnd hook landing after the reaper already stamped
+//     the session exited (exited→exited), well past the cooldown window.
 func TestNotificationFilters_SelfTransitionNeverNotifies(t *testing.T) {
 	f := newFlow(t)
 	enableNotificationsForTest(t)
