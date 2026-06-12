@@ -49,16 +49,16 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // response `warning` field so the dashboard can show "started but not
 // online yet" instead of a generic success toast.
 //
+// effort and model are the launch flags for the clone's CC instance —
+// callers pass the source's inherited flags (inheritedLaunchFlags) so
+// the clone runs the same model as the original; "" omits the flag.
+//
 // Extracted from runCloneOrchestration so groups-clone can reuse the
 // same race handling without duplicating it.
-func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
 	if noCopyConv {
 		label = generateSpawnLabel()
-		// "" effort + model: a clone deliberately does not carry the
-		// source's --effort / --model (launch-time claude flags, not
-		// persisted — JOH-36 MVP is spawn-time pass-through). The clone
-		// starts on claude's defaults.
-		if err := SpawnDetachedTclaudeNew(label, cwd, "", ""); err != nil {
+		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
@@ -93,7 +93,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool) (newConv, newTmux, 
 		}
 	}
 	newConv = copyResult.NewConvID
-	if err := SpawnDetachedTclaudeResume(newConv, cwd); err != nil {
+	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
@@ -430,8 +430,11 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	// 2. Mint the clone's conv-id (and optionally its jsonl). The
 	// branching logic + race-handling lives in cloneSpawnOnce so the
 	// groups-clone orchestration can reuse the same code path without
-	// duplicating it.
-	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv)
+	// duplicating it. The clone is launched with the source's live
+	// model + effort (inheritedLaunchFlags; "" falls back to claude's
+	// default) — a fork should run what the original runs.
+	effort, model := inheritedLaunchFlags(oldSess.ID)
+	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model)
 	if spawnErr != nil {
 		spawnErr.write(w)
 		return

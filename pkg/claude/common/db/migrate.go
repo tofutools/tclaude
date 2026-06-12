@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 54
+const currentVersion = 55
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -347,6 +347,56 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 55 {
+		if err := migrateV54toV55(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV54toV55 adds sessions.model_id — the full Claude model ID
+// (e.g. "claude-fable-5") the session last reported running on, from
+// the statusline's model.id field. Sibling to sessions.model (v47),
+// which stores the human-facing display name ("Fable 5") that can't
+// be fed back to `claude --model`. The ID can: it's what lets a
+// reincarnated / cloned / resumed agent come back on the SAME model
+// its predecessor was running instead of claude's default
+// (inheritedLaunchFlags in agentd reads it). '' = not reported yet —
+// successor spawns then omit --model, the pre-v55 behaviour.
+//
+// Runs in one transaction AND guards the column add behind a
+// pragma_table_info probe (the migrateV53toV54 convention): SQLite has
+// no ADD COLUMN IF NOT EXISTS, and a half-applied run must converge on
+// re-run instead of wedging on "duplicate column name".
+func migrateV54toV55(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v54→v55 (add sessions.model_id): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveCol int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'model_id'`,
+	).Scan(&haveCol); err != nil {
+		return fmt.Errorf("migrate v54→v55 (add sessions.model_id): probe column: %w", err)
+	}
+	if haveCol == 0 {
+		if _, err := tx.Exec(
+			`ALTER TABLE sessions ADD COLUMN model_id TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("migrate v54→v55 (add sessions.model_id): add column: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 55`); err != nil {
+		return fmt.Errorf("migrate v54→v55 (add sessions.model_id): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v54→v55 (add sessions.model_id): commit: %w", err)
+	}
 	return nil
 }
 

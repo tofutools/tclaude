@@ -6,7 +6,7 @@ package agentd
 // a fake to Spawn at setup with t.Cleanup-restoration.
 type Spawner interface {
 	SpawnNew(label, cwd, effort, model string) error
-	SpawnResume(convID, cwd string) error
+	SpawnResume(convID, cwd, effort, model string) error
 }
 
 // Spawn is the package-wide Spawner every caller hits via the
@@ -24,4 +24,6 @@ type LiveSpawner struct{}
 func (LiveSpawner) SpawnNew(label, cwd, effort, model string) error {
 	return liveSpawnNew(label, cwd, effort, model)
 }
-func (LiveSpawner) SpawnResume(convID, cwd string) error { return liveSpawnResume(convID, cwd) }
+func (LiveSpawner) SpawnResume(convID, cwd, effort, model string) error {
+	return liveSpawnResume(convID, cwd, effort, model)
+}

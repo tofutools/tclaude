@@ -66,7 +66,9 @@ func TestMigrateV53toV54_HealsHalfAppliedRun(t *testing.T) {
 
 	// The half-applied state: column already there (with a non-default
 	// value to prove the re-run doesn't recreate/reset anything),
-	// version still 53, prefs table absent.
+	// version still 53, prefs table absent. The bare sessions table is
+	// not part of this scenario — it's only there so the final
+	// migrate() call can carry the DB past v55 (which ALTERs sessions).
 	_, err = d.Exec(`
 		CREATE TABLE schema_version (version INTEGER NOT NULL);
 		INSERT INTO schema_version (version) VALUES (53);
@@ -78,6 +80,7 @@ func TestMigrateV53toV54_HealsHalfAppliedRun(t *testing.T) {
 			notify_enabled INTEGER NOT NULL DEFAULT 1
 		);
 		INSERT INTO agent_groups (name, descr, created_at, notify_enabled) VALUES ('team', '', '2026-06-01T00:00:00Z', 0);
+		CREATE TABLE sessions (id TEXT PRIMARY KEY);
 	`)
 	require.NoError(t, err, "seed half-applied v53 schema")
 
@@ -94,16 +97,15 @@ func TestMigrateV53toV54_HealsHalfAppliedRun(t *testing.T) {
 	_, err = d.Exec(`INSERT INTO agent_notify_prefs (conv_id, mode, updated_at) VALUES ('c1', 'off', '2026-06-01T00:00:00Z')`)
 	assert.NoError(t, err, "the prefs table got created by the healing run")
 
-	// And a second run on the now-complete schema is a clean no-op
-	// path through migrate(): version matches, nothing executes.
+	// And a full migrate() on the healed DB proceeds cleanly from 54
+	// up to currentVersion instead of re-tripping on this migration.
 	require.NoError(t, migrate(d), "migrate() on the healed DB")
 }
 
 // TestMigrateV53toV54_FreshSchemaRoundTrips builds a fresh DB through
 // the full migrate() chain and round-trips the group switch and the
-// per-agent prefs through the production helpers. Carries the literal
-// currentVersion pin — a tripwire the next migration's author moves
-// forward into their own v55 test.
+// per-agent prefs through the production helpers. (The literal
+// currentVersion pin moved forward to the v55 test, per convention.)
 func TestMigrateV53toV54_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -112,7 +114,6 @@ func TestMigrateV53toV54_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 54, currentVersion, "currentVersion is 54")
 
 	// Group switch: on by default, flips off and back via the setter.
 	_, err = CreateAgentGroup("team", "")

@@ -499,6 +499,30 @@ func UpdateSessionModel(sessionID, model string) error {
 	return err
 }
 
+// UpdateSessionModelID stores the full Claude model ID
+// ("claude-fable-5", "claude-sonnet-4-6", …) the session is currently
+// running on — the statusline's model.id, the machine-facing sibling of
+// the display name UpdateSessionModel records. Unlike the display name
+// it round-trips into `claude --model`, which is what lets a
+// reincarnated / cloned / resumed agent come back on the same model as
+// its predecessor (see agentd's inheritedLaunchFlags).
+//
+// Same write discipline as UpdateSessionModel: written on every
+// statusline render (not gated on the all-zero context guard), and an
+// empty ID is a no-op so a stray render without one — e.g. an older
+// Claude Code that doesn't emit model.id — can never blank a good value.
+func UpdateSessionModelID(sessionID, modelID string) error {
+	if modelID == "" {
+		return nil
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET model_id = ? WHERE id = ?`, modelID, sessionID)
+	return err
+}
+
 // SessionModels returns the model display name of every session that
 // has reported one, keyed by session id — the Costs tab's per-agent
 // model lookup. Sessions whose row has since been deleted (kill,
@@ -707,6 +731,13 @@ type ContextSnapshot struct {
 	// has ticked at least once. Rides on the same row read so the
 	// dashboard gets it with no extra query.
 	Model string
+	// ModelID is the full Claude model ID ("claude-fable-5", …) behind
+	// Model — the statusline's model.id, recorded by the same hook. ""
+	// until the statusbar has ticked, or when Claude Code predates the
+	// field. Unlike Model it can be passed back to `claude --model`;
+	// reincarnate / clone / resume read it to keep the successor on the
+	// predecessor's model.
+	ModelID string
 	// EffortLevel is the reasoning-effort level the session last
 	// reported ("low"…"max"), from the same statusline hook. "" until
 	// the statusbar has ticked, or when the model lacks reasoning-effort
@@ -729,9 +760,9 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	}
 	var s ContextSnapshot
 	err = db.QueryRow(
-		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model, effort_level, cost_usd
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model, model_id, effort_level, cost_usd
 		 FROM sessions WHERE id = ?`, sessionID).
-		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model, &s.EffortLevel, &s.CostUSD)
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model, &s.ModelID, &s.EffortLevel, &s.CostUSD)
 	return s, err
 }
 

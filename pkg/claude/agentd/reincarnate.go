@@ -292,15 +292,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	}
 	cwd := oldSess.Cwd
 
-	// 2. Spawn a fresh tclaude session in the same cwd. The trailing
-	// ""s are effort and model: reincarnation deliberately does NOT
-	// carry the predecessor's --effort / --model, because both are
-	// launch-time claude flags that aren't persisted on the session
-	// (JOH-36 MVP is spawn-time pass-through; inheritance is a tracked
-	// follow-up). The successor therefore comes up on claude's own
-	// defaults.
+	// 2. Spawn a fresh tclaude session in the same cwd, carrying the
+	// predecessor's live model + reasoning effort (the JOH-36 follow-up:
+	// the statusline hook persists model_id / effort_level on the
+	// session row, so the launch-time flags are now reconstructible).
+	// Fail-open: an agent whose statusbar never reported a model spawns
+	// with no --model, claude's own default — the historical behaviour.
+	effort, model := inheritedLaunchFlags(oldSess.ID)
 	label := generateSpawnLabel()
-	if err := SpawnDetachedTclaudeNew(label, cwd, "", ""); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, cwd, effort, model); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return
