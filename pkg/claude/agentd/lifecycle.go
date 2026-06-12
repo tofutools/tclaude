@@ -166,6 +166,154 @@ func resumeOneConv(convID string) memberOpResult {
 	return res
 }
 
+// groupRetireResp is the response shape of the bulk groups.retire
+// endpoint. It mirrors groupOpResp (so the CLI renders the per-member
+// table identically to stop/resume) but carries an extra Warnings list
+// — retire can leave a group ownerless when it demotes an owner, and
+// the human needs to hear about that.
+type groupRetireResp struct {
+	Group    string           `json:"group"`
+	Action   string           `json:"action"`
+	Members  []memberOpResult `json:"members"`
+	Warnings []string         `json:"warnings,omitempty"`
+}
+
+// handleGroupRetire retires every OTHER active-agent member of the
+// group in one shot — the bulk parallel of `agent retire`, completing
+// the groups.stop / groups.resume lifecycle family (which until now had
+// no retire sibling).
+//
+// "Retire" demotes an agent to a plain conversation: retireAgentConv
+// drops every group membership (this group and any others the member
+// belongs to), revokes every permission and sudo grant, and flips the
+// enrollment bit. The conversation itself — .jsonl, history, conv_index
+// row — is left completely intact and reinstatable; this is the
+// non-destructive bulk cleanup, never `agent delete`. Unless
+// ?shutdown=0, a retired member's running tmux pane is also soft-exited
+// (stopOneConv, soft only — never a force-kill), since a retired
+// agent's idle process is almost never wanted.
+//
+// Per-member outcomes (memberOpResult.Action):
+//   - retired                  — demoted (Detail summarises what changed)
+//   - skipped:self             — the caller's own conv; never self-retire
+//   - skipped:no_conv_id       — a placeholder member with no conv yet
+//   - skipped:not_active_agent — already retired / never an agent
+//   - error                    — the retire failed (Detail has the cause)
+//
+// The caller's own conv is always skipped: the brief is "retire OTHER
+// agents in the group", and an agent demoting itself mid-request would
+// revoke its own grants and /exit its own pane out from under the very
+// request it is serving. A human caller (caller == "") has no conv to
+// skip and retires every member.
+//
+// Permission: groups.retire (default human-only — retiring agents is a
+// sensitive cleanup the human normally drives; the slug delegates it to
+// a trusted coordinator). Gated with the same plain requirePermission
+// the other bulk group endpoints (stop/resume/spawn) use — the
+// group-owner structural bypass is a single-agent-endpoint affordance,
+// not a bulk one.
+func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	caller, ok := requirePermission(w, r, PermGroupsRetire)
+	if !ok {
+		return
+	}
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	shutdown := retireShouldShutdown(r)
+	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	by := enrollmentActor(caller)
+
+	out := groupRetireResp{Group: g.Name, Action: "retire", Members: []memberOpResult{}}
+	// Groups whose owner roster a retire touched — checked once at the
+	// end so a bulk retire that demotes a member-owner warns about the
+	// now-ownerless group, matching the single-agent cleanup path.
+	ownerless := map[int64]bool{}
+	for _, m := range members {
+		res := memberOpResult{ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
+		switch {
+		case m.ConvID == "":
+			res.Action = "skipped:no_conv_id"
+			res.Detail = "placeholder member (no conv yet)"
+		case caller != "" && m.ConvID == caller:
+			res.Action = "skipped:self"
+			res.Detail = "the caller never retires itself"
+		default:
+			res = retireGroupMember(m.ConvID, by, reason, shutdown, res, ownerless)
+		}
+		out.Members = append(out.Members, res)
+	}
+	out.Warnings = warnOwnerlessGroups(ownerless)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// retireGroupMember retires one member as part of the bulk groups.retire
+// loop. It enforces the "active agent only" guard (a no-op on a conv
+// that was never an agent or is already retired comes back as
+// skipped:not_active_agent), runs the shared retireAgentConv demotion,
+// records any group whose owner roster it touched into the ownerless
+// set, and — when shutdown is requested — soft-exits the member's pane.
+// Returns the populated result; res arrives pre-seeded with ConvID +
+// Title so the caller's table stays consistent across every branch.
+func retireGroupMember(convID, by, reason string, shutdown bool, res memberOpResult, ownerless map[int64]bool) memberOpResult {
+	state, serr := db.EnrollmentState(convID)
+	if serr != nil {
+		res.Action = "error"
+		res.Detail = "enrollment lookup: " + serr.Error()
+		return res
+	}
+	if state != db.EnrollmentActive {
+		res.Action = "skipped:not_active_agent"
+		res.Detail = "enrollment: " + state
+		return res
+	}
+	outcome, ownerGroups, rerr := retireAgentConv(convID, by, reason)
+	if rerr != nil {
+		res.Action = "error"
+		res.Detail = rerr.Error()
+		return res
+	}
+	for _, gid := range ownerGroups {
+		ownerless[gid] = true
+	}
+	res.Action = "retired"
+	res.Detail = summarizeRetireOutcome(outcome)
+	if shutdown {
+		sd := stopOneConv(convID, false /* soft exit */)
+		res.TmuxSes = sd.TmuxSes
+		if sd.Action == "soft_stopped" {
+			res.Detail = joinDetail(res.Detail, "/exit sent")
+		}
+	}
+	return res
+}
+
+// summarizeRetireOutcome renders the parts of a retireConvOutcome the
+// bulk table cares about into a compact, human-readable Detail cell:
+// how many groups the member left and how many grants were revoked. An
+// outcome that changed nothing beyond the enrollment bit yields "".
+func summarizeRetireOutcome(o retireConvOutcome) string {
+	var parts []string
+	if n := len(o.GroupsLeft); n > 0 {
+		parts = append(parts, fmt.Sprintf("left %d group(s)", n))
+	}
+	if revoked := o.PermsRevoked + o.SudoRevoked; revoked > 0 {
+		parts = append(parts, fmt.Sprintf("revoked %d grant(s)", revoked))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// joinDetail appends extra to a Detail string with ", " glue, treating
+// an empty base as "no prefix".
+func joinDetail(base, extra string) string {
+	if base == "" {
+		return extra
+	}
+	return base + ", " + extra
+}
+
 // handleAgentStop stops a single conv's tmux session. Sibling of
 // the bulk groups.stop. Auth: agent.stop slug OR caller is owner of
 // a group containing target. Routed via /v1/agent/{selector}/stop;

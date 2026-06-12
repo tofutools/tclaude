@@ -46,6 +46,7 @@ func groupsCmd() *cobra.Command {
 			groupsUpdateMemberCmd(),
 			groupsStopCmd(),
 			groupsResumeCmd(),
+			groupsRetireCmd(),
 			groupsOwnersCmd(),
 			groupsGrantOwnerCmd(),
 			groupsRevokeOwnerCmd(),
@@ -717,6 +718,115 @@ func runGroupsResume(p *groupsResumeParams, stdout, stderr io.Writer) int {
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/resume"
 	return runGroupsLifecycle(path, ask, stdout, stderr)
+}
+
+// --- groups retire ---
+
+type groupsRetireParams struct {
+	Name       string `pos:"true" help:"Group name"`
+	NoShutdown bool   `long:"no-shutdown" help:"Leave each retired member's running session alive. By default retire also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
+	Reason     string `long:"reason" short:"r" optional:"true" help:"Why the members are being retired (recorded in the audit trail)"`
+	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsRetireCmd() *cobra.Command {
+	return boa.CmdT[groupsRetireParams]{
+		Use:   "retire",
+		Short: "Retire every other member of a group (bulk soft-delete)",
+		Long: "Retires every OTHER active-agent member of the group in one shot — the bulk parallel of `tclaude agent retire`. " +
+			"Each member is demoted to a plain conversation: its group memberships are dropped and its permission/sudo grants " +
+			"revoked, but the conversation itself (.jsonl, history) is left intact and reinstatable. This is the non-destructive " +
+			"bulk cleanup, not `agent delete`. " +
+			"\n\n" +
+			"By default each retired member's running tmux pane is also soft-exited (sends /exit); pass --no-shutdown to leave " +
+			"the processes running. The CALLER's own conversation is always skipped — an agent never retires itself. Members that " +
+			"aren't active agents (placeholders, already-retired convs) are skipped; retire is idempotent. " +
+			"\n\n" +
+			"Gated on the `groups.retire` permission (default human-only). Note retire leaves ALL of a member's groups, not just this one.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsRetireParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsRetireParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsRetire(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
+	if p.Name == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	// Spell shutdown out explicitly so the CLI default is independent of
+	// the server-side default (which also defaults shutdown ON).
+	q := url.Values{}
+	if p.NoShutdown {
+		q.Set("shutdown", "0")
+	} else {
+		q.Set("shutdown", "1")
+	}
+	if reason := strings.TrimSpace(p.Reason); reason != "" {
+		q.Set("reason", reason)
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/retire?" + q.Encode()
+
+	var resp struct {
+		Group   string `json:"group"`
+		Action  string `json:"action"`
+		Members []struct {
+			ConvID  string `json:"conv_id"`
+			Title   string `json:"title,omitempty"`
+			Action  string `json:"action"`
+			Detail  string `json:"detail,omitempty"`
+			TmuxSes string `json:"tmux_session,omitempty"`
+		} `json:"members"`
+		Warnings []string `json:"warnings,omitempty"`
+	}
+	opts := DaemonOpts{AskHuman: ask}
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, opts); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if len(resp.Members) == 0 {
+		fmt.Fprintf(stdout, "Group %q has no members.\n", resp.Group)
+		return rcOK
+	}
+	tbl := table.New(
+		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
+		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	for _, m := range resp.Members {
+		name := m.Title
+		if name == "" {
+			name = "(unnamed)"
+		}
+		tbl.AddRow(table.Row{Cells: []string{
+			short(m.ConvID), name, m.Action, m.Detail,
+		}})
+	}
+	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
+	fmt.Fprintln(stdout, tbl.Render())
+	for _, warn := range resp.Warnings {
+		fmt.Fprintf(stdout, "⚠ %s\n", warn)
+	}
+	return rcOK
 }
 
 // runGroupsLifecycle is shared between stop/resume — both endpoints

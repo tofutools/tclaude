@@ -198,6 +198,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"groups.rm", "Delete groups"},
 			{"groups.stop", "Stop a group's running members"},
 			{"groups.resume", "Resume a group's offline members"},
+			{"groups.retire", "Retire a group's other members (bulk)"},
 			{"member.add", "Add members to a group"},
 			{"member.remove", "Remove members from a group"},
 			{"member.redesignate", "Edit role/descr on group members"},
