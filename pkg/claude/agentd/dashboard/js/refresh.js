@@ -1055,7 +1055,18 @@ function isValidRenameTitleJS(t) {
 // Resolves to null on Cancel / outside-click / Escape. Auto-refresh
 // suspends while the modal is open — refreshSuspended() sees its
 // .modal-overlay.show.
-function editMemberModal({label, title, role, descr}) {
+// editMemberModal is the single per-agent edit panel: title (incl. the
+// "auto" self-rename), group role, group description, the group-owner
+// toggle, and a Permissions… button that opens the permanent-permission
+// editor on top. `owner` seeds the checkbox; `focusRole` lands the
+// caret in the Role field (the click-to-edit role cell opens here);
+// `openPerms` is the caller-supplied callback that opens the perm
+// editor for this conv (passed in so refresh.js doesn't take a
+// modal-message.js import). Resolves to:
+//   null            — cancelled
+//   'noop'          — opened, nothing changed
+//   {rename?, role?, descr?, owner?} — only the fields that changed
+function editMemberModal({label, title, role, descr, owner, focusRole, openPerms}) {
   return new Promise(resolve => {
     const overlay = $('#edit-member-modal');
     $('#edit-member-meta').textContent = label || '';
@@ -1063,26 +1074,34 @@ function editMemberModal({label, title, role, descr}) {
     const titleEl = $('#edit-member-title-input');
     const autoEl = $('#edit-member-auto');
     const roleEl = $('#edit-member-role');
+    const ownerEl = $('#edit-member-owner');
     const descrEl = $('#edit-member-descr');
     const errEl = $('#edit-member-error');
+    const permsBtn = $('#edit-member-perms');
     titleEl.value = title || '';
     titleEl.disabled = false;
     autoEl.checked = false;
     roleEl.value = role || '';
+    ownerEl.checked = !!owner;
     descrEl.value = descr || '';
     errEl.textContent = '';
+    // The Permissions… button only makes sense for a known conv — the
+    // caller wires openPerms when it has one. Hide it otherwise.
+    permsBtn.style.display = openPerms ? '' : 'none';
     const saveBtn = $('#edit-member-save');
     const cancelBtn = $('#edit-member-cancel');
     // Auto and an explicit title are mutually exclusive — disable the
     // text field while auto is checked so the two paths can't be
     // ambiguous (the rename modal this folded in did the same).
     const onAuto = () => { titleEl.disabled = autoEl.checked; };
+    const onPerms = () => { if (openPerms) openPerms(); };
     const cleanup = (result) => {
       overlay.classList.remove('show');
       saveBtn.removeEventListener('click', onSave);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlay);
       autoEl.removeEventListener('change', onAuto);
+      permsBtn.removeEventListener('click', onPerms);
       document.removeEventListener('keydown', onKey);
       resolve(result);
     };
@@ -1106,16 +1125,25 @@ function editMemberModal({label, title, role, descr}) {
         }
       }
       // Membership half: send only fields that changed (an empty
-      // value still counts as a change — it clears the field).
+      // value still counts as a change — it clears the field). The
+      // owner toggle is a boolean — the dispatcher routes it to the
+      // owners grant/revoke endpoints, separate from the role/descr
+      // PATCH.
       const newRole = roleEl.value;
       const newDescr = descrEl.value;
       if (newRole !== (role || '')) out.role = newRole;
       if (newDescr !== (descr || '')) out.descr = newDescr;
+      if (ownerEl.checked !== !!owner) out.owner = ownerEl.checked;
       cleanup(Object.keys(out).length === 0 ? 'noop' : out);
     };
     const onCancel = () => cleanup(null);
     const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
     const onKey = (e) => {
+      // While the Permissions editor is stacked on top (it opens from
+      // this modal's Permissions… button), it owns the keyboard — let
+      // its own Esc / inputs handle the event, so an Esc up there can't
+      // also tear THIS modal down underneath it.
+      if ($('#perm-edit-modal').classList.contains('show')) return;
       if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
       // Ctrl/Cmd+Enter saves from anywhere in the modal so power
       // users don't have to mouse over to the Save button.
@@ -1127,10 +1155,14 @@ function editMemberModal({label, title, role, descr}) {
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlay);
     autoEl.addEventListener('change', onAuto);
+    permsBtn.addEventListener('click', onPerms);
     document.addEventListener('keydown', onKey);
     overlay.classList.add('show');
-    titleEl.focus();
-    titleEl.select();
+    // The role cell's click-to-edit lands here on the Role field; the
+    // ⚙ "edit" button lands on Title (the broader edit).
+    const focusEl = focusRole ? roleEl : titleEl;
+    focusEl.focus();
+    focusEl.select();
   });
 }
 

@@ -52,7 +52,7 @@ function memberRowHTML(m, ctx) {
                 <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
                 <td>${cwdCell(m)}</td>
                 <td>${branchCell(m)}</td>
-                <td>${roleCell(m)}</td>
+                <td>${roleCell(m, ctx.group)}</td>
                 <td class="descr-cell muted">${esc(m.descr || '')}</td>
               </tr>`;
 }
