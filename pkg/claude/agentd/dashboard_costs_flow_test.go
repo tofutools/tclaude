@@ -31,6 +31,7 @@ type costsRespConv struct {
 	Title   string  `json:"title"`
 	CostUSD float64 `json:"cost_usd"`
 	LastDay string  `json:"last_day"`
+	Model   string  `json:"model"`
 }
 
 func fetchCosts(t *testing.T, mux http.Handler, query string) costsResp {
@@ -81,7 +82,7 @@ func TestDashboardCosts_DailySeriesAndBreakdown(t *testing.T) {
 	assert.Equal(t, len(out.Days), daysInclusive(t, monthStart, today), "one point per calendar day, gaps zero-filled")
 
 	require.Len(t, out.Agents, 2, "one breakdown row per conv")
-	assert.Equal(t, convA, out.Agents[0].ConvID, "sorted by cost descending")
+	assert.Equal(t, convA, out.Agents[0].ConvID, "same last day — cost descending breaks the tie")
 	assert.InDelta(t, 1.25, out.Agents[0].CostUSD, 1e-9, "A's two sessions summed, retired one included")
 	assert.Equal(t, today, out.Agents[0].LastDay)
 	assert.Equal(t, convB, out.Agents[1].ConvID)
@@ -107,6 +108,49 @@ func TestDashboardCosts_FromParam(t *testing.T) {
 	r := testharness.JSONRequest(t, http.MethodGet, "/api/costs?from=junk", nil)
 	rec := testharness.Serve(mux, r)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "malformed from rejected")
+}
+
+// Scenario: the per-agent breakdown's ordering and model column. Two
+// agents spent today on different models; a third spent more, but
+// days ago and its sessions row is long gone. Rows must come back
+// latest-activity-first (cost only breaks same-day ties — recency
+// outranks spend), today's agents must carry the model their session
+// reported, and the retired agent has no live session to resolve a
+// model from, so its model is empty.
+func TestDashboardCosts_AgentOrderingAndModels(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const convA = "wcoa-1111-2222-3333-4444"
+	const convB = "wcob-1111-2222-3333-4444"
+	const convC = "wcoc-1111-2222-3333-4444"
+
+	seedAgentCostSession(t, "wco-a1", convA, 1.00)
+	require.NoError(t, db.UpdateSessionModel("wco-a1", "Fable 5"), "model for A")
+	seedAgentCostSession(t, "wco-b1", convB, 2.00)
+	require.NoError(t, db.UpdateSessionModel("wco-b1", "Opus 4.8"), "model for B")
+
+	// Agent C: the biggest spender, but days ago. The production write
+	// path always stamps today, so its daily row is inserted directly —
+	// exactly what history left behind by a deleted session looks like.
+	oldDay := time.Now().AddDate(0, 0, -3).Format("2006-01-02")
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+		VALUES (?, ?, ?, ?)`, "wco-c1", oldDay, convC, 5.00)
+	require.NoError(t, err, "seed C's historical daily row")
+
+	from := time.Now().AddDate(0, 0, -9).Format("2006-01-02")
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)
+
+	require.Len(t, out.Agents, 3, "one breakdown row per conv")
+	assert.Equal(t, convB, out.Agents[0].ConvID, "today's agents first; B's higher spend breaks the same-day tie")
+	assert.Equal(t, "Opus 4.8", out.Agents[0].Model)
+	assert.Equal(t, convA, out.Agents[1].ConvID)
+	assert.Equal(t, "Fable 5", out.Agents[1].Model)
+	assert.Equal(t, convC, out.Agents[2].ConvID, "older last-day sorts below today despite the larger spend")
+	assert.Equal(t, oldDay, out.Agents[2].LastDay)
+	assert.Empty(t, out.Agents[2].Model, "no live session row → no model to show")
 }
 
 // seedAgentCostSession writes a sessions row tied to a conv and

@@ -24,9 +24,10 @@ const costDayKey = "2006-01-02"
 // cumulative snapshots of a session; multiple sessions of the same
 // conv simply contribute separate deltas.
 type costDelta struct {
-	day    string
-	convID string
-	usd    float64
+	day       string
+	convID    string
+	sessionID string
+	usd       float64
 }
 
 // costDeltasFromRows turns cumulative (session, day) snapshots into
@@ -48,7 +49,7 @@ func costDeltasFromRows(rows []db.CostDailyRow) []costDelta {
 			baseline = 0
 		}
 		if d := r.CostUSD - baseline; d > 0 {
-			out = append(out, costDelta{day: r.Day, convID: r.ConvID, usd: d})
+			out = append(out, costDelta{day: r.Day, convID: r.ConvID, sessionID: r.SessionID, usd: d})
 			baseline = r.CostUSD
 		}
 	}
@@ -80,11 +81,15 @@ type costDayPoint struct {
 // dashboard's notion of an agent). Title resolves through the same
 // cached lookup the snapshot uses; a conv deleted since the spend was
 // recorded keeps its history under the "(unknown)" placeholder.
+// Model is the display name reported by the agent's most recent
+// costed session in the span — "latest model wins" when sessions ran
+// different models; empty when no live sessions row still carries one.
 type costAgentRow struct {
 	ConvID  string  `json:"conv_id"`
 	Title   string  `json:"title"`
 	CostUSD float64 `json:"cost_usd"`
 	LastDay string  `json:"last_day"`
+	Model   string  `json:"model"`
 }
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
@@ -119,11 +124,20 @@ func collectCosts(from time.Time) (costsResponse, error) {
 		return costsResponse{}, err
 	}
 	deltas := costDeltasFromRows(rows)
+	models, err := db.SessionModels()
+	if err != nil {
+		return costsResponse{}, err
+	}
 
 	byDay := map[string]float64{}
 	type agentAgg struct {
 		usd     float64
 		lastDay string
+		// model of the latest-day session with a known model; modelDay
+		// tracks that day so a model-less session (its row deleted, or
+		// no statusline tick yet) never blanks an older known value.
+		model    string
+		modelDay string
 	}
 	byConv := map[string]*agentAgg{}
 	total := 0.0
@@ -140,6 +154,9 @@ func collectCosts(from time.Time) (costsResponse, error) {
 		a.usd += d.usd
 		if d.day > a.lastDay {
 			a.lastDay = d.day
+		}
+		if m := models[d.sessionID]; m != "" && d.day >= a.modelDay {
+			a.model, a.modelDay = m, d.day
 		}
 		total += d.usd
 	}
@@ -159,15 +176,27 @@ func collectCosts(from time.Time) (costsResponse, error) {
 			Title:   agent.CachedTitle(convID),
 			CostUSD: a.usd,
 			LastDay: a.lastDay,
+			Model:   a.model,
 		})
 	}
-	sort.Slice(out.Agents, func(i, j int) bool {
-		if out.Agents[i].CostUSD != out.Agents[j].CostUSD {
-			return out.Agents[i].CostUSD > out.Agents[j].CostUSD
-		}
-		return out.Agents[i].ConvID < out.Agents[j].ConvID
-	})
+	sortCostAgentRows(out.Agents)
 	return out, nil
+}
+
+// sortCostAgentRows orders the breakdown most-recent-first: latest
+// activity day first, spend descending within a day, conv id as the
+// stable tail. Day keys are zero-padded ISO dates, so string order is
+// date order.
+func sortCostAgentRows(agents []costAgentRow) {
+	sort.Slice(agents, func(i, j int) bool {
+		if agents[i].LastDay != agents[j].LastDay {
+			return agents[i].LastDay > agents[j].LastDay
+		}
+		if agents[i].CostUSD != agents[j].CostUSD {
+			return agents[i].CostUSD > agents[j].CostUSD
+		}
+		return agents[i].ConvID < agents[j].ConvID
+	})
 }
 
 // handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD — the
