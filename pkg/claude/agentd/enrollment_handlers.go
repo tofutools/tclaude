@@ -95,10 +95,13 @@ func retireShouldShutdown(r *http.Request) bool {
 
 // retireShouldDeleteWorktree reports whether a retire request should
 // also remove the agent's git worktree and delete its local branch.
-// Unlike shutdown, this defaults OFF: only the dashboard's retire modal
-// — which has already probed for a removable worktree — sends the flag.
-// A bare CLI `retire`, or any caller that omits it, must never nuke a
-// worktree by accident. ?delete_worktree=1 (or =true) opts in.
+// Unlike shutdown, this defaults OFF for an absent param: a caller that
+// omits it must never nuke a worktree by accident. Both retire surfaces
+// that delete worktrees send the flag explicitly — the dashboard modal
+// (after probing for a removable worktree) and the `tclaude agent retire`
+// CLI (delete is its default; --no-delete-worktree sends =0). The OFF
+// default is the failsafe for any other / future caller.
+// ?delete_worktree=1 (or =true) opts in.
 func retireShouldDeleteWorktree(r *http.Request) bool {
 	v := strings.TrimSpace(r.URL.Query().Get("delete_worktree"))
 	on, err := strconv.ParseBool(v)

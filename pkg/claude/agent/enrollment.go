@@ -87,9 +87,10 @@ func runPromote(p *promoteParams, stdout, stderr io.Writer) int {
 }
 
 type retireParams struct {
-	Selector   string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
-	Reason     string `long:"reason" short:"r" help:"Why the agent is being retired (recorded in the audit trail)"`
-	NoShutdown bool   `long:"no-shutdown" help:"Leave the agent's running session alive. By default retire also soft-exits the running tmux session (sends /exit); pass this to keep the process running."`
+	Selector         string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
+	Reason           string `long:"reason" short:"r" optional:"true" help:"Why the agent is being retired (recorded in the audit trail)"`
+	NoShutdown       bool   `long:"no-shutdown" help:"Leave the agent's running session alive. By default retire also soft-exits the running tmux session (sends /exit); pass this to keep the process running."`
+	NoDeleteWorktree bool   `long:"no-delete-worktree" help:"Keep the agent's git worktree + branch. By default retire also removes a removable linked worktree (never the main repo or one shared with a live agent) and force-deletes its branch; pass this to leave the worktree untouched."`
 }
 
 func retireCmd() *cobra.Command {
@@ -107,6 +108,15 @@ func retireCmd() *cobra.Command {
 			"is untouched and still reinstatable; only the live process " +
 			"ends. Pass --no-shutdown to leave the session running. A " +
 			"retired agent with no live session is a no-op either way. " +
+			"\n\n" +
+			"By default retire ALSO cleans up the agent's git worktree: it " +
+			"removes the linked worktree and force-deletes its branch, so a " +
+			"retired feature agent leaves no git footprint behind. This is " +
+			"safe — the repo's main worktree, and any worktree a surviving " +
+			"agent is still working in, are always kept. Because the agent's " +
+			"cwd IS the worktree, removal waits until its pane exits; with " +
+			"--no-shutdown a still-running agent keeps its worktree. Pass " +
+			"--no-delete-worktree to leave the worktree and branch untouched. " +
 			"\n\n" +
 			"This is the non-destructive alternative to `tclaude agent " +
 			"delete`, which permanently wipes the conversation. " +
@@ -133,9 +143,11 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	// Always send shutdown explicitly so the request is unambiguous —
-	// the daemon defaults an absent param to ON, but spelling it out
-	// keeps the CLI behaviour independent of that server-side default.
+	// Always send shutdown and delete_worktree explicitly so the request
+	// is unambiguous — the daemon defaults shutdown ON and delete_worktree
+	// OFF for absent params, but spelling both out keeps the CLI behaviour
+	// independent of those server-side defaults. The CLI's own defaults
+	// (set by the --no-* flags) do both, matching the dashboard modal.
 	q := url.Values{}
 	if reason := strings.TrimSpace(p.Reason); reason != "" {
 		q.Set("reason", reason)
@@ -144,6 +156,11 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 		q.Set("shutdown", "0")
 	} else {
 		q.Set("shutdown", "1")
+	}
+	if p.NoDeleteWorktree {
+		q.Set("delete_worktree", "0")
+	} else {
+		q.Set("delete_worktree", "1")
 	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/retire?" + q.Encode()
 	var resp struct {
@@ -161,6 +178,13 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 			Action string `json:"action"`
 			Detail string `json:"detail"`
 		} `json:"shutdown"`
+		// Worktree is present only when delete_worktree was requested.
+		// Action is one of: none | kept | removed | scheduled (see the
+		// daemon's retireWorktreePlan); Detail is already human-readable.
+		Worktree *struct {
+			Action string `json:"action"`
+			Detail string `json:"detail"`
+		} `json:"worktree"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -183,6 +207,13 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 		case resp.Shutdown.Action == "error":
 			fmt.Fprintf(stdout, "  session: shutdown failed: %s\n", resp.Shutdown.Detail)
 		}
+	}
+	// The detail strings are already human-readable (e.g. "worktree +
+	// branch will be removed after the agent exits", "worktree kept (main
+	// repo)"). Action "none" means the agent had no worktree — stay silent
+	// rather than printing a "no worktree" line on every default retire.
+	if resp.Worktree != nil && resp.Worktree.Action != "none" && resp.Worktree.Detail != "" {
+		fmt.Fprintf(stdout, "  worktree: %s\n", resp.Worktree.Detail)
 	}
 	return rcOK
 }
