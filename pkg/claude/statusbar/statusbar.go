@@ -46,6 +46,11 @@ type StatusLineInput struct {
 	// falls back to TCLAUDE_SESSION_ID (the launch-time conv-id).
 	SessionID string `json:"session_id"`
 	Model     struct {
+		// ID is the full model ID ("claude-fable-5") — unlike the
+		// display name it round-trips into `claude --model`, so the
+		// statusbar persists it for reincarnate/clone/resume model
+		// inheritance. Absent on older Claude Code versions.
+		ID          string `json:"id"`
 		DisplayName string `json:"display_name"`
 	} `json:"model"`
 	Version   string `json:"version"`
@@ -288,6 +293,13 @@ func run() error {
 	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
+		}
+		// The full model ID rides the same cadence as the display name.
+		// It's what reincarnate/clone/resume feed back to `claude
+		// --model` so a successor keeps the predecessor's model; an
+		// empty ID (older CC) is a no-op inside UpdateSessionModelID.
+		if err := db.UpdateSessionModelID(sessionID, input.Model.ID); err != nil {
+			slog.Warn("status-bar: failed to update session model id", "error", err, "module", "hooks")
 		}
 		// Reasoning-effort level rides on the same write cadence as the
 		// model — present in (almost) every render, recorded onto the

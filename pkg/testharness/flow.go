@@ -65,7 +65,7 @@ func NewFlow(
 // flow_setup_test.go can do `agentd.Spawn = mocks.Spawner` directly.
 type SpawnerLike interface {
 	SpawnNew(label, cwd, effort, model string) error
-	SpawnResume(convID, cwd string) error
+	SpawnResume(convID, cwd, effort, model string) error
 }
 
 // Mocks bundles the default boundary impls for the v2 simulators.
@@ -135,7 +135,7 @@ func (s *simSpawner) SpawnNew(label, cwd, effort, model string) error {
 	return nil
 }
 
-func (s *simSpawner) SpawnResume(convID, cwd string) error {
+func (s *simSpawner) SpawnResume(convID, cwd, effort, model string) error {
 	cc := s.w.CCs.GetByConvID(convID)
 	if cc == nil {
 		cc = HydrateCCSim(s.t, s.w.HomeDir, convID, cwd)
@@ -144,6 +144,11 @@ func (s *simSpawner) SpawnResume(convID, cwd string) error {
 	if err := cc.Start(); err != nil {
 		return err
 	}
+	// Same observability as SpawnNew: capture the effort and model the
+	// resume path threaded through, keyed by the conv-id, so flow tests
+	// can assert model inheritance on resume / clone-copy paths.
+	s.w.RecordSpawnEffort(convID, effort)
+	s.w.RecordSpawnModel(convID, model)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label

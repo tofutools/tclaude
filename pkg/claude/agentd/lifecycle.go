@@ -151,13 +151,17 @@ func resumeOneConv(convID string) memberOpResult {
 		return res
 	}
 	// Look up the recorded cwd so resume lands the agent in the
-	// directory they were last running in. Falls back to "" which
-	// makes `tclaude session new` use its own default.
-	cwd := ""
+	// directory they were last running in — falls back to "" which
+	// makes `tclaude session new` use its own default — and the
+	// model + effort it last reported running on, so the resumed
+	// agent comes back on its own model instead of claude's default
+	// (rows are updated_at DESC; [0] is the conv's freshest session).
+	cwd, effort, model := "", "", ""
 	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
 		cwd = rows[0].Cwd
+		effort, model = inheritedLaunchFlags(rows[0].ID)
 	}
-	if err := SpawnDetachedTclaudeResume(convID, cwd); err != nil {
+	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
@@ -1080,8 +1084,12 @@ func SpawnDetachedTclaudeNew(label, cwd, effort, model string) error {
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
-func SpawnDetachedTclaudeResume(convID, cwd string) error {
-	return Spawn.SpawnResume(convID, cwd)
+// effort and model ("" = omit the flag) ride through to the resumed
+// claude invocation — `claude --resume` does NOT restore the
+// conversation's previous model on its own, so resume surfaces pass
+// the predecessor's inherited flags to keep the agent on its model.
+func SpawnDetachedTclaudeResume(convID, cwd, effort, model string) error {
+	return Spawn.SpawnResume(convID, cwd, effort, model)
 }
 
 // sessionNewArgs builds the argv for the detached `tclaude session new`
@@ -1091,6 +1099,25 @@ func SpawnDetachedTclaudeResume(convID, cwd string) error {
 // subprocess.
 func sessionNewArgs(label, cwd, effort, model string) []string {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
+	if cwd != "" {
+		args = append(args, "-C", cwd)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return args
+}
+
+// sessionResumeArgs builds the argv for the detached `tclaude session
+// new -r <conv>` that a resume forks. Same flag discipline as
+// sessionNewArgs: --effort and --model are appended only when a value
+// was chosen, so "" keeps claude on its own default. Kept pure so it
+// can be unit-tested without forking a subprocess.
+func sessionResumeArgs(convID, cwd, effort, model string) []string {
+	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
 	}
@@ -1165,11 +1192,8 @@ func liveSpawnNew(label, cwd, effort, model string) error {
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func liveSpawnResume(convID, cwd string) error {
-	args := []string{"session", "new", "-r", convID, "-d", "--global"}
-	if cwd != "" {
-		args = append(args, "-C", cwd)
-	}
+func liveSpawnResume(convID, cwd, effort, model string) error {
+	args := sessionResumeArgs(convID, cwd, effort, model)
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
