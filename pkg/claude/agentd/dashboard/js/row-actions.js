@@ -1264,6 +1264,27 @@ function bindRowActions() {
           refresh();
           return;
         }
+        case 'msg-delete': {
+          // Per-message delete — read OR unread, the single-row
+          // complement to "clear read". Confirm before the hard delete.
+          const id = btn.getAttribute('data-id');
+          const confirmed = await confirmModal({
+            title: 'Delete this message?',
+            body: 'Permanently deletes this one message, read or unread. This cannot be undone.',
+            meta: `#${id}`,
+            okLabel: 'Delete',
+          });
+          if (!confirmed) return;
+          const r = await fetch('/api/human-messages/delete', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: parseInt(id, 10) }),
+          });
+          if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
+          toast('message deleted');
+          refresh();
+          return;
+        }
         case 'row-menu':
         case 'group-menu':
         case 'filter-bar-menu': {

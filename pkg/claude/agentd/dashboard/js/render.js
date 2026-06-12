@@ -471,6 +471,9 @@ function renderMessages(msgs, onlineConvs) {
     const readBtn = unread
       ? `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`
       : '';
+    // Per-message delete — works on read AND unread messages, the
+    // single-row complement to the bulk "clear read" sweep.
+    const deleteBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
     return `<div class="msg-card${unread ? ' msg-unread' : ''}">
       <div class="msg-head">
         ${unread ? '<span class="msg-dot" title="unread">●</span>' : ''}
@@ -482,7 +485,7 @@ function renderMessages(msgs, onlineConvs) {
       </div>
       ${subj}
       <div class="msg-body">${esc(m.body)}</div>
-      <div class="msg-actions">${focusBtn}${readBtn}</div>
+      <div class="msg-actions">${focusBtn}${readBtn}${deleteBtn}</div>
     </div>`;
   }).join('');
 }

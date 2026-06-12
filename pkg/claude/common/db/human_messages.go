@@ -168,3 +168,20 @@ func DeleteReadHumanMessages() (int, error) {
 	n, _ := res.RowsAffected()
 	return int(n), nil
 }
+
+// DeleteHumanMessage hard-deletes a single message by id, regardless of
+// its read state — the per-message delete control on the tab, distinct
+// from the bulk "clear read" sweep. A non-existent id is a no-op, not an
+// error. Returns whether a row was actually removed.
+func DeleteHumanMessage(id int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`DELETE FROM human_messages WHERE id = ?`, id)
+	if err != nil {
+		return false, fmt.Errorf("delete human message: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}

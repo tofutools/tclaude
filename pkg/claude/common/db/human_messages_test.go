@@ -103,3 +103,36 @@ func TestHumanMessages_MarkAllReadAndClear(t *testing.T) {
 	assert.Equal(t, "fresh", msgs[0].Body)
 	assert.False(t, msgs[0].IsRead())
 }
+
+func TestHumanMessages_DeleteOne(t *testing.T) {
+	setupTestDB(t)
+
+	// An unread message and a read message — per-message delete ignores
+	// read state, unlike the bulk "clear read" sweep.
+	unreadID, err := InsertHumanMessage(&HumanMessage{FromConv: "c", Body: "unread"})
+	require.NoError(t, err)
+	readID, err := InsertHumanMessage(&HumanMessage{FromConv: "c", Body: "read"})
+	require.NoError(t, err)
+	_, err = MarkHumanMessageRead(readID)
+	require.NoError(t, err)
+
+	// Delete the unread one directly — read state is irrelevant.
+	removed, err := DeleteHumanMessage(unreadID)
+	require.NoError(t, err)
+	assert.True(t, removed, "an existing message is removed")
+	msgs, _ := ListHumanMessages()
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "read", msgs[0].Body, "only the deleted message is gone")
+
+	// Deleting a non-existent id is a no-op, not an error.
+	removed, err = DeleteHumanMessage(999999)
+	require.NoError(t, err)
+	assert.False(t, removed)
+
+	// And the still-read message can be deleted too.
+	removed, err = DeleteHumanMessage(readID)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	msgs, _ = ListHumanMessages()
+	assert.Empty(t, msgs)
+}

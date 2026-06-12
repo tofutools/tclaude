@@ -67,6 +67,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-windows", handleAgentWindows)
 	mux.HandleFunc("/api/human-messages/read", handleDashboardHumanMessagesRead)
 	mux.HandleFunc("/api/human-messages/clear", handleDashboardHumanMessagesClear)
+	mux.HandleFunc("/api/human-messages/delete", handleDashboardHumanMessagesDelete)
 	registerDashboardCronRoutes(mux)
 	registerDashboardMessageRoutes(mux)
 	registerDashboardTemplateRoutes(mux)

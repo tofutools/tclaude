@@ -50,6 +50,7 @@ nav button:hover { color: #d4d4d4; }
 .msg-subject { font-weight: 600; color: #d4d4d4; margin-top: 6px; }
 .msg-body { color: #c9d1d9; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
 .msg-actions { margin-top: 8px; display: flex; gap: 6px; }
+.msg-actions button.danger:hover { color: #f85149; border-color: #f85149; }
 main { padding: 16px 24px; }
 section { display: none; }
 section.active { display: block; }
