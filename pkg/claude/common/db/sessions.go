@@ -499,6 +499,32 @@ func UpdateSessionModel(sessionID, model string) error {
 	return err
 }
 
+// SessionModels returns the model display name of every session that
+// has reported one, keyed by session id — the Costs tab's per-agent
+// model lookup. Sessions whose row has since been deleted (kill,
+// agent delete) simply aren't in the map; their cost history keeps an
+// empty model.
+func SessionModels() (map[string]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT id, model FROM sessions WHERE model <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, model string
+		if err := rows.Scan(&id, &model); err != nil {
+			return nil, err
+		}
+		out[id] = model
+	}
+	return out, rows.Err()
+}
+
 // UpdateSessionEffort stores the reasoning-effort level ("low", "medium",
 // "high", "xhigh", "max") the session is currently running on. Claude
 // Code's statusline carries it as effort.level on every render (when the

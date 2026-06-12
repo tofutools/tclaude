@@ -284,13 +284,33 @@ details[open] > summary::before { content: "▼ "; }
 #costs-summary strong { color: #6e9c7d; font-weight: 600; }
 #costs-summary .cost-sep { color: #30363d; }
 .cost-chart {
-  display: flex; align-items: stretch; gap: 2px;
+  display: flex; align-items: stretch;
   height: 180px; padding: 12px 12px 4px;
   background: #0d1117; border: 1px solid #2a3340; border-radius: 6px;
   margin-bottom: 16px;
 }
+/* Y axis: tick labels positioned at the same bottom-percentages as
+   the gridlines; the empty .cost-day spacer keeps the tick area
+   vertically congruent with the columns' bar areas. */
+.cost-yaxis { flex: 0 0 auto; display: flex; flex-direction: column; padding-right: 8px; }
+.cost-yarea { flex: 1 1 auto; position: relative; min-width: 28px; }
+.cost-ytick {
+  position: absolute; right: 0; transform: translateY(50%);
+  font-size: 9px; color: #6e7681; line-height: 1; white-space: nowrap;
+}
+/* Plot area: the gridline overlay spans exactly the columns' bar
+   areas (bottom offset = the .cost-day label row), so lines, ticks
+   and bar heights all share one scale. */
+.cost-plot { flex: 1 1 auto; min-width: 0; position: relative; }
+.cost-grid { position: absolute; left: 0; right: 0; top: 0; bottom: 17px; pointer-events: none; }
+.cost-gridline { position: absolute; left: 0; right: 0; height: 1px; background: #1c2430; }
+.cost-cols { display: flex; align-items: stretch; gap: 2px; height: 100%; position: relative; }
 .cost-col {
-  flex: 1 1 0; min-width: 0;
+  flex: 1 1 0; min-width: 0; position: relative;
+  display: flex; flex-direction: column;
+}
+.cost-bararea {
+  flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; justify-content: flex-end;
 }
 .cost-bar {
@@ -302,6 +322,18 @@ details[open] > summary::before { content: "▼ "; }
   background: transparent;
   border: 1px dashed #6e9c7d; border-bottom: none;
   opacity: 0.6;
+}
+/* Instant hover tooltip — only columns with recorded/projected spend
+   carry data-tip, so empty days don't react. CSS-rendered (no native
+   title) so it appears with no hover delay. */
+.cost-col[data-tip]:hover .cost-bar { background: #8fbf9e; }
+.cost-col.projected[data-tip]:hover .cost-bar { background: transparent; border-color: #8fbf9e; opacity: 1; }
+.cost-col[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; top: -6px; left: 50%; transform: translate(-50%, -100%);
+  background: #1c2128; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 3px 8px; font-size: 11px; color: #d4d4d4; white-space: nowrap;
+  z-index: 10; pointer-events: none;
 }
 .cost-day {
   flex: 0 0 auto; height: 14px; overflow: hidden;

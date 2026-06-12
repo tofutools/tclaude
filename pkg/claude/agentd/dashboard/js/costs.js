@@ -55,6 +55,26 @@ function fmtUSD(v) {
   return v >= 0.005 ? '$' + v.toFixed(2) : '<1¢';
 }
 
+// niceCeil rounds v up to a 1/2/2.5/5 × 10^k "nice" number — the
+// Y-axis top, so the scale reads "$5" rather than "$4.7312".
+function niceCeil(v) {
+  const base = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) {
+    if (m * base >= v - 1e-12) return m * base;
+  }
+  return 10 * base;
+}
+
+// fmtAxisUSD formats a Y-axis tick value compactly: whole dollars
+// without cents, fractional ticks with just enough decimals (sub-cent
+// scales keep four — a $0.005 tick must not round up to "$0.01").
+function fmtAxisUSD(v) {
+  if (!(v > 0)) return '$0';
+  if (v >= 1000) return '$' + +(v / 1000).toFixed(1) + 'k';
+  if (v >= 1) return Number.isInteger(v) ? '$' + v : '$' + v.toFixed(2);
+  return '$' + +v.toFixed(4);
+}
+
 // isWeekendKey reports whether a "YYYY-MM-DD" key falls on a
 // Saturday/Sunday (local — keys are local days by construction).
 function isWeekendKey(key) {
@@ -98,22 +118,46 @@ function monthProjection(data) {
   };
 }
 
-// barColHTML renders one chart column. Projected bars are hollow
-// (CSS) so estimated spend never reads as recorded spend; weekend
-// columns are dimmed.
-function barColHTML(day, usd, maxUSD, projected, showLabel) {
-  const pct = maxUSD > 0 ? Math.max(usd > 0 ? 2 : 0, Math.round(usd / maxUSD * 100)) : 0;
+// barColHTML renders one chart column, with bar height scaled against
+// the Y-axis top (scaleMax) so bars line up with the gridlines.
+// Projected bars are hollow (CSS) so estimated spend never reads as
+// recorded spend; weekend columns are dimmed. The hover tooltip is a
+// data-tip attribute (instant CSS tooltip, not the native delayed
+// title) and only exists on columns with actual value — hovering an
+// empty day shows nothing.
+function barColHTML(day, usd, scaleMax, projected, showLabel) {
+  const pct = scaleMax > 0 ? Math.max(usd > 0 ? 2 : 0, Math.round(usd / scaleMax * 100)) : 0;
   const date = new Date(day + 'T12:00:00');
   const cls = ['cost-col'];
   if (isWeekendKey(day)) cls.push('weekend');
   if (projected) cls.push('projected');
-  const tip = projected
-    ? `${day} — projected ~$${usd.toFixed(2)}`
-    : `${day} — $${usd.toFixed(4)}`;
-  return `<div class="${cls.join(' ')}" title="${esc(tip)}">`
-    + `<div class="cost-bar" style="height:${pct}%"></div>`
+  const tip = !(usd > 0) ? ''
+    : projected
+      ? `${day} — projected ~$${usd.toFixed(2)}`
+      : `${day} — $${usd.toFixed(4)}`;
+  return `<div class="${cls.join(' ')}"${tip ? ` data-tip="${esc(tip)}"` : ''}>`
+    + `<div class="cost-bararea"><div class="cost-bar" style="height:${pct}%"></div></div>`
     + `<div class="cost-day">${showLabel ? date.getDate() : ''}</div>`
     + `</div>`;
+}
+
+// yAxisHTML renders the Y-axis tick labels and the gridline overlay
+// for a chart scaled to scaleMax. Both place ticks at the same
+// bottom-percentages, so labels and lines stay aligned with the bars
+// (whose heights are percentages of the same scale).
+function yAxisHTML(scaleMax) {
+  const ticks = [
+    { pct: 100, label: fmtAxisUSD(scaleMax) },
+    { pct: 50, label: fmtAxisUSD(scaleMax / 2) },
+    { pct: 0, label: '$0' },
+  ];
+  const axis = `<div class="cost-yaxis"><div class="cost-yarea">`
+    + ticks.map(t => `<div class="cost-ytick" style="bottom:${t.pct}%">${esc(t.label)}</div>`).join('')
+    + `</div><div class="cost-day"></div></div>`;
+  const grid = `<div class="cost-grid">`
+    + ticks.map(t => `<div class="cost-gridline" style="bottom:${t.pct}%"></div>`).join('')
+    + `</div>`;
+  return { axis, grid };
 }
 
 function renderChart(data, proj) {
@@ -130,12 +174,16 @@ function renderChart(data, proj) {
       '<div class="empty">No API cost recorded in this span. Cost is tracked only for agents on API/enterprise pricing (subscription sessions have no per-dollar cost).</div>';
     return;
   }
+  const scaleMax = niceCeil(maxUSD);
   // Thin the day-of-month labels on wide spans so they don't collide.
   const labelEvery = all.length > 62 ? 7 : (all.length > 35 ? 2 : 1);
   const cols = all.map((d, i) =>
-    barColHTML(d.day, d.cost_usd, maxUSD, d.projected, i % labelEvery === 0));
+    barColHTML(d.day, d.cost_usd, scaleMax, d.projected, i % labelEvery === 0));
+  const { axis, grid } = yAxisHTML(scaleMax);
   $('#costs-chart').innerHTML =
-    `<div class="cost-chart" style="--cols:${all.length}">${cols.join('')}</div>`;
+    `<div class="cost-chart">${axis}`
+    + `<div class="cost-plot">${grid}<div class="cost-cols">${cols.join('')}</div></div>`
+    + `</div>`;
 }
 
 function renderSummary(data, proj) {
@@ -157,17 +205,19 @@ function renderTable(data) {
   }
   $('#costs-table').innerHTML = `
     <table>
-      <thead><tr><th>Agent</th><th>Cost</th><th>Last activity</th></tr></thead>
+      <thead><tr><th>Agent</th><th>Cost</th><th>Model</th><th>Last activity</th></tr></thead>
       <tbody>
         ${agents.map(a => `
           <tr>
             <td><span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
+            <td><span class="muted">${esc(a.model || '')}</span></td>
             <td><span class="muted">${esc(a.last_day || '')}</span></td>
           </tr>`).join('')}
         <tr class="cost-total-row">
           <td><span class="muted">total (${agents.length} agent${agents.length === 1 ? '' : 's'})</span></td>
           <td><span class="cost-amt">${esc(fmtUSD(data.total_usd))}</span></td>
+          <td></td>
           <td></td>
         </tr>
       </tbody>

@@ -91,4 +91,19 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(".cost-bar", "bar style rule present")
 	must(".cost-col.projected .cost-bar", "projected bars styled hollow")
 	must(".cost-col.weekend .cost-bar", "weekend bars dimmed")
+
+	// Y axis: costs.js computes a nice scale top and renders tick
+	// labels + gridlines; css positions both on the same percentages.
+	must("function niceCeil", "nice Y-axis scale top computed")
+	must("cost-ytick", "Y-axis tick labels rendered")
+	must(".cost-gridline", "gridlines styled")
+
+	// Hover tooltip: instant CSS tooltip off data-tip (not the
+	// delayed native title), and only on columns with spend.
+	must("data-tip", "tooltip attribute rendered on nonzero columns")
+	must(".cost-col[data-tip]:hover::after", "instant CSS tooltip rule present")
+
+	// Breakdown table: the per-agent model column.
+	must("<th>Model</th>", "model column header present")
+	must("a.model", "model field rendered from the API row")
 }
