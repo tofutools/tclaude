@@ -142,6 +142,59 @@ func TestFindSubRepos(t *testing.T) {
 	assert.Nil(t, FindSubRepos(mono, 0))
 }
 
+// setupEmptyTestRepo creates a `git init`-ed repo with NO commits —
+// an unborn HEAD on `main`. Returns the repo path and its parent dir
+// (where default-located worktrees land).
+func setupEmptyTestRepo(t *testing.T) (repoPath string, parentDir string) {
+	t.Helper()
+	parentDir = t.TempDir()
+	parentDir, err := filepath.EvalSymlinks(parentDir)
+	require.NoError(t, err, "resolve symlinks")
+	repoPath = filepath.Join(parentDir, "empty-repo")
+	require.NoError(t, os.MkdirAll(repoPath, 0o755))
+	require.NoError(t, exec.Command("git", "-C", repoPath, "init", "-b", "main").Run(), "git init")
+	_ = exec.Command("git", "-C", repoPath, "config", "user.email", "test@example.com").Run()
+	_ = exec.Command("git", "-C", repoPath, "config", "user.name", "Test User").Run()
+	return repoPath, parentDir
+}
+
+func TestHasCommitsIn(t *testing.T) {
+	withCommits, _ := setupTestRepo(t)
+	assert.True(t, HasCommitsIn(withCommits), "repo with an initial commit has commits")
+
+	empty, _ := setupEmptyTestRepo(t)
+	assert.False(t, HasCommitsIn(empty), "freshly init'd repo (unborn HEAD) has no commits")
+}
+
+// TestAddWorktreeInEmptyRepo is the regression for spawning a worktree
+// into a brand-new repo with no commits yet: `git worktree add … <base>`
+// can't work (no commit to base on), so AddWorktreeIn cuts an orphan
+// branch instead. Before the fix the picker showed an empty base list
+// and creation failed with "could not determine base branch".
+func TestAddWorktreeInEmptyRepo(t *testing.T) {
+	repoPath, parentDir := setupEmptyTestRepo(t)
+
+	// No base branch is available (nor needed) — the worktree is cut as
+	// an orphan branch. An empty from_branch is the dashboard's default.
+	path, err := AddWorktreeIn(repoPath, "feature-x", "", "")
+	require.NoError(t, err, "orphan worktree should succeed in a no-commit repo")
+	want := filepath.Join(parentDir, "empty-repo-feature-x")
+	assert.Equal(t, normalizePath(want), normalizePath(path))
+	info, statErr := os.Stat(path)
+	require.NoError(t, statErr)
+	assert.True(t, info.IsDir())
+
+	// The orphan worktree is checked out on its own branch and shows up
+	// alongside the main worktree.
+	wts, err := ListWorktreesIn(repoPath)
+	require.NoError(t, err)
+	branches := map[string]bool{}
+	for _, wt := range wts {
+		branches[wt.Branch] = true
+	}
+	assert.Truef(t, branches["feature-x"], "feature-x worktree should be listed, got %v", branches)
+}
+
 func TestBranchesAndDefaultBranchIn(t *testing.T) {
 	repoPath, _ := setupTestRepo(t)
 

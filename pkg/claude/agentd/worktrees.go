@@ -90,6 +90,10 @@ func dashboardListWorktrees(w http.ResponseWriter, r *http.Request) {
 		"default_branch": defBranch,
 		"worktrees":      views,
 		"branches":       worktree.BranchesIn(root),
+		// false for a freshly-init'd repo (unborn HEAD): there's no
+		// commit to base a worktree on, so the picker hides the base
+		// dropdown and "+ create" cuts an orphan branch instead.
+		"has_commits": worktree.HasCommitsIn(root),
 	})
 }
 

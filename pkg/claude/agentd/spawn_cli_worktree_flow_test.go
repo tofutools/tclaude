@@ -46,6 +46,80 @@ func initRepoOnMain(t *testing.T) (repo, parent string) {
 	return repo, parent
 }
 
+// initEmptyRepoOnMain creates a real git repo with NO commits — an
+// unborn HEAD on `main` — inside a fresh parent temp dir. This is the
+// brand-new-repo case where `git worktree add … <base>` can't work
+// (there's no commit to base on), so a worktree must be cut as an
+// orphan branch. Same parent-anchoring as initRepoOnMain.
+func initEmptyRepoOnMain(t *testing.T) (repo, parent string) {
+	t.Helper()
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err, "EvalSymlinks tempdir")
+	repo = filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755), "mkdir repo")
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, gerr := cmd.CombinedOutput(); gerr != nil {
+			t.Fatalf("git %v: %v\n%s", args, gerr, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "tclaude tests")
+	run("config", "commit.gpgsign", "false")
+	return repo, parent
+}
+
+// Scenario: a human spawns `--worktree feat-x` into a BRAND-NEW repo —
+// `git init` done, but no commits yet (unborn HEAD). `git worktree add
+// … <base>` can't work (nothing to base on); the spawn must still land
+// the agent in its own worktree, cut as an orphan branch. This is the
+// regression for the dashboard's empty-base-branch / "could not
+// determine base branch" failure on a fresh repo.
+func TestSpawnCLI_WorktreeInEmptyRepoCutsOrphan(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+
+	repo, parent := initEmptyRepoOnMain(t)
+
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: repo, Worktree: "feat-x"},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equalf(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+	require.NotNil(t, resp, "RunSpawn resp")
+
+	// The orphan worktree git would have created: ../<repo-base>-<branch>.
+	wantWorktree := filepath.Join(parent, "repo-feat-x")
+	info, statErr := os.Stat(wantWorktree)
+	require.NoErrorf(t, statErr, "orphan worktree dir should exist at %s", wantWorktree)
+	assert.True(t, info.IsDir(), "worktree path should be a directory")
+
+	// It's a real linked worktree of the repo, on branch feat-x.
+	wts, err := worktree.ListWorktreesIn(repo)
+	require.NoError(t, err, "ListWorktreesIn")
+	var found *worktree.WorktreeInfo
+	for i := range wts {
+		if wts[i].Branch == "feat-x" {
+			found = &wts[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "repo should have a worktree on branch feat-x; got %+v", wts)
+
+	// The agent launched IN the orphan worktree — the SessionRow records
+	// it as the new agent's cwd.
+	rows, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err, "FindSessionsByConvID")
+	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+	assert.Equal(t, resolveSym(t, wantWorktree), resolveSym(t, rows[0].Cwd),
+		"spawned agent's cwd should be the orphan worktree, not the repo")
+}
+
 // Scenario: a human runs `tclaude agent spawn alpha worker --worktree
 // feat-x` from a git repo. The CLI must create a git worktree on
 // branch feat-x and spawn the new agent INTO it — the CLI equivalent
