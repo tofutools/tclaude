@@ -6,6 +6,7 @@
 
 import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
 import { renderGroupsTab, renderSudoTab } from './tabs.js';
+import { toggleMessageCollapse } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
@@ -1283,6 +1284,12 @@ function bindRowActions() {
           if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
           toast('message deleted');
           refresh();
+          return;
+        }
+        case 'msg-toggle': {
+          // Pure client-side view state — expand/collapse one card. No
+          // daemon round-trip; the override survives the 2s re-render.
+          toggleMessageCollapse(btn.getAttribute('data-id'));
           return;
         }
         case 'row-menu':

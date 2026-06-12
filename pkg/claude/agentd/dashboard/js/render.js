@@ -455,27 +455,75 @@ function renderMessagesTab() {
     : `${total} message${total === 1 ? '' : 's'}`;
 }
 
+// Per-message collapse state. The Messages tab re-renders on every 2s
+// poll, so the human's expand/collapse choices live in module state
+// (keyed by message id) rather than the DOM, which each re-render wipes.
+// An id absent from the map uses the default: unread expanded (you want
+// to read what just arrived), read collapsed (declutter what's handled).
+const msgExpandOverride = new Map();
+
+function isMsgExpanded(m) {
+  if (msgExpandOverride.has(m.id)) return msgExpandOverride.get(m.id);
+  return !m.read;
+}
+
+// toggleMessageCollapse flips one message's expand state and redraws the
+// tab. Driven by the delegated click handler (data-act="msg-toggle").
+function toggleMessageCollapse(id) {
+  id = Number(id);
+  // Flip the CURRENT effective state (override or read-derived default)
+  // so the first click always inverts what the human actually sees.
+  const m = ((lastSnapshot && lastSnapshot.messages) || []).find(x => x.id === id);
+  const cur = m ? isMsgExpanded(m) : (msgExpandOverride.get(id) ?? false);
+  msgExpandOverride.set(id, !cur);
+  renderMessagesTab();
+}
+
+// msgPreview is the one-line collapsed title: the sender's subject if
+// there is one, else the first non-blank line of the body. CSS truncates
+// it with an ellipsis at the card width.
+function msgPreview(m) {
+  if (m.subject) return m.subject;
+  const firstNonBlank = (m.body || '').split('\n').find(l => l.trim() !== '');
+  return firstNonBlank || '';
+}
+
 function renderMessages(msgs, onlineConvs) {
   if (!msgs || !msgs.length) return '<div class="empty">No messages.</div>';
   return msgs.map(m => {
     const unread = !m.read;
+    const expanded = isMsgExpanded(m);
     const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
     const grp = m.group ? `<span class="msg-group">· ${esc(m.group)}</span>` : '';
-    const subj = m.subject ? `<div class="msg-subject">${esc(m.subject)}</div>` : '';
-    // Focus raises the sending agent's terminal window. Only offered
-    // when the agent is online — disabled otherwise, never an error.
-    const focusable = m.from_conv && onlineConvs.has(m.from_conv);
-    const focusBtn = m.from_conv
-      ? `<button data-act="msg-focus" data-conv="${esc(m.from_conv)}" data-id="${m.id}" data-label="${esc(m.from_title || m.from_conv)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`
-      : '';
-    const readBtn = unread
-      ? `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`
-      : '';
-    // Per-message delete — works on read AND unread messages, the
-    // single-row complement to the bulk "clear read" sweep.
-    const deleteBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
-    return `<div class="msg-card${unread ? ' msg-unread' : ''}">
-      <div class="msg-head">
+    // Collapsed shows one ellipsised title line; expanded shows the full
+    // subject + body + the per-message action buttons.
+    let detail;
+    if (expanded) {
+      const subj = m.subject ? `<div class="msg-subject">${esc(m.subject)}</div>` : '';
+      // Focus raises the sending agent's terminal window. Only offered
+      // when the agent is online — disabled otherwise, never an error.
+      const focusable = m.from_conv && onlineConvs.has(m.from_conv);
+      const focusBtn = m.from_conv
+        ? `<button data-act="msg-focus" data-conv="${esc(m.from_conv)}" data-id="${m.id}" data-label="${esc(m.from_title || m.from_conv)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`
+        : '';
+      const readBtn = unread
+        ? `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`
+        : '';
+      // Per-message delete — works on read AND unread messages, the
+      // single-row complement to the bulk "clear read" sweep.
+      const deleteBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
+      detail = `${subj}
+      <div class="msg-body">${esc(m.body)}</div>
+      <div class="msg-actions">${focusBtn}${readBtn}${deleteBtn}</div>`;
+    } else {
+      detail = `<div class="msg-preview" data-act="msg-toggle" data-id="${m.id}" title="Expand to read">${esc(msgPreview(m))}</div>`;
+    }
+    // The whole header toggles collapse (data-act="msg-toggle"); the
+    // caret mirrors the state. Matches the dashboard's other clickable
+    // headers — the delegated handler preventDefaults the click.
+    return `<div class="msg-card${unread ? ' msg-unread' : ''}${expanded ? '' : ' msg-collapsed'}">
+      <div class="msg-head" data-act="msg-toggle" data-id="${m.id}" title="${expanded ? 'Collapse' : 'Expand'} this message">
+        <span class="msg-caret">${expanded ? '▾' : '▸'}</span>
         ${unread ? '<span class="msg-dot" title="unread">●</span>' : ''}
         <span class="msg-from">${esc(m.from_title || '(unknown sender)')}</span>
         ${grp}
@@ -483,9 +531,7 @@ function renderMessages(msgs, onlineConvs) {
         <span class="spacer"></span>
         <span class="msg-time">${esc(when)}</span>
       </div>
-      ${subj}
-      <div class="msg-body">${esc(m.body)}</div>
-      <div class="msg-actions">${focusBtn}${readBtn}${deleteBtn}</div>
+      ${detail}
     </div>`;
   }).join('');
 }
@@ -619,4 +665,5 @@ function renderUserDefaultModel(model) {
 export {
   renderGroups, renderPermissions, renderSlugs, showStatus,
   renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
+  toggleMessageCollapse,
 };
