@@ -10,7 +10,17 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 )
+
+// humanMsgNotify is the OS-notification seam for notify-human: a desktop
+// banner companion to the dashboard Messages tab. Production routes it
+// through notify.SendHumanMessage (which self-gates on config and no-ops
+// when disabled); flow tests swap in a recorder via
+// SetHumanMessageNotifierForTest. The handler fires it through
+// goBackground so a slow platform send (WSL spawns PowerShell) never
+// blocks the request.
+var humanMsgNotify = notify.SendHumanMessage
 
 // notifyHumanRequest is the POST /v1/notify-human body.
 type notifyHumanRequest struct {
@@ -86,10 +96,14 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("subject too long: %d bytes, max %d", len(body.Subject), maxNotifyHumanSubjectLen))
 		return
 	}
+	// Snapshot the sender attribution once, reused for both the persisted
+	// row and the OS notification below.
+	fromTitle := notifyHumanCallerTitle(callerConv)
+	groupName := notifyHumanCallerGroup(callerConv)
 	id, err := db.InsertHumanMessage(&db.HumanMessage{
 		FromConv:  callerConv,
-		FromTitle: notifyHumanCallerTitle(callerConv),
-		GroupName: notifyHumanCallerGroup(callerConv),
+		FromTitle: fromTitle,
+		GroupName: groupName,
 		Subject:   body.Subject,
 		Body:      body.Body,
 		CreatedAt: time.Now(),
@@ -99,7 +113,30 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 			"failed to record message: "+err.Error())
 		return
 	}
+	// Also raise a desktop notification (off the request goroutine — a
+	// platform send can spawn a subprocess). Self-gates on config, so this
+	// is a no-op unless the human opted in.
+	senderSession := notifyHumanSenderSessionID(callerConv)
+	goBackground(func() {
+		humanMsgNotify(senderSession, fromTitle, groupName, body.Subject, body.Body)
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
+}
+
+// notifyHumanSenderSessionID resolves the caller conv-id to its tclaude
+// session ID so the desktop notification can click-to-focus the sending
+// agent's terminal — the OS-notification twin of the dashboard's
+// per-message Focus button. Empty for the human path (callerConv == "")
+// or when the sender has no recorded session; the notification still
+// fires, just non-clickable.
+func notifyHumanSenderSessionID(callerConv string) string {
+	if callerConv == "" {
+		return ""
+	}
+	if row, err := db.FindSessionByConvID(callerConv); err == nil && row != nil {
+		return row.ID
+	}
+	return ""
 }
 
 // requireNotifyHumanPermission gates POST /v1/notify-human. The caller

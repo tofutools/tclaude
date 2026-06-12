@@ -166,6 +166,20 @@ func SetFocusAgentWindowForTest(fn func(*db.SessionRow)) func() {
 	return func() { focusAgentWindow = prev }
 }
 
+// SetHumanMessageNotifierForTest swaps the notify-human OS-notification
+// seam so a flow test can assert that handleNotifyHuman dispatched a
+// desktop notification — with the right sender/group/subject/body — without
+// the production notify.SendHumanMessage (which self-gates on config and
+// would no-op under the test's default config anyway). The handler fires
+// through goBackground, so drain with WaitForBackgroundForTest before
+// asserting. Returns a restore function for t.Cleanup. Mirrors the
+// reaperNotify recorder pattern.
+func SetHumanMessageNotifierForTest(fn func(senderSessionID, fromTitle, group, subject, body string)) func() {
+	prev := humanMsgNotify
+	humanMsgNotify = fn
+	return func() { humanMsgNotify = prev }
+}
+
 // SetDetachAgentWindowsForTest swaps the per-agent unfocus/detach seam
 // behind the bulk /api/agent-windows endpoint. The fake returns the
 // detached-client count the real session.DetachSessionClients would
