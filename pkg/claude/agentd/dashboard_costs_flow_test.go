@@ -27,11 +27,12 @@ type costsRespDay struct {
 	CostUSD float64 `json:"cost_usd"`
 }
 type costsRespConv struct {
-	ConvID  string  `json:"conv_id"`
-	Title   string  `json:"title"`
-	CostUSD float64 `json:"cost_usd"`
-	LastDay string  `json:"last_day"`
-	Model   string  `json:"model"`
+	ConvID       string  `json:"conv_id"`
+	Title        string  `json:"title"`
+	CostUSD      float64 `json:"cost_usd"`
+	LastDay      string  `json:"last_day"`
+	LastActivity string  `json:"last_activity"`
+	Model        string  `json:"model"`
 }
 
 func fetchCosts(t *testing.T, mux http.Handler, query string) costsResp {
@@ -81,12 +82,19 @@ func TestDashboardCosts_DailySeriesAndBreakdown(t *testing.T) {
 	assert.InDelta(t, 1.75, last.CostUSD, 1e-9, "today's bar carries all spend recorded today")
 	assert.Equal(t, len(out.Days), daysInclusive(t, monthStart, today), "one point per calendar day, gaps zero-filled")
 
+	// Look the rows up by conv rather than by index: ordering is by
+	// last-activity time now (exercised by AgentOrderingAndModels), and
+	// this scenario is about the sums — A's spend includes its retired
+	// session's history, which outlives the deleted sessions row.
 	require.Len(t, out.Agents, 2, "one breakdown row per conv")
-	assert.Equal(t, convA, out.Agents[0].ConvID, "same last day — cost descending breaks the tie")
-	assert.InDelta(t, 1.25, out.Agents[0].CostUSD, 1e-9, "A's two sessions summed, retired one included")
-	assert.Equal(t, today, out.Agents[0].LastDay)
-	assert.Equal(t, convB, out.Agents[1].ConvID)
-	assert.InDelta(t, 0.50, out.Agents[1].CostUSD, 1e-9)
+	byConv := map[string]costsRespConv{}
+	for _, a := range out.Agents {
+		byConv[a.ConvID] = a
+	}
+	assert.InDelta(t, 1.25, byConv[convA].CostUSD, 1e-9, "A's two sessions summed, retired one included")
+	assert.Equal(t, today, byConv[convA].LastDay)
+	assert.NotEmpty(t, byConv[convA].LastActivity, "live session's spend carries a precise last-activity time")
+	assert.InDelta(t, 0.50, byConv[convB].CostUSD, 1e-9)
 
 	assert.InDelta(t, 1.75, out.TotalUSD, 1e-9, "span total matches the series")
 }
@@ -144,13 +152,51 @@ func TestDashboardCosts_AgentOrderingAndModels(t *testing.T) {
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)
 
 	require.Len(t, out.Agents, 3, "one breakdown row per conv")
-	assert.Equal(t, convB, out.Agents[0].ConvID, "today's agents first; B's higher spend breaks the same-day tie")
+	assert.Equal(t, convB, out.Agents[0].ConvID, "today's agents first; B was costed last (and outspent A), so it leads")
 	assert.Equal(t, "Opus 4.8", out.Agents[0].Model)
 	assert.Equal(t, convA, out.Agents[1].ConvID)
 	assert.Equal(t, "Fable 5", out.Agents[1].Model)
 	assert.Equal(t, convC, out.Agents[2].ConvID, "older last-day sorts below today despite the larger spend")
 	assert.Equal(t, oldDay, out.Agents[2].LastDay)
 	assert.Empty(t, out.Agents[2].Model, "no live session row → no model to show")
+}
+
+// Scenario: within a single day, the precise last-activity timestamp
+// orders the breakdown — not spend. A cheaper agent that was active
+// later in the day must sort ahead of a pricier one that went quiet
+// earlier, and the wire must carry the timestamp the UI renders. The
+// day-only tie-break this replaced would have ordered them by cost.
+func TestDashboardCosts_LastActivityTimeOrdersWithinDay(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const convLate = "wcla-1111-2222-3333-4444"  // cheaper, active later
+	const convEarly = "wcea-1111-2222-3333-4444" // pricier, quiet since morning
+
+	// Direct daily rows with explicit timestamps so the ordering is
+	// pinned to the times, not to wall-clock seed order. Same day; the
+	// cheaper agent's stamp is the later one.
+	now := time.Now()
+	day := now.Format("2006-01-02")
+	y, m, d0 := now.Date()
+	early := time.Date(y, m, d0, 1, 0, 0, 0, now.Location()).Format(time.RFC3339Nano)
+	late := time.Date(y, m, d0, 2, 0, 0, 0, now.Location()).Format(time.RFC3339Nano)
+
+	conn, err := db.Open()
+	require.NoError(t, err)
+	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
+		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+		"wcl-1", day, convLate, 0.10, late,
+		"wce-1", day, convEarly, 5.00, early)
+	require.NoError(t, err, "seed two same-day rows with explicit times")
+
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
+
+	require.Len(t, out.Agents, 2, "one breakdown row per conv")
+	assert.Equal(t, convLate, out.Agents[0].ConvID, "later activity sorts first despite the lower spend")
+	assert.Equal(t, late, out.Agents[0].LastActivity, "precise last-activity timestamp surfaced on the wire")
+	assert.Equal(t, convEarly, out.Agents[1].ConvID, "pricier-but-earlier agent sorts below")
+	assert.Equal(t, early, out.Agents[1].LastActivity)
 }
 
 // seedAgentCostSession writes a sessions row tied to a conv and

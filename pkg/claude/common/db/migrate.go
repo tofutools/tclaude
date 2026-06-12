@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 52
+const currentVersion = 53
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -335,6 +335,44 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 53 {
+		if err := migrateV52toV53(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV52toV53 adds session_cost_daily.updated_at — the wall-clock
+// time (RFC3339Nano, local) of the most recent spend recorded on that
+// (session, day) row, so the Costs tab's per-agent breakdown can show
+// and sort on a real last-activity time, not just the calendar day.
+// Empty = unknown, which renders date-only (the prior behaviour).
+//
+// Going forward UpdateSessionCost stamps this when a day's cumulative
+// figure actually rises. For rows that already exist we backfill from
+// the sessions table — last_hook when it carries a real timestamp
+// (the same per-session clock the Activity tab's "last activity"
+// reads), else updated_at — but only where the session row still
+// exists; history whose session was deleted keeps the empty value and
+// stays date-only. The year guard ('… > 2000') skips the zero-time
+// "0001-01-01…" that SaveSession writes for a never-hooked session.
+func migrateV52toV53(db *sql.DB) error {
+	_, err := db.Exec(`
+		ALTER TABLE session_cost_daily ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+
+		UPDATE session_cost_daily SET updated_at = (
+			SELECT CASE WHEN s.last_hook > '2000' THEN s.last_hook ELSE s.updated_at END
+			FROM sessions s WHERE s.id = session_cost_daily.session_id
+		)
+		WHERE session_id IN (SELECT id FROM sessions);
+
+		UPDATE schema_version SET version = 53;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v52→v53 (add session_cost_daily.updated_at): %w", err)
+	}
 	return nil
 }
 

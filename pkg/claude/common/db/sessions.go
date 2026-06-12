@@ -598,13 +598,23 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// conv_id is denormalised in at write time — the daily history must
 	// survive the sessions row being deleted later (session kill, agent
 	// delete).
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
-		SELECT id, ?, conv_id, ? FROM sessions WHERE id = ?
+	// updated_at stamps the wall-clock moment of the most recent spend
+	// on this (session, day) row: set on insert, and refreshed on
+	// conflict only when the new cumulative figure actually exceeds the
+	// stored one — a stale render at an equal/lower cost is real
+	// activity for cost purposes only if it raised the total, so an idle
+	// session whose statusline keeps ticking never bumps its
+	// last-activity time. Powers the Costs tab's last-activity column.
+	now := time.Now()
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
+		SELECT id, ?, conv_id, ?, ? FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
+			updated_at = CASE WHEN excluded.cost_usd > session_cost_daily.cost_usd
+			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
 			cost_usd = MAX(session_cost_daily.cost_usd, excluded.cost_usd),
 			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
 			                ELSE session_cost_daily.conv_id END`,
-		time.Now().Format(costDayFormat), costUSD, sessionID)
+		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
 	if err != nil {
 		return err
 	}
@@ -626,6 +636,7 @@ type CostDailyRow struct {
 	Day       string // local "2006-01-02"
 	ConvID    string
 	CostUSD   float64 // cumulative within the session as of that day
+	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 }
 
 // SumCostSinceDay totals the actual spend recorded on or after fromDay
@@ -665,7 +676,7 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd
+	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, updated_at
 		FROM session_cost_daily ORDER BY session_id, day`)
 	if err != nil {
 		return nil, err
@@ -674,7 +685,7 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	var out []CostDailyRow
 	for rows.Next() {
 		var r CostDailyRow
-		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD); err != nil {
+		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

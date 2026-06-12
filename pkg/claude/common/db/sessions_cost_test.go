@@ -58,6 +58,37 @@ func TestUpdateSessionCost_WritesDailySnapshot(t *testing.T) {
 	assert.Equal(t, "conv-dcost-a", row.ConvID, "conv_id denormalised from the sessions row")
 }
 
+// TestUpdateSessionCost_StampsUpdatedAt pins the daily row's
+// last-activity clock: the first spend stamps updated_at; a stale,
+// lower render (which never raises the day's max) must leave the stamp
+// alone — an idle session whose statusline keeps ticking does not read
+// as fresh activity; a higher cumulative figure (real new spend) does
+// refresh it.
+func TestUpdateSessionCost_StampsUpdatedAt(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+
+	saveCostSession(t, "ts-a", "idle", 1.00)
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	row := dailyRowFor(t, rows, "ts-a", today)
+	require.NotNil(t, row)
+	first := row.UpdatedAt
+	require.NotEmpty(t, first, "first spend stamps updated_at")
+
+	require.NoError(t, UpdateSessionCost("ts-a", 0.50), "stale lower render")
+	rows, err = AllCostDailyRows()
+	require.NoError(t, err)
+	assert.Equal(t, first, dailyRowFor(t, rows, "ts-a", today).UpdatedAt,
+		"a render that does not raise the day's spend must not bump the stamp")
+
+	require.NoError(t, UpdateSessionCost("ts-a", 2.00), "real new spend")
+	rows, err = AllCostDailyRows()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, dailyRowFor(t, rows, "ts-a", today).UpdatedAt, first,
+		"a higher cumulative figure refreshes the stamp")
+}
+
 // TestCostDaily_SurvivesSessionDeletion is the retired-agent
 // guarantee: deleting the sessions row (session kill, agent delete)
 // must leave the daily cost history — and its conv attribution —
