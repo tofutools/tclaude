@@ -35,10 +35,46 @@ func enableNotificationsForTest(t *testing.T) {
 // 5s cooldown never bleeds between steps.
 func notified(t *testing.T, sessionID, convID string) bool {
 	t.Helper()
-	notify.OnStateTransition(sessionID, convID, "working", "idle", "/tmp/x", "worker")
+	return notifiedTransition(t, sessionID, convID, "working", "idle")
+}
+
+func notifiedTransition(t *testing.T, sessionID, convID, from, to string) bool {
+	t.Helper()
+	notify.OnStateTransition(sessionID, convID, from, to, "/tmp/x", "worker")
 	_, found, err := db.GetNotifyTime(sessionID)
 	require.NoError(t, err, "GetNotifyTime(%s)", sessionID)
 	return found
+}
+
+// Scenario: a self-transition never notifies, even with notifications
+// fully enabled and no cooldown in play (every step uses a fresh
+// session ID, so the only thing standing between the call and a banner
+// is the from==to guard).
+//
+// The production sequences this models:
+//   - Claude Code's ~60s idle timer fires Notification(idle_prompt) on a
+//     session that already went idle via Stop — without the guard the
+//     wildcard {from:"*", to:"idle"} rule matched the idle→idle re-stamp
+//     and the human got a duplicate "Idle" banner a minute after the
+//     real one (the cooldown, default 5s, was long expired);
+//   - a late SessionEnd hook landing after the reaper already stamped
+//     the session exited (exited→exited), well past the cooldown window.
+func TestNotificationFilters_SelfTransitionNeverNotifies(t *testing.T) {
+	f := newFlow(t)
+	enableNotificationsForTest(t)
+
+	const conv = "self-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(conv, "worker")
+
+	require.True(t, notified(t, "sess-real-idle", conv),
+		"control: working→idle fires, so a missing banner below is the guard, not a broken harness")
+
+	assert.False(t, notifiedTransition(t, "sess-idle-restamp", conv, "idle", "idle"),
+		"idle_prompt re-stamp of an already-idle session must not re-notify")
+	assert.False(t, notifiedTransition(t, "sess-exit-resweep", conv, "exited", "exited"),
+		"reaper re-observing an announced exit must not re-notify")
+	assert.False(t, notifiedTransition(t, "sess-perm-repeat", conv, "awaiting_permission", "awaiting_permission"),
+		"repeated permission prompt must not re-notify")
 }
 
 // Scenario: the notification-filter ladder end to end — the dashboard

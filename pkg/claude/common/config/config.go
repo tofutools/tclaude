@@ -415,7 +415,9 @@ type RateLimitConfig struct {
 }
 
 // TransitionRule defines a state transition that triggers a notification.
-// Use "*" as a wildcard to match any state.
+// Use "*" as a wildcard to match any state. A self-transition (from ==
+// to, e.g. an idle session re-stamped idle) never notifies, regardless
+// of rules — notify.OnStateTransition drops it before matching.
 type TransitionRule struct {
 	From string `json:"from"`
 	To   string `json:"to"`

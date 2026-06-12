@@ -58,9 +58,11 @@ func newSessionReaper() *sessionReaper {
 
 // defaultReaperNotify routes an offline transition through the shared
 // notification path. notify.OnStateTransition no-ops when notifications
-// are disabled (the default) and dedupes via the per-session cooldown —
-// so a clean exit already announced by the SessionEnd hook is not
-// double-notified when the reaper's next sweep observes the same exit.
+// are disabled (the default). prevStatus here is never "exited" — tick
+// skips already-exited rows before capturing it — so the reaper itself
+// cannot produce an exited→exited repeat; the reverse race (a late
+// SessionEnd hook landing after the reaper already stamped exited) is
+// suppressed by OnStateTransition's self-transition guard.
 func defaultReaperNotify(st *session.SessionState, prevStatus string) {
 	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusExited, st.Cwd, agent.FreshTitle(st.ConvID))
 }

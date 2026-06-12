@@ -35,6 +35,26 @@ func IsEnabled() bool {
 // filter lookup; convTitle is optional - pass empty string if not
 // available.
 func OnStateTransition(sessionID, convID, from, to, cwd, convTitle string) {
+	// A no-op "transition" never notifies — and an explicit config rule
+	// cannot opt back in. Without this guard, CC's ~60s idle timer fires
+	// a Notification(idle_prompt) hook that re-stamps an already-idle
+	// session (idle → idle); the wildcard {from:"*", to:"idle"} rule
+	// matched that, and with the cooldown (default 5s) long expired the
+	// human got a duplicate "Idle" banner about a minute after the real
+	// one. Same shape for a SessionEnd hook landing after the reaper
+	// already stamped the session exited (exited → exited).
+	//
+	// Deliberate trade-off: a genuinely NEW prompt that re-lands on the
+	// same status (deny tool A, the model immediately requests tool B —
+	// awaiting_permission → awaiting_permission with no hook in between)
+	// is suppressed too. The banner would have been byte-identical to
+	// the one already sent (Send renders the status + project, not the
+	// detail), and the human was at the keyboard to deny A moments
+	// earlier — accepted as noise reduction, not signal loss.
+	if from == to {
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled {
 		return
