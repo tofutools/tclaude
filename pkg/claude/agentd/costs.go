@@ -28,6 +28,7 @@ type costDelta struct {
 	convID    string
 	sessionID string
 	usd       float64
+	updatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 }
 
 // costDeltasFromRows turns cumulative (session, day) snapshots into
@@ -49,7 +50,7 @@ func costDeltasFromRows(rows []db.CostDailyRow) []costDelta {
 			baseline = 0
 		}
 		if d := r.CostUSD - baseline; d > 0 {
-			out = append(out, costDelta{day: r.Day, convID: r.ConvID, sessionID: r.SessionID, usd: d})
+			out = append(out, costDelta{day: r.Day, convID: r.ConvID, sessionID: r.SessionID, usd: d, updatedAt: r.UpdatedAt})
 			baseline = r.CostUSD
 		}
 	}
@@ -84,12 +85,18 @@ type costDayPoint struct {
 // Model is the display name reported by the agent's most recent
 // costed session in the span — "latest model wins" when sessions ran
 // different models; empty when no live sessions row still carries one.
+// LastActivity is the wall-clock time (RFC3339Nano) of the agent's
+// most recent spend on LastDay — the finer-grained timestamp the
+// breakdown shows and sorts on; "" when unknown (pre-v53 history whose
+// session was already gone), in which case the surface falls back to
+// LastDay's calendar date.
 type costAgentRow struct {
-	ConvID  string  `json:"conv_id"`
-	Title   string  `json:"title"`
-	CostUSD float64 `json:"cost_usd"`
-	LastDay string  `json:"last_day"`
-	Model   string  `json:"model"`
+	ConvID       string  `json:"conv_id"`
+	Title        string  `json:"title"`
+	CostUSD      float64 `json:"cost_usd"`
+	LastDay      string  `json:"last_day"`
+	LastActivity string  `json:"last_activity,omitempty"`
+	Model        string  `json:"model"`
 }
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
@@ -133,6 +140,11 @@ func collectCosts(from time.Time) (costsResponse, error) {
 	type agentAgg struct {
 		usd     float64
 		lastDay string
+		// lastActivity is the RFC3339Nano time of the agent's last spend
+		// on lastDay — the finest-grained "last activity" the breakdown
+		// can show. A newer day always replaces it; a same-day delta only
+		// raises it. "" when no contributing row carried a timestamp.
+		lastActivity string
 		// model of the latest-day session with a known model; modelDay
 		// tracks that day so a model-less session (its row deleted, or
 		// no statusline tick yet) never blanks an older known value.
@@ -152,8 +164,11 @@ func collectCosts(from time.Time) (costsResponse, error) {
 			byConv[d.convID] = a
 		}
 		a.usd += d.usd
-		if d.day > a.lastDay {
-			a.lastDay = d.day
+		switch {
+		case d.day > a.lastDay:
+			a.lastDay, a.lastActivity = d.day, d.updatedAt
+		case d.day == a.lastDay && d.updatedAt > a.lastActivity:
+			a.lastActivity = d.updatedAt
 		}
 		if m := models[d.sessionID]; m != "" && d.day >= a.modelDay {
 			a.model, a.modelDay = m, d.day
@@ -172,11 +187,12 @@ func collectCosts(from time.Time) (costsResponse, error) {
 	}
 	for convID, a := range byConv {
 		out.Agents = append(out.Agents, costAgentRow{
-			ConvID:  convID,
-			Title:   agent.CachedTitle(convID),
-			CostUSD: a.usd,
-			LastDay: a.lastDay,
-			Model:   a.model,
+			ConvID:       convID,
+			Title:        agent.CachedTitle(convID),
+			CostUSD:      a.usd,
+			LastDay:      a.lastDay,
+			LastActivity: a.lastActivity,
+			Model:        a.model,
 		})
 	}
 	sortCostAgentRows(out.Agents)
@@ -184,19 +200,37 @@ func collectCosts(from time.Time) (costsResponse, error) {
 }
 
 // sortCostAgentRows orders the breakdown most-recent-first: latest
-// activity day first, spend descending within a day, conv id as the
-// stable tail. Day keys are zero-padded ISO dates, so string order is
-// date order.
+// activity first, spend descending within a tie, conv id as the stable
+// tail. Recency uses the precise last-activity timestamp when both
+// rows carry one; otherwise it falls back to the calendar day, so an
+// agent with a known time on a day sorts ahead of one with only that
+// day's date (its activity is provably no earlier, and resolved finer).
 func sortCostAgentRows(agents []costAgentRow) {
 	sort.Slice(agents, func(i, j int) bool {
-		if agents[i].LastDay != agents[j].LastDay {
-			return agents[i].LastDay > agents[j].LastDay
+		if ki, kj := costRowRecencyKey(agents[i]), costRowRecencyKey(agents[j]); ki != kj {
+			return ki > kj
 		}
 		if agents[i].CostUSD != agents[j].CostUSD {
 			return agents[i].CostUSD > agents[j].CostUSD
 		}
 		return agents[i].ConvID < agents[j].ConvID
 	})
+}
+
+// costRowRecencyKey is the string the breakdown sorts recency on. With
+// a precise timestamp it's the RFC3339Nano value (lexically ordered —
+// the local offset is constant across rows, so string order is time
+// order); without one it's the calendar day floored to midnight, which
+// sorts just below any same-day timestamp. Both forms share the
+// "2006-01-02" prefix, so cross-form comparison still orders by day.
+func costRowRecencyKey(a costAgentRow) string {
+	if a.LastActivity != "" {
+		return a.LastActivity
+	}
+	if a.LastDay != "" {
+		return a.LastDay + "T00:00:00"
+	}
+	return ""
 }
 
 // handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD — the

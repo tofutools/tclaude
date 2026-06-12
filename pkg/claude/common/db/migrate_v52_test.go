@@ -52,9 +52,8 @@ func TestMigrateV51toV52_AddsDefaultModel(t *testing.T) {
 
 // TestMigrateV51toV52_FreshSchemaRoundTrips builds a fresh DB through
 // the full migrate() chain and round-trips a group default model
-// through the production setter + getter. Carries the literal
-// currentVersion pin — a tripwire the next migration's author moves
-// forward into their own v53 test.
+// through the production setter + getter. The literal currentVersion
+// pin moved forward into the v53 test (migrate_v53_test.go).
 func TestMigrateV51toV52_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -63,7 +62,6 @@ func TestMigrateV51toV52_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 52, currentVersion, "currentVersion is 52")
 
 	_, err = CreateAgentGroup("g", "")
 	require.NoError(t, err, "CreateAgentGroup")

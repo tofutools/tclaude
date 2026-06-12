@@ -38,6 +38,22 @@ function dayKey(d) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+// fmtLastActivity renders the breakdown's last-activity cell. The API
+// sends a precise `last_activity` timestamp (RFC3339) plus the
+// date-only `last_day`; prefer the timestamp, shown as local
+// "YYYY-MM-DD HH:MM", and fall back to the bare day when no time is
+// known (pre-v53 history whose session was already gone).
+function fmtLastActivity(a) {
+  if (a.last_activity) {
+    const d = new Date(a.last_activity);
+    if (!isNaN(d.getTime())) {
+      const p = n => String(n).padStart(2, '0');
+      return `${dayKey(d)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+  }
+  return a.last_day || '';
+}
+
 // spanFromDate computes the span's starting Date (local).
 function spanFromDate(span) {
   const now = new Date();
@@ -212,7 +228,7 @@ function renderTable(data) {
             <td><span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
             <td><span class="muted">${esc(a.model || '')}</span></td>
-            <td><span class="muted">${esc(a.last_day || '')}</span></td>
+            <td><span class="muted">${esc(fmtLastActivity(a))}</span></td>
           </tr>`).join('')}
         <tr class="cost-total-row">
           <td><span class="muted">total (${agents.length} agent${agents.length === 1 ? '' : 's'})</span></td>
