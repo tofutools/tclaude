@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -102,20 +103,85 @@ func Send(sessionID, status, cwd, convTitle string) {
 	}
 	body = truncate(body, notifyBodyMaxLen)
 
-	var err error
+	dispatch(sessionID, title, body)
+}
 
-	// Check for a custom notification command
+// dispatch delivers an already-formatted notification through the
+// configured channel — a custom notification_command if one is set,
+// otherwise the platform default (D-Bus / toast / terminal-notifier) —
+// and falls back to stderr if that fails. sessionID drives the
+// click-to-focus action. Shared by Send and SendHumanMessage so both
+// honor notification_command identically.
+func dispatch(sessionID, title, body string) {
+	var err error
 	cfg, cfgErr := config.Load()
 	if cfgErr == nil && cfg.Notifications != nil && len(cfg.Notifications.NotificationCommand) > 0 {
 		err = runCustomCommand(cfg.Notifications.NotificationCommand, sessionID, title, body)
 	} else {
 		err = platformSend(sessionID, title, body)
 	}
-
 	if err != nil {
 		// Final fallback to stderr
 		fmt.Fprintf(os.Stderr, "[notify] %s: %s\n", title, body)
 	}
+}
+
+// SendHumanMessage raises an OS notification for a `tclaude agent
+// notify-human` message — the desktop companion to the dashboard
+// Messages tab, so the human sees an agent's ping off the busy terminal.
+//
+// It no-ops unless notifications are enabled AND the human_messages knob
+// is on (see config.NotificationConfig.NotifyHumanMessages) — mirroring
+// how OnStateTransition self-gates on config, so callers stay dumb.
+//
+// senderSessionID, when non-empty, makes the notification click-to-focus
+// the sending agent's terminal — the OS-notification twin of the
+// dashboard's per-message Focus button. Pass "" when the sender has no
+// live session; the notification still fires, just non-clickable.
+func SendHumanMessage(senderSessionID, fromTitle, group, subject, body string) {
+	cfg, err := config.Load()
+	if err != nil || !cfg.Notifications.NotifyHumanMessages() {
+		return
+	}
+	title, notifBody := formatHumanMessage(fromTitle, group, subject, body)
+	slog.Debug("sending human-message notification",
+		"senderSessionID", senderSessionID, "from", fromTitle, "group", group)
+	dispatch(senderSessionID, title, notifBody)
+}
+
+// formatHumanMessage builds the title/body of a human-message
+// notification. The title carries the subject (or a "messaged you"
+// attribution when there is none); the body carries the message, prefixed
+// by the sender when a subject occupied the title, and suffixed by the
+// group — truncated to the same caps as Send so an over-long message
+// can't overflow the banner. who falls back to a generic phrase when the
+// sender title is unknown.
+func formatHumanMessage(fromTitle, group, subject, body string) (title, notifBody string) {
+	who := strings.TrimSpace(fromTitle)
+	if who == "" {
+		who = "An agent"
+	}
+
+	if s := strings.TrimSpace(subject); s != "" {
+		title = truncate("Claude: "+s, notifyTitleMaxLen)
+	} else {
+		title = truncate(fmt.Sprintf("Claude: %s messaged you", who), notifyTitleMaxLen)
+	}
+
+	var b strings.Builder
+	if s := strings.TrimSpace(subject); s != "" {
+		// Title already carries the subject; lead the body with the
+		// sender so the human knows who, even when the subject is set.
+		b.WriteString(who)
+		b.WriteString(": ")
+	}
+	b.WriteString(strings.TrimSpace(body))
+	if g := strings.TrimSpace(group); g != "" {
+		b.WriteString("\n— ")
+		b.WriteString(g)
+	}
+	notifBody = truncate(b.String(), notifyBodyMaxLen)
+	return title, notifBody
 }
 
 const (

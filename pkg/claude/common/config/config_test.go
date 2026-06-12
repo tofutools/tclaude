@@ -295,3 +295,45 @@ func TestFocusConfig_RoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(none), "focus")
 }
+
+// NotifyHumanMessages gates the notify-human OS notification: off unless
+// the master switch is on, and within that defaulting ON (nil) but
+// suppressible by an explicit false.
+func TestNotifyHumanMessages_Gating(t *testing.T) {
+	tru, fls := true, false
+	cases := []struct {
+		name string
+		cfg  *NotificationConfig
+		want bool
+	}{
+		{"nil config", nil, false},
+		{"disabled, knob unset", &NotificationConfig{Enabled: false}, false},
+		{"disabled, knob true", &NotificationConfig{Enabled: false, HumanMessages: &tru}, false},
+		{"enabled, knob unset → default on", &NotificationConfig{Enabled: true}, true},
+		{"enabled, knob true", &NotificationConfig{Enabled: true, HumanMessages: &tru}, true},
+		{"enabled, knob false → suppressed", &NotificationConfig{Enabled: true, HumanMessages: &fls}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.cfg.NotifyHumanMessages())
+		})
+	}
+}
+
+// human_messages round-trips through JSON, and an unset knob stays absent
+// (omitempty) so a default config never shows it as a spurious diff.
+func TestNotifyHumanMessages_RoundTrips(t *testing.T) {
+	fls := false
+	data, err := json.Marshal(&Config{Notifications: &NotificationConfig{Enabled: true, HumanMessages: &fls}})
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"human_messages":false`)
+
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.False(t, out.Notifications.NotifyHumanMessages())
+
+	// An unset knob marshals without the key at all.
+	none, err := json.Marshal(&Config{Notifications: &NotificationConfig{Enabled: true}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(none), "human_messages")
+}

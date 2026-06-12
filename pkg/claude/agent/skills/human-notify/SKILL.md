@@ -20,6 +20,12 @@ shows who sent it and offers a button that focuses that agent's
 terminal window — so the human can read a message and jump straight to
 the agent to respond.
 
+If the human has OS notifications enabled (`tclaude setup`), each
+notify-human **also raises a desktop notification** — so it reaches them
+even when the dashboard isn't open. This is on by default once
+notifications are enabled and can be silenced with
+`"human_messages": false` under `notifications` in `~/.tclaude/config.json`.
+
 ## It is an extra channel, not a replacement
 
 Keep doing your normal terminal output. Your regular responses in your

@@ -54,6 +54,10 @@ Alternatively, create `~/.tclaude/config.json` manually:
 | `transitions`          | List of state transitions that trigger notifications    | See below |
 | `cooldown_seconds`     | Minimum seconds between notifications per session       | `5`       |
 | `notification_command` | Custom command to run instead of platform notifications | (none)    |
+| `human_messages`       | Also notify on a `tclaude agent notify-human` message   | `true`*   |
+
+\* Only takes effect when `enabled` is `true`. On by default within an
+enabled block; set `false` to suppress just the human-message banners.
 
 ### Transitions
 
@@ -66,6 +70,36 @@ Each transition rule has `from` and `to` fields. Use `*` as a wildcard to match 
 - `*` → `exited` - Session ended
 
 **Available states:** `working`, `idle`, `awaiting_permission`, `awaiting_input`, `exited`
+
+### Human-message notifications
+
+`tclaude agent notify-human` lets a coordinating agent reach you with a
+message that lands in the dashboard's **Messages tab**. When
+notifications are enabled, each such message **also raises an OS
+notification** — the desktop companion to that tab — so you see it even
+when the dashboard isn't open. Clicking the notification focuses the
+sending agent's terminal (the same jump the tab's per-message button
+does).
+
+It rides on the same `enabled` master switch and the same
+`notification_command` override as state-transition notifications. It is
+**on by default** once notifications are enabled; silence just these
+banners (while keeping session-state notifications) with:
+
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "human_messages": false
+  }
+}
+```
+
+The notification title is `Claude: <subject>` (or `Claude: <sender>
+messaged you` when there's no subject); the body carries the message and
+the sender's group. Unlike state-transition notifications, human messages
+are **not** subject to `cooldown_seconds` — each one is an explicit,
+deliberate nudge from an agent, not a state the system may flap into.
 
 ### Custom Notification Command
 

@@ -317,6 +317,92 @@ func TestNotifyHuman_UnrelatedGroupOwnerPasses(t *testing.T) {
 	require.Len(t, msgs, 1, "the owner's message is persisted")
 }
 
+// capturedNotif records one humanMsgNotify dispatch for assertion.
+type capturedNotif struct {
+	senderSessionID string
+	fromTitle       string
+	group           string
+	subject         string
+	body            string
+}
+
+// Scenario: a delivered notify-human ALSO raises an OS notification — the
+// desktop companion to the Messages tab. The dispatch carries the sender's
+// session ID (so the banner is click-to-focus onto that agent's terminal,
+// the OS twin of the dashboard Focus button), the snapshotted group, and
+// the subject/body verbatim. Fired off the request goroutine via
+// goBackground, so the test drains with WaitForBackgroundForTest.
+func TestNotifyHuman_RaisesOSNotification(t *testing.T) {
+	f := newFlow(t)
+
+	var got []capturedNotif
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(
+		func(senderSessionID, fromTitle, group, subject, body string) {
+			got = append(got, capturedNotif{senderSessionID, fromTitle, group, subject, body})
+		}))
+	t.Cleanup(agentd.WaitForBackgroundForTest) // drain any stragglers before $HOME teardown
+
+	const poConv = "po00-1111-2222-3333-4444"
+	const poSession = "po-session-label"
+	f.HaveConvWithTitle(poConv, "tclaude-PO")
+	f.HaveGroup("tclaude-dev")
+	f.HaveMember("tclaude-dev", poConv)
+	// A session row so notifyHumanSenderSessionID resolves the sender's
+	// session for the banner's click-to-focus target.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: poSession, ConvID: poConv, TmuxSession: "tmux-po", Cwd: "/work/proj", Status: "running",
+	}))
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermHumanNotify, "test"))
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "build is green", "subject": "status"})
+	r = agentd.AsAgentPeer(r, poConv)
+	require.Equal(t, http.StatusOK, testharness.Serve(f.Mux, r).Code)
+
+	agentd.WaitForBackgroundForTest() // the notification fires on goBackground
+	require.Len(t, got, 1, "a delivered notify-human should raise exactly one OS notification")
+	n := got[0]
+	assert.Equal(t, poSession, n.senderSessionID,
+		"the banner click-to-focuses the sending agent's session")
+	assert.Equal(t, "tclaude-dev", n.group, "the snapshotted group rides along")
+	assert.Equal(t, "status", n.subject)
+	assert.Equal(t, "build is green", n.body)
+	assert.Equal(t, "tclaude-PO", n.fromTitle, "the snapshotted sender title rides along")
+	// And it matches what was snapshotted onto the persisted row — both
+	// come from notifyHumanCallerTitle(callerConv).
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, msgs[0].FromTitle, n.fromTitle,
+		"the notification's sender attribution matches the stored message")
+}
+
+// Scenario: a refused notify-human (not a slug-holder, not a group owner)
+// raises NO OS notification — the gate runs before any insert or dispatch,
+// so a denied sender can't even ring the desktop.
+func TestNotifyHuman_ForbiddenSenderRaisesNoNotification(t *testing.T) {
+	f := newFlow(t)
+
+	var got []capturedNotif
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(
+		func(senderSessionID, fromTitle, group, subject, body string) {
+			got = append(got, capturedNotif{senderSessionID, fromTitle, group, subject, body})
+		}))
+	t.Cleanup(agentd.WaitForBackgroundForTest)
+
+	const workerConv = "wk00-1111-2222-3333-4444"
+	f.HaveGroup("tclaude-dev")
+	f.HaveMember("tclaude-dev", workerConv) // a plain member, not an owner
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "let me ring the desktop"})
+	r = agentd.AsAgentPeer(r, workerConv)
+	require.Equal(t, http.StatusForbidden, testharness.Serve(f.Mux, r).Code)
+
+	agentd.WaitForBackgroundForTest()
+	assert.Empty(t, got, "a denied caller must not raise an OS notification")
+}
+
 // Scenario: a request body larger than maxNotifyHumanRequestBytes is
 // rejected at the http.MaxBytesReader, before the JSON decoder buffers
 // it all into daemon memory — the DoS guard the size cap implies.

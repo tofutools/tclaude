@@ -386,6 +386,26 @@ type NotificationConfig struct {
 	Transitions         []TransitionRule `json:"transitions,omitempty"`
 	CooldownSeconds     int              `json:"cooldown_seconds,omitempty"`
 	NotificationCommand []string         `json:"notification_command,omitempty"`
+
+	// HumanMessages controls whether a `tclaude agent notify-human`
+	// message also raises an OS notification (the desktop companion to
+	// the dashboard Messages tab). It is a *bool so the unset/zero state
+	// is distinguishable from an explicit false: within an enabled
+	// notification block it defaults ON — the human asked notify-human to
+	// also ping the desktop — and is silenced only by an explicit
+	// "human_messages": false. See NotifyHumanMessages.
+	HumanMessages *bool `json:"human_messages,omitempty"`
+}
+
+// NotifyHumanMessages reports whether a notify-human message should also
+// raise an OS notification. It requires the master switch (Enabled);
+// within that it defaults ON and is suppressed only by an explicit
+// "human_messages": false. nil receiver / disabled block → false.
+func (c *NotificationConfig) NotifyHumanMessages() bool {
+	if c == nil || !c.Enabled {
+		return false
+	}
+	return c.HumanMessages == nil || *c.HumanMessages
 }
 
 // RateLimitConfig holds settings for rate limit
