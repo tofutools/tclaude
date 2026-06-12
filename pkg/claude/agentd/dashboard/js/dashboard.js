@@ -1,6 +1,6 @@
 import { esc } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
-import { applySlopThemeIfRequested } from './slop.js';
+import { applySlopThemeIfRequested, bindSlopHotkey } from './slop.js';
 import {
   bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
   bindSlopCursorTrail, bindSlopMarquee,
@@ -95,6 +95,7 @@ bindCostsTab();
 // starts an interval) once. They no-op while slop is off and the
 // body-class check inside each handler is what actually gates the
 // effect, so toggling slop mid-session needs no re-binding.
+bindSlopHotkey();
 bindSlopClickFx();
 bindSlopMachineClicks();
 bindSlopStatusWatch();
