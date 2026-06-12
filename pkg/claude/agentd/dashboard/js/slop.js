@@ -4,9 +4,11 @@
 // through the auth redirect (see handleDashboardRoot in agentd/dashboard.go)
 // so the bare-path URL still carries it.
 //
-// Click the header icon (🤝 / 🎰) to toggle slop mode at runtime. The
-// URL is rewritten in place via history.replaceState so a refresh
-// preserves the chosen state without leaving an extra history entry.
+// Click the header icon (🤝 / 🎰) — or hit the global hotkey
+// Ctrl/⌘ + Alt/⌥ + Shift + S (see bindSlopHotkey) — to toggle slop mode
+// at runtime. The URL is rewritten in place via history.replaceState so
+// a refresh preserves the chosen state without leaving an extra history
+// entry.
 
 const SLOP_FAVICON =
   'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
@@ -110,4 +112,33 @@ export function applySlopThemeIfRequested() {
 // icon, and consumers (slop-fx.js) re-check on every click.
 export function isSlopActive() {
   return document.body.classList.contains('slop');
+}
+
+// bindSlopHotkey wires a single global keyboard shortcut that toggles
+// slop mode from anywhere in the dashboard:
+//
+//   Ctrl + Alt + Shift + S   (Windows / Linux)
+//   ⌘   + ⌥   + Shift + S   (macOS — Cmd substitutes for Ctrl)
+//
+// Three modifiers is deliberate: the easter egg must never fire by
+// accident during normal work, and the trio dodges every default we
+// could collide with — Ctrl+Shift+S is Firefox "Save As", Win+Shift+S is
+// the Windows snip tool, Alt+Shift switches the keyboard layout. Nothing
+// owns Ctrl/⌘+Alt+Shift+S, so we claim it.
+//
+// We match on e.code === 'KeyS' rather than e.key because e.key is
+// keyboard-layout *and* modifier dependent: on macOS Option+S emits 'ß',
+// and Ctrl+Alt (AltGr on Windows/EU layouts) can remap the produced
+// character too. e.code is the physical key, so the shortcut behaves the
+// same on every layout. e.repeat is ignored so holding the keys down
+// doesn't strobe the toggle.
+export function bindSlopHotkey() {
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (e.code !== 'KeyS') return;
+    if (!e.shiftKey || !e.altKey) return;
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    toggleSlop();
+  });
 }
