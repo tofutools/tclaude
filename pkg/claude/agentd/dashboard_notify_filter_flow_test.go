@@ -153,6 +153,49 @@ func TestNotificationFilters_GroupAndAgentBells(t *testing.T) {
 	assert.True(t, notified(t, "sess-globalon", conv), "master back on notifies again")
 }
 
+// Scenario: the per-agent / per-group filters also gate the
+// notify-human OS banner (PR #300). A muted sender's message still
+// lands in the Messages tab — only the desktop notification is
+// skipped — and unmuting restores it. The recorder seam sits BEHIND
+// the AllowedForConv gate, so what it observes is exactly what the
+// human's desktop would.
+func TestNotificationFilters_GateNotifyHumanBanner(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "mute-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "muted-po")
+	f.HaveGroup("gamma")
+	f.HaveMember("gamma", conv)
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanNotify, "test"))
+
+	var banners []string
+	t.Cleanup(agentd.SetHumanMessageNotifierForTest(
+		func(_, fromTitle, _, _, _ string) { banners = append(banners, fromTitle) }))
+	t.Cleanup(agentd.WaitForBackgroundForTest)
+
+	send := func(body string) {
+		t.Helper()
+		r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/notify-human", map[string]any{"body": body}), conv)
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusOK, rec.Code, "notify-human body=%s", rec.Body.String())
+		agentd.WaitForBackgroundForTest()
+	}
+
+	// Muted sender: persisted, not bannered.
+	require.NoError(t, db.SetConvNotifyPref(conv, db.NotifyPrefOff))
+	send("while muted")
+	assert.Empty(t, banners, "a muted sender's ping must skip the OS banner")
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 1, "the message itself still lands in the Messages tab")
+
+	// Unmuted: the banner fires again.
+	require.NoError(t, db.SetConvNotifyPref(conv, db.NotifyPrefInherit))
+	send("after unmute")
+	assert.Equal(t, []string{"muted-po"}, banners, "an unmuted sender banners normally")
+}
+
 // Scenario: the CLI verb's transport — PATCH /v1/groups/{name} with
 // {notify_enabled} (what `tclaude agent groups set-notifications`
 // sends) flips the switch for a human-authenticated caller, and the
