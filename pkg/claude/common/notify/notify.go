@@ -35,6 +35,17 @@ func IsEnabled() bool {
 // filter lookup; convTitle is optional - pass empty string if not
 // available.
 func OnStateTransition(sessionID, convID, from, to, cwd, convTitle string) {
+	// A no-op "transition" never notifies. Claude Code's ~60s idle timer
+	// fires a Notification(idle_prompt) hook that re-stamps an already-idle
+	// session (idle → idle); the wildcard {from:"*", to:"idle"} rule matches
+	// that, and with the cooldown (default 5s) long expired the human got a
+	// duplicate "Idle" banner about a minute after the real one. The same
+	// guard suppresses repeated permission_prompt events while already
+	// awaiting_permission, and a reaper re-stamp of an exited session.
+	if from == to {
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled {
 		return
