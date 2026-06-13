@@ -68,15 +68,17 @@ type codexHookInstaller struct{}
 
 func (codexHookInstaller) ConfigTarget() string { return codexHooksPath() }
 
-// TrustNote: Codex won't run a non-managed command hook until it's trusted
-// (a sha256 trusted_hash persisted in config.toml [hooks.state], written
-// when the user approves the TUI startup hooks review). The exact wording
-// here — interactive-trust vs. the Spawner passing
-// --dangerously-bypass-hook-trust — is pending an operator decision
-// (bridges the Codex Spawner); for now it states the requirement plainly.
+// TrustNote: Codex runs a non-managed command hook only after it's trusted
+// (a sha256 trusted_hash persisted in config.toml [hooks.state]). Because
+// tclaude's hook lives in the user-level ~/.codex/hooks.json and Codex
+// keys trust on a config-derived hash (event + command, repo-independent),
+// approving it ONCE in Codex's startup hooks review persists across every
+// future session and repo — so this is a one-time step, not per-launch.
+// (A scoped --dangerously-bypass-hook-trust toggle for fully-unattended
+// first runs is a possible future enhancement; the default is safe.)
 func (codexHookInstaller) TrustNote() string {
-	return "Codex runs command hooks only after they're trusted. On first launch, approve the tclaude hook in Codex's startup hooks review (the trust persists). " +
-		"(Automated/unattended spawns may instead require launching with --dangerously-bypass-hook-trust — pending finalization.)"
+	return "Codex runs command hooks only after they're trusted: on the first Codex launch, approve the tclaude hook in the startup hooks review. " +
+		"The approval persists across all future sessions and repos, so it's a one-time step."
 }
 
 // codexHookCommandStr is the callback command tclaude installs — the same
