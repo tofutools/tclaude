@@ -91,8 +91,13 @@ func codexHookCommandStr() string {
 	return clcommon.DetectCmd("session", "hook-callback")
 }
 
-// isOurCodexHook reports whether a hook command belongs to tclaude (any
-// path whose basename is "tclaude").
+// isOurCodexHook reports whether a hook command belongs to tclaude — any
+// path whose basename is "tclaude" (mirrors session.isOurHook for CC). The
+// basename match is deliberate: it lets a stale absolute-path tclaude hook
+// be recognised and repaired. The trade-off is that ANY binary named
+// "tclaude" is treated as ours; a user hook pointing at an unrelated tool
+// that happens to share the name would be replaced on install (vanishingly
+// unlikely, and the same assumption CC's installer makes).
 func isOurCodexHook(command string) bool {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
@@ -258,11 +263,15 @@ func codexHooksContain(groupsRaw json.RawMessage, want string) bool {
 }
 
 // codexHooksNeedCleanup reports whether an event's groups carry a stale
-// (wrong-binary) tclaude hook or a duplicate of the current one.
+// (wrong-binary) tclaude hook or a duplicate of the current one — or are
+// structurally unparseable. The last case is reported as needing cleanup
+// so `Check` warns rather than silently calling the event merely
+// "missing": Install's strip pass errors out on the same unparseable
+// groups, so the two surfaces agree that the file needs attention.
 func codexHooksNeedCleanup(groupsRaw json.RawMessage, want string) bool {
 	var groups []codexMatcherGroup
 	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
-		return false
+		return true
 	}
 	ours := 0
 	for _, g := range groups {

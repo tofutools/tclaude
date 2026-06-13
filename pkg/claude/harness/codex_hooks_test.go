@@ -207,6 +207,28 @@ func TestCodexHookInstaller_EmptyFileTreatedAsNoHooks(t *testing.T) {
 	assert.True(t, installed)
 }
 
+// TestCodexHookInstaller_MalformedEventFlagsRepair confirms Check and
+// Install agree on a structurally-broken event: Check reports needsRepair
+// (not a silent "just missing"), matching Install's strip-pass error, so
+// the user is told the file needs attention rather than getting a clean
+// bill from --check followed by a hard setup failure.
+func TestCodexHookInstaller_MalformedEventFlagsRepair(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// SessionStart's value is an object, not the expected array of groups.
+	seed := `{"hooks": {"SessionStart": {"unexpected": "shape"}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(seed), 0o644))
+
+	installed, _, needsRepair := codexHookInstaller{}.Check()
+	assert.False(t, installed)
+	assert.True(t, needsRepair, "a structurally-unparseable event must flag repair, not read as clean")
+
+	// And Install refuses to mangle a file it can't parse (no clobber).
+	assert.Error(t, codexHookInstaller{}.Install())
+}
+
 // TestCodexHarness_HasHooks pins the descriptor wiring.
 func TestCodexHarness_HasHooks(t *testing.T) {
 	home := t.TempDir()
