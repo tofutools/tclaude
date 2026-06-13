@@ -480,6 +480,68 @@ func TestCodexConvStore_ColdZstRollout(t *testing.T) {
 	assert.Equal(t, cwd, e.ProjectPath)
 }
 
+// During Codex's hot→cold compression window a session's .jsonl and
+// .jsonl.zst coexist under the same uuid. The store must list the conv ONCE
+// (preferring the uncompressed file) and a unique-uuid prefix must NOT come
+// back as a spurious "ambiguous" Resolve.
+func TestCodexConvStore_DedupHotColdWindow(t *testing.T) {
+	home := codexTestHome(t)
+	cwd := "/home/u/proj"
+	const id = "abcdef01-2345-6789-abcd-ef0123456789"
+	cx := startCodexSim(t, home, id, cwd, "mid compression", "hi")
+
+	// Write <path>.zst NEXT TO the live .jsonl (Codex compresses first,
+	// deletes the .jsonl only afterwards).
+	plain := cx.RolloutPath
+	raw, err := os.ReadFile(plain)
+	require.NoError(t, err)
+	enc, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(plain+".zst", enc.EncodeAll(raw, nil), 0o644))
+	require.NoError(t, enc.Close())
+
+	cs := codexConvs(t)
+	entries, err := cs.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "the conv is listed exactly once, not once per file")
+	assert.Equal(t, plain, entries[0].FullPath, "the uncompressed .jsonl is preferred over the .zst")
+
+	// Exact id resolves.
+	ref, err := cs.Resolve(id, cwd, false)
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	assert.Equal(t, id, ref.ConvID)
+
+	// A prefix that uniquely names the uuid must NOT be a spurious ambiguous.
+	ref, err = cs.Resolve("abcdef01", cwd, false)
+	require.NoError(t, err, "unique uuid prefix must not be a spurious ambiguous error")
+	require.NotNil(t, ref)
+	assert.Equal(t, id, ref.ConvID)
+}
+
+// A corrupt cold rollout (garbage bytes, no .jsonl twin, no threads row)
+// must be skipped with a warning — never crash the listing or fail the
+// whole scan; healthy convs alongside it still list.
+func TestCodexConvStore_CorruptZstSkipped(t *testing.T) {
+	home := codexTestHome(t)
+	cwd := "/home/u/proj"
+	const goodID = "00aa00aa-00aa-00aa-00aa-00aa00aa00aa"
+	startCodexSim(t, home, goodID, cwd, "i am fine", "hi")
+
+	const badID = "00bb00bb-00bb-00bb-00bb-00bb00bb00bb"
+	dir := filepath.Join(home, ".codex", "sessions", "2026", "06", "13")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	bad := filepath.Join(dir, "rollout-2026-06-13T10-00-00-"+badID+".jsonl.zst")
+	require.NoError(t, os.WriteFile(bad, []byte("this is not valid zstd data at all"), 0o644))
+
+	entries, err := codexConvs(t).ListConvs("")
+	require.NoError(t, err)
+	_, ok := findEntry(entries, goodID)
+	assert.True(t, ok, "the healthy conv is listed despite a corrupt sibling")
+	_, ok = findEntry(entries, badID)
+	assert.False(t, ok, "the corrupt rollout is skipped, not surfaced")
+}
+
 // --- descriptor wiring -----------------------------------------------------
 
 func TestCodexHarness_Registered(t *testing.T) {

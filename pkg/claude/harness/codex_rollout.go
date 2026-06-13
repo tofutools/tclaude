@@ -215,18 +215,58 @@ func scanCodexRollouts(home string) ([]string, error) {
 }
 
 // findCodexRollout locates a rollout by session id (the resume model finds
-// the file by id, not by date). Returns "" when no rollout matches.
+// the file by id, not by date). Returns "" when no rollout matches. When a
+// session is mid-compression (both .jsonl and .jsonl.zst on disk) it
+// returns the preferred (uncompressed) one.
 func findCodexRollout(home, convID string) (string, error) {
 	paths, err := scanCodexRollouts(home)
 	if err != nil {
 		return "", err
 	}
+	return dedupCodexRollouts(paths)[convID], nil
+}
+
+// dedupCodexRollouts collapses rollout paths to one per session id. Codex
+// ages a session by writing the `.jsonl.zst` and THEN deleting the
+// `.jsonl`, so during that window both files exist for the SAME uuid —
+// without dedup the conv would list twice and a prefix that uniquely names
+// that uuid would resolve as "ambiguous". Paths with an unparseable name
+// are dropped (they carry no id to key on). See preferCodexRollout for the
+// tie-break.
+func dedupCodexRollouts(paths []string) map[string]string {
+	byID := make(map[string]string, len(paths))
 	for _, p := range paths {
-		if codexIDFromRolloutName(filepath.Base(p)) == convID {
-			return p, nil
+		id := codexIDFromRolloutName(filepath.Base(p))
+		if id == "" {
+			continue
+		}
+		if cur, ok := byID[id]; ok {
+			byID[id] = preferCodexRollout(cur, p)
+		} else {
+			byID[id] = p
 		}
 	}
-	return "", nil
+	return byID
+}
+
+// preferCodexRollout picks which of two rollout paths for the SAME session
+// id to keep: the uncompressed `.jsonl` beats a transient `.jsonl.zst`
+// (avoids a needless decompress and is the live file during the
+// compression window); among two same-kind paths the lexically-greater
+// wins, which orders the date-indexed tree newest-last.
+func preferCodexRollout(a, b string) string {
+	aZst := strings.HasSuffix(a, ".zst")
+	bZst := strings.HasSuffix(b, ".zst")
+	if aZst != bZst {
+		if aZst {
+			return b // b is the uncompressed one
+		}
+		return a
+	}
+	if a >= b {
+		return a
+	}
+	return b
 }
 
 // codexSessionsDir is the root of Codex's date-indexed rollout tree.

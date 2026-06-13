@@ -43,11 +43,16 @@ func scanCodexEntries(home, cwd string) ([]convops.SessionEntry, error) {
 		threads = map[string]codexThread{}
 	}
 
+	// One entry per session id: during the hot→cold compression window a
+	// conv's .jsonl and .jsonl.zst coexist under the same uuid. byID picks
+	// the preferred path; ranging over `paths` (not the map) keeps the
+	// output in deterministic walk order.
+	byID := dedupCodexRollouts(paths)
 	var entries []convops.SessionEntry
 	for _, path := range paths {
 		id := codexIDFromRolloutName(filepath.Base(path))
-		if id == "" {
-			continue
+		if id == "" || byID[id] != path {
+			continue // unparseable name, or the non-preferred dup for this id
 		}
 		info, err := os.Stat(path)
 		if err != nil {
