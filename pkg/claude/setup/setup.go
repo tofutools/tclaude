@@ -189,6 +189,35 @@ func runSetup(params *Params) error {
 		}
 	}
 
+	// 2b. Codex CLI status line (when codex is installed). Codex has no
+	// command-backed status line (openai/codex#17827), so tclaude can't
+	// install its renderer there; instead it curates Codex's built-in
+	// status_line items in ~/.codex/config.toml. Gated on codex being on
+	// PATH so non-Codex users never see a prompt. Never clobbers a
+	// user-owned status_line.
+	fmt.Println("\n=== Codex Status Bar ===")
+	if !isCodexInstalled() {
+		fmt.Println("  Codex CLI not found on PATH — skipping (re-run setup after installing codex)")
+	} else if statusbar.CheckCodexInstalled() {
+		fmt.Println("✓ Codex status line already configured")
+	} else if statusbar.CodexStatusLineUserManaged() {
+		fmt.Println("  You already have a custom Codex status_line — leaving it untouched.")
+		fmt.Printf("  (Remove the status_line under [tui] in %s and re-run to let tclaude manage it.)\n", statusbar.CodexConfigPath())
+	} else if askYesNo("Install a tclaude-curated status line for Codex CLI?", true, params.Yes) {
+		switch outcome, err := statusbar.InstallCodex(); {
+		case err != nil:
+			fmt.Printf("  Warning: failed to configure Codex status line: %v\n", err)
+		case outcome == statusbar.CodexUserManaged:
+			fmt.Println("  You already have a custom Codex status_line — leaving it untouched.")
+		case outcome == statusbar.CodexRepaired:
+			fmt.Println("✓ Codex status line repaired")
+		default:
+			fmt.Println("✓ Codex status line installed")
+		}
+	} else {
+		fmt.Println("  Skipped. Install later with: tclaude setup")
+	}
+
 	// 3. Platform-specific setup for clickable notifications
 	fmt.Println("\n=== Clickable Notifications ===")
 	if runtime.GOOS == "linux" && wsl.IsWSL() {
@@ -456,6 +485,19 @@ func checkStatus() error {
 		fmt.Println("  Run 'tclaude setup' to install")
 	}
 
+	// Check Codex status line
+	fmt.Println("\n=== Codex Status Bar ===")
+	if !isCodexInstalled() {
+		fmt.Println("  Codex CLI not found on PATH")
+	} else if statusbar.CheckCodexInstalled() {
+		fmt.Println("✓ Codex status line configured")
+	} else if statusbar.CodexStatusLineUserManaged() {
+		fmt.Println("  Codex status line set by you (not managed by tclaude)")
+	} else {
+		fmt.Println("✗ Codex status line not configured")
+		fmt.Println("  Run 'tclaude setup' to install")
+	}
+
 	// Check clickable notifications setup
 	fmt.Println("\n=== Clickable Notifications ===")
 	if runtime.GOOS == "linux" && wsl.IsWSL() {
@@ -612,6 +654,13 @@ func installTmux() error {
 // isTmuxInstalled checks if tmux is available.
 func isTmuxInstalled() bool {
 	_, err := exec.LookPath("tmux")
+	return err == nil
+}
+
+// isCodexInstalled checks if the Codex CLI is available on PATH. Used to gate
+// the Codex status-line setup so non-Codex users are never prompted.
+func isCodexInstalled() bool {
+	_, err := exec.LookPath("codex")
 	return err == nil
 }
 
