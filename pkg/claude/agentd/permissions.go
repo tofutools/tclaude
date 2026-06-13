@@ -63,6 +63,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Clone ANOTHER agent into a sibling that inherits its identity (tclaude agent clone --target). Group owners can clone members of groups they own without this slug.",
 	},
 	{
+		Slug:        PermAgentContextInfo,
+		Description: "Read ANOTHER agent's context-window state (tclaude agent context-info --target / --group). Read-only. Group owners can read context for members of groups they own without this slug.",
+	},
+	{
 		Slug:        PermGroupsCreate,
 		Description: "Create new agent groups (tclaude agent groups create)",
 	},

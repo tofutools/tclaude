@@ -335,6 +335,8 @@ tclaude agent clone --no-copy-conv           # clone with a blank context instea
 tclaude agent reincarnate "<follow-up>"      # replace self with a fresh successor (follow-up REQUIRED)
 tclaude agent compact [follow-up]            # inject /compact into the pane
 tclaude agent context-info                   # show this conversation's context-window state (read-only)
+tclaude agent context-info --target <sel>    # read ANOTHER agent's context (gated: agent.context-info or group-owner)
+tclaude agent context-info --group <name|id> # one table of every group member's context % (gated likewise)
 ```
 
 A **clone** inherits identity (group memberships, per-conv grants,
@@ -487,7 +489,7 @@ gate group, messaging, template, and permission administration.
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire` |
 | `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
