@@ -52,16 +52,52 @@ func (codexSandbox) ValidateMode(mode string) (string, error) {
 // neither conflicts. The spawn boundary calls this with the resolved,
 // absolute cwd and home (os.UserHomeDir()); a cwd strictly *inside* a
 // normal project dir (e.g. ~/projects/foo) never conflicts.
+//
+// Both cwd and home are passed through filepath.EvalSymlinks first, because
+// Codex confines writes to the *resolved* real path: a cwd like
+// /tmp/link -> /home/dev would otherwise slip past a textual Rel comparison
+// yet leave $HOME writable. EvalSymlinks failures (e.g. a not-yet-created
+// path) fall back to the cleaned path rather than skipping the guard — the
+// check stays fail-closed.
 func CodexSandboxCwdConflict(mode, cwd, home string) bool {
 	if mode != SandboxWorkspaceWrite || cwd == "" || home == "" {
 		return false
 	}
+	cwd, home = resolveSymlinks(cwd), resolveSymlinks(home)
 	for _, sub := range codexProtectedSubdirs {
 		if pathContainsOrEqual(cwd, filepath.Join(home, sub)) {
 			return true
 		}
 	}
 	return false
+}
+
+// resolveSymlinks returns p with its longest *existing* ancestor
+// symlink-resolved and the non-existent remainder re-attached. Resolving
+// the existing prefix (rather than only the whole path) is what makes the
+// guard correct: Codex confines writes to the resolved real path, and two
+// paths that share an existing ancestor — a cwd and a $HOME under the same
+// root — must resolve that ancestor *identically* for the ancestor check to
+// hold. EvalSymlinks on the whole path alone fails the moment any leaf is
+// synthetic (a not-yet-created cwd, or a platform autofs mount like macOS
+// /home where the parent resolves but the child doesn't), leaving cwd and
+// home in divergent trees and silently dropping the guard. A path with no
+// resolvable ancestor falls back to filepath.Clean(p) — never skips the
+// guard. Mirrors the tolerant intent of worktree.sameDir.
+func resolveSymlinks(p string) string {
+	p = filepath.Clean(p)
+	rest := ""
+	for cur := p; ; {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p // reached the root without resolving anything
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
 }
 
 // codexProtectedSubdirs are the $HOME-relative trees that must stay

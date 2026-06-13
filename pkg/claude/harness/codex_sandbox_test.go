@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,6 +127,65 @@ func TestCodexSandboxCwdConflict(t *testing.T) {
 		if got := CodexSandboxCwdConflict(c.mode, c.cwd, home); got != c.want {
 			t.Errorf("CodexSandboxCwdConflict(%q, %q, %q) = %v, want %v", c.mode, c.cwd, home, got, c.want)
 		}
+	}
+}
+
+// TestCodexSandboxCwdConflict_Symlink pins the symlink hardening: a cwd that
+// is a symlink resolving into $HOME (Codex confines writes to the *resolved*
+// real path) must conflict, even though a textual comparison of the unresolved
+// link path would step out of $HOME and read as safe.
+func TestCodexSandboxCwdConflict_Symlink(t *testing.T) {
+	home := t.TempDir()
+	// A symlink that resolves to $HOME itself: workspace-write rooted here
+	// would make $HOME (hence the protected dirs under it) writable.
+	link := filepath.Join(t.TempDir(), "cwd-link")
+	if err := os.Symlink(home, link); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+	// Sanity: the unresolved link is NOT a textual prefix of home, so without
+	// EvalSymlinks the guard would (wrongly) return false.
+	if got := CodexSandboxCwdConflict(SandboxWorkspaceWrite, link, home); !got {
+		t.Fatalf("symlinked-into-$HOME cwd must conflict, got false (link=%q home=%q)", link, home)
+	}
+	// A symlink resolving to a normal project subdir under $HOME stays safe.
+	proj := filepath.Join(home, "projects", "foo")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projLink := filepath.Join(t.TempDir(), "proj-link")
+	if err := os.Symlink(proj, projLink); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if got := CodexSandboxCwdConflict(SandboxWorkspaceWrite, projLink, home); got {
+		t.Fatalf("symlink to a project subdir must NOT conflict, got true (link=%q)", projLink)
+	}
+}
+
+// TestCodexSandboxCwdConflict_AsymmetricExistence is the deterministic
+// regression for the macOS-autofs failure: cwd is an ancestor of $HOME, the
+// shared prefix is reached through a symlink, and $HOME's leaf does NOT yet
+// exist. Resolving only the whole path leaves cwd (fully resolved) and home
+// (un-resolved literal) in divergent real trees, so the ancestor check
+// wrongly reads "safe". The longest-existing-prefix resolution keeps both in
+// the same tree, so the conflict is caught — on every platform, not just one
+// where /home happens to be a mount.
+func TestCodexSandboxCwdConflict_AsymmetricExistence(t *testing.T) {
+	realRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(realRoot, "home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkRoot := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+	// cwd = <link>/home (exists through the symlink); home = <link>/home/dev
+	// (the "dev" leaf is never created). cwd is the parent of home → a
+	// workspace-write rooted at cwd makes home (and its protected dirs)
+	// writable, so this must conflict.
+	cwd := filepath.Join(linkRoot, "home")
+	home := filepath.Join(linkRoot, "home", "dev")
+	if got := CodexSandboxCwdConflict(SandboxWorkspaceWrite, cwd, home); !got {
+		t.Fatalf("ancestor-of-$HOME cwd via symlink with non-existent home leaf must conflict, got false (cwd=%q home=%q)", cwd, home)
 	}
 }
 

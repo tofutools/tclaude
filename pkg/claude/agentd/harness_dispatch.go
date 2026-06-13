@@ -78,6 +78,13 @@ func harnessNativeTitle(convID string) (string, bool) {
 // sandbox flag (Claude Code) or an unknown tag yields "" (omit the flag).
 // A $HOME cwd is still re-checked by the forked `tclaude session new`'s own
 // guard, so this needn't repeat it.
+//
+// Deliberate: this always re-defaults to the secure mode and does NOT
+// preserve a per-conv override — an agent originally spawned with an explicit
+// danger-full-access comes back sandboxed. That is the fail-closed direction
+// (a relaunch tightening, never loosening, the sandbox), so it is intentional,
+// not a dropped-state bug. Per-conv mode persistence, if ever wanted, would be
+// a separate feature.
 func sandboxForHarness(name string) string {
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsSandbox() {
 		return h.Sandbox.DefaultMode()
