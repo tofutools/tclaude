@@ -105,9 +105,10 @@ func TestMigrateV56toV57_HealsHalfAppliedRun(t *testing.T) {
 
 // TestMigrateV56toV57_FreshSchemaRoundTrips builds a fresh DB through the
 // full migrate() chain and round-trips harness through the production
-// SaveSession / UpsertConvIndex / read helpers. Carries the literal
-// currentVersion pin — the tripwire the next migration's author moves
-// forward into their own v58 test.
+// SaveSession / UpsertConvIndex / read helpers. The literal currentVersion
+// pin moved on to the v58 test (TestMigrateV57toV58_FreshSchemaRoundTrips)
+// — the sandbox_mode migration that landed on top of this one; this test
+// defers to the head.
 func TestMigrateV56toV57_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -116,7 +117,6 @@ func TestMigrateV56toV57_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 57, currentVersion, "currentVersion is 57")
 
 	// A session saved without a harness defaults to claude (the empty →
 	// DefaultHarness coalescing in SaveSession + the column default).

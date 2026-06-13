@@ -400,6 +400,12 @@ func runNew(params *NewParams) error {
 		ConvID:      fullConvID,
 		Status:      StatusIdle,
 		Harness:     h.Name,
+		// Record the resolved launch sandbox mode so the dashboard can
+		// badge it (JOH-162). "" for a harness with no launch sandbox flag
+		// (Claude Code) — stored verbatim, never coalesced. This is the
+		// only write of the column; it can't be re-derived from the
+		// harness's own files later.
+		SandboxMode: sandboxMode,
 		Created:     time.Now(),
 		Updated:     time.Now(),
 	}

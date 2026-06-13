@@ -1001,7 +1001,11 @@
       <span class="cron-create-label">Descr</span>
       <textarea id="agent-spawn-descr" rows="2" placeholder="optional — short one-line description shown on the dashboard" spellcheck="false"></textarea>
     </label>
-    <label class="cron-create-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window; opusplan runs Opus in plan mode and Sonnet otherwise. Default passes no --model, so the spawn inherits the group's default model, then the user-level settings.json model, then claude's own default — the Default label shows what that resolves to.">
+    <label class="cron-create-row" id="agent-spawn-harness-row" title="Coding harness for the new agent. Claude Code is the default; Codex (OpenAI) is the other driver. The harness switches the Model + Effort menus to that harness's valid values and shows the Sandbox selector for harnesses that take a launch sandbox (Codex).">
+      <span class="cron-create-label">Harness</span>
+      <select id="agent-spawn-harness"></select>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-model-claude-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window; opusplan runs Opus in plan mode and Sonnet otherwise. Default passes no --model, so the spawn inherits the group's default model, then the user-level settings.json model, then claude's own default — the Default label shows what that resolves to.">
       <span class="cron-create-label">Model</span>
       <select id="agent-spawn-model">
         <option value="">Default (claude's own)</option>
@@ -1015,16 +1019,25 @@
         <option value="opusplan">opusplan</option>
       </select>
     </label>
-    <label class="cron-create-row" title="Claude reasoning effort for the new agent. Default leaves claude on its own setting (no --effort passed).">
+    <label class="cron-create-row" id="agent-spawn-model-codex-row" style="display:none" title="Codex model for the new agent (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Codex's model set changes per release and Codex validates it itself, so this is free text rather than a fixed list. Blank passes no --model, leaving Codex on its own default.">
+      <span class="cron-create-label">Model</span>
+      <input id="agent-spawn-model-codex" type="text" list="agent-spawn-model-codex-list" placeholder="blank = Codex default; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
+      <datalist id="agent-spawn-model-codex-list"></datalist>
+    </label>
+    <label class="cron-create-row" title="Reasoning effort for the new agent. Default leaves the harness on its own setting (no --effort passed). For Codex, the level maps onto its reasoning-effort scale (max → xhigh).">
       <span class="cron-create-label">Effort</span>
       <select id="agent-spawn-effort">
-        <option value="">Default (claude's own)</option>
+        <option value="">Default (harness's own)</option>
         <option value="low">low</option>
         <option value="medium">medium</option>
         <option value="high">high</option>
         <option value="xhigh">xhigh</option>
         <option value="max">max</option>
       </select>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch-time OS sandbox for the new agent (Codex's --sandbox). workspace-write (the secure default) confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
+      <span class="cron-create-label">Sandbox</span>
+      <select id="agent-spawn-sandbox"></select>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
