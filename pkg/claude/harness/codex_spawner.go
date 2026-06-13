@@ -67,6 +67,19 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// never free text, but quoted defensively.
 		cmd += " --ask-for-approval " + clcommon.ShellQuoteArg(spec.ApprovalPolicy)
 	}
+	if spec.AutoReview {
+		// `-c approvals_reviewer="auto_review"` routes approval prompts to
+		// Codex's guardian subagent (auto-decides in the human's place)
+		// instead of the human (`user`, the default) — the orthogonal "who
+		// answers" axis to --ask-for-approval's "when to ask". A per-spawn
+		// `-c` config override, so the user's config.toml stays untouched.
+		// Accepted on both a fresh `codex` and `codex resume <id>`. The value
+		// is a TOML-quoted string (matching Codex's own `-c model="o3"`
+		// convention) and the whole `key="value"` is shell-quoted as one arg.
+		// Experimental/undocumented upstream, hence opt-in (JOH-200 part 2);
+		// see docs/plans/harness-independence.md §E.
+		cmd += " -c " + clcommon.ShellQuoteArg(codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
+	}
 	if spec.Model != "" {
 		// `--model` is accepted both on a fresh `codex` and on
 		// `codex resume <id>` (shared option).

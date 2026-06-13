@@ -68,6 +68,14 @@ type NewParams struct {
 	// Code (settings.json-driven), which errors if it is set. See JOH-200.
 	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy: untrusted|on-failure|on-request|never. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
 
+	// AutoReview opts into the harness's guardian subagent (Codex's `-c
+	// approvals_reviewer=auto_review`), which auto-decides approval prompts in
+	// your place. Off by default (you review). Gated on the harness having an
+	// approvals subsystem (Codex); set for claude is an error. Same per-spawn
+	// opt-in on the direct `session new` path as on the daemon path —
+	// experimental/undocumented upstream. See JOH-200 part 2.
+	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -196,6 +204,17 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Approval = approvalPolicy
+
+	// Gate --auto-review the same way: it is allowed only for a harness with an
+	// approvals subsystem (Codex), so setting it for Claude Code errors here.
+	// There is no non-false default to apply (it is off unless explicitly opted
+	// into), so ResolveAutoReview serves both this direct path and the daemon
+	// path. See JOH-200 part 2.
+	autoReview, err := harness.ResolveAutoReview(h, params.AutoReview)
+	if err != nil {
+		return err
+	}
+	params.AutoReview = autoReview
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -335,6 +354,7 @@ func runNew(params *NewParams) error {
 		ExtraArgs:      extraArgs,
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
+		AutoReview:     autoReview,
 	})
 
 	// Create tmux session with claude

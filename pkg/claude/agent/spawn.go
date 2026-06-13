@@ -99,6 +99,16 @@ type SpawnRequest struct {
 	// docs/plans/harness-independence.md §E.
 	ApprovalPolicy string `json:"approval,omitempty"`
 
+	// AutoReview opts the spawned agent into the harness's guardian subagent
+	// (Codex's `-c approvals_reviewer=auto_review`), which auto-decides approval
+	// prompts in the human's place — the orthogonal "who answers" axis to
+	// ApprovalPolicy's "when to ask". false (the default) keeps the human as
+	// reviewer. The daemon gates it on the chosen harness having an approvals
+	// subsystem (Codex); requesting it for Claude Code is a 400. Forwarded to
+	// `tclaude session new --auto-review`. Experimental/undocumented upstream,
+	// hence an explicit opt-in. See JOH-200 part 2.
+	AutoReview bool `json:"auto_review,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -178,6 +188,11 @@ type SpawnParams struct {
 	// the fields above. Unset resolves to the non-escalating default (never)
 	// so the detached agent can't deadlock on an approval prompt (JOH-200).
 	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy for the new agent: untrusted|on-failure|on-request|never. Unset = the harness's non-escalating default (Codex: never) so the unattended agent never blocks on a prompt. Not applicable to claude"`
+
+	// AutoReview is a bool flag declared last (no explicit short) for the same
+	// reason as the fields above — boa's short-flag enricher must not steal a
+	// letter. Experimental opt-in (off by default). See JOH-200 part 2.
+	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route the new agent's Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -320,6 +335,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Gate the experimental --auto-review opt-in: allowed only for a harness
+	// with an approvals subsystem (Codex); requesting it for claude fails fast
+	// here with a clear message. The daemon re-gates server-side.
+	autoReview, err := harness.ResolveAutoReview(h, p.AutoReview)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	cwd := p.Cwd
 	if cwd == "" {
 		if wd, err := os.Getwd(); err == nil {
@@ -341,6 +364,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Harness:        h.Name,
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
+		AutoReview:     autoReview,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the

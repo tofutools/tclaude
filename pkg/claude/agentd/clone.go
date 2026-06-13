@@ -62,7 +62,10 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 	srcHarness := harnessForConv(sourceConv).Name
 	if noCopyConv {
 		label = generateSpawnLabel()
-		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness)); err != nil {
+		// A clone is a relaunch, not a fresh opt-in, so it never engages the
+		// experimental auto-review guardian (autoReview=false) — same rationale
+		// as approvalForHarness re-defaulting rather than carrying per-conv state.
+		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
@@ -97,7 +100,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		}
 	}
 	newConv = copyResult.NewConvID
-	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness)); err != nil {
+	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),

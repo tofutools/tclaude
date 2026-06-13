@@ -184,7 +184,9 @@ func resumeOneConv(convID string) memberOpResult {
 		// leaves it "" so the flag is omitted.
 		harnessName = rows[0].Harness
 	}
-	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName, sandboxForHarness(harnessName), approvalForHarness(harnessName)); err != nil {
+	// Relaunch never re-engages the experimental guardian (auto-review is an
+	// explicit fresh-spawn opt-in, not persisted per-conv), so autoReview=false.
+	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName, sandboxForHarness(harnessName), approvalForHarness(harnessName), false); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
@@ -681,6 +683,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Gate the experimental auto-review (guardian) opt-in: it is allowed only
+	// for a harness with an approvals subsystem (Codex). Requesting it for a
+	// harness with no guardian (Claude Code) is a 400 here rather than a flag
+	// silently dropped. Off by default (the human reviews). See JOH-200 part 2.
+	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
+	if arErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_auto_review", arErr.Error())
+		return
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
@@ -700,6 +712,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Harness:        h.Name,
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
+		AutoReview:     autoReview,
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
@@ -770,6 +783,14 @@ type spawnParams struct {
 	// before building the params; it forwards to `tclaude session new
 	// --ask-for-approval <policy>`. See JOH-200.
 	ApprovalPolicy string
+	// AutoReview opts the spawn into the harness's guardian subagent (Codex's
+	// `-c approvals_reviewer=auto_review` — auto-decides approval prompts in
+	// the human's place), forwarding `--auto-review` to `tclaude session new`.
+	// false (the default) leaves the human as reviewer. Gated at the spawn
+	// boundary (handleGroupSpawn → harness.ResolveAutoReview) before building
+	// the params; experimental/undocumented upstream, so only an explicit
+	// opt-in sets it true. See JOH-200 part 2.
+	AutoReview bool
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -843,7 +864,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode, p.ApprovalPolicy); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode, p.ApprovalPolicy, p.AutoReview); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -1178,8 +1199,8 @@ func generateSpawnLabel() string {
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default.
-func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox, approval string) error {
-	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox, approval)
+func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview)
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
@@ -1191,9 +1212,11 @@ func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox, approv
 // stays sandboxed (the mode isn't persisted per-conv; callers re-resolve
 // the harness default). approval ("" = omit) rides through the same way so a
 // relaunched unattended Codex agent keeps its non-escalating posture and
-// can't deadlock on an approval prompt (JOH-200).
-func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox, approval string) error {
-	return Spawn.SpawnResume(convID, cwd, effort, model, harness, sandbox, approval)
+// can't deadlock on an approval prompt (JOH-200). autoReview ("false" = the
+// human reviews, the default) rides through the same way; relaunch never
+// re-engages the experimental guardian, so resume callers pass false.
+func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	return Spawn.SpawnResume(convID, cwd, effort, model, harness, sandbox, approval, autoReview)
 }
 
 // sessionNewArgs builds the argv for the detached `tclaude session new`
@@ -1201,7 +1224,7 @@ func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox, ap
 // an explicit value was chosen; an empty value leaves claude on its own
 // default. Kept pure so it can be unit-tested without forking a
 // subprocess.
-func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string) []string {
+func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) []string {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1215,6 +1238,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string
 	args = appendHarnessFlag(args, harness)
 	args = appendSandboxFlag(args, sandbox)
 	args = appendApprovalFlag(args, approval)
+	args = appendAutoReviewFlag(args, autoReview)
 	return args
 }
 
@@ -1223,7 +1247,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string
 // sessionNewArgs: --effort and --model are appended only when a value
 // was chosen, so "" keeps claude on its own default. Kept pure so it
 // can be unit-tested without forking a subprocess.
-func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval string) []string {
+func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) []string {
 	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1237,6 +1261,7 @@ func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval st
 	args = appendHarnessFlag(args, harness)
 	args = appendSandboxFlag(args, sandbox)
 	args = appendApprovalFlag(args, approval)
+	args = appendAutoReviewFlag(args, autoReview)
 	return args
 }
 
@@ -1278,6 +1303,20 @@ func appendApprovalFlag(args []string, policy string) []string {
 	return args
 }
 
+// appendAutoReviewFlag adds `--auto-review` to a `tclaude session new` argv when
+// the spawn opted into the harness's guardian subagent. false (the default)
+// omits it, so an ordinary spawn keeps the human as approval reviewer. It is a
+// boolean flag — no value — gated at the spawn boundary (harness.ResolveAutoReview
+// rejects it for a harness with no guardian), and the forked `tclaude session
+// new` re-validates. Experimental/undocumented upstream, hence opt-in. See
+// JOH-200 part 2.
+func appendAutoReviewFlag(args []string, autoReview bool) []string {
+	if autoReview {
+		args = append(args, "--auto-review")
+	}
+	return args
+}
+
 // liveSpawnNew runs `tclaude session new -d --global --label <label>`
 // as a fully-detached subprocess. Same detachment story as
 // liveSpawnResume — see its doc comment for the full rationale on
@@ -1286,13 +1325,13 @@ func appendApprovalFlag(args []string, policy string) []string {
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error {
-	// effort, model, sandbox and approval are validated at the spawn boundary
-	// (handleGroupSpawn / the `agent spawn` CLI) before they reach here;
+func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	// effort, model, sandbox, approval and autoReview are validated at the spawn
+	// boundary (handleGroupSpawn / the `agent spawn` CLI) before they reach here;
 	// the forked `tclaude session new` re-validates too, though by then
 	// a bad value would only surface as a non-zero exit in the daemon
-	// log. sessionNewArgs omits each flag entirely when its value is "".
-	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval)...)
+	// log. sessionNewArgs omits each flag entirely when its value is "" / false.
+	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval, autoReview)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	// Capture stderr so a silent subprocess failure (PATH issue, bad
@@ -1340,8 +1379,8 @@ func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string) 
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error {
-	args := sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval)
+func liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	args := sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval, autoReview)
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil

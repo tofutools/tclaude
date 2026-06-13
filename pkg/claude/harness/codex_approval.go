@@ -50,3 +50,24 @@ func (codexApproval) ValidatePolicy(policy string) (string, error) {
 			policy, ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest, ApprovalNever)
 	}
 }
+
+// Codex auto-review (guardian) — the orthogonal "who answers an approval
+// prompt" axis. `--ask-for-approval` decides WHEN Codex asks; this config
+// decides WHO decides: the human (`user`, Codex's default) or a guardian
+// subagent that auto-decides in the human's place (`auto_review`). Source-
+// present but undocumented/experimental at rust-v0.139.0 (config key
+// `approvals_reviewer`, set via `-c approvals_reviewer=auto_review`; the value
+// has a legacy alias `guardian_subagent`). The guardian fail-closes to Denied
+// on timeout/error/malformed and has a per-turn circuit breaker; `/approve`
+// is the human override. See docs/plans/harness-independence.md §E (JOH-167)
+// and JOH-200 part 2.
+//
+// It is plumbed as a per-spawn opt-in bool (SpawnSpec.AutoReview) rather than
+// a free-text config because tclaude only ever wants the canonical
+// `auto_review` value; the bool keeps the harness-agnostic layers from
+// knowing Codex's config syntax — codexSpawner is the only place that emits
+// the `-c approvals_reviewer="auto_review"` override.
+const (
+	codexApprovalsReviewerKey  = "approvals_reviewer"
+	codexApprovalsReviewerAuto = "auto_review"
+)

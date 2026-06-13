@@ -54,6 +54,17 @@ type SpawnSpec struct {
 	// ResolveApprovalPolicy before building the spec. See JOH-200 +
 	// docs/plans/harness-independence.md §E.
 	ApprovalPolicy string
+	// AutoReview, when true, asks the harness to route approval prompts to its
+	// guardian subagent (which auto-decides in the human's place) instead of
+	// the human. Codex maps this to `-c approvals_reviewer=auto_review`;
+	// harnesses without a guardian (Claude Code) ignore it. It is an
+	// orthogonal axis to ApprovalPolicy — that decides WHEN Codex asks, this
+	// decides WHO answers — so the two compose. Defaults to false (the human,
+	// Codex's `user` default); it is an experimental, undocumented-upstream
+	// opt-in, so callers enable it explicitly. Gate via Harness.Approval /
+	// ResolveAutoReview before building the spec. See JOH-200 part 2 +
+	// docs/plans/harness-independence.md §E.
+	AutoReview bool
 }
 
 // Spawner builds the in-tmux launch command for a harness from a
