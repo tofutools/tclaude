@@ -281,7 +281,7 @@ web search, local code-review agent, approval modes.
 | Model slugs | `claude-*` | `gpt-5.*` |
 | MCP / subagents | yes | yes |
 | Sandbox | tweakable built-in sandbox, off unless `sandbox.enabled` + hand-written `denyWrite` (see `docs/sandbox-hardening.md`) | OS-native: Seatbelt / bwrap+seccomp / Win restricted-token; `--sandbox {read-only\|workspace-write\|danger-full-access}`; **`workspace-write` writes only cwd+/tmp+$TMPDIR (so `$HOME` is read-only) + net-deny by default** — the tclaude-hardening integrity goal is met without config (§D, JOH-166) |
-| Oversight / "auto" | oversight agent checks the worker | **Auto-review** subagent at the sandbox boundary + granular approval policies (v0.122+) (JOH-167) |
+| Oversight / "auto" | oversight agent checks the worker | **Auto-review** = a *guardian* subagent that auto-decides the `on-request`/granular approval prompts a human would answer (`approvals_reviewer=auto_review`); **fail-closed**; orthogonal to tclaude's agentd gating; distinct from the `/review` diff-reviewer (§E, JOH-167) |
 
 ### D. CC ↔ Codex sandbox mapping (JOH-166 — researched)
 
@@ -384,7 +384,138 @@ row updated; nested-sandbox question answered. Implementation lands as M2
 (Spawner field + `--sandbox`) and M5 (dialog/badge) follow-ups — this
 research issue is the design input for them.
 
-### E. Project constraints to honor (from tclaude memory/CLAUDE.md)
+### E. CC ↔ Codex oversight / Auto-review mapping (JOH-167 — researched)
+
+Verified firsthand from openai/codex Rust source at tag **`rust-v0.139.0`**
+(same discipline as §D — read off the source, not marketing docs). The
+headline: **Codex's "Auto-review" oversight is the `guardian` subsystem — a
+dedicated subagent that *auto-decides the approval prompts a human would
+otherwise answer*, fail-closed.** It is **not** the `/review` code-reviewer
+(a separate "review my current changes and find issues" diff feature,
+`SlashCommand::Review`), and it sits on a **different boundary** from
+tclaude's own agentd gating — the two compose cleanly rather than conflict.
+
+**What it is + trigger surface.** Enabled by config
+`approvals_reviewer = "auto_review"` (legacy alias `guardian_subagent`;
+**default `user`** — `protocol/src/config_types.rs:157-172`). When set, the
+gate `routes_approval_to_guardian` (`core/src/guardian/review.rs:147-160`)
+fires **only if** the approval policy is `OnRequest` or `Granular` **and**
+the reviewer is `auto_review`. At that point every tool-execution approval
+that would normally prompt the human is instead routed to the guardian —
+verified at the call sites: shell exec (`tools/runtimes/shell.rs:151`),
+`apply_patch` writes (`tools/runtimes/apply_patch.rs:147`), `unified_exec`,
+MCP tool calls (`mcp_tool_call.rs:1223`), delegated subagents
+(`codex_delegate.rs:462/540/703`). The config doc-comment enumerates the
+surface: **sandbox escapes, blocked network access, MCP approval prompts,
+ARC escalations** (`config_types.rs:160-164`).
+
+**How the guardian runs (`core/src/guardian/mod.rs`, `review.rs`).** It
+reconstructs a compact transcript, then asks a dedicated, **locked-down**
+review session — pinned to a **read-only sandbox with
+`approval_policy = never`**, nonessential agent features disabled, so the
+guardian itself can neither mutate state nor trigger further approvals
+(`review.rs:646-659`). It clones the parent config (inherits the managed
+network proxy/allowlist for read-only context only). It must return strict
+JSON `GuardianAssessment { risk_level, user_authorization, outcome,
+rationale }` (`mod.rs:62-69`). **Fail-closed:** 90 s timeout
+(`GUARDIAN_REVIEW_TIMEOUT`), execution failure, malformed output, or even a
+runtime-spawn failure all resolve to `ReviewDecision::Denied`
+(`review.rs:380-391, 469-480, 564-568, 629`). A per-turn **circuit breaker**
+interrupts the turn after ≥3 consecutive or ≥10 recent denials
+(`mod.rs:49-51, 103-120`); the human override is the `/approve` slash
+command ("approve one retry of a recent auto-review denial",
+`SlashCommand::AutoReview`).
+
+**Where it sits relative to sandbox + approval policy.** *After* them, not
+instead of them. The sandbox (§D) and exec-policy still bound what is even
+possible; ARC (an independent risk classifier) "may still block actions
+earlier in the flow" (`review.rs:144-146`) and `approvals_reviewer` "does
+not disable separate safety checks such as ARC"
+(`core/src/config/mod.rs:631-633`). So Auto-review only intercepts the
+**residual human-escalation prompts** — it never widens the sandbox.
+
+> **Maturity caveat.** At `rust-v0.139.0` `approvals_reviewer`/`auto_review`
+> is **source-present but undocumented** in the public in-repo docs
+> (`docs/config.md` doesn't mention it; `docs/sandbox.md` only links out to
+> the security page), and the retained `guardian_subagent` alias shows the
+> key is still being renamed. **Treat it as experimental/unstable — do not
+> hard-depend on the key name.**
+
+**Q: does it conflict / duplicate / bypass tclaude's agentd gating?** No —
+**different boundaries, orthogonal axes, clean composition.**
+
+- **agentd gating** authorizes `tclaude agent …` *coordination* RPCs
+  (messaging / lifecycle / group / permission ops) by **SO_PEERCRED
+  identity** with the owner-state / grants / DENY precedence — host-side,
+  about agent→daemon calls.
+- **the guardian** decides whether the agent's *own harness tool calls*
+  (shell / patch / network / MCP) may run — it stands in for the human at
+  *that Codex session's keyboard*.
+
+They never evaluate the same decision. When a Codex agent runs
+`tclaude agent …` as a shell tool, the guardian may auto-approve/deny
+*launching that process*, but agentd **independently** authorizes the RPC
+via SO_PEERCRED regardless of the guardian's verdict — **defense in depth,
+no bypass**: a guardian-allow cannot bypass agentd, and a guardian-deny just
+means the command never runs (agentd never sees it). **No double-prompt:**
+agentd's approval popup is the *operator* approving an agent's
+coordination/permission request; the guardian *removes* a Codex-side human
+prompt — different surfaces, so they cannot stack.
+
+**The real interaction is a deadlock risk, not a conflict.** A
+tclaude-spawned Codex agent runs **detached in tmux with no human at its
+TUI**. With `approval_policy = on-request` and the **default**
+`approvals_reviewer = user`, any boundary-crossing tool call surfaces an
+approval prompt to a TUI nobody is attached to → the agent **blocks
+forever**. This is the actual oversight problem for tclaude, and it is a
+*sandbox/approval-policy* problem continuous with §D (JOH-166) — **not**
+something agentd gating addresses. Two exits: (a) spawn with a
+non-escalating posture (`workspace-write` + a policy that doesn't escalate
+to an absent human), or (b) enable `auto_review` so the guardian answers in
+the human's place.
+
+**Recommendation — don't wire it in, don't couple it to agentd; fix the
+deadlock at the spawn seam.**
+
+1. **Do not hardcode or default-enable Codex auto-review, and do not
+   cross-wire it to agentd gating.** They are independent security layers;
+   feeding one into the other only conflates boundaries. Keep them
+   **composed, not coordinated**, and document the no-bypass / no-double-
+   prompt property above.
+2. **tclaude's narrow obligation: never spawn an unattended Codex agent that
+   can deadlock on an approval prompt.** Solve it at the sandbox/approval
+   seam JOH-166 already opened — `codexSpawner` should emit an approval
+   policy that does **not** escalate to an absent human (default unattended
+   spawns to a non-interactive posture, e.g. `--full-auto` / on-failure with
+   `--sandbox workspace-write`; **never** `danger-full-access`). This keeps
+   the agent autonomous **without** depending on the experimental guardian.
+3. **Expose `auto_review` only as an opt-in pass-through knob.** If an
+   operator wants guardian oversight on unattended agents, let them flip it
+   via a `SpawnSpec` passthrough that emits a per-spawn `-c
+   approvals_reviewer=auto_review` override (same shape as JOH-166's
+   `--sandbox` flag — leave the user's `config.toml`/profiles untouched).
+   Flexible primitive, **not** a forced workflow; gate it behind a feature
+   flag while the key stays experimental/undocumented.
+4. **Surfacing (M5):** if exposed, render the approval posture (sandbox mode
+   + reviewer) as a per-agent badge beside the §D sandbox badge. CC has **no
+   exact analog** — its "auto" approval mode is harness-internal policy
+   automation, not a separate reviewer-subagent at the boundary — so
+   mixed-harness groups render each harness's own label.
+
+**Acceptance status:** Auto-review mechanism documented firsthand (guardian
+subagent, trigger surface, fail-closed, circuit breaker, position vs.
+sandbox/ARC); interaction with agentd gating answered (orthogonal, composes,
+no bypass / no double-prompt, real risk = unattended-deadlock); matrix row
+updated; recommendation = don't-wire / fix-at-spawn-seam, with `auto_review`
+as an opt-in passthrough. **Impl follow-up (mirrors JOH-166 → JOH-192):** a
+new ticket for a `SpawnSpec` approval-policy/reviewer passthrough (default
+unattended-safe non-escalating policy; `auto_review` opt-in behind a flag),
+`codexSpawner` flag emission, spawn-dialog + dashboard badge (M5), and a flow
+test that a spawned Codex agent's approval posture is non-blocking.
+Cold-review any path that injects `/approve` via send-keys (send-keys
+injection sink — the existing charset gate applies).
+
+### F. Project constraints to honor (from tclaude memory/CLAUDE.md)
 
 - **Migrations:** head is v55; grab the next free number, **renumber if a
   parallel branch lands first**; make it **idempotent** (pragma_table_info
@@ -398,7 +529,7 @@ research issue is the design input for them.
 - **Status enum is scattered** across ~10 switches (incl. two
   `matchesShowFilter` funcs) — mapping Codex events touches all of them.
 
-### F. Sources
+### G. Sources
 
 - Codex storage/rollout: deepwiki openai/codex 3.3, 3.5.2; GH discussion #3827.
 - Official docs: developers.openai.com/codex/cli, /codex/cli/reference,
@@ -408,3 +539,16 @@ research issue is the design input for them.
   (`SandboxPolicy` + `get_writable_roots_with_cwd`, network defaults),
   `core/src/landlock.rs` (`codex-linux-sandbox` = bubblewrap + seccomp);
   developers.openai.com/codex/concepts/sandboxing + /agent-approvals-security.
+- Oversight / Auto-review (§E, JOH-167), read firsthand from openai/codex
+  `rust-v0.139.0`: `protocol/src/config_types.rs:157-184`
+  (`ApprovalsReviewer` = `user` | `auto_review`/`guardian_subagent`, default
+  `user`); `protocol/src/protocol.rs:785-833` (`AskForApproval` +
+  `GranularApprovalConfig`); `core/src/guardian/mod.rs` (guardian contract,
+  `GuardianAssessment`, circuit breaker); `core/src/guardian/review.rs`
+  (`routes_approval_to_guardian`, locked-down review session, fail-closed →
+  `Denied`); approval call sites `core/src/tools/runtimes/{shell,apply_patch,
+  unified_exec}.rs`, `core/src/mcp_tool_call.rs`, `core/src/codex_delegate.rs`;
+  `core/src/config/mod.rs:631-633` (reviewer ≠ ARC); `tui/src/slash_command.rs`
+  (`/review` diff-reviewer vs `/approve` auto-review override). Note: at this
+  tag the key is **undocumented** in `docs/config.md` / `docs/sandbox.md`
+  (experimental).
