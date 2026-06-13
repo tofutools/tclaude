@@ -66,9 +66,10 @@ func TestMigrateV53toV54_HealsHalfAppliedRun(t *testing.T) {
 
 	// The half-applied state: column already there (with a non-default
 	// value to prove the re-run doesn't recreate/reset anything),
-	// version still 53, prefs table absent. The bare sessions table is
-	// not part of this scenario — it's only there so the final
-	// migrate() call can carry the DB past v55 (which ALTERs sessions).
+	// version still 53, prefs table absent. The bare sessions and
+	// conv_index tables are not part of this scenario — they're only
+	// there so the final migrate() call can carry the DB past v55 (ALTERs
+	// sessions) and v56 (ALTERs both sessions and conv_index).
 	_, err = d.Exec(`
 		CREATE TABLE schema_version (version INTEGER NOT NULL);
 		INSERT INTO schema_version (version) VALUES (53);
@@ -81,6 +82,7 @@ func TestMigrateV53toV54_HealsHalfAppliedRun(t *testing.T) {
 		);
 		INSERT INTO agent_groups (name, descr, created_at, notify_enabled) VALUES ('team', '', '2026-06-01T00:00:00Z', 0);
 		CREATE TABLE sessions (id TEXT PRIMARY KEY);
+		CREATE TABLE conv_index (conv_id TEXT PRIMARY KEY);
 	`)
 	require.NoError(t, err, "seed half-applied v53 schema")
 

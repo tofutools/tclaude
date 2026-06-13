@@ -11,7 +11,15 @@ import (
 	"time"
 )
 
-const currentVersion = 55
+const currentVersion = 56
+
+// DefaultHarness is the value of the `harness` column for a row that
+// predates multi-harness support or was produced by the Claude Code scan
+// path. It matches the `harness TEXT NOT NULL DEFAULT 'claude'` column
+// default (migrateV55toV56) and harness.DefaultName in pkg/claude/harness
+// — kept as a literal here because the db/convops layers cannot import
+// harness without an import cycle (harness → common → convops).
+const DefaultHarness = "claude"
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -353,6 +361,62 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 56 {
+		if err := migrateV55toV56(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV55toV56 adds the `harness` column to both `sessions` and
+// `conv_index` — the harness (coding tool) each row belongs to. Default
+// 'claude' so every existing row, and every reader that doesn't yet
+// select the column, keeps working untouched; the Codex scan path
+// (JOH-152+) writes 'codex' instead. The columns are filled on rescan by
+// the scanner + UpsertConvIndex/SaveSession (self-healing), not by a
+// one-shot backfill — DEFAULT covers the rows nothing has rescanned yet.
+//
+// Runs in one transaction AND guards each column add behind a
+// pragma_table_info probe (the migrateV54toV55 convention): SQLite has no
+// ADD COLUMN IF NOT EXISTS, and a half-applied run (e.g. interrupted
+// between the two ALTERs) must converge on re-run instead of wedging on
+// "duplicate column name". Each ALTER is probed independently so a run
+// that added `sessions.harness` but not `conv_index.harness` heals.
+func migrateV55toV56(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v55→v56 (add harness columns): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, table := range []string{"sessions", "conv_index"} {
+		var haveCol int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'harness'`,
+			table,
+		).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v55→v56 (add %s.harness): probe column: %w", table, err)
+		}
+		if haveCol == 0 {
+			// Table name is from a hardcoded loop, not user input, so the
+			// Sprintf into the DDL (ALTER TABLE has no parameter binding
+			// for identifiers) is safe.
+			if _, err := tx.Exec(fmt.Sprintf(
+				`ALTER TABLE %s ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude'`, table,
+			)); err != nil {
+				return fmt.Errorf("migrate v55→v56 (add %s.harness): add column: %w", table, err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 56`); err != nil {
+		return fmt.Errorf("migrate v55→v56 (add harness columns): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v55→v56 (add harness columns): commit: %w", err)
+	}
 	return nil
 }
 

@@ -46,7 +46,11 @@ type SessionEntry struct {
 	GitBranchStartup string `json:"gitBranchStartup,omitempty"`
 	ProjectPath      string `json:"projectPath"`
 	IsSidechain      bool   `json:"isSidechain"`
-	FileSize         int64  `json:"-"` // Populated at load time, not persisted in index
+	// Harness is the coding tool this conversation belongs to ("claude",
+	// "codex", …). Sourced from the conv_index.harness column; empty on a
+	// fresh parse, which the DB layer coalesces to "claude" (schema v56).
+	Harness  string `json:"harness,omitempty"`
+	FileSize int64  `json:"-"` // Populated at load time, not persisted in index
 	// ArchivedAt is the canonical archived signal sourced from
 	// `conv_index.archived_at`. RFC3339 timestamp string when archived,
 	// empty when active. Populated at load time from the DB row;
@@ -358,6 +362,7 @@ func dbRowToEntry(r *db.ConvIndexRow, fileSize int64) SessionEntry {
 		GitBranchStartup: r.GitBranchStartup,
 		ProjectPath:      r.ProjectPath,
 		IsSidechain:      r.IsSidechain,
+		Harness:          r.Harness,
 		FileSize:         fileSize,
 		ArchivedAt:       archived,
 	}
@@ -381,7 +386,10 @@ func entryToDBRow(e *SessionEntry, projectDir string) *db.ConvIndexRow {
 		GitBranchStartup: e.GitBranchStartup,
 		ProjectPath:      e.ProjectPath,
 		IsSidechain:      e.IsSidechain,
-		IndexedAt:        time.Now(),
+		// Empty on the Claude Code scan path; UpsertConvIndex coalesces
+		// it to "claude". A Codex scanner sets e.Harness = "codex".
+		Harness:   e.Harness,
+		IndexedAt: time.Now(),
 	}
 }
 
