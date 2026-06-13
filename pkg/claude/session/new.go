@@ -296,7 +296,11 @@ func runNew(params *NewParams) error {
 	// Get the PID of claude in the tmux session
 	pid := ParsePIDFromTmux(tmuxSession)
 
-	// Create session state (starts as idle, waiting for user input)
+	// Create session state (starts as idle, waiting for user input).
+	// Tag it with the harness it was spawned under so the tag is set on
+	// the row's first write rather than relying on the DB default —
+	// today always "claude"; the same line carries "codex" once
+	// --harness selects a different harness.
 	state := &SessionState{
 		ID:          sessionID,
 		TmuxSession: tmuxSession,
@@ -304,6 +308,7 @@ func runNew(params *NewParams) error {
 		Cwd:         cwd,
 		ConvID:      fullConvID,
 		Status:      StatusIdle,
+		Harness:     h.Name,
 		Created:     time.Now(),
 		Updated:     time.Now(),
 	}
