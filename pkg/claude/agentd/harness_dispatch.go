@@ -92,6 +92,22 @@ func sandboxForHarness(name string) string {
 	return ""
 }
 
+// approvalForHarness returns the launch approval policy the daemon re-applies
+// when it relaunches an existing conv (resume / clone / reincarnate). Like
+// sandboxForHarness, the policy is not persisted per-conv, so a Codex agent is
+// re-defaulted to its non-escalating mode (never) on relaunch rather than
+// coming back with an escalating policy that would deadlock the detached,
+// unattended pane; a harness with no launch approval flag (Claude Code) or an
+// unknown tag yields "" (omit the flag). Same fail-safe-direction rationale as
+// sandboxForHarness: a relaunch always returns to the non-deadlocking default.
+// See JOH-200.
+func approvalForHarness(name string) string {
+	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsApproval() {
+		return h.Approval.DefaultPolicy()
+	}
+	return ""
+}
+
 // deliverRename renames a conversation the way its harness dictates and
 // reports whether delivery succeeded. A harness with an in-pane rename
 // command (Claude Code's /rename) gets it injected into the live pane; one

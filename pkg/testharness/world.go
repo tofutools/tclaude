@@ -39,6 +39,7 @@ type World struct {
 	spawnEfforts   map[string]string
 	spawnModels    map[string]string
 	spawnSandboxes map[string]string
+	spawnApprovals map[string]string
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -62,6 +63,7 @@ func New(t *testing.T) *World {
 		spawnEfforts:   map[string]string{},
 		spawnModels:    map[string]string{},
 		spawnSandboxes: map[string]string{},
+		spawnApprovals: map[string]string{},
 	}
 }
 
@@ -118,6 +120,25 @@ func (w *World) SpawnSandbox(convID string) (string, bool) {
 	defer w.spawnMu.Unlock()
 	s, ok := w.spawnSandboxes[convID]
 	return s, ok
+}
+
+// RecordSpawnApproval captures the approval policy a simSpawner.SpawnNew /
+// SpawnResume received, keyed by the new conv-id, so a flow test can assert
+// the --ask-for-approval flag the spawn path threaded through (JOH-200). The
+// unset case ("") is recorded too.
+func (w *World) RecordSpawnApproval(convID, approval string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnApprovals[convID] = approval
+}
+
+// SpawnApproval returns the approval policy recorded for a spawned conv-id and
+// whether a spawn for that conv was observed.
+func (w *World) SpawnApproval(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	a, ok := w.spawnApprovals[convID]
+	return a, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the

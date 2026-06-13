@@ -43,6 +43,17 @@ type SpawnSpec struct {
 	// ResolveSandboxMode before building the spec. See JOH-192 +
 	// docs/plans/harness-independence.md §D.
 	SandboxMode string
+	// ApprovalPolicy names the launch-time approval policy for harnesses that
+	// take one (Codex's `--ask-for-approval {untrusted|on-failure|on-request|
+	// never}`). "" omits the flag entirely; the Spawner emits
+	// `--ask-for-approval <policy>` per-spawn so the user's config.toml/
+	// profiles stay untouched. The daemon spawn path resolves it to the
+	// harness's non-escalating default (Codex: `never`) so an unattended pane
+	// can't deadlock on an approval prompt; harnesses without a launch
+	// approval flag (Claude Code) ignore it. Validate via Harness.Approval /
+	// ResolveApprovalPolicy before building the spec. See JOH-200 +
+	// docs/plans/harness-independence.md §E.
+	ApprovalPolicy string
 }
 
 // Spawner builds the in-tmux launch command for a harness from a
