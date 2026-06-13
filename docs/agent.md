@@ -335,6 +335,8 @@ tclaude agent clone --no-copy-conv           # clone with a blank context instea
 tclaude agent reincarnate "<follow-up>"      # replace self with a fresh successor (follow-up REQUIRED)
 tclaude agent compact [follow-up]            # inject /compact into the pane
 tclaude agent context-info                   # show this conversation's context-window state (read-only)
+tclaude agent context-info --target <sel>    # read ANOTHER agent's context (gated: agent.context-info or group-owner)
+tclaude agent context-info --group <name|id> # one table of every group member's context % (gated likewise)
 ```
 
 A **clone** inherits identity (group memberships, per-conv grants,
@@ -463,8 +465,13 @@ has [classified the caller](#identity), it decides:
 1. **Human?** Pass — the human bypasses every gate.
 2. **Agent?** Allowed iff the slug is in `default_permissions`
    (global), the agent's per-conv grants (SQLite), or an active
-   `sudo` elevation. Owning a group also passes the `agent.*`
-   manager-pattern checks against members of that group.
+   `sudo` elevation. **Group-owner state** raises an owner's default
+   slugs: owning a group confers, for that group, the `agent.*`
+   manager-pattern checks against its members, the group-lifecycle
+   verbs (`groups.spawn` / `groups.stop` / `groups.retire` /
+   `groups.resume`), and `human.notify` (owning any group). These owner
+   defaults fill only the *undecided* gap — an explicit **deny** override
+   is always authoritative and suppresses them, read or write.
 3. **Neither?** Refused fail-closed — see [Identity](#identity).
 
 ### Storage split
@@ -487,7 +494,7 @@ gate group, messaging, template, and permission administration.
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire` |
 | `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |

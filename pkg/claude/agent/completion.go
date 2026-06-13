@@ -194,6 +194,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"agent.compact", "Compact ANOTHER agent"},
 			{"agent.rename", "Rename ANOTHER agent"},
 			{"agent.clone", "Clone ANOTHER agent"},
+			{"agent.context-info", "Read ANOTHER agent's context-window state"},
 			{"groups.create", "Create new groups"},
 			{"groups.rm", "Delete groups"},
 			{"groups.stop", "Stop a group's running members"},

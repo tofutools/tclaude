@@ -28,6 +28,60 @@ func TestFormatTokens(t *testing.T) {
 	}
 }
 
+// TestFormatContextPct covers the group-listing CTX% cell: a member
+// whose statusline hook has never fired (HasSnapshot false) renders "—"
+// rather than a misleading 0%, while a reported snapshot renders its
+// rounded percentage.
+func TestFormatContextPct(t *testing.T) {
+	tests := []struct {
+		name string
+		in   groupContextEntry
+		want string
+	}{
+		{"no snapshot", groupContextEntry{HasSnapshot: false, ContextPct: 0}, "—"},
+		{"no snapshot ignores stray pct", groupContextEntry{HasSnapshot: false, ContextPct: 42}, "—"},
+		{"genuine zero", groupContextEntry{HasSnapshot: true, ContextPct: 0}, "0%"},
+		{"reported", groupContextEntry{HasSnapshot: true, ContextPct: 72.4}, "72%"},
+		{"rounds up", groupContextEntry{HasSnapshot: true, ContextPct: 91.6}, "92%"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatContextPct(tt.in), "formatContextPct(%+v)", tt.in)
+		})
+	}
+}
+
+// TestFormatContextTokens covers the group-listing TOKENS cell:
+// "<used> / <window>" when the absolute counts are present, empty
+// otherwise (no snapshot, or pre-v2.1.132 CC that reports only a
+// percentage).
+func TestFormatContextTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		in   groupContextEntry
+		want string
+	}{
+		{"no snapshot", groupContextEntry{HasSnapshot: false}, ""},
+		{"no window size", groupContextEntry{HasSnapshot: true, TokensInput: 100, ContextWindowSize: 0}, ""},
+		{"no tokens", groupContextEntry{HasSnapshot: true, ContextWindowSize: 200000}, ""},
+		{
+			"populated",
+			groupContextEntry{HasSnapshot: true, TokensInput: 110000, TokensOutput: 10000, ContextWindowSize: 200000},
+			"120k / 200k",
+		},
+		{
+			"millions window",
+			groupContextEntry{HasSnapshot: true, TokensInput: 600000, TokensOutput: 50000, ContextWindowSize: 1000000},
+			"650k / 1.0M",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatContextTokens(tt.in), "formatContextTokens(%+v)", tt.in)
+		})
+	}
+}
+
 // TestIsValidFollowUp mirrors the daemon-side check; the daemon is the
 // security boundary, so its TestIsValidFollowUp is the authoritative
 // spec — this CLI mirror just keeps a fast local error path in sync.

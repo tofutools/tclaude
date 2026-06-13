@@ -63,6 +63,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Clone ANOTHER agent into a sibling that inherits its identity (tclaude agent clone --target). Group owners can clone members of groups they own without this slug.",
 	},
 	{
+		Slug:        PermAgentContextInfo,
+		Description: "Read ANOTHER agent's context-window state (tclaude agent context-info --target / --group). Read-only. Group owners can read context for members of groups they own without this slug.",
+	},
+	{
 		Slug:        PermGroupsCreate,
 		Description: "Create new agent groups (tclaude agent groups create)",
 	},
@@ -72,19 +76,19 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermGroupsStop,
-		Description: "Stop a group's running members (tclaude agent groups stop)",
+		Description: "Stop a group's running members (tclaude agent groups stop). Group owners can stop members of groups they own without this slug.",
 	},
 	{
 		Slug:        PermGroupsResume,
-		Description: "Resume a group's offline members (tclaude agent groups resume)",
+		Description: "Resume a group's offline members (tclaude agent groups resume). Group owners can resume members of groups they own without this slug.",
 	},
 	{
 		Slug:        PermGroupsRetire,
-		Description: "Retire (soft-delete) every other member of a group in one shot — the bulk parallel of agent.retire (tclaude agent groups retire). Demotes each member to a plain conversation: drops its group memberships and revokes its permission/sudo grants, leaving the conversation intact and reinstatable. The caller's own conv is always skipped. NOT default-granted; retiring agents is a sensitive cleanup the human normally drives.",
+		Description: "Retire (soft-delete) every other member of a group in one shot — the bulk parallel of agent.retire (tclaude agent groups retire). Demotes each member to a plain conversation: drops its group memberships and revokes its permission/sudo grants, leaving the conversation intact and reinstatable. The caller's own conv is always skipped. Group owners can retire members of groups they own without this slug; it is not in the global defaults otherwise (retiring agents an owner doesn't manage is a sensitive cleanup the human drives).",
 	},
 	{
 		Slug:        PermGroupsSpawn,
-		Description: "Spawn a fresh CC session and add it to a group (tclaude agent spawn)",
+		Description: "Spawn a fresh CC session and add it to a group (tclaude agent spawn). Group owners can spawn into groups they own without this slug (the spawn guardrails — member cap, rate limit — still apply).",
 	},
 	{
 		Slug:        PermGroupsOwn,
@@ -172,7 +176,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermHumanNotify,
-		Description: "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Not default-granted: the human grants it to the PO so workers cannot spam the channel.",
+		Description: "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Group owners get this by default (a trusted coordinating role), suppressible by a deny override; otherwise not in the global defaults, so plain workers cannot spam the channel without an explicit grant.",
 	},
 	{
 		Slug:        PermSettingsDefaultModel,
