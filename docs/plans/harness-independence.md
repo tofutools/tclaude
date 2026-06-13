@@ -18,11 +18,29 @@ harnesses, not just Claude Code (CC). **First additional harness: OpenAI Codex
 CLI.** Other harnesses (Gemini CLI, Aider, open-source) are explicitly later —
 the point of the abstraction is to make them a recipe, not a rewrite.
 
-The core idea: introduce a **`Harness` seam** that captures everything that
-differs between CC and Codex, refactor existing CC behavior behind it (no
-behavior change), then add a `codex` implementation. Persist which harness each
-session/conv belongs to and default it to `claude` so every existing row and
-reader keeps working untouched.
+The core idea: introduce a **set of focused, capability-segregated Go
+interfaces** that hide harness specifics, refactor existing CC behavior behind
+them (no behavior change), then add `codex` implementations. **Not one
+monolithic `Harness` interface** — the same feature is distributed differently
+across each harness's components, so we model the *contracts* (spawn a session,
+list conversations, get/set a title, install hooks, validate a model, stop a
+pane) and let each harness satisfy them however its storage/command model
+dictates. A small `Harness` descriptor composes the pieces and exposes
+capability flags for features a harness lacks. **Expect real refactors**, not
+just shims — the operator has explicitly blessed this (2026-06-13).
+
+Persist which harness each session/conv belongs to and default it to `claude`
+so every existing row and reader keeps working untouched.
+
+**Load-bearing principle — drop the "single `.jsonl` is the whole truth"
+assumption.** tclaude today assembles a `SessionEntry` entirely from CC's one
+conversation file (title, summary, cwd, gitBranch all parsed from it). Codex's
+storage model is different and may split metadata across the rollout file +
+a sidecar/index (its session **title/rename is shipped** — issue #22526 closed
+COMPLETED — but the title likely does **not** live as a turn inside the rollout
+`.jsonl` the way CC's `customTitle` does). So the conv-source contract is
+"assemble a SessionEntry from *this harness's* storage model" (one file, many
+files, file+sidecar, or file+DB) — never "parse the one file".
 
 Phased so each milestone is independently shippable and low-risk:
 
@@ -52,16 +70,52 @@ peer creds, harness-agnostic) already generalize. The real work concentrates in
 **Out of scope:** harnesses beyond Codex; tclaude stays an orchestrator, not a
 work engine (tasks/tickets stay in Linear/Jira/GHI).
 
+### Interface decomposition (sketch — refine in M1)
+
+Segregated contracts, composed by a `Harness` descriptor. Each is satisfied
+per-harness however that harness's internal model distributes the work; some
+are optional (capability detection via nil / a flag):
+
+- `Spawner` — build the in-tmux launch command + env from a spawn spec; express
+  the resume form (`claude --resume <id>` vs `codex resume <id>`).
+- `ConvStore` — `ListConvs(cwd) → []SessionEntry`, `Resolve(idPrefix, cwd)`,
+  `Title(convID)` / `SetTitle(convID, t)`. **Assembles from the harness's full
+  storage model** (CC: one `.jsonl`; Codex: rollout file ± sidecar/index). The
+  `Title` getter/setter is where the CC-vs-Codex difference hides — CC reads the
+  `customTitle` turn / injects `/rename`; Codex reads/writes wherever its native
+  rename persists, or tclaude falls back to `conv_index.custom_title`.
+- `HookInstaller` — install/check/repair the tclaude callback in the harness's
+  config target (settings.json vs config.toml/hooks.json) + any trust step.
+- `HookEventMap` — map this harness's hook stdin payload + event names onto
+  tclaude's internal status state machine (mostly shared; CC↔Codex payloads
+  already align field-for-field).
+- `ModelCatalog` — validate/normalize model + effort; list valid values for the
+  spawn dialog.
+- `Lifecycle` (capabilities) — `RenameCommand`, `CompactCommand`,
+  `SoftExitCommand` tokens (or "unsupported" → tclaude-side fallback / no-op).
+  Every slash injection is gated on these so no pane gets a command it can't
+  parse.
+- `StatuslineInstaller` — optional; CC only for now.
+
+This is the "different distribution of functionality across mostly-equivalent
+components" the operator flagged: e.g. *rename* is one `ConvStore.SetTitle`
+contract, but CC implements it by injecting `/rename` (→ `.jsonl` turn) while
+Codex implements it against its own title store.
+
 ### Open questions (resolve via spikes, then update this doc)
 
 - **Hook trust automation.** Codex requires non-managed command hooks to be
   trusted (`/hooks`) or declared managed via `requirements.toml`. Can `tclaude
   setup` register the callback as managed/trusted non-interactively, or is a
   one-time `/hooks` trust step unavoidable? (M3 / JOH-157)
-- **Title model.** Codex has no `customTitle` turn. Plan: store titles
-  tclaude-side in `conv_index.custom_title`. Worth adopting for CC too, or keep
-  CC's round-trip-through-`.jsonl` behavior? (M4 / JOH-161 — don't change CC in
-  this project.)
+- **Title model + persistence (spike).** Codex CLI rename **is shipped** (issue
+  #22526, COMPLETED) but the title almost certainly does **not** live as a turn
+  in the rollout `.jsonl` like CC's `customTitle`. Spike: find where Codex
+  persists it (extended `SessionMeta` / sidecar `meta.json` / sessions index)
+  and what the rename command/syntax is. Plan: `ConvStore.Title` **reads
+  Codex's native title** when present; `conv_index.custom_title` is the
+  **fallback**, not the primary. CC behavior unchanged in this project. (M4 /
+  JOH-161)
 - **Effort ↔ reasoning mapping.** Is tclaude's effort concept 1:1 with Codex
   reasoning levels, or do we expose them as distinct per-harness knobs? (M2)
 - **Compaction.** Does Codex expose a scriptable compaction command/flag, or is
@@ -116,7 +170,11 @@ line is a `RolloutLine{timestamp, item}` wrapping a `RolloutItem`:
   `TurnComplete`, lifecycle.
 - `TurnContext` — model, approval_policy, sandbox_policy snapshot.
 - `Compacted` — history-compaction output.
-No `customTitle` concept → derive a display title from the first `UserMessage`.
+The rollout file has **no `customTitle` turn** like CC's. Default display title
+is auto-generated from the conversation; a **user rename is supported** (issue
+#22526, COMPLETED) but persisted **outside the rollout turns** (exact location
+TBD — likely extended `SessionMeta`/sidecar/index). For an un-renamed session,
+derive a display title from the first `UserMessage`.
 
 **Commands.** `codex` (TUI), `codex exec`/`codex e` (headless, streams stdout or
 JSONL), `codex resume <SESSION_ID>` / `codex resume --last` / `--all`. Flags:
@@ -164,7 +222,8 @@ web search, local code-review agent, approval modes.
 | Hook trust | n/a | explicit/managed required |
 | Notification event | yes | no → use `PermissionRequest` |
 | SessionEnd event | yes | no → use `Stop` + proc-exit |
-| Rename / customTitle | `/rename` → `.jsonl` turn | none → store tclaude-side |
+| Rename / title | `/rename` → `customTitle` turn in `.jsonl` | shipped (#22526), persisted outside rollout turns (TBD) → read native, fallback tclaude-side |
+| "everything in one file" | yes (title/summary/cwd/branch all in the `.jsonl`) | no — metadata split across rollout + sidecar/index |
 | Compact | `/compact` | TBD (spike) |
 | Model slugs | `claude-*` | `gpt-5.*` |
 | MCP / subagents | yes | yes |
