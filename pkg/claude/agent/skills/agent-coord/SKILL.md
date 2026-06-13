@@ -192,11 +192,13 @@ load that one when you need to rename, not this one.
 
 Long-running agents can act on context pressure via
 `tclaude agent context-info`, `tclaude agent compact`, and
-`tclaude agent reincarnate`. Reincarnate is the heavier path that swaps
-you out for a fresh successor with the same identity. **When and whether
-to do either — and at what context %, if at all — is a per-project
-policy, not something prescribed here**; check your project's `CLAUDE.md`
-/ the human's instructions. The mechanics, permission slugs
+`tclaude agent reincarnate`. Reincarnate — usually the preferred
+mechanism — swaps you out for a successor with the same identity,
+carrying forward only the context you choose (unlike `/compact`, which
+compresses history blindly and is slower); it is *not* a heavy or
+clean-restart operation. **When and whether to do either — and at what
+context %, if at all — is a per-project policy, not something prescribed
+here**; check your project's `CLAUDE.md` / the human's instructions. The mechanics, permission slugs
 (`self.compact` / `self.reincarnate`), disk-handoff convention, and
 follow-up etiquette live in the dedicated **`agent-lifecycle`** skill —
 load that one when you need to compact or reincarnate yourself, not this
