@@ -37,6 +37,8 @@ import {
 import { bindConfigTab } from './config.js';
 import { bindPluginsUI } from './plugins.js';
 import { bindCostsTab } from './costs.js';
+import { initDashPrefs } from './prefs.js';
+import { loadSortState } from './sort.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -63,60 +65,74 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   return `<span class="sudo-badge" data-act="sudo-manage" data-conv="${esc(convID)}" title="${esc(title)}">🔓</span>`;
 }
 
-bindTabs();
-bindCopy();
-bindDetailsPersistence();
-bindSortHeaders();
-bindRowActions();
-bindDnd();
-bindFilter('groups');
-bindFilter('templates');
-bindFilter('cron');
-bindFilter('sudo');
-bindFilter('links');
-bindFilter('plugins');
-bindFilter('messages');
-bindSudoModal();
-bindPermEditModal();
-bindCronModal();
-bindMessageModal();
-bindGroupCreateModal();
-bindTemplatesUI();
-bindGroupImportModal();
-bindGroupContextModal();
-bindLinkModal();
-bindAgentSpawnModal();
-bindCloneAgentModal();
-bindReincarnateAgentModal();
-bindConfigTab();
-bindPluginsUI();
-bindCostsTab();
-// Slop-mode flair — each binder installs a delegated listener (or
-// starts an interval) once. They no-op while slop is off and the
-// body-class check inside each handler is what actually gates the
-// effect, so toggling slop mid-session needs no re-binding.
-bindSlopHotkey();
-bindSlopClickFx();
-bindSlopMachineClicks();
-bindSlopStatusWatch();
-bindSlopCursorTrail();
-bindSlopMarquee();
-// Slop-mode extras, all hung off the tclaude:slopfx bus slop-fx emits:
-// synthesized casino sound (default-muted, header toggle), a credits
-// counter + high-rollers leaderboard, and the Konami mega-jackpot / side
-// pull-lever / confetti spectacle. Each no-ops while slop is off.
-bindSlopAudio();
-bindSlopCredits();
-bindSlopSpectacle();
-// The volume mixer (header 🎚️ popover) — persistent music/FX sliders
-// backed by /api/slop/volumes (the "slop" block of config.json). Must
-// bind after applySlopThemeIfRequested() so an already-slop page load
-// is caught by its initial-state check.
-bindSlopVolume();
-// Vegas-mode soundtrack — the "Vegas" tab + lounge-radio player, started
-// and stopped with slop mode (listens for the tclaude:slop event slop.js
-// dispatches). Must bind after applySlopThemeIfRequested() above so an
-// already-slop page is handled by its initial-state check.
-bindVegasMusic();
-refresh();
-setInterval(refresh, 2000);
+// Boot. The dashboard's sticky view/config prefs now live server-side
+// (prefs.js → /api/dashboard/prefs) because the random per-start port
+// makes localStorage origin-scoped and thus reset-on-restart. We must
+// load that cache BEFORE any bind or render reads a pref, so the whole
+// boot runs inside an async IIFE that awaits it first. (An IIFE rather
+// than top-level await, to keep this entry module's evaluation
+// synchronous for the benign import cycles documented above.)
+(async () => {
+  await initDashPrefs();
+  // sort.js seeds its in-memory sortState from a pref; re-seed it now
+  // that the cache is populated (its import-time read saw an empty one).
+  loadSortState();
+
+  bindTabs();
+  bindCopy();
+  bindDetailsPersistence();
+  bindSortHeaders();
+  bindRowActions();
+  bindDnd();
+  bindFilter('groups');
+  bindFilter('templates');
+  bindFilter('cron');
+  bindFilter('sudo');
+  bindFilter('links');
+  bindFilter('plugins');
+  bindFilter('messages');
+  bindSudoModal();
+  bindPermEditModal();
+  bindCronModal();
+  bindMessageModal();
+  bindGroupCreateModal();
+  bindTemplatesUI();
+  bindGroupImportModal();
+  bindGroupContextModal();
+  bindLinkModal();
+  bindAgentSpawnModal();
+  bindCloneAgentModal();
+  bindReincarnateAgentModal();
+  bindConfigTab();
+  bindPluginsUI();
+  bindCostsTab();
+  // Slop-mode flair — each binder installs a delegated listener (or
+  // starts an interval) once. They no-op while slop is off and the
+  // body-class check inside each handler is what actually gates the
+  // effect, so toggling slop mid-session needs no re-binding.
+  bindSlopHotkey();
+  bindSlopClickFx();
+  bindSlopMachineClicks();
+  bindSlopStatusWatch();
+  bindSlopCursorTrail();
+  bindSlopMarquee();
+  // Slop-mode extras, all hung off the tclaude:slopfx bus slop-fx emits:
+  // synthesized casino sound (default-muted, header toggle), a credits
+  // counter + high-rollers leaderboard, and the Konami mega-jackpot / side
+  // pull-lever / confetti spectacle. Each no-ops while slop is off.
+  bindSlopAudio();
+  bindSlopCredits();
+  bindSlopSpectacle();
+  // The volume mixer (header 🎚️ popover) — persistent music/FX sliders
+  // backed by /api/slop/volumes (the "slop" block of config.json). Must
+  // bind after applySlopThemeIfRequested() so an already-slop page load
+  // is caught by its initial-state check.
+  bindSlopVolume();
+  // Vegas-mode soundtrack — the "Vegas" tab + lounge-radio player, started
+  // and stopped with slop mode (listens for the tclaude:slop event slop.js
+  // dispatches). Must bind after applySlopThemeIfRequested() above so an
+  // already-slop page is handled by its initial-state check.
+  bindVegasMusic();
+  refresh();
+  setInterval(refresh, 2000);
+})();

@@ -4,6 +4,7 @@
 // clone modals embed the worktree picker from modal-link-wt.
 
 import { $, $$, esc, shortId } from './helpers.js';
+import { dashPrefs } from './prefs.js';
 import { groupDefaultContext } from './modal-templates.js';
 import {
   WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve, wtResolveCwd,
@@ -69,9 +70,47 @@ function updateSpawnModelDefaultLabel(groupName) {
 // detached with no window, so the common case is wanting one opened.
 function spawnAutoFocusPref() {
   try {
-    const v = localStorage.getItem('tclaude.dash.spawn.autofocus');
+    const v = dashPrefs.getItem('tclaude.dash.spawn.autofocus');
     return v === null ? true : v === '1';
   } catch (_) { return true; }
+}
+
+// ---- Per-model effort memory --------------------------------------------
+//
+// When the human picks an effort for a given Model and spawns, we
+// remember it keyed by the exact Model <select> value ("" = the
+// Default option) so re-selecting that model in a later spawn dialog
+// re-applies the same effort. The use case: default to high for fable
+// models but xhigh for opus models, without re-picking every spawn.
+// Stored as a JSON object { model: effort } in dashPrefs.
+const SPAWN_MODEL_EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
+
+// loadModelEffortMap reads the persisted model→effort map. Returns an
+// empty object on any error (missing key, corrupt JSON, non-object).
+function loadModelEffortMap() {
+  try {
+    const obj = JSON.parse(dashPrefs.getItem(SPAWN_MODEL_EFFORT_KEY));
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch (_) { return {}; }
+}
+
+// rememberModelEffort records `effort` as the remembered default for
+// `model`. A blank effort (the Default option) drops any prior entry
+// so the model falls back to Default next time, keeping the map tidy.
+function rememberModelEffort(model, effort) {
+  try {
+    const map = loadModelEffortMap();
+    if (effort) map[model] = effort;
+    else delete map[model];
+    dashPrefs.setItem(SPAWN_MODEL_EFFORT_KEY, JSON.stringify(map));
+  } catch (_) {}
+}
+
+// applyRememberedEffort sets the Effort <select> to the value last
+// remembered for `model`, or back to Default ("") when none is stored.
+// Call it on modal open and whenever the Model <select> changes.
+function applyRememberedEffort(model) {
+  $('#agent-spawn-effort').value = loadModelEffortMap()[model] || '';
 }
 
 // prefillSpawnCwd fills #agent-spawn-cwd with the group's default
@@ -170,8 +209,10 @@ function openAgentSpawnModal(opts) {
   $('#agent-spawn-role').value = '';
   $('#agent-spawn-descr').value = '';
   $('#agent-spawn-init-msg').value = '';
-  $('#agent-spawn-effort').value = '';
   $('#agent-spawn-model').value = '';
+  // Restore the effort last remembered for the selected model (the
+  // Default model on a fresh open) — see rememberModelEffort.
+  applyRememberedEffort($('#agent-spawn-model').value);
   $('#agent-spawn-cwd').value = '';
   // Restore the auto-focus checkbox from the human's last choice
   // (defaults on — see spawnAutoFocusPref).
@@ -245,7 +286,11 @@ async function submitAgentSpawn() {
     return;
   }
   // Persist the checkbox so the human's choice sticks across spawns.
-  try { localStorage.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
+  try { dashPrefs.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
+  // Remember this model's effort so re-selecting the model in a later
+  // spawn dialog re-applies it (per-model memory). Both values are the
+  // raw <select> values, "" included.
+  rememberModelEffort(model, effort);
   const submitBtn = $('#agent-spawn-submit');
   submitBtn.disabled = true;
   submitBtn.textContent = 'Spawning…';
@@ -294,7 +339,7 @@ async function submitAgentSpawn() {
     // Vegas-themed celebration when slop is on; silent no-op otherwise.
     slopJackpot();
     // Keep the destination group expanded so the new member is visible.
-    try { localStorage.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
+    try { dashPrefs.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
     refresh();
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
@@ -317,6 +362,12 @@ function bindAgentSpawnModal() {
     updateSpawnModelDefaultLabel(e.target.value);
     if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
     spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
+  });
+  // Switching the Model re-applies that model's remembered effort (or
+  // resets to Default when it has none), so each model carries its own
+  // effort default — see rememberModelEffort.
+  $('#agent-spawn-model').addEventListener('change', (e) => {
+    applyRememberedEffort(e.target.value);
   });
   $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
   $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);

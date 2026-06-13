@@ -6,6 +6,7 @@
 // sudo-grant modal (defined in modal-cron) to its DOM controls.
 
 import { $, $$, esc, shortId } from './helpers.js';
+import { dashPrefs } from './prefs.js';
 import {
   bindTargetPicker, populateTargetPicker, readTargetPicker, pickCronTargetModal,
   openSudoGrantModal, closeSudoGrantModal, submitSudoGrant, pickSudoAgentModal,
@@ -467,7 +468,7 @@ async function submitGroupCreate() {
     closeGroupCreateModal();
     toast(`group created: ${name}`);
     // Persist the expanded state so the new group shows expanded on next render.
-    try { localStorage.setItem('tclaude.dash.group.' + name, '1'); } catch (_) {}
+    try { dashPrefs.setItem('tclaude.dash.group.' + name, '1'); } catch (_) {}
     refresh();
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
