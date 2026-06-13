@@ -45,6 +45,31 @@ func resolveSpawnHarness(name string) (*harness.Harness, error) {
 	return harness.ResolveSpawnable(strings.TrimSpace(name))
 }
 
+// harnessNativeTitle returns a conversation's current title from its
+// harness's NATIVE title store, for harnesses that keep titles outside the
+// Claude-Code conv_index / `.jsonl` (Codex's threads.title). The bool is
+// false for the default (Claude Code) harness — whose title the callers
+// already read through agent.FreshConvRow* / DisplayTitle — so a CC caller
+// keeps its existing path byte-for-byte unchanged. An unreadable / empty
+// native title also folds to ("", false), degrading to the caller's
+// fallback rather than failing the lifecycle op.
+//
+// This is the read half of "title carry-over via SetTitle/Title": when a
+// Codex agent is reincarnated or cloned, its predecessor title lives in
+// threads.title, not the conv_index the CC path reads, so the carry must
+// source it through the harness ConvStore.
+func harnessNativeTitle(convID string) (string, bool) {
+	h := harnessForConv(convID)
+	if h.Name == harness.DefaultName || !h.SupportsConvs() {
+		return "", false
+	}
+	title, err := h.Convs.Title(convID)
+	if err != nil || title == "" {
+		return "", false
+	}
+	return title, true
+}
+
 // deliverRename renames a conversation the way its harness dictates and
 // reports whether delivery succeeded. A harness with an in-pane rename
 // command (Claude Code's /rename) gets it injected into the live pane; one

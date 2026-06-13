@@ -91,6 +91,7 @@ type CodexSim struct {
 	GitBranch string
 
 	createdAt time.Time
+	home      string // HOME the rollout + state DB live under
 
 	mu         sync.Mutex
 	title      string
@@ -143,6 +144,7 @@ func NewCodexSimWithID(t *testing.T, home, convID, cwd string) *CodexSim {
 		CliVersion:    "0.139.0",
 		ContextWindow: 258400,
 		createdAt:     created,
+		home:          home,
 	}
 	cx.installDefaultHandlers()
 	t.Cleanup(cx.Shutdown)

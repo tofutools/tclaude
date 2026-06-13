@@ -27,9 +27,10 @@ import (
 //     callback would have recorded a real Codex launch.
 //   - The Codex worker shows up in the group. Its display name comes from
 //     the pending_name fallback: Codex has no in-pane /rename command, so
-//     the post-spawn rename degrades to the title store (the JOH-161
-//     ConvStore.SetTitle stub) and the pending name carries the name in
-//     the meantime — the graceful degradation lead signed off on (Q2).
+//     the post-spawn rename degrades to the title store (ConvStore.SetTitle,
+//     real since JOH-161). The simSpawner's CodexSim writes no threads row,
+//     so that out-of-band write has no row to UPDATE and the pending name
+//     carries the name — the graceful degradation lead signed off on (Q2).
 //   - Messaging is harness-agnostic: a grouped peer's message lands in the
 //     Codex worker's inbox and nudges its live pane the same as any agent.
 //   - A soft stop injects Codex's `/quit` (verified vs openai/codex

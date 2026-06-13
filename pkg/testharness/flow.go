@@ -404,6 +404,35 @@ func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch 
 	f.World.CCs.Set(label, cc)
 }
 
+// HaveAliveCodexSession is the Codex analog of HaveAliveSession: it stands
+// up a live Codex-tagged session DETERMINISTICALLY — a CodexSim with a real
+// rollout, an alive tmux registration, and a harness="codex" SessionRow —
+// WITHOUT the async spawn post-init (no background /rename to race). Use it
+// when a lifecycle test needs a Codex agent whose state is fully settled
+// before the test acts (rename, reincarnate, compact). Returns the sim so
+// the test can seed its threads state row (WriteThreadRow) or read back a
+// rename (ThreadTitle).
+func (f *Flow) HaveAliveCodexSession(convID, label, tmuxSession, cwd string) *CodexSim {
+	f.T.Helper()
+	cx := NewCodexSimWithID(f.T, f.World.HomeDir, convID, cwd)
+	if err := cx.Start(); err != nil {
+		f.T.Fatalf("HaveAliveCodexSession: cx.Start: %v", err)
+	}
+	if err := db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: tmuxSession,
+		ConvID:      convID,
+		Cwd:         cwd,
+		Status:      "running",
+		Harness:     codexHarnessName,
+	}); err != nil {
+		f.T.Fatalf("HaveAliveCodexSession: %v", err)
+	}
+	f.World.Tmux.Register(tmuxSession, cwd, cx)
+	f.World.Codexes.Set(label, cx)
+	return cx
+}
+
 // MarkOffline flips a tmux session off (handler side believes it's
 // down). Useful between an action that left the conv online and an
 // action that requires it offline (resume).
@@ -642,6 +671,42 @@ func (f *Flow) ReincarnateWith(target string, body map[string]any) ReincarnateRe
 	resp.Raw = rec.Body.Bytes()
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	return resp
+}
+
+// RenameResp parses POST /v1/agent/{conv}/rename. Returns WITHOUT
+// fatal-on-error so tests can assert both the success (200) and the
+// no-store / rejected-title failure paths.
+type RenameResp struct {
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Code   int    `json:"-"`
+	Raw    []byte `json:"-"`
+}
+
+// Rename drives POST /v1/agent/{conv}/rename with an explicit title.
+func (f *Flow) Rename(convID, title string) RenameResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/rename", map[string]any{"title": title})
+	var resp RenameResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp
+}
+
+// CompactResp parses POST /v1/agent/{conv}/compact. Code/Raw carry the
+// daemon's response so a test can assert the harness-unsupported 400 (a
+// harness with no CompactCommand) as readily as the CC success path.
+type CompactResp struct {
+	Code int    `json:"-"`
+	Raw  []byte `json:"-"`
+}
+
+// Compact drives POST /v1/agent/{conv}/compact WITHOUT fatal-on-error.
+func (f *Flow) Compact(convID string) CompactResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/compact", nil)
+	return CompactResp{Code: rec.Code, Raw: rec.Body.Bytes()}
 }
 
 // CloneResp parses POST /v1/agent/{target}/clone. Note: clone has no

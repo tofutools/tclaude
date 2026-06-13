@@ -382,8 +382,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// where the parent itself was just spawned and never indexed yet
 	// (otherwise prevTitle would be "" and we'd produce `reincarnate-1`
 	// instead of `<parent>-reincarnate-N`).
+	// A non-CC harness (Codex) keeps its title in its own store
+	// (threads.title), not the conv_index the CC path reads — source it
+	// through the harness ConvStore so the carry survives. CC falls through
+	// to the existing FreshConvRowAt scan, unchanged.
 	prevTitle := ""
-	if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
+	if t, ok := harnessNativeTitle(target); ok {
+		prevTitle = t
+	} else if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
 		prevTitle = agent.DisplayTitle(row)
 	}
 	newTitle := uniqueReincarnateTitle(prevTitle)
