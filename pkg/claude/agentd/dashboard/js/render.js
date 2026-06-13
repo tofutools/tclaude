@@ -5,7 +5,8 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
+  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
+  harnessCanRename,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline,
 } from './helpers.js';
@@ -20,6 +21,23 @@ import { dashPrefs } from './prefs.js';
 // lastSnapshot / sudoByConv are read-only live bindings here).
 import { lastSnapshot, sudoBadge } from './dashboard.js';
 import { sudoByConv } from './refresh.js';
+
+// renameNameCell renders the agent's name — the click-to-edit rename
+// affordance when the agent's harness supports a rename (the common case:
+// both Claude Code and Codex do, via /rename and ConvStore respectively),
+// or a plain non-editable name when it does not. The capability comes from
+// the snapshot's harness catalog (harnessCanRename), so a mixed-harness
+// group hides the rename only on a harness that genuinely can't deliver one
+// — never on Codex, which renames out-of-band. The click handler
+// (row-actions.js, data-act="rename-name") is wired only on the editable
+// variant, so a non-renameable agent's name simply does nothing on click.
+function renameNameCell(m, state) {
+  const name = esc(m.title || '(unnamed)');
+  if (harnessCanRename(lastSnapshot, state.harness)) {
+    return `<span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${name}</span>`;
+  }
+  return `<span class="rowname-text rowname-fixed" title="This agent's harness does not support renaming">${name}</span>`;
+}
 
 // memberRowHTML renders one draggable member <tr>. `ctx` selects the
 // drag wiring + action set:
@@ -43,10 +61,10 @@ function memberRowHTML(m, ctx) {
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}</td>
+                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
                 <td class="name-cell">
-                  <div class="rowname"><span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${esc(m.title || '(unnamed)')}</span>${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
+                  <div class="rowname">${renameNameCell(m, state)}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
                 </td>
                 <td class="state-cell">
                   ${contextMeter(state)}

@@ -107,6 +107,32 @@ func (h *Harness) SupportsConvs() bool {
 	return h != nil && h.Convs != nil
 }
 
+// CanRename reports whether a rename is DELIVERABLE for this harness by
+// either mechanism the daemon's deliverRename dispatch uses: an in-pane
+// rename slash command (Claude Code's `/rename`), OR an out-of-band
+// title-store write (Codex's ConvStore.SetTitle). It mirrors deliverRename
+// exactly — if deliverRename would attempt a path, CanRename is true — so
+// a spawn/row UI can gate the rename affordance on "will this actually
+// work" rather than on the in-pane flag alone.
+//
+// This is deliberately broader than SupportsRename: Codex has no TUI
+// rename command (SupportsRename() == false) yet renames fine through its
+// ConvStore, so gating the dashboard's rename control on SupportsRename
+// alone would wrongly hide a working feature for Codex agents.
+func (h *Harness) CanRename() bool {
+	return h.SupportsRename() || h.SupportsConvs()
+}
+
+// CanCompact reports whether a context-compaction is deliverable for this
+// harness. Unlike rename there is no out-of-band fallback — compaction is
+// only ever an in-pane slash command — so this is exactly SupportsCompact.
+// A harness without it (Codex, which has no `/compact`) must have every
+// compaction affordance hidden, and the daemon's compact endpoint already
+// refuses it; this is the matching UI-side predicate.
+func (h *Harness) CanCompact() bool {
+	return h.SupportsCompact()
+}
+
 // SupportsSandbox reports whether the harness takes a launch-time sandbox
 // mode (Codex's --sandbox). Callers gate sandbox handling on this; a
 // harness that leaves Sandbox nil (Claude Code) keeps its out-of-band

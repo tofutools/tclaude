@@ -27,6 +27,12 @@ type codexSandbox struct{}
 
 func (codexSandbox) DefaultMode() string { return SandboxWorkspaceWrite }
 
+// Modes lists Codex's sandbox modes for spawn UIs, least → most
+// permissive. A fresh slice each call so a caller can't mutate the set.
+func (codexSandbox) Modes() []string {
+	return []string{SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFull}
+}
+
 func (codexSandbox) ValidateMode(mode string) (string, error) {
 	mode = strings.TrimSpace(mode)
 	switch mode {

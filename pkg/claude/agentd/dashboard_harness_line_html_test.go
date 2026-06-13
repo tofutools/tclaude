@@ -58,9 +58,99 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must(".harness-sep", "the middot separator is styled")
 	must(".harness-effort", "the effort token is styled")
 
-	// The harness is a frontend constant (only Claude Code exists), not a
-	// DB column — the label says "CC".
-	must("const HARNESS_SHORT = 'CC'", "harness short label is the CC constant")
+	// The harness is now a per-agent value (state.harness), not a frontend
+	// constant: a label map keyed by the tag drives the chip, and the line
+	// reads the tag off the agent's state (JOH-162).
+	must("const HARNESS_LABELS = {", "per-harness label map replaces the CC constant")
+	must("claude: { short: 'CC', long: 'Claude Code' }", "claude keeps its CC label")
+	must("codex: { short: 'Codex', long: 'Codex CLI' }", "codex has its own label")
+	must("m.state.harness", "harnessLine reads the harness tag off the agent's state")
+}
+
+// TestDashboardHTML_HarnessBadgeAndSandboxWired guards the JOH-162 per-agent
+// surfaces: a non-default harness (Codex) is badged even before a model is
+// known, the launch-sandbox chip renders from state.sandbox_mode, and the
+// rename affordance is gated on the harness's deliverable-rename capability.
+// All three span helpers.js (builders) + render.js (wiring) + dashboard.css
+// (styles); the repo has no JS test runner, so this asserts on the embedded
+// concatenation.
+func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+
+	// helpers.js: a non-default harness is flagged even with no model yet,
+	// so a mixed group is legible before the first tick.
+	must("function isDefaultHarness(name)", "default-harness predicate defined")
+	must("if (isDefaultHarness(harness)) return ''", "no-model Claude Code rows stay clean; Codex still badges")
+
+	// helpers.js: the sandbox badge builder reads state.sandbox_mode, is
+	// exported, and special-cases the full-access (sandbox-off) mode.
+	must("function sandboxBadge(m)", "sandboxBadge helper is defined")
+	must("m.state.sandbox_mode", "sandboxBadge reads the launch sandbox off the agent's state")
+	must("danger-full-access", "the full-access (sandbox-off) mode is special-cased")
+	must("harnessLine, sandboxBadge,", "sandboxBadge is exported from helpers.js")
+
+	// render.js: the sandbox chip renders in the agent control cell, next
+	// to the harness line.
+	must("${harnessLine(m)}${sandboxBadge(m)}", "sandboxBadge renders beside the harness line")
+
+	// render.js: the rename affordance is gated on the harness capability —
+	// a non-renameable harness gets a fixed (non-editable) name.
+	must("function harnessCanRename(snapshot, name)", "rename-capability lookup is defined")
+	must("function renameNameCell(m, state)", "the name cell switches on rename capability")
+	must("harnessCanRename(lastSnapshot, state.harness)", "the name cell gates rename on the agent's harness")
+	must("rowname-fixed", "a non-renameable harness gets a fixed-name span")
+
+	// CSS: the sandbox chip + its danger variant + the fixed-name tweak are
+	// styled.
+	must(".sandbox-badge", "sandbox chip has a style rule")
+	must(".sandbox-badge.sandbox-danger", "the full-access sandbox chip is styled distinctly")
+	must(".rowname-text.rowname-fixed", "the non-renameable name drops the click-to-edit affordance")
+}
+
+// TestDashboardHTML_SpawnHarnessMenusWired guards the JOH-162 spawn dialog:
+// a harness selector that reshapes the Model + Sandbox menus per harness,
+// driven off the snapshot's harness catalog, with the chosen harness +
+// sandbox forwarded in the spawn POST body. Spans dashboard.html (the new
+// rows) + modal-spawn.js (the logic); asserted on the embedded source
+// since the repo has no JS test runner.
+func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+
+	// dashboard.html: the harness selector, the Codex free-text model row,
+	// and the sandbox selector row exist.
+	must(`id="agent-spawn-harness"`, "spawn dialog has a harness selector")
+	must(`id="agent-spawn-model-claude-row"`, "the curated (claude) model row is identifiable for toggling")
+	must(`id="agent-spawn-model-codex"`, "spawn dialog has a Codex free-text model input")
+	must(`id="agent-spawn-sandbox"`, "spawn dialog has a sandbox selector")
+
+	// modal-spawn.js: the selector is populated from the catalog, the rows
+	// reshape per harness, and the active model control is read on submit.
+	must("function populateSpawnHarnessSelect()", "harness selector is populated from the catalog")
+	must("lastSnapshot.harnesses", "the dialog reads the snapshot harness catalog")
+	must("function applySpawnHarness(harnessName)", "the dialog reshapes per harness")
+	must("function activeSpawnModelEl()", "submit reads whichever Model control is active")
+
+	// modal-spawn.js: the spawn POST body carries the chosen harness (only
+	// when non-default) and sandbox.
+	must("body.harness = harness", "non-default harness is sent in the spawn body")
+	must("body.sandbox = sandbox", "the chosen sandbox is sent in the spawn body")
+
+	// modal-spawn.js: the Effort menu is rebuilt per harness from the
+	// catalog's effort_levels (single source of truth — the static HTML
+	// options are only a pre-snapshot fallback), so a harness with its own
+	// reasoning scale needs no dashboard edit.
+	must("function populateSpawnEffortSelect(", "the effort menu is rebuilt per harness")
+	must("h.effort_levels", "the effort menu reads the harness's effort levels from the catalog")
 }
 
 // TestDashboardHTML_ShortModelRules pins the shortModel() compression

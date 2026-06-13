@@ -68,22 +68,60 @@ function agentStatusDot(m) {
     ` title="${esc(tip)}" aria-label="${esc(tip)}">${glyph}</button>`;
 }
 
-// The harness an agent runs under. tclaude only drives Claude Code, so
-// this is a constant — there is no DB column for it (a 2nd harness can
-// add one when it actually exists). HARNESS_SHORT is the compact chip
-// shown in the row; HARNESS_LONG is spelled out in tooltips.
-const HARNESS_SHORT = 'CC';
-const HARNESS_LONG = 'Claude Code';
+// The harness an agent runs under, now a real per-agent value: the
+// dashboard drives more than Claude Code (Codex too, JOH-162). state.harness
+// carries the tag ("claude", "codex"); empty means the default (Claude
+// Code), the value a row written before the harness column existed reports.
+// HARNESS_LABELS maps a known tag to its compact row chip (short) and the
+// spelled-out tooltip label (long); an unknown tag falls back to its raw
+// name so a future harness still shows something legible.
+const HARNESS_LABELS = {
+  claude: { short: 'CC', long: 'Claude Code' },
+  codex: { short: 'Codex', long: 'Codex CLI' },
+};
 
-// harnessModel returns "Claude Code · Opus 4.8" for tooltips, or '' when
-// the model isn't known yet (the statusbar hook hasn't ticked for this
-// agent). The model comes from state.model — the statusline hook records
-// model.display_name onto the session row every render. Uses the FULL
-// model name (tooltips have room); shortModel() is for the visible chip.
+// isDefaultHarness reports whether a harness tag is the default (Claude
+// Code) — '' (untagged / pre-column row) or the explicit 'claude'. Used to
+// keep the common case visually quiet (no badge until a model is known)
+// while a non-default harness like Codex is flagged immediately.
+function isDefaultHarness(name) {
+  return !name || name === 'claude';
+}
+
+// harnessLabels returns the {short, long} display labels for a harness
+// tag, falling back to the default (Claude Code) for an empty tag and to
+// the raw name for an unknown one.
+function harnessLabels(name) {
+  if (!name) return HARNESS_LABELS.claude;
+  return HARNESS_LABELS[name] || { short: name, long: name };
+}
+
+// harnessCanRename reports whether an agent on harness `name` can be
+// renamed, per the snapshot's harness catalog (dashboardHarness.can_rename).
+// can_rename is true whenever a rename is DELIVERABLE — by an in-pane
+// command (Claude Code's /rename) OR an out-of-band ConvStore write
+// (Codex's title store) — so Codex stays renameable even without a TUI
+// rename command; only a harness that supports NEITHER reports false.
+//
+// Fail-OPEN: an unknown harness, or a snapshot whose catalog hasn't loaded
+// yet, returns true so the rename affordance is never hidden on incomplete
+// data. Only an explicit can_rename:false hides it.
+function harnessCanRename(snapshot, name) {
+  const list = (snapshot && snapshot.harnesses) || [];
+  const h = list.find(x => x.name === (name || 'claude'));
+  return h ? !!h.can_rename : true;
+}
+
+// harnessModel returns "Claude Code · Opus 4.8" / "Codex CLI · gpt-5" for
+// tooltips, or '' when the model isn't known yet (the statusbar hook /
+// Codex telemetry hasn't ticked for this agent). The model comes from
+// state.model; the harness label from state.harness. Uses the FULL model
+// name (tooltips have room); shortModel() is for the visible chip.
 function harnessModel(m) {
   const model = (m && m.state && m.state.model) || '';
   if (!model) return '';
-  return `${HARNESS_LONG} · ${model}`;
+  const labels = harnessLabels((m && m.state && m.state.harness) || '');
+  return `${labels.long} · ${model}`;
 }
 
 // shortModel compresses a model display name for the always-visible row
@@ -132,8 +170,18 @@ function shortModel(model) {
 // dimmer than the model so the eye lands on the model first. The visible
 // model is shortModel()-compressed; the full name rides in the title.
 function harnessLine(m) {
+  const harness = (m && m.state && m.state.harness) || '';
+  const labels = harnessLabels(harness);
   const model = (m && m.state && m.state.model) || '';
-  if (!model) return '';
+  if (!model) {
+    // No model reported yet. Keep Claude Code (the default) rows clean —
+    // a freshly-spawned CC agent shows no line until its first tick — but
+    // still flag a non-default harness (Codex) right away so a mixed group
+    // is legible the moment an agent appears, not only after a model lands.
+    if (isDefaultHarness(harness)) return '';
+    return `<div class="agent-harness" title="Harness: ${esc(labels.long)}">`
+      + `<span class="harness-name">${esc(labels.short)}</span></div>`;
+  }
   // Reasoning-effort level (low…max), recorded by the statusline hook on
   // the same row as the model. Trails the model — "CC · O4.8 1M high" —
   // and is omitted entirely when absent (model without effort support, or
@@ -149,7 +197,7 @@ function harnessLine(m) {
   // model-gate above never hides a real cost. Like the model, the cost
   // survives an agent's exit — what a dead agent cost is still useful.
   const cost = Number((m && m.state && m.state.cost_usd) || 0);
-  let tip = `Harness: ${HARNESS_LONG} — Model: ${model}`;
+  let tip = `Harness: ${labels.long} — Model: ${model}`;
   if (effort) tip += ` — Effort: ${effort}`;
   if (cost > 0) tip += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
   // One continuous string — "CC · O4.8 1M high $0.42" — no chip/box
@@ -163,10 +211,30 @@ function harnessLine(m) {
     ? `<span class="harness-cost">${esc(cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢')}</span>`
     : '';
   return `<div class="agent-harness" title="${esc(tip)}">`
-    + `<span class="harness-name">${esc(HARNESS_SHORT)}</span>`
+    + `<span class="harness-name">${esc(labels.short)}</span>`
     + `<span class="harness-sep">·</span>`
     + `<span class="harness-model">${esc(shortModel(model))}</span>`
     + effortEl + costEl + `</div>`;
+}
+
+// sandboxBadge renders the per-agent launch-sandbox chip — "🔒 workspace-
+// write" — from state.sandbox_mode (Codex's --sandbox, recorded on the
+// session row at spawn). Returns '' when no mode is set: a Claude Code
+// agent (sandbox configured out of band, not a launch flag) or a row from
+// before the column existed shows no badge. read-only / workspace-write
+// carry a lock; danger-full-access carries a warning glyph + a distinct
+// class so a sandbox-OFF agent stands out. The full mode rides in the
+// tooltip; the chip text is the bare mode.
+function sandboxBadge(m) {
+  const mode = (m && m.state && m.state.sandbox_mode) || '';
+  if (!mode) return '';
+  const danger = mode === 'danger-full-access';
+  const glyph = danger ? '⚠' : '🔒';
+  const cls = danger ? 'sandbox-badge sandbox-danger' : 'sandbox-badge';
+  const tip = danger
+    ? `Sandbox: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
+    : `Sandbox: ${mode} — launch-time OS sandbox confining the agent's writes`;
+  return `<span class="${cls}" title="${esc(tip)}">${glyph} ${esc(mode)}</span>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so
@@ -740,7 +808,8 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, statePill, slopMachine, contextMeter,
+  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
+  harnessCanRename,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,

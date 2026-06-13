@@ -26,6 +26,12 @@ type SandboxCatalog interface {
 	// default is wanted, via ResolveSandboxMode); any other value is either
 	// a recognized mode (returned trimmed) or an error naming the valid set.
 	ValidateMode(mode string) (string, error)
+	// Modes lists the selectable sandbox modes for spawn UIs, in ascending
+	// order of permissiveness (read-only … danger-full-access). The
+	// dashboard spawn dialog drives its sandbox <select> off this so a
+	// harness owns its own mode set — the SandboxCatalog parallel to
+	// ModelCatalog.Models / EffortLevels.
+	Modes() []string
 }
 
 // ResolveSandboxMode is the entry point the *daemon* spawn boundaries

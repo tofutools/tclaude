@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 57
+const currentVersion = 58
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -373,6 +373,61 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 58 {
+		if err := migrateV57toV58(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV57toV58 adds the `sandbox_mode` column to `sessions` — the
+// launch-time OS-sandbox mode a session was spawned under (Codex's
+// `--sandbox`: read-only / workspace-write / danger-full-access). Default
+// '' so every existing row, and every reader that doesn't yet select the
+// column, keeps working untouched; '' is also the genuine value for a
+// harness with no launch sandbox flag (Claude Code, whose sandbox is
+// settings.json-driven, not a launch flag). The dashboard reads it to
+// render a per-agent sandbox badge (JOH-162).
+//
+// Unlike harness (v56→v57) this lands on `sessions` only: the sandbox mode
+// is a property of a launched process, not of a stored conversation, so
+// there is no conv_index counterpart. It is written once at spawn by
+// `session new` (SaveSession owns the column) and is never re-derivable
+// from the harness's own files, so it has no self-healing rescan path —
+// the DEFAULT covers pre-migration rows, which simply show no badge.
+//
+// Single transaction, pragma_table_info-guarded (the migrateV56toV57
+// convention): SQLite has no ADD COLUMN IF NOT EXISTS, so a half-applied /
+// re-run must converge instead of wedging on "duplicate column name".
+func migrateV57toV58(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v57→v58 (add sandbox_mode column): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveCol int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox_mode'`,
+	).Scan(&haveCol); err != nil {
+		return fmt.Errorf("migrate v57→v58 (add sessions.sandbox_mode): probe column: %w", err)
+	}
+	if haveCol == 0 {
+		if _, err := tx.Exec(
+			`ALTER TABLE sessions ADD COLUMN sandbox_mode TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("migrate v57→v58 (add sessions.sandbox_mode): add column: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 58`); err != nil {
+		return fmt.Errorf("migrate v57→v58 (add sandbox_mode column): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v57→v58 (add sandbox_mode column): commit: %w", err)
+	}
 	return nil
 }
 
