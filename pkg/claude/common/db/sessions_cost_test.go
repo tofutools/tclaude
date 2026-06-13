@@ -37,6 +37,18 @@ func dailyRowFor(t *testing.T, rows []CostDailyRow, sessionID, day string) *Cost
 	return nil
 }
 
+// parseStamp parses a stored RFC3339(Nano) updated_at into a time.Time.
+// updated_at is stored with variable sub-second precision (trailing zeros
+// are trimmed), so two stamps must be compared AS TIME — a lexical string
+// compare is wrong across the precision boundary (e.g. ".978Z" sorts
+// after ".978494Z" even though it is the earlier instant).
+func parseStamp(t *testing.T, s string) time.Time {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339Nano, s)
+	require.NoError(t, err, "parse timestamp %q", s)
+	return ts
+}
+
 // TestUpdateSessionCost_WritesDailySnapshot pins the statusline hook's
 // sibling write: recording a session's cumulative cost also upserts
 // today's session_cost_daily row — monotonic within the day (a stale,
@@ -85,7 +97,8 @@ func TestUpdateSessionCost_StampsUpdatedAt(t *testing.T) {
 	require.NoError(t, UpdateSessionCost("ts-a", 2.00), "real new spend")
 	rows, err = AllCostDailyRows()
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, dailyRowFor(t, rows, "ts-a", today).UpdatedAt, first,
+	bumped := dailyRowFor(t, rows, "ts-a", today).UpdatedAt
+	assert.False(t, parseStamp(t, bumped).Before(parseStamp(t, first)),
 		"a higher cumulative figure refreshes the stamp")
 }
 
