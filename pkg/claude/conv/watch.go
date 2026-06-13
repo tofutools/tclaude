@@ -1940,6 +1940,10 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 
 	pid := session.ParsePIDFromTmux(tmuxSession)
+	// TODO(harness): carry Harness on resume — see JOH-155. Fresh
+	// SessionState (no Harness) saved over the existing row, coalescing a
+	// non-claude tag back to "claude". Inert today (claude --resume only);
+	// fix when codex resume lands.
 	state := &session.SessionState{
 		ID:          sessionID,
 		TmuxSession: tmuxSession,
