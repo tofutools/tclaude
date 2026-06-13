@@ -185,6 +185,17 @@ func (claudeConvStore) Title(convID string) (string, error) {
 	}
 }
 
+// SetTitle is a guard for Claude Code: its title store is the `.jsonl`
+// customTitle turn, which only a live CC pane writes (via the `/rename`
+// slash command). There is no direct-write path, so agentd renames a CC
+// conv by injecting `/rename` (gated on Lifecycle.RenameCommand) and never
+// calls this. Returning an error rather than silently writing
+// conv_index.custom_title is deliberate: a direct conv_index write would
+// be clobbered by the next .jsonl rescan (which finds no customTitle turn).
+func (claudeConvStore) SetTitle(convID, title string) error {
+	return fmt.Errorf("claude renames via the %q slash injection, not a direct title write", "/rename")
+}
+
 func claudeConvRef(r *db.ConvIndexRow) *ConvRef {
 	return &ConvRef{
 		ConvID:      r.ConvID,

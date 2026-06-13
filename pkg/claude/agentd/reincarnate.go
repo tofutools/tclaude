@@ -445,9 +445,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// shows). The Retired tray is the durable surface the human uses to
 	// reinstate the pre-rotation conv later for knowledge pings.
 	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
-		_ = injectSlashCommand(target, "/rename "+prevTitle+"-x", "")
+		_ = deliverRename(target, prevTitle+"-x")
 	}
-	_ = injectSlashCommand(target, "/exit", "")
+	// Soft-stop the old pane via the harness's exit command. A harness
+	// with no soft-exit command (Lifecycle.SoftExitCommand == "") is
+	// left for a hard kill rather than typed a command it can't parse.
+	if h := harnessForConv(target); h.SupportsSoftExit() {
+		_ = injectSlashCommand(target, h.Life.SoftExitCommand(), "")
+	}
 
 	resp := map[string]any{
 		"old_conv":         target,
@@ -500,10 +505,10 @@ func runReincarnatePostSpawn(newConv, newTitle string) {
 		return
 	}
 	if newTitle != "" {
-		if !injectSlashCommand(newConv, "/rename "+newTitle, "") {
-			slog.Warn("reincarnate: rename injection failed", "conv", newConv, "title", newTitle)
+		if !deliverRename(newConv, newTitle) {
+			slog.Warn("reincarnate: rename delivery failed", "conv", newConv, "title", newTitle)
 		}
-		// Gap so CC has time to process the rename slash command
+		// Gap so the harness has time to process the rename
 		// before the handoff message's nudge lands.
 		time.Sleep(reincarnateReadyDelay)
 	}

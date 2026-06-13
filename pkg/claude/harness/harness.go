@@ -81,6 +81,14 @@ func (h *Harness) SupportsSoftExit() bool {
 	return h != nil && h.Life != nil && h.Life.SoftExitCommand() != ""
 }
 
+// SupportsConvs reports whether the harness exposes a ConvStore. Callers
+// that fall back to ConvStore (e.g. a rename for a harness without an
+// in-pane rename command) must check this first — a descriptor may leave
+// Convs nil.
+func (h *Harness) SupportsConvs() bool {
+	return h != nil && h.Convs != nil
+}
+
 // registry holds the registered harnesses keyed by Name. Populated from
 // each harness file's init() (single-threaded, before main) and read at
 // runtime; the mutex guards against any test that registers concurrently.

@@ -609,7 +609,7 @@ func runClonePostInit(newConv, title, target, caller string) {
 	// that path so it gets a synthetic welcome from runSpawnPostInit;
 	// clone doesn't need one. The /rename alone is enough to materialise
 	// the .jsonl.
-	if !injectSlashCommand(newConv, "/rename "+title, "") {
-		slog.Warn("clone: /rename injection failed", "conv", newConv, "title", title)
+	if !deliverRename(newConv, title) {
+		slog.Warn("clone: rename delivery failed", "conv", newConv, "title", title)
 	}
 }
