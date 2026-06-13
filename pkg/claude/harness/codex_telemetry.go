@@ -121,7 +121,16 @@ func CodexTelemetryFromRollout(rolloutPath string) (ContextTelemetry, bool, erro
 	if latest == nil {
 		return ContextTelemetry{}, false, nil
 	}
-	return contextTelemetryFromTokenCount(*latest), true, nil
+	snap := contextTelemetryFromTokenCount(*latest)
+	// A token_count carrying no actual usage (all-zero last_token_usage —
+	// e.g. an event emitted before the first real response) has no occupancy
+	// signal. Report it as "nothing to persist" so it can't overwrite a good
+	// snapshot with a window-only row: db.UpdateContextSnapshot's all-zero
+	// guard would NOT catch that, because WindowSize is non-zero.
+	if snap.TokensInput == 0 && snap.TokensOutput == 0 {
+		return ContextTelemetry{}, false, nil
+	}
+	return snap, true, nil
 }
 
 // contextTelemetryFromTokenCount turns a token_count info block into a
@@ -141,9 +150,11 @@ func contextTelemetryFromTokenCount(info codexTokenCountInfo) ContextTelemetry {
 	if info.ModelContextWindow > 0 {
 		used := u.TotalTokens
 		if used == 0 {
-			// total_tokens absent on the event — reconstruct it. input
-			// already includes the cached prefix, so input+output is the
-			// full occupancy without double-counting cached_input_tokens.
+			// total_tokens absent on the event — reconstruct it as
+			// input+output. output_tokens already includes
+			// reasoning_output_tokens (OpenAI usage semantics) and
+			// input_tokens already includes the cached prefix, so this is
+			// the full occupancy with nothing dropped or double-counted.
 			used = u.InputTokens + u.OutputTokens
 		}
 		snap.Pct = float64(used) / float64(info.ModelContextWindow) * 100

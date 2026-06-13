@@ -840,10 +840,16 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	// Lift Codex's context-window telemetry off its rollout onto the
 	// sessions row. Claude Code gets these figures from its statusbar; a
-	// Codex session has no command-statusline, so this hook tick is where
-	// context% becomes visible to the dashboard / context-info. No-op for
-	// CC (it already has the statusbar) and best-effort for everyone.
-	persistCodexContextTelemetry(state, input)
+	// Codex session has no command-statusline, so the hook is where
+	// context% becomes visible to the dashboard / context-info. Codex only
+	// writes a token_count when the model responds, so refresh at turn
+	// boundaries — Stop/SubagentStop (stopped) and resume (SessionStart) —
+	// not on every PreToolUse/PostToolUse tick: that keeps the rollout read
+	// (and, on the fallback, the ~/.codex/sessions walk) to ~once per turn.
+	// No-op for CC (it already has the statusbar) and best-effort.
+	if stopped || input.HookEventName == "SessionStart" {
+		persistCodexContextTelemetry(state, input)
+	}
 
 	// Refresh usage cache when user is likely looking at the status bar.
 	// Runs synchronously — hook callbacks are separate processes so this

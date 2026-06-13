@@ -100,6 +100,27 @@ func TestCodexContextTelemetry_MissingWindow(t *testing.T) {
 	assert.Zero(t, snap.WindowSize)
 }
 
+// A token_count with a real window but all-zero last_token_usage (no usage
+// recorded yet) carries no occupancy signal: it must report ok=false, NOT a
+// window-only snapshot. Otherwise db.UpdateContextSnapshot's all-zero guard
+// (which requires window==0 too) would let it overwrite a good snapshot.
+func TestCodexContextTelemetry_ZeroUsageWithWindowIgnored(t *testing.T) {
+	home := codexTestHome(t)
+	const id = "019ec004-4250-79b1-9ade-ebaea4135457"
+	cx := testharness.NewCodexSimWithID(t, home, id, "/home/u/proj")
+	cx.ContextWindow = 200000
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteUserInput("hi"))
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{},
+		testharness.CodexTokenUsage{}))
+
+	snap, ok, err := harness.CodexContextTelemetry(home, id)
+	require.NoError(t, err)
+	assert.False(t, ok, "all-zero last_token_usage ⇒ nothing to persist, even with a window")
+	assert.Equal(t, harness.ContextTelemetry{}, snap)
+}
+
 // IsCodexRolloutPath accepts only well-formed rollout filenames (the guard
 // that lets the hook callback trust a transcript_path before reading it),
 // rejecting CC transcripts, bare ids, and truncated names.

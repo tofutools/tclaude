@@ -274,11 +274,13 @@ func codexSessionsDir(home string) string {
 	return filepath.Join(home, ".codex", "sessions")
 }
 
-// IsCodexRolloutPath reports whether path names a Codex rollout file
+// IsCodexRolloutPath reports whether path's FILENAME matches a Codex rollout
 // (`rollout-<ts>-<uuid>.jsonl[.zst]`). It lets a caller holding a candidate
-// path — e.g. a hook payload's transcript_path — read it directly without
-// the by-id directory walk, while rejecting any unrelated path so a wrong
-// file can't be parsed as a rollout.
+// path — e.g. a hook payload's transcript_path — read it directly instead of
+// doing the by-id directory walk. It validates the filename shape only, not
+// that the path is rooted under ~/.codex/sessions; that is sufficient here,
+// since the path is opened read-only and any non-rollout name simply falls
+// back to the by-id lookup.
 func IsCodexRolloutPath(path string) bool {
 	return codexIDFromRolloutName(filepath.Base(path)) != ""
 }

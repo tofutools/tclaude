@@ -103,3 +103,52 @@ func TestApplyHook_CodexStopUsesTranscriptPath(t *testing.T) {
 	assert.InDelta(t, 25.0, snap.ContextPct, 0.001)
 	assert.Equal(t, int64(200000), snap.ContextWindowSize)
 }
+
+// Telemetry is refreshed at turn boundaries, not on every hook: a
+// mid-turn PreToolUse must NOT read the rollout (it would, per tool call,
+// walk ~/.codex/sessions on the fallback path), so context_pct stays put;
+// the turn-ending Stop then persists it. Locks in the per-hook-walk fix.
+func TestApplyHook_CodexTelemetryOnlyAtTurnBoundary(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	const convID = "019ec004-4250-79b1-9ade-ebaea4170172"
+	const sessionID = "agent-codex-tb"
+
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:      sessionID,
+		ConvID:  convID,
+		Status:  session.StatusWorking,
+		Harness: "codex",
+		Cwd:     "/home/u/proj",
+	}))
+
+	cx := testharness.NewCodexSimWithID(t, dir, convID, "/home/u/proj")
+	cx.ContextWindow = 200000
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteUserInput("do the thing"))
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000},
+		testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000}))
+
+	// Mid-turn tool hook: must not persist telemetry.
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        convID,
+		ToolName:      "Bash",
+	}, sessionID))
+	mid, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, mid.ContextPct, "PreToolUse must not refresh Codex context%")
+
+	// Turn end: now it persists.
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "Stop",
+		ConvID:        convID,
+	}, sessionID))
+	end, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 25.0, end.ContextPct, 0.001, "Stop refreshes context%")
+}
