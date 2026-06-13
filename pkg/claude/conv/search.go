@@ -69,74 +69,83 @@ func RunSearch(params *SearchParams, stdout, stderr *os.File) int {
 		return 1
 	}
 
-	var projectPaths []string
+	// Gather candidate conversations across every harness, then search them.
+	var allEntries []SessionEntry
 
 	if params.Global {
-		// Search all projects
+		// Search all Claude projects. A missing projects dir is not fatal —
+		// there may still be other-harness (Codex) conversations.
 		projectsDir := ClaudeProjectsDir()
-		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
+		dirs, err := os.ReadDir(projectsDir)
+		if err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(stderr, "Error reading projects directory: %v\n", err)
 			return 1
 		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				projectPaths = append(projectPaths, filepath.Join(projectsDir, entry.Name()))
+		for _, d := range dirs {
+			if !d.IsDir() {
+				continue
 			}
+			index, err := LoadSessionsIndex(filepath.Join(projectsDir, d.Name()))
+			if err != nil {
+				continue
+			}
+			allEntries = append(allEntries, index.Entries...)
 		}
+		allEntries = appendNonClaudeHarnessEntries(allEntries, "")
 	} else {
 		// Single directory
 		targetDir := params.Dir
 		if targetDir == "" {
-			var err error
-			targetDir, err = os.Getwd()
-			if err != nil {
-				fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
+			var wderr error
+			targetDir, wderr = os.Getwd()
+			if wderr != nil {
+				fmt.Fprintf(stderr, "Error getting current directory: %v\n", wderr)
 				return 1
 			}
 		}
 
-		projectPath := GetClaudeProjectPath(targetDir)
-		if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-			fmt.Fprintf(stderr, "No Claude conversations found for %s\n", targetDir)
-			return 1
+		// Canonicalize so the Claude project-dir encode and the harness cwd
+		// filter (an exact-string match) agree on a relative or
+		// trailing-slash --dir; otherwise Codex convs would silently drop.
+		if abs, err := filepath.Abs(targetDir); err == nil {
+			targetDir = abs
 		}
-		projectPaths = []string{projectPath}
+
+		// A missing Claude project dir is no longer fatal — the directory
+		// may still have other-harness (Codex) conversations.
+		projectPath := GetClaudeProjectPath(targetDir)
+		if _, err := os.Stat(projectPath); err == nil {
+			if index, err := LoadSessionsIndex(projectPath); err == nil {
+				allEntries = index.Entries
+			}
+		}
+		allEntries = appendNonClaudeHarnessEntries(allEntries, targetDir)
+	}
+
+	// Filter by time once over the merged set.
+	allEntries, err = FilterEntriesByTime(allEntries, params.Since, params.Before)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
 	}
 
 	var results []SearchResult
+	for _, entry := range allEntries {
+		// Search metadata fields (CustomTitle, Summary, FirstPrompt).
+		metadataMatches := searchMetadata(entry, re)
 
-	for _, projectPath := range projectPaths {
-		index, err := LoadSessionsIndex(projectPath)
-		if err != nil {
-			continue
+		var contentMatches []MatchLine
+		if params.Content {
+			// Search full conversation content (slow).
+			contentMatches = searchConversation(entry.FullPath, re)
 		}
 
-		// Filter by time if specified
-		entries, err := FilterEntriesByTime(index.Entries, params.Since, params.Before)
-		if err != nil {
-			fmt.Fprintf(stderr, "%v\n", err)
-			return 1
-		}
-
-		for _, entry := range entries {
-			// Search metadata fields (CustomTitle, Summary, FirstPrompt)
-			metadataMatches := searchMetadata(entry, re)
-
-			var contentMatches []MatchLine
-			if params.Content {
-				// Search full conversation content (slow)
-				contentMatches = searchConversation(entry.FullPath, re)
-			}
-
-			allMatches := append(metadataMatches, contentMatches...)
-			if len(allMatches) > 0 {
-				results = append(results, SearchResult{
-					Entry:   entry,
-					Matches: allMatches,
-				})
-			}
+		allMatches := append(metadataMatches, contentMatches...)
+		if len(allMatches) > 0 {
+			results = append(results, SearchResult{
+				Entry:   entry,
+				Matches: allMatches,
+			})
 		}
 	}
 
@@ -245,6 +254,14 @@ func searchMetadata(entry SessionEntry, re *regexp.Regexp) []MatchLine {
 }
 
 func searchConversation(filePath string, re *regexp.Regexp) []MatchLine {
+	// A cold Codex rollout (.jsonl.zst) is compressed binary, not text —
+	// regexing over it would yield noise, not matches. Skip it; metadata
+	// search (title/prompt) still covers these convs. (Content search over
+	// compressed rollouts is a later enhancement if it's ever wanted.)
+	if strings.HasSuffix(filePath, ".zst") {
+		return nil
+	}
+
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil

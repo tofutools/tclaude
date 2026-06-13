@@ -8,12 +8,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
@@ -66,10 +68,11 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 	loadOpts := LoadSessionsIndexOptions{ForceRescan: params.Reindex}
 
 	if params.Global {
-		// List all projects
+		// List all Claude projects. A missing projects dir is not fatal —
+		// there may still be other-harness (Codex) conversations.
 		projectsDir := ClaudeProjectsDir()
 		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(stderr, "Error reading projects directory: %v\n", err)
 			return 1
 		}
@@ -85,6 +88,9 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 			}
 			allEntries = append(allEntries, index.Entries...)
 		}
+
+		// Merge every other registered harness (Codex, …), all dirs.
+		allEntries = appendNonClaudeHarnessEntries(allEntries, "")
 	} else {
 		// Single directory
 		targetDir := params.Dir
@@ -97,22 +103,28 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 			}
 		}
 
+		// Canonicalize so the Claude project-dir encode and the harness cwd
+		// filter (an exact-string match) agree on a relative or
+		// trailing-slash --dir; otherwise Codex convs would silently drop.
+		if abs, err := filepath.Abs(targetDir); err == nil {
+			targetDir = abs
+		}
+
+		// Load Claude conversations if this dir has a project dir. A missing
+		// one is no longer fatal — the directory may still have other-harness
+		// (Codex) conversations, merged just below.
 		projectPath := GetClaudeProjectPath(targetDir)
-
-		// Check if project directory exists
-		if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-			fmt.Fprintf(stderr, "No Claude conversations found for %s\n", targetDir)
-			return 1
+		if _, err := os.Stat(projectPath); err == nil {
+			index, err := LoadSessionsIndexWithOptions(projectPath, loadOpts)
+			if err != nil {
+				fmt.Fprintf(stderr, "Error loading sessions index: %v\n", err)
+				return 1
+			}
+			allEntries = index.Entries
 		}
 
-		// Load index
-		index, err := LoadSessionsIndexWithOptions(projectPath, loadOpts)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error loading sessions index: %v\n", err)
-			return 1
-		}
-
-		allEntries = index.Entries
+		// Merge every other registered harness (Codex, …) for this dir.
+		allEntries = appendNonClaudeHarnessEntries(allEntries, targetDir)
 	}
 
 	// Filter by time if specified
@@ -227,6 +239,16 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 		}
 	}
 
+	// Only surface the Harness column once a non-Claude-Code conv is in the
+	// list, so a CC-only listing is unchanged. Empty / "claude" don't count.
+	showHarness := false
+	for _, e := range entries {
+		if e.Harness != "" && e.Harness != harness.DefaultName {
+			showHarness = true
+			break
+		}
+	}
+
 	t := table.NewWriter()
 	t.SetOutputMirror(stdout)
 	t.SetStyle(table.StyleLight)
@@ -236,6 +258,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 
 	// Build header
 	header := table.Row{"ID"}
+	if showHarness {
+		header = append(header, "Harness")
+	}
 	if showProject {
 		header = append(header, "Project")
 	}
@@ -255,6 +280,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	// Calculate fixed column widths
 	// ID=8, Modified=16, borders/padding ~20
 	fixedWidth := 8 + 16 + 20
+	if showHarness {
+		fixedWidth += 9 // Harness column
+	}
 	if showProject {
 		fixedWidth += 43 // Project column
 	}
@@ -285,6 +313,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 		modified := formatDate(e.Modified)
 
 		row := table.Row{e.SessionID[:8]}
+		if showHarness {
+			row = append(row, harnessBadge(e.Harness))
+		}
 		if showProject {
 			row = append(row, shortenPath(e.ProjectPath, 41))
 		}
@@ -305,23 +336,54 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	t.Render()
 }
 
-func cleanPrompt(prompt string) string {
-	// Replace newlines with spaces
-	prompt = strings.ReplaceAll(prompt, "\n", " ")
-	prompt = strings.ReplaceAll(prompt, "\r", "")
-	// Collapse multiple spaces
-	for strings.Contains(prompt, "  ") {
-		prompt = strings.ReplaceAll(prompt, "  ", " ")
+// harnessBadge renders the harness label for the conv list. An empty
+// harness — a CC conv indexed before the harness column existed — reads as
+// the default "claude".
+func harnessBadge(h string) string {
+	if h == "" {
+		return harness.DefaultName
 	}
-	return strings.TrimSpace(prompt)
+	return h
+}
+
+func cleanPrompt(prompt string) string {
+	// Titles/prompts come from (now multi-harness) untrusted conversation
+	// files and are printed straight into the user's terminal, so newlines
+	// become spaces and every other control char — ESC/ANSI escapes above
+	// all — is dropped rather than allowed to reach the terminal.
+	var b strings.Builder
+	b.Grow(len(prompt))
+	for _, r := range prompt {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case unicode.IsControl(r):
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	// Collapse multiple spaces
+	for strings.Contains(out, "  ") {
+		out = strings.ReplaceAll(out, "  ", " ")
+	}
+	return strings.TrimSpace(out)
 }
 
 func truncatePrompt(prompt string, maxLen int) string {
 	prompt = cleanPrompt(prompt)
-	if len(prompt) <= maxLen {
+	// Count/cut on runes, not bytes, so a multi-byte char near the limit is
+	// never split into invalid UTF-8 (maxLen also tracks display columns
+	// more closely this way).
+	r := []rune(prompt)
+	if len(r) <= maxLen {
 		return prompt
 	}
-	return prompt[:maxLen-1] + "…"
+	if maxLen < 1 {
+		return "…"
+	}
+	return string(r[:maxLen-1]) + "…"
 }
 
 func formatDate(isoDate string) string {
