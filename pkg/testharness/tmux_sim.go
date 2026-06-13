@@ -1,11 +1,41 @@
 package testharness
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+// has-session liveness flows through cmd.Run()==nil (see
+// session.IsTmuxSessionAlive), so the sim answers it with an exit-0 /
+// exit-1 process. A bare exec.Command("true") PATH-resolves at Run()
+// time — under `env -i` (empty PATH) LookPath fails and EVERY live
+// session reads as dead, wedging the whole flow-test suite. Resolving
+// true/false to ABSOLUTE paths once at init keeps the truthiness
+// hermetic: exec.Command skips LookPath when the name contains a
+// separator, so cmd.Path is taken verbatim regardless of $PATH.
+var (
+	trueBin  = resolveCoreutil("true")
+	falseBin = resolveCoreutil("false")
+)
+
+// resolveCoreutil returns an absolute path to the named coreutil from a
+// fixed candidate list, independent of $PATH. Falls back to the bare
+// name (the legacy PATH-resolved behaviour) only when no candidate
+// exists, so platforms without /usr/bin|/bin coreutils are no worse off
+// than before.
+func resolveCoreutil(name string) string {
+	for _, dir := range []string{"/usr/bin", "/bin"} {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return name
+}
 
 // SentKey records one tmux send-keys invocation. The TmuxSim retains a
 // log for back-compat assertions (WaitForSendKeys); the v2 preferred
@@ -75,9 +105,10 @@ func newTmuxSim() *TmuxSim {
 }
 
 // Command satisfies the clcommon.Tmux interface. Returns a no-op
-// `true`/`false` exec.Cmd whose Run() exits with the appropriate
-// status; for verbs that mutate state (send-keys, kill-session),
-// the mutation happens here before the cmd is returned.
+// exit-0 / exit-1 exec.Cmd (absolute-path true/false, hermetic under
+// empty PATH — see trueBin/falseBin) whose Run() exits with the
+// appropriate status; for verbs that mutate state (send-keys,
+// kill-session), the mutation happens here before the cmd is returned.
 func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	if len(args) > 0 {
 		t.mu.Lock()
@@ -87,9 +118,9 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	switch {
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
 		if t.IsAlive(args[2]) {
-			return exec.Command("true")
+			return exec.Command(trueBin)
 		}
-		return exec.Command("false")
+		return exec.Command(falseBin)
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		t.routeSendKeys(args[2], args[3])
 	case len(args) >= 3 && args[0] == "set-buffer":
@@ -99,7 +130,7 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
 		t.killSession(args[2])
 	}
-	return exec.Command("true")
+	return exec.Command(trueBin)
 }
 
 // setBuffer models `tmux set-buffer -b <name> <data>` — it stores the
