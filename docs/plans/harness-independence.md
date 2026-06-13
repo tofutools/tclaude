@@ -74,6 +74,14 @@ Phased so each milestone is independently shippable and low-risk:
 3. **M3 — Codex hooks & live status.** Install hooks into `~/.codex/config.toml`
    / `hooks.json` + hook-trust; per-harness `tclaude setup`; the existing
    hook-callback already parses Codex's payload; live status + notifications.
+   Live status + notifications (JOH-159) is the *shared* pipeline: the
+   hook-callback's event→status switch and `notify.OnStateTransition`
+   (mute ladder + cooldown) are harness-agnostic, so Codex's event subset
+   drives them unchanged. The two degradations need no new code path —
+   needs-attention comes from `PermissionRequest` (no `Notification`), and
+   exit from the reaper's tmux→PID liveness check (no `SessionEnd`).
+   Notification banners are attributed per-harness ("Codex: …" vs
+   "Claude: …").
 4. **M4 — agentd / agent lifecycle for Codex.** Daemon spawn/stop/resume;
    degrade reincarnate/clone/rename/compact via capability flags (titles stored
    tclaude-side where Codex lacks `/rename`).

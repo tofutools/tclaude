@@ -64,7 +64,7 @@ func newSessionReaper() *sessionReaper {
 // SessionEnd hook landing after the reaper already stamped exited) is
 // suppressed by OnStateTransition's self-transition guard.
 func defaultReaperNotify(st *session.SessionState, prevStatus string) {
-	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusExited, st.Cwd, agent.FreshTitle(st.ConvID))
+	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusExited, st.Cwd, agent.FreshTitle(st.ConvID), st.Harness)
 }
 
 // startSessionReaper runs the reaper in its own goroutine, ticking
