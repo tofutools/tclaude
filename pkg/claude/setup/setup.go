@@ -170,28 +170,21 @@ func runSetup(params *Params) error {
 		}
 	}
 
-	// 1. Install hooks (for the selected harness, via the HookInstaller seam)
-	fmt.Printf("=== Hooks (%s) ===\n", h.DisplayName)
-	if !h.SupportsHooks() {
-		fmt.Printf("  (no hook installer for harness %q in this build; skipping)\n", h.Name)
-	} else {
-		installed, missing, needsRepair := h.Hooks.Check()
-		if installed && !needsRepair {
-			fmt.Println("✓ All hooks already installed")
-		} else {
-			if needsRepair {
-				fmt.Println("  Repairing stale/duplicate hooks...")
-			}
-			if len(missing) > 0 {
-				fmt.Printf("  Installing hooks for: %v\n", missing)
-			}
-			if err := h.Hooks.Install(); err != nil {
-				return fmt.Errorf("failed to install hooks: %w", err)
-			}
-			fmt.Printf("✓ Hooks installed (%s)\n", h.Hooks.ConfigTarget())
+	// 1. Install hooks — the mandatory core of the integration. Hooks go in
+	// for the selected harness (always, regardless of whether its CLI is on
+	// PATH) AND are auto-installed for every other registered hook-capable
+	// harness whose CLI is present on PATH — so a machine with Codex
+	// installed gets its Codex hooks without anyone having to pass
+	// `--harness codex`. Installing hooks for a harness you don't actively
+	// use is harmless: the status state machine tolerates a harness firing
+	// fewer events, and Codex won't run the callback until it's trusted (see
+	// codexHookInstaller.TrustNote).
+	for i, hh := range hookInstallTargets(h, harnessOnPath) {
+		if i > 0 {
+			fmt.Println()
 		}
-		if note := h.Hooks.TrustNote(); note != "" {
-			fmt.Printf("  ⚠ %s\n", note)
+		if err := installHooksForHarness(hh); err != nil {
+			return err
 		}
 	}
 
@@ -380,6 +373,92 @@ func installExtras(params *Params) error {
 	return nil
 }
 
+// hookInstallTargets returns the harnesses whose tclaude callback hooks the
+// baseline should install: the selected harness always (hooks are the
+// mandatory core, installed regardless of whether its CLI is on PATH), plus
+// every OTHER registered hook-capable harness the `present` predicate
+// reports as available — so a Codex install is picked up automatically,
+// without `--harness codex`. The selected harness is first; the rest follow
+// in registry (name) order. `present` is a parameter so tests can drive the
+// auto-add path without depending on what's on the test machine's PATH.
+func hookInstallTargets(selected *harness.Harness, present func(*harness.Harness) bool) []*harness.Harness {
+	targets := []*harness.Harness{selected}
+	seen := map[string]bool{selected.Name: true}
+	for _, name := range harness.Names() {
+		if seen[name] {
+			continue
+		}
+		h, ok := harness.Get(name)
+		if !ok || !h.SupportsHooks() || !present(h) {
+			continue
+		}
+		targets = append(targets, h)
+		seen[name] = true
+	}
+	return targets
+}
+
+// harnessOnPath reports whether a harness's launcher binary is resolvable on
+// PATH — the gate for auto-installing a NON-selected harness's hooks. A
+// harness with no Spawner can't be probed, so it counts as absent. The
+// selected harness bypasses this gate entirely (its hooks are mandatory).
+func harnessOnPath(h *harness.Harness) bool {
+	if h == nil || h.Spawn == nil {
+		return false
+	}
+	_, err := exec.LookPath(h.Spawn.Binary())
+	return err == nil
+}
+
+// installHooksForHarness installs or repairs the tclaude callback hooks for
+// one harness, printing its section. A harness with no HookInstaller in this
+// build is skipped with a note rather than failing the whole run.
+func installHooksForHarness(h *harness.Harness) error {
+	fmt.Printf("=== Hooks (%s) ===\n", h.DisplayName)
+	if !h.SupportsHooks() {
+		fmt.Printf("  (no hook installer for harness %q in this build; skipping)\n", h.Name)
+		return nil
+	}
+	installed, missing, needsRepair := h.Hooks.Check()
+	if installed && !needsRepair {
+		fmt.Println("✓ All hooks already installed")
+	} else {
+		if needsRepair {
+			fmt.Println("  Repairing stale/duplicate hooks...")
+		}
+		if len(missing) > 0 {
+			fmt.Printf("  Installing hooks for: %v\n", missing)
+		}
+		if err := h.Hooks.Install(); err != nil {
+			return fmt.Errorf("failed to install hooks: %w", err)
+		}
+		fmt.Printf("✓ Hooks installed (%s)\n", h.Hooks.ConfigTarget())
+	}
+	if note := h.Hooks.TrustNote(); note != "" {
+		fmt.Printf("  ⚠ %s\n", note)
+	}
+	return nil
+}
+
+// checkHooksForHarness reports one harness's hook-install status in the
+// `tclaude setup --check` output.
+func checkHooksForHarness(h *harness.Harness) {
+	fmt.Printf("\n=== Hooks (%s) ===\n", h.DisplayName)
+	if !h.SupportsHooks() {
+		fmt.Printf("  (no hook installer for harness %q in this build)\n", h.Name)
+		return
+	}
+	installed, missing, needsRepair := h.Hooks.Check()
+	if needsRepair {
+		fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
+	}
+	if installed {
+		fmt.Println("✓ All hooks installed")
+	} else {
+		fmt.Printf("✗ Missing hooks: %v\n", missing)
+	}
+}
+
 // installAgentSkills writes the bundled agent-* skills into
 // ~/.claude/skills/<name>/. Idempotent: overwrites existing installs.
 // The CLI prints each destination so the user knows where to look if
@@ -502,20 +581,16 @@ func checkStatus(harnessName string) error {
 		fmt.Println("✗ tmux not found (required)")
 	}
 
-	// Check hooks for the selected harness via the HookInstaller seam.
-	fmt.Printf("\n=== Hooks (%s) ===\n", h.DisplayName)
-	if !h.SupportsHooks() {
-		fmt.Printf("  (no hook installer for harness %q in this build)\n", h.Name)
-	} else {
-		installed, missing, needsRepair := h.Hooks.Check()
-		if needsRepair {
-			fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
-		}
-		if installed {
-			fmt.Println("✓ All hooks installed")
-		} else {
-			fmt.Printf("✗ Missing hooks: %v\n", missing)
-		}
+	// Check hooks. Naming a harness scopes the check to it; with no harness
+	// named we mirror what `tclaude setup` installs — the default harness
+	// plus every other present hook-capable harness — so `--check` doesn't
+	// hide auto-installed Codex hooks.
+	checkTargets := []*harness.Harness{h}
+	if harnessName == "" {
+		checkTargets = hookInstallTargets(h, harnessOnPath)
+	}
+	for _, hh := range checkTargets {
+		checkHooksForHarness(hh)
 	}
 
 	// Check status bar
