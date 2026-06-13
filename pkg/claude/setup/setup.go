@@ -196,26 +196,35 @@ func runSetup(params *Params) error {
 	// PATH so non-Codex users never see a prompt. Never clobbers a
 	// user-owned status_line.
 	fmt.Println("\n=== Codex Status Bar ===")
-	if !isCodexInstalled() {
+	switch {
+	case !isCodexInstalled():
 		fmt.Println("  Codex CLI not found on PATH — skipping (re-run setup after installing codex)")
-	} else if statusbar.CheckCodexInstalled() {
-		fmt.Println("✓ Codex status line already configured")
-	} else if statusbar.CodexStatusLineUserManaged() {
-		fmt.Println("  You already have a custom Codex status_line — leaving it untouched.")
-		fmt.Printf("  (Remove the status_line under [tui] in %s and re-run to let tclaude manage it.)\n", statusbar.CodexConfigPath())
-	} else if askYesNo("Install a tclaude-curated status line for Codex CLI?", true, params.Yes) {
-		switch outcome, err := statusbar.InstallCodex(); {
-		case err != nil:
-			fmt.Printf("  Warning: failed to configure Codex status line: %v\n", err)
-		case outcome == statusbar.CodexUserManaged:
+	default:
+		switch statusbar.CodexStatusLineState() {
+		case statusbar.CodexInstalledState:
+			fmt.Println("✓ Codex status line already configured")
+		case statusbar.CodexUserManagedState:
 			fmt.Println("  You already have a custom Codex status_line — leaving it untouched.")
-		case outcome == statusbar.CodexRepaired:
-			fmt.Println("✓ Codex status line repaired")
-		default:
-			fmt.Println("✓ Codex status line installed")
+		case statusbar.CodexTuiConflictState:
+			fmt.Printf("  Your config defines [tui] as an inline table in %s — tclaude won't edit it.\n", statusbar.CodexConfigPath())
+			fmt.Println("  Convert tui to a [tui] table (or add the status_line items yourself) and re-run.")
+		default: // CodexNotInstalled or CodexNeedsRepair
+			// A stale tclaude-managed value repairs silently (like hooks); a
+			// brand-new install asks first.
+			repair := statusbar.CodexStatusLineState() == statusbar.CodexNeedsRepair
+			if repair || askYesNo("Install a tclaude-curated status line for Codex CLI?", true, params.Yes) {
+				switch outcome, err := statusbar.InstallCodex(); {
+				case err != nil:
+					fmt.Printf("  Warning: failed to configure Codex status line: %v\n", err)
+				case outcome == statusbar.CodexRepaired:
+					fmt.Println("✓ Codex status line repaired")
+				default:
+					fmt.Println("✓ Codex status line installed")
+				}
+			} else {
+				fmt.Println("  Skipped. Install later with: tclaude setup")
+			}
 		}
-	} else {
-		fmt.Println("  Skipped. Install later with: tclaude setup")
 	}
 
 	// 3. Platform-specific setup for clickable notifications
@@ -489,13 +498,20 @@ func checkStatus() error {
 	fmt.Println("\n=== Codex Status Bar ===")
 	if !isCodexInstalled() {
 		fmt.Println("  Codex CLI not found on PATH")
-	} else if statusbar.CheckCodexInstalled() {
-		fmt.Println("✓ Codex status line configured")
-	} else if statusbar.CodexStatusLineUserManaged() {
-		fmt.Println("  Codex status line set by you (not managed by tclaude)")
 	} else {
-		fmt.Println("✗ Codex status line not configured")
-		fmt.Println("  Run 'tclaude setup' to install")
+		switch statusbar.CodexStatusLineState() {
+		case statusbar.CodexInstalledState:
+			fmt.Println("✓ Codex status line configured")
+		case statusbar.CodexNeedsRepair:
+			fmt.Println("⚠ Codex status line is tclaude-managed but stale (run 'tclaude setup' to repair)")
+		case statusbar.CodexUserManagedState:
+			fmt.Println("  Codex status line set by you (not managed by tclaude)")
+		case statusbar.CodexTuiConflictState:
+			fmt.Println("  tui is defined as an inline table (not managed by tclaude)")
+		default:
+			fmt.Println("✗ Codex status line not configured")
+			fmt.Println("  Run 'tclaude setup' to install")
+		}
 	}
 
 	// Check clickable notifications setup

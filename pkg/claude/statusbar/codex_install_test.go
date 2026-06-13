@@ -208,7 +208,7 @@ func TestInstallCodex_DoesNotClobberUserOwned(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, original, string(got), "user-owned status_line must be left byte-for-byte")
 	assert.False(t, CheckCodexInstalled())
-	assert.True(t, CodexStatusLineUserManaged())
+	assert.Equal(t, CodexUserManagedState, CodexStatusLineState())
 }
 
 func TestInstallCodex_RepairsStaleManaged(t *testing.T) {
@@ -228,6 +228,82 @@ func TestInstallCodex_RepairsStaleManaged(t *testing.T) {
 	assert.NotContains(t, s, `status_line = ["model"]`, "stale value must be gone")
 	assert.Contains(t, s, codexManagedPrefix, "marker preserved")
 	assert.True(t, CheckCodexInstalled())
+}
+
+func TestInstallCodex_RefusesTuiInlineTable(t *testing.T) {
+	// Regression: appending a [tui] table when `tui` is already an inline table
+	// would produce a duplicate-`tui` key and break the whole config's parse.
+	path := withTempHome(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	original := "tui = { theme = \"dark\" }\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+
+	outcome, err := InstallCodex()
+	require.NoError(t, err)
+	assert.Equal(t, CodexTuiConflict, outcome)
+	assert.Equal(t, CodexTuiConflictState, CodexStatusLineState())
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(got), "must not edit a config where tui is an inline table")
+}
+
+func TestInstallCodex_DottedInsertWhenTuiSubtableOnly(t *testing.T) {
+	// Regression (S1): with only a [tui.colors] subtable, appending a bare
+	// [tui] header is out-of-order/fragile; insert a top-level dotted key
+	// instead, which is unambiguously valid.
+	path := withTempHome(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	original := "[tui.colors]\nfg = \"x\"\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+
+	outcome, err := InstallCodex()
+	require.NoError(t, err)
+	assert.Equal(t, CodexInstalled, outcome)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	s := string(got)
+	assert.Contains(t, s, `tui.status_line = `+formatStatusLineArray(codexStatusLineItems))
+	assert.Contains(t, s, "[tui.colors]", "subtable preserved")
+	assert.NotContains(t, s, "\n[tui]\n", "must not add a conflicting/out-of-order [tui] header")
+	// Dotted key sits in top-level scope (before the first table header).
+	assert.Less(t, strings.Index(s, "tui.status_line"), strings.Index(s, "[tui.colors]"))
+	assert.True(t, CheckCodexInstalled())
+}
+
+func TestInstallCodex_DottedInsertWhenTuiDottedTopLevel(t *testing.T) {
+	path := withTempHome(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	original := "tui.theme = \"dark\"\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+
+	outcome, err := InstallCodex()
+	require.NoError(t, err)
+	assert.Equal(t, CodexInstalled, outcome)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	s := string(got)
+	assert.Contains(t, s, `tui.theme = "dark"`, "existing dotted key preserved")
+	assert.Contains(t, s, `tui.status_line = `+formatStatusLineArray(codexStatusLineItems))
+	assert.NotContains(t, s, "[tui]", "must not create a conflicting [tui] table")
+	assert.True(t, CheckCodexInstalled())
+}
+
+func TestRepair_MultilineArrayWithCommentBracket(t *testing.T) {
+	// Regression (B2): a hand-edited multi-line managed array whose opening
+	// line carries a ']' inside an inline comment must be replaced as a whole,
+	// not split — otherwise repair orphans the trailing element/bracket lines.
+	original := "[tui]\n" + codexManagedMarker + "\nstatus_line = [ # note]\n  \"model\",\n]\n"
+	outcome, out := planCodexStatusLine([]byte(original))
+	require.Equal(t, CodexRepaired, outcome)
+	// The whole multi-line array is replaced as one line; the orphan element
+	// (`"model",`) and dangling `]` lines are gone — exact expected output:
+	want := "[tui]\n" + codexManagedMarker + "\n" + formatCodexStatusLine(codexStatusLineItems) + "\n"
+	assert.Equal(t, want, string(out))
+	assert.NotContains(t, string(out), `"model",`, "stale element must not be orphaned")
+	assert.True(t, scanCodexConfigData(out).current)
 }
 
 func TestPlanCodexStatusLine_NoopReturnsOriginalBytes(t *testing.T) {

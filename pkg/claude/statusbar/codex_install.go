@@ -69,6 +69,24 @@ const (
 	// CodexUserManaged: the user has their own (non-tclaude) status_line —
 	// tclaude left it untouched.
 	CodexUserManaged
+	// CodexTuiConflict: the config defines `tui` as an inline table or scalar
+	// (e.g. `tui = { theme = "dark" }`), so tclaude cannot add a `[tui]` table
+	// or a `tui.status_line` key without producing a duplicate-key TOML error.
+	// Left untouched; the user is told to convert `tui` to a `[tui]` table.
+	CodexTuiConflict
+)
+
+// CodexConfigState is the read-only classification of the Codex config's
+// status-line state. Centralised so `tclaude setup` and `--check` share one
+// source of truth (no scattered re-classification).
+type CodexConfigState int
+
+const (
+	CodexNotInstalled CodexConfigState = iota // no status_line; tclaude can add one
+	CodexInstalledState                       // tclaude-managed and current
+	CodexNeedsRepair                          // tclaude-managed but stale
+	CodexUserManagedState                     // user owns the status_line
+	CodexTuiConflictState                     // tui is an inline table/scalar; unsafe to edit
 )
 
 // CodexConfigPath returns ~/.codex/config.toml, or "" if the home dir is unknown.
@@ -80,35 +98,24 @@ func CodexConfigPath() string {
 	return filepath.Join(home, ".codex", "config.toml")
 }
 
+// CodexStatusLineState reads ~/.codex/config.toml and classifies the status
+// line. A missing/unreadable file reads as CodexNotInstalled.
+func CodexStatusLineState() CodexConfigState {
+	path := CodexConfigPath()
+	if path == "" {
+		return CodexNotInstalled
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return CodexNotInstalled
+	}
+	return classifyCodex(scanCodexConfigData(data))
+}
+
 // CheckCodexInstalled reports whether the current curated default is installed
 // as a tclaude-managed status_line in ~/.codex/config.toml.
 func CheckCodexInstalled() bool {
-	path := CodexConfigPath()
-	if path == "" {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	sc := scanCodexConfigData(data)
-	return sc.present && sc.managed && sc.current
-}
-
-// CodexStatusLineUserManaged reports whether ~/.codex/config.toml has a
-// status_line that the user (not tclaude) owns — used by `tclaude setup
-// --check` to explain why tclaude isn't managing it.
-func CodexStatusLineUserManaged() bool {
-	path := CodexConfigPath()
-	if path == "" {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	sc := scanCodexConfigData(data)
-	return sc.present && !sc.managed
+	return CodexStatusLineState() == CodexInstalledState
 }
 
 // InstallCodex writes (or repairs) tclaude's curated status_line into
@@ -117,10 +124,13 @@ func CodexStatusLineUserManaged() bool {
 //   - tclaude-managed + current    → no-op                          (CodexAlreadyInstalled)
 //   - tclaude-managed + stale      → replace with the curated default (CodexRepaired)
 //   - user-owned status_line       → leave it untouched             (CodexUserManaged)
+//   - tui is an inline table/scalar → leave it untouched            (CodexTuiConflict)
 //
 // The user's other keys and comments are preserved: edits are surgical (splice
 // specific lines), never a parse→re-marshal round-trip, which is the only way
-// to keep a hand-written TOML file's comments and ordering intact.
+// to keep a hand-written TOML file's comments and ordering intact. The
+// insertion form is chosen so the result is always valid TOML (it never
+// duplicates the `tui` table).
 func InstallCodex() (CodexInstallOutcome, error) {
 	path := CodexConfigPath()
 	if path == "" {
@@ -133,8 +143,9 @@ func InstallCodex() (CodexInstallOutcome, error) {
 	}
 
 	outcome, newData := planCodexStatusLine(data)
-	if outcome == CodexAlreadyInstalled || outcome == CodexUserManaged {
-		return outcome, nil
+	switch outcome {
+	case CodexAlreadyInstalled, CodexUserManaged, CodexTuiConflict:
+		return outcome, nil // no write
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -146,14 +157,19 @@ func InstallCodex() (CodexInstallOutcome, error) {
 	return outcome, nil
 }
 
-// codexScan is tclaude's view of the status_line key in a Codex config.
+// codexScan is tclaude's structural view of a Codex config, computed by a
+// single line-by-line pass.
 type codexScan struct {
-	present   bool // an active (non-comment) tui.status_line assignment exists
-	managed   bool // that assignment is tclaude-managed (preceded by the marker)
-	current   bool // the managed value matches codexStatusLineItems exactly
-	keyStart  int  // line index of the status_line key (-1 if absent)
-	keyEnd    int  // line index of the array's closing ']' (inclusive)
-	tuiHeader int  // line index of the first [tui] table header (-1 if absent)
+	present  bool // an active (non-comment) tui.status_line assignment exists
+	managed  bool // that assignment is tclaude-managed (preceded by the marker)
+	current  bool // the managed value matches codexStatusLineItems exactly
+	keyStart int  // line index of the status_line key (-1 if absent)
+	keyEnd   int  // line index of the array's closing ']' (inclusive)
+
+	tuiHeader        int  // line index of the first [tui] table header (-1 if absent)
+	firstTableHeader int  // line index of the first table header of any kind (-1 if absent)
+	tuiBoundAsValue  bool // a top-level `tui = ...` binding (inline table/scalar) exists
+	tuiNamespaced    bool // tui exists as a table via dotted `tui.x` keys or `[tui.sub]` subtables
 }
 
 func scanCodexConfigData(data []byte) codexScan {
@@ -164,9 +180,11 @@ func scanCodexConfigData(data []byte) codexScan {
 // scanCodexConfig walks the config line-by-line, tracking the current table so
 // a bare `status_line` is attributed to `tui.status_line` only inside [tui]
 // (and the dotted top-level `tui.status_line` form is also recognised). Only
-// the first active binding is considered (TOML forbids duplicate keys).
+// the first active binding is considered (TOML forbids duplicate keys). It also
+// records how the `tui` namespace is used, so the installer can pick an
+// insertion form that never produces invalid TOML.
 func scanCodexConfig(lines []string) codexScan {
-	sc := codexScan{keyStart: -1, keyEnd: -1, tuiHeader: -1}
+	sc := codexScan{keyStart: -1, keyEnd: -1, tuiHeader: -1, firstTableHeader: -1}
 	currentTable := ""
 	prevNonBlank := ""
 
@@ -180,35 +198,44 @@ func scanCodexConfig(lines []string) codexScan {
 			continue
 		}
 		if strings.HasPrefix(t, "[") {
+			if sc.firstTableHeader == -1 {
+				sc.firstTableHeader = i
+			}
 			currentTable = tomlTableName(t)
-			if currentTable == "tui" && sc.tuiHeader == -1 {
+			switch {
+			case currentTable == "tui" && sc.tuiHeader == -1:
 				sc.tuiHeader = i
+			case currentTable == "tui" || strings.HasPrefix(currentTable, "tui."):
+				sc.tuiNamespaced = true
 			}
 			prevNonBlank = t
 			continue
 		}
 
-		if sc.keyStart == -1 {
-			if lhs, rhs, found := strings.Cut(t, "="); found {
-				left := strings.TrimSpace(lhs)
+		if lhs, rhs, found := strings.Cut(t, "="); found {
+			left := strings.TrimSpace(lhs)
+
+			// Record how `tui` is used at the top level, to guide insertion.
+			if currentTable == "" {
+				switch {
+				case left == "tui":
+					sc.tuiBoundAsValue = true
+				case strings.HasPrefix(left, "tui."):
+					sc.tuiNamespaced = true
+				}
+			}
+
+			if sc.keyStart == -1 {
 				isTui := (currentTable == "tui" && left == "status_line") ||
 					(currentTable == "" && left == "tui.status_line")
 				if isTui {
 					sc.present = true
 					sc.keyStart = i
 					sc.managed = strings.HasPrefix(prevNonBlank, codexManagedPrefix)
-
-					// Accumulate the value across lines until the array closes,
-					// so a multi-line array is replaced as a whole on repair.
-					val := rhs
-					j := i
-					for !strings.Contains(val, "]") && j+1 < len(lines) {
-						j++
-						val += " " + strings.TrimSpace(lines[j])
-					}
-					sc.keyEnd = j
-					if sc.managed {
-						sc.current = equalStrings(parseTomlStringArray(val), codexStatusLineItems)
+					endIdx, items, ok := scanStatusLineArray(lines, i, rhs)
+					sc.keyEnd = endIdx
+					if sc.managed && ok {
+						sc.current = equalStrings(items, codexStatusLineItems)
 					}
 				}
 			}
@@ -216,6 +243,22 @@ func scanCodexConfig(lines []string) codexScan {
 		prevNonBlank = t
 	}
 	return sc
+}
+
+// classifyCodex maps a scan to the read-only state enum.
+func classifyCodex(sc codexScan) CodexConfigState {
+	switch {
+	case sc.present && !sc.managed:
+		return CodexUserManagedState
+	case sc.present && sc.managed && sc.current:
+		return CodexInstalledState
+	case sc.present && sc.managed:
+		return CodexNeedsRepair
+	case sc.tuiBoundAsValue:
+		return CodexTuiConflictState
+	default:
+		return CodexNotInstalled
+	}
 }
 
 // planCodexStatusLine decides the outcome and returns the new file bytes (the
@@ -230,45 +273,75 @@ func planCodexStatusLine(data []byte) (CodexInstallOutcome, []byte) {
 		return CodexUserManaged, data
 	case sc.present && sc.managed && sc.current:
 		return CodexAlreadyInstalled, data
+	case !sc.present && sc.tuiBoundAsValue:
+		// `tui = {...}` / `tui = scalar`: a [tui] table or tui.status_line key
+		// would duplicate `tui` and break the parse. Refuse rather than corrupt.
+		return CodexTuiConflict, data
 	}
 
-	keyLine := formatCodexStatusLine(codexStatusLineItems)
-
-	// Repair: replace the managed (stale) key — possibly multi-line — in place.
-	// The marker line sits above keyStart and is preserved untouched.
+	// Repair: replace the managed (stale) key — possibly multi-line — in place,
+	// preserving its original left-hand side (`status_line` vs `tui.status_line`)
+	// and indentation. The marker line above keyStart is left untouched.
 	if sc.present && sc.managed {
+		lhs, _, _ := strings.Cut(lines[sc.keyStart], "=")
 		out := append([]string{}, lines[:sc.keyStart]...)
-		out = append(out, keyLine)
+		out = append(out, strings.TrimRight(lhs, " \t")+" = "+formatStatusLineArray(codexStatusLineItems))
 		out = append(out, lines[sc.keyEnd+1:]...)
 		return CodexRepaired, fromLines(out, sep)
 	}
 
-	// Install: no status_line present. Prefer inserting into an existing [tui]
-	// table (right after its header, before any keys/subtables); otherwise
-	// append a fresh [tui] block at EOF.
-	if sc.tuiHeader >= 0 {
+	// Install (no status_line present). Pick an insertion form that is always
+	// valid TOML for the current `tui` usage:
+	switch {
+	case sc.tuiHeader >= 0:
+		// An existing [tui] table: add `status_line` right after its header.
+		keyLine := "status_line = " + formatStatusLineArray(codexStatusLineItems)
 		out := append([]string{}, lines[:sc.tuiHeader+1]...)
 		out = append(out, codexManagedMarker, keyLine)
 		out = append(out, lines[sc.tuiHeader+1:]...)
 		return CodexInstalled, fromLines(out, sep)
-	}
 
-	out := append([]string{}, lines...)
-	if len(out) > 0 {
-		out = append(out, "") // blank separator before our block
+	case sc.tuiNamespaced:
+		// tui is already a table (via dotted keys or [tui.sub] subtables) but
+		// has no [tui] header. A dotted `tui.status_line` in top-level scope is
+		// compatible; a new [tui] header would conflict / be out-of-order.
+		keyLine := "tui.status_line = " + formatStatusLineArray(codexStatusLineItems)
+		insertAt := sc.firstTableHeader // top-level scope = before the first table
+		if insertAt < 0 {
+			insertAt = len(lines)
+		}
+		out := append([]string{}, lines[:insertAt]...)
+		out = append(out, codexManagedMarker, keyLine)
+		out = append(out, lines[insertAt:]...)
+		return CodexInstalled, fromLines(out, sep)
+
+	default:
+		// No `tui` usage anywhere: a fresh [tui] block at EOF is clean and
+		// conventional (matches what Codex's own /statusline writes).
+		keyLine := "status_line = " + formatStatusLineArray(codexStatusLineItems)
+		out := append([]string{}, lines...)
+		if len(out) > 0 {
+			out = append(out, "") // blank separator before our block
+		}
+		out = append(out, "[tui]", codexManagedMarker, keyLine)
+		return CodexInstalled, fromLines(out, sep)
 	}
-	out = append(out, "[tui]", codexManagedMarker, keyLine)
-	return CodexInstalled, fromLines(out, sep)
 }
 
-// formatCodexStatusLine renders the single-line `status_line = [...]` TOML key.
-// Always single-line so repair is a clean one-line splice.
-func formatCodexStatusLine(items []string) string {
+// formatStatusLineArray renders the `[...]` array of the status_line value
+// (without the key) on a single line, so repair is a clean one-line splice.
+func formatStatusLineArray(items []string) string {
 	quoted := make([]string, len(items))
 	for i, it := range items {
 		quoted[i] = fmt.Sprintf("%q", it)
 	}
-	return "status_line = [" + strings.Join(quoted, ", ") + "]"
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// formatCodexStatusLine renders the full `status_line = [...]` line (the form
+// written inside a [tui] table). Used by tests and the table-insert path.
+func formatCodexStatusLine(items []string) string {
+	return "status_line = " + formatStatusLineArray(items)
 }
 
 // toLines splits config bytes into lines (\r stripped), returning the dominant
@@ -305,27 +378,82 @@ func tomlTableName(t string) string {
 	return strings.TrimSpace(t)
 }
 
-// parseTomlStringArray extracts the string elements of a (possibly multi-line)
-// TOML array value such as `["model", "git-branch"]`. Good enough for the
-// status_line shape (a flat array of identifier strings with no brackets
-// inside the quoted values).
-func parseTomlStringArray(val string) []string {
-	_, rest, found := strings.Cut(val, "[")
-	if !found {
-		return nil
-	}
-	if before, _, ok := strings.Cut(rest, "]"); ok {
-		rest = before
-	}
-	var out []string
-	for p := range strings.SplitSeq(rest, ",") {
-		p = strings.TrimSpace(p)
-		p = strings.Trim(p, `"'`)
-		if p != "" {
-			out = append(out, p)
+// scanStatusLineArray reads a (possibly multi-line) TOML array value starting
+// at line startIdx, whose text after '=' is rhs. It returns the line index of
+// the closing ']' (inclusive) and the array's string elements. Quote- and
+// comment-aware: a ']', ',' or '#' inside a quoted string or an inline comment
+// does not end the array — so a hand-edited multi-line managed value is bounded
+// correctly (avoids orphaning lines on repair). ok is false if the array never
+// closes within the file.
+func scanStatusLineArray(lines []string, startIdx int, rhs string) (endIdx int, items []string, ok bool) {
+	depth := 0
+	inString := false
+	var quote byte
+	escaped := false
+	var elem strings.Builder
+	hasElem := false
+
+	flush := func() {
+		if hasElem {
+			items = append(items, elem.String())
+			elem.Reset()
+			hasElem = false
 		}
 	}
-	return out
+
+	// process one physical line's worth of text; returns true once the array
+	// closes (depth back to 0).
+	process := func(s string) bool {
+		for i := 0; i < len(s); i++ {
+			c := s[i]
+			if inString {
+				if escaped {
+					escaped = false
+					elem.WriteByte(c)
+					continue
+				}
+				if c == '\\' && quote == '"' {
+					escaped = true
+					continue
+				}
+				if c == quote {
+					inString = false
+					continue
+				}
+				elem.WriteByte(c)
+				continue
+			}
+			switch c {
+			case '#':
+				return false // comment to end of this physical line
+			case '"', '\'':
+				inString = true
+				quote = c
+				hasElem = true
+			case '[':
+				depth++
+			case ']':
+				depth--
+				if depth == 0 {
+					flush()
+					return true
+				}
+			case ',':
+				flush()
+			}
+		}
+		return false
+	}
+
+	if process(rhs) {
+		return startIdx, items, true
+	}
+	for j := startIdx + 1; j < len(lines); j++ {
+		if process(lines[j]) {
+			return j, items, true
+		}
+	}
+	return startIdx, items, false
 }
 
 func equalStrings(a, b []string) bool {
