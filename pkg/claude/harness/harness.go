@@ -57,6 +57,10 @@ type Harness struct {
 	// (or reports them unsupported). Every slash injection must be gated
 	// on these so no pane is typed a command it can't parse.
 	Life Lifecycle
+	// Convs assembles conversation metadata from the harness's storage
+	// model (list / resolve / read title). Read-only for now; the write
+	// counterpart (SetTitle) rides the Lifecycle/send-keys PR.
+	Convs ConvStore
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
