@@ -274,6 +274,15 @@ func codexSessionsDir(home string) string {
 	return filepath.Join(home, ".codex", "sessions")
 }
 
+// IsCodexRolloutPath reports whether path names a Codex rollout file
+// (`rollout-<ts>-<uuid>.jsonl[.zst]`). It lets a caller holding a candidate
+// path — e.g. a hook payload's transcript_path — read it directly without
+// the by-id directory walk, while rejecting any unrelated path so a wrong
+// file can't be parsed as a rollout.
+func IsCodexRolloutPath(path string) bool {
+	return codexIDFromRolloutName(filepath.Base(path)) != ""
+}
+
 // codexIDFromRolloutName extracts the session uuid from a rollout file
 // name `rollout-<ts>-<uuid>.jsonl[.zst]`. Both the timestamp and the uuid
 // contain '-', so the uuid is taken as the trailing 36 chars (8-4-4-4-12)

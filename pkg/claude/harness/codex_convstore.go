@@ -94,7 +94,7 @@ func codexThreadEntry(t codexThread, id, path string, info os.FileInfo) convops.
 		Created:      codexUnixToRFC3339(t.CreatedAt),
 		Modified:     info.ModTime().UTC().Format(time.RFC3339),
 		Model:        t.Model,
-		Harness:      codexHarnessName,
+		Harness:      CodexName,
 		MessageCount: 0, // not surfaced for Codex in v1 (documented)
 	}
 	if e.FirstPrompt == "" {
@@ -128,7 +128,7 @@ func codexRolloutEntry(id, path string, info os.FileInfo) (convops.SessionEntry,
 		Created:      codexRolloutCreated(head, info),
 		Modified:     info.ModTime().UTC().Format(time.RFC3339),
 		Model:        head.Model,
-		Harness:      codexHarnessName,
+		Harness:      CodexName,
 		MessageCount: 0,
 	}, nil
 }
@@ -302,6 +302,6 @@ func codexConvRef(e convops.SessionEntry) *ConvRef {
 	return &ConvRef{
 		ConvID:      e.SessionID,
 		ProjectPath: e.ProjectPath,
-		Harness:     codexHarnessName,
+		Harness:     CodexName,
 	}
 }
