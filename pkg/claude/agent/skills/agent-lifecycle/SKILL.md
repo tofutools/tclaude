@@ -1,6 +1,6 @@
 ---
 name: agent-lifecycle
-description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and `tclaude agent clone [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` replaces self with a fresh CC instance that inherits identity — REQUIRES a follow-up so the fresh pane isn't idle. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
+description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and `tclaude agent clone [follow-up]`. The mechanics a long-running agent uses to act on context pressure. `compact` is a /compact slash-injection that preserves identity. `reincarnate` replaces self with a fresh CC instance that inherits identity — REQUIRES a follow-up so the fresh pane isn't idle. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. WHEN and whether to use them — and at what context %, if any — is a policy that belongs to your project/operator; this skill documents the capability, it does not prescribe a cadence or threshold. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
@@ -29,30 +29,47 @@ window** — the percentage is the authoritative signal that Claude Code
 itself computes. On a 200k-window model the absolute number is off by
 5x, but the percentage threshold-based decision is still correct.
 
-## When to compact / reincarnate
+## When to compact / reincarnate — that's your project's call, not this skill's
 
 Context rot is real: as the window fills you become slower, less
-coherent, and more likely to forget early instructions. The thresholds
-that work in practice depend on **how big your context window is**:
+coherent, and more likely to forget early instructions. So these
+commands exist to let you *do something* about it. But **this skill
+deliberately does not tell you when, or at what context %, to act** —
+that is a policy decision that belongs to your project and operator, not
+to a bundled tool's skill file.
 
-- **1M context window (Opus 4.7 1M and similar):** start considering
-  compaction around **50%**. You can stretch to 60–70% on focused work,
-  but past that the rot is noticeable. The window is large enough that
-  even after compaction you have plenty of headroom.
-- **200k context window (most other models):** push to **75%** or so.
-  The window is small enough that compacting too early throws away
-  useful context every few turns.
+Why it's not prescribed here: different projects want very different
+things. Some prefer agents run long and only reincarnate at clean task
+boundaries; some compact aggressively to keep windows small; some never
+self-manage context and leave it entirely to the human. Baking a single
+"~50%" reflex into the skill would impose one project's policy on all of
+them.
 
-Either way, **don't wait until auto-compact triggers**. By then you're
-already deep into the rotted regime. Pre-empt it: poll
-`context-info`, and run `compact` once you're near your threshold.
+So:
+
+- **Look to your project for the policy.** Your project's `CLAUDE.md`
+  (or your group's conventions / the human's instructions) is where a
+  compaction & reincarnation policy lives — including any threshold, and
+  whether to prefer `compact`, `reincarnate`, or just keep going.
+- **Absent an explicit policy, the safe default is to keep working** and
+  *not* self-compact on a timer. Unnecessary compaction throws away
+  useful context and its summaries are lossy; an unprompted `/compact`
+  appearing in a pane is also surprising to a human watching.
+- `tclaude agent context-info` is always available and free — use it to
+  *see* where you stand whenever you want, independent of any decision
+  to act.
+
+The rest of this skill is reference: what each verb does, how to hand
+off work, the charset/delivery rules, and the manager pattern. Reach for
+it once your project's policy (or the human) has told you to act.
 
 ## Compact vs. reincarnate vs. clone
 
 - `compact` — CC summarises the prior turns and replaces them with a
-  short recap. **Default choice** for "I want to keep going on the
-  same task without losing my place." Identity, conv-id, name, and
-  most state survive; just the message history is abbreviated.
+  short recap. **Lightest option** when your policy says to free context
+  but you want to keep going on the same task without losing your place.
+  Identity, conv-id, name, and most state survive; just the message
+  history is abbreviated (lossily).
 - `reincarnate` — heavier. The daemon spawns a brand new CC instance,
   migrates your identity (groups, per-conv permissions, ownerships)
   onto the new conv-id, and soft-stops the old one. The new agent
@@ -142,7 +159,7 @@ tclaude agent context-info
 # context: 47% (~470k of ~1.0M tokens, assumes 1M window)
 # compact: idle
 
-# Approaching threshold — write down what matters
+# Before you compact or reincarnate — write down what matters
 # (do this in your tools — Read/Edit/Write — not via tclaude)
 
 # Compact in-place, with a follow-up that lands after the summary
