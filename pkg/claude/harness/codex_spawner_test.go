@@ -60,6 +60,31 @@ func TestCodexSpawner_Resume(t *testing.T) {
 	}
 }
 
+// TestCodexSpawner_BypassHookTrust covers the headless escape hatch: the
+// `--dangerously-bypass-hook-trust` flag is emitted only when the toggle is
+// set (default off), on both fresh and resume invocations.
+func TestCodexSpawner_BypassHookTrust(t *testing.T) {
+	const flag = "--dangerously-bypass-hook-trust"
+
+	// Default off: the flag must never appear.
+	if got := codexBuild("", "", "", "", nil); strings.Contains(got, flag) {
+		t.Fatalf("bypass-hook-trust must default off, got %q", got)
+	}
+
+	// Fresh session with the toggle on.
+	got := codexSpawner{}.BuildCommand(SpawnSpec{BypassHookTrust: true})
+	if !strings.Contains(got, flag) {
+		t.Fatalf("toggle on (fresh) must emit %s, got %q", flag, got)
+	}
+
+	// Resume with the toggle on: flag coexists with the resume subcommand
+	// and --model.
+	got = codexSpawner{}.BuildCommand(SpawnSpec{ResumeID: "sess-1", Model: "gpt-5", BypassHookTrust: true})
+	if !strings.Contains(got, flag) || !strings.Contains(got, "resume sess-1") || !strings.Contains(got, "--model gpt-5") {
+		t.Fatalf("toggle on (resume) must emit %s alongside resume + model, got %q", flag, got)
+	}
+}
+
 // TestCodexModels covers the minimal catalog: model pass-through, effort
 // rejected-with-guidance, empty values stay empty.
 func TestCodexModels(t *testing.T) {

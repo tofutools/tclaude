@@ -20,8 +20,9 @@ type codexSpawner struct{}
 func (codexSpawner) Binary() string { return "codex" }
 
 // BuildCommand assembles the Codex invocation: env exports + the binary,
-// the `resume <id>` subcommand when resuming, an optional `--model`, then
-// any post-`--` passthrough args.
+// the `resume <id>` subcommand when resuming, an optional
+// `--dangerously-bypass-hook-trust`, an optional `--model`, then any
+// post-`--` passthrough args.
 //
 // Working directory is NOT passed via `-C/--cd`: tclaude launches the
 // pane with `tmux new-session -c <cwd>`, and Codex uses the pane's cwd —
@@ -37,6 +38,13 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// `codex resume <id>` — resume is a subcommand; the id is a
 		// positional. Quoted defensively even though it's a UUID.
 		cmd += " resume " + clcommon.ShellQuoteArg(spec.ResumeID)
+	}
+	if spec.BypassHookTrust {
+		// Run configured hooks without persisted hook trust for this
+		// invocation — a headless escape hatch (default off). Accepted
+		// both on a fresh `codex` and on `codex resume <id>`, like
+		// `--model`. No value, so nothing to quote.
+		cmd += " --dangerously-bypass-hook-trust"
 	}
 	if spec.Model != "" {
 		// `--model` is accepted both on a fresh `codex` and on
