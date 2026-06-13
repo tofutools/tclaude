@@ -2,6 +2,7 @@ package harness
 
 import (
 	"database/sql"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -69,26 +70,45 @@ func loadCodexThreads(home string) (map[string]codexThread, error) {
 
 	out := map[string]codexThread{}
 	for rows.Next() {
-		var t codexThread
-		// git_branch / model are nullable in the schema; first_user_message
-		// / preview are NOT NULL DEFAULT '' in real Codex but a test or an
-		// older schema may leave them NULL — read all four defensively.
-		var gitBranch, model, firstMsg, preview sql.NullString
-		var archived int64
+		// Every column is read through a sql.Null* even though the verified
+		// schema marks most NOT NULL: a slightly older/newer Codex schema,
+		// or a half-written row, must not crash the scan. And a single
+		// unreadable row is skipped, not fatal — otherwise one bad row would
+		// blank out enrichment for EVERY conversation (the whole map),
+		// silently dropping every title/branch/model down to rollout-only.
+		var (
+			id, rolloutPath, cwd, title         sql.NullString
+			gitBranch, model, firstMsg, preview sql.NullString
+			tokensUsed, createdAt, updatedAt    sql.NullInt64
+			archived, archivedAt                sql.NullInt64
+		)
 		if err := rows.Scan(
-			&t.ID, &t.RolloutPath, &t.Cwd, &t.Title,
+			&id, &rolloutPath, &cwd, &title,
 			&gitBranch, &model, &firstMsg, &preview,
-			&t.TokensUsed, &t.CreatedAt, &t.UpdatedAt,
-			&archived, &t.ArchivedAt,
+			&tokensUsed, &createdAt, &updatedAt,
+			&archived, &archivedAt,
 		); err != nil {
-			return nil, err
+			slog.Warn("codex convstore: skipping unreadable threads row", "error", err)
+			continue
 		}
-		t.GitBranch = gitBranch.String
-		t.Model = model.String
-		t.FirstUserMessage = firstMsg.String
-		t.Preview = preview.String
-		t.Archived = archived != 0
-		out[t.ID] = t
+		if !id.Valid || id.String == "" {
+			continue // a row with no id can't be matched to a rollout
+		}
+		out[id.String] = codexThread{
+			ID:               id.String,
+			RolloutPath:      rolloutPath.String,
+			Cwd:              cwd.String,
+			Title:            title.String,
+			GitBranch:        gitBranch.String,
+			Model:            model.String,
+			FirstUserMessage: firstMsg.String,
+			Preview:          preview.String,
+			TokensUsed:       tokensUsed.Int64,
+			CreatedAt:        createdAt.Int64,
+			UpdatedAt:        updatedAt.Int64,
+			Archived:         archived.Int64 != 0,
+			ArchivedAt:       archivedAt,
+		}
 	}
 	return out, rows.Err()
 }

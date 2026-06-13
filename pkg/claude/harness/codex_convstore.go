@@ -157,9 +157,12 @@ func codexFirstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
+	// Truncate on a rune boundary so a multi-byte char near the limit is
+	// never split into invalid UTF-8 (which would never match Codex's own
+	// derived title).
 	const max = 80
-	if len(s) > max {
-		s = s[:max]
+	if r := []rune(s); len(r) > max {
+		s = string(r[:max])
 	}
 	return s
 }

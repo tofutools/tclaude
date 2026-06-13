@@ -295,6 +295,57 @@ func TestCodexConvStore_ThreadsEnrichment_Archived(t *testing.T) {
 	assert.Equal(t, time.Unix(archivedAtSec, 0).UTC().Format(time.RFC3339), e.ArchivedAt)
 }
 
+// On a drifted/sparse schema where a row leaves columns NULL, a single
+// malformed row must NOT abort the whole load and silently degrade every
+// conversation to rollout-only — the bad row degrades alone, others keep
+// their enrichment. (Builds its own permissive table since the real schema
+// marks these columns NOT NULL, so the failure mode only appears on drift.)
+func TestCodexConvStore_ThreadsEnrichment_NullRowTolerated(t *testing.T) {
+	home := codexTestHome(t)
+	cwd := "/home/u/proj"
+	const goodID = "10101010-1010-1010-1010-101010101010"
+	const badID = "20202020-2020-2020-2020-202020202020"
+	startCodexSim(t, home, goodID, cwd, "hello good", "hi")
+	startCodexSim(t, home, badID, cwd, "hello bad", "hi")
+
+	path := filepath.Join(home, ".codex", "state_5.sqlite")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	d, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+	_, err = d.Exec(`CREATE TABLE threads (
+		id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT, title TEXT,
+		git_branch TEXT, model TEXT, first_user_message TEXT, preview TEXT,
+		tokens_used INTEGER, created_at INTEGER, updated_at INTEGER,
+		archived INTEGER, archived_at INTEGER)`)
+	require.NoError(t, err)
+	// A fully-populated row (rename + branch) — its enrichment must survive.
+	_, err = d.Exec(`INSERT INTO threads VALUES
+		(?, '', ?, 'Renamed Good', 'br-good', 'gpt-5.5', 'hello good', 'hello good',
+		 0, 1781337965, 1781337973, 0, NULL)`, goodID, cwd)
+	require.NoError(t, err)
+	// A degenerate row with NULLs in columns the pre-fix scan read into
+	// plain string/int64 — that scan would error and abort loadCodexThreads.
+	_, err = d.Exec(`INSERT INTO threads
+		(id, rollout_path, cwd, title, git_branch, model, first_user_message,
+		 preview, tokens_used, created_at, updated_at, archived, archived_at)
+		VALUES (?, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
+		badID, cwd)
+	require.NoError(t, err)
+	require.NoError(t, d.Close())
+
+	entries, err := codexConvs(t).ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 2, "both convs still listed despite the malformed row")
+
+	good, ok := findEntry(entries, goodID)
+	require.True(t, ok)
+	assert.Equal(t, "Renamed Good", good.CustomTitle, "the good row's enrichment survived the bad row")
+	assert.Equal(t, "br-good", good.GitBranch)
+
+	_, ok = findEntry(entries, badID)
+	assert.True(t, ok, "the malformed-row conv is still listed (degraded, not dropped)")
+}
+
 // --- Resolve ---------------------------------------------------------------
 
 func TestCodexConvStore_Resolve(t *testing.T) {
