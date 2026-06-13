@@ -1,8 +1,19 @@
 # JOH-152 — Codex ConvStore (rollout parser + date-scan + state-DB read → SessionEntry)
 
-**Status:** design complete, verified against real data + CodexSim; **no code written yet.**
-Worktree `codex-convstore` off `main-codex` (base 18dab5d). PR target: `main-codex`.
-This doc is the handoff from the design/exploration pass — implement against it.
+**Status:** IMPLEMENTED. `codex_{rollout,state,convstore}.go` + `codex.go` in `pkg/claude/harness`,
+tests in `codex_convstore_test.go`. Worktree `codex-convstore` off `main-codex`. PR target: `main-codex`.
+This doc was the design/exploration handoff; see the as-built note below for the one divergence.
+
+## As-built note (the one divergence)
+The merged ConvStore contract is **read-only** (convstore.go: "This slice is READ-ONLY"), and CC's
+own `ListConvs` is a pure reader of the cache — the scan-and-upsert lives in a *separate* path
+(`convops.LoadSessionsIndex`), not in the ConvStore methods. So the Codex ConvStore is likewise a
+**pure reader**: it assembles entries straight from the rollout files + threads DB on every call and
+sets `Harness="codex"` **on each returned entry**. It does **not** write a `conv_index` row. The
+"set harness on the conv_index INSERT" line below is therefore deferred to the multi-harness
+enumeration slice (**JOH-153**) that decides whether/how Codex entries are persisted into the cache;
+its ON-CONFLICT survival remains codex-seam's durability slice, as noted. Net: the harness tag rides
+on the SessionEntry now; the INSERT is JOH-153's call.
 
 ## Task (from lead-r-2, msg #1293)
 Implement Codex's **ConvStore** (assemble a `convops.SessionEntry` from Codex's full
