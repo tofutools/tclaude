@@ -27,25 +27,10 @@ import { sudoByConv } from './refresh.js';
 //     toggle / remove-from-group).
 //   - {ungrouped: true}    — a row in the virtual Ungrouped group:
 //     tagged as an ungrouped drag source; agent-level actions only.
-// memberNotifyBell renders the per-agent notification bell. Three
-// states cycle on click (inherit → off → on → inherit):
-//   - inherit: dimmed bell, glyph follows the EFFECTIVE state (🔕 when
-//     a containing group is muted, 🔔 otherwise);
-//   - off: solid 🔕 — the agent is muted no matter what;
-//   - on: solid 🔔 — notifies even when its group is muted.
-// The global master switch (top-bar bell) sits above all of this.
-function memberNotifyBell(m) {
-  const label = m.title || m.conv_id;
-  const mode = m.notify || 'inherit';
-  const effective = !!m.notify_effective;
-  const glyph = (mode === 'off' || (mode === 'inherit' && !effective)) ? '🔕' : '🔔';
-  let tip;
-  if (mode === 'off') tip = `notifications muted for ${label} — click to force ON (overrides a group mute)`;
-  else if (mode === 'on') tip = `notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`;
-  else tip = `notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`;
-  return `<button class="notify-bell${mode === 'inherit' ? ' inherit' : ''}" data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${glyph}</button>`;
-}
-
+// The per-agent OS-notification control is no longer a standalone bell
+// in this cell — it moved into the ⚙ options menu (notifyMenuItem in
+// helpers.js) to declutter the row. The global master switch (top-bar
+// bell) still sits above all of it.
 function memberRowHTML(m, ctx) {
   const state = m.state || {};
   const subagents = state.subagent_count || 0;
@@ -57,7 +42,7 @@ function memberRowHTML(m, ctx) {
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td><div class="agent-ctl">${agentStatusDot(m)}${memberNotifyBell(m)}${actions}</div>${harnessLine(m)}</td>
+                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}</td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
                 <td class="name-cell">
                   <div class="rowname"><span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${esc(m.title || '(unnamed)')}</span>${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
@@ -212,13 +197,27 @@ function renderVirtualRetiredGroup(g) {
   `;
 }
 
+// groupNotifyMenuItem renders the per-group OS-notification toggle as a
+// ⚙ options-menu row. It used to be a 🔔/🔕 chip in the group summary's
+// header strip, but that strip was getting crowded, so the control moved
+// into the menu. One click still flips agent_groups.notify_enabled; the
+// data-act / data-enabled the row-action dispatcher reads are unchanged.
+function groupNotifyMenuItem(g) {
+  const on = g.notify_enabled;
+  const text = on ? '🔔 notifications: on' : '🔕 notifications: muted';
+  const tip = on
+    ? 'OS notifications on for this group’s agents — click to mute the whole group (a per-agent 🔔 override still notifies)'
+    : 'OS notifications MUTED for this group’s agents — click to unmute (members with a per-agent 🔔 override notify anyway)';
+  return `<button data-act="toggle-group-notify" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-enabled="${on ? '1' : '0'}" title="${esc(tip)}">${esc(text)}</button>`;
+}
+
 // groupActionsHTML renders a real group header's action cluster. The
 // three most-used controls — spawn, power on, shutdown — stay at the
-// TOP LEVEL; the rest (add member, multicast cron, message, rename,
-// export, cleanup, windows, delete) are collected behind the ⚙ options
-// cog so the header stays readable. Every button keeps the exact
-// data-act / data-* the row-action dispatcher already expects — only
-// their DOM position moves.
+// TOP LEVEL; the rest (add member, multicast cron, message, startup
+// context, notifications, rename, export, cleanup, windows, delete) are
+// collected behind the ⚙ options cog so the header stays readable. Every
+// button keeps the exact data-act / data-* the row-action dispatcher
+// already expects — only their DOM position moves.
 // Feather "user-plus": a person silhouette with a + alongside. Same
 // monochrome-via-currentColor convention as the helpers.js eye icons.
 const SPAWN_ICO_SVG = '<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>';
@@ -240,6 +239,7 @@ function groupActionsHTML(g, members) {
     + `<button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring cron job scoped to ${esc(g.name)} — multicast the whole group, or nudge a single member">⏰ multicast</button>`
     + `<button data-act="message-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name}))}' data-label="${esc(g.name)}" title="Send a one-shot message to ${esc(g.name)} — the whole group, or a ticked subset of its members">✉ message</button>`
     + `<button data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(ctxTitle)}">${ctxLabel}</button>`
+    + groupNotifyMenuItem(g)
     + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>`
     + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>`
     + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>`
@@ -305,7 +305,6 @@ function renderGroups(groups) {
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
         <span class="group-default-model${g.default_model ? '' : ' unset'}" data-act="set-group-model" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-model="${esc(g.default_model || '')}" title="${g.default_model ? 'Default model for agents spawned into this group: ' + esc(g.default_model) + ' — click to edit' : 'No group default model — spawns inherit ' + esc(userDefaultModelLabel()) + '. Click to set one.'}">🧠 ${g.default_model ? esc(g.default_model) : 'no default model'}</span>
-        <button type="button" class="group-notify${g.notify_enabled ? '' : ' muted'}" data-act="toggle-group-notify" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-enabled="${g.notify_enabled ? '1' : '0'}" title="${g.notify_enabled ? 'OS notifications on for this group’s agents — click to mute the whole group (a per-agent 🔔 override still notifies)' : 'OS notifications MUTED for this group’s agents — click to unmute (members with a per-agent 🔔 override notify anyway)'}">${g.notify_enabled ? '🔔' : '🔕 muted'}</button>
       </summary>
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>

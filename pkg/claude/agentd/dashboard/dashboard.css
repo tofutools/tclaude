@@ -577,26 +577,15 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .group-max-members.unset { color: #484f58; font-style: italic; }
 .group-max-members.unset:hover { color: #d4d4d4; }
 .group-max-members.full { color: #f0883e; }
-/* 🔔 group notification chip — same look as the sibling header chips,
-   but a real <button> so it's keyboard-operable; background/font resets
-   strip the UA button chrome back to chip styling. Muted state goes
-   orange so a silenced group is visible at a glance. */
-.group-notify {
-  background: none; font: inherit; font-size: 11px; color: #7d8590;
-  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
-  border: 1px solid transparent;
-}
-.group-notify:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-notify.muted { color: #f0883e; }
-/* 🔔/🔕 per-agent + top-bar notification bells — chrome-free buttons
-   like .status-dot. The inherit (no per-agent override) state is
-   dimmed so explicit overrides stand out; .muted dims the top-bar
-   bell when everything is off. */
+/* 🔔/🔕 top-bar master notification bell — a chrome-free button like
+   .status-dot. The per-group and per-agent notify controls used to be
+   bells/chips too, but they moved into the ⚙ options menus and now wear
+   the plain menu-item skin, so only the master bell keeps this class.
+   .muted dims it when everything is off. */
 .notify-bell {
   background: none; border: none; margin: 0; padding: 2px 4px;
   font: inherit; font-size: 12px; line-height: 1; cursor: pointer; border-radius: 4px;
 }
-.notify-bell.inherit { opacity: 0.45; }
 .notify-bell.muted { opacity: 0.55; }
 .notify-bell:hover { background: #1f2937; opacity: 1; }
 .notify-bell:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
