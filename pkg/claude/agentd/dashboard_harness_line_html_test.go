@@ -144,6 +144,13 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	// when non-default) and sandbox.
 	must("body.harness = harness", "non-default harness is sent in the spawn body")
 	must("body.sandbox = sandbox", "the chosen sandbox is sent in the spawn body")
+
+	// modal-spawn.js: the Effort menu is rebuilt per harness from the
+	// catalog's effort_levels (single source of truth — the static HTML
+	// options are only a pre-snapshot fallback), so a harness with its own
+	// reasoning scale needs no dashboard edit.
+	must("function populateSpawnEffortSelect(", "the effort menu is rebuilt per harness")
+	must("h.effort_levels", "the effort menu reads the harness's effort levels from the catalog")
 }
 
 // TestDashboardHTML_ShortModelRules pins the shortModel() compression

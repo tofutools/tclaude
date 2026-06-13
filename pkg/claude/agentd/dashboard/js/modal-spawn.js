@@ -110,13 +110,32 @@ function activeSpawnModelEl() {
   return codexStyle ? $('#agent-spawn-model-codex') : $('#agent-spawn-model');
 }
 
-// applySpawnHarness reshapes the Model + Sandbox rows for the chosen
-// harness: a harness with a curated model list shows the <select>, one
-// without shows the free-text input; a harness that takes a launch sandbox
-// reveals the Sandbox <select> (populated from its modes, defaulted to its
-// secure default), and one without hides it. The Effort menu is shared —
-// both harnesses use tclaude's levels. Re-applies the remembered effort for
-// whatever Model control is now active.
+// populateSpawnEffortSelect rebuilds the Effort <select> options from the
+// harness's effort levels, making the catalog (server-side
+// clcommon.ValidEffortLevels) the single source of truth — adding a level
+// needs no dashboard edit, and a future harness with its own reasoning
+// scale just works. Keeps the leading Default ("") option and preserves the
+// current selection when the new list still offers it. Leaves the static
+// HTML options in place when the catalog hasn't loaded (h is null) or
+// carries no levels, so the field still works pre-snapshot.
+function populateSpawnEffortSelect(h) {
+  const levels = h && h.effort_levels;
+  if (!levels || !levels.length) return; // keep the static fallback options
+  const sel = $('#agent-spawn-effort');
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">Default (harness's own)</option>`
+    + levels.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+// applySpawnHarness reshapes the Model + Sandbox + Effort menus for the
+// chosen harness: a harness with a curated model list shows the <select>,
+// one without shows the free-text input; a harness that takes a launch
+// sandbox reveals the Sandbox <select> (populated from its modes, defaulted
+// to its secure default), and one without hides it; the Effort menu is
+// rebuilt from the harness's levels (today identical across harnesses, but
+// data-driven so it tracks the catalog). Re-applies the remembered effort
+// for whatever Model control is now active.
 function applySpawnHarness(harnessName) {
   const h = spawnHarnessByName(harnessName);
   // No catalog entry (snapshot not loaded, or unknown harness): fall back
@@ -137,7 +156,9 @@ function applySpawnHarness(harnessName) {
     sandSel.value = h.default_sandbox || h.sandbox_modes[0];
   }
 
-  // Re-apply the effort remembered for the now-active model control.
+  // Rebuild the Effort menu for this harness (data-driven off the catalog),
+  // then re-apply the effort remembered for the now-active model control.
+  populateSpawnEffortSelect(h);
   applyRememberedEffort(activeSpawnModelEl().value);
 }
 

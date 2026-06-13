@@ -1021,11 +1021,12 @@
     </label>
     <label class="cron-create-row" id="agent-spawn-model-codex-row" style="display:none" title="Codex model for the new agent (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Codex's model set changes per release and Codex validates it itself, so this is free text rather than a fixed list. Blank passes no --model, leaving Codex on its own default.">
       <span class="cron-create-label">Model</span>
-      <input id="agent-spawn-model-codex" type="text" list="agent-spawn-model-codex-list" placeholder="blank = Codex default; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
-      <datalist id="agent-spawn-model-codex-list"></datalist>
+      <input id="agent-spawn-model-codex" type="text" placeholder="blank = Codex default; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" title="Reasoning effort for the new agent. Default leaves the harness on its own setting (no --effort passed). For Codex, the level maps onto its reasoning-effort scale (max → xhigh).">
       <span class="cron-create-label">Effort</span>
+      <!-- Pre-snapshot fallback; populateSpawnEffortSelect() rebuilds these
+           from the chosen harness's effort_levels once the catalog loads. -->
       <select id="agent-spawn-effort">
         <option value="">Default (harness's own)</option>
         <option value="low">low</option>

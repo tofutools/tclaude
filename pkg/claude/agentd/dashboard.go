@@ -388,7 +388,7 @@ type snapshotPayload struct {
 	// agent's harness can_rename (JOH-162). Built from the harness registry
 	// so a newly-registered harness appears with no dashboard edit.
 	Harnesses []dashboardHarness `json:"harnesses"`
-	PopupBase        string `json:"popup_base"` // for tray-shareable display
+	PopupBase string             `json:"popup_base"` // for tray-shareable display
 	// NotificationsEnabled mirrors config.notifications.enabled — the
 	// master OS-notification switch above the per-group / per-agent
 	// filters. Drives the top-bar bell toggle.
