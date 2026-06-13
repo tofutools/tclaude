@@ -254,6 +254,13 @@ func (c *CodexSim) SetTitle(title string) {
 	c.title = title
 }
 
+// CreatedUnix is the session's start time as unix seconds — the stamp a
+// threads-row writer uses for created_at/updated_at so the seeded row
+// agrees with the rollout's session_meta time.
+func (c *CodexSim) CreatedUnix() int64 {
+	return c.createdAt.Unix()
+}
+
 // OnInput registers a handler. Newer registrations win on prefix match.
 // Empty prefix matches every input (a custom catch-all that shadows the
 // default user-turn fallback).

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,15 +101,22 @@ func TestCodexAgent_ReincarnateCarriesIdentityAndTitle(t *testing.T) {
 	require.NotEmpty(t, sessions, "successor session row should exist")
 	assert.Equal(t, "codex", sessions[0].Harness, "reincarnated codex agent stays codex")
 
-	// Title carry: the predecessor's title (sourced via the native store)
-	// was written back as `<prev>-x` through the out-of-band SetTitle. (The
-	// successor's own async rename to `<prev>-r-1` logs a benign "no threads
-	// row" warning here: a real Codex creates its threads row at startup, but
-	// the freshly-spawned CodexSim doesn't model that, so the successor has
-	// no row to UPDATE. The successor identity above is the assertable half;
-	// its title would persist in production where Codex owns the row.)
+	// Title carry, predecessor half: the retired pane was renamed to
+	// `<prev>-x` through the out-of-band SetTitle on its native store.
 	got, err := cx.ThreadTitle()
 	require.NoError(t, err)
 	assert.Equal(t, "original-codex-x", got,
 		"predecessor renamed via the native store on reincarnate")
+
+	// Title carry, successor half (end-to-end): the freshly-spawned Codex
+	// pane models Codex's session-start threads-row creation, so its async
+	// rename to `<prev>-r-1` lands on a real row. Poll the successor sim's
+	// threads.title until the post-spawn rename goroutine has delivered it.
+	newCx := f.World.Codexes.GetByConvID(rein.NewConv)
+	require.NotNil(t, newCx, "successor CodexSim should be registered")
+	require.Eventually(t, func() bool {
+		title, err := newCx.ThreadTitle()
+		return err == nil && title == "original-codex-r-1"
+	}, 3*time.Second, 20*time.Millisecond,
+		"successor's `<prev>-r-1` rename should persist to its native threads.title")
 }

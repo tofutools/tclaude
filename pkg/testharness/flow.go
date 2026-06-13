@@ -196,6 +196,22 @@ func (s *simSpawner) spawnNewCodex(label, cwd, effort, model string) error {
 	if err := cx.Start(); err != nil {
 		return err
 	}
+	// Model Codex's own session-start behaviour: a real `codex` process
+	// creates this session's `threads` row at startup (cwd/model stamped,
+	// no first message or rename yet). Seeding it here means the out-of-band
+	// rename the lifecycle path performs — ConvStore.SetTitle UPDATEs
+	// threads.title — has a row to land on, so a spawned/reincarnated Codex
+	// pane's rename persists end-to-end instead of warning "no threads row".
+	// Title/FirstUserMessage start empty so codexIsRename reads "not yet
+	// renamed" until the lifecycle rename writes a real title.
+	if err := cx.WriteThreadRow(CodexThreadSeed{
+		Cwd:       cx.Cwd,
+		Model:     model,
+		CreatedAt: cx.CreatedUnix(),
+		UpdatedAt: cx.CreatedUnix(),
+	}); err != nil {
+		return err
+	}
 	// Mirror the CCSim path's observability: capture the effort/model the
 	// spawn threaded, keyed by the new conv-id.
 	s.w.RecordSpawnEffort(cx.ConvID, effort)
