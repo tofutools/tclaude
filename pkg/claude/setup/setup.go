@@ -206,8 +206,10 @@ func runSetup(params *Params) error {
 		case statusbar.CodexUserManagedState:
 			fmt.Println("  You already have a custom Codex status_line — leaving it untouched.")
 		case statusbar.CodexTuiConflictState:
-			fmt.Printf("  Your config defines [tui] as an inline table in %s — tclaude won't edit it.\n", statusbar.CodexConfigPath())
+			fmt.Printf("  Your config defines tui as an inline table/array in %s — tclaude won't edit it.\n", statusbar.CodexConfigPath())
 			fmt.Println("  Convert tui to a [tui] table (or add the status_line items yourself) and re-run.")
+		case statusbar.CodexNeedsManualFixState:
+			fmt.Printf("  tclaude's Codex status_line in %s looks hand-edited (unterminated array) — fix or delete it and re-run.\n", statusbar.CodexConfigPath())
 		default: // CodexNotInstalled or CodexNeedsRepair
 			// A stale tclaude-managed value repairs silently (like hooks); a
 			// brand-new install asks first.
@@ -507,7 +509,9 @@ func checkStatus() error {
 		case statusbar.CodexUserManagedState:
 			fmt.Println("  Codex status line set by you (not managed by tclaude)")
 		case statusbar.CodexTuiConflictState:
-			fmt.Println("  tui is defined as an inline table (not managed by tclaude)")
+			fmt.Println("  tui is defined as an inline table/array (not managed by tclaude)")
+		case statusbar.CodexNeedsManualFixState:
+			fmt.Println("⚠ tclaude-managed Codex status_line looks hand-edited (unterminated array); fix or delete it and re-run setup")
 		default:
 			fmt.Println("✗ Codex status line not configured")
 			fmt.Println("  Run 'tclaude setup' to install")

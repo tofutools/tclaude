@@ -306,6 +306,43 @@ func TestRepair_MultilineArrayWithCommentBracket(t *testing.T) {
 	assert.True(t, scanCodexConfigData(out).current)
 }
 
+func TestInstallCodex_RefusesTuiArrayOfTables(t *testing.T) {
+	// [[tui]] makes `tui` an array-of-tables; adding a [tui] table or
+	// tui.status_line key would conflict, so refuse rather than mis-insert.
+	path := withTempHome(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	original := "[[tui]]\nfoo = \"bar\"\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+
+	outcome, err := InstallCodex()
+	require.NoError(t, err)
+	assert.Equal(t, CodexTuiConflict, outcome)
+	assert.Equal(t, CodexTuiConflictState, CodexStatusLineState())
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(got), "must not edit a config where tui is an array-of-tables")
+}
+
+func TestInstallCodex_LeavesUnterminatedManagedArray(t *testing.T) {
+	// A managed value hand-edited into an unterminated array is already invalid
+	// TOML; tclaude must not guess where it ends (which could orphan lines or
+	// delete trailing content). Leave it untouched and flag it.
+	path := withTempHome(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	original := "[tui]\n" + codexManagedMarker + "\nstatus_line = [\n  \"model\",\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+
+	outcome, err := InstallCodex()
+	require.NoError(t, err)
+	assert.Equal(t, CodexNeedsManualFix, outcome)
+	assert.Equal(t, CodexNeedsManualFixState, CodexStatusLineState())
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(got), "unterminated managed array must be left untouched")
+}
+
 func TestPlanCodexStatusLine_NoopReturnsOriginalBytes(t *testing.T) {
 	// User-owned and already-installed are pure no-ops that must hand back the
 	// exact original bytes (the caller relies on this to skip the write).

@@ -69,11 +69,16 @@ const (
 	// CodexUserManaged: the user has their own (non-tclaude) status_line —
 	// tclaude left it untouched.
 	CodexUserManaged
-	// CodexTuiConflict: the config defines `tui` as an inline table or scalar
-	// (e.g. `tui = { theme = "dark" }`), so tclaude cannot add a `[tui]` table
-	// or a `tui.status_line` key without producing a duplicate-key TOML error.
-	// Left untouched; the user is told to convert `tui` to a `[tui]` table.
+	// CodexTuiConflict: the config defines `tui` as an inline table, scalar, or
+	// array-of-tables (e.g. `tui = { theme = "dark" }` or `[[tui]]`), so tclaude
+	// cannot add a `[tui]` table or a `tui.status_line` key without producing a
+	// duplicate-key TOML error. Left untouched; the user is told to convert
+	// `tui` to a `[tui]` table.
 	CodexTuiConflict
+	// CodexNeedsManualFix: a tclaude-managed status_line was hand-edited into an
+	// unterminated array (the file is already invalid TOML). tclaude won't guess
+	// where the array ends — left untouched; the user fixes or deletes it.
+	CodexNeedsManualFix
 )
 
 // CodexConfigState is the read-only classification of the Codex config's
@@ -86,7 +91,8 @@ const (
 	CodexInstalledState                       // tclaude-managed and current
 	CodexNeedsRepair                          // tclaude-managed but stale
 	CodexUserManagedState                     // user owns the status_line
-	CodexTuiConflictState                     // tui is an inline table/scalar; unsafe to edit
+	CodexTuiConflictState                     // tui is an inline table/scalar/array; unsafe to edit
+	CodexNeedsManualFixState                  // managed value hand-edited into an unterminated (broken) array
 )
 
 // CodexConfigPath returns ~/.codex/config.toml, or "" if the home dir is unknown.
@@ -144,7 +150,7 @@ func InstallCodex() (CodexInstallOutcome, error) {
 
 	outcome, newData := planCodexStatusLine(data)
 	switch outcome {
-	case CodexAlreadyInstalled, CodexUserManaged, CodexTuiConflict:
+	case CodexAlreadyInstalled, CodexUserManaged, CodexTuiConflict, CodexNeedsManualFix:
 		return outcome, nil // no write
 	}
 
@@ -160,11 +166,12 @@ func InstallCodex() (CodexInstallOutcome, error) {
 // codexScan is tclaude's structural view of a Codex config, computed by a
 // single line-by-line pass.
 type codexScan struct {
-	present  bool // an active (non-comment) tui.status_line assignment exists
-	managed  bool // that assignment is tclaude-managed (preceded by the marker)
-	current  bool // the managed value matches codexStatusLineItems exactly
-	keyStart int  // line index of the status_line key (-1 if absent)
-	keyEnd   int  // line index of the array's closing ']' (inclusive)
+	present         bool // an active (non-comment) tui.status_line assignment exists
+	managed         bool // that assignment is tclaude-managed (preceded by the marker)
+	current         bool // the managed value matches codexStatusLineItems exactly
+	arrayTerminated bool // the value array closed its ']' (false = unterminated, already-broken TOML)
+	keyStart        int  // line index of the status_line key (-1 if absent)
+	keyEnd          int  // line index of the array's closing ']' (inclusive)
 
 	tuiHeader        int  // line index of the first [tui] table header (-1 if absent)
 	firstTableHeader int  // line index of the first table header of any kind (-1 if absent)
@@ -184,7 +191,7 @@ func scanCodexConfigData(data []byte) codexScan {
 // records how the `tui` namespace is used, so the installer can pick an
 // insertion form that never produces invalid TOML.
 func scanCodexConfig(lines []string) codexScan {
-	sc := codexScan{keyStart: -1, keyEnd: -1, tuiHeader: -1, firstTableHeader: -1}
+	sc := codexScan{keyStart: -1, keyEnd: -1, tuiHeader: -1, firstTableHeader: -1, arrayTerminated: true}
 	currentTable := ""
 	prevNonBlank := ""
 
@@ -201,11 +208,20 @@ func scanCodexConfig(lines []string) codexScan {
 			if sc.firstTableHeader == -1 {
 				sc.firstTableHeader = i
 			}
+			arrayTable := strings.HasPrefix(t, "[[")
 			currentTable = tomlTableName(t)
 			switch {
-			case currentTable == "tui" && sc.tuiHeader == -1:
-				sc.tuiHeader = i
-			case currentTable == "tui" || strings.HasPrefix(currentTable, "tui."):
+			case currentTable == "tui" && arrayTable:
+				// [[tui]] is an array-of-tables: `tui` is an array, so neither a
+				// [tui] table nor a tui.status_line key can be added without a
+				// duplicate-key conflict. Mark it so install refuses rather than
+				// inserting into an array element Codex won't read.
+				sc.tuiBoundAsValue = true
+			case currentTable == "tui":
+				if sc.tuiHeader == -1 {
+					sc.tuiHeader = i
+				}
+			case strings.HasPrefix(currentTable, "tui."):
 				sc.tuiNamespaced = true
 			}
 			prevNonBlank = t
@@ -234,6 +250,7 @@ func scanCodexConfig(lines []string) codexScan {
 					sc.managed = strings.HasPrefix(prevNonBlank, codexManagedPrefix)
 					endIdx, items, ok := scanStatusLineArray(lines, i, rhs)
 					sc.keyEnd = endIdx
+					sc.arrayTerminated = ok
 					if sc.managed && ok {
 						sc.current = equalStrings(items, codexStatusLineItems)
 					}
@@ -250,6 +267,8 @@ func classifyCodex(sc codexScan) CodexConfigState {
 	switch {
 	case sc.present && !sc.managed:
 		return CodexUserManagedState
+	case sc.present && sc.managed && !sc.arrayTerminated:
+		return CodexNeedsManualFixState
 	case sc.present && sc.managed && sc.current:
 		return CodexInstalledState
 	case sc.present && sc.managed:
@@ -271,11 +290,17 @@ func planCodexStatusLine(data []byte) (CodexInstallOutcome, []byte) {
 	switch {
 	case sc.present && !sc.managed:
 		return CodexUserManaged, data
+	case sc.present && sc.managed && !sc.arrayTerminated:
+		// Our managed value was hand-edited into an unterminated array, so the
+		// file is already invalid TOML. Don't guess where the array ends (that
+		// risks deleting the user's trailing content) — leave it untouched.
+		return CodexNeedsManualFix, data
 	case sc.present && sc.managed && sc.current:
 		return CodexAlreadyInstalled, data
 	case !sc.present && sc.tuiBoundAsValue:
-		// `tui = {...}` / `tui = scalar`: a [tui] table or tui.status_line key
-		// would duplicate `tui` and break the parse. Refuse rather than corrupt.
+		// `tui = {...}` / `tui = scalar` / `[[tui]]`: a [tui] table or
+		// tui.status_line key would duplicate `tui` and break the parse. Refuse
+		// rather than corrupt.
 		return CodexTuiConflict, data
 	}
 
