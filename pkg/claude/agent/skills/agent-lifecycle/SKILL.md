@@ -1,6 +1,6 @@
 ---
 name: agent-lifecycle
-description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and `tclaude agent clone [follow-up]`. Lets a long-running agent self-throttle on context pressure without the human babysitting. `compact` is a /compact slash-injection that preserves identity. `reincarnate` replaces self with a fresh CC instance that inherits identity — REQUIRES a follow-up so the fresh pane isn't idle. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. Use periodically — at ~50% on a 1M context window or ~75% on a 200k window — to avoid context rot. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
+description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and `tclaude agent clone [follow-up]`. The mechanics a long-running agent uses to act on context pressure. `compact` is a /compact slash-injection that preserves identity but compacts history blindly (lossy, slow, undirected) — kept mainly for compatibility. `reincarnate` replaces self with a fresh CC instance that inherits identity and lets you choose what context carries forward (the preferred mechanism for most tasks) — REQUIRES a follow-up so the fresh pane isn't idle. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. WHEN and whether to use them — and at what context %, if any — is a policy that belongs to your project/operator; this skill documents the capability, it does not prescribe a cadence or threshold. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
@@ -29,41 +29,78 @@ window** — the percentage is the authoritative signal that Claude Code
 itself computes. On a 200k-window model the absolute number is off by
 5x, but the percentage threshold-based decision is still correct.
 
-## When to compact / reincarnate
+## When to reincarnate (or compact) — your project's call, not this skill's
 
 Context rot is real: as the window fills you become slower, less
-coherent, and more likely to forget early instructions. The thresholds
-that work in practice depend on **how big your context window is**:
+coherent, and more likely to forget early instructions. These commands
+exist to let you *do something* about it — but **this skill deliberately
+does not hardcode when, or at what context %, to act.** That timing is a
+policy decision, and it belongs to — in roughly this order of authority:
 
-- **1M context window (Opus 4.7 1M and similar):** start considering
-  compaction around **50%**. You can stretch to 60–70% on focused work,
-  but past that the rot is noticeable. The window is large enough that
-  even after compaction you have plenty of headroom.
-- **200k context window (most other models):** push to **75%** or so.
-  The window is small enough that compacting too early throws away
-  useful context every few turns.
+- a **direct instruction from the human** at the moment ("reincarnate
+  and pick up from X"),
+- your **project's** conventions (`CLAUDE.md`, the group's norms),
+- the operator's **global settings / context**,
+- and the **task at hand** — a tight, focused task tolerates a fuller
+  window than a sprawling exploratory one.
 
-Either way, **don't wait until auto-compact triggers**. By then you're
-already deep into the rotted regime. Pre-empt it: poll
-`context-info`, and run `compact` once you're near your threshold.
+Baking a single threshold into a bundled tool's skill would impose one
+project's policy on every project, so we don't.
+
+If you want a concrete anchor and nothing above gave you one:
+**reincarnating around ~300–400k tokens (≈30–40% on a 1M-window model)
+is one reasonable rhythm.** Take that as *one illustrative option, not a
+recommendation* — lighter or heavier both work, and because
+`reincarnate` is cheap and lets you *choose* what carries forward (see
+below) you can comfortably do it early and often rather than nursing a
+fat, rotting window.
+
+Two steady defaults, whatever threshold you land on:
+
+- **Don't `/compact` on a timer.** It's lossy and slow (see below), and
+  an unprompted `/compact` appearing in a pane is surprising to a human
+  watching. When you free context, reach for `reincarnate`.
+- **`tclaude agent context-info` is free** — check where you stand
+  whenever you like, independent of any decision to act.
+
+The rest of this skill is reference: what each verb does, how to hand
+off work, the charset/delivery rules, and the manager pattern.
 
 ## Compact vs. reincarnate vs. clone
 
 - `compact` — CC summarises the prior turns and replaces them with a
-  short recap. **Default choice** for "I want to keep going on the
-  same task without losing my place." Identity, conv-id, name, and
-  most state survive; just the message history is abbreviated.
-- `reincarnate` — heavier. The daemon spawns a brand new CC instance,
-  migrates your identity (groups, per-conv permissions, ownerships)
-  onto the new conv-id, and soft-stops the old one. The new agent
-  comes up with a **clean context window** but the same identity. Use
-  when:
+  short recap, in place. Identity, conv-id, name, and most state survive.
+  Its fundamental limitation is that it is **undirected**: CC has no way
+  of knowing what you'll care about *going forward* — that you only need
+  a subset of the history, or that you're deliberately tuning context for
+  a specific follow-up task. It just compacts the conversation in
+  general, **lossily**, and — because it runs a full LLM summarisation
+  pass over the whole window — **slowly**; you then keep accumulating in
+  the same conversation. Kept mainly for compatibility; in practice
+  `reincarnate` is almost always the better choice.
+- `reincarnate` — the daemon spawns a fresh CC instance, migrates your
+  identity (groups, per-conv permissions, ownerships) onto the new
+  conv-id, and soft-stops the old one. The new agent keeps your identity
+  but doesn't drag the old message log along — it starts with **only the
+  context you hand it.** That is *not* a clean restart (neither compact
+  nor reincarnate is for starting over — both carry context forward); it
+  is a more efficient, more focused *continuation*. Its decisive
+  advantage over `compact` is that the handoff is **directed**: *you*
+  choose what the successor carries forward. It isn't lossless either — you can't
+  carry *everything* across — but unlike `compact` you get to
+  **prioritise what to keep and what to drop**: bring exactly what the
+  *next* task needs (a notes file, the specific files/decisions) and let
+  the rest go. Curated, not blindly compressed. And despite
+  "spawning a new instance" sounding heavy, it is **not** the heavy
+  option — a fresh pane is usually *faster* than a `/compact` (no
+  summarisation pass) and far more precise. So **for most ongoing tasks
+  it is the preferred tool**; reach for it over `compact` unless you have
+  a specific reason to stay in the same conversation. Especially when:
   - You're switching to an unrelated task and prior context would
     actively interfere.
-  - Compact has left you stuck — too much summary fluff, can't shake
-    a wrong direction.
-  - You're at the very tail of the context window and even a compact
-    won't buy enough headroom.
+  - You want the next stretch focused on a specific subset of what you
+    know — bring exactly that forward, drop the rest.
+  - You're at (or near) the tail of the context window.
 - `clone` — fork instead of replace. Original keeps running; the
   clone spawns alongside as a sibling that inherits identity (renamed
   to a `<title>-c-<N>` title suffix) and, by default, the same
@@ -85,7 +122,8 @@ with no memory of what you were working on. If you don't write down
 where you were, the work is lost.
 
 **The follow-up prompt is REQUIRED** for `reincarnate` — the new pane
-comes up with a clean context window and would otherwise sit idle. So
+comes up with nothing in context until your handoff lands, and would
+otherwise sit idle. So
 even when you have no concrete next directive, you must hand the
 successor *something* to start from. The convention this repo (and
 others should) adopt:
@@ -112,10 +150,13 @@ Pick up by re-reading that file and asking the human how to proceed."`
 The notes file is for *you*, not the human — bullet points with paths
 are fine, polish isn't required.
 
-For `compact`, the same advice applies but with lower stakes: a
-post-compact summary is lossy but not blank, and the follow-up there
-is optional. Reincarnate is harder — treat it like closing a tab with
-no recovery.
+This is the discipline `reincarnate` asks of you — and it's the same
+property that makes it the better tool: the successor starts with only
+what you hand it, so the handoff note is exactly where you decide what
+carries forward. Treat it like closing a tab you can't reopen, and leave
+yourself everything the next stretch needs. (`compact` skips the note —
+its lossy recap isn't blank — but that's also why it can't focus on
+what matters next.)
 
 ## Don't reload massive context after compact / reincarnate
 
@@ -142,7 +183,7 @@ tclaude agent context-info
 # context: 47% (~470k of ~1.0M tokens, assumes 1M window)
 # compact: idle
 
-# Approaching threshold — write down what matters
+# Before you compact or reincarnate — write down what matters
 # (do this in your tools — Read/Edit/Write — not via tclaude)
 
 # Compact in-place, with a follow-up that lands after the summary
