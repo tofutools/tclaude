@@ -2,7 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # main-codex is the long-lived harness-independence integration branch; gate
+    # its increment PRs with the same CI as main. Drop it once main-codex→main lands.
+    branches: [main, main-codex]
 
 permissions:
   contents: read
