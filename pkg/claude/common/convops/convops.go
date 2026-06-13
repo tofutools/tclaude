@@ -49,7 +49,19 @@ type SessionEntry struct {
 	// Harness is the coding tool this conversation belongs to ("claude",
 	// "codex", …). Sourced from the conv_index.harness column; empty on a
 	// fresh parse, which the DB layer coalesces to "claude" (schema v56).
-	Harness  string `json:"harness,omitempty"`
+	Harness string `json:"harness,omitempty"`
+	// Model is the model the conversation ran on, populated at load time
+	// by the harness's ConvStore (not persisted in conv_index, like
+	// FileSize). Claude Code leaves it empty here — CC's per-session model
+	// lives on the `sessions` row, not the conv file; Codex fills it from
+	// the `threads.model` sidecar column, where it's the natural source
+	// for the dashboard model badge (JOH-162).
+	//
+	// (Codex's `threads` sidecar also surfaces `preview` and
+	// `tokens_used`; those are intentionally NOT added as SessionEntry
+	// fields yet — nothing renders them. Add them in the slice that does,
+	// per "no load fields without a consumer".)
+	Model    string `json:"model,omitempty"`
 	FileSize int64  `json:"-"` // Populated at load time, not persisted in index
 	// ArchivedAt is the canonical archived signal sourced from
 	// `conv_index.archived_at`. RFC3339 timestamp string when archived,

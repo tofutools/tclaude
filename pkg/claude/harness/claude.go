@@ -1,10 +1,13 @@
 package harness
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // init registers the Claude Code harness as the default. Claude Code is
@@ -18,6 +21,7 @@ func init() {
 		Spawn:       claudeSpawner{},
 		Models:      claudeModels{},
 		Life:        claudeLifecycle{},
+		Convs:       claudeConvStore{},
 	})
 }
 
@@ -91,6 +95,100 @@ func (claudeModels) EffortLevels() []string {
 // injections on these tokens.
 type claudeLifecycle struct{}
 
-func (claudeLifecycle) RenameCommand() string  { return "/rename" }
-func (claudeLifecycle) CompactCommand() string { return "/compact" }
+func (claudeLifecycle) RenameCommand() string   { return "/rename" }
+func (claudeLifecycle) CompactCommand() string  { return "/compact" }
 func (claudeLifecycle) SoftExitCommand() string { return "/exit" }
+
+// claudeConvStore assembles conversations from Claude Code's storage
+// model — one cwd-indexed `.jsonl` per conv under ~/.claude/projects — by
+// delegating to the existing convops read paths. It's the reference impl
+// the Codex ConvStore (JOH-152) plugs in beside; the production callers
+// (conv ls / search / dashboard) are rewired to enumerate every
+// registered harness in the multi-harness enumeration slice (JOH-153).
+type claudeConvStore struct{}
+
+// ListConvs returns the conversations under cwd's Claude project dir, or —
+// when cwd is the empty sentinel — every indexed conversation across all
+// projects (served from the conv_index cache, the same fast path watch
+// mode uses).
+func (claudeConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) {
+	if cwd == "" {
+		return convops.LoadEntriesFromDB("")
+	}
+	idx, err := convops.LoadSessionsIndex(convops.GetClaudeProjectPath(cwd))
+	if err != nil {
+		return nil, err
+	}
+	return idx.Entries, nil
+}
+
+// Resolve maps an id prefix to a conv via the conv_index cache. It
+// distinguishes the three outcomes the contract requires: no match
+// (nil, nil), an unreadable store (nil, err), and an ambiguous prefix
+// (nil, err) — never collapsing the latter two into "not found". An exact
+// id match always wins over prefix matches.
+func (claudeConvStore) Resolve(idPrefix, cwd string, global bool) (*ConvRef, error) {
+	if idPrefix == "" {
+		return nil, nil
+	}
+
+	var rows []*db.ConvIndexRow
+	var err error
+	if global {
+		rows, err = db.ListAllConvIndex()
+	} else {
+		rows, err = db.ListConvIndex(convops.GetClaudeProjectPath(cwd))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve conversation %q: %w", idPrefix, err)
+	}
+
+	// An exact id match is unambiguous regardless of how many other ids
+	// share it as a prefix.
+	for _, r := range rows {
+		if r.ConvID == idPrefix {
+			return claudeConvRef(r), nil
+		}
+	}
+
+	var matches []*db.ConvIndexRow
+	for _, r := range rows {
+		if strings.HasPrefix(r.ConvID, idPrefix) {
+			matches = append(matches, r)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, nil
+	case 1:
+		return claudeConvRef(matches[0]), nil
+	default:
+		return nil, fmt.Errorf("ambiguous conversation id %q: matches %d conversations", idPrefix, len(matches))
+	}
+}
+
+// Title returns the conv's display title, refreshing from the `.jsonl` if
+// it changed on disk. Priority mirrors SessionEntry.DisplayTitle:
+// customTitle > summary > first prompt. An unknown conv is ("", nil).
+func (claudeConvStore) Title(convID string) (string, error) {
+	row := convops.RefreshConvIndexEntry(convID)
+	if row == nil {
+		return "", nil
+	}
+	switch {
+	case row.CustomTitle != "":
+		return row.CustomTitle, nil
+	case row.Summary != "":
+		return row.Summary, nil
+	default:
+		return row.FirstPrompt, nil
+	}
+}
+
+func claudeConvRef(r *db.ConvIndexRow) *ConvRef {
+	return &ConvRef{
+		ConvID:      r.ConvID,
+		ProjectPath: r.ProjectPath,
+		Harness:     r.Harness,
+	}
+}
