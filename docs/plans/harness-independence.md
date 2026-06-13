@@ -9,6 +9,26 @@ Status: investigation complete; implementation not started. Linear project
 > research it rests on (coupling inventory + Codex CLI facts). The plan is
 > the locked-in part; the knowledge pool is reference, not commitments.
 
+## Workflow & branching (every agent: read first)
+
+This project uses a **long-lived integration branch: `main-codex`** ("dual
+mains"). `main` stays clean / Codex-free for the whole project so the operator
+can switch between a Codex-enabled build (`main-codex`) and a plain build
+(`main`) at will.
+
+- **All project work targets `main-codex`, NOT `main`.** Each increment (a
+  milestone slice / one issue) is its own small PR **merged into `main-codex`**.
+- Do feature work in a **worktree branched off `main-codex`**
+  (`git worktree add … -b <feature> main-codex`); open the PR with **base
+  `main-codex`**.
+- **`main-codex` → `main` is a much-later decision**, only once the whole
+  feature set is robust end-to-end (CLI + data model + agentd + dashboard).
+  No PR to `main` for this project without explicit operator sign-off.
+- Force-pushing `main-codex` is fine (feature branch); `main` is not.
+
+**Completeness bar:** a robust, fully-integrated feature set across all of
+tclaude — not a partial/subset release.
+
 ---
 
 ## Plan (committed shape)
