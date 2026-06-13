@@ -25,6 +25,9 @@ func TestCCHookInstaller_AttachedToClaudeDescriptor(t *testing.T) {
 	wantInstalled, wantMissing, wantRepair := CheckHooksInstalled()
 	gotInstalled, gotMissing, gotRepair := h.Hooks.Check()
 	assert.Equal(t, wantInstalled, gotInstalled)
-	assert.Equal(t, wantMissing, gotMissing)
+	// missing is a set built by iterating a map, so its order is not
+	// stable between calls — compare membership, not order (otherwise this
+	// flakes whenever missing is non-empty, e.g. on a clean CI home).
+	assert.ElementsMatch(t, wantMissing, gotMissing)
 	assert.Equal(t, wantRepair, gotRepair)
 }

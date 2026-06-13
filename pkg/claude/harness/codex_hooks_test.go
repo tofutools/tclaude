@@ -10,6 +10,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// seedTclaudeOnPath makes clcommon.DetectCmd resolve to a bare "tclaude"
+// for the duration of a test by putting an executable named "tclaude" on
+// PATH. Without this, DetectCmd falls back to os.Executable() — under `go
+// test` that's the test binary (e.g. "harness.test"), whose basename is NOT
+// "tclaude", so isOurCodexHook (a basename==tclaude match) fails to
+// recognise the freshly-installed hook. In production the binary IS
+// tclaude, so the two always agree; this only removes the dependency on
+// whether the developer happens to have tclaude on PATH (it's absent in
+// CI). Unix-only stub, which matches the CI matrix (ubuntu + macos).
+func seedTclaudeOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "tclaude")
+	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // TestCodexHookInstaller_InstallAndCheck installs into a temp ~/.codex and
 // verifies Check reports installed for every Codex event, and the on-disk
 // hooks.json matches the verified Codex format: {"hooks": {<Event>:
@@ -56,6 +73,7 @@ func TestCodexHookInstaller_InstallAndCheck(t *testing.T) {
 // duplicate tclaude hooks accumulate.
 func TestCodexHookInstaller_Idempotent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	seedTclaudeOnPath(t) // installed command must have basename "tclaude" for isOurCodexHook
 	inst := codexHookInstaller{}
 	require.NoError(t, inst.Install())
 	require.NoError(t, inst.Install())
@@ -87,6 +105,7 @@ func TestCodexHookInstaller_Idempotent(t *testing.T) {
 func TestCodexHookInstaller_PreservesUserContent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t) // installed command must have basename "tclaude" for isOurCodexHook
 	dir := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	seed := `{
