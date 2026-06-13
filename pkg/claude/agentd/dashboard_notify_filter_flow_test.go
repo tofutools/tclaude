@@ -40,7 +40,7 @@ func notified(t *testing.T, sessionID, convID string) bool {
 
 func notifiedTransition(t *testing.T, sessionID, convID, from, to string) bool {
 	t.Helper()
-	notify.OnStateTransition(sessionID, convID, from, to, "/tmp/x", "worker")
+	notify.OnStateTransition(sessionID, convID, from, to, "/tmp/x", "worker", "claude")
 	_, found, err := db.GetNotifyTime(sessionID)
 	require.NoError(t, err, "GetNotifyTime(%s)", sessionID)
 	return found

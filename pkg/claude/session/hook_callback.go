@@ -502,7 +502,22 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	state.LastHook = time.Now()
 
-	// Update state based on hook event
+	// Update state based on hook event. This switch is tclaude's
+	// cross-harness event→status map. Claude Code and Codex deliver the
+	// same snake_case payload field names through the same
+	// `tclaude session hook-callback` — the parse of a Codex hook payload
+	// into HookCallbackInput is JOH-157's contract — so both harnesses
+	// drive this switch unchanged. Codex fires only a SUBSET of these
+	// events (no Notification, SessionEnd, StopFailure or
+	// PostToolUseFailure), so JOH-159's two degradations are handled by
+	// what the subset DOES carry:
+	//   - needs-attention comes from PermissionRequest (Codex has no
+	//     Notification(permission_prompt)); both land on
+	//     StatusAwaitingPermission below.
+	//   - exit comes from the session reaper (tmux has-session → PID
+	//     liveness, RefreshSessionStatus) rather than a SessionEnd hook.
+	// A subset event tclaude doesn't model (e.g. PreCompact) falls through
+	// to the default arm: last_hook is stamped, status is left untouched.
 	switch input.HookEventName {
 	case "UserPromptSubmit":
 		state.Status = StatusWorking
@@ -832,9 +847,12 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// Look up conversation title for notification
 	convTitle := getConvTitle(state.ConvID, state.Cwd)
 
-	// Notify on state transition (handles cooldown internally)
+	// Notify on state transition (handles cooldown internally). The
+	// harness drives the banner attribution ("Codex: …" vs "Claude: …");
+	// the cooldown + mute ladder inside OnStateTransition are
+	// harness-agnostic.
 	if input.HookEventName != "SessionStart" {
-		notify.OnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle)
+		notify.OnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle, state.Harness)
 	}
 
 	return nil

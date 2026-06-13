@@ -33,8 +33,10 @@ func IsEnabled() bool {
 // (AllowedForConv) and the cooldown via the database, and sends a
 // notification if appropriate. convID identifies the agent for the
 // filter lookup; convTitle is optional - pass empty string if not
-// available.
-func OnStateTransition(sessionID, convID, from, to, cwd, convTitle string) {
+// available. harness is the session's coding tool ("claude", "codex",
+// …) and drives the banner title attribution; pass "" for the historical
+// Claude-Code default.
+func OnStateTransition(sessionID, convID, from, to, cwd, convTitle, harness string) {
 	// A no-op "transition" never notifies — and an explicit config rule
 	// cannot opt back in. Without this guard, CC's ~60s idle timer fires
 	// a Notification(idle_prompt) hook that re-stamps an already-idle
@@ -76,7 +78,7 @@ func OnStateTransition(sessionID, convID, from, to, cwd, convTitle string) {
 		}
 	}
 
-	Send(sessionID, formatStatus(to), cwd, convTitle)
+	sendWithHarness(sessionID, formatStatus(to), cwd, convTitle, harness)
 
 	// Record notification time
 	_ = db.SetNotifyTime(sessionID)
@@ -129,6 +131,26 @@ func AllowedForConv(convID string) bool {
 	return true
 }
 
+// harnessLabel maps a session's harness id to the label used in the
+// notification banner title. The empty/unknown harness defaults to
+// "Claude" so Claude Code notifications — and harness-neutral callers
+// like the task runner and rate-limit warnings, which go through Send —
+// read exactly as before.
+func harnessLabel(harness string) string {
+	switch harness {
+	case "codex": // session.SessionState.Harness for OpenAI Codex CLI
+		return "Codex"
+	default:
+		return "Claude"
+	}
+}
+
+// notificationTitle composes the banner title from the harness label and
+// the human-readable status, truncated to the platform title budget.
+func notificationTitle(harness, status string) string {
+	return truncate(fmt.Sprintf("%s: %s", harnessLabel(harness), status), notifyTitleMaxLen)
+}
+
 // formatStatus returns a human-readable status string.
 func formatStatus(status string) string {
 	switch status {
@@ -151,13 +173,22 @@ func formatStatus(status string) string {
 	}
 }
 
-// Send actually sends the notification.
+// Send actually sends the notification, attributing the banner to Claude
+// Code (the historical default). Callers that know the session's harness
+// reach the harness-aware path through OnStateTransition instead.
 func Send(sessionID, status, cwd, convTitle string) {
+	sendWithHarness(sessionID, status, cwd, convTitle, "")
+}
+
+// sendWithHarness builds and dispatches a notification, attributing the
+// banner title to the session's harness ("Codex: …" vs "Claude: …").
+func sendWithHarness(sessionID, status, cwd, convTitle, harness string) {
 	slog.Debug("sending notification",
 		"sessionID", sessionID,
 		"status", status,
 		"cwd", cwd,
 		"convTitle", convTitle,
+		"harness", harness,
 	)
 
 	// Build notification content
@@ -166,7 +197,7 @@ func Send(sessionID, status, cwd, convTitle string) {
 		projectName = "unknown"
 	}
 
-	title := truncate(fmt.Sprintf("Claude: %s", status), notifyTitleMaxLen)
+	title := notificationTitle(harness, status)
 
 	// Build body: ID | Project - conversation title
 	var body string
