@@ -7,6 +7,7 @@
 import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
 import { renderGroupsTab, renderSudoTab } from './tabs.js';
 import { toggleMessageCollapse } from './render.js';
+import { dashPrefs } from './prefs.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
@@ -214,8 +215,8 @@ function bindRowActions() {
           const okey = 'tclaude.dash.group.offline.' + group;
           const cur = groupOfflineOverride(group);
           const next = cur === 'inherit' ? 'show' : cur === 'show' ? 'hide' : 'inherit';
-          if (next === 'inherit') localStorage.removeItem(okey);
-          else localStorage.setItem(okey, next);
+          if (next === 'inherit') dashPrefs.removeItem(okey);
+          else dashPrefs.setItem(okey, next);
           renderGroupsTab();
           return;
         }
@@ -380,7 +381,7 @@ function bindRowActions() {
           // grants without scrolling through unrelated rows.
           const filterInput = $('#filter-sudo');
           filterInput.value = shortId(conv);
-          try { localStorage.setItem('tclaude.dash.filter.sudo', filterInput.value); } catch (_) {}
+          try { dashPrefs.setItem('tclaude.dash.filter.sudo', filterInput.value); } catch (_) {}
           $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'sudo'));
           $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-sudo'));
           renderSudoTab();
@@ -687,9 +688,9 @@ function bindRowActions() {
             }
             // Move the persisted "is open" flag onto the new key so
             // the details stays in the state the user left it in.
-            const wasOpen = localStorage.getItem('tclaude.dash.group.' + oldName) === '1';
-            localStorage.removeItem('tclaude.dash.group.' + oldName);
-            if (wasOpen) localStorage.setItem('tclaude.dash.group.' + newName, '1');
+            const wasOpen = dashPrefs.getItem('tclaude.dash.group.' + oldName) === '1';
+            dashPrefs.removeItem('tclaude.dash.group.' + oldName);
+            if (wasOpen) dashPrefs.setItem('tclaude.dash.group.' + newName, '1');
             renameEditing = false;
             toast(`renamed: ${oldName} → ${newName}`);
             refresh();

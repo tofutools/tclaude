@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 55
+const currentVersion = 56
 
 func migrate(db *sql.DB) error {
 	ver := schemaVersion(db)
@@ -353,6 +353,56 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 56 {
+		if err := migrateV55toV56(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV55toV56 adds dashboard_prefs — a flat key→value store for the
+// browser dashboard's "sticky" view/config preferences (group
+// expand/collapse, per-tab filters and toggles, the sort state, the
+// spawn-modal auto-focus checkbox, and the per-model spawn effort
+// memory). These used to live in the browser's localStorage, but the
+// dashboard is served on a RANDOM loopback port each daemon start and
+// localStorage is partitioned by origin (scheme+host+port) — so every
+// such setting silently reset on restart. Moving them server-side
+// makes them survive restarts, browser profiles and multiple tabs (the
+// same reasoning the slop volume sliders already use, via config.json).
+//
+// Values are stored verbatim as the opaque strings the dashboard wrote
+// to localStorage ('1'/'0', filter text, a JSON blob) — the daemon
+// never looks inside them, so a flat TEXT KV is all that's needed; no
+// JSON/JSONB column type buys anything here.
+//
+// CREATE TABLE IF NOT EXISTS is idempotent, so a half-applied earlier
+// run converges on re-run (the migrateV53toV54 convention); the whole
+// thing rides one transaction with the version bump.
+func migrateV55toV56(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v55→v56 (add dashboard_prefs): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS dashboard_prefs (
+			key        TEXT PRIMARY KEY,
+			value      TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+
+		UPDATE schema_version SET version = 56;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v55→v56 (add dashboard_prefs): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v55→v56 (add dashboard_prefs): commit: %w", err)
+	}
 	return nil
 }
 

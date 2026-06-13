@@ -7,18 +7,28 @@
 // part of the Stage 2 module split.
 
 import { esc } from './helpers.js';
+import { dashPrefs } from './prefs.js';
 
 // --- column sorting --------------------------------------------------
 // Every primary table (group members, cron, sudo, links) has
 // clickable headers. The active sort — a {col, dir} pair keyed by a
-// stable table name — lives in sortState and is mirrored to
-// localStorage so it survives reloads and the 2s auto-refresh.
-// Clicking a header cycles asc → desc → unsorted; the third click
-// drops back to the server's own ordering.
+// stable table name — lives in sortState and is mirrored to the
+// server-backed dashPrefs store so it survives reloads, the 2s
+// auto-refresh, and daemon restarts (the random per-start port made
+// the old localStorage copy reset every restart). Clicking a header
+// cycles asc → desc → unsorted; the third click drops back to the
+// server's own ordering.
 const SORT_LS_KEY = 'tclaude.dash.sort';
 let sortState = {};
-try { sortState = JSON.parse(localStorage.getItem(SORT_LS_KEY)) || {}; }
-catch (_) { sortState = {}; }
+
+// loadSortState (re)seeds sortState from dashPrefs. dashPrefs reads are
+// only valid after initDashPrefs() has populated its cache, so this is
+// called from the boot IIFE rather than at import time — the cache is
+// empty during module evaluation.
+function loadSortState() {
+  try { sortState = JSON.parse(dashPrefs.getItem(SORT_LS_KEY)) || {}; }
+  catch (_) { sortState = {}; }
+}
 
 // cycleSort advances one table's sort through the three-state cycle
 // and persists the result.
@@ -31,8 +41,8 @@ function cycleSort(tableKey, col) {
   } else {
     delete sortState[tableKey];
   }
-  try { localStorage.setItem(SORT_LS_KEY, JSON.stringify(sortState)); }
-  catch (_) { /* private-mode / quota — sort still works in-memory */ }
+  try { dashPrefs.setItem(SORT_LS_KEY, JSON.stringify(sortState)); }
+  catch (_) { /* write-through is best-effort — sort still works in-memory */ }
 }
 
 // sortHead builds a table's <thead> from a column spec. Each spec
@@ -173,7 +183,7 @@ const LINK_ACCESSORS = {
 };
 
 export {
-  cycleSort, sortHead, applySort,
+  cycleSort, sortHead, applySort, loadSortState,
   MEMBER_COLS, MEMBER_ACCESSORS, CRON_COLS, CRON_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
 };
