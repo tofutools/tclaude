@@ -1,0 +1,302 @@
+package harness
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+)
+
+// codexHookEvents is the set of Codex hook events tclaude registers its
+// callback for. These are Codex's event names (PascalCase, per
+// HookEventsToml in openai/codex codex-rs/config/src/hook_config.rs at
+// rust-v0.139.0) — a SUBSET of Claude Code's: Codex has no Notification,
+// SessionEnd, StopFailure or PostToolUseFailure. The status state machine
+// already tolerates a harness firing fewer events (a session with no
+// SessionEnd is reaped via Stop + process-exit, the same fallback the CC
+// path uses for interrupted turns).
+var codexHookEvents = []string{
+	"SessionStart",
+	"UserPromptSubmit",
+	"Stop",
+	"PreToolUse",
+	"PostToolUse",
+	"PermissionRequest",
+	"PreCompact",
+	"PostCompact",
+	"SubagentStart",
+	"SubagentStop",
+}
+
+// codexHooksPath is ~/.codex/hooks.json — Codex's dedicated hooks file
+// (config_folder.join("hooks.json") in codex's discovery.rs). tclaude owns
+// this file rather than editing the user's config.toml [hooks] table:
+// Codex loads both and warns when they conflict, so a separate file keeps
+// tclaude's hooks cleanly separable.
+func codexHooksPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "hooks.json")
+}
+
+// codexHookCommand mirrors Codex's HookHandlerConfig::Command variant
+// (serde tag = "type"). tclaude only ever writes the command form; the
+// optional commandWindows/timeout/async/statusMessage fields are omitted.
+type codexHookCommand struct {
+	Type    string `json:"type"` // always "command"
+	Command string `json:"command"`
+}
+
+// codexMatcherGroup mirrors Codex's MatcherGroup. tclaude writes a single
+// matcher-less (catch-all) group per event.
+type codexMatcherGroup struct {
+	Matcher string             `json:"matcher,omitempty"`
+	Hooks   []codexHookCommand `json:"hooks"`
+}
+
+// codexHookInstaller installs the tclaude callback into ~/.codex/hooks.json.
+// It manages tclaude's matcher groups surgically — preserving any other
+// top-level keys and any non-tclaude matcher groups the user has — the
+// same belt-and-suspenders approach session.InstallHooks uses for CC's
+// settings.json.
+type codexHookInstaller struct{}
+
+func (codexHookInstaller) ConfigTarget() string { return codexHooksPath() }
+
+// TrustNote: Codex won't run a non-managed command hook until it's trusted
+// (a sha256 trusted_hash persisted in config.toml [hooks.state], written
+// when the user approves the TUI startup hooks review). The exact wording
+// here — interactive-trust vs. the Spawner passing
+// --dangerously-bypass-hook-trust — is pending an operator decision
+// (bridges the Codex Spawner); for now it states the requirement plainly.
+func (codexHookInstaller) TrustNote() string {
+	return "Codex runs command hooks only after they're trusted. On first launch, approve the tclaude hook in Codex's startup hooks review (the trust persists). " +
+		"(Automated/unattended spawns may instead require launching with --dangerously-bypass-hook-trust — pending finalization.)"
+}
+
+// codexHookCommandStr is the callback command tclaude installs — the same
+// `tclaude session hook-callback` every harness invokes (the callback
+// reads a snake_case JSON payload from stdin; Codex's payload matches
+// Claude Code's field-for-field).
+func codexHookCommandStr() string {
+	return clcommon.DetectCmd("session", "hook-callback")
+}
+
+// isOurCodexHook reports whether a hook command belongs to tclaude (any
+// path whose basename is "tclaude").
+func isOurCodexHook(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	return filepath.Base(fields[0]) == "tclaude"
+}
+
+// Check reports whether the tclaude callback is installed for every
+// required Codex event with the current binary. missing lists events that
+// lack it; needsRepair is true when a stale (wrong-binary) or duplicate
+// tclaude hook is present.
+func (codexHookInstaller) Check() (installed bool, missing []string, needsRepair bool) {
+	path := codexHooksPath()
+	if path == "" {
+		return false, []string{"all"}, false
+	}
+	hooks, _, err := readCodexHooks(path)
+	if err != nil {
+		// Unreadable/missing file → everything is missing, nothing to repair.
+		return false, []string{"all (" + err.Error() + ")"}, false
+	}
+
+	want := codexHookCommandStr()
+	for _, groupsRaw := range hooks {
+		if codexHooksNeedCleanup(groupsRaw, want) {
+			needsRepair = true
+			break
+		}
+	}
+	for _, event := range codexHookEvents {
+		if !codexHooksContain(hooks[event], want) {
+			missing = append(missing, event)
+		}
+	}
+	return len(missing) == 0, missing, needsRepair
+}
+
+// Install installs or repairs the tclaude callback for every required
+// Codex event, preserving any other top-level keys and non-tclaude matcher
+// groups. Idempotent.
+func (codexHookInstaller) Install() error {
+	path := codexHooksPath()
+	if path == "" {
+		return fmt.Errorf("cannot determine codex hooks path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create ~/.codex: %w", err)
+	}
+
+	hooks, top, err := readCodexHooks(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if hooks == nil {
+		hooks = map[string]json.RawMessage{}
+	}
+	if top == nil {
+		top = map[string]json.RawMessage{}
+	}
+
+	want := codexHookCommandStr()
+
+	// First pass: strip every tclaude hook from every event (prevents
+	// duplicates / clears stale binaries).
+	for event, groupsRaw := range hooks {
+		cleaned, removed, err := removeOurCodexHooks(groupsRaw)
+		if err != nil {
+			return fmt.Errorf("clean codex hooks for %s: %w", event, err)
+		}
+		if removed {
+			if cleaned == nil {
+				delete(hooks, event)
+			} else {
+				hooks[event] = cleaned
+			}
+		}
+	}
+
+	// Second pass: add the current tclaude group to each required event,
+	// appending to any non-tclaude groups already there.
+	group := codexMatcherGroup{Hooks: []codexHookCommand{{Type: "command", Command: want}}}
+	groupJSON, err := json.Marshal(group)
+	if err != nil {
+		return err
+	}
+	for _, event := range codexHookEvents {
+		var groups []json.RawMessage
+		if existing, ok := hooks[event]; ok {
+			if err := json.Unmarshal(existing, &groups); err != nil {
+				return fmt.Errorf("parse codex hooks for %s: %w", event, err)
+			}
+		}
+		groups = append(groups, groupJSON)
+		merged, err := json.Marshal(groups)
+		if err != nil {
+			return err
+		}
+		hooks[event] = merged
+	}
+
+	hooksJSON, err := json.Marshal(hooks)
+	if err != nil {
+		return err
+	}
+	top["hooks"] = hooksJSON
+	out, err := json.MarshalIndent(top, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// readCodexHooks reads ~/.codex/hooks.json and returns the event→groups
+// map (the "hooks" object) plus the full top-level object (so callers can
+// preserve other keys on write). A missing file returns (nil, nil, err)
+// with os.IsNotExist(err) true.
+func readCodexHooks(path string) (hooks map[string]json.RawMessage, top map[string]json.RawMessage, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	top = map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	hooks = map[string]json.RawMessage{}
+	if raw, ok := top["hooks"]; ok {
+		if err := json.Unmarshal(raw, &hooks); err != nil {
+			return nil, top, fmt.Errorf("parse hooks in %s: %w", path, err)
+		}
+	}
+	return hooks, top, nil
+}
+
+// codexHooksContain reports whether an event's groups already include the
+// tclaude callback with the current command.
+func codexHooksContain(groupsRaw json.RawMessage, want string) bool {
+	if len(groupsRaw) == 0 {
+		return false
+	}
+	var groups []codexMatcherGroup
+	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
+		return false
+	}
+	for _, g := range groups {
+		for _, h := range g.Hooks {
+			if h.Command == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// codexHooksNeedCleanup reports whether an event's groups carry a stale
+// (wrong-binary) tclaude hook or a duplicate of the current one.
+func codexHooksNeedCleanup(groupsRaw json.RawMessage, want string) bool {
+	var groups []codexMatcherGroup
+	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
+		return false
+	}
+	ours := 0
+	for _, g := range groups {
+		for _, h := range g.Hooks {
+			if isOurCodexHook(h.Command) {
+				if h.Command != want {
+					return true
+				}
+				ours++
+			}
+		}
+	}
+	return ours > 1
+}
+
+// removeOurCodexHooks strips every tclaude hook from an event's groups,
+// dropping a group that becomes empty. Returns the new groups JSON (nil
+// when no groups remain), whether anything was removed, and any error.
+func removeOurCodexHooks(groupsRaw json.RawMessage) (json.RawMessage, bool, error) {
+	var groups []codexMatcherGroup
+	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
+		return groupsRaw, false, err
+	}
+	var kept []codexMatcherGroup
+	removed := false
+	for _, g := range groups {
+		var kh []codexHookCommand
+		for _, h := range g.Hooks {
+			if isOurCodexHook(h.Command) {
+				removed = true
+			} else {
+				kh = append(kh, h)
+			}
+		}
+		if len(kh) > 0 {
+			kept = append(kept, codexMatcherGroup{Matcher: g.Matcher, Hooks: kh})
+		}
+	}
+	if !removed {
+		return groupsRaw, false, nil
+	}
+	if len(kept) == 0 {
+		return nil, true, nil
+	}
+	out, err := json.Marshal(kept)
+	return out, true, err
+}

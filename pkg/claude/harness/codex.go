@@ -25,6 +25,7 @@ func init() {
 		Spawn:       codexSpawner{},
 		Models:      codexModels{},
 		Convs:       codexConvStore{},
+		Hooks:       codexHookInstaller{},
 	})
 }
 
