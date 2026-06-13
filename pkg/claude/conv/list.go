@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
@@ -66,10 +67,11 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 	loadOpts := LoadSessionsIndexOptions{ForceRescan: params.Reindex}
 
 	if params.Global {
-		// List all projects
+		// List all Claude projects. A missing projects dir is not fatal —
+		// there may still be other-harness (Codex) conversations.
 		projectsDir := ClaudeProjectsDir()
 		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(stderr, "Error reading projects directory: %v\n", err)
 			return 1
 		}
@@ -85,6 +87,9 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 			}
 			allEntries = append(allEntries, index.Entries...)
 		}
+
+		// Merge every other registered harness (Codex, …), all dirs.
+		allEntries = appendNonClaudeHarnessEntries(allEntries, "")
 	} else {
 		// Single directory
 		targetDir := params.Dir
@@ -97,22 +102,21 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 			}
 		}
 
+		// Load Claude conversations if this dir has a project dir. A missing
+		// one is no longer fatal — the directory may still have other-harness
+		// (Codex) conversations, merged just below.
 		projectPath := GetClaudeProjectPath(targetDir)
-
-		// Check if project directory exists
-		if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-			fmt.Fprintf(stderr, "No Claude conversations found for %s\n", targetDir)
-			return 1
+		if _, err := os.Stat(projectPath); err == nil {
+			index, err := LoadSessionsIndexWithOptions(projectPath, loadOpts)
+			if err != nil {
+				fmt.Fprintf(stderr, "Error loading sessions index: %v\n", err)
+				return 1
+			}
+			allEntries = index.Entries
 		}
 
-		// Load index
-		index, err := LoadSessionsIndexWithOptions(projectPath, loadOpts)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error loading sessions index: %v\n", err)
-			return 1
-		}
-
-		allEntries = index.Entries
+		// Merge every other registered harness (Codex, …) for this dir.
+		allEntries = appendNonClaudeHarnessEntries(allEntries, targetDir)
 	}
 
 	// Filter by time if specified
@@ -227,6 +231,16 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 		}
 	}
 
+	// Only surface the Harness column once a non-Claude-Code conv is in the
+	// list, so a CC-only listing is unchanged. Empty / "claude" don't count.
+	showHarness := false
+	for _, e := range entries {
+		if e.Harness != "" && e.Harness != harness.DefaultName {
+			showHarness = true
+			break
+		}
+	}
+
 	t := table.NewWriter()
 	t.SetOutputMirror(stdout)
 	t.SetStyle(table.StyleLight)
@@ -236,6 +250,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 
 	// Build header
 	header := table.Row{"ID"}
+	if showHarness {
+		header = append(header, "Harness")
+	}
 	if showProject {
 		header = append(header, "Project")
 	}
@@ -255,6 +272,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	// Calculate fixed column widths
 	// ID=8, Modified=16, borders/padding ~20
 	fixedWidth := 8 + 16 + 20
+	if showHarness {
+		fixedWidth += 9 // Harness column
+	}
 	if showProject {
 		fixedWidth += 43 // Project column
 	}
@@ -285,6 +305,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 		modified := formatDate(e.Modified)
 
 		row := table.Row{e.SessionID[:8]}
+		if showHarness {
+			row = append(row, harnessBadge(e.Harness))
+		}
 		if showProject {
 			row = append(row, shortenPath(e.ProjectPath, 41))
 		}
@@ -303,6 +326,16 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	}
 
 	t.Render()
+}
+
+// harnessBadge renders the harness label for the conv list. An empty
+// harness — a CC conv indexed before the harness column existed — reads as
+// the default "claude".
+func harnessBadge(h string) string {
+	if h == "" {
+		return harness.DefaultName
+	}
+	return h
 }
 
 func cleanPrompt(prompt string) string {
