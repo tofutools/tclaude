@@ -363,6 +363,33 @@ func resolvePermission(convID, slug string) permResolution {
 // the resolved conv-id for an agent. On failure the response is
 // already written; the caller just returns.
 func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (string, bool) {
+	return requirePermissionEx(w, r, perm, nil)
+}
+
+// requireGroupPermission gates a GROUP-scoped endpoint behind perm with
+// the structural rule that OWNING g confers perm by default. It is
+// requirePermission plus an owner-of-this-group bypass: owner-state
+// raises the default group-lifecycle slugs (groups.spawn / groups.stop /
+// groups.retire / groups.resume) so a lead can run its own team's
+// lifecycle without an explicit grant. Consistent with the universal
+// precedence — the bypass fills only the permUndecided gap, an explicit
+// deny override still suppresses it, and a non-owner still needs the slug.
+func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string, g *db.AgentGroup) (string, bool) {
+	return requirePermissionEx(w, r, perm, func(convID string) bool {
+		owns, err := db.IsAgentGroupOwner(g.ID, convID)
+		return err == nil && owns
+	})
+}
+
+// requirePermissionEx is the shared core of requirePermission and
+// requireGroupPermission. ownerBypass, when non-nil, is consulted with
+// the resolved caller conv-id ONLY when the slug is otherwise undecided
+// (no grant, no deny) — a structural grant that fills the default-slug
+// gap. It is deliberately NOT consulted on permDeny: a deny override is
+// always authoritative and suppresses the bypass, the same precedence
+// every other gate follows. ownerBypass == nil reproduces plain
+// requirePermission behaviour exactly.
+func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass func(convID string) bool) (string, bool) {
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
@@ -390,9 +417,19 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 	slog.Debug("requirePermission: resolved caller",
 		"conv", p.ConvID, "row_present", row != nil, "title", title, "perm", perm)
 	// Defaults, per-conv grant/deny overrides, and sudo grants all
-	// resolve in resolvePermission. permDeny and permUndecided both
-	// fall through to the popup-or-403 path below.
-	allowed := resolvePermission(p.ConvID, perm) == permAllow
+	// resolve in resolvePermission. A permAllow passes; a permUndecided
+	// may still pass via the structural owner bypass; permDeny is
+	// authoritative and (like an undecided with no bypass) falls through
+	// to the popup-or-403 path below.
+	allowed := false
+	switch resolvePermission(p.ConvID, perm) {
+	case permAllow:
+		allowed = true
+	case permUndecided:
+		allowed = ownerBypass != nil && ownerBypass(p.ConvID)
+	case permDeny:
+		// Authoritative deny — suppresses the owner bypass.
+	}
 	if !allowed {
 		// Permission denied. If the caller asked for a human-override
 		// popup (via X-Tclaude-Ask-Human: <duration>), open one and

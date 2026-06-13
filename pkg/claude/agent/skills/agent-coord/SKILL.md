@@ -214,7 +214,10 @@ when you need to compact or reincarnate yourself, not this one.
   permission-gated. By default agents can't run them. Humans bypass
   the gate. Slugs: `groups.create`, `groups.rm`, `groups.stop`,
   `groups.resume`, `groups.retire`, `member.add`, `member.remove`,
-  `member.redesignate`.
+  `member.redesignate`. A **group owner gets the lifecycle verbs for
+  its own group by default** — `groups.spawn` / `groups.stop` /
+  `groups.retire` / `groups.resume`, plus `human.notify` — without an
+  explicit grant (an explicit deny override still suppresses them).
 
   Permissions live in two places:
   - **Defaults** — `agent.default_permissions` in

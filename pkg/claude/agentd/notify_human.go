@@ -148,25 +148,23 @@ func notifyHumanSenderSessionID(callerConv string) string {
 // requireNotifyHumanPermission gates POST /v1/notify-human. The caller
 // passes if ANY of:
 //
+//   - they are the human, or hold the human.notify slug (config default
+//     / per-conv grant / sudo), or clear the X-Tclaude-Ask-Human popup;
 //   - they own at least one group — a group owner is a trusted
-//     coordinating role and may always reach the human, slug or not;
-//   - they are the human, hold the human.notify slug, or clear the
-//     X-Tclaude-Ask-Human popup — all handled by requirePermission.
+//     coordinating role and gets human.notify by default, slug or not.
 //
-// The group-owner check runs first so it also covers an owner who was
-// never granted the slug. Returns (callerConvID, ok); callerConvID is
-// "" for the human path. On failure the response is already written.
+// The owner default is realised as a structural bypass at the
+// permUndecided level (via requirePermissionEx), so the universal
+// precedence holds: a permAllow grant passes, and an explicit deny
+// override is authoritative and suppresses the owner default too — deny
+// always wins, the same as every other gate. Returns (callerConvID, ok);
+// callerConvID is "" for the human path. On failure the response is
+// already written.
 func requireNotifyHumanPermission(w http.ResponseWriter, r *http.Request) (string, bool) {
-	p := peerFromContext(r.Context())
-	if classify(p) == classAgent {
-		if owned, err := db.ListGroupsOwnedBy(p.ConvID); err == nil && len(owned) > 0 {
-			return p.ConvID, true
-		}
-	}
-	// Everyone else: the standard slug gate — human bypass, the
-	// human.notify slug (config default / per-conv grant / sudo), and the
-	// X-Tclaude-Ask-Human popup escape hatch, with a 403 otherwise.
-	return requirePermission(w, r, PermHumanNotify)
+	return requirePermissionEx(w, r, PermHumanNotify, func(convID string) bool {
+		owned, err := db.ListGroupsOwnedBy(convID)
+		return err == nil && len(owned) > 0
+	})
 }
 
 // notifyHumanCallerTitle resolves a caller conv-id to its display title

@@ -48,7 +48,7 @@ type groupOpResp struct {
 // Members that aren't currently online are reported as
 // `skipped:already_offline` and skipped — stop is idempotent.
 func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsStop); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsStop, g); !ok {
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
@@ -112,7 +112,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 // — resume is idempotent. The "ensure my team is up" reconciliation
 // the TODO design described.
 func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsResume); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsResume, g); !ok {
 		return
 	}
 	members, err := db.ListAgentGroupMembers(g.ID)
@@ -217,7 +217,7 @@ type groupRetireResp struct {
 // group-owner structural bypass is a single-agent-endpoint affordance,
 // not a bulk one.
 func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requirePermission(w, r, PermGroupsRetire)
+	caller, ok := requireGroupPermission(w, r, PermGroupsRetire, g)
 	if !ok {
 		return
 	}
@@ -483,11 +483,14 @@ func pickAliveSession(convID string) *db.SessionRow {
 // run arbitrary CC instances on the human's machine, blast radius
 // matches `agent.spawn` in the design doc).
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	// requirePermission also hands back the caller's conv-id: a real
+	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
 	// the human resolves to "". It is the default reply-to target for
-	// the startup briefing assembled further down.
-	spawnerConvID, ok := requirePermission(w, r, PermGroupsSpawn)
+	// the startup briefing assembled further down. Owners of g pass
+	// without an explicit groups.spawn grant (owner-state default); the
+	// spawn guardrails below still bind them (member cap, rate limit) and
+	// already treat an owner as allowed for the group restriction.
+	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsSpawn, g)
 	if !ok {
 		return
 	}

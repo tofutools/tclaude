@@ -465,8 +465,13 @@ has [classified the caller](#identity), it decides:
 1. **Human?** Pass — the human bypasses every gate.
 2. **Agent?** Allowed iff the slug is in `default_permissions`
    (global), the agent's per-conv grants (SQLite), or an active
-   `sudo` elevation. Owning a group also passes the `agent.*`
-   manager-pattern checks against members of that group.
+   `sudo` elevation. **Group-owner state** raises an owner's default
+   slugs: owning a group confers, for that group, the `agent.*`
+   manager-pattern checks against its members, the group-lifecycle
+   verbs (`groups.spawn` / `groups.stop` / `groups.retire` /
+   `groups.resume`), and `human.notify` (owning any group). These owner
+   defaults fill only the *undecided* gap — an explicit **deny** override
+   is always authoritative and suppresses them, read or write.
 3. **Neither?** Refused fail-closed — see [Identity](#identity).
 
 ### Storage split
