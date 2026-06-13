@@ -6,10 +6,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 )
 
-// codexHarnessName is the stable identifier Codex conversations are tagged
-// with, in the DB `harness` column and on every SessionEntry the Codex
-// ConvStore returns.
-const codexHarnessName = "codex"
+// CodexName is the stable identifier Codex conversations are tagged with,
+// in the DB `harness` column and on every SessionEntry the Codex ConvStore
+// returns. Exported so callers outside this package (e.g. the session hook
+// callback) can recognise a Codex session row without re-spelling "codex".
+const CodexName = "codex"
 
 // init registers the OpenAI Codex CLI harness. It provides the ConvStore
 // (read conversations from Codex's rollout files + threads state DB; see
@@ -20,7 +21,7 @@ const codexHarnessName = "codex"
 // routes a Codex rename through ConvStore.SetTitle (a JOH-161 stub today).
 func init() {
 	Register(&Harness{
-		Name:        codexHarnessName,
+		Name:        CodexName,
 		DisplayName: "Codex CLI",
 		Spawn:       codexSpawner{},
 		Models:      codexModels{},
