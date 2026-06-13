@@ -85,27 +85,67 @@ func TestCodexSpawner_BypassHookTrust(t *testing.T) {
 	}
 }
 
-// TestCodexModels covers the minimal catalog: model pass-through, effort
-// rejected-with-guidance, empty values stay empty.
+// TestCodexModels covers the catalog (JOH-155): pass-through of a Codex
+// model, rejection of a Claude Code slug, and tclaude effort levels
+// accepted (validated like CC; mapped to Codex reasoning by the spawner).
 func TestCodexModels(t *testing.T) {
 	c := codexModels{}
 
 	if got, err := c.ValidateModel("  gpt-5-codex "); err != nil || got != "gpt-5-codex" {
-		t.Fatalf("ValidateModel should trim + pass through, got (%q, %v)", got, err)
+		t.Fatalf("ValidateModel should trim + pass through a codex model, got (%q, %v)", got, err)
 	}
 	if got, err := c.ValidateModel(""); err != nil || got != "" {
 		t.Fatalf("empty model stays empty, got (%q, %v)", got, err)
+	}
+	// A Claude Code slug/ID is rejected for the codex harness.
+	for _, cc := range []string{"opus", "Opus", "sonnet", "claude-fable-5", "fable[1m]"} {
+		if _, err := c.ValidateModel(cc); err == nil {
+			t.Fatalf("ValidateModel(%q) must reject a Claude Code model for codex", cc)
+		}
 	}
 
 	if got, err := c.ValidateEffort(""); err != nil || got != "" {
 		t.Fatalf("empty effort is allowed, got (%q, %v)", got, err)
 	}
-	if _, err := c.ValidateEffort("high"); err == nil {
-		t.Fatalf("a non-empty effort must error until the codex reasoning mapping is wired")
+	if got, err := c.ValidateEffort("  High "); err != nil || got != "high" {
+		t.Fatalf("ValidateEffort should accept + normalise a tclaude level, got (%q, %v)", got, err)
 	}
+	if _, err := c.ValidateEffort("bogus"); err == nil {
+		t.Fatalf("an unknown effort level must error")
+	}
+	if len(c.EffortLevels()) == 0 {
+		t.Fatalf("codex now exposes tclaude's effort levels")
+	}
+}
 
-	if len(c.Models()) != 0 || len(c.EffortLevels()) != 0 {
-		t.Fatalf("codex catalog should not curate model/effort suggestions yet")
+// TestCodexReasoningEffort pins the tclaude-effort → Codex-reasoning map.
+func TestCodexReasoningEffort(t *testing.T) {
+	for in, want := range map[string]string{
+		"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh",
+	} {
+		if got := codexReasoningEffort(in); got != want {
+			t.Fatalf("codexReasoningEffort(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestCodexSpawner_Effort covers the reasoning-effort config emission:
+// unset → no -c flag; set → `-c model_reasoning_effort="<mapped>"`, with
+// max mapping to xhigh.
+func TestCodexSpawner_Effort(t *testing.T) {
+	if got := codexBuild("", "", "", "", nil); strings.Contains(got, "model_reasoning_effort") {
+		t.Fatalf("unset effort must omit the reasoning config, got %q", got)
+	}
+	got := codexBuild("", "", "high", "", nil)
+	if !strings.Contains(got, `model_reasoning_effort="high"`) {
+		t.Fatalf("effort high must emit model_reasoning_effort=\"high\", got %q", got)
+	}
+	if !strings.Contains(got, "-c ") {
+		t.Fatalf("reasoning effort must be passed via -c, got %q", got)
+	}
+	got = codexBuild("", "", "max", "", nil)
+	if !strings.Contains(got, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("effort max must map to xhigh, got %q", got)
 	}
 }
 

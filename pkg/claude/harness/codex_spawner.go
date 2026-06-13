@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -26,12 +27,9 @@ func (codexSpawner) Binary() string { return "codex" }
 //
 // Working directory is NOT passed via `-C/--cd`: tclaude launches the
 // pane with `tmux new-session -c <cwd>`, and Codex uses the pane's cwd —
-// the same way the CC spawner relies on tmux for cwd. Sandbox policy and
-// reasoning effort are deliberately omitted: their mapping onto tclaude's
-// model is a research item (sandbox → JOH-166, reasoning/effort → the M2
-// mapping), and codexModels.ValidateEffort rejects a non-empty effort
-// today, so spec.Effort is always "" here. Codex falls back to its own
-// config defaults for both.
+// the same way the CC spawner relies on tmux for cwd. Effort maps onto
+// Codex's reasoning-effort config (JOH-155); sandbox policy is still
+// omitted (→ JOH-166), so Codex uses its own sandbox default.
 func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	cmd := spec.EnvExports + "codex"
 	if spec.ResumeID != "" {
@@ -51,6 +49,15 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// `codex resume <id>` (shared option).
 		cmd += " --model " + clcommon.ShellQuoteArg(spec.Model)
 	}
+	if spec.Effort != "" {
+		// Codex has no `--effort` flag; reasoning effort is a config
+		// value, set via `-c model_reasoning_effort=…`. The value is a
+		// TOML-quoted string (matching Codex's own `-c model="o3"`
+		// convention) and the whole `key="value"` is shell-quoted as one
+		// arg. spec.Effort is a validated tclaude level; codexReasoningEffort
+		// maps it onto Codex's scale.
+		cmd += " -c " + clcommon.ShellQuoteArg(`model_reasoning_effort="`+codexReasoningEffort(spec.Effort)+`"`)
+	}
 	if len(spec.ExtraArgs) > 0 {
 		quoted := make([]string, len(spec.ExtraArgs))
 		for i, a := range spec.ExtraArgs {
@@ -61,38 +68,53 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	return cmd
 }
 
-// codexModels is a minimal ModelCatalog for Codex (JOH-154). Model
-// validation is pass-through and effort is rejected-with-guidance until
-// the reasoning mapping is settled — enough to make `session new
-// --harness codex [--model …]` work without prematurely freezing the
-// effort↔reasoning question.
+// codexModels is the ModelCatalog for Codex (JOH-154/155). It validates a
+// model is not a Claude Code slug (otherwise pass-through, since Codex
+// validates its own per-release model set) and accepts tclaude's effort
+// levels, which codexSpawner maps onto Codex's reasoning-effort scale.
 type codexModels struct{}
 
-// ValidateModel passes a non-empty model through (trimmed). Codex's model
-// set changes with releases and Codex validates the value itself at
-// launch, so tclaude does not curate a list that would go stale; an empty
-// value stays empty → the spawner omits `--model` and Codex uses its own
-// default.
+// ValidateModel rejects a Claude Code model slug/ID chosen for a Codex
+// session (a clear error beats forwarding e.g. "opus" or "claude-fable-5"
+// to `codex --model`, which fails opaquely at launch). Any other non-empty
+// value passes through trimmed: Codex's model set changes per release and
+// Codex validates it itself, so tclaude doesn't curate a list that would
+// go stale. Empty stays empty → the spawner omits `--model`.
 func (codexModels) ValidateModel(s string) (string, error) {
-	return strings.TrimSpace(s), nil
-}
-
-// ValidateEffort accepts only the empty value for now. Codex exposes
-// reasoning effort via `-c model_reasoning_effort=…`, but its levels
-// (minimal/low/medium/high) don't map 1:1 onto tclaude's
-// (low/medium/high/xhigh/max) — that mapping is an open M2 question. Until
-// it's settled, a non-empty effort errors rather than silently doing
-// nothing or guessing a mapping.
-func (codexModels) ValidateEffort(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", nil
 	}
-	return "", fmt.Errorf("reasoning effort is not yet wired for the codex harness (open M2 mapping); omit --effort for codex sessions")
+	// clcommon.IsValidModel recognises CC aliases (opus, sonnet, …) and
+	// claude-* full IDs; fold case the way clcommon.ValidateModel does.
+	if clcommon.IsValidModel(strings.ToLower(s)) {
+		return "", fmt.Errorf("%q is a Claude Code model; the codex harness uses OpenAI models (e.g. gpt-5, gpt-5-codex)", s)
+	}
+	return s, nil
 }
 
-// Models / EffortLevels return no curated suggestions yet — Codex's model
-// set isn't enumerated here and effort is unmapped. Spawn UIs fall back to
-// free-form entry; ValidateModel/ValidateEffort remain the authority.
+// ValidateEffort accepts tclaude's effort levels — a harness-agnostic
+// concept — validating them exactly as Claude Code does. The level →
+// Codex reasoning-effort mapping is applied by codexSpawner.BuildCommand
+// when it emits the config override (see codexReasoningEffort).
+func (codexModels) ValidateEffort(s string) (string, error) {
+	return clcommon.ValidateEffort(s)
+}
+
+// Models returns no curated suggestions — Codex's model set changes per
+// release, so ValidateModel (reject-CC-slug, else pass-through) is the
+// authority. EffortLevels returns tclaude's levels, now valid for Codex.
 func (codexModels) Models() []string       { return nil }
-func (codexModels) EffortLevels() []string { return nil }
+func (codexModels) EffortLevels() []string { return slices.Clone(clcommon.ValidEffortLevels) }
+
+// codexReasoningEffort maps a validated tclaude effort level onto Codex's
+// reasoning-effort scale. Codex's ReasoningEffort is
+// none/minimal/low/medium/high/xhigh; tclaude's low/medium/high/xhigh pass
+// straight through, and "max" — which Codex has no separate level for —
+// maps to Codex's highest, "xhigh".
+func codexReasoningEffort(effort string) string {
+	if effort == "max" {
+		return "xhigh"
+	}
+	return effort // low / medium / high / xhigh map 1:1
+}
