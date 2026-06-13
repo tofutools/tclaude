@@ -400,16 +400,46 @@ function roleCell(m, g) {
   return `<span class="role-edit" ${attrs} title="Edit role, ownership and permissions">${inner}</span>`;
 }
 
+// notifyMenuItem renders the per-agent OS-notification control as a ⚙
+// options-menu row. It used to be an always-visible 🔔/🔕 bell beside
+// the status dot, but the agent-ctl cluster was getting crowded, so the
+// control now lives in the menu. One click still cycles the override
+// inherit → off → on → inherit; the data-act / data-mode the row-action
+// dispatcher reads are unchanged — only the presentation moved. The
+// label states the current mode (and, for inherit, the effective
+// on/off after group mutes) so the menu row is self-describing; the
+// title keeps the full explanation. The global master switch (top-bar
+// bell) still sits above all of this.
+function notifyMenuItem(m) {
+  const label = m.title || m.conv_id;
+  const mode = m.notify || 'inherit';
+  const effective = !!m.notify_effective;
+  const glyph = (mode === 'off' || (mode === 'inherit' && !effective)) ? '🔕' : '🔔';
+  let text, tip;
+  if (mode === 'off') {
+    text = `${glyph} notify: off`;
+    tip = `notifications muted for ${label} — click to force ON (overrides a group mute)`;
+  } else if (mode === 'on') {
+    text = `${glyph} notify: on`;
+    tip = `notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`;
+  } else {
+    text = `${glyph} notify: inherit (${effective ? 'on' : 'off'})`;
+    tip = `notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`;
+  }
+  return `<button data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
+}
+
 // memberActions renders the per-row action cell for a real group
 // member. focus + hide stay at the TOP LEVEL — the window pair,
 // disabled when the agent is offline — and everything heavier (term,
-// clone, reincarnate, edit, the owner toggle, sudo, permissions, cron,
-// remove-from-group) is collected behind the ⚙ options cog so the row
-// stays uncluttered. The cog is always present and enabled.
+// clone, reincarnate, edit, the owner toggle, sudo, permissions,
+// notifications, cron, remove-from-group) is collected behind the ⚙
+// options cog so the row stays uncluttered. The cog is always present
+// and enabled.
 function memberActions(g, m) {
   const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
-    + permMemberButton(m) + cronMemberButton(m) + removeMemberButton(g, m);
+    + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m) + removeMemberButton(g, m);
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
 // cloneAgentButton renders a "clone" button for any row that
@@ -564,7 +594,7 @@ function removeMemberButton(g, m) {
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m) {
   const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
-    + sudoMemberButton(m) + permMemberButton(m) + cronMemberButton(m)
+    + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m)
     + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }

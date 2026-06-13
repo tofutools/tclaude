@@ -32,7 +32,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 
 	// render.js: wired into the member control cell — same column as the
 	// dot/actions, NOT a new <td>.
-	must("${agentStatusDot(m)}${memberNotifyBell(m)}${actions}</div>${harnessLine(m)}", "harnessLine renders in the agent-ctl cell")
+	must("${agentStatusDot(m)}${actions}</div>${harnessLine(m)}", "harnessLine renders in the agent-ctl cell")
 
 	// The always-visible label is shortModel()-compressed; the FULL name
 	// stays in the tooltip (the title attr / the status-dot tip).
