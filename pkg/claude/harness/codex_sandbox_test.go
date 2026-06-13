@@ -66,6 +66,39 @@ func TestResolveSandboxMode(t *testing.T) {
 	}
 }
 
+// TestValidateSandboxMode is the no-default variant the direct `session new`
+// path uses: it must NOT inject the harness default (the human's own
+// session keeps their config.toml sandbox_mode unless they pass --sandbox),
+// but still validate an explicit value and reject a mode for a flagless
+// harness.
+func TestValidateSandboxMode(t *testing.T) {
+	codex, err := Resolve(CodexName)
+	if err != nil {
+		t.Fatalf("Resolve(codex): %v", err)
+	}
+	claude := Default()
+
+	// Codex: unset stays "" (NO default — the key difference from Resolve).
+	if got, err := ValidateSandboxMode(codex, ""); err != nil || got != "" {
+		t.Fatalf("ValidateSandboxMode(codex, \"\") = %q,%v; want \"\",nil (must not default)", got, err)
+	}
+	// Codex: explicit validated + passed through.
+	if got, err := ValidateSandboxMode(codex, SandboxReadOnly); err != nil || got != SandboxReadOnly {
+		t.Fatalf("ValidateSandboxMode(codex, read-only) = %q,%v; want %q,nil", got, err, SandboxReadOnly)
+	}
+	// Codex: junk → error.
+	if _, err := ValidateSandboxMode(codex, "nope"); err == nil {
+		t.Fatalf("ValidateSandboxMode(codex, nope) must error")
+	}
+	// Claude: unset → ""; explicit → error.
+	if got, err := ValidateSandboxMode(claude, ""); err != nil || got != "" {
+		t.Fatalf("ValidateSandboxMode(claude, \"\") = %q,%v; want \"\",nil", got, err)
+	}
+	if _, err := ValidateSandboxMode(claude, SandboxWorkspaceWrite); err == nil {
+		t.Fatalf("ValidateSandboxMode(claude, workspace-write) must error")
+	}
+}
+
 // TestCodexSandboxCwdConflict pins the cwd-safety guard: a writable Codex
 // sandbox (workspace-write) confines writes to the cwd subtree, so a cwd
 // at/above $HOME (or at/above a protected state dir) exposes those dirs

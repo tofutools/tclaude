@@ -28,9 +28,11 @@ type SandboxCatalog interface {
 	ValidateMode(mode string) (string, error)
 }
 
-// ResolveSandboxMode is the single entry point the spawn boundaries (CLI
-// `session new`, agentd spawn/resume) use to turn a requested sandbox mode
-// into the value to thread into SpawnSpec.SandboxMode:
+// ResolveSandboxMode is the entry point the *daemon* spawn boundaries
+// (agentd spawn/resume/clone/reincarnate, `tclaude agent spawn`) use to turn
+// a requested sandbox mode into the value to thread into
+// SpawnSpec.SandboxMode. It applies the secure default, because an
+// agentd-spawned agent is the untrusted party that must be sandboxed:
 //
 //   - Harness has no launch sandbox flag (Claude Code): an explicit mode is
 //     an error (its sandbox is settings.json-driven, not a launch flag); an
@@ -42,15 +44,28 @@ type SandboxCatalog interface {
 // the flag.
 func ResolveSandboxMode(h *Harness, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
-	if !h.SupportsSandbox() {
-		if requested != "" {
-			return "", fmt.Errorf("harness %q has no launch-time sandbox mode "+
-				"(its sandbox is configured out of band, not via --sandbox)", h.Name)
-		}
+	if requested == "" && h.SupportsSandbox() {
+		requested = h.Sandbox.DefaultMode()
+	}
+	return ValidateSandboxMode(h, requested)
+}
+
+// ValidateSandboxMode validates a requested mode WITHOUT applying the
+// harness default — empty stays empty (omit the flag). It is the direct
+// `tclaude session new` path's entry point: the human running session new is
+// the trust root, so tclaude must not silently override their own
+// config.toml sandbox_mode — it only emits --sandbox when they pass it
+// explicitly (the daemon spawn path uses ResolveSandboxMode for the secure
+// default instead). An explicit mode for a harness with no launch sandbox
+// flag (Claude Code) is still an error.
+func ValidateSandboxMode(h *Harness, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
 		return "", nil
 	}
-	if requested == "" {
-		requested = h.Sandbox.DefaultMode()
+	if !h.SupportsSandbox() {
+		return "", fmt.Errorf("harness %q has no launch-time sandbox mode "+
+			"(its sandbox is configured out of band, not via --sandbox)", h.Name)
 	}
 	return h.Sandbox.ValidateMode(requested)
 }

@@ -48,12 +48,14 @@ type NewParams struct {
 	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
 
 	// Sandbox selects a harness's launch-time OS-sandbox mode (Codex's
-	// --sandbox). Empty defaults to the harness's secure mode for a
-	// tclaude-spawned agent (Codex: workspace-write — writes confined to
-	// cwd+/tmp+$TMPDIR, network denied). danger-full-access disables it.
-	// Not applicable to Claude Code (settings.json-driven), which errors if
-	// it is set. See JOH-192.
-	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = the harness's secure default (Codex: workspace-write). Not applicable to claude"`
+	// --sandbox). On a direct `session new` it is opt-in: unset emits no
+	// flag, so Codex uses the user's own config.toml sandbox_mode (the human
+	// running session new is the trust root — tclaude doesn't override their
+	// config). Pass a value to sandbox explicitly. The daemon spawn path
+	// (agentd / `agent spawn`) defaults it to workspace-write instead, since
+	// a spawned agent is the untrusted party. Not applicable to Claude Code
+	// (settings.json-driven), which errors if it is set. See JOH-192.
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
@@ -155,13 +157,16 @@ func runNew(params *NewParams) error {
 	}
 	params.Model = model
 
-	// Resolve --sandbox up front: for a harness with a launch sandbox flag
-	// (Codex) an empty value becomes its secure default (workspace-write),
-	// an explicit value is validated; for a harness without one (Claude
-	// Code) an explicit value errors and empty stays "". The cwd-safety
-	// check needs the resolved cwd, so it happens later (just before the
-	// spawn command is built).
-	sandboxMode, err := harness.ResolveSandboxMode(h, params.Sandbox)
+	// Validate --sandbox up front WITHOUT defaulting it: a direct
+	// `tclaude session new` is the human's own session, and the human is the
+	// trust root — tclaude must not silently override their config.toml
+	// sandbox_mode, so we emit --sandbox only when they pass it explicitly.
+	// (The daemon spawn path is where the workspace-write default belongs —
+	// an agentd-spawned agent is the untrusted party — and it threads the
+	// resolved mode in as an explicit --sandbox.) An explicit mode for a
+	// harness without a launch sandbox flag (Claude Code) errors here. The
+	// cwd-safety check needs the resolved cwd, so it happens later.
+	sandboxMode, err := harness.ValidateSandboxMode(h, params.Sandbox)
 	if err != nil {
 		return err
 	}

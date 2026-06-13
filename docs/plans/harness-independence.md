@@ -355,7 +355,13 @@ per-spawn, leave the user's `config.toml`/profiles untouched, and match how
 `--model`/effort are already passed). CC's `Spawner` ignores the field (its
 sandbox is `settings.json`-driven, not a launch flag). **Never default to
 `danger-full-access`**; expose it only behind the same explicit opt-in as
-CC's "no sandbox". Pair with the cwd!=$HOME guard above.
+CC's "no sandbox". Pair with the cwd!=$HOME guard above. **The
+`workspace-write` default applies to *daemon-spawned* agents only**
+(agentd / `agent spawn` / resume / clone / reincarnate) — the integrity
+threat is an *agent* property. A direct `tclaude session new --harness
+codex` is the human's own session (they are the trust root), so it does
+**not** default-inject `--sandbox` — it stays an explicit opt-in there and
+otherwise respects the user's `config.toml` `sandbox_mode`.
 
 **Recommendation — `setup` contract.** There is **no Codex equivalent of
 `tclaude setup --install-sandbox-hardening` to build** for the *integrity*
@@ -384,11 +390,13 @@ row updated; nested-sandbox question answered. **Spawner implementation
 SHIPPED (JOH-192):** `SpawnSpec.SandboxMode` + a `SandboxCatalog` capability
 on the harness descriptor (`Harness.Sandbox`, nil for CC); `codexSpawner`
 emits `--sandbox <mode>`; `ResolveSandboxMode` defaults Codex to
-`workspace-write` and rejects a mode for CC; the `CodexSandboxCwdConflict`
-cwd-guard refuses a workspace-write spawn rooted at/above `$HOME` (a clean
-400 at the agentd boundary + a `session new` error); threaded through the
-agentd Spawner / `session new` / `agent spawn` paths (resume/clone/
-reincarnate re-default it since the mode isn't persisted). M5 (spawn-dialog
+`workspace-write` for the **daemon** spawn paths (agentd / `agent spawn` /
+resume / clone / reincarnate — the untrusted-agent case), while
+`ValidateSandboxMode` keeps direct `tclaude session new --harness codex`
+opt-in (no default-inject; respects the user's `config.toml`); both reject a
+mode for CC. The `CodexSandboxCwdConflict` cwd-guard refuses a
+workspace-write spawn rooted at/above `$HOME` (a clean 400 at the agentd
+boundary + a `session new` error when `--sandbox workspace-write` is passed). M5 (spawn-dialog
 selector + dashboard badge) remains the follow-up.
 
 ### E. CC ↔ Codex oversight / Auto-review mapping (JOH-167 — researched)
