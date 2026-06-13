@@ -47,6 +47,16 @@ type NewParams struct {
 	// rest of runNew stays harness-agnostic.
 	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
 
+	// Sandbox selects a harness's launch-time OS-sandbox mode (Codex's
+	// --sandbox). On a direct `session new` it is opt-in: unset emits no
+	// flag, so Codex uses the user's own config.toml sandbox_mode (the human
+	// running session new is the trust root — tclaude doesn't override their
+	// config). Pass a value to sandbox explicitly. The daemon spawn path
+	// (agentd / `agent spawn`) defaults it to workspace-write instead, since
+	// a spawned agent is the untrusted party. Not applicable to Claude Code
+	// (settings.json-driven), which errors if it is set. See JOH-192.
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -146,6 +156,21 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Model = model
+
+	// Validate --sandbox up front WITHOUT defaulting it: a direct
+	// `tclaude session new` is the human's own session, and the human is the
+	// trust root — tclaude must not silently override their config.toml
+	// sandbox_mode, so we emit --sandbox only when they pass it explicitly.
+	// (The daemon spawn path is where the workspace-write default belongs —
+	// an agentd-spawned agent is the untrusted party — and it threads the
+	// resolved mode in as an explicit --sandbox.) An explicit mode for a
+	// harness without a launch sandbox flag (Claude Code) errors here. The
+	// cwd-safety check needs the resolved cwd, so it happens later.
+	sandboxMode, err := harness.ValidateSandboxMode(h, params.Sandbox)
+	if err != nil {
+		return err
+	}
+	params.Sandbox = sandboxMode
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -265,12 +290,25 @@ func runNew(params *NewParams) error {
 	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
+	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
+	// confines writes to the cwd subtree, so a cwd at/above $HOME would make
+	// ~/.tclaude / ~/.codex / ~/.claude writable and defeat the protection.
+	// Refuse that rather than spawn an agent with a false sense of
+	// containment. No-op for harnesses/modes that don't write outside cwd.
+	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandboxMode, cwd, home) {
+		return fmt.Errorf("refusing to launch a %s agent in %q under --sandbox %s: "+
+			"that cwd contains your tclaude/Codex/Claude state dirs, which the sandbox would make writable "+
+			"(defeating it). Run the agent from a project subdirectory, or pass --sandbox %s to opt out of the sandbox",
+			h.Name, cwd, sandboxMode, harness.SandboxDangerFull)
+	}
+
 	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports: envExports,
-		ResumeID:   fullConvID,
-		Effort:     effort,
-		Model:      model,
-		ExtraArgs:  extraArgs,
+		EnvExports:  envExports,
+		ResumeID:    fullConvID,
+		Effort:      effort,
+		Model:       model,
+		ExtraArgs:   extraArgs,
+		SandboxMode: sandboxMode,
 	})
 
 	// Create tmux session with claude

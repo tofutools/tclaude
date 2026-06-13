@@ -34,6 +34,15 @@ type SpawnSpec struct {
 	// enforced); it is a deliberate supply-chain trade-off (repo-local
 	// `./.codex` hooks become trusted), so callers opt in explicitly.
 	BypassHookTrust bool
+	// SandboxMode names the launch-time OS-sandbox mode for harnesses that
+	// take one (Codex's `--sandbox {read-only|workspace-write|
+	// danger-full-access}`). "" omits the flag entirely; the Spawner emits
+	// `--sandbox <mode>` per-spawn so the user's config.toml/profiles stay
+	// untouched. Harnesses without a launch sandbox flag (Claude Code —
+	// settings.json-driven) ignore it. Validate via Harness.Sandbox /
+	// ResolveSandboxMode before building the spec. See JOH-192 +
+	// docs/plans/harness-independence.md §D.
+	SandboxMode string
 }
 
 // Spawner builds the in-tmux launch command for a harness from a

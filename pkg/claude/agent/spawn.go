@@ -80,6 +80,15 @@ type SpawnRequest struct {
 	// (so a Codex spawn is checked against Codex's rules, not Claude's).
 	Harness string `json:"harness,omitempty"`
 
+	// SandboxMode picks the launch-time OS-sandbox mode for a harness that
+	// takes one (Codex's --sandbox). Empty resolves to the harness's secure
+	// default (Codex: workspace-write — writes confined to cwd+/tmp+$TMPDIR,
+	// network denied), so a daemon-owned Codex agent is sandboxed by
+	// default; danger-full-access opts out. Forwarded to `tclaude session
+	// new --sandbox <mode>`. Not applicable to Claude Code (settings.json-
+	// driven), which rejects a non-empty value. See JOH-192.
+	SandboxMode string `json:"sandbox,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -148,6 +157,11 @@ type SpawnParams struct {
 	// (no explicit short) for the same reason as Effort/Model — boa's
 	// short-flag enricher must not steal a letter from an existing field.
 	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude (default) | codex. Effort/model are validated against the chosen harness's own rules"`
+
+	// Sandbox is the launch-time OS-sandbox mode for a harness that takes
+	// one (Codex). Declared last (no explicit short) for the same reason as
+	// the fields above.
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode for the new agent: read-only|workspace-write|danger-full-access. Unset = the harness's secure default (Codex: workspace-write). Not applicable to claude"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -270,6 +284,15 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Resolve --sandbox to the harness's secure default (Codex:
+	// workspace-write) when unset, validate an explicit value, and reject a
+	// mode for a harness with no launch sandbox flag (claude). The daemon
+	// re-resolves + applies the cwd-safety guard server-side.
+	sandboxMode, err := harness.ResolveSandboxMode(h, p.Sandbox)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	cwd := p.Cwd
 	if cwd == "" {
 		if wd, err := os.Getwd(); err == nil {
@@ -289,6 +312,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Effort:         effort,
 		Model:          model,
 		Harness:        h.Name,
+		SandboxMode:    sandboxMode,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the

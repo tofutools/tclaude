@@ -35,9 +35,10 @@ type World struct {
 	// unset case ("") is recorded too. Guarded by spawnMu — spawns are
 	// sequential in flow tests, but the post-init goroutines make the
 	// mutex cheap insurance.
-	spawnMu      sync.Mutex
-	spawnEfforts map[string]string
-	spawnModels  map[string]string
+	spawnMu        sync.Mutex
+	spawnEfforts   map[string]string
+	spawnModels    map[string]string
+	spawnSandboxes map[string]string
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -54,12 +55,13 @@ func New(t *testing.T) *World {
 	t.Setenv("HOME", home)
 	db.ResetForTest()
 	return &World{
-		HomeDir:      home,
-		Tmux:         newTmuxSim(),
-		CCs:          newCCRegistry(),
-		Codexes:      newCodexRegistry(),
-		spawnEfforts: map[string]string{},
-		spawnModels:  map[string]string{},
+		HomeDir:        home,
+		Tmux:           newTmuxSim(),
+		CCs:            newCCRegistry(),
+		Codexes:        newCodexRegistry(),
+		spawnEfforts:   map[string]string{},
+		spawnModels:    map[string]string{},
+		spawnSandboxes: map[string]string{},
 	}
 }
 
@@ -97,6 +99,25 @@ func (w *World) SpawnModel(convID string) (string, bool) {
 	defer w.spawnMu.Unlock()
 	m, ok := w.spawnModels[convID]
 	return m, ok
+}
+
+// RecordSpawnSandbox captures the sandbox mode a simSpawner.SpawnNew /
+// SpawnResume received, keyed by the new conv-id, so a flow test can assert
+// the sandbox flag the spawn path threaded through (JOH-192). The unset
+// case ("") is recorded too.
+func (w *World) RecordSpawnSandbox(convID, sandbox string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnSandboxes[convID] = sandbox
+}
+
+// SpawnSandbox returns the sandbox mode recorded for a spawned conv-id and
+// whether a spawn for that conv was observed.
+func (w *World) SpawnSandbox(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	s, ok := w.spawnSandboxes[convID]
+	return s, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the
