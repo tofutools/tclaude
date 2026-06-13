@@ -203,7 +203,7 @@ func TestCheckStatus_PrintsSandboxAdvisory(t *testing.T) {
 	tempHome(t)
 
 	out := captureStdout(t, func() {
-		require.NoError(t, checkStatus())
+		require.NoError(t, checkStatus(""))
 	})
 
 	assert.Contains(t, out, "=== Agent Sandbox ===")
@@ -258,4 +258,21 @@ func TestSandboxDocCrossReferencesConsistent(t *testing.T) {
 		assert.Containsf(t, string(body), base,
 			"%s must reference the sandbox-hardening doc by name (%s)", ref, base)
 	}
+}
+
+// TestCheckStatus_HarnessDispatch covers the --harness selector on
+// `tclaude setup --check`: codex reports the codex hooks target, and an
+// unknown harness errors rather than silently checking Claude Code.
+func TestCheckStatus_HarnessDispatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+
+	out := captureStdout(t, func() {
+		require.NoError(t, checkStatus("codex"))
+	})
+	require.Contains(t, out, "Codex CLI", "status should name the codex harness")
+	require.Contains(t, out, ".codex", "status should reference the codex hooks target")
+
+	require.Error(t, checkStatus("no-such-harness"), "an unknown --harness must error")
 }

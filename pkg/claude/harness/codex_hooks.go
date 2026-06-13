@@ -78,7 +78,8 @@ func (codexHookInstaller) ConfigTarget() string { return codexHooksPath() }
 // first runs is a possible future enhancement; the default is safe.)
 func (codexHookInstaller) TrustNote() string {
 	return "Codex runs command hooks only after they're trusted: on the first Codex launch, approve the tclaude hook in the startup hooks review. " +
-		"The approval persists across all future sessions and repos, so it's a one-time step."
+		"The approval persists across all future sessions and repos, so it's a one-time step. " +
+		"(For fully-unattended/headless deployments, the Codex Spawner can launch with hook-trust bypassed — at the cost of also running any repo-local ./.codex hooks unprompted, a supply-chain trade-off; default is safe.)"
 }
 
 // codexHookCommandStr is the callback command tclaude installs — the same

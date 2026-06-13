@@ -17,6 +17,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/statusbar"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -63,6 +64,13 @@ type Params struct {
 	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the self.* permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
+
+	// Harness selects which coding harness's hooks to install/check
+	// (default "claude" → ~/.claude/settings.json; "codex" →
+	// ~/.codex/hooks.json, via the harness HookInstaller seam). Other
+	// setup steps (status bar, protocol handler, skills) stay
+	// Claude-Code-specific for now.
+	Harness string `long:"harness" optional:"true" help:"Coding harness whose hooks to install: claude (default) | codex"`
 }
 
 func Cmd() *cobra.Command {
@@ -88,7 +96,14 @@ func Cmd() *cobra.Command {
 
 func runSetup(params *Params) error {
 	if params.Check {
-		return checkStatus()
+		return checkStatus(params.Harness)
+	}
+
+	// Resolve which harness's hooks to manage (default claude). An
+	// unknown value errors up front.
+	h, err := harness.Resolve(params.Harness)
+	if err != nil {
+		return err
 	}
 
 	// Configure path mode for hooks and callbacks
@@ -155,22 +170,29 @@ func runSetup(params *Params) error {
 		}
 	}
 
-	// 1. Install hooks
-	fmt.Println("=== Hooks ===")
-	installed, missing, needsRepair := session.CheckHooksInstalled()
-	if installed && !needsRepair {
-		fmt.Println("✓ All hooks already installed")
+	// 1. Install hooks (for the selected harness, via the HookInstaller seam)
+	fmt.Printf("=== Hooks (%s) ===\n", h.DisplayName)
+	if !h.SupportsHooks() {
+		fmt.Printf("  (no hook installer for harness %q in this build; skipping)\n", h.Name)
 	} else {
-		if needsRepair {
-			fmt.Println("  Repairing stale/duplicate hooks...")
+		installed, missing, needsRepair := h.Hooks.Check()
+		if installed && !needsRepair {
+			fmt.Println("✓ All hooks already installed")
+		} else {
+			if needsRepair {
+				fmt.Println("  Repairing stale/duplicate hooks...")
+			}
+			if len(missing) > 0 {
+				fmt.Printf("  Installing hooks for: %v\n", missing)
+			}
+			if err := h.Hooks.Install(); err != nil {
+				return fmt.Errorf("failed to install hooks: %w", err)
+			}
+			fmt.Printf("✓ Hooks installed (%s)\n", h.Hooks.ConfigTarget())
 		}
-		if len(missing) > 0 {
-			fmt.Printf("  Installing hooks for: %v\n", missing)
+		if note := h.Hooks.TrustNote(); note != "" {
+			fmt.Printf("  ⚠ %s\n", note)
 		}
-		if err := session.InstallHooks(); err != nil {
-			return fmt.Errorf("failed to install hooks: %w", err)
-		}
-		fmt.Println("✓ Hooks installed")
 	}
 
 	// 2. Status bar
@@ -463,9 +485,14 @@ func askYesNo(prompt string, defaultYes bool, assumeYes bool) bool {
 	return input == "y" || input == "yes"
 }
 
-func checkStatus() error {
+func checkStatus(harnessName string) error {
 	fmt.Println("tclaude Setup Status")
 	fmt.Println()
+
+	h, err := harness.Resolve(harnessName)
+	if err != nil {
+		return err
+	}
 
 	// Check tmux
 	fmt.Println("=== Prerequisites ===")
@@ -475,16 +502,20 @@ func checkStatus() error {
 		fmt.Println("✗ tmux not found (required)")
 	}
 
-	// Check hooks
-	fmt.Println("\n=== Hooks ===")
-	installed, missing, needsRepair := session.CheckHooksInstalled()
-	if needsRepair {
-		fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
-	}
-	if installed {
-		fmt.Println("✓ All hooks installed")
+	// Check hooks for the selected harness via the HookInstaller seam.
+	fmt.Printf("\n=== Hooks (%s) ===\n", h.DisplayName)
+	if !h.SupportsHooks() {
+		fmt.Printf("  (no hook installer for harness %q in this build)\n", h.Name)
 	} else {
-		fmt.Printf("✗ Missing hooks: %v\n", missing)
+		installed, missing, needsRepair := h.Hooks.Check()
+		if needsRepair {
+			fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
+		}
+		if installed {
+			fmt.Println("✓ All hooks installed")
+		} else {
+			fmt.Printf("✗ Missing hooks: %v\n", missing)
+		}
 	}
 
 	// Check status bar
