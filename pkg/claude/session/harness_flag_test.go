@@ -18,17 +18,19 @@ func TestRunNew_UnknownHarnessErrors(t *testing.T) {
 	}
 }
 
-// TestRunNew_CodexRejectsEffortBeforeSpawn pins that the codex harness's
-// ModelCatalog is wired into the spawn path: --harness codex --effort high
-// fails at validation (the codex reasoning mapping isn't wired yet), before
-// runNew touches tmux. Guards that a typo'd/unsupported effort surfaces as
-// a clean error rather than being forwarded to codex.
-func TestRunNew_CodexRejectsEffortBeforeSpawn(t *testing.T) {
-	err := RunNew(&NewParams{Harness: "codex", Effort: "high"})
+// TestRunNew_CodexRejectsClaudeModelBeforeSpawn pins that the codex
+// harness's ModelCatalog is wired into the spawn path: --harness codex
+// --model opus (a Claude Code model) fails at validation, before runNew
+// touches tmux, rather than being forwarded to `codex --model`. (Effort,
+// by contrast, is now accepted for codex and mapped to its reasoning
+// scale — see TestCodexModels / TestCodexReasoningEffort in the harness
+// package; so a valid effort is NOT a pre-spawn error anymore.)
+func TestRunNew_CodexRejectsClaudeModelBeforeSpawn(t *testing.T) {
+	err := RunNew(&NewParams{Harness: "codex", Model: "opus"})
 	if err == nil {
-		t.Fatalf("codex --effort high must error until the reasoning mapping is wired")
+		t.Fatalf("codex --model opus (a Claude Code model) must error before spawn")
 	}
-	if !strings.Contains(err.Error(), "effort") {
-		t.Fatalf("error should mention effort, got: %v", err)
+	if !strings.Contains(err.Error(), "Claude Code model") {
+		t.Fatalf("error should explain it's a Claude Code model, got: %v", err)
 	}
 }

@@ -218,19 +218,16 @@ func runNew(params *NewParams) error {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")
 	shortID := clcommon.ExtractIDFromCompletion(params.Resume)
 
-	// Resolve to full UUID and get project path
+	// Resolve to full UUID and get project path, via the harness's
+	// conversation source (CC's cwd-indexed resolver, or another harness's
+	// ConvStore — e.g. Codex's rollout/state DB).
 	var fullConvID string
 	var convProjectPath string
 	if shortID != "" {
-		convInfo := clcommon.ResolveConvID(shortID, params.Global, cwd)
-		if convInfo != nil {
-			fullConvID = convInfo.SessionID
-			convProjectPath = convInfo.ProjectPath
-		} else {
-			if params.Global {
-				return fmt.Errorf("conversation %s not found", shortID)
-			}
-			return fmt.Errorf("conversation %s not found in current project (use -g to search all projects)", shortID)
+		var err error
+		fullConvID, convProjectPath, err = resolveResumeConv(h, shortID, params.Global, cwd)
+		if err != nil {
+			return err
 		}
 		// Use conversation's project directory instead of cwd
 		if convProjectPath != "" {
@@ -341,3 +338,38 @@ func runNew(params *NewParams) error {
 
 // The CC launch-command builder lives behind the harness seam now —
 // see claudeSpawner.BuildCommand in pkg/claude/harness/claude.go.
+
+// resolveResumeConv resolves a --resume id prefix to a full conversation
+// id + its project path, using the harness's own conversation source:
+// Claude Code keeps the established cwd-indexed resolver
+// (clcommon.ResolveConvID, unchanged); any other harness resolves through
+// its ConvStore (Codex reads its rollout files + state DB, not
+// ~/.claude/projects). A conversation that doesn't resolve is an error;
+// `global` widens the search beyond the current project.
+func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd string) (fullConvID, projectPath string, err error) {
+	if h.Name == harness.DefaultName {
+		convInfo := clcommon.ResolveConvID(shortID, global, cwd)
+		if convInfo == nil {
+			return "", "", resumeNotFoundErr(shortID, global)
+		}
+		return convInfo.SessionID, convInfo.ProjectPath, nil
+	}
+	if !h.SupportsConvs() {
+		return "", "", fmt.Errorf("harness %q cannot resolve a conversation to resume", h.Name)
+	}
+	ref, err := h.Convs.Resolve(shortID, cwd, global)
+	if err != nil {
+		return "", "", err
+	}
+	if ref == nil {
+		return "", "", resumeNotFoundErr(shortID, global)
+	}
+	return ref.ConvID, ref.ProjectPath, nil
+}
+
+func resumeNotFoundErr(shortID string, global bool) error {
+	if global {
+		return fmt.Errorf("conversation %s not found", shortID)
+	}
+	return fmt.Errorf("conversation %s not found in current project (use -g to search all projects)", shortID)
+}
