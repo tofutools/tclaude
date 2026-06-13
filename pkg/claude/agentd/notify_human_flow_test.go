@@ -71,6 +71,32 @@ func TestNotifyHuman_GroupOwnerDelivers(t *testing.T) {
 	require.Len(t, msgs, 1)
 }
 
+// Scenario: a group owner with an explicit DENY override on human.notify
+// is refused — deny is always authoritative and suppresses the owner
+// default, the same universal precedence every gate follows. The owner
+// default only fills the "undecided" gap.
+func TestNotifyHuman_DenyOverrideBeatsGroupOwner(t *testing.T) {
+	f := newFlow(t)
+
+	const ownerConv = "ownd-1111-2222-3333-4444"
+	g := f.HaveGroup("owned-team")
+	f.HaveMember("owned-team", ownerConv)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, ownerConv, "test"))
+	require.NoError(t,
+		db.SetAgentPermissionOverride(ownerConv, agentd.PermHumanNotify, db.PermEffectDeny, "test"),
+		"seed deny override")
+
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human",
+		map[string]any{"body": "owner ping despite deny"})
+	r = agentd.AsAgentPeer(r, ownerConv)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusForbidden, rec.Code,
+		"a deny override must beat the group-owner default; body=%s", rec.Body.String())
+
+	msgs, _ := db.ListHumanMessages()
+	require.Empty(t, msgs, "no message should be persisted on a denied call")
+}
+
 // Scenario: a worker that is neither a slug-holder nor a group owner is
 // refused. The slug + the owner bypass are the anti-spam control;
 // nothing is persisted.
