@@ -150,3 +150,55 @@ func TestMigrateV55toV56_FreshSchemaRoundTrips(t *testing.T) {
 	require.NotNil(t, row2)
 	assert.Equal(t, "codex", row2.Harness, "explicit conv harness round-trips")
 }
+
+// TestUpsertConvIndex_HarnessNotClobberedOnRescan is the durability guard
+// for the conv_index side: once a conv is tagged (the Codex scanner sets
+// 'codex' on INSERT), a later harness-blind rescan — the Claude Code scan
+// path builds rows without a harness, which coalesces to 'claude' — must
+// NOT overwrite the stored tag. harness is omitted from UpsertConvIndex's
+// ON-CONFLICT UPDATE (the archived_at precedent) precisely so this holds.
+func TestUpsertConvIndex_HarnessNotClobberedOnRescan(t *testing.T) {
+	setupTestDB(t)
+
+	// First write tags the conv 'codex' (what the Codex scanner does).
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
+		ConvID: "conv-cod", ProjectDir: "/p", Created: "2026-01-01T00:00:00Z", Harness: "codex",
+	}))
+
+	// A later harness-blind rescan upserts the same conv with no harness
+	// (→ coalesced to 'claude' on the INSERT branch). The ON-CONFLICT
+	// update must leave the stored 'codex' intact.
+	require.NoError(t, UpsertConvIndex(&ConvIndexRow{
+		ConvID: "conv-cod", ProjectDir: "/p", Created: "2026-01-02T00:00:00Z", FirstPrompt: "hi",
+	}))
+
+	row, err := GetConvIndex("conv-cod")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "codex", row.Harness, "rescan must not clobber the stored harness tag")
+	assert.Equal(t, "hi", row.FirstPrompt, "other columns still update on rescan")
+}
+
+// TestSaveSession_HarnessSurvivesLoadMutateSave is the durability guard
+// for the sessions side at the DB layer: a 'codex' tag round-trips through
+// the load→mutate→save cycle the hook callback runs. (db.SaveSession's
+// ON-CONFLICT DOES update harness — sessions, unlike conv_index, want a
+// spawn's UPDATE to set it — so durability relies on the caller carrying
+// the tag through, which a load supplies.)
+func TestSaveSession_HarnessSurvivesLoadMutateSave(t *testing.T) {
+	setupTestDB(t)
+
+	require.NoError(t, SaveSession(&SessionRow{ID: "s1", ConvID: "c1", Status: "running", Harness: "codex"}))
+
+	// Load → mutate → save, the hook-tick pattern.
+	got, err := LoadSession("s1")
+	require.NoError(t, err)
+	assert.Equal(t, "codex", got.Harness, "load reads the tag back")
+	got.Status = "idle"
+	require.NoError(t, SaveSession(got))
+
+	again, err := LoadSession("s1")
+	require.NoError(t, err)
+	assert.Equal(t, "codex", again.Harness, "tag survives a load→mutate→save cycle")
+	assert.Equal(t, "idle", again.Status)
+}

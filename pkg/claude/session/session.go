@@ -33,6 +33,12 @@ type SessionState struct {
 	Updated       time.Time `json:"updated"`
 	LastHook      time.Time `json:"lastHook"`
 	Attached      int       `json:"-"` // Number of attached clients (runtime only, not persisted)
+	// Harness is the coding tool this session belongs to ("claude",
+	// "codex"). Carried through toRow/fromRow so the hook callback's
+	// load→mutate→save round-trip preserves a non-claude tag instead of
+	// blanking it (which db.SaveSession would coalesce back to "claude").
+	// Empty on a fresh state → coalesced to "claude" at the DB layer.
+	Harness string `json:"harness,omitempty"`
 }
 
 // Status constants
@@ -134,6 +140,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		CreatedAt:     s.Created,
 		UpdatedAt:     s.Updated,
 		LastHook:      s.LastHook,
+		Harness:       s.Harness,
 	}
 }
 
@@ -151,6 +158,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		Created:       r.CreatedAt,
 		Updated:       r.UpdatedAt,
 		LastHook:      r.LastHook,
+		Harness:       r.Harness,
 	}
 }
 

@@ -130,6 +130,10 @@ func runResumeWithSession(convInfo *clcommon.ConvInfo, projectPath, displayName 
 
 	// Get PID and save state (starts as idle, waiting for user input)
 	pid := session.ParsePIDFromTmux(tmuxSession)
+	// TODO(harness): carry Harness on resume — see JOH-155. This builds a
+	// fresh SessionState (no Harness) and SaveSessionState's over the
+	// existing row, coalescing a non-claude tag back to "claude". Inert
+	// today (this path is claude --resume only); fix when codex resume lands.
 	state := &session.SessionState{
 		ID:          sessionID,
 		TmuxSession: tmuxSession,
