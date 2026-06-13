@@ -61,6 +61,10 @@ type Harness struct {
 	// model (list / resolve / read title). Read-only for now; the write
 	// counterpart (SetTitle) rides the Lifecycle/send-keys PR.
 	Convs ConvStore
+	// Hooks installs/checks/repairs the tclaude callback in the harness's
+	// config target (+ any trust step). nil = this build can't install
+	// hooks for the harness; `tclaude setup` skips it with a message.
+	Hooks HookInstaller
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
@@ -87,6 +91,13 @@ func (h *Harness) SupportsSoftExit() bool {
 // Convs nil.
 func (h *Harness) SupportsConvs() bool {
 	return h != nil && h.Convs != nil
+}
+
+// SupportsHooks reports whether this build can install tclaude hooks for
+// the harness. `tclaude setup` checks it before dispatching to
+// Hooks.Install, and skips with a message when false.
+func (h *Harness) SupportsHooks() bool {
+	return h != nil && h.Hooks != nil
 }
 
 // registry holds the registered harnesses keyed by Name. Populated from
