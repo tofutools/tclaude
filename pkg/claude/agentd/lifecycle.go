@@ -210,12 +210,15 @@ type groupRetireResp struct {
 // request it is serving. A human caller (caller == "") has no conv to
 // skip and retires every member.
 //
-// Permission: groups.retire (default human-only — retiring agents is a
-// sensitive cleanup the human normally drives; the slug delegates it to
-// a trusted coordinator). Gated with the same plain requirePermission
-// the other bulk group endpoints (stop/resume/spawn) use — the
-// group-owner structural bypass is a single-agent-endpoint affordance,
-// not a bulk one.
+// Permission: groups.retire (not in the global defaults — retiring
+// agents is a sensitive cleanup the human normally drives; the slug
+// delegates it to a trusted coordinator). Gated with
+// requireGroupPermission, like the other bulk group endpoints
+// (stop/resume/spawn): owning THIS group raises the slug by default
+// (the owner-state bypass), so an owner can run its own team's
+// lifecycle without an explicit grant. The bypass fills only the
+// permUndecided gap — an explicit deny override is always
+// authoritative and suppresses it.
 func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	caller, ok := requireGroupPermission(w, r, PermGroupsRetire, g)
 	if !ok {
