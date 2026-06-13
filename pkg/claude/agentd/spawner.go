@@ -20,9 +20,15 @@ package agentd
 // the harness's non-escalating default (Codex: never) before spawning, so a
 // daemon-owned Codex agent — detached, with no human at its TUI — never
 // deadlocks on an approval prompt no one can answer (JOH-200).
+//
+// autoReview opts the spawn into the harness's guardian subagent (Codex's
+// `-c approvals_reviewer=auto_review`), which auto-decides approval prompts in
+// the human's place; false (the default) leaves the human as reviewer. It is an
+// experimental, undocumented-upstream opt-in, only ever true via an explicit
+// request — relaunch paths (resume/clone/reincarnate) pass false (JOH-200 part 2).
 type Spawner interface {
-	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error
-	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error
+	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
+	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
 }
 
 // Spawn is the package-wide Spawner every caller hits via the
@@ -37,9 +43,9 @@ var Spawn Spawner = LiveSpawner{}
 // it (e.g., a recording proxy).
 type LiveSpawner struct{}
 
-func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error {
-	return liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval)
+func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	return liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview)
 }
-func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error {
-	return liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval)
+func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	return liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval, autoReview)
 }

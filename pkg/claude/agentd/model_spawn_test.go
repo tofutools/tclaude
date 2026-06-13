@@ -9,7 +9,7 @@ import (
 // the spawn path's forked `tclaude session new`: with no model chosen,
 // the argv must carry no --model flag, so claude uses its own default.
 func TestSessionNewArgs_ModelOmittedWhenUnset(t *testing.T) {
-	args := sessionNewArgs("lbl", "/tmp/x", "", "", "", "", "")
+	args := sessionNewArgs("lbl", "/tmp/x", "", "", "", "", "", false)
 	if slices.Contains(args, "--model") {
 		t.Fatalf("unset model must omit --model, got %v", args)
 	}
@@ -18,7 +18,7 @@ func TestSessionNewArgs_ModelOmittedWhenUnset(t *testing.T) {
 // TestSessionNewArgs_ModelIncludedWhenSet verifies an explicit alias is
 // passed through as `--model <alias>` to the forked session.
 func TestSessionNewArgs_ModelIncludedWhenSet(t *testing.T) {
-	args := sessionNewArgs("lbl", "/tmp/x", "", "opus[1m]", "", "", "")
+	args := sessionNewArgs("lbl", "/tmp/x", "", "opus[1m]", "", "", "", false)
 	i := slices.Index(args, "--model")
 	if i < 0 || i+1 >= len(args) || args[i+1] != "opus[1m]" {
 		t.Fatalf("set model must append `--model opus[1m]`, got %v", args)
@@ -29,7 +29,7 @@ func TestSessionNewArgs_ModelIncludedWhenSet(t *testing.T) {
 // check for the resume fork: no inherited model ⇒ no --model flag, so
 // claude resolves its own default (the fail-open inheritance contract).
 func TestSessionResumeArgs_ModelOmittedWhenUnset(t *testing.T) {
-	args := sessionResumeArgs("conv-1", "/tmp/x", "", "", "", "", "")
+	args := sessionResumeArgs("conv-1", "/tmp/x", "", "", "", "", "", false)
 	if slices.Contains(args, "--model") || slices.Contains(args, "--effort") {
 		t.Fatalf("unset model/effort must omit the flags, got %v", args)
 	}
@@ -39,7 +39,7 @@ func TestSessionResumeArgs_ModelOmittedWhenUnset(t *testing.T) {
 // model + effort ride the forked `tclaude session new -r` argv — the
 // seam clone-copy and agent-resume reach liveSpawnResume through.
 func TestSessionResumeArgs_ModelIncludedWhenSet(t *testing.T) {
-	args := sessionResumeArgs("conv-1", "/tmp/x", "high", "claude-fable-5[1m]", "", "", "")
+	args := sessionResumeArgs("conv-1", "/tmp/x", "high", "claude-fable-5[1m]", "", "", "", false)
 	if i := slices.Index(args, "--model"); i < 0 || i+1 >= len(args) || args[i+1] != "claude-fable-5[1m]" {
 		t.Fatalf("inherited model must append `--model claude-fable-5[1m]`, got %v", args)
 	}

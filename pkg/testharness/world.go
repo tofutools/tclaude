@@ -35,11 +35,12 @@ type World struct {
 	// unset case ("") is recorded too. Guarded by spawnMu — spawns are
 	// sequential in flow tests, but the post-init goroutines make the
 	// mutex cheap insurance.
-	spawnMu        sync.Mutex
-	spawnEfforts   map[string]string
-	spawnModels    map[string]string
-	spawnSandboxes map[string]string
-	spawnApprovals map[string]string
+	spawnMu         sync.Mutex
+	spawnEfforts    map[string]string
+	spawnModels     map[string]string
+	spawnSandboxes  map[string]string
+	spawnApprovals  map[string]string
+	spawnAutoReview map[string]bool
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -56,14 +57,15 @@ func New(t *testing.T) *World {
 	t.Setenv("HOME", home)
 	db.ResetForTest()
 	return &World{
-		HomeDir:        home,
-		Tmux:           newTmuxSim(),
-		CCs:            newCCRegistry(),
-		Codexes:        newCodexRegistry(),
-		spawnEfforts:   map[string]string{},
-		spawnModels:    map[string]string{},
-		spawnSandboxes: map[string]string{},
-		spawnApprovals: map[string]string{},
+		HomeDir:         home,
+		Tmux:            newTmuxSim(),
+		CCs:             newCCRegistry(),
+		Codexes:         newCodexRegistry(),
+		spawnEfforts:    map[string]string{},
+		spawnModels:     map[string]string{},
+		spawnSandboxes:  map[string]string{},
+		spawnApprovals:  map[string]string{},
+		spawnAutoReview: map[string]bool{},
 	}
 }
 
@@ -138,6 +140,25 @@ func (w *World) SpawnApproval(convID string) (string, bool) {
 	w.spawnMu.Lock()
 	defer w.spawnMu.Unlock()
 	a, ok := w.spawnApprovals[convID]
+	return a, ok
+}
+
+// RecordSpawnAutoReview captures the auto-review (guardian) opt-in a
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert the `--auto-review` flag the spawn path threaded through
+// (JOH-200 part 2). The default (false) is recorded too.
+func (w *World) RecordSpawnAutoReview(convID string, autoReview bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnAutoReview[convID] = autoReview
+}
+
+// SpawnAutoReview returns the auto-review opt-in recorded for a spawned conv-id
+// and whether a spawn for that conv was observed.
+func (w *World) SpawnAutoReview(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	a, ok := w.spawnAutoReview[convID]
 	return a, ok
 }
 

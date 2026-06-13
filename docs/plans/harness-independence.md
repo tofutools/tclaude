@@ -325,8 +325,10 @@ for both `read-only` and `workspace-write` (constructors at
 `read-only`, but Codex's interactive TUI selects a mode via *approval
 presets*, whose agent/"Auto" preset is `workspace-write` + on-request
 approvals. `codex exec` (headless) defaults to `read-only` unless
-`--sandbox`/`--full-auto` is passed. So the effective default depends on
+`--sandbox` is passed. So the effective default depends on
 launch surface — **do not rely on it; pass `--sandbox` explicitly.**
+(`--full-auto` was *removed* at `rust-v0.139.0` — its deprecation note points
+at `--sandbox workspace-write`, which is exactly what JOH-192 emits.)
 
 **Linux mechanism (for the nested-sandbox question).** Codex's Linux
 sandbox is a helper, `codex-linux-sandbox`, that wraps each tool command in
@@ -500,10 +502,14 @@ deadlock at the spawn seam.**
 2. **tclaude's narrow obligation: never spawn an unattended Codex agent that
    can deadlock on an approval prompt.** Solve it at the sandbox/approval
    seam JOH-166 already opened — `codexSpawner` should emit an approval
-   policy that does **not** escalate to an absent human (default unattended
-   spawns to a non-interactive posture, e.g. `--full-auto` / on-failure with
-   `--sandbox workspace-write`; **never** `danger-full-access`). This keeps
-   the agent autonomous **without** depending on the experimental guardian.
+   policy that does **not** escalate to an absent human. The only
+   non-escalating value at `rust-v0.139.0` is **`--ask-for-approval never`**
+   ("never ask the user; failures return to the model"), paired with
+   `--sandbox workspace-write`; **never** `danger-full-access`. (`--full-auto`
+   was *removed*, and `on-failure` is *deprecated and still escalates* — so
+   neither is a valid non-escalating posture; `never` is the one correct
+   default.) This keeps the agent autonomous **without** depending on the
+   experimental guardian.
 3. **Expose `auto_review` only as an opt-in pass-through knob.** If an
    operator wants guardian oversight on unattended agents, let them flip it
    via a `SpawnSpec` passthrough that emits a per-spawn `-c
@@ -522,13 +528,18 @@ subagent, trigger surface, fail-closed, circuit breaker, position vs.
 sandbox/ARC); interaction with agentd gating answered (orthogonal, composes,
 no bypass / no double-prompt, real risk = unattended-deadlock); matrix row
 updated; recommendation = don't-wire / fix-at-spawn-seam, with `auto_review`
-as an opt-in passthrough. **Impl follow-up (mirrors JOH-166 → JOH-192):** a
-new ticket for a `SpawnSpec` approval-policy/reviewer passthrough (default
-unattended-safe non-escalating policy; `auto_review` opt-in behind a flag),
-`codexSpawner` flag emission, spawn-dialog + dashboard badge (M5), and a flow
-test that a spawned Codex agent's approval posture is non-blocking.
-Cold-review any path that injects `/approve` via send-keys (send-keys
-injection sink — the existing charset gate applies).
+as an opt-in passthrough. **Impl status — JOH-200 (mirrors JOH-166 → JOH-192),
+SHIPPED:** part 1 = the non-blocking default — `codexSpawner` emits
+`--ask-for-approval`, the daemon spawn path defaults an unattended Codex pane to
+the non-escalating `never`, direct `session new` stays opt-in (human is the
+trust root). Part 2 = the `auto_review` opt-in — a per-spawn `SpawnSpec.AutoReview`
+bool threaded through the same seam, emitting `-c approvals_reviewer="auto_review"`
+only when explicitly requested and gated on the harness having an approvals
+subsystem; off by default, experimental. Both come with flow tests asserting the
+threaded posture. Remaining: spawn-dialog + dashboard badge (M5). Cold-review any
+path that injects `/approve` via send-keys (send-keys injection sink — the
+existing charset gate applies); JOH-200 added no such injection (the opt-in is a
+launch flag, not a runtime send-keys path).
 
 ### F. Project constraints to honor (from tclaude memory/CLAUDE.md)
 

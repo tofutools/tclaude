@@ -303,7 +303,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// Reincarnate under the same harness the predecessor ran on — a Codex
 	// agent must come back as Codex, not Claude Code. oldSess.Harness is ""
 	// for an untagged/claude row, which omits the flag (the default).
-	if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, oldSess.Harness, sandboxForHarness(oldSess.Harness), approvalForHarness(oldSess.Harness)); err != nil {
+	// Reincarnation is a relaunch, so the experimental auto-review guardian is
+	// never re-engaged (autoReview=false) — it is an explicit fresh-spawn opt-in.
+	if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, oldSess.Harness, sandboxForHarness(oldSess.Harness), approvalForHarness(oldSess.Harness), false); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return

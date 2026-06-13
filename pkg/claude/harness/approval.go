@@ -75,3 +75,24 @@ func ValidateApprovalPolicy(h *Harness, requested string) (string, error) {
 	}
 	return h.Approval.ValidatePolicy(requested)
 }
+
+// ResolveAutoReview gates the experimental auto-review (guardian) opt-in for a
+// spawn: it returns the requested bool to thread into SpawnSpec.AutoReview, or
+// an error if auto-review was requested for a harness that has no approvals
+// reviewer. Auto-review is part of the approval subsystem (it changes *who*
+// answers an approval prompt — a guardian subagent vs the human), so it is
+// gated on the same SupportsApproval() capability: a harness whose approval
+// handling is configured out of band (Claude Code) has no guardian to route
+// to, and silently dropping the flag would hide a mistake. There is no
+// non-false default to apply, so — unlike ResolveApprovalPolicy /
+// ValidateApprovalPolicy — a single function serves both the daemon spawn path
+// and the direct `session new` path: false (off) is the default everywhere,
+// and the experimental guardian is only ever engaged by an explicit opt-in.
+// See JOH-200 part 2.
+func ResolveAutoReview(h *Harness, requested bool) (bool, error) {
+	if requested && !h.SupportsApproval() {
+		return false, fmt.Errorf("harness %q has no approvals reviewer "+
+			"(auto-review is a Codex approval-subsystem feature; not available for this harness)", h.Name)
+	}
+	return requested, nil
+}
