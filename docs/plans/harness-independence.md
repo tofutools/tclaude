@@ -227,6 +227,8 @@ web search, local code-review agent, approval modes.
 | Compact | `/compact` | TBD (spike) |
 | Model slugs | `claude-*` | `gpt-5.*` |
 | MCP / subagents | yes | yes |
+| Sandbox | tweakable built-in sandbox | OS-native: Seatbelt / bwrap+Landlock+seccomp / Win tokens; `--sandbox {read-only\|workspace-write\|danger-full-access}`, net-deny default (JOH-166) |
+| Oversight / "auto" | oversight agent checks the worker | **Auto-review** subagent at the sandbox boundary + granular approval policies (v0.122+) (JOH-167) |
 
 ### D. Project constraints to honor (from tclaude memory/CLAUDE.md)
 
