@@ -10,7 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -71,6 +71,14 @@ type SpawnRequest struct {
 	// default; a non-empty value must be one of clcommon.ValidModels.
 	// Same single-sourced wire contract as Effort above.
 	Model string `json:"model,omitempty"`
+
+	// Harness picks which coding harness the spawned agent runs — ""
+	// (or "claude") = Claude Code, the default; "codex" = OpenAI Codex CLI
+	// (JOH-160). It forwards to `tclaude session new --harness <h>`. The
+	// daemon validates it against the harness registry and validates the
+	// Effort/Model fields above through the chosen harness's own catalog
+	// (so a Codex spawn is checked against Codex's rules, not Claude's).
+	Harness string `json:"harness,omitempty"`
 
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
@@ -133,8 +141,13 @@ type SpawnParams struct {
 	// (which assigns the first free letter in field order) cannot steal
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
-	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
-	Model  string `long:"model" optional:"true" help:"Claude model for the new agent: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan, or a full model ID (e.g. claude-fable-5). Unset = the group's default model, else claude's own default"`
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = the harness's own default (no flag passed)"`
+	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = the group's default model, else the harness's own default"`
+
+	// Harness picks the coding harness the new agent runs. Declared last
+	// (no explicit short) for the same reason as Effort/Model — boa's
+	// short-flag enricher must not steal a letter from an existing field.
+	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude (default) | codex. Effort/model are validated against the chosen harness's own rules"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -233,17 +246,26 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Resolve --harness (default Claude Code) so --effort/--model are
+	// validated against the chosen harness's own rules — a Codex spawn
+	// accepts a Codex model and rejects a Claude Code slug, and vice
+	// versa. An unknown/not-spawnable harness fails fast here.
+	h, err := harness.ResolveSpawnable(strings.TrimSpace(p.Harness))
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	// Validate --effort client-side so a typo fails fast with a clear
 	// message instead of reaching the daemon (where an invalid level
 	// would otherwise surface only as a conv-id-poll timeout once the
 	// forked `tclaude session new --effort <bad>` exits non-zero).
-	effort, err := clcommon.ValidateEffort(p.Effort)
+	effort, err := h.Models.ValidateEffort(p.Effort)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
 	// Same fail-fast treatment for --model.
-	model, err := clcommon.ValidateModel(p.Model)
+	model, err := h.Models.ValidateModel(p.Model)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
@@ -266,6 +288,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		AutoFocus:      p.AutoFocus,
 		Effort:         effort,
 		Model:          model,
+		Harness:        h.Name,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the

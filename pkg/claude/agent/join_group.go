@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -40,16 +41,24 @@ func RunJoinGroup(params *session.NewParams) error {
 			cwd = wd
 		}
 	}
+	// Resolve --harness (default Claude Code) so --effort/--model are
+	// validated against the chosen harness's own rules (a Codex join
+	// accepts a Codex model, rejects a Claude Code slug). An
+	// unknown/not-spawnable harness fails fast here.
+	h, err := harness.ResolveSpawnable(strings.TrimSpace(params.Harness))
+	if err != nil {
+		return err
+	}
 	// Validate --effort here too: this surface is reachable directly
 	// (RunJoinGroup runs both via `session new --effort --join-group`,
 	// where runNew already normalised it, and standalone), so a clean
 	// client-side error beats a daemon round-trip on a typo.
-	effort, err := clcommon.ValidateEffort(params.Effort)
+	effort, err := h.Models.ValidateEffort(params.Effort)
 	if err != nil {
 		return err
 	}
 	// Same treatment for --model.
-	model, err := clcommon.ValidateModel(params.Model)
+	model, err := h.Models.ValidateModel(params.Model)
 	if err != nil {
 		return err
 	}
@@ -60,6 +69,7 @@ func RunJoinGroup(params *session.NewParams) error {
 		Cwd:            cwd,
 		Effort:         effort,
 		Model:          model,
+		Harness:        h.Name,
 		TimeoutSeconds: 30,
 	}
 	var resp SpawnResponse

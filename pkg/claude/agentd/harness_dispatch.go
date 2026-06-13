@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -31,6 +32,17 @@ func harnessForConv(convID string) *harness.Harness {
 		}
 	}
 	return harness.Default()
+}
+
+// resolveSpawnHarness resolves a requested harness name for a daemon
+// spawn, trimming surrounding whitespace first. It delegates to
+// harness.ResolveSpawnable, so an empty name is the default (Claude Code)
+// and an unknown or not-yet-spawnable harness is an error the spawn
+// boundary surfaces as a 400 — rather than a silent failure once the
+// forked session exits. The returned harness's Models is guaranteed
+// non-nil so the caller can validate effort/model through it.
+func resolveSpawnHarness(name string) (*harness.Harness, error) {
+	return harness.ResolveSpawnable(strings.TrimSpace(name))
 }
 
 // deliverRename renames a conversation the way its harness dictates and

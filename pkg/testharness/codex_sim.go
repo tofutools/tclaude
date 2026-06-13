@@ -401,11 +401,24 @@ func (c *CodexSim) WriteExchange(userText, agentText string) error {
 func (c *CodexSim) installDefaultHandlers() {
 	// Mirror CCSim: dispatch walks top-to-bottom, first matching prefix
 	// wins, OnInput prepends so test handlers shadow defaults. Codex's
-	// exact slash-command surface (exit/rename/compact) is still being
-	// confirmed against the real CLI, so the only default is the
-	// catch-all that writes a user turn. Specific commands are added
-	// here as we confirm them (the "sims accrete knowledge" rule).
+	// exact slash-command surface (rename/compact) is still being
+	// confirmed against the real CLI, so the only specific default is
+	// `/quit`; everything else falls through to the catch-all user turn.
+	// More commands are added here as we confirm them (the "sims accrete
+	// knowledge" rule).
 	c.handlers = []codexHandlerEntry{
+		// `/quit` is Codex's soft-exit slash command (the CC `/exit`
+		// analog). Real Codex routes Quit to
+		// request_quit_without_confirmation — a one-shot graceful
+		// shutdown, no confirm prompt, no turn written — so the sim just
+		// flips alive=false. This is what lets the daemon's soft-stop
+		// path (stopOneConv → harness SoftExitCommand "/quit") take a
+		// Codex pane offline gracefully instead of falling back to a
+		// hard kill-session.
+		{prefix: "/quit", fn: func(c *CodexSim, _ string) bool {
+			c.MarkDead()
+			return true
+		}},
 		{prefix: "", fn: func(c *CodexSim, line string) bool {
 			_ = c.WriteUserInput(line)
 			return true

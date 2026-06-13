@@ -20,6 +20,14 @@ type World struct {
 	HomeDir string
 	Tmux    *TmuxSim
 	CCs     *CCRegistry
+	// Codexes is the Codex analog of CCs: conv-id → CodexSim, so the
+	// simSpawner's `--harness codex` branch can stash the sim it built and
+	// the resume branch can re-attach it. Kept as a parallel registry (not
+	// unified with CCs) because the two sims expose harness-specific
+	// surfaces — CCs.Clear pokes CCSim's /clear rotation, CodexSim has no
+	// such concept — and a typed store keeps each test reaching for the
+	// right one without a cast.
+	Codexes *CodexRegistry
 
 	// spawnEfforts / spawnModels record the effort and model strings
 	// each simSpawner.SpawnNew received, keyed by the new conv-id, so a
@@ -49,6 +57,7 @@ func New(t *testing.T) *World {
 		HomeDir:      home,
 		Tmux:         newTmuxSim(),
 		CCs:          newCCRegistry(),
+		Codexes:      newCodexRegistry(),
 		spawnEfforts: map[string]string{},
 		spawnModels:  map[string]string{},
 	}
@@ -137,6 +146,58 @@ func (r *CCRegistry) GetByConvID(convID string) *CCSim {
 
 // GetByLabel returns the registered sim for label, or nil.
 func (r *CCRegistry) GetByLabel(label string) *CCSim {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byLabel[label]
+}
+
+// CodexRegistry is the Codex analog of CCRegistry: conv-id → CodexSim,
+// multi-keyed by label too. The simSpawner's `--harness codex` branch
+// records the sim it built here so a later resume re-attaches the same
+// instance instead of synthesising a new one.
+type CodexRegistry struct {
+	mu       sync.Mutex
+	byConvID map[string]*CodexSim
+	byLabel  map[string]*CodexSim
+}
+
+func newCodexRegistry() *CodexRegistry {
+	return &CodexRegistry{
+		byConvID: map[string]*CodexSim{},
+		byLabel:  map[string]*CodexSim{},
+	}
+}
+
+// Set records a CodexSim under both label and conv-id (label may be
+// empty for hydrated sims). A later SetByConvID with the same id
+// overwrites — useful when a resume creates a new label for an existing
+// conv.
+func (r *CodexRegistry) Set(label string, cx *CodexSim) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if label != "" {
+		r.byLabel[label] = cx
+	}
+	r.byConvID[cx.ConvID] = cx
+}
+
+// SetByConvID registers a sim by conv-id only. Used for hydrate-from-
+// disk scenarios where the original label is unknown.
+func (r *CodexRegistry) SetByConvID(cx *CodexSim) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byConvID[cx.ConvID] = cx
+}
+
+// GetByConvID returns the registered sim for convID, or nil.
+func (r *CodexRegistry) GetByConvID(convID string) *CodexSim {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byConvID[convID]
+}
+
+// GetByLabel returns the registered sim for label, or nil.
+func (r *CodexRegistry) GetByLabel(label string) *CodexSim {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.byLabel[label]

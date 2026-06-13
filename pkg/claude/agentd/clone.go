@@ -56,9 +56,13 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // Extracted from runCloneOrchestration so groups-clone can reuse the
 // same race handling without duplicating it.
 func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+	// Clone under the same harness the source ran on — a Codex agent's
+	// clone must relaunch as Codex. "" for an untagged/claude source omits
+	// the flag (the default).
+	srcHarness := harnessForConv(sourceConv).Name
 	if noCopyConv {
 		label = generateSpawnLabel()
-		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model); err != nil {
+		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, srcHarness); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
@@ -93,7 +97,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		}
 	}
 	newConv = copyResult.NewConvID
-	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model); err != nil {
+	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model, srcHarness); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),

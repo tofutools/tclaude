@@ -15,6 +15,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -171,12 +172,18 @@ func resumeOneConv(convID string) memberOpResult {
 	// model + effort it last reported running on, so the resumed
 	// agent comes back on its own model instead of claude's default
 	// (rows are updated_at DESC; [0] is the conv's freshest session).
-	cwd, effort, model := "", "", ""
+	cwd, effort, model, harnessName := "", "", "", ""
 	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
 		cwd = rows[0].Cwd
 		effort, model = inheritedLaunchFlags(rows[0].ID)
+		// Resume under the harness the conv was last running on — a Codex
+		// conv must relaunch as `tclaude session new -r --harness codex` so
+		// session-new resolves its rollout id (resolveResumeConv, JOH-155)
+		// instead of looking in ~/.claude/projects. An untagged/claude row
+		// leaves it "" so the flag is omitted.
+		harnessName = rows[0].Harness
 	}
-	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model); err != nil {
+	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
@@ -608,10 +615,22 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	worktreeBranch := strings.TrimSpace(body.WorktreeBranch)
 
+	// Resolve the requested harness (default Claude Code). An unknown
+	// name is a 400 here rather than a silent failure once the forked
+	// session exits. The chosen harness's ModelCatalog then validates
+	// effort/model below, so a Codex spawn is checked against Codex's
+	// rules (rejects Claude Code slugs, accepts effort levels) instead of
+	// Claude Code's.
+	h, harnessErr := resolveSpawnHarness(body.Harness)
+	if harnessErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
+		return
+	}
+
 	// Validate the requested effort before building the spawn params.
 	// Empty → "" (downstream omits the flag); a bad level becomes a 400
 	// here rather than a silent 504 once the forked session exits.
-	effort, effErr := clcommon.ValidateEffort(body.Effort)
+	effort, effErr := h.Models.ValidateEffort(body.Effort)
 	if effErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_effort", effErr.Error())
 		return
@@ -619,7 +638,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 
 	// Same treatment for the requested model: empty omits the flag, a
 	// bad alias becomes a 400 here rather than a silent 504.
-	model, modelErr := clcommon.ValidateModel(body.Model)
+	model, modelErr := h.Models.ValidateModel(body.Model)
 	if modelErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_model", modelErr.Error())
 		return
@@ -641,6 +660,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AutoFocus:      body.AutoFocus,
 		Effort:         effort,
 		Model:          model,
+		Harness:        h.Name,
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
@@ -692,6 +712,12 @@ type spawnParams struct {
 	// group's default_model inside executeSpawn; if that is unset too,
 	// the flag is omitted entirely.
 	Model string
+	// Harness is the resolved harness name to launch ("" or "claude" =
+	// Claude Code, the default; "codex" = Codex CLI). It forwards to
+	// `tclaude session new --harness <h>` and is validated at the spawn
+	// boundary (handleGroupSpawn resolves it against the harness registry
+	// before building the params).
+	Harness string
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -765,7 +791,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -1100,8 +1126,8 @@ func generateSpawnLabel() string {
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default.
-func SpawnDetachedTclaudeNew(label, cwd, effort, model string) error {
-	return Spawn.SpawnNew(label, cwd, effort, model)
+func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness string) error {
+	return Spawn.SpawnNew(label, cwd, effort, model, harness)
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
@@ -1109,8 +1135,8 @@ func SpawnDetachedTclaudeNew(label, cwd, effort, model string) error {
 // claude invocation — `claude --resume` does NOT restore the
 // conversation's previous model on its own, so resume surfaces pass
 // the predecessor's inherited flags to keep the agent on its model.
-func SpawnDetachedTclaudeResume(convID, cwd, effort, model string) error {
-	return Spawn.SpawnResume(convID, cwd, effort, model)
+func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness string) error {
+	return Spawn.SpawnResume(convID, cwd, effort, model, harness)
 }
 
 // sessionNewArgs builds the argv for the detached `tclaude session new`
@@ -1118,7 +1144,7 @@ func SpawnDetachedTclaudeResume(convID, cwd, effort, model string) error {
 // an explicit value was chosen; an empty value leaves claude on its own
 // default. Kept pure so it can be unit-tested without forking a
 // subprocess.
-func sessionNewArgs(label, cwd, effort, model string) []string {
+func sessionNewArgs(label, cwd, effort, model, harness string) []string {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1129,6 +1155,7 @@ func sessionNewArgs(label, cwd, effort, model string) []string {
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+	args = appendHarnessFlag(args, harness)
 	return args
 }
 
@@ -1137,7 +1164,7 @@ func sessionNewArgs(label, cwd, effort, model string) []string {
 // sessionNewArgs: --effort and --model are appended only when a value
 // was chosen, so "" keeps claude on its own default. Kept pure so it
 // can be unit-tested without forking a subprocess.
-func sessionResumeArgs(convID, cwd, effort, model string) []string {
+func sessionResumeArgs(convID, cwd, effort, model, harness string) []string {
 	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1147,6 +1174,20 @@ func sessionResumeArgs(convID, cwd, effort, model string) []string {
 	}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	args = appendHarnessFlag(args, harness)
+	return args
+}
+
+// appendHarnessFlag adds `--harness <h>` to a `tclaude session new` argv
+// when h names a non-default harness. The empty string and the default
+// harness (Claude Code) both omit the flag, so an untagged spawn keeps the
+// exact pre-JOH-160 argv and Claude Code stays the zero-config default.
+// h is a registered harness name (validated at the spawn boundary), never
+// user free-text, so it is safe as a bare arg.
+func appendHarnessFlag(args []string, h string) []string {
+	if h != "" && h != harness.DefaultName {
+		args = append(args, "--harness", h)
 	}
 	return args
 }
@@ -1159,13 +1200,13 @@ func sessionResumeArgs(convID, cwd, effort, model string) []string {
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func liveSpawnNew(label, cwd, effort, model string) error {
+func liveSpawnNew(label, cwd, effort, model, harness string) error {
 	// effort and model are validated at the spawn boundary
 	// (handleGroupSpawn / the `agent spawn` CLI) before they reach here;
 	// the forked `tclaude session new` re-validates too, though by then
 	// a bad value would only surface as a non-zero exit in the daemon
 	// log. sessionNewArgs omits each flag entirely when its value is "".
-	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model)...)
+	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	// Capture stderr so a silent subprocess failure (PATH issue, bad
@@ -1213,8 +1254,8 @@ func liveSpawnNew(label, cwd, effort, model string) error {
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func liveSpawnResume(convID, cwd, effort, model string) error {
-	args := sessionResumeArgs(convID, cwd, effort, model)
+func liveSpawnResume(convID, cwd, effort, model, harness string) error {
+	args := sessionResumeArgs(convID, cwd, effort, model, harness)
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil

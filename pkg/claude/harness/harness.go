@@ -145,6 +145,23 @@ func Default() *Harness {
 	return MustGet(DefaultName)
 }
 
+// SpawnBinaries returns the executable name of every registered harness
+// that can be spawned (has a Spawner) — e.g. ["claude", "codex"]. Used by
+// the process-tree walk that recognises a hook callback's harness ancestor
+// (session.FindClaudePID), so a newly-registered harness is matched
+// without editing that walk. Order is unspecified.
+func SpawnBinaries() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	out := make([]string, 0, len(registry))
+	for _, h := range registry {
+		if h.Spawn != nil {
+			out = append(out, h.Spawn.Binary())
+		}
+	}
+	return out
+}
+
 // Resolve returns the harness for name, falling back to Default when name
 // is empty. An unknown non-empty name is an error so a typo surfaces
 // rather than silently running Claude Code.
@@ -156,6 +173,24 @@ func Resolve(name string) (*Harness, error) {
 		return h, nil
 	}
 	return nil, fmt.Errorf("unknown harness %q: must be one of %v", name, Names())
+}
+
+// ResolveSpawnable resolves name like Resolve, but additionally requires
+// the harness to be launchable by tclaude: it must carry both a Spawner
+// (to build the `session new` command) and a ModelCatalog (to validate the
+// requested model/effort). Spawn surfaces — the daemon's group-spawn, the
+// `agent spawn` CLI, `--join-group` — use this so an unknown or
+// not-yet-spawnable harness fails fast with a clear message instead of a
+// silent conv-id-poll timeout once the forked session exits.
+func ResolveSpawnable(name string) (*Harness, error) {
+	h, err := Resolve(name)
+	if err != nil {
+		return nil, err
+	}
+	if h.Spawn == nil || h.Models == nil {
+		return nil, fmt.Errorf("harness %q is not spawnable (no spawner/model catalog)", h.Name)
+	}
+	return h, nil
 }
 
 // Names returns the registered harness names in sorted order.
