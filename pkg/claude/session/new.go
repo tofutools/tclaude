@@ -40,6 +40,13 @@ type NewParams struct {
 	// against clcommon.ValidModels in runNew.
 	Model string `long:"model" optional:"true" help:"Claude model: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan, or a full model ID (e.g. claude-fable-5). Unset = claude's own default (no flag passed)"`
 
+	// Harness selects the coding tool this session runs (default
+	// "claude"). "codex" launches OpenAI Codex CLI in the tmux pane via
+	// the codex Spawner. The chosen harness's ModelCatalog validates
+	// --model/--effort and its Spawner builds the launch command, so the
+	// rest of runNew stays harness-agnostic.
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -111,11 +118,14 @@ func RunNew(params *NewParams) error {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
-	// `tclaude session new` launches a Claude Code session, so the spawn
-	// command, model/effort validation and resume form all come from the
-	// claude harness behind the seam (pkg/claude/harness). When a
-	// `--harness` flag lands, this resolves the requested harness instead.
-	h := harness.Default()
+	// The spawn command, model/effort validation and resume form all come
+	// from the selected harness behind the seam (pkg/claude/harness).
+	// --harness picks it (default "claude"); an unknown value errors here
+	// rather than silently launching Claude Code.
+	h, err := harness.Resolve(params.Harness)
+	if err != nil {
+		return err
+	}
 
 	// Normalise + validate --effort up front so a typo errors cleanly
 	// here (and, on the daemon spawn path, surfaces as the forked

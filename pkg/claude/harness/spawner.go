@@ -26,6 +26,14 @@ type SpawnSpec struct {
 	// ExtraArgs are post-`--` pass-through args, appended last and
 	// shell-quoted individually by the Spawner.
 	ExtraArgs []string
+	// BypassHookTrust, when true, asks the harness to run its configured
+	// hooks without requiring persisted hook trust for this invocation —
+	// a headless escape hatch for automation that already vets its hook
+	// sources. Codex maps this to `--dangerously-bypass-hook-trust`;
+	// harnesses without the concept ignore it. Defaults to false (trust is
+	// enforced); it is a deliberate supply-chain trade-off (repo-local
+	// `./.codex` hooks become trusted), so callers opt in explicitly.
+	BypassHookTrust bool
 }
 
 // Spawner builds the in-tmux launch command for a harness from a
