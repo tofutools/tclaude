@@ -64,8 +64,8 @@ func NewFlow(
 // concrete type satisfying agentd.Spawner satisfies this too, so a
 // flow_setup_test.go can do `agentd.Spawn = mocks.Spawner` directly.
 type SpawnerLike interface {
-	SpawnNew(label, cwd, effort, model string) error
-	SpawnResume(convID, cwd, effort, model string) error
+	SpawnNew(label, cwd, effort, model, harness string) error
+	SpawnResume(convID, cwd, effort, model, harness string) error
 }
 
 // Mocks bundles the default boundary impls for the v2 simulators.
@@ -104,7 +104,12 @@ type simSpawner struct {
 	w *World
 }
 
-func (s *simSpawner) SpawnNew(label, cwd, effort, model string) error {
+// TODO(JOH-160): branch on harness=="codex" to build a CodexSim (it
+// implements PaneSim) + write a harness="codex" SessionRow, so the
+// acceptance flow test can spawn a Codex agent through the daemon mux. For
+// now every spawn is a CCSim; harness is accepted (and "claude"/"" behave
+// exactly as before) so the production Spawner signature is satisfied.
+func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness string) error {
 	cc := NewCCSim(s.t, s.w.HomeDir, cwd)
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
 	// stable key the hook callback tracks conv-id rotations against.
@@ -135,7 +140,10 @@ func (s *simSpawner) SpawnNew(label, cwd, effort, model string) error {
 	return nil
 }
 
-func (s *simSpawner) SpawnResume(convID, cwd, effort, model string) error {
+// TODO(JOH-160): when SpawnNew learns to build a CodexSim, SpawnResume
+// must re-attach the matching sim by harness too. For now it re-attaches a
+// CCSim; harness is accepted to satisfy the production Spawner signature.
+func (s *simSpawner) SpawnResume(convID, cwd, effort, model, harness string) error {
 	cc := s.w.CCs.GetByConvID(convID)
 	if cc == nil {
 		cc = HydrateCCSim(s.t, s.w.HomeDir, convID, cwd)
