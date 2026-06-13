@@ -28,11 +28,14 @@ type ConvRef struct {
 // so every downstream reader (conv ls, search, dashboard) stays
 // harness-agnostic.
 //
-// This slice is READ-ONLY. The write counterpart — SetTitle (CC injects
-// `/rename` via the send-keys path; Codex writes threads.title directly)
-// — is deferred to the Lifecycle/send-keys PR, where agentd stays the
-// rename orchestrator gated on the Lifecycle capability flag and the
-// injection sink gets its own cold review.
+// Reads assemble a SessionEntry; SetTitle is the one write. agentd stays
+// the rename orchestrator and dispatches on the Lifecycle capability flag:
+// a harness whose Lifecycle has a rename slash command (CC's `/rename`)
+// renames by injecting it into the live pane; one without (Codex, which
+// has no TUI rename command) renames out-of-band via SetTitle. So a CC
+// ConvStore never reaches SetTitle through that dispatch — its title store
+// is the `.jsonl` customTitle turn, only writable by the injection — and
+// its SetTitle is a guard that says exactly that.
 type ConvStore interface {
 	// ListConvs returns the conversations for a working directory. An
 	// empty cwd is the documented sentinel for "all conversations across
@@ -59,4 +62,12 @@ type ConvStore interface {
 	// from the first user message). An unknown conv yields ("", nil), not
 	// an error.
 	Title(convID string) (string, error)
+
+	// SetTitle persists a new title in the harness's title store WITHOUT a
+	// live pane — for harnesses whose title is a directly-writable record
+	// (Codex's threads.title). A harness that renames only via an in-pane
+	// slash command (CC's `/rename`) returns an error here; agentd routes
+	// such harnesses through the injection path instead (gated on
+	// Lifecycle.RenameCommand), so this is never reached for them.
+	SetTitle(convID, title string) error
 }

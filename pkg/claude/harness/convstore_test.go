@@ -179,3 +179,21 @@ func TestClaudeConvStore_ListConvs(t *testing.T) {
 func TestClaudeHarness_HasConvStore(t *testing.T) {
 	require.NotNil(t, Default().Convs, "claude harness must expose a ConvStore")
 }
+
+// TestClaudeConvStore_SetTitleGuards confirms Claude Code's SetTitle is a
+// guard, not a silent no-op: CC's title store (the .jsonl customTitle
+// turn) is injection-only, so a direct write must error rather than write
+// conv_index.custom_title (which a rescan would clobber).
+func TestClaudeConvStore_SetTitleGuards(t *testing.T) {
+	err := claudeConvStore{}.SetTitle("any-conv", "any-title")
+	require.Error(t, err, "claude SetTitle must refuse a direct title write")
+}
+
+// TestSupportsConvs pins the nil-guard helper: claude exposes a ConvStore,
+// a bare descriptor does not.
+func TestSupportsConvs(t *testing.T) {
+	require.True(t, Default().SupportsConvs(), "claude exposes a ConvStore")
+	require.False(t, (&Harness{Name: "bare"}).SupportsConvs(), "a descriptor with nil Convs reports false")
+	var nilH *Harness
+	require.False(t, nilH.SupportsConvs(), "nil harness reports false")
+}

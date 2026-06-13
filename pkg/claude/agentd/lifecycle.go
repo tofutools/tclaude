@@ -91,14 +91,29 @@ func stopOneConv(convID string, force bool) memberOpResult {
 		}
 		return res
 	}
-	// Soft stop: inject `/exit`. Same two-step send-keys the /rename
-	// injector uses (see injectSlashCommand). CC closes the conversation
-	// cleanly; tmux session goes away when CC exits.
-	if injectSlashCommand(convID, "/exit", "") {
-		res.Action = "soft_stopped"
-	} else {
+	// Soft stop: inject the harness's exit command (CC's `/exit`). The
+	// harness closes the conversation cleanly and the tmux session goes
+	// away when it exits. The command is sourced from the harness's
+	// Lifecycle so a non-CC pane is never typed `/exit` if that's not its
+	// exit command.
+	h := harnessForConv(convID)
+	if h.SupportsSoftExit() {
+		exitCmd := h.Life.SoftExitCommand()
+		if injectSlashCommand(convID, exitCmd, "") {
+			res.Action = "soft_stopped"
+		} else {
+			res.Action = "error"
+			res.Detail = "send-keys " + exitCmd + " failed"
+		}
+		return res
+	}
+	// No soft-exit command for this harness → hard kill so the pane never
+	// lingers because we couldn't type a graceful exit.
+	if err := clcommon.TmuxCommand("kill-session", "-t", sess.TmuxSession).Run(); err != nil {
 		res.Action = "error"
-		res.Detail = "send-keys /exit failed"
+		res.Detail = "kill-session (harness has no soft-exit): " + err.Error()
+	} else {
+		res.Action = "killed_no_soft_exit"
 	}
 	return res
 }
@@ -903,17 +918,20 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	}
 	target := sess.TmuxSession + ":0.0"
 
-	// /rename first — see the doc comment. Skipped when name is empty
-	// or not a valid rename title (some callers pass human-friendly
-	// names that don't fit the rename charset); the welcome below
-	// still materialises the .jsonl in that case.
+	// Rename first — see the doc comment. Skipped when name is empty or
+	// not a valid rename title (some callers pass human-friendly names
+	// that don't fit the rename charset); the welcome below still
+	// materialises the conversation in that case. deliverRename routes
+	// through the harness (CC injects its rename command; a direct-write
+	// harness uses its title store) — the charset gate stays here, since
+	// deliverRename only routes, it does not validate.
 	if name != "" && isValidRenameTitle(name) {
-		if err := injectTextAndSubmit(target, "/rename "+name); err != nil {
-			slog.Warn("spawn: /rename injection failed",
-				"conv", convID, "name", name, "error", err)
+		if !deliverRename(convID, name) {
+			slog.Warn("spawn: rename delivery failed",
+				"conv", convID, "name", name)
 		}
 	} else if name != "" {
-		slog.Warn("spawn: name not a valid rename title; skipping /rename",
+		slog.Warn("spawn: name not a valid rename title; skipping rename",
 			"conv", convID, "name", name)
 	}
 
