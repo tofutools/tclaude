@@ -40,7 +40,7 @@ func TestSessionNewArgs_Harness(t *testing.T) {
 		t.Fatalf("codex harness must append `--harness codex`, got %v", args)
 	}
 	rargs := sessionResumeArgs("conv-1", "/tmp/x", "", "", "codex")
-	if ri := slices.Index(rargs, "--harness"); ri < 0 || rargs[ri+1] != "codex" {
+	if ri := slices.Index(rargs, "--harness"); ri < 0 || ri+1 >= len(rargs) || rargs[ri+1] != "codex" {
 		t.Fatalf("resume must append `--harness codex`, got %v", rargs)
 	}
 }
