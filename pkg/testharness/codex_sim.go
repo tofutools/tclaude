@@ -91,6 +91,7 @@ type CodexSim struct {
 	GitBranch string
 
 	createdAt time.Time
+	home      string // HOME the rollout + state DB live under
 
 	mu         sync.Mutex
 	title      string
@@ -143,6 +144,7 @@ func NewCodexSimWithID(t *testing.T, home, convID, cwd string) *CodexSim {
 		CliVersion:    "0.139.0",
 		ContextWindow: 258400,
 		createdAt:     created,
+		home:          home,
 	}
 	cx.installDefaultHandlers()
 	t.Cleanup(cx.Shutdown)
@@ -250,6 +252,13 @@ func (c *CodexSim) SetTitle(title string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.title = title
+}
+
+// CreatedUnix is the session's start time as unix seconds — the stamp a
+// threads-row writer uses for created_at/updated_at so the seeded row
+// agrees with the rollout's session_meta time.
+func (c *CodexSim) CreatedUnix() int64 {
+	return c.createdAt.Unix()
 }
 
 // OnInput registers a handler. Newer registrations win on prefix match.

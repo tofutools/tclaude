@@ -469,8 +469,14 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	// Resolve the original's display title so the clone's title can be
 	// derived as `<base>-c-<N>`. Best-effort — an empty originalTitle
 	// just means uniqueCloneTitle falls back to a bare `c-<N>`.
+	// A non-CC harness (Codex) keeps its title in its own store
+	// (threads.title); read it through the harness ConvStore so the clone
+	// inherits the source's name. CC falls through to the conv_index path
+	// unchanged.
 	originalTitle := ""
-	if row := agent.FreshConvRowResolved(target); row != nil {
+	if t, ok := harnessNativeTitle(target); ok {
+		originalTitle = t
+	} else if row := agent.FreshConvRowResolved(target); row != nil {
 		originalTitle = agent.DisplayTitle(row)
 	}
 	newTitle := uniqueCloneTitle(originalTitle)

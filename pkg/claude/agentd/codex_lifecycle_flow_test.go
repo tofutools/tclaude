@@ -25,11 +25,12 @@ import (
 //     the Codex harness. The simSpawner builds a CodexSim (a real
 //     date-indexed rollout .jsonl), exactly as the production hook
 //     callback would have recorded a real Codex launch.
-//   - The Codex worker shows up in the group. Its display name comes from
-//     the pending_name fallback: Codex has no in-pane /rename command, so
-//     the post-spawn rename degrades to the title store (the JOH-161
-//     ConvStore.SetTitle stub) and the pending name carries the name in
-//     the meantime — the graceful degradation lead signed off on (Q2).
+//   - The Codex worker shows up in the group. Codex has no in-pane /rename
+//     command, so the post-spawn rename degrades to the title store
+//     (ConvStore.SetTitle, real since JOH-161). The simSpawner's CodexSim
+//     models Codex's session-start threads-row creation, so that out-of-band
+//     UPDATE now lands on a real row instead of warning "no threads row" —
+//     the harness-aware rename path the lead signed off on (Q2).
 //   - Messaging is harness-agnostic: a grouped peer's message lands in the
 //     Codex worker's inbox and nudges its live pane the same as any agent.
 //   - A soft stop injects Codex's `/quit` (verified vs openai/codex
@@ -60,8 +61,10 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	assert.Equal(t, "codex", sessions[0].Harness, "spawned session is tagged codex")
 
 	// Membership surface — what `tclaude agent groups members codex-crew`
-	// renders. The name resolves through pending_name (the Codex rename
-	// degrades to the title store, which is still a stub).
+	// renders. Codex has no in-pane /rename, so the post-spawn rename
+	// degrades to the native title store (ConvStore.SetTitle → threads.title,
+	// now landing on the modeled session-start row); the displayed name
+	// resolves to the intended --name either way.
 	f.AssertGroupMember("codex-crew", spawn.ConvID, "codex-worker", 5*time.Second)
 
 	// Message it: a grouped peer sends; the message lands in the Codex
