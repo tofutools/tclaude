@@ -154,6 +154,42 @@ func TestRunList_EmptyDir_UnifiedNotFound(t *testing.T) {
 	assert.Contains(t, out, "No conversations found")
 }
 
+// A non-canonical --dir (here a trailing separator) must still list Codex
+// convs: the dir is canonicalized so the Codex exact-match cwd filter agrees
+// with the Claude project-dir encode. Without the fix Codex convs drop.
+func TestRunList_NonCanonicalDir(t *testing.T) {
+	home := setupHarnessTestHome(t)
+	cwd := filepath.Join(home, "proj")
+	writeClaudeConv(t, cwd, "11111111-1111-1111-1111-111111111111", "hello from claude")
+	writeCodexRollout(t, home, "22222222-2222-2222-2222-222222222222", cwd, "hello from codex")
+
+	stdout, stderr := tempOutErr(t)
+	// Trailing separator → filepath.Abs cleans it back to cwd.
+	code := RunList(&ListParams{Dir: cwd + string(filepath.Separator), SortBy: "modified"}, stdout, stderr)
+	require.Equal(t, 0, code)
+
+	out := readFileContents(t, stdout.Name())
+	assert.Contains(t, out, "11111111", "claude conv listed for non-canonical dir")
+	assert.Contains(t, out, "22222222", "codex conv still listed for non-canonical dir")
+}
+
+// A control char / ANSI escape embedded in an (untrusted) Codex first
+// message must be scrubbed before it reaches the terminal.
+func TestRunList_ScrubsControlCharsInUntrustedTitle(t *testing.T) {
+	home := setupHarnessTestHome(t)
+	cwd := filepath.Join(home, "proj")
+	// \\u001b[31m is a JSON-escaped ESC + ANSI color sequence.
+	writeCodexRollout(t, home, "44444444-4444-4444-4444-444444444444", cwd, "danger\\u001b[31mRED")
+
+	stdout, stderr := tempOutErr(t)
+	code := RunList(&ListParams{Dir: cwd, SortBy: "modified"}, stdout, stderr)
+	require.Equal(t, 0, code)
+
+	out := readFileContents(t, stdout.Name())
+	assert.NotContains(t, out, "\x1b[31m", "the raw ESC sequence must not reach the terminal")
+	assert.Contains(t, out, "danger", "the visible text survives the scrub")
+}
+
 // --- conv search ------------------------------------------------------------
 
 func TestRunSearch_MergesCodexAndClaude(t *testing.T) {

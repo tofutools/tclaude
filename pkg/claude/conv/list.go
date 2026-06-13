@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -100,6 +101,13 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 				fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
 				return 1
 			}
+		}
+
+		// Canonicalize so the Claude project-dir encode and the harness cwd
+		// filter (an exact-string match) agree on a relative or
+		// trailing-slash --dir; otherwise Codex convs would silently drop.
+		if abs, err := filepath.Abs(targetDir); err == nil {
+			targetDir = abs
 		}
 
 		// Load Claude conversations if this dir has a project dir. A missing
@@ -339,22 +347,43 @@ func harnessBadge(h string) string {
 }
 
 func cleanPrompt(prompt string) string {
-	// Replace newlines with spaces
-	prompt = strings.ReplaceAll(prompt, "\n", " ")
-	prompt = strings.ReplaceAll(prompt, "\r", "")
-	// Collapse multiple spaces
-	for strings.Contains(prompt, "  ") {
-		prompt = strings.ReplaceAll(prompt, "  ", " ")
+	// Titles/prompts come from (now multi-harness) untrusted conversation
+	// files and are printed straight into the user's terminal, so newlines
+	// become spaces and every other control char — ESC/ANSI escapes above
+	// all — is dropped rather than allowed to reach the terminal.
+	var b strings.Builder
+	b.Grow(len(prompt))
+	for _, r := range prompt {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case unicode.IsControl(r):
+			continue
+		default:
+			b.WriteRune(r)
+		}
 	}
-	return strings.TrimSpace(prompt)
+	out := b.String()
+	// Collapse multiple spaces
+	for strings.Contains(out, "  ") {
+		out = strings.ReplaceAll(out, "  ", " ")
+	}
+	return strings.TrimSpace(out)
 }
 
 func truncatePrompt(prompt string, maxLen int) string {
 	prompt = cleanPrompt(prompt)
-	if len(prompt) <= maxLen {
+	// Count/cut on runes, not bytes, so a multi-byte char near the limit is
+	// never split into invalid UTF-8 (maxLen also tracks display columns
+	// more closely this way).
+	r := []rune(prompt)
+	if len(r) <= maxLen {
 		return prompt
 	}
-	return prompt[:maxLen-1] + "…"
+	if maxLen < 1 {
+		return "…"
+	}
+	return string(r[:maxLen-1]) + "…"
 }
 
 func formatDate(isoDate string) string {

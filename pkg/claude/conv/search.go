@@ -104,6 +104,13 @@ func RunSearch(params *SearchParams, stdout, stderr *os.File) int {
 			}
 		}
 
+		// Canonicalize so the Claude project-dir encode and the harness cwd
+		// filter (an exact-string match) agree on a relative or
+		// trailing-slash --dir; otherwise Codex convs would silently drop.
+		if abs, err := filepath.Abs(targetDir); err == nil {
+			targetDir = abs
+		}
+
 		// A missing Claude project dir is no longer fatal — the directory
 		// may still have other-harness (Codex) conversations.
 		projectPath := GetClaudeProjectPath(targetDir)
