@@ -73,24 +73,35 @@ function scheduleFlush() {
   flushTimer = setTimeout(flush, WRITE_DEBOUNCE_MS);
 }
 
-async function flush() {
+function flush() {
   flushTimer = null;
   const batch = [...pending.entries()];
   pending.clear();
+  // Dispatch every queued write SYNCHRONOUSLY — fire-and-forget, no
+  // inter-request await. The writes are independent and best-effort, so
+  // serialising them buys nothing; worse, awaiting between them breaks
+  // the page-unload path: flushNow() calls this from pagehide /
+  // visibilitychange→hidden, where the event loop won't resume past an
+  // await, so an `await fetch` loop would dispatch only the FIRST request
+  // of a multi-key batch and silently drop the rest. Calling fetch() up
+  // front commits each keepalive request before the page tears down.
   for (const [key, { value }] of batch) {
     try {
-      await fetch(API, {
+      // value:null tells the daemon to delete (mirrors removeItem).
+      fetch(API, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        // value:null tells the daemon to delete (mirrors removeItem).
         body: JSON.stringify({ key, value }),
         // keepalive lets the write survive a tab close / navigation that
         // races the debounce (also how flushNow's unload writes land).
         keepalive: true,
+      }).catch(() => {
+        // Best-effort persistence; the cache already reflects the value.
       });
     } catch (_) {
-      // Best-effort persistence; the cache already reflects the value.
+      // fetch() itself can throw synchronously (e.g. the keepalive total
+      // body-size quota is exceeded). Best-effort — swallow and move on.
     }
   }
 }
