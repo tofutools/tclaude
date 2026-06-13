@@ -6,6 +6,7 @@
 
 import { $, $$, esc, shortId, relTime } from './helpers.js';
 import { cycleSort } from './sort.js';
+import { dashPrefs } from './prefs.js';
 import {
   renderPermissions, renderSlugs, showStatus,
   renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
@@ -70,7 +71,7 @@ function bindFilter(tab) {
   const input = $(`#filter-${tab}`);
   const clear = $(`#filter-${tab}-clear`);
   const key = `tclaude.dash.filter.${tab}`;
-  input.value = localStorage.getItem(key) || '';
+  input.value = dashPrefs.getItem(key) || '';
   const rerender = () => {
     if (tab === 'groups') renderGroupsTab();
     else if (tab === 'templates') renderTemplatesTab();
@@ -82,7 +83,7 @@ function bindFilter(tab) {
   };
   const onChange = () => {
     const v = input.value;
-    if (v) localStorage.setItem(key, v); else localStorage.removeItem(key);
+    if (v) dashPrefs.setItem(key, v); else dashPrefs.removeItem(key);
     rerender();
   };
   input.addEventListener('input', onChange);
@@ -93,10 +94,10 @@ function bindFilter(tab) {
   const offline = $(`#filter-${tab}-offline`);
   if (offline) {
     const okey = `tclaude.dash.offline.${tab}`;
-    const saved = localStorage.getItem(okey);
+    const saved = dashPrefs.getItem(okey);
     offline.checked = saved === null ? true : saved === '1';
     offline.addEventListener('change', () => {
-      localStorage.setItem(okey, offline.checked ? '1' : '0');
+      dashPrefs.setItem(okey, offline.checked ? '1' : '0');
       rerender();
     });
   }
@@ -106,10 +107,10 @@ function bindFilter(tab) {
   const ungrouped = $(`#filter-${tab}-ungrouped`);
   if (ungrouped) {
     const ukey = `tclaude.dash.ungrouped.${tab}`;
-    const saved = localStorage.getItem(ukey);
+    const saved = dashPrefs.getItem(ukey);
     ungrouped.checked = saved === null ? true : saved === '1';
     ungrouped.addEventListener('change', () => {
-      localStorage.setItem(ukey, ungrouped.checked ? '1' : '0');
+      dashPrefs.setItem(ukey, ungrouped.checked ? '1' : '0');
       rerender();
     });
   }
@@ -119,10 +120,10 @@ function bindFilter(tab) {
   const conversations = $(`#filter-${tab}-conversations`);
   if (conversations) {
     const ckey = `tclaude.dash.conversations.${tab}`;
-    const saved = localStorage.getItem(ckey);
+    const saved = dashPrefs.getItem(ckey);
     conversations.checked = saved === '1';
     conversations.addEventListener('change', () => {
-      localStorage.setItem(ckey, conversations.checked ? '1' : '0');
+      dashPrefs.setItem(ckey, conversations.checked ? '1' : '0');
       rerender();
     });
   }
@@ -132,10 +133,10 @@ function bindFilter(tab) {
   const retired = $(`#filter-${tab}-retired`);
   if (retired) {
     const rkey = `tclaude.dash.retired.${tab}`;
-    const saved = localStorage.getItem(rkey);
+    const saved = dashPrefs.getItem(rkey);
     retired.checked = saved === null ? true : saved === '1';
     retired.addEventListener('change', () => {
-      localStorage.setItem(rkey, retired.checked ? '1' : '0');
+      dashPrefs.setItem(rkey, retired.checked ? '1' : '0');
       rerender();
     });
   }
@@ -307,9 +308,9 @@ function bindDetailsPersistence() {
     const key = d.getAttribute('data-group-key');
     if (!key) return;
     if (d.open) {
-      localStorage.setItem('tclaude.dash.group.' + key, '1');
+      dashPrefs.setItem('tclaude.dash.group.' + key, '1');
     } else {
-      localStorage.removeItem('tclaude.dash.group.' + key);
+      dashPrefs.removeItem('tclaude.dash.group.' + key);
     }
   }, true);
 }

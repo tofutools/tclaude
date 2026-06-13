@@ -4,7 +4,9 @@
 // formatting, and the small pure-ish cell / pill / status-dot / row-
 // button builders the dashboard render code shares. Extracted verbatim
 // from dashboard.js as the first step of the Stage 2 module split.
-// A leaf module: it imports nothing.
+// Near-leaf: it imports only the prefs store (which itself imports
+// nothing), used by the per-group offline-override helpers below.
+import { dashPrefs } from './prefs.js';
 
 const $ = (sel, root) => (root || document).querySelector(sel);
 const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -700,9 +702,9 @@ function offlineDefault(tab) {
 
 // groupOfflineOverride: per-group override — 'show', 'hide', or
 // 'inherit' (no override; follows the tab-wide checkbox). Persisted
-// in localStorage keyed by group name so it survives reloads.
+// in dashPrefs keyed by group name so it survives reloads and restarts.
 function groupOfflineOverride(name) {
-  const v = localStorage.getItem('tclaude.dash.group.offline.' + name);
+  const v = dashPrefs.getItem('tclaude.dash.group.offline.' + name);
   return (v === 'show' || v === 'hide') ? v : 'inherit';
 }
 

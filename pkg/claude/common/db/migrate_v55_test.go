@@ -106,6 +106,9 @@ func TestMigrateV54toV55_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
+	// The literal currentVersion pin moved forward to the v57 test
+	// (TestMigrateV56toV57_FreshSchemaRoundTrips) — the next migration's
+	// author carries it on, per the comment above.
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "sess-1", TmuxSession: "t1", Status: "running"}))
 

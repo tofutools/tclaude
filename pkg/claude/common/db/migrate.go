@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-const currentVersion = 56
+const currentVersion = 57
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
 // path. It matches the `harness TEXT NOT NULL DEFAULT 'claude'` column
-// default (migrateV55toV56) and harness.DefaultName in pkg/claude/harness
+// default (migrateV56toV57) and harness.DefaultName in pkg/claude/harness
 // — kept as a literal here because the db/convops layers cannot import
 // harness without an import cycle (harness → common → convops).
 const DefaultHarness = "claude"
@@ -367,10 +367,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 57 {
+		if err := migrateV56toV57(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// migrateV55toV56 adds the `harness` column to both `sessions` and
+// migrateV56toV57 adds the `harness` column to both `sessions` and
 // `conv_index` — the harness (coding tool) each row belongs to. Default
 // 'claude' so every existing row, and every reader that doesn't yet
 // select the column, keeps working untouched; the Codex scan path
@@ -384,10 +390,10 @@ func migrate(db *sql.DB) error {
 // between the two ALTERs) must converge on re-run instead of wedging on
 // "duplicate column name". Each ALTER is probed independently so a run
 // that added `sessions.harness` but not `conv_index.harness` heals.
-func migrateV55toV56(db *sql.DB) error {
+func migrateV56toV57(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v55→v56 (add harness columns): begin: %w", err)
+		return fmt.Errorf("migrate v56→v57 (add harness columns): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -397,7 +403,7 @@ func migrateV55toV56(db *sql.DB) error {
 			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'harness'`,
 			table,
 		).Scan(&haveCol); err != nil {
-			return fmt.Errorf("migrate v55→v56 (add %s.harness): probe column: %w", table, err)
+			return fmt.Errorf("migrate v56→v57 (add %s.harness): probe column: %w", table, err)
 		}
 		if haveCol == 0 {
 			// Table name is from a hardcoded loop, not user input, so the
@@ -406,16 +412,60 @@ func migrateV55toV56(db *sql.DB) error {
 			if _, err := tx.Exec(fmt.Sprintf(
 				`ALTER TABLE %s ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude'`, table,
 			)); err != nil {
-				return fmt.Errorf("migrate v55→v56 (add %s.harness): add column: %w", table, err)
+				return fmt.Errorf("migrate v56→v57 (add %s.harness): add column: %w", table, err)
 			}
 		}
 	}
 
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 56`); err != nil {
-		return fmt.Errorf("migrate v55→v56 (add harness columns): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 57`); err != nil {
+		return fmt.Errorf("migrate v56→v57 (add harness columns): %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v55→v56 (add harness columns): commit: %w", err)
+		return fmt.Errorf("migrate v56→v57 (add harness columns): commit: %w", err)
+	}
+	return nil
+}
+
+// migrateV55toV56 adds dashboard_prefs — a flat key→value store for the
+// browser dashboard's "sticky" view/config preferences (group
+// expand/collapse, per-tab filters and toggles, the sort state, the
+// spawn-modal auto-focus checkbox, and the per-model spawn effort
+// memory). These used to live in the browser's localStorage, but the
+// dashboard is served on a RANDOM loopback port each daemon start and
+// localStorage is partitioned by origin (scheme+host+port) — so every
+// such setting silently reset on restart. Moving them server-side
+// makes them survive restarts, browser profiles and multiple tabs (the
+// same reasoning the slop volume sliders already use, via config.json).
+//
+// Values are stored verbatim as the opaque strings the dashboard wrote
+// to localStorage ('1'/'0', filter text, a JSON blob) — the daemon
+// never looks inside them, so a flat TEXT KV is all that's needed; no
+// JSON/JSONB column type buys anything here.
+//
+// CREATE TABLE IF NOT EXISTS is idempotent, so a half-applied earlier
+// run converges on re-run (the migrateV53toV54 convention); the whole
+// thing rides one transaction with the version bump.
+func migrateV55toV56(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v55→v56 (add dashboard_prefs): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS dashboard_prefs (
+			key        TEXT PRIMARY KEY,
+			value      TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+
+		UPDATE schema_version SET version = 56;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v55→v56 (add dashboard_prefs): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v55→v56 (add dashboard_prefs): commit: %w", err)
 	}
 	return nil
 }

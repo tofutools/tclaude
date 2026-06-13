@@ -10,6 +10,7 @@ import {
   cwdCell, branchCell, offlineDefault, groupShowOffline,
 } from './helpers.js';
 import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS } from './sort.js';
+import { dashPrefs } from './prefs.js';
 
 // lastSnapshot and sudoBadge live in dashboard.js; sudoByConv lives in
 // refresh.js (refresh() rebuilds it on every poll). Imported back here —
@@ -79,7 +80,7 @@ function renderVirtualGroup(g) {
   const visible = offlineDefault('groups') ? members : members.filter(m => m.online);
   const hiddenOffline = members.length - visible.length;
   const key = g.key || g.name;
-  const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+  const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
   const body = members.length === 0
     ? '<div class="muted">(no ungrouped agents)</div>'
     : visible.length === 0
@@ -115,7 +116,7 @@ function renderVirtualGroup(g) {
 function renderVirtualConversationsGroup(g) {
   const members = g.members || [];
   const key = g.key || g.name;
-  const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+  const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
   const body = members.length === 0
     ? '<div class="muted">(no non-agent conversations)</div>'
     : `
@@ -162,7 +163,7 @@ function renderVirtualConversationsGroup(g) {
 function renderVirtualRetiredGroup(g) {
   const members = g.members || [];
   const key = g.key || g.name;
-  const isOpen = localStorage.getItem('tclaude.dash.group.' + key) === '1';
+  const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
   const body = members.length === 0
     ? '<div class="muted">(no retired agents)</div>'
     : `
@@ -274,7 +275,7 @@ function renderGroups(groups) {
     // Restore expanded state across the 2s polling re-renders by
     // keying on group name. Persisted in localStorage so it
     // survives a full page reload too.
-    const isOpen = localStorage.getItem('tclaude.dash.group.' + g.name) === '1';
+    const isOpen = dashPrefs.getItem('tclaude.dash.group.' + g.name) === '1';
     // 👥 chip: <online>/<total>/<cap> — but collapse the online
     // slot to <total>/<cap> when everyone is online (the common
     // case), so the chip stays terse and only grows a third slot
