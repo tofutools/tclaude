@@ -182,19 +182,43 @@ dashboard comments referring to the model/effort line. Clean slate.
 
 **Storage.** Rollout files at `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`
 (+ `.jsonl.zst` for cold sessions; resume materializes back to plain `.jsonl`
-to append). **Date-indexed, not cwd-indexed** — cwd lives inside the file. Each
-line is a `RolloutLine{timestamp, item}` wrapping a `RolloutItem`:
-- `SessionMeta` — `id`, `source`, `cwd`, `model_provider`, `cli_version`.
-- `ResponseItem` — model responses + tool calls (role, content, tool outputs).
-- `EventMsg` — `UserMessage`, `AgentMessage`, `AgentReasoning`, `TokenCount`,
-  `TurnComplete`, lifecycle.
-- `TurnContext` — model, approval_policy, sandbox_policy snapshot.
-- `Compacted` — history-compaction output.
-The rollout file has **no `customTitle` turn** like CC's. Default display title
-is auto-generated from the conversation; a **user rename is supported** (issue
-#22526, COMPLETED) but persisted **outside the rollout turns** (exact location
-TBD — likely extended `SessionMeta`/sidecar/index). For an un-renamed session,
-derive a display title from the first `UserMessage`.
+to append). **Date-indexed, not cwd-indexed** — cwd lives inside the file. The
+dir + filename `<ts>` are **local** time; timestamps *inside* the file are UTC.
+
+**CORRECTED against real Codex CLI v0.139.0** (sampled rollout, captured in
+`pkg/testharness/testdata/codex_rollout_v0139.jsonl`; the old
+`RolloutLine{timestamp,item}` model below was from earlier research and is
+**wrong**): each line is an envelope **`{timestamp, type, payload}`** with a
+snake_case top-level `type`:
+- `session_meta` — `id`, `timestamp`, `cwd`, `originator` (`codex-tui`),
+  `cli_version`, `source` (`cli`), `thread_source`, `model_provider` (`openai`),
+  `base_instructions:{text}`. Written **once** at session start.
+- `event_msg` — `payload.type` ∈ {`task_started` (turn_id, started_at,
+  model_context_window, collaboration_mode_kind), `user_message` (message,
+  images, local_images, text_elements), `agent_message` (message, phase,
+  memory_citation), `token_count`, `task_complete` (turn_id, last_agent_message,
+  completed_at, duration_ms, time_to_first_token_ms), …}.
+- `response_item` — `payload.type=message`, `role` ∈ {`developer`, `user`,
+  `assistant`}, `content:[{type:input_text|output_text, text}]` (+ `phase` on
+  assistant). Tool calls/outputs are also `response_item`s.
+- `turn_context` — per-turn snapshot: `turn_id`, `cwd`, `workspace_roots`,
+  `current_date`, `timezone`, `approval_policy`, `sandbox_policy`, `model`,
+  `personality`, `collaboration_mode`, … Emitted per turn.
+
+`token_count` (feeds context% → JOH-170) shape:
+`payload.info.{total_token_usage,last_token_usage}` each =
+`{input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens}`,
+plus `payload.info.model_context_window` and a `payload.rate_limits` block.
+
+**Title (JOH-165 — RESOLVED).** The rollout has **no `customTitle` turn** like
+CC's. Titles live in **`~/.codex/state_5.sqlite`, table `threads`**, column
+`title` (alongside `rollout_path`, `cwd`, `tokens_used`, `git_branch`/`git_sha`,
+`model`, `first_user_message`, `preview`, `archived`, …) — a metadata index DB,
+**not** the rollout file. For an un-renamed session `title` is auto-derived from
+the first user message; a user rename (#22526) updates this column. So the Codex
+read path must consult the state DB (or derive from the first `user_message`),
+never look for a title turn in the rollout. (`~/.codex/history.jsonl` is a flat
+`{session_id, ts, text}` global prompt log — not per-session metadata.)
 
 **Commands.** `codex` (TUI), `codex exec`/`codex e` (headless, streams stdout or
 JSONL), `codex resume <SESSION_ID>` / `codex resume --last` / `--all`. Flags:
@@ -242,7 +266,7 @@ web search, local code-review agent, approval modes.
 | Hook trust | n/a | explicit/managed required |
 | Notification event | yes | no → use `PermissionRequest` |
 | SessionEnd event | yes | no → use `Stop` + proc-exit |
-| Rename / title | `/rename` → `customTitle` turn in `.jsonl` | shipped (#22526), persisted outside rollout turns (TBD) → read native, fallback tclaude-side |
+| Rename / title | `/rename` → `customTitle` turn in `.jsonl` | shipped (#22526), persisted in `~/.codex/state_5.sqlite` `threads.title` (JOH-165), not rollout turns → read state DB or derive from first `user_message` |
 | "everything in one file" | yes (title/summary/cwd/branch all in the `.jsonl`) | no — metadata split across rollout + sidecar/index |
 | Compact | `/compact` | TBD (spike) |
 | Model slugs | `claude-*` | `gpt-5.*` |
