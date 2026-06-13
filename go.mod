@@ -15,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jedib0t/go-pretty/v6 v6.7.10
+	github.com/klauspost/compress v1.18.5
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
