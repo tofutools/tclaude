@@ -9,9 +9,14 @@ package agentd
 // "claude" omits the --harness flag and spawns Claude Code. It threads
 // through to `tclaude session new --harness <h>` so a daemon-owned Codex
 // agent comes up under the Codex CLI (JOH-160).
+//
+// sandbox is the launch-time OS-sandbox mode for harnesses that take one
+// (Codex's --sandbox); "" omits the flag. The daemon resolves it to the
+// harness's secure default (Codex: workspace-write) before spawning, so a
+// daemon-owned Codex agent runs sandboxed by default (JOH-192).
 type Spawner interface {
-	SpawnNew(label, cwd, effort, model, harness string) error
-	SpawnResume(convID, cwd, effort, model, harness string) error
+	SpawnNew(label, cwd, effort, model, harness, sandbox string) error
+	SpawnResume(convID, cwd, effort, model, harness, sandbox string) error
 }
 
 // Spawn is the package-wide Spawner every caller hits via the
@@ -26,9 +31,9 @@ var Spawn Spawner = LiveSpawner{}
 // it (e.g., a recording proxy).
 type LiveSpawner struct{}
 
-func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness string) error {
-	return liveSpawnNew(label, cwd, effort, model, harness)
+func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox string) error {
+	return liveSpawnNew(label, cwd, effort, model, harness, sandbox)
 }
-func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness string) error {
-	return liveSpawnResume(convID, cwd, effort, model, harness)
+func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox string) error {
+	return liveSpawnResume(convID, cwd, effort, model, harness, sandbox)
 }

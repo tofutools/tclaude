@@ -70,6 +70,21 @@ func harnessNativeTitle(convID string) (string, bool) {
 	return title, true
 }
 
+// sandboxForHarness returns the launch sandbox mode the daemon re-applies
+// when it relaunches an existing conv (resume / clone / reincarnate). The
+// mode is not persisted per-conv, so a Codex agent that was spawned
+// sandboxed must be re-defaulted to its secure mode (workspace-write) on
+// relaunch rather than coming back unsandboxed; a harness with no launch
+// sandbox flag (Claude Code) or an unknown tag yields "" (omit the flag).
+// A $HOME cwd is still re-checked by the forked `tclaude session new`'s own
+// guard, so this needn't repeat it.
+func sandboxForHarness(name string) string {
+	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsSandbox() {
+		return h.Sandbox.DefaultMode()
+	}
+	return ""
+}
+
 // deliverRename renames a conversation the way its harness dictates and
 // reports whether delivery succeeded. A harness with an in-pane rename
 // command (Claude Code's /rename) gets it injected into the live pane; one

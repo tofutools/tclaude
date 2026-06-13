@@ -280,7 +280,7 @@ web search, local code-review agent, approval modes.
 | Compact | `/compact` | TBD (spike) |
 | Model slugs | `claude-*` | `gpt-5.*` |
 | MCP / subagents | yes | yes |
-| Sandbox | tweakable built-in sandbox, off unless `sandbox.enabled` + hand-written `denyWrite` (see `docs/sandbox-hardening.md`) | OS-native: Seatbelt / bwrap+seccomp / Win restricted-token; `--sandbox {read-only\|workspace-write\|danger-full-access}`; **`workspace-write` writes only cwd+/tmp+$TMPDIR (so `$HOME` is read-only) + net-deny by default** — the tclaude-hardening integrity goal is met without config (§D, JOH-166) |
+| Sandbox | tweakable built-in sandbox, off unless `sandbox.enabled` + hand-written `denyWrite` (see `docs/sandbox-hardening.md`) | OS-native: Seatbelt / bwrap+seccomp / Win restricted-token; `--sandbox {read-only\|workspace-write\|danger-full-access}`; **`workspace-write` writes only cwd+/tmp+$TMPDIR (so `$HOME` is read-only) + net-deny by default** — the tclaude-hardening integrity goal is met without config; tclaude spawns Codex `--sandbox workspace-write` by default (§D, JOH-166/JOH-192) |
 | Oversight / "auto" | oversight agent checks the worker | **Auto-review** = a *guardian* subagent that auto-decides the `on-request`/granular approval prompts a human would answer (`approvals_reviewer=auto_review`); **fail-closed**; orthogonal to tclaude's agentd gating; distinct from the `/review` diff-reviewer (§E, JOH-167) |
 
 ### D. CC ↔ Codex sandbox mapping (JOH-166 — researched)
@@ -380,9 +380,16 @@ mode label.
 
 **Acceptance status:** CC↔Codex mapping documented (above + matrix row);
 Spawner/`setup` contract + default (`workspace-write`) recommended; matrix
-row updated; nested-sandbox question answered. Implementation lands as M2
-(Spawner field + `--sandbox`) and M5 (dialog/badge) follow-ups — this
-research issue is the design input for them.
+row updated; nested-sandbox question answered. **Spawner implementation
+SHIPPED (JOH-192):** `SpawnSpec.SandboxMode` + a `SandboxCatalog` capability
+on the harness descriptor (`Harness.Sandbox`, nil for CC); `codexSpawner`
+emits `--sandbox <mode>`; `ResolveSandboxMode` defaults Codex to
+`workspace-write` and rejects a mode for CC; the `CodexSandboxCwdConflict`
+cwd-guard refuses a workspace-write spawn rooted at/above `$HOME` (a clean
+400 at the agentd boundary + a `session new` error); threaded through the
+agentd Spawner / `session new` / `agent spawn` paths (resume/clone/
+reincarnate re-default it since the mode isn't persisted). M5 (spawn-dialog
+selector + dashboard badge) remains the follow-up.
 
 ### E. CC ↔ Codex oversight / Auto-review mapping (JOH-167 — researched)
 

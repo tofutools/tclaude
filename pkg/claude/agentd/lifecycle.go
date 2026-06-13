@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -183,7 +184,7 @@ func resumeOneConv(convID string) memberOpResult {
 		// leaves it "" so the flag is omitted.
 		harnessName = rows[0].Harness
 	}
-	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName); err != nil {
+	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName, sandboxForHarness(harnessName)); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
@@ -644,6 +645,27 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Resolve the sandbox mode for the chosen harness: a Codex agent gets
+	// its secure default (workspace-write) when unset, an explicit mode is
+	// validated, and a harness with no launch sandbox flag (Claude Code)
+	// rejects a non-empty mode. Then the cwd-safety guard: a writable Codex
+	// sandbox confines writes to the cwd subtree, so a cwd at/above $HOME
+	// would expose ~/.tclaude / ~/.codex / ~/.claude — refuse here with a
+	// clean 400 rather than after the forked session times out.
+	sandboxMode, sbErr := harness.ResolveSandboxMode(h, body.SandboxMode)
+	if sbErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
+		return
+	}
+	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandboxMode, cwd, home) {
+		writeError(w, http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
+			"refusing to spawn a %s agent in %q under sandbox %q: it would expose "+
+				"~/.tclaude / ~/.codex / ~/.claude to the agent's writes; spawn in a "+
+				"project subdirectory or set sandbox %q to opt out",
+			h.Name, cwd, sandboxMode, harness.SandboxDangerFull))
+		return
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
@@ -661,6 +683,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Effort:         effort,
 		Model:          model,
 		Harness:        h.Name,
+		SandboxMode:    sandboxMode,
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
@@ -718,6 +741,12 @@ type spawnParams struct {
 	// boundary (handleGroupSpawn resolves it against the harness registry
 	// before building the params).
 	Harness string
+	// SandboxMode is the resolved launch sandbox mode for a harness that
+	// takes one (Codex: "workspace-write" by default), or "" to omit the
+	// flag (Claude Code, or no sandbox handling). Resolved + cwd-guarded at
+	// the spawn boundary (handleGroupSpawn) before building the params; it
+	// forwards to `tclaude session new --sandbox <mode>`.
+	SandboxMode string
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -791,7 +820,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -1126,8 +1155,8 @@ func generateSpawnLabel() string {
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default.
-func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness string) error {
-	return Spawn.SpawnNew(label, cwd, effort, model, harness)
+func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox string) error {
+	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox)
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
@@ -1135,8 +1164,11 @@ func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness string) error {
 // claude invocation — `claude --resume` does NOT restore the
 // conversation's previous model on its own, so resume surfaces pass
 // the predecessor's inherited flags to keep the agent on its model.
-func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness string) error {
-	return Spawn.SpawnResume(convID, cwd, effort, model, harness)
+// sandbox ("" = omit) likewise rides through so a relaunched Codex agent
+// stays sandboxed (the mode isn't persisted per-conv; callers re-resolve
+// the harness default).
+func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox string) error {
+	return Spawn.SpawnResume(convID, cwd, effort, model, harness, sandbox)
 }
 
 // sessionNewArgs builds the argv for the detached `tclaude session new`
@@ -1144,7 +1176,7 @@ func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness string) erro
 // an explicit value was chosen; an empty value leaves claude on its own
 // default. Kept pure so it can be unit-tested without forking a
 // subprocess.
-func sessionNewArgs(label, cwd, effort, model, harness string) []string {
+func sessionNewArgs(label, cwd, effort, model, harness, sandbox string) []string {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1156,6 +1188,7 @@ func sessionNewArgs(label, cwd, effort, model, harness string) []string {
 		args = append(args, "--model", model)
 	}
 	args = appendHarnessFlag(args, harness)
+	args = appendSandboxFlag(args, sandbox)
 	return args
 }
 
@@ -1164,7 +1197,7 @@ func sessionNewArgs(label, cwd, effort, model, harness string) []string {
 // sessionNewArgs: --effort and --model are appended only when a value
 // was chosen, so "" keeps claude on its own default. Kept pure so it
 // can be unit-tested without forking a subprocess.
-func sessionResumeArgs(convID, cwd, effort, model, harness string) []string {
+func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox string) []string {
 	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1176,6 +1209,7 @@ func sessionResumeArgs(convID, cwd, effort, model, harness string) []string {
 		args = append(args, "--model", model)
 	}
 	args = appendHarnessFlag(args, harness)
+	args = appendSandboxFlag(args, sandbox)
 	return args
 }
 
@@ -1192,6 +1226,18 @@ func appendHarnessFlag(args []string, h string) []string {
 	return args
 }
 
+// appendSandboxFlag adds `--sandbox <mode>` to a `tclaude session new` argv
+// when a mode is set. "" omits it (no sandbox handling — Claude Code, or a
+// caller that didn't resolve one). The mode is a validated enum resolved at
+// the spawn boundary (harness.ResolveSandboxMode), never user free-text, so
+// it is safe as a bare arg. The forked `tclaude session new` re-validates.
+func appendSandboxFlag(args []string, mode string) []string {
+	if mode != "" {
+		args = append(args, "--sandbox", mode)
+	}
+	return args
+}
+
 // liveSpawnNew runs `tclaude session new -d --global --label <label>`
 // as a fully-detached subprocess. Same detachment story as
 // liveSpawnResume — see its doc comment for the full rationale on
@@ -1200,13 +1246,13 @@ func appendHarnessFlag(args []string, h string) []string {
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func liveSpawnNew(label, cwd, effort, model, harness string) error {
-	// effort and model are validated at the spawn boundary
+func liveSpawnNew(label, cwd, effort, model, harness, sandbox string) error {
+	// effort, model and sandbox are validated at the spawn boundary
 	// (handleGroupSpawn / the `agent spawn` CLI) before they reach here;
 	// the forked `tclaude session new` re-validates too, though by then
 	// a bad value would only surface as a non-zero exit in the daemon
 	// log. sessionNewArgs omits each flag entirely when its value is "".
-	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness)...)
+	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	// Capture stderr so a silent subprocess failure (PATH issue, bad
@@ -1254,8 +1300,8 @@ func liveSpawnNew(label, cwd, effort, model, harness string) error {
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func liveSpawnResume(convID, cwd, effort, model, harness string) error {
-	args := sessionResumeArgs(convID, cwd, effort, model, harness)
+func liveSpawnResume(convID, cwd, effort, model, harness, sandbox string) error {
+	args := sessionResumeArgs(convID, cwd, effort, model, harness, sandbox)
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil

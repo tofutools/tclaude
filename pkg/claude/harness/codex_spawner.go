@@ -22,14 +22,16 @@ func (codexSpawner) Binary() string { return "codex" }
 
 // BuildCommand assembles the Codex invocation: env exports + the binary,
 // the `resume <id>` subcommand when resuming, an optional
-// `--dangerously-bypass-hook-trust`, an optional `--model`, then any
-// post-`--` passthrough args.
+// `--dangerously-bypass-hook-trust`, an optional `--sandbox <mode>`, an
+// optional `--model`, then any post-`--` passthrough args.
 //
 // Working directory is NOT passed via `-C/--cd`: tclaude launches the
 // pane with `tmux new-session -c <cwd>`, and Codex uses the pane's cwd —
 // the same way the CC spawner relies on tmux for cwd. Effort maps onto
-// Codex's reasoning-effort config (JOH-155); sandbox policy is still
-// omitted (→ JOH-166), so Codex uses its own sandbox default.
+// Codex's reasoning-effort config (JOH-155). Sandbox mode is a per-spawn
+// `--sandbox` flag (JOH-192) — resolved/validated at the spawn boundary
+// (ResolveSandboxMode) and emitted verbatim here, so the user's config.toml
+// sandbox_mode/profiles stay untouched.
 func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	cmd := spec.EnvExports + "codex"
 	if spec.ResumeID != "" {
@@ -43,6 +45,15 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// both on a fresh `codex` and on `codex resume <id>`, like
 		// `--model`. No value, so nothing to quote.
 		cmd += " --dangerously-bypass-hook-trust"
+	}
+	if spec.SandboxMode != "" {
+		// `--sandbox {read-only|workspace-write|danger-full-access}` selects
+		// Codex's OS-native sandbox for THIS invocation only — a per-spawn
+		// flag, so the user's config.toml sandbox_mode/profiles are left
+		// untouched. Accepted on both a fresh `codex` and `codex resume
+		// <id>` (shared option). The value is a validated enum
+		// (codexSandbox.ValidateMode), never free text, but quoted defensively.
+		cmd += " --sandbox " + clcommon.ShellQuoteArg(spec.SandboxMode)
 	}
 	if spec.Model != "" {
 		// `--model` is accepted both on a fresh `codex` and on

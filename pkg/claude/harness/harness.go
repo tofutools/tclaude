@@ -65,6 +65,12 @@ type Harness struct {
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.
 	Hooks HookInstaller
+	// Sandbox names the launch-time OS-sandbox modes this harness accepts
+	// (Codex's --sandbox) and its secure default. nil for harnesses whose
+	// sandbox is configured out of band (Claude Code → settings.json), in
+	// which case the spawn path passes no sandbox flag and rejects an
+	// explicit mode. See JOH-192.
+	Sandbox SandboxCatalog
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
@@ -91,6 +97,14 @@ func (h *Harness) SupportsSoftExit() bool {
 // Convs nil.
 func (h *Harness) SupportsConvs() bool {
 	return h != nil && h.Convs != nil
+}
+
+// SupportsSandbox reports whether the harness takes a launch-time sandbox
+// mode (Codex's --sandbox). Callers gate sandbox handling on this; a
+// harness that leaves Sandbox nil (Claude Code) keeps its out-of-band
+// (settings.json) sandbox untouched and rejects an explicit --sandbox.
+func (h *Harness) SupportsSandbox() bool {
+	return h != nil && h.Sandbox != nil
 }
 
 // SupportsHooks reports whether this build can install tclaude hooks for

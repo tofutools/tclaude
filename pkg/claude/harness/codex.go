@@ -31,6 +31,7 @@ func init() {
 		Convs:       codexConvStore{},
 		Hooks:       codexHookInstaller{},
 		Life:        codexLifecycle{},
+		Sandbox:     codexSandbox{},
 	})
 }
 
