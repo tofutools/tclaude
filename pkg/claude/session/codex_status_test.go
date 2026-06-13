@@ -10,14 +10,20 @@ import (
 // Codex fires no SessionEnd hook, so a Codex session never reaches
 // StatusExited through the event switch. Exit detection instead falls to
 // the liveness check the reaper and `session ls` share
-// (RefreshSessionStatus: tmux has-session → PID). These assert that path
-// works for a harness=codex row in both directions: a dead session is
-// marked exited, a live one is left on its hook-driven status.
+// (RefreshSessionStatus: tmux has-session → PID). That liveness path is
+// itself harness-agnostic — it never reads state.Harness — so this pins
+// the generic no-SessionEnd fallback, with Codex as the motivating case
+// (Claude Code still gets a SessionEnd; Codex relies solely on this).
+// Both directions: a dead row is marked exited, a live one is left on its
+// hook-driven status.
 //
-// (FindClaudePID — used elsewhere to refresh a stale PID — only matches
-// "claude"/"node", so it can't relocate a Codex process. That's why a
-// Codex row's liveness rests on tmux has-session, exercised here via the
-// no-tmux/no-PID fallback rather than a process-name match.)
+// FindClaudePID — used elsewhere to refresh a stale PID — only matches
+// "claude"/"node", so it can't relocate a Codex process. A Codex row's
+// liveness therefore rests on tmux has-session (exercised here via the
+// no-tmux/no-PID fallback). NOTE for the future Codex spawn slice: because
+// the PID can't be re-found, a Codex row must be created with either a
+// live tmux session or a real PID — a non-tmux row left at PID 0 would be
+// reaped as a false-positive on the first sweep.
 func TestRefreshSessionStatus_CodexNoSessionEndExitDetection(t *testing.T) {
 	t.Run("dead session (no tmux, no live process) → exited", func(t *testing.T) {
 		st := &SessionState{

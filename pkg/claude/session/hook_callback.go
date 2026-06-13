@@ -503,12 +503,14 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	state.LastHook = time.Now()
 
 	// Update state based on hook event. This switch is tclaude's
-	// cross-harness event→status map: Claude Code and Codex deliver
-	// field-identical snake_case payloads through the same
-	// `tclaude session hook-callback`, so both drive it unchanged. Codex
-	// fires a SUBSET of these events (no Notification, SessionEnd,
-	// StopFailure or PostToolUseFailure — see harness.codexHookEvents), so
-	// JOH-159's two degradations are handled by what the subset DOES carry:
+	// cross-harness event→status map. Claude Code and Codex deliver the
+	// same snake_case payload field names through the same
+	// `tclaude session hook-callback` — the parse of a Codex hook payload
+	// into HookCallbackInput is JOH-157's contract — so both harnesses
+	// drive this switch unchanged. Codex fires only a SUBSET of these
+	// events (no Notification, SessionEnd, StopFailure or
+	// PostToolUseFailure), so JOH-159's two degradations are handled by
+	// what the subset DOES carry:
 	//   - needs-attention comes from PermissionRequest (Codex has no
 	//     Notification(permission_prompt)); both land on
 	//     StatusAwaitingPermission below.

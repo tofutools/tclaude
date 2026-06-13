@@ -77,11 +77,12 @@ Phased so each milestone is independently shippable and low-risk:
    Live status + notifications (JOH-159) is the *shared* pipeline: the
    hook-callback's event→status switch and `notify.OnStateTransition`
    (mute ladder + cooldown) are harness-agnostic, so Codex's event subset
-   drives them unchanged. The two degradations need no new code path —
-   needs-attention comes from `PermissionRequest` (no `Notification`), and
-   exit from the reaper's tmux→PID liveness check (no `SessionEnd`).
-   Notification banners are attributed per-harness ("Codex: …" vs
-   "Claude: …").
+   drives them unchanged — *given* the Codex hook payload parses into
+   `HookCallbackInput` (JOH-157's contract). The two degradations need no
+   new code path — needs-attention comes from `PermissionRequest` (no
+   `Notification`), and exit from the reaper's tmux→PID liveness check (no
+   `SessionEnd`). Notification banners are attributed per-harness
+   ("Codex: …" vs "Claude: …").
 4. **M4 — agentd / agent lifecycle for Codex.** Daemon spawn/stop/resume;
    degrade reincarnate/clone/rename/compact via capability flags (titles stored
    tclaude-side where Codex lacks `/rename`).
