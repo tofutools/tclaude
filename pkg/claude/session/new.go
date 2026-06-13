@@ -15,6 +15,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -110,13 +111,19 @@ func RunNew(params *NewParams) error {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
+	// `tclaude session new` launches a Claude Code session, so the spawn
+	// command, model/effort validation and resume form all come from the
+	// claude harness behind the seam (pkg/claude/harness). When a
+	// `--harness` flag lands, this resolves the requested harness instead.
+	h := harness.Default()
+
 	// Normalise + validate --effort up front so a typo errors cleanly
 	// here (and, on the daemon spawn path, surfaces as the forked
 	// `tclaude session new`'s non-zero exit) rather than being forwarded
 	// to claude. Empty stays empty → the flag is omitted entirely. The
 	// cleaned value is written back so the --join-group handler sees the
 	// normalised level too.
-	effort, err := clcommon.ValidateEffort(params.Effort)
+	effort, err := h.Models.ValidateEffort(params.Effort)
 	if err != nil {
 		return err
 	}
@@ -124,7 +131,7 @@ func runNew(params *NewParams) error {
 
 	// Same treatment for --model: normalise + validate up front, empty
 	// stays empty → the flag is omitted entirely.
-	model, err := clcommon.ValidateModel(params.Model)
+	model, err := h.Models.ValidateModel(params.Model)
 	if err != nil {
 		return err
 	}
@@ -138,9 +145,10 @@ func runNew(params *NewParams) error {
 	}
 	extraArgs := clcommon.ExtractClaudeExtraArgs()
 
-	// Pass-through mode: --help, --version etc. — run claude directly, no tmux.
+	// Pass-through mode: --help, --version etc. — run the harness binary
+	// directly, no tmux.
 	if clcommon.ShouldRunClaudeDirect(extraArgs) {
-		cmd := exec.Command("claude", extraArgs...)
+		cmd := exec.Command(h.Spawn.Binary(), extraArgs...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -250,7 +258,13 @@ func runNew(params *NewParams) error {
 	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
-	claudeCmd := buildClaudeCmd(envExports, fullConvID, effort, model, extraArgs)
+	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+		EnvExports: envExports,
+		ResumeID:   fullConvID,
+		Effort:     effort,
+		Model:      model,
+		ExtraArgs:  extraArgs,
+	})
 
 	// Create tmux session with claude
 	// Use tmux new-session -d to create detached
@@ -310,38 +324,5 @@ func runNew(params *NewParams) error {
 	return AttachToSession(sessionID, tmuxSession, false)
 }
 
-// buildClaudeCmd assembles the `claude` invocation runNew runs inside
-// tmux: env exports + the claude binary, an optional --resume, an
-// optional --effort and --model (each appended only when an explicit
-// value was chosen — empty leaves claude on its own default), then any
-// post-`--` passthrough args. effort and model are validated single
-// tokens, but everything is shell-quoted anyway; the passthrough args
-// are shell-quoted individually. Kept pure so the "unset omits the
-// flag" guarantee is unit-testable without tmux.
-func buildClaudeCmd(envExports, fullConvID, effort, model string, extraArgs []string) string {
-	claudeCmd := envExports + "claude"
-	if fullConvID != "" {
-		claudeCmd += " --resume " + fullConvID
-	}
-	if effort != "" {
-		// Quote defensively even though effort is a validated single
-		// token: this string is handed to `sh -c`, so quoting keeps the
-		// safety local here rather than trusting every caller to have
-		// validated first. For a clean level it is a no-op.
-		claudeCmd += " --effort " + clcommon.ShellQuoteArg(effort)
-	}
-	if model != "" {
-		// Quoting is load-bearing here, not just defensive: the `[1m]`
-		// aliases contain brackets, which sh would otherwise treat as a
-		// glob pattern.
-		claudeCmd += " --model " + clcommon.ShellQuoteArg(model)
-	}
-	if len(extraArgs) > 0 {
-		quoted := make([]string, len(extraArgs))
-		for i, a := range extraArgs {
-			quoted[i] = clcommon.ShellQuoteArg(a)
-		}
-		claudeCmd += " " + strings.Join(quoted, " ")
-	}
-	return claudeCmd
-}
+// The CC launch-command builder lives behind the harness seam now —
+// see claudeSpawner.BuildCommand in pkg/claude/harness/claude.go.
