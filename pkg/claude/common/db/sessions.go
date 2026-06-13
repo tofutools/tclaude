@@ -437,6 +437,23 @@ func SetSessionPendingConv(id, convID string) error {
 	return err
 }
 
+// SetSessionConvID sets a session row's conv_id directly. The daemon's spawn
+// path uses it to record a conv-id discovered from the harness's conv store
+// for a harness (Codex) that does not report its conv-id through an immediate
+// launch hook — so the row is linked at launch instead of only when the first
+// user turn finally fires a hook. The hook callback later writes the same
+// conv-id (keyed by the session's TCLAUDE_SESSION_ID), so this is idempotent
+// with the hook path. Mirrors SetSessionPendingConv: conv_id only, no other
+// columns touched.
+func SetSessionConvID(id, convID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE sessions SET conv_id = ? WHERE id = ?`, convID, id)
+	return err
+}
+
 // GetSessionPendingConv returns the last announced next-conv for a
 // session, or "" when no transition has been announced.
 func GetSessionPendingConv(id string) (string, error) {

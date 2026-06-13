@@ -869,16 +869,44 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			"failed to launch tclaude session new: " + err.Error()}
 	}
 
-	// Poll the sessions table for the conv-id. The hook callback
-	// writes it shortly after CC actually starts inside tmux.
-	deadline := time.Now().Add(timeout)
+	// Poll the sessions table for the conv-id. The hook callback writes it
+	// shortly after the harness actually starts inside tmux — for Claude
+	// Code that is an immediate SessionStart hook, so this poll wins.
+	//
+	// Codex fires NO hook until the first user turn, so the hook-written
+	// conv-id never lands for a freshly-spawned, idle Codex agent and this
+	// poll would otherwise hang the whole timeout (the JOH-205 spawn-freeze).
+	// Codex DOES write its rollout (carrying the session-id) ~1s after
+	// launch, so once the grace elapses we fall back to discovering the
+	// conv-id from the harness conv store and persist it ourselves. The
+	// harness is resolved once; an empty/unknown --harness yields a nil
+	// descriptor and discoverSpawnedConvID no-ops, leaving CC on the hook.
+	launchedAt := time.Now()
+	deadline := launchedAt.Add(timeout)
+	spawnHarness, _ := harness.Get(p.Harness)
 	var convID, tmuxSession string
+	var lastDiscoveryScan time.Time
 	for time.Now().Before(deadline) {
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
 			tmuxSession = s.TmuxSession
 			if s.ConvID != "" {
 				convID = s.ConvID
+				break
+			}
+		}
+		// Fallback for a lazy-hook harness: once a pane exists but no hook has
+		// reported a conv-id within the grace, ask the harness conv store.
+		// Throttled so the tree-walking scan doesn't run every 250ms.
+		if tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
+			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
+			lastDiscoveryScan = time.Now()
+			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt); id != "" {
+				if err := db.SetSessionConvID(label, id); err != nil {
+					slog.Warn("spawn: failed to persist discovered conv-id",
+						"label", label, "conv", id, "error", err)
+				}
+				convID = id
 				break
 			}
 		}
