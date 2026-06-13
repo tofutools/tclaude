@@ -141,6 +141,72 @@ func TestCodexHookInstaller_RepairsStale(t *testing.T) {
 	assert.False(t, needsRepair, "install repairs the stale hook")
 }
 
+// TestCodexHookInstaller_PreservesUserHookOptionalFields is the regression
+// guard for the data-loss bug: a co-resident user hook carrying optional
+// fields (timeout/async/statusMessage/commandWindows + any unknown key)
+// must keep them byte-for-byte across install — tclaude removes only its
+// own hook, never round-trips the user's through a lossy typed struct.
+func TestCodexHookInstaller_PreservesUserHookOptionalFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// A user hook in the SAME event tclaude registers (SessionStart), with
+	// every optional field set, plus an unknown future key.
+	seed := `{"hooks": {"SessionStart": [{"matcher": "*", "hooks": [
+	  {"type": "command", "command": "/usr/bin/user-tool", "timeout": 42, "async": true, "statusMessage": "running user tool", "commandWindows": "user-tool.exe", "futureKey": "keep-me"}
+	]}]}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(seed), 0o644))
+
+	// Install twice — the second pass re-runs the strip+add on the now
+	// co-resident state, which is exactly when the lossy round-trip bit.
+	require.NoError(t, codexHookInstaller{}.Install())
+	require.NoError(t, codexHookInstaller{}.Install())
+
+	data, err := os.ReadFile(filepath.Join(dir, "hooks.json"))
+	require.NoError(t, err)
+	var file struct {
+		Hooks map[string][]struct {
+			Matcher string            `json:"matcher"`
+			Hooks   []json.RawMessage `json:"hooks"`
+		} `json:"hooks"`
+	}
+	require.NoError(t, json.Unmarshal(data, &file))
+
+	var userHook map[string]any
+	for _, g := range file.Hooks["SessionStart"] {
+		for _, raw := range g.Hooks {
+			var m map[string]any
+			require.NoError(t, json.Unmarshal(raw, &m))
+			if m["command"] == "/usr/bin/user-tool" {
+				userHook = m
+			}
+		}
+	}
+	require.NotNil(t, userHook, "the user's hook survived")
+	assert.EqualValues(t, 42, userHook["timeout"], "timeout preserved")
+	assert.Equal(t, true, userHook["async"], "async preserved")
+	assert.Equal(t, "running user tool", userHook["statusMessage"], "statusMessage preserved")
+	assert.Equal(t, "user-tool.exe", userHook["commandWindows"], "commandWindows preserved")
+	assert.Equal(t, "keep-me", userHook["futureKey"], "unknown keys preserved")
+}
+
+// TestCodexHookInstaller_EmptyFileTreatedAsNoHooks confirms an empty /
+// whitespace-only hooks.json is populated by Install (not an error).
+func TestCodexHookInstaller_EmptyFileTreatedAsNoHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte("   \n"), 0o644))
+
+	installed, _, _ := codexHookInstaller{}.Check()
+	assert.False(t, installed, "empty file = no hooks installed, not an error")
+	require.NoError(t, codexHookInstaller{}.Install(), "install populates an empty file")
+	installed, _, _ = codexHookInstaller{}.Check()
+	assert.True(t, installed)
+}
+
 // TestCodexHarness_HasHooks pins the descriptor wiring.
 func TestCodexHarness_HasHooks(t *testing.T) {
 	home := t.TempDir()

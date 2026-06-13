@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -217,6 +218,12 @@ func readCodexHooks(path string) (hooks map[string]json.RawMessage, top map[stri
 	if err != nil {
 		return nil, nil, err
 	}
+	// An empty or whitespace-only file is treated as "no hooks yet" rather
+	// than a parse error, so Install can populate it and Check reports it
+	// as missing (not unreadable).
+	if len(bytes.TrimSpace(data)) == 0 {
+		return map[string]json.RawMessage{}, map[string]json.RawMessage{}, nil
+	}
 	top = map[string]json.RawMessage{}
 	if err := json.Unmarshal(data, &top); err != nil {
 		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
@@ -274,25 +281,67 @@ func codexHooksNeedCleanup(groupsRaw json.RawMessage, want string) bool {
 // removeOurCodexHooks strips every tclaude hook from an event's groups,
 // dropping a group that becomes empty. Returns the new groups JSON (nil
 // when no groups remain), whether anything was removed, and any error.
+//
+// Non-tclaude content is preserved BYTE-FOR-BYTE: groups and individual
+// hooks are carried as json.RawMessage, never round-tripped through a
+// typed struct, so a co-resident user hook keeps its optional fields
+// (timeout/async/statusMessage/commandWindows) and any unknown keys. Only
+// hooks whose command resolves to the tclaude binary are dropped.
 func removeOurCodexHooks(groupsRaw json.RawMessage) (json.RawMessage, bool, error) {
-	var groups []codexMatcherGroup
+	var groups []json.RawMessage
 	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
 		return groupsRaw, false, err
 	}
-	var kept []codexMatcherGroup
+	var kept []json.RawMessage
 	removed := false
-	for _, g := range groups {
-		var kh []codexHookCommand
-		for _, h := range g.Hooks {
-			if isOurCodexHook(h.Command) {
+	for _, groupRaw := range groups {
+		// Parse the group as a generic object so every field other than
+		// "hooks" survives untouched.
+		var groupObj map[string]json.RawMessage
+		if err := json.Unmarshal(groupRaw, &groupObj); err != nil {
+			kept = append(kept, groupRaw) // not an object — keep verbatim
+			continue
+		}
+		hooksRaw, ok := groupObj["hooks"]
+		if !ok {
+			kept = append(kept, groupRaw)
+			continue
+		}
+		var hookList []json.RawMessage
+		if err := json.Unmarshal(hooksRaw, &hookList); err != nil {
+			kept = append(kept, groupRaw)
+			continue
+		}
+
+		var keptHooks []json.RawMessage
+		groupHadOurs := false
+		for _, hookRaw := range hookList {
+			if isOurCodexHookRaw(hookRaw) {
 				removed = true
+				groupHadOurs = true
 			} else {
-				kh = append(kh, h)
+				keptHooks = append(keptHooks, hookRaw)
 			}
 		}
-		if len(kh) > 0 {
-			kept = append(kept, codexMatcherGroup{Matcher: g.Matcher, Hooks: kh})
+		if !groupHadOurs {
+			kept = append(kept, groupRaw) // untouched group → byte-identical
+			continue
 		}
+		if len(keptHooks) == 0 {
+			continue // the whole group was ours → drop it
+		}
+		// Re-serialize only the hooks array; every other group field
+		// (matcher, unknown keys) is preserved as-is.
+		newHooks, err := json.Marshal(keptHooks)
+		if err != nil {
+			return groupsRaw, false, err
+		}
+		groupObj["hooks"] = newHooks
+		rebuilt, err := json.Marshal(groupObj)
+		if err != nil {
+			return groupsRaw, false, err
+		}
+		kept = append(kept, rebuilt)
 	}
 	if !removed {
 		return groupsRaw, false, nil
@@ -302,4 +351,17 @@ func removeOurCodexHooks(groupsRaw json.RawMessage) (json.RawMessage, bool, erro
 	}
 	out, err := json.Marshal(kept)
 	return out, true, err
+}
+
+// isOurCodexHookRaw reports whether a raw hook object is a tclaude command
+// hook, peeking only its "command" field (a prompt/agent hook has none →
+// not ours).
+func isOurCodexHookRaw(hookRaw json.RawMessage) bool {
+	var probe struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(hookRaw, &probe); err != nil {
+		return false
+	}
+	return probe.Command != "" && isOurCodexHook(probe.Command)
 }
