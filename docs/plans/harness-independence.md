@@ -1,8 +1,13 @@
 # Plan: harness independence — driving more than Claude Code
 
-Status: investigation complete; implementation not started. Linear project
+Status: **shipped to `main-codex`** (M1–M5 complete; the Codex harness is usable
+end-to-end — spawn/resume, conv-index, hooks/status, agentd lifecycle, sandbox &
+approval posture, dashboard). Linear project
 [`tclaude-harness-independence`](https://linear.app/johan-kjolhede/project/tclaude-harness-independence-00bba5a7cfda)
-(JOH-149…163) is the live work tracker — this doc is the design intent.
+(JOH-149…163) is the work tracker. The user-facing docs are `docs/harnesses.md`
+(overview + capability matrix) and `docs/adding-a-harness.md` (contributor
+recipe); this doc is the design intent + research pool behind them. The
+`main-codex` → `main` promotion remains a separate, later operator decision.
 
 > **Hand-off pointer:** if you are picking this up cold, read the **Plan**
 > section below for the committed shape, then the **Knowledge pool** for the
