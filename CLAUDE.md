@@ -128,3 +128,4 @@ setup, and keep the board current as work ships.
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
 - `docs/plans/agentd.md` — design for `tclaude agentd` HTTP-over-Unix-socket daemon. Identity comes from socket peer credentials (`LOCAL_PEERPID` / `SO_PEERCRED`), not tokens; tmux delivery happens out-of-sandbox.
+- `docs/plans/harness-independence.md` — design for making tclaude harness-agnostic (drive Codex CLI + others, not just Claude Code). Lean plan + knowledge pool; phased M1–M5. Linear project `tclaude-harness-independence`.
