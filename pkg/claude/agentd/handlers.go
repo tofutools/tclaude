@@ -1448,6 +1448,18 @@ func isValidRenameTitle(t string) bool {
 	if strings.Contains(t, "  ") {
 		return false
 	}
+	return renameTitleCharsetOK(t)
+}
+
+// renameTitleCharsetOK reports whether every rune in t is in the rename
+// title's allowed charset — no length or spacing checks. It is the
+// injection-safety core shared by isValidRenameTitle (which layers on a
+// 64-char cap + no-double-space readability rule) and isValidRenameSink
+// (the length-exempt send-keys gate). Allowed: [A-Za-z0-9_\-\[\]{}() ].
+// Anything `tmux send-keys` could interpret as a control sequence —
+// newlines, tabs, slashes, quotes, NUL, unicode — is rejected, so a
+// title that passes can never carry a premature Enter into a pane.
+func renameTitleCharsetOK(t string) bool {
 	for _, r := range t {
 		switch {
 		case r >= 'a' && r <= 'z':
@@ -1462,6 +1474,25 @@ func isValidRenameTitle(t string) bool {
 		}
 	}
 	return true
+}
+
+// isValidRenameSink is the charset-only rename gate used on the
+// send-keys injection path for titles that may legitimately exceed
+// isValidRenameTitle's 64-char cap. A reincarnate/clone carry title is
+// `<predecessor-title>-r-<N>` / `<predecessor-title>-x` — a predecessor
+// already at the 64-char display max would push the suffixed title past
+// the cap, so reusing isValidRenameTitle here would reject a perfectly
+// legitimate title (and, pre-JOH-177, the reincarnate path injected with
+// NO gate at all rather than over-reject). The injection-relevant
+// property is the CHARSET — reject any rune `tmux send-keys` would treat
+// as an early submit / control sequence — not the length, so this keeps
+// the charset rule and drops the cap. An empty title is rejected
+// (nothing to inject; callers fall back to leaving the pane unnamed).
+func isValidRenameSink(t string) bool {
+	if t == "" {
+		return false
+	}
+	return renameTitleCharsetOK(t)
 }
 
 // --- /v1/messages/{id} (GET) and /v1/messages/{id}/reply (POST) ---
