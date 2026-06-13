@@ -11,17 +11,19 @@ import (
 // ConvStore returns.
 const codexHarnessName = "codex"
 
-// init registers the OpenAI Codex CLI harness. For now it provides ONLY
-// the ConvStore (read conversations from Codex's rollout files + threads
-// state DB); Spawn/Models/Life are deferred to their own slices, so the
-// capability helpers fold the nil sub-contracts to false and no spawn path
-// can select Codex yet (session new still goes through harness.Default()).
-// Registering it makes `harness.Resolve("codex")` succeed and lets the
-// multi-harness conv enumeration (JOH-153) reach this store.
+// init registers the OpenAI Codex CLI harness. It provides the ConvStore
+// (read conversations from Codex's rollout files + threads state DB; see
+// codex_convstore.go) plus the Spawner + ModelCatalog (JOH-154) that let
+// `session new --harness codex` launch a Codex TUI in tmux. Life (in-pane
+// lifecycle slash commands) is still nil — Codex has no `/rename`-style
+// commands, so SupportsRename/Compact/SoftExit fold to false and agentd
+// routes a Codex rename through ConvStore.SetTitle (a JOH-161 stub today).
 func init() {
 	Register(&Harness{
 		Name:        codexHarnessName,
 		DisplayName: "Codex CLI",
+		Spawn:       codexSpawner{},
+		Models:      codexModels{},
 		Convs:       codexConvStore{},
 	})
 }
