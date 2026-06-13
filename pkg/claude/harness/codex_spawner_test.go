@@ -150,8 +150,10 @@ func TestCodexSpawner_Effort(t *testing.T) {
 }
 
 // TestCodexHarness_Registered pins the descriptor: codex resolves, carries
-// a Spawner + ModelCatalog + ConvStore, and reports no in-pane lifecycle
-// commands (so agentd routes its rename through ConvStore.SetTitle).
+// a Spawner + ModelCatalog + ConvStore, and supports exactly one in-pane
+// lifecycle command — the soft-exit `/quit` (JOH-160). Rename and compact
+// stay unsupported, so agentd still routes a Codex rename through
+// ConvStore.SetTitle (JOH-161).
 func TestCodexHarness_Registered(t *testing.T) {
 	h, err := Resolve("codex")
 	if err != nil {
@@ -160,8 +162,14 @@ func TestCodexHarness_Registered(t *testing.T) {
 	if h.Spawn == nil || h.Models == nil || h.Convs == nil {
 		t.Fatalf("codex descriptor missing a contract: %+v", h)
 	}
-	if h.SupportsRename() || h.SupportsCompact() || h.SupportsSoftExit() {
-		t.Fatalf("codex has no in-pane lifecycle commands yet")
+	if h.SupportsRename() || h.SupportsCompact() {
+		t.Fatalf("codex has no in-pane rename/compact command")
+	}
+	if !h.SupportsSoftExit() {
+		t.Fatalf("codex must support soft-exit (/quit) for graceful stop")
+	}
+	if got := h.Life.SoftExitCommand(); got != "/quit" {
+		t.Fatalf("codex soft-exit command = %q, want /quit", got)
 	}
 	if h.Spawn.Binary() != "codex" {
 		t.Fatalf("codex binary = %q", h.Spawn.Binary())

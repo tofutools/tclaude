@@ -549,9 +549,12 @@ func TestCodexHarness_Registered(t *testing.T) {
 	require.True(t, ok, "codex harness must be registered")
 	require.NotNil(t, h.Convs, "codex harness must expose a ConvStore")
 	assert.Equal(t, "Codex CLI", h.DisplayName)
-	// Convs-only for this slice: spawn/models/lifecycle are later issues,
-	// so the capability helpers fold the nil sub-contracts to false.
+	// Rename/compact stay unsupported (Codex has no in-pane rename — titles
+	// live in its threads state DB, reached via ConvStore/JOH-161 — and
+	// compact is unwired), but soft-exit is supported: JOH-160 added a
+	// `/quit` Lifecycle command so the daemon can stop a Codex agent
+	// gracefully.
 	assert.False(t, h.SupportsRename())
 	assert.False(t, h.SupportsCompact())
-	assert.False(t, h.SupportsSoftExit())
+	assert.True(t, h.SupportsSoftExit())
 }
