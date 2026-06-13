@@ -128,12 +128,27 @@ const dashPrefs = {
   // queues a debounced write-through.
   setItem(key, value) {
     const s = String(value);
+    // No-op when the value is unchanged: the cache already reflects it,
+    // so there is nothing to persist. This is load-bearing, not just an
+    // optimisation. The Groups tab rebuilds its DOM via innerHTML on
+    // every 2s snapshot, and each re-created open <details open> fires a
+    // spurious `toggle` event → bindDetailsPersistence calls setItem with
+    // the '1' it already holds. Without this guard every such no-op
+    // queued a POST, so N open groups meant N redundant prefs writes
+    // every tick (the "3 prefs calls per snapshot" report). Genuine user
+    // toggles still write — they change the value away from what render
+    // last persisted, so the cache comparison sees a real diff.
+    if (cache[key] === s) return;
     cache[key] = s;
     pending.set(key, { value: s });
     scheduleFlush();
   },
-  // removeItem drops the cached value and queues a delete.
+  // removeItem drops the cached value and queues a delete. Symmetric
+  // no-op: an already-absent key has nothing to delete, so don't queue a
+  // DELETE the server would just process as a miss (a closed <details>
+  // re-renders and re-fires `toggle` the same way an open one does).
   removeItem(key) {
+    if (cache[key] === undefined) return;
     delete cache[key];
     pending.set(key, { value: null });
     scheduleFlush();
