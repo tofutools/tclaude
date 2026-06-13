@@ -280,10 +280,111 @@ web search, local code-review agent, approval modes.
 | Compact | `/compact` | TBD (spike) |
 | Model slugs | `claude-*` | `gpt-5.*` |
 | MCP / subagents | yes | yes |
-| Sandbox | tweakable built-in sandbox | OS-native: Seatbelt / bwrap+Landlock+seccomp / Win tokens; `--sandbox {read-only\|workspace-write\|danger-full-access}`, net-deny default (JOH-166) |
+| Sandbox | tweakable built-in sandbox, off unless `sandbox.enabled` + hand-written `denyWrite` (see `docs/sandbox-hardening.md`) | OS-native: Seatbelt / bwrap+seccomp / Win restricted-token; `--sandbox {read-only\|workspace-write\|danger-full-access}`; **`workspace-write` writes only cwd+/tmp+$TMPDIR (so `$HOME` is read-only) + net-deny by default** — the tclaude-hardening integrity goal is met without config (§D, JOH-166) |
 | Oversight / "auto" | oversight agent checks the worker | **Auto-review** subagent at the sandbox boundary + granular approval policies (v0.122+) (JOH-167) |
 
-### D. Project constraints to honor (from tclaude memory/CLAUDE.md)
+### D. CC ↔ Codex sandbox mapping (JOH-166 — researched)
+
+Verified firsthand from openai/codex Rust source at tag **`rust-v0.139.0`**
+(the doc has been wrong before on unverified Codex internals, so these are
+read off the source, not the marketing docs). The headline: **Codex's
+`workspace-write` sandbox already denies the exact writes
+`docs/sandbox-hardening.md` asks CC operators to deny by hand** — so a
+tclaude-spawned Codex agent gets the guardrail-protecting integrity property
+for free, *provided* the Spawner selects a sandboxed mode and cwd isn't
+`$HOME`.
+
+**Mode mapping.** `SandboxMode` (`protocol/src/config_types.rs`, serde
+kebab-case) is a 3-value enum, the same axis as CC's sandbox on/off + deny
+lists but as a single preset:
+
+| Codex `--sandbox` / `sandbox_mode` | Writable | Network | CC analog |
+|---|---|---|---|
+| `read-only` | nothing (reads only) | denied | `sandbox.enabled` + deny-all-write |
+| `workspace-write` | **cwd + `/tmp` + `$TMPDIR`** only (+ any explicit `writable_roots`); `$HOME` read-only | **denied** (opt-in via `network_access`) | `sandbox.enabled` + the `docs/sandbox-hardening.md` `denyWrite` set |
+| `danger-full-access` | everything | allowed | sandbox **off** — never for a tclaude agent |
+
+Writable-roots logic is `SandboxPolicy::get_writable_roots_with_cwd`
+(`protocol/src/protocol.rs`): in `WorkspaceWrite` it returns `cwd + /tmp +
+$TMPDIR` (plus configured `writable_roots`), and the cwd root gets a
+read-only `.codex` subpath carve-out. **`$HOME` is not a writable root**, so
+`~/.tclaude`, `~/.claude/sessions`, and Codex's own `~/.codex`
+(`hooks.json`, `state_5.sqlite`, the rollout tree) are **not writable** by
+the agent's sandboxed tool subprocesses. `network_access` defaults `false`
+for both `read-only` and `workspace-write` (constructors at
+`protocol.rs:1010`/`1019`).
+
+> **Caveat — the cwd==$HOME hole.** Writability follows cwd. If a Codex agent
+> is spawned with `cwd = $HOME` (or any parent of `~/.tclaude` / `~/.codex`),
+> the whole home tree becomes writable and the protection evaporates — the
+> same "check your `allowWrite`/`additionalDirectories` lists" caveat
+> `sandbox-hardening.md` already calls out for CC. The Spawner must not spawn
+> a Codex agent rooted at `$HOME`.
+
+**Default mode is a trap.** The `SandboxMode` enum's serde `#[default]` is
+`read-only`, but Codex's interactive TUI selects a mode via *approval
+presets*, whose agent/"Auto" preset is `workspace-write` + on-request
+approvals. `codex exec` (headless) defaults to `read-only` unless
+`--sandbox`/`--full-auto` is passed. So the effective default depends on
+launch surface — **do not rely on it; pass `--sandbox` explicitly.**
+
+**Linux mechanism (for the nested-sandbox question).** Codex's Linux
+sandbox is a helper, `codex-linux-sandbox`, that wraps each tool command in
+**bubblewrap (filesystem) + seccomp (network)** (`core/src/landlock.rs:15`)
+— the *same family* CC uses for its Bash-tool sandbox. macOS = Seatbelt,
+Windows = restricted token. Codex applies this to the **commands it runs**,
+not to itself.
+
+**Q: does this collide with agentd's identity model?** No.
+`agentd` runs **on the host** and attributes a caller via `SO_PEERCRED` +
+`/proc` walk (see `docs/plans/agentd.md` security-model discussion); tclaude
+does **not** wrap the harness in its own bwrap. The only bwrap in play is the harness's own
+per-tool-command sandbox — identical between CC and Codex — so the
+PID-namespace property the identity model leans on is preserved, with no new
+nesting introduced. **One impl-phase verification item (M4):** confirm the
+Codex-spawned session carries the identity env the `/proc` walk reads
+(`TCLAUDE_SESSION_ID` / `~/.claude/sessions/<pid>.json`) through to the
+`tclaude agent …` tool subprocess, exactly as CC does — likely a no-op
+since env inherits, but pin it with a flow test when M4 lands.
+
+**Recommendation — Spawner contract (feeds M2 / JOH-154).** Add a
+`SandboxMode` field to `SpawnSpec` (sibling of the existing
+`BypassHookTrust` toggle), default **`workspace-write`**; `codexSpawner`
+emits `--sandbox <mode>` (a CLI flag, not a `config.toml` edit — flags are
+per-spawn, leave the user's `config.toml`/profiles untouched, and match how
+`--model`/effort are already passed). CC's `Spawner` ignores the field (its
+sandbox is `settings.json`-driven, not a launch flag). **Never default to
+`danger-full-access`**; expose it only behind the same explicit opt-in as
+CC's "no sandbox". Pair with the cwd!=$HOME guard above.
+
+**Recommendation — `setup` contract.** There is **no Codex equivalent of
+`tclaude setup --install-sandbox-hardening` to build** for the *integrity*
+goal: CC needs that command because its sandbox is off-by-default and the
+deny-lists are hand-written, whereas Codex's `workspace-write` denies the
+guardrail-bypass writes natively. The residual is **confidentiality**:
+`workspace-write` restricts *writes*, but a sandboxed Codex agent may still
+*read* `$HOME` (incl. `~/.tclaude/db.sqlite`'s `-wal`) — the read-deny half
+`sandbox-hardening.md` recommends for CC has no built-in Codex equivalent.
+Treat read-confidentiality parity as a **lower-priority follow-up** (a
+`writable_roots`/profile note in the operator guide, or accept the residual
+as an out-of-scope OS-level give), not a blocker — the integrity
+guarantee (can't forge identity / rewrite the daemon DB) holds on the OS
+sandbox alone.
+
+**Recommendation — dashboard/spawn-dialog surfacing (feeds M5).** Add a
+sandbox-mode selector to the spawn dialog (read-only | workspace-write |
+danger-full-access; default workspace-write) feeding `SpawnSpec.SandboxMode`,
+and show the chosen mode as a per-agent badge on the dashboard — parity with
+the CC sandbox controls. Mixed-harness groups render each harness's own
+mode label.
+
+**Acceptance status:** CC↔Codex mapping documented (above + matrix row);
+Spawner/`setup` contract + default (`workspace-write`) recommended; matrix
+row updated; nested-sandbox question answered. Implementation lands as M2
+(Spawner field + `--sandbox`) and M5 (dialog/badge) follow-ups — this
+research issue is the design input for them.
+
+### E. Project constraints to honor (from tclaude memory/CLAUDE.md)
 
 - **Migrations:** head is v55; grab the next free number, **renumber if a
   parallel branch lands first**; make it **idempotent** (pragma_table_info
@@ -297,8 +398,13 @@ web search, local code-review agent, approval modes.
 - **Status enum is scattered** across ~10 switches (incl. two
   `matchesShowFilter` funcs) — mapping Codex events touches all of them.
 
-### E. Sources
+### F. Sources
 
 - Codex storage/rollout: deepwiki openai/codex 3.3, 3.5.2; GH discussion #3827.
 - Official docs: developers.openai.com/codex/cli, /codex/cli/reference,
   /codex/hooks, /codex/config-reference.
+- Sandbox (§D, JOH-166), read firsthand from openai/codex `rust-v0.139.0`:
+  `protocol/src/config_types.rs` (`SandboxMode`), `protocol/src/protocol.rs`
+  (`SandboxPolicy` + `get_writable_roots_with_cwd`, network defaults),
+  `core/src/landlock.rs` (`codex-linux-sandbox` = bubblewrap + seccomp);
+  developers.openai.com/codex/concepts/sandboxing + /agent-approvals-security.
