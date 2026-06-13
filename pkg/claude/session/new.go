@@ -57,6 +57,17 @@ type NewParams struct {
 	// (settings.json-driven), which errors if it is set. See JOH-192.
 	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
 
+	// Approval selects a harness's launch-time approval policy (Codex's
+	// --ask-for-approval). On a direct `session new` it is opt-in: unset emits
+	// no flag, so Codex uses the user's own config.toml (the human running
+	// session new is the trust root and can attach to answer prompts — tclaude
+	// doesn't force a policy on them). The daemon spawn path (agentd / `agent
+	// spawn`) defaults it to the non-escalating `never` instead, since its pane
+	// is detached/unattended and would otherwise deadlock; that resolved value
+	// arrives here as an explicit --ask-for-approval. Not applicable to Claude
+	// Code (settings.json-driven), which errors if it is set. See JOH-200.
+	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy: untrusted|on-failure|on-request|never. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -171,6 +182,20 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Sandbox = sandboxMode
+
+	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
+	// trust-root reason as --sandbox above: a direct `tclaude session new` is
+	// the human's own session and they can attach to answer prompts, so tclaude
+	// emits --ask-for-approval only when they pass it explicitly. The daemon
+	// spawn path is where the non-escalating `never` default belongs (its pane
+	// is unattended) and it threads the resolved policy in as an explicit flag.
+	// An explicit policy for a harness without a launch approval flag (Claude
+	// Code) errors here.
+	approvalPolicy, err := harness.ValidateApprovalPolicy(h, params.Approval)
+	if err != nil {
+		return err
+	}
+	params.Approval = approvalPolicy
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -303,12 +328,13 @@ func runNew(params *NewParams) error {
 	}
 
 	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports:  envExports,
-		ResumeID:    fullConvID,
-		Effort:      effort,
-		Model:       model,
-		ExtraArgs:   extraArgs,
-		SandboxMode: sandboxMode,
+		EnvExports:     envExports,
+		ResumeID:       fullConvID,
+		Effort:         effort,
+		Model:          model,
+		ExtraArgs:      extraArgs,
+		SandboxMode:    sandboxMode,
+		ApprovalPolicy: approvalPolicy,
 	})
 
 	// Create tmux session with claude

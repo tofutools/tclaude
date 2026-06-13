@@ -89,6 +89,16 @@ type SpawnRequest struct {
 	// driven), which rejects a non-empty value. See JOH-192.
 	SandboxMode string `json:"sandbox,omitempty"`
 
+	// ApprovalPolicy picks the launch-time approval policy for a harness that
+	// takes one (Codex's --ask-for-approval). Empty resolves to the harness's
+	// non-escalating default (Codex: never), so a daemon-owned Codex agent —
+	// detached, with no human at its TUI — never deadlocks on an approval
+	// prompt no one can answer. Forwarded to `tclaude session new
+	// --ask-for-approval <policy>`. Not applicable to Claude Code
+	// (settings.json-driven), which rejects a non-empty value. See JOH-200 +
+	// docs/plans/harness-independence.md §E.
+	ApprovalPolicy string `json:"approval,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -162,6 +172,12 @@ type SpawnParams struct {
 	// one (Codex). Declared last (no explicit short) for the same reason as
 	// the fields above.
 	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode for the new agent: read-only|workspace-write|danger-full-access. Unset = the harness's secure default (Codex: workspace-write). Not applicable to claude"`
+
+	// Approval is the launch-time approval policy for a harness that takes
+	// one (Codex). Declared last (no explicit short) for the same reason as
+	// the fields above. Unset resolves to the non-escalating default (never)
+	// so the detached agent can't deadlock on an approval prompt (JOH-200).
+	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy for the new agent: untrusted|on-failure|on-request|never. Unset = the harness's non-escalating default (Codex: never) so the unattended agent never blocks on a prompt. Not applicable to claude"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -293,6 +309,17 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Resolve --ask-for-approval to the harness's non-escalating default
+	// (Codex: never) when unset, validate an explicit value, and reject a
+	// policy for a harness with no launch approval flag (claude). The non-
+	// escalating default is what keeps the detached, unattended pane from
+	// deadlocking on an approval prompt (JOH-200). The daemon re-resolves it
+	// server-side.
+	approvalPolicy, err := harness.ResolveApprovalPolicy(h, p.Approval)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	cwd := p.Cwd
 	if cwd == "" {
 		if wd, err := os.Getwd(); err == nil {
@@ -313,6 +340,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Model:          model,
 		Harness:        h.Name,
 		SandboxMode:    sandboxMode,
+		ApprovalPolicy: approvalPolicy,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the

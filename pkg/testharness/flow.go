@@ -64,8 +64,8 @@ func NewFlow(
 // concrete type satisfying agentd.Spawner satisfies this too, so a
 // flow_setup_test.go can do `agentd.Spawn = mocks.Spawner` directly.
 type SpawnerLike interface {
-	SpawnNew(label, cwd, effort, model, harness, sandbox string) error
-	SpawnResume(convID, cwd, effort, model, harness, sandbox string) error
+	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error
+	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error
 }
 
 // Mocks bundles the default boundary impls for the v2 simulators.
@@ -110,9 +110,9 @@ type simSpawner struct {
 // everything else (""/"claude") keeps the CCSim path byte-for-byte as
 // before the seam, so the production Spawner signature is satisfied with no
 // behaviour change for Claude Code.
-func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox string) error {
+func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error {
 	if harness == codexHarnessName {
-		return s.spawnNewCodex(label, cwd, effort, model, sandbox)
+		return s.spawnNewCodex(label, cwd, effort, model, sandbox, approval)
 	}
 	cc := NewCCSim(s.t, s.w.HomeDir, cwd)
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
@@ -127,6 +127,7 @@ func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox string
 	s.w.RecordSpawnEffort(cc.ConvID, effort)
 	s.w.RecordSpawnModel(cc.ConvID, model)
 	s.w.RecordSpawnSandbox(cc.ConvID, sandbox)
+	s.w.RecordSpawnApproval(cc.ConvID, approval)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
 	// with the .jsonl's actual on-disk location. Otherwise an empty
 	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
@@ -148,9 +149,9 @@ func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox string
 // SpawnResume re-attaches the matching sim by harness. A Codex conv
 // relaunches its CodexSim (located by conv-id, or hydrated from the
 // on-disk rollout); everything else re-attaches a CCSim exactly as before.
-func (s *simSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox string) error {
+func (s *simSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error {
 	if harness == codexHarnessName {
-		return s.spawnResumeCodex(convID, cwd, effort, model, sandbox)
+		return s.spawnResumeCodex(convID, cwd, effort, model, sandbox, approval)
 	}
 	cc := s.w.CCs.GetByConvID(convID)
 	if cc == nil {
@@ -166,6 +167,7 @@ func (s *simSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox st
 	s.w.RecordSpawnEffort(convID, effort)
 	s.w.RecordSpawnModel(convID, model)
 	s.w.RecordSpawnSandbox(convID, sandbox)
+	s.w.RecordSpawnApproval(convID, approval)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
@@ -193,7 +195,7 @@ const codexHarnessName = "codex"
 // CodexSim (owns a date-indexed rollout .jsonl, implements PaneSim), writes
 // the harness="codex" SessionRow the production hook callback would have
 // written, registers in TmuxSim, and stashes the sim in World.Codexes.
-func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox string) error {
+func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox, approval string) error {
 	cx := NewCodexSim(s.t, s.w.HomeDir, cwd)
 	if err := cx.Start(); err != nil {
 		return err
@@ -219,6 +221,7 @@ func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox string) er
 	s.w.RecordSpawnEffort(cx.ConvID, effort)
 	s.w.RecordSpawnModel(cx.ConvID, model)
 	s.w.RecordSpawnSandbox(cx.ConvID, sandbox)
+	s.w.RecordSpawnApproval(cx.ConvID, approval)
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
 		TmuxSession: label,
@@ -240,7 +243,7 @@ func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox string) er
 // spawnResumeCodex is SpawnResume's `--harness codex` branch: it re-attaches
 // the existing CodexSim (or hydrates one from the on-disk rollout) under a
 // fresh resume label, mirroring `codex resume <id>` reopening the rollout.
-func (s *simSpawner) spawnResumeCodex(convID, cwd, effort, model, sandbox string) error {
+func (s *simSpawner) spawnResumeCodex(convID, cwd, effort, model, sandbox, approval string) error {
 	cx := s.w.Codexes.GetByConvID(convID)
 	if cx == nil {
 		cx = HydrateCodexSim(s.t, s.w.HomeDir, convID, cwd)
@@ -252,6 +255,7 @@ func (s *simSpawner) spawnResumeCodex(convID, cwd, effort, model, sandbox string
 	s.w.RecordSpawnEffort(convID, effort)
 	s.w.RecordSpawnModel(convID, model)
 	s.w.RecordSpawnSandbox(convID, sandbox)
+	s.w.RecordSpawnApproval(convID, approval)
 	label := generateResumeLabel()
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,

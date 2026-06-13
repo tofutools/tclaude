@@ -55,6 +55,18 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// (codexSandbox.ValidateMode), never free text, but quoted defensively.
 		cmd += " --sandbox " + clcommon.ShellQuoteArg(spec.SandboxMode)
 	}
+	if spec.ApprovalPolicy != "" {
+		// `--ask-for-approval {untrusted|on-failure|on-request|never}` (the
+		// short is `-a`) selects Codex's approval policy for THIS invocation
+		// only — a per-spawn flag, so the user's config.toml/profiles stay
+		// untouched. Accepted on both a fresh `codex` and `codex resume <id>`
+		// (resume flattens the same TuiCli, verified against
+		// rust-v0.139.0). The daemon resolves this to `never` for an
+		// unattended pane so it never blocks on a prompt no human can answer
+		// (JOH-200). The value is a validated enum (codexApproval.ValidatePolicy),
+		// never free text, but quoted defensively.
+		cmd += " --ask-for-approval " + clcommon.ShellQuoteArg(spec.ApprovalPolicy)
+	}
 	if spec.Model != "" {
 		// `--model` is accepted both on a fresh `codex` and on
 		// `codex resume <id>` (shared option).

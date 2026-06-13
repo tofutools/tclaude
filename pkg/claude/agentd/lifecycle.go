@@ -184,7 +184,7 @@ func resumeOneConv(convID string) memberOpResult {
 		// leaves it "" so the flag is omitted.
 		harnessName = rows[0].Harness
 	}
-	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName, sandboxForHarness(harnessName)); err != nil {
+	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName, sandboxForHarness(harnessName), approvalForHarness(harnessName)); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
@@ -666,6 +666,18 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Resolve the approval policy for the chosen harness: a Codex agent gets
+	// its non-escalating default (never) when unset, an explicit policy is
+	// validated, and a harness with no launch approval flag (Claude Code)
+	// rejects a non-empty policy. The default is what stops a detached,
+	// unattended Codex pane from deadlocking on an approval prompt no human
+	// can answer (JOH-200) — safe because the agent is sandbox-confined above.
+	approvalPolicy, apErr := harness.ResolveApprovalPolicy(h, body.ApprovalPolicy)
+	if apErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_approval", apErr.Error())
+		return
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
@@ -684,6 +696,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Model:          model,
 		Harness:        h.Name,
 		SandboxMode:    sandboxMode,
+		ApprovalPolicy: approvalPolicy,
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
@@ -747,6 +760,13 @@ type spawnParams struct {
 	// the spawn boundary (handleGroupSpawn) before building the params; it
 	// forwards to `tclaude session new --sandbox <mode>`.
 	SandboxMode string
+	// ApprovalPolicy is the resolved launch approval policy for a harness that
+	// takes one (Codex: "never" by default — non-escalating so the unattended
+	// pane can't deadlock), or "" to omit the flag (Claude Code, or no
+	// approval handling). Resolved at the spawn boundary (handleGroupSpawn)
+	// before building the params; it forwards to `tclaude session new
+	// --ask-for-approval <policy>`. See JOH-200.
+	ApprovalPolicy string
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -820,7 +840,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode, p.ApprovalPolicy); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -1155,8 +1175,8 @@ func generateSpawnLabel() string {
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default.
-func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox string) error {
-	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox)
+func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox, approval string) error {
+	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox, approval)
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
@@ -1166,9 +1186,11 @@ func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox string)
 // the predecessor's inherited flags to keep the agent on its model.
 // sandbox ("" = omit) likewise rides through so a relaunched Codex agent
 // stays sandboxed (the mode isn't persisted per-conv; callers re-resolve
-// the harness default).
-func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox string) error {
-	return Spawn.SpawnResume(convID, cwd, effort, model, harness, sandbox)
+// the harness default). approval ("" = omit) rides through the same way so a
+// relaunched unattended Codex agent keeps its non-escalating posture and
+// can't deadlock on an approval prompt (JOH-200).
+func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox, approval string) error {
+	return Spawn.SpawnResume(convID, cwd, effort, model, harness, sandbox, approval)
 }
 
 // sessionNewArgs builds the argv for the detached `tclaude session new`
@@ -1176,7 +1198,7 @@ func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox str
 // an explicit value was chosen; an empty value leaves claude on its own
 // default. Kept pure so it can be unit-tested without forking a
 // subprocess.
-func sessionNewArgs(label, cwd, effort, model, harness, sandbox string) []string {
+func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string) []string {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1189,6 +1211,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox string) []string
 	}
 	args = appendHarnessFlag(args, harness)
 	args = appendSandboxFlag(args, sandbox)
+	args = appendApprovalFlag(args, approval)
 	return args
 }
 
@@ -1197,7 +1220,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox string) []string
 // sessionNewArgs: --effort and --model are appended only when a value
 // was chosen, so "" keeps claude on its own default. Kept pure so it
 // can be unit-tested without forking a subprocess.
-func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox string) []string {
+func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval string) []string {
 	args := []string{"session", "new", "-r", convID, "-d", "--global"}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1210,6 +1233,7 @@ func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox string) []st
 	}
 	args = appendHarnessFlag(args, harness)
 	args = appendSandboxFlag(args, sandbox)
+	args = appendApprovalFlag(args, approval)
 	return args
 }
 
@@ -1238,6 +1262,19 @@ func appendSandboxFlag(args []string, mode string) []string {
 	return args
 }
 
+// appendApprovalFlag adds `--ask-for-approval <policy>` to a `tclaude session
+// new` argv when a policy is set. "" omits it (no approval handling — Claude
+// Code, or a caller that didn't resolve one). The policy is a validated enum
+// resolved at the spawn boundary (harness.ResolveApprovalPolicy), never user
+// free-text, so it is safe as a bare arg. The forked `tclaude session new`
+// re-validates. See JOH-200.
+func appendApprovalFlag(args []string, policy string) []string {
+	if policy != "" {
+		args = append(args, "--ask-for-approval", policy)
+	}
+	return args
+}
+
 // liveSpawnNew runs `tclaude session new -d --global --label <label>`
 // as a fully-detached subprocess. Same detachment story as
 // liveSpawnResume — see its doc comment for the full rationale on
@@ -1246,13 +1283,13 @@ func appendSandboxFlag(args []string, mode string) []string {
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func liveSpawnNew(label, cwd, effort, model, harness, sandbox string) error {
-	// effort, model and sandbox are validated at the spawn boundary
+func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error {
+	// effort, model, sandbox and approval are validated at the spawn boundary
 	// (handleGroupSpawn / the `agent spawn` CLI) before they reach here;
 	// the forked `tclaude session new` re-validates too, though by then
 	// a bad value would only surface as a non-zero exit in the daemon
 	// log. sessionNewArgs omits each flag entirely when its value is "".
-	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox)...)
+	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	// Capture stderr so a silent subprocess failure (PATH issue, bad
@@ -1300,8 +1337,8 @@ func liveSpawnNew(label, cwd, effort, model, harness, sandbox string) error {
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func liveSpawnResume(convID, cwd, effort, model, harness, sandbox string) error {
-	args := sessionResumeArgs(convID, cwd, effort, model, harness, sandbox)
+func liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error {
+	args := sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval)
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil

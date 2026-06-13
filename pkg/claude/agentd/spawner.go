@@ -14,9 +14,15 @@ package agentd
 // (Codex's --sandbox); "" omits the flag. The daemon resolves it to the
 // harness's secure default (Codex: workspace-write) before spawning, so a
 // daemon-owned Codex agent runs sandboxed by default (JOH-192).
+//
+// approval is the launch-time approval policy for harnesses that take one
+// (Codex's --ask-for-approval); "" omits the flag. The daemon resolves it to
+// the harness's non-escalating default (Codex: never) before spawning, so a
+// daemon-owned Codex agent — detached, with no human at its TUI — never
+// deadlocks on an approval prompt no one can answer (JOH-200).
 type Spawner interface {
-	SpawnNew(label, cwd, effort, model, harness, sandbox string) error
-	SpawnResume(convID, cwd, effort, model, harness, sandbox string) error
+	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error
+	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error
 }
 
 // Spawn is the package-wide Spawner every caller hits via the
@@ -31,9 +37,9 @@ var Spawn Spawner = LiveSpawner{}
 // it (e.g., a recording proxy).
 type LiveSpawner struct{}
 
-func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox string) error {
-	return liveSpawnNew(label, cwd, effort, model, harness, sandbox)
+func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string) error {
+	return liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval)
 }
-func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox string) error {
-	return liveSpawnResume(convID, cwd, effort, model, harness, sandbox)
+func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string) error {
+	return liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval)
 }

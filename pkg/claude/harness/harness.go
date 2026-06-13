@@ -71,6 +71,14 @@ type Harness struct {
 	// which case the spawn path passes no sandbox flag and rejects an
 	// explicit mode. See JOH-192.
 	Sandbox SandboxCatalog
+	// Approval names the launch-time approval policies this harness accepts
+	// (Codex's --ask-for-approval) and its non-escalating default. nil for
+	// harnesses whose approval handling is configured out of band (Claude
+	// Code → settings.json), in which case the spawn path passes no approval
+	// flag and rejects an explicit policy. The default exists so a daemon-
+	// spawned (unattended) pane can't deadlock on an approval prompt no human
+	// can answer — see JOH-200 + docs/plans/harness-independence.md §E.
+	Approval ApprovalCatalog
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
@@ -105,6 +113,15 @@ func (h *Harness) SupportsConvs() bool {
 // (settings.json) sandbox untouched and rejects an explicit --sandbox.
 func (h *Harness) SupportsSandbox() bool {
 	return h != nil && h.Sandbox != nil
+}
+
+// SupportsApproval reports whether the harness takes a launch-time approval
+// policy (Codex's --ask-for-approval). Callers gate approval handling on this;
+// a harness that leaves Approval nil (Claude Code) keeps its out-of-band
+// (settings.json) approval behaviour untouched and rejects an explicit
+// --ask-for-approval. See JOH-200.
+func (h *Harness) SupportsApproval() bool {
+	return h != nil && h.Approval != nil
 }
 
 // SupportsHooks reports whether this build can install tclaude hooks for

@@ -32,6 +32,7 @@ func init() {
 		Hooks:       codexHookInstaller{},
 		Life:        codexLifecycle{},
 		Sandbox:     codexSandbox{},
+		Approval:    codexApproval{},
 	})
 }
 
