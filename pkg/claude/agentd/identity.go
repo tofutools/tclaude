@@ -259,6 +259,7 @@ const (
 	PermAgentCompact      = "agent.compact"
 	PermAgentRename       = "agent.rename"
 	PermAgentClone        = "agent.clone"
+	PermAgentContextInfo  = "agent.context-info"
 	PermGroupsCreate      = "groups.create"
 	PermGroupsRm          = "groups.rm"
 	PermGroupsStop        = "groups.stop"

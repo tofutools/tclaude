@@ -9,12 +9,16 @@ You have three commands for managing your own context window:
 
 | Command                                            | What it does                                                                                                                              |
 |----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
-| `tclaude agent context-info`                       | Print the current context_pct + any pending /compact claim                                                                                |
+| `tclaude agent context-info`                       | Print the current context_pct + any pending /compact claim (self by default; `--target <peer>` reads one agent, `--group <name>` lists a whole team) |
 | `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued.                                            |
 | `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
 | `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. |
 
-`context-info` is read-only and self-targeted, so no permission slug.
+`context-info` on **yourself** is read-only and needs no slug. Reading
+**another** agent's context (`--target`) or a whole group's
+(`--group`) is gated on `agent.context-info`, OR being an owner of a
+group containing the target — same manager-pattern gate as the other
+cross-agent verbs (see "Manager pattern" below).
 `compact`, `reincarnate`, and `clone` are gated on `self.compact`,
 `self.reincarnate`, and `self.clone` respectively. All three are
 default-granted by `tclaude setup --install-default-agent-permissions`
@@ -310,12 +314,20 @@ reincarnate needs) that you can't. Same architecture as
 
 ## Manager pattern: act on ANOTHER agent
 
-All three lifecycle verbs (`compact`, `reincarnate`, `clone`) accept
-an optional `--target <selector>` that swaps the action onto a peer
-instead of yourself. The selector is the same title / conv-id /
-8+-char prefix the rest of `tclaude agent` accepts.
+All four lifecycle verbs (`context-info`, `compact`, `reincarnate`,
+`clone`) accept an optional `--target <selector>` that swaps the action
+onto a peer instead of yourself. The selector is the same title /
+conv-id / 8+-char prefix the rest of `tclaude agent` accepts.
 
 ```bash
+# Read-only: check how full a worker's context window is BEFORE it
+# breaks — the watch-then-nudge half of the manager loop.
+tclaude agent context-info --target worker-1
+
+# Whole-team glance: one table of every group member's context %, so a
+# lead can spot anyone running hot. Read-only.
+tclaude agent context-info --group my-squad
+
 # Cheap: nudge a worker to free its context.
 tclaude agent compact --target worker-1 "keep going on the failing test"
 
@@ -331,13 +343,15 @@ tclaude agent clone --target worker-1 \
   "explore the no-prepared-statement branch while worker-1 keeps the prepared-statement path"
 ```
 
-Auth model (same for all three verbs): the caller passes if EITHER
+Auth model (same for all four verbs): the caller passes if EITHER
 
-- they hold the matching `agent.<verb>` slug (default human-only —
-  granted via `tclaude agent permissions grant <caller> agent.<verb>`),
-  OR
+- they hold the matching `agent.<verb>` slug (`agent.compact`,
+  `agent.reincarnate`, `agent.clone`, `agent.context-info`; default
+  human-only — granted via
+  `tclaude agent permissions grant <caller> agent.<verb>`), OR
 - they own at least one group that contains the target (mirrors how
-  `tclaude agent message` already special-cases group owners).
+  `tclaude agent message` already special-cases group owners). For
+  `--group`, ownership of THAT group is the bypass.
 
 The response includes `caller_conv` so the target's audit trail
 records who acted. For `reincarnate`, the handoff message uses
@@ -346,7 +360,12 @@ pointing at you and can reply directly.
 
 Notes vs. self variants:
 
-- The target must have an alive tmux session — if it's offline,
+- `context-info --target` / `--group` are **read-only** and work on
+  offline agents too — they read the last-persisted context snapshot, so
+  no alive tmux session is required (a dead agent still reports "it died
+  at 80%"). The mutating verbs below do need a live pane.
+- For the mutating verbs (`compact`, `reincarnate`, `clone`) the target
+  must have an alive tmux session — if it's offline,
   `tclaude agent groups resume` it first.
 - `--ask-human` is **not** honored on cross-agent calls; the manager
   pattern is opt-in via explicit grants, not a popup escape hatch.

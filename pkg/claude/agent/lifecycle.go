@@ -11,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -65,15 +66,28 @@ func compactCmd() *cobra.Command {
 // --- agent context-info ---
 
 type contextInfoParams struct {
-	JSON bool `long:"json" help:"Output JSON"`
+	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's context-window state instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.context-info permission, or being an owner of a group containing the target."`
+	Group  string `long:"group" optional:"true" help:"Show the context-window state of EVERY member of a group at a glance (name or id). Read-only; requires the agent.context-info permission, or being an owner of the group."`
+	JSON   bool   `long:"json" help:"Output JSON"`
 }
 
 func contextInfoCmd() *cobra.Command {
 	return boa.CmdT[contextInfoParams]{
-		Use:         "context-info",
-		Short:       "Show this conversation's context-window state",
-		Long:        "Reads the latest context_pct (populated by tclaude's statusline hook) and any pending /compact claim. Read-only and self-targeted; no permission slug required.",
+		Use:   "context-info",
+		Short: "Show context-window state (self, --target an agent, or --group a whole team)",
+		Long: "Reads the latest context_pct (populated by tclaude's statusline hook) and any pending /compact claim. " +
+			"By default reports the calling agent's own state (read-only, no permission slug). " +
+			"\n\n" +
+			"--target <selector> reports ANOTHER agent's state — the manager pattern, for a lead watching a worker " +
+			"approach its context limit (requires `agent.context-info`, or being an owner of a group containing the " +
+			"target). --group <name|id> lists every member of a group in one table so a lead can spot anyone running " +
+			"hot (requires `agent.context-info`, or owning the group). --target and --group are mutually exclusive.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *contextInfoParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			return nil
+		},
 		RunFunc: func(p *contextInfoParams, _ *cobra.Command, _ []string) {
 			os.Exit(runContextInfo(p, os.Stdout, os.Stderr))
 		},
@@ -225,20 +239,58 @@ func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writ
 	return rcOK
 }
 
+// contextInfoResp is the wire shape for a single agent's context read
+// (self via /v1/whoami/context, or another agent via
+// /v1/agent/{selector}/context). CallerConv is only set on the
+// cross-agent path.
+type contextInfoResp struct {
+	ConvID            string  `json:"conv_id"`
+	SessionID         string  `json:"session_id,omitempty"`
+	ContextPct        float64 `json:"context_pct"`
+	TokensInput       int64   `json:"tokens_input"`
+	TokensOutput      int64   `json:"tokens_output"`
+	ContextWindowSize int64   `json:"context_window_size"`
+	CompactPending    float64 `json:"compact_pending"`
+	Model             string  `json:"model,omitempty"`
+	CallerConv        string  `json:"caller_conv,omitempty"`
+}
+
+// groupContextEntry mirrors the daemon's per-member wire shape for
+// GET /v1/groups/{name}/context.
+type groupContextEntry struct {
+	ConvID            string  `json:"conv_id"`
+	Title             string  `json:"title"`
+	Role              string  `json:"role,omitempty"`
+	Online            bool    `json:"online"`
+	HasSnapshot       bool    `json:"has_snapshot"`
+	ContextPct        float64 `json:"context_pct"`
+	TokensInput       int64   `json:"tokens_input"`
+	TokensOutput      int64   `json:"tokens_output"`
+	ContextWindowSize int64   `json:"context_window_size"`
+	CompactPending    float64 `json:"compact_pending,omitempty"`
+	Model             string  `json:"model,omitempty"`
+}
+
 func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
+	target := strings.TrimSpace(p.Target)
+	group := strings.TrimSpace(p.Group)
+	if target != "" && group != "" {
+		fmt.Fprintln(stderr, "Error: --target and --group are mutually exclusive (one agent vs a whole group).")
+		return rcInvalidArg
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	var resp struct {
-		ConvID            string  `json:"conv_id"`
-		SessionID         string  `json:"session_id,omitempty"`
-		ContextPct        float64 `json:"context_pct"`
-		TokensInput       int64   `json:"tokens_input"`
-		TokensOutput      int64   `json:"tokens_output"`
-		ContextWindowSize int64   `json:"context_window_size"`
-		CompactPending    float64 `json:"compact_pending"`
+	if group != "" {
+		return runGroupContextInfo(p, group, stdout, stderr)
 	}
-	if err := DaemonGet("/v1/whoami/context", &resp); err != nil {
+
+	path := "/v1/whoami/context"
+	if target != "" {
+		path = "/v1/agent/" + url.PathEscape(target) + "/context"
+	}
+	var resp contextInfoResp
+	if err := DaemonGet(path, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -251,6 +303,9 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "conv:    %s\n", short(resp.ConvID))
+	if resp.CallerConv != "" {
+		fmt.Fprintf(stdout, "caller:  %s\n", short(resp.CallerConv))
+	}
 	tokensTotal := resp.TokensInput + resp.TokensOutput
 	if resp.ContextWindowSize > 0 && tokensTotal > 0 {
 		// Authoritative shape: real abs counts + real window size from CC.
@@ -270,7 +325,76 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintln(stdout, "compact: idle")
 	}
+	if resp.Model != "" {
+		fmt.Fprintf(stdout, "model:   %s\n", resp.Model)
+	}
 	return rcOK
+}
+
+// runGroupContextInfo fetches and renders the context-window state of
+// every member of a group — the lead-watching-workers view. Read-only.
+func runGroupContextInfo(p *contextInfoParams, group string, stdout, stderr io.Writer) int {
+	var entries []groupContextEntry
+	if err := DaemonGet("/v1/groups/"+url.PathEscape(group)+"/context", &entries); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(entries); err != nil {
+			return rcIOFailure
+		}
+		return rcOK
+	}
+	if len(entries) == 0 {
+		fmt.Fprintf(stdout, "(group %q has no members)\n", group)
+		return rcOK
+	}
+	tbl := table.New(
+		table.Column{Header: "", Width: 1},
+		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
+		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
+		table.Column{Header: "CTX%", Width: 5, Align: table.AlignRight},
+		table.Column{Header: "TOKENS", MinWidth: 13, Weight: 0.5, Truncate: true},
+		table.Column{Header: "MODEL", MinWidth: 6, Weight: 0.5, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	for _, e := range entries {
+		tbl.AddRow(table.Row{Cells: []string{
+			onlineMark(e.Online),
+			short(e.ConvID),
+			e.Title,
+			e.Role,
+			formatContextPct(e),
+			formatContextTokens(e),
+			e.Model,
+		}})
+	}
+	fmt.Fprintln(stdout, tbl.Render())
+	return rcOK
+}
+
+// formatContextPct renders the CTX% cell. A member whose statusline hook
+// has never fired (HasSnapshot false) shows "—" rather than a misleading
+// "0%" — the daemon distinguishes "not reported yet" from a genuine 0%.
+func formatContextPct(e groupContextEntry) string {
+	if !e.HasSnapshot {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f%%", e.ContextPct)
+}
+
+// formatContextTokens renders the TOKENS cell as "<used> / <window>"
+// (e.g. "120k / 200k"). Empty when the absolute counts aren't available
+// yet — the percentage in CTX% still carries the headline figure.
+func formatContextTokens(e groupContextEntry) string {
+	total := e.TokensInput + e.TokensOutput
+	if !e.HasSnapshot || e.ContextWindowSize <= 0 || total <= 0 {
+		return ""
+	}
+	return formatTokens(total) + " / " + formatTokens(e.ContextWindowSize)
 }
 
 // formatTokens renders an int64 as a short human-readable token count

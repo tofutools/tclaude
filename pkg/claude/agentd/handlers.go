@@ -1303,15 +1303,40 @@ func handleWhoamiContext(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	candidates, _ := db.FindSessionsByConvID(convID)
-	var snap db.ContextSnapshot
-	var sessionID string
-	if sess := pickLiveOrLatest(candidates); sess != nil {
-		sessionID = sess.ID
-		if s, err := db.GetContextSnapshot(sess.ID); err == nil {
-			snap = s
-		}
+	writeContextInfo(w, convID, "")
+}
+
+// handleAgentContext returns ANOTHER agent's context-window state — the
+// manager-pattern read reached via /v1/agent/{selector}/context. Unlike
+// the directory read (ungated, see handleAgentDir), context usage is
+// gated like the other cross-agent verbs: the caller passes with the
+// agent.context-info slug, or by owning a group containing the target
+// (the owner bypass — a lead never needs a slug to watch its own team).
+//
+// An explicit deny override is ALWAYS authoritative and suppresses the
+// owner bypass — the universal precedence resolvePermission /
+// requireCrossAgentPermission apply to every cross-agent verb. The owner
+// bypass only fills the "undecided" gap (no grant, no deny). Read-only,
+// so GET only; the X-Tclaude-Ask-Human popup escape hatch still applies.
+func handleAgentContext(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
+		return
 	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentContextInfo, targetConv)
+	if !ok {
+		return
+	}
+	writeContextInfo(w, targetConv, caller)
+}
+
+// writeContextInfo resolves convID to its most-relevant session row and
+// writes that row's context snapshot. caller is the requesting agent's
+// conv-id on the cross-agent path (echoed for the audit trail) and ""
+// for self / human reads. Shared by the self and cross-agent handlers.
+func writeContextInfo(w http.ResponseWriter, convID, caller string) {
+	aliveSessions, _ := session.LiveTmuxSessions()
+	snap, sessionID, _ := contextSnapshotForConvIn(convID, aliveSessions)
 	resp := map[string]any{
 		"conv_id":             convID,
 		"session_id":          sessionID,
@@ -1320,23 +1345,46 @@ func handleWhoamiContext(w http.ResponseWriter, r *http.Request) {
 		"tokens_output":       snap.TokensOutput,
 		"context_window_size": snap.ContextWindowSize,
 		"compact_pending":     snap.CompactPending,
+		"model":               snap.Model,
+	}
+	if caller != "" && caller != convID {
+		resp["caller_conv"] = caller
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// pickLiveOrLatest returns the session row whose tmux pane is alive,
-// or — falling back — the row that comes first in the list (which
-// FindSessionsByConvID orders by updated_at DESC). nil when the list
-// is empty.
-func pickLiveOrLatest(candidates []*db.SessionRow) *db.SessionRow {
-	return pickWithLiveness(candidates, func(t string) bool {
-		return t != "" && session.IsTmuxSessionAlive(t)
+// contextSnapshotForConvIn resolves convID to the session row whose
+// context snapshot best represents it — a live tmux pane preferred, else
+// the most-recent historical row — and reads that row's snapshot. The
+// alive set is passed in (fetched once per request) so a group-wide
+// listing does one tmux ls, not one per member. hasSession is false when
+// no session row exists for the conv at all (never launched under
+// tclaude); the snapshot is then the zero value.
+func contextSnapshotForConvIn(convID string, aliveSet map[string]struct{}) (snap db.ContextSnapshot, sessionID string, hasSession bool) {
+	candidates, _ := db.FindSessionsByConvID(convID)
+	sess := pickWithLiveness(candidates, func(t string) bool {
+		if t == "" {
+			return false
+		}
+		_, ok := aliveSet[t]
+		return ok
 	})
+	if sess == nil {
+		return db.ContextSnapshot{}, "", false
+	}
+	if s, err := db.GetContextSnapshot(sess.ID); err == nil {
+		snap = s
+	}
+	return snap, sess.ID, true
 }
 
-// pickWithLiveness is the testable core of pickLiveOrLatest. The
-// liveness predicate is injected so unit tests can stub it without
-// reaching for tmux on the host.
+// pickWithLiveness returns the session row whose tmux pane is alive
+// (per the injected liveness predicate), or — falling back — the row
+// that comes first in the list (which FindSessionsByConvID orders by
+// updated_at DESC). nil when the list is empty. The predicate is
+// injected so callers can supply a pre-fetched alive set (a single tmux
+// ls for a whole listing) and unit tests can stub it without reaching
+// for tmux on the host.
 func pickWithLiveness(candidates []*db.SessionRow, isAlive func(string) bool) *db.SessionRow {
 	for _, c := range candidates {
 		if isAlive(c.TmuxSession) {
@@ -2085,6 +2133,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 //	GET    /v1/groups/{name}/owners          → list owners
 //	POST   /v1/groups/{name}/owners          → grant owner
 //	DELETE /v1/groups/{name}/owners/{conv}   → revoke owner
+//	GET    /v1/groups/{name}/context         → list members' context-window state
 //	GET    /v1/groups/{name}/members         → list members
 //	POST   /v1/groups/{name}/members         → add member
 //	PATCH  /v1/groups/{name}/members/{conv}  → update role/descr
@@ -2116,6 +2165,8 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/groups/{name}/owners/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupOwnersRemove(w, r, g, r.PathValue("conv"))
 	}))
+
+	mux.HandleFunc("GET /v1/groups/{name}/context", v1GroupRoute(handleGroupContext))
 
 	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))
 	mux.HandleFunc("POST /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersAdd))
@@ -2458,6 +2509,129 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// groupContextEntry is one member's context-window state in the
+// group-wide listing (GET /v1/groups/{name}/context). HasSnapshot is
+// false for a member whose statusline hook has never fired (a
+// freshly-spawned agent pre-first-response, or one that never ran under
+// tclaude) — the caller renders that as "—" rather than a misleading 0%.
+// Model can be non-empty even when HasSnapshot is false: it's written on
+// every statusline render (UpdateSessionModel), including the empty
+// pre-first-response ones that carry no context figures.
+type groupContextEntry struct {
+	ConvID            string  `json:"conv_id"`
+	Title             string  `json:"title"`
+	Role              string  `json:"role,omitempty"`
+	Online            bool    `json:"online"`
+	HasSnapshot       bool    `json:"has_snapshot"`
+	ContextPct        float64 `json:"context_pct"`
+	TokensInput       int64   `json:"tokens_input"`
+	TokensOutput      int64   `json:"tokens_output"`
+	ContextWindowSize int64   `json:"context_window_size"`
+	CompactPending    float64 `json:"compact_pending,omitempty"`
+	Model             string  `json:"model,omitempty"`
+}
+
+// handleGroupContext returns the context-window state of every member of
+// a group in one read — the lead-watching-workers view, so a manager can
+// spot anyone approaching their context limit at a glance. Read-only
+// (GET only). Gated like the per-target read: the human always passes,
+// an agent passes with the agent.context-info slug or by owning this
+// group (owner bypass — the lead is normally the owner). All members'
+// snapshots ride on the same already-persisted sessions rows the
+// dashboard reads; no new data source.
+func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
+		return
+	}
+	if _, ok := requireGroupContextAccess(w, r, g); !ok {
+		return
+	}
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	// One tmux ls for the whole listing; the per-member snapshot read
+	// resolves liveness against this set, not a per-row subprocess.
+	aliveSessions, _ := session.LiveTmuxSessions()
+	out := make([]groupContextEntry, 0, len(members))
+	for _, m := range members {
+		snap, _, hasSession := contextSnapshotForConvIn(m.ConvID, aliveSessions)
+		// A row that exists but whose statusline hook never fired reads
+		// as all-zero — same "unknown" state as no row at all. Either way
+		// there's no real context figure to show.
+		hasSnapshot := hasSession && snapshotPopulated(snap)
+		out = append(out, groupContextEntry{
+			ConvID:            m.ConvID,
+			Title:             agent.FreshTitle(m.ConvID),
+			Role:              m.Role,
+			Online:            isConvOnlineIn(m.ConvID, aliveSessions),
+			HasSnapshot:       hasSnapshot,
+			ContextPct:        snap.ContextPct,
+			TokensInput:       snap.TokensInput,
+			TokensOutput:      snap.TokensOutput,
+			ContextWindowSize: snap.ContextWindowSize,
+			CompactPending:    snap.CompactPending,
+			Model:             snap.Model,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// snapshotPopulated reports whether a context snapshot carries any real
+// figure — i.e. the statusline hook has fired at least once. An all-zero
+// snapshot is the "not reported yet" sentinel (the same shape a missing
+// row produces); distinguishing it lets the caller mark "hook never
+// fired" separately from a genuine 0%.
+func snapshotPopulated(s db.ContextSnapshot) bool {
+	return s.ContextPct != 0 || s.TokensInput != 0 || s.TokensOutput != 0 || s.ContextWindowSize != 0
+}
+
+// requireGroupContextAccess gates the group-wide context read. The human
+// operator always passes. An agent passes if it holds the
+// agent.context-info slug, or if it owns this group (the owner bypass) —
+// but an explicit deny override is ALWAYS authoritative and suppresses
+// the owner bypass, mirroring the universal precedence in
+// resolvePermission / requireCrossAgentPermission (the owner bypass only
+// fills the "undecided" gap). Unidentified / unconfirmed / unidentifiable
+// callers are refused fail-closed. Returns the caller's conv-id ("" for
+// humans) on success; on failure the error response is already written.
+func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, bool) {
+	p := peerFromContext(r.Context())
+	switch classify(p) {
+	case classUnidentified:
+		writeUnidentified(w)
+		return "", false
+	case classHuman:
+		return "", true
+	case classAgentUnknown:
+		writeAgentUnknown(w)
+		return "", false
+	case classUnconfirmed:
+		writeUnconfirmed(w)
+		return "", false
+	case classAgent:
+		// Confirmed agent — evaluate slug + owner bypass below.
+	}
+	switch resolvePermission(p.ConvID, PermAgentContextInfo) {
+	case permAllow:
+		return p.ConvID, true
+	case permUndecided:
+		// No grant/deny source — the owner bypass applies.
+		if owns, err := db.IsAgentGroupOwner(g.ID, p.ConvID); err == nil && owns {
+			return p.ConvID, true
+		}
+	case permDeny:
+		// Explicit deny is authoritative — it suppresses the owner bypass.
+	}
+	writeError(w, http.StatusForbidden, "permission",
+		fmt.Sprintf("caller is not granted %q and is not an owner of group %q "+
+			"(be added as a group owner, or grant via `tclaude agent permissions grant %s %s`)",
+			PermAgentContextInfo, g.Name, PermAgentContextInfo, short8(p.ConvID)))
+	return "", false
 }
 
 type ownerJSON struct {
