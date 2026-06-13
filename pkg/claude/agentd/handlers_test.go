@@ -264,3 +264,54 @@ func TestIsValidRenameTitle(t *testing.T) {
 		})
 	}
 }
+
+// TestIsValidRenameSink locks down the send-keys charset gate used on
+// the reincarnate/clone injection path (JOH-177). It shares its charset
+// with isValidRenameTitle but is LENGTH-EXEMPT: a reincarnate carry
+// title is `<predecessor>-r-<N>` / `<predecessor>-x`, and a predecessor
+// already at the 64-char display max pushes the suffixed title past the
+// cap — reusing isValidRenameTitle there would reject a legitimate
+// title. The gate's job is the charset (no early-submit / control
+// chars), not the length.
+func TestIsValidRenameSink(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		// --- accepted: legitimate charset, including over-64 ---
+		{"plain", "worker-r-1", true},
+		{"archive suffix", "code reviewer-x", true},
+		// The whole reason this helper exists: a max-length predecessor
+		// plus a `-r-N` suffix exceeds isValidRenameTitle's 64-char cap
+		// yet must still be injectable.
+		{"max-len predecessor plus suffix (over 64)",
+			"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789AB-r-12", true},
+
+		// --- rejected: nothing to inject ---
+		{"empty", "", false},
+
+		// --- rejected: early-submit / control-char injection vectors ---
+		{"newline", "evil\nrm -rf", false},
+		{"carriage return", "code\rreviewer", false},
+		{"tab", "code\treviewer", false},
+		{"NUL", "code\x00reviewer", false},
+
+		// --- rejected: shell/keystroke metacharacters ---
+		{"slash command", "foo /bash", false},
+		{"double quote", "code\"reviewer", false},
+		{"semicolon", "code;reviewer", false},
+		{"unicode", "café", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isValidRenameSink(tt.in), "isValidRenameSink(%q)", tt.in)
+		})
+	}
+
+	// Cross-check the length-exemption contract directly: a title that
+	// isValidRenameTitle rejects ONLY for length must pass the sink.
+	overCap := "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789AB-r-1"
+	assert.False(t, isValidRenameTitle(overCap), "precondition: title should exceed the 64-char cap")
+	assert.True(t, isValidRenameSink(overCap), "length-exempt sink must accept a charset-clean over-cap title")
+}

@@ -98,17 +98,33 @@ func sandboxForHarness(name string) string {
 // without (e.g. Codex, which has no TUI rename command) is renamed
 // out-of-band through its ConvStore.SetTitle.
 //
-// The title must already be charset-validated by the caller — on the
-// injection path it becomes literal send-keys input, so an un-gated title
-// is a keystroke-injection sink (a newline would submit early). deliverRename
-// does NOT validate; it only routes.
+// On the in-pane injection path the title becomes literal send-keys
+// input, so deliverRename charset-gates it here as a last line of defense
+// (isValidRenameSink) — a length-exempt, charset-only check that rejects
+// any rune tmux would treat as a premature Enter. This makes the
+// injection path safe for ALL callers regardless of whether each one
+// pre-validates: the user-facing endpoints (handlers/lifecycle/clone)
+// already pass titles through the stricter isValidRenameTitle (a charset
+// superset of this gate, plus a 64-char cap) so they are unaffected,
+// while the reincarnate carry titles — which exceed that cap once the
+// `-x` / `-r-N` suffix is appended and were previously injected with no
+// gate at all (JOH-177) — are now sanitized without being over-rejected.
+//
+// The out-of-band SetTitle path is a direct title-store write, not a
+// send-keys stream, so it is not a keystroke sink and is not gated here.
 func deliverRename(convID, title string) bool {
 	h := harnessForConv(convID)
 
 	// Slash-injection rename (Claude Code): type `<rename-cmd> <title>`
 	// into the live pane. RenameCommand is a compile-time constant, never
-	// caller input, so it adds no injection surface.
+	// caller input, so it adds no injection surface — but the title is
+	// caller-derived, so it must clear the send-keys charset gate first.
 	if h.SupportsRename() {
+		if !isValidRenameSink(title) {
+			slog.Warn("rename: title rejected by send-keys charset gate; skipping injection",
+				"conv", convID, "harness", h.Name)
+			return false
+		}
 		return injectSlashCommand(convID, h.Life.RenameCommand()+" "+title, "")
 	}
 
