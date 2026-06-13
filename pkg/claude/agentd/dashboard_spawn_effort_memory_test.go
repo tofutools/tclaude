@@ -64,10 +64,13 @@ func TestDashboardHTML_SpawnEffortMemory(t *testing.T) {
 	}
 
 	// Open path: the modal restores the selected model's remembered
-	// effort instead of always blanking the Effort field.
+	// effort instead of always blanking the Effort field. Since JOH-162
+	// the "selected model" is whichever Model control the chosen harness
+	// puts in play (activeSpawnModelEl — the curated <select> for Claude
+	// Code, the free-text <input> for Codex), not the bare claude select.
 	open := spawnFuncBody(t, "openAgentSpawnModal")
-	if !strings.Contains(open, "applyRememberedEffort($('#agent-spawn-model').value)") {
-		t.Error("openAgentSpawnModal: must applyRememberedEffort for the selected model on open")
+	if !strings.Contains(open, "applyRememberedEffort(activeSpawnModelEl().value)") {
+		t.Error("openAgentSpawnModal: must applyRememberedEffort for the active model control on open")
 	}
 
 	// Submit path: spawning persists the chosen effort for the chosen

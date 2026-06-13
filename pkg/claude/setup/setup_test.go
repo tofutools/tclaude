@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -203,7 +204,7 @@ func TestCheckStatus_PrintsSandboxAdvisory(t *testing.T) {
 	tempHome(t)
 
 	out := captureStdout(t, func() {
-		require.NoError(t, checkStatus())
+		require.NoError(t, checkStatus(""))
 	})
 
 	assert.Contains(t, out, "=== Agent Sandbox ===")
@@ -224,6 +225,61 @@ func TestSandboxAdvisory_NamesPathsAndDoc(t *testing.T) {
 	} {
 		assert.Containsf(t, adv, want, "advisory should mention %q", want)
 	}
+}
+
+func harnessTargetNames(hs []*harness.Harness) []string {
+	out := make([]string, len(hs))
+	for i, h := range hs {
+		out[i] = h.Name
+	}
+	return out
+}
+
+// hookInstallTargets always includes the selected harness, and auto-adds
+// every OTHER present hook-capable harness (Codex when its CLI is on PATH) —
+// the selection that makes `tclaude setup` install Codex hooks without
+// `--harness codex`. The `present` predicate is injected so the test doesn't
+// depend on what's on the machine's PATH.
+func TestHookInstallTargets(t *testing.T) {
+	claude := harness.Default()
+	codex, ok := harness.Get("codex")
+	require.True(t, ok, "codex harness must be registered")
+
+	none := func(*harness.Harness) bool { return false }
+	all := func(*harness.Harness) bool { return true }
+	onlyCodex := func(h *harness.Harness) bool { return h.Name == "codex" }
+
+	// Selected harness only — nothing else present → no auto-adds.
+	assert.Equal(t, []string{"claude"},
+		harnessTargetNames(hookInstallTargets(claude, none)))
+
+	// Codex present → auto-added after the selected default harness.
+	assert.Equal(t, []string{"claude", "codex"},
+		harnessTargetNames(hookInstallTargets(claude, onlyCodex)))
+
+	// Selecting codex: it leads, the present claude follows, and the
+	// selected harness is never duplicated by the auto-add pass.
+	assert.Equal(t, []string{"codex", "claude"},
+		harnessTargetNames(hookInstallTargets(codex, all)))
+}
+
+// installHooksForHarness writes the harness's own hook config — for Codex,
+// ~/.codex/hooks.json — proving the auto-install path actually lands the
+// callback file (the missing file was the spawn-freeze root cause).
+func TestInstallHooksForHarness_Codex_WritesHooksFile(t *testing.T) {
+	home := tempHome(t)
+	codex, ok := harness.Get("codex")
+	require.True(t, ok, "codex harness must be registered")
+
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	assert.NoFileExists(t, hooksPath, "precondition: no codex hooks yet")
+
+	out := captureStdout(t, func() {
+		require.NoError(t, installHooksForHarness(codex))
+	})
+
+	assert.FileExists(t, hooksPath, "codex hooks.json must be written")
+	assert.Contains(t, out, "Hooks (", "the codex hooks section must be printed")
 }
 
 // findRepoRoot returns the repository root, derived from this test
@@ -258,4 +314,21 @@ func TestSandboxDocCrossReferencesConsistent(t *testing.T) {
 		assert.Containsf(t, string(body), base,
 			"%s must reference the sandbox-hardening doc by name (%s)", ref, base)
 	}
+}
+
+// TestCheckStatus_HarnessDispatch covers the --harness selector on
+// `tclaude setup --check`: codex reports the codex hooks target, and an
+// unknown harness errors rather than silently checking Claude Code.
+func TestCheckStatus_HarnessDispatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+
+	out := captureStdout(t, func() {
+		require.NoError(t, checkStatus("codex"))
+	})
+	require.Contains(t, out, "Codex CLI", "status should name the codex harness")
+	require.Contains(t, out, ".codex", "status should reference the codex hooks target")
+
+	require.Error(t, checkStatus("no-such-harness"), "an unknown --harness must error")
 }

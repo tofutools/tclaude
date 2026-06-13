@@ -1,11 +1,41 @@
 package testharness
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+// has-session liveness flows through cmd.Run()==nil (see
+// session.IsTmuxSessionAlive), so the sim answers it with an exit-0 /
+// exit-1 process. A bare exec.Command("true") PATH-resolves at Run()
+// time — under `env -i` (empty PATH) LookPath fails and EVERY live
+// session reads as dead, wedging the whole flow-test suite. Resolving
+// true/false to ABSOLUTE paths once at init keeps the truthiness
+// hermetic: exec.Command skips LookPath when the name contains a
+// separator, so cmd.Path is taken verbatim regardless of $PATH.
+var (
+	trueBin  = resolveCoreutil("true")
+	falseBin = resolveCoreutil("false")
+)
+
+// resolveCoreutil returns an absolute path to the named coreutil from a
+// fixed candidate list, independent of $PATH. Falls back to the bare
+// name (the legacy PATH-resolved behaviour) only when no candidate
+// exists, so platforms without /usr/bin|/bin coreutils are no worse off
+// than before.
+func resolveCoreutil(name string) string {
+	for _, dir := range []string{"/usr/bin", "/bin"} {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return name
+}
 
 // SentKey records one tmux send-keys invocation. The TmuxSim retains a
 // log for back-compat assertions (WaitForSendKeys); the v2 preferred
@@ -16,9 +46,27 @@ type SentKey struct {
 	Text   string
 }
 
+// PaneSim is the behaviour a TmuxSim needs from whatever harness
+// simulator is attached to a pane: it receives keystrokes, reports
+// whether it is still alive, and tears down on kill-session. Both
+// *CCSim and *CodexSim implement it, so one TmuxSim drives either
+// harness's sim unchanged — the routing / has-session / kill-session
+// machinery is harness-agnostic.
+type PaneSim interface {
+	Receive(text string)
+	IsAlive() bool
+	Shutdown()
+}
+
+// Both harness simulators satisfy PaneSim, so TmuxSim routes to either.
+var (
+	_ PaneSim = (*CCSim)(nil)
+	_ PaneSim = (*CodexSim)(nil)
+)
+
 // TmuxSim is the test-time stand-in for clcommon.LiveTmux. It
 // satisfies the clcommon.Tmux interface: owns a sessions table,
-// routes send-keys to the registered CCSim's Receive, answers
+// routes send-keys to the registered pane sim's Receive, answers
 // has-session against the alive flag, and removes sessions on
 // kill-session. Tests assign a *TmuxSim to clcommon.Default at
 // setup; t.Cleanup restores the production singleton.
@@ -31,7 +79,7 @@ type TmuxSim struct {
 	sentLog  []SentKey
 	// buffers models tmux's named paste buffers. set-buffer stores into
 	// it; paste-buffer reads it back and routes the content to the
-	// target pane's CCSim — the test-time stand-in for the bracketed
+	// target pane's sim — the test-time stand-in for the bracketed
 	// paste injectMultilineAndSubmit uses to land multi-line text.
 	buffers map[string]string
 	// commandCounts records every Command(verb, …) invocation by verb
@@ -45,7 +93,7 @@ type TmuxSim struct {
 type tmuxSession struct {
 	name string
 	cwd  string
-	cc   *CCSim
+	pane PaneSim
 }
 
 func newTmuxSim() *TmuxSim {
@@ -57,9 +105,10 @@ func newTmuxSim() *TmuxSim {
 }
 
 // Command satisfies the clcommon.Tmux interface. Returns a no-op
-// `true`/`false` exec.Cmd whose Run() exits with the appropriate
-// status; for verbs that mutate state (send-keys, kill-session),
-// the mutation happens here before the cmd is returned.
+// exit-0 / exit-1 exec.Cmd (absolute-path true/false, hermetic under
+// empty PATH — see trueBin/falseBin) whose Run() exits with the
+// appropriate status; for verbs that mutate state (send-keys,
+// kill-session), the mutation happens here before the cmd is returned.
 func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	if len(args) > 0 {
 		t.mu.Lock()
@@ -69,9 +118,9 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	switch {
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
 		if t.IsAlive(args[2]) {
-			return exec.Command("true")
+			return exec.Command(trueBin)
 		}
-		return exec.Command("false")
+		return exec.Command(falseBin)
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		t.routeSendKeys(args[2], args[3])
 	case len(args) >= 3 && args[0] == "set-buffer":
@@ -81,7 +130,7 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
 		t.killSession(args[2])
 	}
-	return exec.Command("true")
+	return exec.Command(trueBin)
 }
 
 // setBuffer models `tmux set-buffer -b <name> <data>` — it stores the
@@ -137,42 +186,43 @@ func (t *TmuxSim) pasteBuffer(args []string) {
 	t.routeSendKeys(target, text)
 }
 
-// routeSendKeys logs the call and forwards text to the attached CCSim.
-// Target is "<sessionName>:0.0" or bare "<sessionName>"; we strip the
-// pane suffix before lookup.
+// routeSendKeys logs the call and forwards text to the attached pane
+// sim. Target is "<sessionName>:0.0" or bare "<sessionName>"; we strip
+// the pane suffix before lookup.
 func (t *TmuxSim) routeSendKeys(target, text string) {
 	t.mu.Lock()
 	t.sentLog = append(t.sentLog, SentKey{Target: target, Text: text})
 	sessName := strings.SplitN(target, ":", 2)[0]
 	s, ok := t.sessions[sessName]
 	t.mu.Unlock()
-	if ok && s.cc != nil {
-		s.cc.Receive(text)
+	if ok && s.pane != nil {
+		s.pane.Receive(text)
 	}
 }
 
 // killSession removes the session from the alive table and tears down
-// its attached CCSim (mirrors tmux dropping the foreground process).
+// its attached pane sim (mirrors tmux dropping the foreground process).
 func (t *TmuxSim) killSession(name string) {
 	t.mu.Lock()
 	s, ok := t.sessions[name]
 	delete(t.sessions, name)
 	t.mu.Unlock()
-	if ok && s.cc != nil {
-		s.cc.Shutdown()
+	if ok && s.pane != nil {
+		s.pane.Shutdown()
 	}
 }
 
-// Register attaches a CCSim to a tmux session name. The CC owns its
-// own alive state; once it /exits, has-session returns false even if
-// the session entry is still in the table.
-func (t *TmuxSim) Register(name, cwd string, cc *CCSim) {
+// Register attaches a pane sim (a *CCSim or *CodexSim) to a tmux
+// session name. The sim owns its own alive state; once it exits,
+// has-session returns false even if the session entry is still in the
+// table.
+func (t *TmuxSim) Register(name, cwd string, pane PaneSim) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, cc: cc}
+	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane}
 }
 
-// MarkAlive registers a session without an attached CCSim. Used for
+// MarkAlive registers a session without an attached pane sim. Used for
 // scenarios that need a live session entry but don't drive simulator
 // behavior. Has-session returns true; send-keys is logged but
 // silently dropped.
@@ -184,10 +234,10 @@ func (t *TmuxSim) MarkAlive(name string) {
 	}
 }
 
-// MarkOffline drops the session entry. The attached CCSim (if any)
+// MarkOffline drops the session entry. The attached pane sim (if any)
 // keeps its in-memory state — Resume can find it via CCRegistry and
 // re-Register under a new tmux name. To hard-kill, use kill-session
-// via Command (TmuxSim shuts the CC down).
+// via Command (TmuxSim shuts the sim down).
 func (t *TmuxSim) MarkOffline(name string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -227,8 +277,8 @@ func (t *TmuxSim) CommandCount(verb string) int {
 	return t.commandCounts[verb]
 }
 
-// IsAlive reports whether the session is registered and (when a CC is
-// attached) the CC is still processing input.
+// IsAlive reports whether the session is registered and (when a pane
+// sim is attached) the sim is still processing input.
 func (t *TmuxSim) IsAlive(name string) bool {
 	t.mu.Lock()
 	s, ok := t.sessions[name]
@@ -236,10 +286,10 @@ func (t *TmuxSim) IsAlive(name string) bool {
 	if !ok {
 		return false
 	}
-	if s.cc == nil {
+	if s.pane == nil {
 		return true
 	}
-	return s.cc.IsAlive()
+	return s.pane.IsAlive()
 }
 
 // Sessions returns a snapshot of registered session names.

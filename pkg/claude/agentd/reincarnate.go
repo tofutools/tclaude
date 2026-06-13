@@ -300,7 +300,12 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// with no --model, claude's own default — the historical behaviour.
 	effort, model := inheritedLaunchFlags(oldSess.ID)
 	label := generateSpawnLabel()
-	if err := SpawnDetachedTclaudeNew(label, cwd, effort, model); err != nil {
+	// Reincarnate under the same harness the predecessor ran on — a Codex
+	// agent must come back as Codex, not Claude Code. oldSess.Harness is ""
+	// for an untagged/claude row, which omits the flag (the default).
+	// Reincarnation is a relaunch, so the experimental auto-review guardian is
+	// never re-engaged (autoReview=false) — it is an explicit fresh-spawn opt-in.
+	if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, oldSess.Harness, sandboxForHarness(oldSess.Harness), approvalForHarness(oldSess.Harness), false); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return
@@ -379,8 +384,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// where the parent itself was just spawned and never indexed yet
 	// (otherwise prevTitle would be "" and we'd produce `reincarnate-1`
 	// instead of `<parent>-reincarnate-N`).
+	// A non-CC harness (Codex) keeps its title in its own store
+	// (threads.title), not the conv_index the CC path reads — source it
+	// through the harness ConvStore so the carry survives. CC falls through
+	// to the existing FreshConvRowAt scan, unchanged.
 	prevTitle := ""
-	if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
+	if t, ok := harnessNativeTitle(target); ok {
+		prevTitle = t
+	} else if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
 		prevTitle = agent.DisplayTitle(row)
 	}
 	newTitle := uniqueReincarnateTitle(prevTitle)
@@ -445,9 +456,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// shows). The Retired tray is the durable surface the human uses to
 	// reinstate the pre-rotation conv later for knowledge pings.
 	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
-		_ = injectSlashCommand(target, "/rename "+prevTitle+"-x", "")
+		_ = deliverRename(target, prevTitle+"-x")
 	}
-	_ = injectSlashCommand(target, "/exit", "")
+	// Soft-stop the old pane via the harness's exit command. A harness
+	// with no soft-exit command (Lifecycle.SoftExitCommand == "") is
+	// left for a hard kill rather than typed a command it can't parse.
+	if h := harnessForConv(target); h.SupportsSoftExit() {
+		_ = injectSlashCommand(target, h.Life.SoftExitCommand(), "")
+	}
 
 	resp := map[string]any{
 		"old_conv":         target,
@@ -500,10 +516,10 @@ func runReincarnatePostSpawn(newConv, newTitle string) {
 		return
 	}
 	if newTitle != "" {
-		if !injectSlashCommand(newConv, "/rename "+newTitle, "") {
-			slog.Warn("reincarnate: rename injection failed", "conv", newConv, "title", newTitle)
+		if !deliverRename(newConv, newTitle) {
+			slog.Warn("reincarnate: rename delivery failed", "conv", newConv, "title", newTitle)
 		}
-		// Gap so CC has time to process the rename slash command
+		// Gap so the harness has time to process the rename
 		// before the handoff message's nudge lands.
 		time.Sleep(reincarnateReadyDelay)
 	}

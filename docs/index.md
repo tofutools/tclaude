@@ -1,6 +1,6 @@
-# Claude Code Integration 🤖✨
+# Coding-Harness Integration 🤖✨
 
-Powerful session and conversation management for [Claude Code](https://claude.ai/code).
+Powerful session and conversation management for agentic coding CLIs. tclaude is **harness-agnostic**: it drives [Claude Code](https://claude.ai/code) (the default) and, experimentally, [OpenAI Codex CLI](https://developers.openai.com/codex/cli) — see **[Harnesses](harnesses.md)**.
 
 ## Supported Platforms
 
@@ -15,7 +15,8 @@ Powerful session and conversation management for [Claude Code](https://claude.ai
 
 ## Features
 
-- 📺 **Session Management** - Run Claude in tmux sessions, attach/detach anytime
+- 🔌 **Multiple Harnesses** - Drive Claude Code (default) or OpenAI Codex CLI via `--harness`; the choice is persisted per conversation ([details](harnesses.md), experimental)
+- 📺 **Session Management** - Run a harness in tmux sessions, attach/detach anytime
 - 🔮 **Status Tracking** - See when Claude is working, idle, or waiting for input
 - 📊 **Status Bar** - Rich statusline with context usage, rate limits, git links
 - 🔔 **OS Notifications** - Get notified when sessions need attention (opt-in)
@@ -69,6 +70,9 @@ The **baseline** always runs (you can't turn it off) and:
 - Sets up clickable notifications for your platform (terminal-notifier on macOS, D-Bus + xdotool/kdotool on Linux, the `tclaude://` protocol handler on WSL)
 - Asks if you want to enable desktop notifications
 
+!!! tip "Using Codex CLI?"
+    Install Codex's hooks (into `~/.codex/hooks.json`) with `tclaude setup --harness codex`. See **[Harnesses](harnesses.md)** for the full multi-harness guide.
+
 ### Optional extras
 
 The `--install-*` flags add extras **on top of** the baseline — they don't replace it. All are idempotent, so re-running `tclaude setup` with different flags is safe.
@@ -94,10 +98,13 @@ tclaude setup --check
 ## Quick Start 🚀
 
 ```bash
-# Start Claude in a new tmux session
+# Start Claude Code in a new tmux session (--harness claude is the default)
 tclaude session new
 
-# Or resume an existing conversation
+# Or start a Codex CLI session
+tclaude session new --harness codex
+
+# Or resume an existing conversation (harness is remembered automatically)
 tclaude session new --resume <conv-id>
 
 # Interactive session browser
@@ -148,6 +155,8 @@ Session watch also supports:
 
 ## Documentation
 
+- [Harnesses](harnesses.md) - Drive Claude Code or Codex CLI; the per-harness capability matrix (**experimental**)
+- [Adding a Harness](adding-a-harness.md) - Contributor recipe for teaching tclaude a new coding CLI
 - [Session Management](sessions.md) - Detailed session commands
 - [Conversation Management](conversations.md) - Detailed conversation commands
 - [Agent Coordination](agent.md) - Cross-session messaging, groups, lifecycle, and scheduling via `tclaude agent` + `agentd` (**experimental**)

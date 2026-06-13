@@ -56,9 +56,16 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // Extracted from runCloneOrchestration so groups-clone can reuse the
 // same race handling without duplicating it.
 func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+	// Clone under the same harness the source ran on — a Codex agent's
+	// clone must relaunch as Codex. "" for an untagged/claude source omits
+	// the flag (the default).
+	srcHarness := harnessForConv(sourceConv).Name
 	if noCopyConv {
 		label = generateSpawnLabel()
-		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model); err != nil {
+		// A clone is a relaunch, not a fresh opt-in, so it never engages the
+		// experimental auto-review guardian (autoReview=false) — same rationale
+		// as approvalForHarness re-defaulting rather than carrying per-conv state.
+		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
@@ -93,7 +100,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		}
 	}
 	newConv = copyResult.NewConvID
-	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model); err != nil {
+	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
@@ -465,8 +472,14 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	// Resolve the original's display title so the clone's title can be
 	// derived as `<base>-c-<N>`. Best-effort — an empty originalTitle
 	// just means uniqueCloneTitle falls back to a bare `c-<N>`.
+	// A non-CC harness (Codex) keeps its title in its own store
+	// (threads.title); read it through the harness ConvStore so the clone
+	// inherits the source's name. CC falls through to the conv_index path
+	// unchanged.
 	originalTitle := ""
-	if row := agent.FreshConvRowResolved(target); row != nil {
+	if t, ok := harnessNativeTitle(target); ok {
+		originalTitle = t
+	} else if row := agent.FreshConvRowResolved(target); row != nil {
 		originalTitle = agent.DisplayTitle(row)
 	}
 	newTitle := uniqueCloneTitle(originalTitle)
@@ -609,7 +622,7 @@ func runClonePostInit(newConv, title, target, caller string) {
 	// that path so it gets a synthetic welcome from runSpawnPostInit;
 	// clone doesn't need one. The /rename alone is enough to materialise
 	// the .jsonl.
-	if !injectSlashCommand(newConv, "/rename "+title, "") {
-		slog.Warn("clone: /rename injection failed", "conv", newConv, "title", title)
+	if !deliverRename(newConv, title) {
+		slog.Warn("clone: rename delivery failed", "conv", newConv, "title", title)
 	}
 }

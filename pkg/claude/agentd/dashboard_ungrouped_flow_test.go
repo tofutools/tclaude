@@ -21,6 +21,7 @@ type dashSnapshot struct {
 	Conversations        []dashConversation `json:"conversations"`
 	Retired              []dashRetired      `json:"retired"`
 	Usage                dashUsage          `json:"usage"`
+	Harnesses            []dashHarness      `json:"harnesses"`
 	NotificationsEnabled bool               `json:"notifications_enabled"`
 }
 
@@ -83,6 +84,19 @@ type dashAgent struct {
 	State           dashState `json:"state"`
 }
 
+// dashHarness mirrors the relevant fields of agentd.dashboardHarness.
+type dashHarness struct {
+	Name           string   `json:"name"`
+	DisplayName    string   `json:"display_name"`
+	Models         []string `json:"models"`
+	EffortLevels   []string `json:"effort_levels"`
+	SandboxModes   []string `json:"sandbox_modes"`
+	DefaultSandbox string   `json:"default_sandbox"`
+	CanRename      bool     `json:"can_rename"`
+	CanCompact     bool     `json:"can_compact"`
+	CanSandbox     bool     `json:"can_sandbox"`
+}
+
 // dashState mirrors the relevant fields of agentd.agentState.
 type dashState struct {
 	Status            string  `json:"status,omitempty"`
@@ -96,6 +110,8 @@ type dashState struct {
 	EffortLevel       string  `json:"effort_level,omitempty"`
 	CostUSD           float64 `json:"cost_usd,omitempty"`
 	ExitReason        string  `json:"exit_reason,omitempty"`
+	Harness           string  `json:"harness,omitempty"`
+	SandboxMode       string  `json:"sandbox_mode,omitempty"`
 }
 
 func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {

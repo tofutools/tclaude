@@ -17,6 +17,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/statusbar"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -63,6 +64,13 @@ type Params struct {
 	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the self.* permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
+
+	// Harness selects which coding harness's hooks to install/check
+	// (default "claude" → ~/.claude/settings.json; "codex" →
+	// ~/.codex/hooks.json, via the harness HookInstaller seam). Other
+	// setup steps (status bar, protocol handler, skills) stay
+	// Claude-Code-specific for now.
+	Harness string `long:"harness" optional:"true" help:"Coding harness whose hooks to install: claude (default) | codex"`
 }
 
 func Cmd() *cobra.Command {
@@ -88,7 +96,14 @@ func Cmd() *cobra.Command {
 
 func runSetup(params *Params) error {
 	if params.Check {
-		return checkStatus()
+		return checkStatus(params.Harness)
+	}
+
+	// Resolve which harness's hooks to manage (default claude). An
+	// unknown value errors up front.
+	h, err := harness.Resolve(params.Harness)
+	if err != nil {
+		return err
 	}
 
 	// Configure path mode for hooks and callbacks
@@ -155,22 +170,22 @@ func runSetup(params *Params) error {
 		}
 	}
 
-	// 1. Install hooks
-	fmt.Println("=== Hooks ===")
-	installed, missing, needsRepair := session.CheckHooksInstalled()
-	if installed && !needsRepair {
-		fmt.Println("✓ All hooks already installed")
-	} else {
-		if needsRepair {
-			fmt.Println("  Repairing stale/duplicate hooks...")
+	// 1. Install hooks — the mandatory core of the integration. Hooks go in
+	// for the selected harness (always, regardless of whether its CLI is on
+	// PATH) AND are auto-installed for every other registered hook-capable
+	// harness whose CLI is present on PATH — so a machine with Codex
+	// installed gets its Codex hooks without anyone having to pass
+	// `--harness codex`. Installing hooks for a harness you don't actively
+	// use is harmless: the status state machine tolerates a harness firing
+	// fewer events, and Codex won't run the callback until it's trusted (see
+	// codexHookInstaller.TrustNote).
+	for i, hh := range hookInstallTargets(h, harnessOnPath) {
+		if i > 0 {
+			fmt.Println()
 		}
-		if len(missing) > 0 {
-			fmt.Printf("  Installing hooks for: %v\n", missing)
+		if err := installHooksForHarness(hh); err != nil {
+			return err
 		}
-		if err := session.InstallHooks(); err != nil {
-			return fmt.Errorf("failed to install hooks: %w", err)
-		}
-		fmt.Println("✓ Hooks installed")
 	}
 
 	// 2. Status bar
@@ -186,6 +201,46 @@ func runSetup(params *Params) error {
 			}
 		} else {
 			fmt.Println("  Skipped. Install later with: tclaude setup")
+		}
+	}
+
+	// 2b. Codex CLI status line (when codex is installed). Codex has no
+	// command-backed status line (openai/codex#17827), so tclaude can't
+	// install its renderer there; instead it curates Codex's built-in
+	// status_line items in ~/.codex/config.toml. Gated on codex being on
+	// PATH so non-Codex users never see a prompt. Never clobbers a
+	// user-owned status_line.
+	fmt.Println("\n=== Codex Status Bar ===")
+	switch {
+	case !isCodexInstalled():
+		fmt.Println("  Codex CLI not found on PATH — skipping (re-run setup after installing codex)")
+	default:
+		switch statusbar.CodexStatusLineState() {
+		case statusbar.CodexInstalledState:
+			fmt.Println("✓ Codex status line already configured")
+		case statusbar.CodexUserManagedState:
+			fmt.Println("  You already have a custom Codex status_line — leaving it untouched.")
+		case statusbar.CodexTuiConflictState:
+			fmt.Printf("  Your config defines tui as an inline table/array in %s — tclaude won't edit it.\n", statusbar.CodexConfigPath())
+			fmt.Println("  Convert tui to a [tui] table (or add the status_line items yourself) and re-run.")
+		case statusbar.CodexNeedsManualFixState:
+			fmt.Printf("  tclaude's Codex status_line in %s looks hand-edited (unterminated array) — fix or delete it and re-run.\n", statusbar.CodexConfigPath())
+		default: // CodexNotInstalled or CodexNeedsRepair
+			// A stale tclaude-managed value repairs silently (like hooks); a
+			// brand-new install asks first.
+			repair := statusbar.CodexStatusLineState() == statusbar.CodexNeedsRepair
+			if repair || askYesNo("Install a tclaude-curated status line for Codex CLI?", true, params.Yes) {
+				switch outcome, err := statusbar.InstallCodex(); {
+				case err != nil:
+					fmt.Printf("  Warning: failed to configure Codex status line: %v\n", err)
+				case outcome == statusbar.CodexRepaired:
+					fmt.Println("✓ Codex status line repaired")
+				default:
+					fmt.Println("✓ Codex status line installed")
+				}
+			} else {
+				fmt.Println("  Skipped. Install later with: tclaude setup")
+			}
 		}
 	}
 
@@ -318,6 +373,92 @@ func installExtras(params *Params) error {
 	return nil
 }
 
+// hookInstallTargets returns the harnesses whose tclaude callback hooks the
+// baseline should install: the selected harness always (hooks are the
+// mandatory core, installed regardless of whether its CLI is on PATH), plus
+// every OTHER registered hook-capable harness the `present` predicate
+// reports as available — so a Codex install is picked up automatically,
+// without `--harness codex`. The selected harness is first; the rest follow
+// in registry (name) order. `present` is a parameter so tests can drive the
+// auto-add path without depending on what's on the test machine's PATH.
+func hookInstallTargets(selected *harness.Harness, present func(*harness.Harness) bool) []*harness.Harness {
+	targets := []*harness.Harness{selected}
+	seen := map[string]bool{selected.Name: true}
+	for _, name := range harness.Names() {
+		if seen[name] {
+			continue
+		}
+		h, ok := harness.Get(name)
+		if !ok || !h.SupportsHooks() || !present(h) {
+			continue
+		}
+		targets = append(targets, h)
+		seen[name] = true
+	}
+	return targets
+}
+
+// harnessOnPath reports whether a harness's launcher binary is resolvable on
+// PATH — the gate for auto-installing a NON-selected harness's hooks. A
+// harness with no Spawner can't be probed, so it counts as absent. The
+// selected harness bypasses this gate entirely (its hooks are mandatory).
+func harnessOnPath(h *harness.Harness) bool {
+	if h == nil || h.Spawn == nil {
+		return false
+	}
+	_, err := exec.LookPath(h.Spawn.Binary())
+	return err == nil
+}
+
+// installHooksForHarness installs or repairs the tclaude callback hooks for
+// one harness, printing its section. A harness with no HookInstaller in this
+// build is skipped with a note rather than failing the whole run.
+func installHooksForHarness(h *harness.Harness) error {
+	fmt.Printf("=== Hooks (%s) ===\n", h.DisplayName)
+	if !h.SupportsHooks() {
+		fmt.Printf("  (no hook installer for harness %q in this build; skipping)\n", h.Name)
+		return nil
+	}
+	installed, missing, needsRepair := h.Hooks.Check()
+	if installed && !needsRepair {
+		fmt.Println("✓ All hooks already installed")
+	} else {
+		if needsRepair {
+			fmt.Println("  Repairing stale/duplicate hooks...")
+		}
+		if len(missing) > 0 {
+			fmt.Printf("  Installing hooks for: %v\n", missing)
+		}
+		if err := h.Hooks.Install(); err != nil {
+			return fmt.Errorf("failed to install hooks: %w", err)
+		}
+		fmt.Printf("✓ Hooks installed (%s)\n", h.Hooks.ConfigTarget())
+	}
+	if note := h.Hooks.TrustNote(); note != "" {
+		fmt.Printf("  ⚠ %s\n", note)
+	}
+	return nil
+}
+
+// checkHooksForHarness reports one harness's hook-install status in the
+// `tclaude setup --check` output.
+func checkHooksForHarness(h *harness.Harness) {
+	fmt.Printf("\n=== Hooks (%s) ===\n", h.DisplayName)
+	if !h.SupportsHooks() {
+		fmt.Printf("  (no hook installer for harness %q in this build)\n", h.Name)
+		return
+	}
+	installed, missing, needsRepair := h.Hooks.Check()
+	if needsRepair {
+		fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
+	}
+	if installed {
+		fmt.Println("✓ All hooks installed")
+	} else {
+		fmt.Printf("✗ Missing hooks: %v\n", missing)
+	}
+}
+
 // installAgentSkills writes the bundled agent-* skills into
 // ~/.claude/skills/<name>/. Idempotent: overwrites existing installs.
 // The CLI prints each destination so the user knows where to look if
@@ -423,9 +564,14 @@ func askYesNo(prompt string, defaultYes bool, assumeYes bool) bool {
 	return input == "y" || input == "yes"
 }
 
-func checkStatus() error {
+func checkStatus(harnessName string) error {
 	fmt.Println("tclaude Setup Status")
 	fmt.Println()
+
+	h, err := harness.Resolve(harnessName)
+	if err != nil {
+		return err
+	}
 
 	// Check tmux
 	fmt.Println("=== Prerequisites ===")
@@ -435,16 +581,16 @@ func checkStatus() error {
 		fmt.Println("✗ tmux not found (required)")
 	}
 
-	// Check hooks
-	fmt.Println("\n=== Hooks ===")
-	installed, missing, needsRepair := session.CheckHooksInstalled()
-	if needsRepair {
-		fmt.Println("⚠ Stale or duplicate hooks detected (need repair)")
+	// Check hooks. Naming a harness scopes the check to it; with no harness
+	// named we mirror what `tclaude setup` installs — the default harness
+	// plus every other present hook-capable harness — so `--check` doesn't
+	// hide auto-installed Codex hooks.
+	checkTargets := []*harness.Harness{h}
+	if harnessName == "" {
+		checkTargets = hookInstallTargets(h, harnessOnPath)
 	}
-	if installed {
-		fmt.Println("✓ All hooks installed")
-	} else {
-		fmt.Printf("✗ Missing hooks: %v\n", missing)
+	for _, hh := range checkTargets {
+		checkHooksForHarness(hh)
 	}
 
 	// Check status bar
@@ -454,6 +600,28 @@ func checkStatus() error {
 	} else {
 		fmt.Println("✗ Status bar not configured")
 		fmt.Println("  Run 'tclaude setup' to install")
+	}
+
+	// Check Codex status line
+	fmt.Println("\n=== Codex Status Bar ===")
+	if !isCodexInstalled() {
+		fmt.Println("  Codex CLI not found on PATH")
+	} else {
+		switch statusbar.CodexStatusLineState() {
+		case statusbar.CodexInstalledState:
+			fmt.Println("✓ Codex status line configured")
+		case statusbar.CodexNeedsRepair:
+			fmt.Println("⚠ Codex status line is tclaude-managed but stale (run 'tclaude setup' to repair)")
+		case statusbar.CodexUserManagedState:
+			fmt.Println("  Codex status line set by you (not managed by tclaude)")
+		case statusbar.CodexTuiConflictState:
+			fmt.Println("  tui is defined as an inline table/array (not managed by tclaude)")
+		case statusbar.CodexNeedsManualFixState:
+			fmt.Println("⚠ tclaude-managed Codex status_line looks hand-edited (unterminated array); fix or delete it and re-run setup")
+		default:
+			fmt.Println("✗ Codex status line not configured")
+			fmt.Println("  Run 'tclaude setup' to install")
+		}
 	}
 
 	// Check clickable notifications setup
@@ -612,6 +780,13 @@ func installTmux() error {
 // isTmuxInstalled checks if tmux is available.
 func isTmuxInstalled() bool {
 	_, err := exec.LookPath("tmux")
+	return err == nil
+}
+
+// isCodexInstalled checks if the Codex CLI is available on PATH. Used to gate
+// the Codex status-line setup so non-Codex users are never prompted.
+func isCodexInstalled() bool {
+	_, err := exec.LookPath("codex")
 	return err == nil
 }
 

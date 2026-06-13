@@ -36,6 +36,8 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Harnesses: harnesses.md
+  - Adding a Harness: adding-a-harness.md
   - Session Management: sessions.md
   - Task Management: tasks.md
   - Conversation Management: conversations.md

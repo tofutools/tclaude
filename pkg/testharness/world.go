@@ -20,6 +20,14 @@ type World struct {
 	HomeDir string
 	Tmux    *TmuxSim
 	CCs     *CCRegistry
+	// Codexes is the Codex analog of CCs: conv-id → CodexSim, so the
+	// simSpawner's `--harness codex` branch can stash the sim it built and
+	// the resume branch can re-attach it. Kept as a parallel registry (not
+	// unified with CCs) because the two sims expose harness-specific
+	// surfaces — CCs.Clear pokes CCSim's /clear rotation, CodexSim has no
+	// such concept — and a typed store keeps each test reaching for the
+	// right one without a cast.
+	Codexes *CodexRegistry
 
 	// spawnEfforts / spawnModels record the effort and model strings
 	// each simSpawner.SpawnNew received, keyed by the new conv-id, so a
@@ -27,9 +35,12 @@ type World struct {
 	// unset case ("") is recorded too. Guarded by spawnMu — spawns are
 	// sequential in flow tests, but the post-init goroutines make the
 	// mutex cheap insurance.
-	spawnMu      sync.Mutex
-	spawnEfforts map[string]string
-	spawnModels  map[string]string
+	spawnMu         sync.Mutex
+	spawnEfforts    map[string]string
+	spawnModels     map[string]string
+	spawnSandboxes  map[string]string
+	spawnApprovals  map[string]string
+	spawnAutoReview map[string]bool
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -46,11 +57,15 @@ func New(t *testing.T) *World {
 	t.Setenv("HOME", home)
 	db.ResetForTest()
 	return &World{
-		HomeDir:      home,
-		Tmux:         newTmuxSim(),
-		CCs:          newCCRegistry(),
-		spawnEfforts: map[string]string{},
-		spawnModels:  map[string]string{},
+		HomeDir:         home,
+		Tmux:            newTmuxSim(),
+		CCs:             newCCRegistry(),
+		Codexes:         newCodexRegistry(),
+		spawnEfforts:    map[string]string{},
+		spawnModels:     map[string]string{},
+		spawnSandboxes:  map[string]string{},
+		spawnApprovals:  map[string]string{},
+		spawnAutoReview: map[string]bool{},
 	}
 }
 
@@ -88,6 +103,63 @@ func (w *World) SpawnModel(convID string) (string, bool) {
 	defer w.spawnMu.Unlock()
 	m, ok := w.spawnModels[convID]
 	return m, ok
+}
+
+// RecordSpawnSandbox captures the sandbox mode a simSpawner.SpawnNew /
+// SpawnResume received, keyed by the new conv-id, so a flow test can assert
+// the sandbox flag the spawn path threaded through (JOH-192). The unset
+// case ("") is recorded too.
+func (w *World) RecordSpawnSandbox(convID, sandbox string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnSandboxes[convID] = sandbox
+}
+
+// SpawnSandbox returns the sandbox mode recorded for a spawned conv-id and
+// whether a spawn for that conv was observed.
+func (w *World) SpawnSandbox(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	s, ok := w.spawnSandboxes[convID]
+	return s, ok
+}
+
+// RecordSpawnApproval captures the approval policy a simSpawner.SpawnNew /
+// SpawnResume received, keyed by the new conv-id, so a flow test can assert
+// the --ask-for-approval flag the spawn path threaded through (JOH-200). The
+// unset case ("") is recorded too.
+func (w *World) RecordSpawnApproval(convID, approval string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnApprovals[convID] = approval
+}
+
+// SpawnApproval returns the approval policy recorded for a spawned conv-id and
+// whether a spawn for that conv was observed.
+func (w *World) SpawnApproval(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	a, ok := w.spawnApprovals[convID]
+	return a, ok
+}
+
+// RecordSpawnAutoReview captures the auto-review (guardian) opt-in a
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert the `--auto-review` flag the spawn path threaded through
+// (JOH-200 part 2). The default (false) is recorded too.
+func (w *World) RecordSpawnAutoReview(convID string, autoReview bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnAutoReview[convID] = autoReview
+}
+
+// SpawnAutoReview returns the auto-review opt-in recorded for a spawned conv-id
+// and whether a spawn for that conv was observed.
+func (w *World) SpawnAutoReview(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	a, ok := w.spawnAutoReview[convID]
+	return a, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the
@@ -137,6 +209,58 @@ func (r *CCRegistry) GetByConvID(convID string) *CCSim {
 
 // GetByLabel returns the registered sim for label, or nil.
 func (r *CCRegistry) GetByLabel(label string) *CCSim {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byLabel[label]
+}
+
+// CodexRegistry is the Codex analog of CCRegistry: conv-id → CodexSim,
+// multi-keyed by label too. The simSpawner's `--harness codex` branch
+// records the sim it built here so a later resume re-attaches the same
+// instance instead of synthesising a new one.
+type CodexRegistry struct {
+	mu       sync.Mutex
+	byConvID map[string]*CodexSim
+	byLabel  map[string]*CodexSim
+}
+
+func newCodexRegistry() *CodexRegistry {
+	return &CodexRegistry{
+		byConvID: map[string]*CodexSim{},
+		byLabel:  map[string]*CodexSim{},
+	}
+}
+
+// Set records a CodexSim under both label and conv-id (label may be
+// empty for hydrated sims). A later SetByConvID with the same id
+// overwrites — useful when a resume creates a new label for an existing
+// conv.
+func (r *CodexRegistry) Set(label string, cx *CodexSim) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if label != "" {
+		r.byLabel[label] = cx
+	}
+	r.byConvID[cx.ConvID] = cx
+}
+
+// SetByConvID registers a sim by conv-id only. Used for hydrate-from-
+// disk scenarios where the original label is unknown.
+func (r *CodexRegistry) SetByConvID(cx *CodexSim) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byConvID[cx.ConvID] = cx
+}
+
+// GetByConvID returns the registered sim for convID, or nil.
+func (r *CodexRegistry) GetByConvID(convID string) *CodexSim {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byConvID[convID]
+}
+
+// GetByLabel returns the registered sim for label, or nil.
+func (r *CodexRegistry) GetByLabel(label string) *CodexSim {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.byLabel[label]

@@ -2,9 +2,11 @@
 
 ## What is tclaude?
 
-`tclaude` is a cross-platform CLI tool written in Go that extends Claude Code with session management, conversation utilities, and developer workflow features. 
-It wraps Claude Code sessions in tmux for detach/reattach, provides conversation search/management, usage tracking, a web terminal,
+`tclaude` is a cross-platform CLI tool written in Go that extends agentic coding CLIs with session management, conversation utilities, and developer workflow features.
+It wraps a coding harness's sessions in tmux for detach/reattach, provides conversation search/management, usage tracking, a web terminal,
 and a custom status bar.
+
+It is **harness-agnostic**: Claude Code is the default harness and OpenAI Codex CLI is the second supported one, selected per session via `--harness claude|codex` and persisted per conversation. The pluggable seam lives in `pkg/claude/harness` (see the [Harnesses](#harnesses) section). Much of the codebase still carries historical `Claude`/`claude`/`TCLAUDE_` prefixes in identifiers and on-disk env vars even though the code behind them is harness-agnostic — this is deliberate (see the naming note below), so do not read those names as "Claude-Code-only".
 
 ## Build & Test
 
@@ -30,6 +32,7 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `session`   | Core tmux-based session management (new, list, attach, kill, watch). Sessions stored in SQLite (`~/.tclaude/db.sqlite`). Hook callbacks update session status. |
 | `conv`      | Conversation management (list, search, AI search, resume, copy, move, delete, prune). Reads Claude's `.jsonl` conversation files; SQLite (`conv_index`) is the source-of-truth cache. The legacy `sessions-index.json` file is written-but-never-read for external-tooling compatibility. |
+| `harness`   | The harness-agnostic seam. A `Harness` descriptor composes capability-segregated contracts (`Spawner`, `ModelCatalog`, `Lifecycle`, `ConvStore`, `HookInstaller`, `SandboxCatalog`, `ApprovalCatalog`) + `Supports*`/`Can*` flags; a registry (`Register`/`Resolve`/`ResolveSpawnable`/`Names`) keyed by name. `claude.go` + `codex*.go` are the two implementations. Default = `claude`. See the [Harnesses](#harnesses) section. |
 | `agent`     | `tclaude agent` CLI — a thin client that talks to `agentd` over the Unix socket: messaging, groups, lifecycle (spawn/clone/reincarnate), cron, permissions, dashboard launch. Bundled `agent-*` skills live under `agent/skills/`. |
 | `agentd`    | `tclaude agentd` daemon — HTTP-over-Unix-socket server that owns the DB, tmux nudges, permission gating, the approval popup, the browser dashboard, the cron scheduler, and the system tray. Identity from socket peer credentials. Flow tests in `*_flow_test.go`. |
 | `worktree`  | Git worktree management for parallel Claude sessions on different branches.                                                                                                       |
@@ -63,6 +66,23 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 - Session state is stored in SQLite with WAL mode for concurrent access from hook callbacks
 - Interactive list views (sessions, conversations) use bubbletea with the shared `table` package
 - The status bar command is hidden (`cmd.Hidden = true`) - it's invoked by Claude Code's statusline feature, not directly by users
+
+## Harnesses
+
+tclaude drives more than one coding harness. **Claude Code** is the default; **OpenAI Codex CLI** is the second. User docs: `docs/harnesses.md` (overview + capability matrix) and `docs/adding-a-harness.md` (contributor recipe). Design + research: `docs/plans/harness-independence.md` (Linear project `tclaude-harness-independence`).
+
+**The seam (`pkg/claude/harness`)** is deliberately *not* one monolithic interface — the same feature is distributed differently per harness (a rename is `/rename` → `.jsonl` turn for CC, but an out-of-band title-store write for Codex). So it models focused, capability-segregated contracts composed by a `Harness` descriptor with `Supports*`/`Can*` capability flags (a `nil` sub-contract = "unsupported"; callers gate on the flag and degrade gracefully). Contracts: `Spawner` (launch/resume command), `ModelCatalog` (validate model/effort), `Lifecycle` (in-pane slash tokens — `RenameCommand`/`CompactCommand`/`SoftExitCommand`, `""` = unsupported), `ConvStore` (assemble conversations from the harness's full storage model — *not* "parse the one file"), `HookInstaller` (install/check/repair the callback + trust), `SandboxCatalog` + `ApprovalCatalog` (Codex launch-time `--sandbox` / `--ask-for-approval`, both `nil` for CC).
+
+**Key facts for working in this area:**
+- The harness is **persisted per conversation** (`harness TEXT NOT NULL DEFAULT 'claude'` on `sessions` + `conv_index`). Every lifecycle op resolves the conv's recorded harness via `harnessForConv` / `harness.Resolve` and does the right thing; spawn tags the row, everything else reads it.
+- **CC's `HookInstaller` is attached in the `session` package** (`session/hook_installer.go`, via an `init()` that sets `Default().Hooks = ccHookInstaller{}`), not in `claude.go` — it wraps `InstallHooks`/`CheckHooksInstalled`/`ClaudeSettingsPath`, kept in `session` to avoid an import cycle. Codex's installer lives in the harness package (`codex_hooks.go`).
+- **send-keys is an injection sink.** In-pane slash injections (`/rename`, `/compact`, `/exit`, `/quit`) go through `agentd`'s `deliverRename` / `injectSlashCommand`, gated on the `Supports*` flag *and* charset-gated (titles via `isValidRenameTitle` / the length-exempt `isValidRenameSink`). Lifecycle tokens are compile-time constants — never interpolate user input into them. Cold-review any PR touching this path.
+- **The hook callback (`HookCallbackInput`) is already harness-agnostic** — it parses CC's and Codex's snake_case stdin field-for-field, so live status + notifications are a shared pipeline.
+- **`SpawnBinaries()`** drives the process-tree walk that recognises a hook callback's harness ancestor, so a newly-registered spawnable harness is matched without editing that walk.
+
+### Naming: historical `Claude`/`claude`/`TCLAUDE_` prefixes are intentional
+
+A deliberate decision (JOH-163): identifiers like `buildClaudeCmd`, `FindClaudePID`, `ClaudeProjectsDir`, and env vars like `TCLAUDE_SESSION_ID` keep their `Claude`-flavored names even though the code behind them is harness-agnostic. They are **historical, not Claude-Code-specific** — they operate on whatever harness a conversation records. A mass rename was rejected as high-churn / low-value / half-rename-risk. **Rule:** only rename one at a *clean, contained, natural* rewrite point; a broader rename belongs in its own focused PR + review, never smuggled into a feature change. Don't "fix" these prefixes opportunistically.
 
 ## Testing
 
@@ -128,3 +148,4 @@ setup, and keep the board current as work ships.
 
 - `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
 - `docs/plans/agentd.md` — design for `tclaude agentd` HTTP-over-Unix-socket daemon. Identity comes from socket peer credentials (`LOCAL_PEERPID` / `SO_PEERCRED`), not tokens; tmux delivery happens out-of-sandbox.
+- `docs/plans/harness-independence.md` — design for making tclaude harness-agnostic (drive Codex CLI + others, not just Claude Code). Lean plan + knowledge pool; phased M1–M5. Linear project `tclaude-harness-independence`.

@@ -21,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -502,7 +503,22 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	state.LastHook = time.Now()
 
-	// Update state based on hook event
+	// Update state based on hook event. This switch is tclaude's
+	// cross-harness event→status map. Claude Code and Codex deliver the
+	// same snake_case payload field names through the same
+	// `tclaude session hook-callback` — the parse of a Codex hook payload
+	// into HookCallbackInput is JOH-157's contract — so both harnesses
+	// drive this switch unchanged. Codex fires only a SUBSET of these
+	// events (no Notification, SessionEnd, StopFailure or
+	// PostToolUseFailure), so JOH-159's two degradations are handled by
+	// what the subset DOES carry:
+	//   - needs-attention comes from PermissionRequest (Codex has no
+	//     Notification(permission_prompt)); both land on
+	//     StatusAwaitingPermission below.
+	//   - exit comes from the session reaper (tmux has-session → PID
+	//     liveness, RefreshSessionStatus) rather than a SessionEnd hook.
+	// A subset event tclaude doesn't model (e.g. PreCompact) falls through
+	// to the default arm: last_hook is stamped, status is left untouched.
 	switch input.HookEventName {
 	case "UserPromptSubmit":
 		state.Status = StatusWorking
@@ -721,7 +737,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		return nil
 	}
 
-	if stopped {
+	if stopped && harnessUsesSlashContextControls(state.Harness) {
 		// Check auto-compact threshold first — when a session's
 		// context_pct has crossed BOTH the auto-compact threshold and
 		// a nudge threshold, the compact takes precedence (it's the
@@ -729,6 +745,16 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// to be invalidated by the compact). handleContextNudge's
 		// "compact_pending > 0 → skip" guard relies on
 		// handleAutoCompact running first to set the flag.
+		//
+		// Both inject CC slash commands (`/compact`, and a nudge that
+		// names `/compact` / `/reincarnate`) into the agent's pane. They
+		// only ran before JOH-170 because context_pct stayed 0 for
+		// non-CC harnesses — nothing populated it. Now that
+		// persistCodexContextTelemetry (below) DOES populate it for
+		// Codex, gate the injections on the harness actually
+		// understanding those commands, or a Codex pane would be typed
+		// `/compact` it can't parse. Harness-aware compaction/nudging is
+		// future work (Codex Lifecycle).
 		handleAutoCompact(input, envSessionID)
 		handleContextNudge(input, envSessionID)
 	}
@@ -812,6 +838,19 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		return err
 	}
 
+	// Lift Codex's context-window telemetry off its rollout onto the
+	// sessions row. Claude Code gets these figures from its statusbar; a
+	// Codex session has no command-statusline, so the hook is where
+	// context% becomes visible to the dashboard / context-info. Codex only
+	// writes a token_count when the model responds, so refresh at turn
+	// boundaries — Stop/SubagentStop (stopped) and resume (SessionStart) —
+	// not on every PreToolUse/PostToolUse tick: that keeps the rollout read
+	// (and, on the fallback, the ~/.codex/sessions walk) to ~once per turn.
+	// No-op for CC (it already has the statusbar) and best-effort.
+	if stopped || input.HookEventName == "SessionStart" {
+		persistCodexContextTelemetry(state, input)
+	}
+
 	// Refresh usage cache when user is likely looking at the status bar.
 	// Runs synchronously — hook callbacks are separate processes so this
 	// just keeps the process alive a bit longer without blocking Claude.
@@ -832,9 +871,12 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// Look up conversation title for notification
 	convTitle := getConvTitle(state.ConvID, state.Cwd)
 
-	// Notify on state transition (handles cooldown internally)
+	// Notify on state transition (handles cooldown internally). The
+	// harness drives the banner attribution ("Codex: …" vs "Claude: …");
+	// the cooldown + mute ladder inside OnStateTransition are
+	// harness-agnostic.
 	if input.HookEventName != "SessionStart" {
-		notify.OnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle)
+		notify.OnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle, state.Harness)
 	}
 
 	return nil
@@ -911,6 +953,70 @@ func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
 // Returns formatted string like "[title]: prompt" for richer notification content.
 func getConvTitle(convID, cwd string) string {
 	return convindex.GetConvTitleAndPrompt(convID, cwd)
+}
+
+// harnessUsesSlashContextControls reports whether a session's harness
+// understands the CC-style context-management slash commands the stopped-
+// hook path types into the pane (`/compact`, plus the nudge that names
+// `/compact` / `/reincarnate`). It folds to the harness's compact
+// capability: Claude Code has `/compact`; Codex does not (its Lifecycle is
+// unregistered), so those injections are suppressed for it. An empty or
+// unknown harness preserves the legacy Claude Code behaviour — the
+// overwhelmingly common case, and the safe default since CC understands the
+// commands.
+func harnessUsesSlashContextControls(name string) bool {
+	h, err := harness.Resolve(name)
+	if err != nil || h == nil {
+		return true
+	}
+	return h.SupportsCompact()
+}
+
+// persistCodexContextTelemetry lifts the latest context-window snapshot off
+// a Codex session's rollout and stores it on the sessions row, mirroring
+// what the statusbar's UpdateContextSnapshot does for Claude Code. It is a
+// no-op for every other harness (CC already has the statusbar path) and
+// best-effort throughout: a missing rollout, a session with no token_count
+// event yet, or a transient read error just leaves the previous snapshot in
+// place. The all-zero guard inside db.UpdateContextSnapshot keeps a
+// pre-first-response read from clobbering a good snapshot.
+func persistCodexContextTelemetry(state *SessionState, input HookCallbackInput) {
+	if state == nil || state.Harness != harness.CodexName || state.ConvID == "" {
+		return
+	}
+
+	var (
+		snap harness.ContextTelemetry
+		ok   bool
+		err  error
+	)
+	// Fast path: the hook payload's transcript_path is this session's
+	// rollout, so read it straight — no ~/.codex/sessions walk. Guarded by
+	// the rollout-filename shape so a stray/foreign path can't be parsed as
+	// a rollout. Fall through to the by-id lookup when it's absent or not a
+	// rollout path (older payload, unexpected shape).
+	if p := input.TranscriptPath; p != "" && harness.IsCodexRolloutPath(p) {
+		snap, ok, err = harness.CodexTelemetryFromRollout(p)
+	} else {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			slog.Warn("codex-telemetry: cannot resolve home", "error", herr, "module", "hooks")
+			return
+		}
+		snap, ok, err = harness.CodexContextTelemetry(home, state.ConvID)
+	}
+	if err != nil {
+		slog.Warn("codex-telemetry: failed to read rollout telemetry",
+			"conv_id", state.ConvID, "error", err, "module", "hooks")
+		return
+	}
+	if !ok {
+		return
+	}
+	if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
+		slog.Warn("codex-telemetry: failed to update context snapshot",
+			"session_id", state.ID, "error", err, "module", "hooks")
+	}
 }
 
 // getOrCreateSessionState finds existing session or creates a new one.

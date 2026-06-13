@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -380,11 +381,91 @@ type snapshotPayload struct {
 	// Shown in the Groups tab header and used by the spawn modal to
 	// label what "Default" actually resolves to.
 	UserDefaultModel string `json:"user_default_model"`
-	PopupBase        string `json:"popup_base"` // for tray-shareable display
+	// Harnesses is the catalog of spawnable harnesses (claude, codex) with
+	// each one's valid model/effort/sandbox menus and capability flags. The
+	// spawn dialog drives its harness selector + per-harness model/effort/
+	// sandbox menus off this, and the per-row controls gate rename on the
+	// agent's harness can_rename (JOH-162). Built from the harness registry
+	// so a newly-registered harness appears with no dashboard edit.
+	Harnesses []dashboardHarness `json:"harnesses"`
+	PopupBase string             `json:"popup_base"` // for tray-shareable display
 	// NotificationsEnabled mirrors config.notifications.enabled — the
 	// master OS-notification switch above the per-group / per-agent
 	// filters. Drives the top-bar bell toggle.
 	NotificationsEnabled bool `json:"notifications_enabled"`
+}
+
+// dashboardHarness is the snapshot view of one spawnable harness — its
+// identifier + human label, the model/effort/sandbox values its spawn
+// menus offer, and the capability flags the per-row controls gate on. The
+// dashboard never hard-codes a harness; it renders this list.
+type dashboardHarness struct {
+	// Name is the stable identifier ("claude", "codex") forwarded as the
+	// spawn body's `harness` and matched against an agent's state.harness.
+	Name string `json:"name"`
+	// DisplayName is the human label ("Claude Code", "Codex").
+	DisplayName string `json:"display_name"`
+	// Models is the curated model list for the spawn dialog's Model menu.
+	// Empty (e.g. Codex, whose model set changes per release and is
+	// validated server-side) means "no curated list" — the dialog offers a
+	// free-text model entry for that harness instead of a <select>.
+	Models []string `json:"models"`
+	// EffortLevels is the reasoning-effort scale for the Effort menu, in
+	// ascending order. Both harnesses share tclaude's levels today.
+	EffortLevels []string `json:"effort_levels"`
+	// SandboxModes lists the launch-time OS-sandbox modes this harness
+	// accepts (Codex: read-only / workspace-write / danger-full-access).
+	// Empty for a harness whose sandbox is configured out of band (Claude
+	// Code) — the dialog hides the sandbox selector for it.
+	SandboxModes []string `json:"sandbox_modes"`
+	// DefaultSandbox is the secure default mode the spawn dialog
+	// pre-selects (Codex: workspace-write). "" when SandboxModes is empty.
+	DefaultSandbox string `json:"default_sandbox"`
+	// CanRename / CanCompact mirror Harness.CanRename / CanCompact — the
+	// deliverable-action predicates the per-row controls gate on. Note
+	// CanRename is true for Codex (it renames via its ConvStore even
+	// without an in-pane /rename), so the dashboard keeps Codex renameable.
+	CanRename  bool `json:"can_rename"`
+	CanCompact bool `json:"can_compact"`
+	// CanSandbox reports whether the harness takes a launch sandbox flag —
+	// the same condition as a non-empty SandboxModes, surfaced explicitly
+	// so the dialog has a single boolean to gate the sandbox row on.
+	CanSandbox bool `json:"can_sandbox"`
+}
+
+// buildHarnessCatalog assembles the spawnable-harness catalog for the
+// snapshot from the harness registry. Only spawnable harnesses (those with
+// a Spawner + ModelCatalog) are listed — the spawn dialog is the only
+// consumer, and a non-spawnable harness has nothing to offer it. Ordered
+// by Names() (sorted) so the dialog's harness selector is stable.
+func buildHarnessCatalog() []dashboardHarness {
+	out := []dashboardHarness{}
+	for _, name := range harness.Names() {
+		h, err := harness.ResolveSpawnable(name)
+		if err != nil {
+			continue // not spawnable — skip
+		}
+		dh := dashboardHarness{
+			Name:         h.Name,
+			DisplayName:  h.DisplayName,
+			Models:       h.Models.Models(),
+			EffortLevels: h.Models.EffortLevels(),
+			CanRename:    h.CanRename(),
+			CanCompact:   h.CanCompact(),
+			CanSandbox:   h.SupportsSandbox(),
+		}
+		if dh.Models == nil {
+			dh.Models = []string{} // JSON [] not null, so JS .map() is safe
+		}
+		if h.SupportsSandbox() {
+			dh.SandboxModes = h.Sandbox.Modes()
+			dh.DefaultSandbox = h.Sandbox.DefaultMode()
+		} else {
+			dh.SandboxModes = []string{}
+		}
+		out = append(out, dh)
+	}
+	return out
 }
 
 // dashboardLink is the snapshot view of one agent_group_links row.
@@ -585,6 +666,17 @@ type agentState struct {
 	// exit_reason column existed. The dashboard renders 'unexpected' as
 	// "crashed" and everything else (incl. empty) as a plain exit.
 	ExitReason string `json:"exit_reason,omitempty"`
+	// Harness is the coding tool this agent runs under ("claude", "codex"),
+	// from the session row. Empty (a conv with no session row) renders as
+	// the default (Claude Code). The dashboard badges it per row and gates
+	// the rename control on the matching harness's can_rename (JOH-162).
+	// Surfaced regardless of liveness — a dead Codex agent is still Codex.
+	Harness string `json:"harness,omitempty"`
+	// SandboxMode is the launch-time OS-sandbox mode the agent was spawned
+	// under (Codex: read-only / workspace-write / danger-full-access), or
+	// "" for a harness with no launch sandbox (Claude Code) — the dashboard
+	// renders no sandbox badge for "". Surfaced regardless of liveness.
+	SandboxMode string `json:"sandbox_mode,omitempty"`
 }
 
 // stateForConvIn looks up the most-recent live tmux session row for
@@ -629,6 +721,11 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		StatusDetail:  pick.StatusDetail,
 		SubagentCount: pick.SubagentCount,
 		Cwd:           pick.Cwd,
+		// Harness + sandbox are launch properties of the row, surfaced
+		// regardless of liveness (a dead Codex agent is still Codex). The
+		// exited override below only touches Status/StatusDetail.
+		Harness:     pick.Harness,
+		SandboxMode: pick.SandboxMode,
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)
@@ -760,6 +857,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		GeneratedAt:          time.Now().Format(time.RFC3339),
 		PopupBase:            popupBaseURL,
 		UserDefaultModel:     readUserDefaultModel(),
+		Harnesses:            buildHarnessCatalog(),
 		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,

@@ -15,6 +15,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -38,6 +39,42 @@ type NewParams struct {
 	// own default; a non-empty value is normalised and validated
 	// against clcommon.ValidModels in runNew.
 	Model string `long:"model" optional:"true" help:"Claude model: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan, or a full model ID (e.g. claude-fable-5). Unset = claude's own default (no flag passed)"`
+
+	// Harness selects the coding tool this session runs (default
+	// "claude"). "codex" launches OpenAI Codex CLI in the tmux pane via
+	// the codex Spawner. The chosen harness's ModelCatalog validates
+	// --model/--effort and its Spawner builds the launch command, so the
+	// rest of runNew stays harness-agnostic.
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
+
+	// Sandbox selects a harness's launch-time OS-sandbox mode (Codex's
+	// --sandbox). On a direct `session new` it is opt-in: unset emits no
+	// flag, so Codex uses the user's own config.toml sandbox_mode (the human
+	// running session new is the trust root — tclaude doesn't override their
+	// config). Pass a value to sandbox explicitly. The daemon spawn path
+	// (agentd / `agent spawn`) defaults it to workspace-write instead, since
+	// a spawned agent is the untrusted party. Not applicable to Claude Code
+	// (settings.json-driven), which errors if it is set. See JOH-192.
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+
+	// Approval selects a harness's launch-time approval policy (Codex's
+	// --ask-for-approval). On a direct `session new` it is opt-in: unset emits
+	// no flag, so Codex uses the user's own config.toml (the human running
+	// session new is the trust root and can attach to answer prompts — tclaude
+	// doesn't force a policy on them). The daemon spawn path (agentd / `agent
+	// spawn`) defaults it to the non-escalating `never` instead, since its pane
+	// is detached/unattended and would otherwise deadlock; that resolved value
+	// arrives here as an explicit --ask-for-approval. Not applicable to Claude
+	// Code (settings.json-driven), which errors if it is set. See JOH-200.
+	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy: untrusted|on-failure|on-request|never. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+
+	// AutoReview opts into the harness's guardian subagent (Codex's `-c
+	// approvals_reviewer=auto_review`), which auto-decides approval prompts in
+	// your place. Off by default (you review). Gated on the harness having an
+	// approvals subsystem (Codex); set for claude is an error. Same per-spawn
+	// opt-in on the direct `session new` path as on the daemon path —
+	// experimental/undocumented upstream. See JOH-200 part 2.
+	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
@@ -110,13 +147,22 @@ func RunNew(params *NewParams) error {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
+	// The spawn command, model/effort validation and resume form all come
+	// from the selected harness behind the seam (pkg/claude/harness).
+	// --harness picks it (default "claude"); an unknown value errors here
+	// rather than silently launching Claude Code.
+	h, err := harness.Resolve(params.Harness)
+	if err != nil {
+		return err
+	}
+
 	// Normalise + validate --effort up front so a typo errors cleanly
 	// here (and, on the daemon spawn path, surfaces as the forked
 	// `tclaude session new`'s non-zero exit) rather than being forwarded
 	// to claude. Empty stays empty → the flag is omitted entirely. The
 	// cleaned value is written back so the --join-group handler sees the
 	// normalised level too.
-	effort, err := clcommon.ValidateEffort(params.Effort)
+	effort, err := h.Models.ValidateEffort(params.Effort)
 	if err != nil {
 		return err
 	}
@@ -124,11 +170,51 @@ func runNew(params *NewParams) error {
 
 	// Same treatment for --model: normalise + validate up front, empty
 	// stays empty → the flag is omitted entirely.
-	model, err := clcommon.ValidateModel(params.Model)
+	model, err := h.Models.ValidateModel(params.Model)
 	if err != nil {
 		return err
 	}
 	params.Model = model
+
+	// Validate --sandbox up front WITHOUT defaulting it: a direct
+	// `tclaude session new` is the human's own session, and the human is the
+	// trust root — tclaude must not silently override their config.toml
+	// sandbox_mode, so we emit --sandbox only when they pass it explicitly.
+	// (The daemon spawn path is where the workspace-write default belongs —
+	// an agentd-spawned agent is the untrusted party — and it threads the
+	// resolved mode in as an explicit --sandbox.) An explicit mode for a
+	// harness without a launch sandbox flag (Claude Code) errors here. The
+	// cwd-safety check needs the resolved cwd, so it happens later.
+	sandboxMode, err := harness.ValidateSandboxMode(h, params.Sandbox)
+	if err != nil {
+		return err
+	}
+	params.Sandbox = sandboxMode
+
+	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
+	// trust-root reason as --sandbox above: a direct `tclaude session new` is
+	// the human's own session and they can attach to answer prompts, so tclaude
+	// emits --ask-for-approval only when they pass it explicitly. The daemon
+	// spawn path is where the non-escalating `never` default belongs (its pane
+	// is unattended) and it threads the resolved policy in as an explicit flag.
+	// An explicit policy for a harness without a launch approval flag (Claude
+	// Code) errors here.
+	approvalPolicy, err := harness.ValidateApprovalPolicy(h, params.Approval)
+	if err != nil {
+		return err
+	}
+	params.Approval = approvalPolicy
+
+	// Gate --auto-review the same way: it is allowed only for a harness with an
+	// approvals subsystem (Codex), so setting it for Claude Code errors here.
+	// There is no non-false default to apply (it is off unless explicitly opted
+	// into), so ResolveAutoReview serves both this direct path and the daemon
+	// path. See JOH-200 part 2.
+	autoReview, err := harness.ResolveAutoReview(h, params.AutoReview)
+	if err != nil {
+		return err
+	}
+	params.AutoReview = autoReview
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -138,9 +224,10 @@ func runNew(params *NewParams) error {
 	}
 	extraArgs := clcommon.ExtractClaudeExtraArgs()
 
-	// Pass-through mode: --help, --version etc. — run claude directly, no tmux.
+	// Pass-through mode: --help, --version etc. — run the harness binary
+	// directly, no tmux.
 	if clcommon.ShouldRunClaudeDirect(extraArgs) {
-		cmd := exec.Command("claude", extraArgs...)
+		cmd := exec.Command(h.Spawn.Binary(), extraArgs...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -200,19 +287,16 @@ func runNew(params *NewParams) error {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")
 	shortID := clcommon.ExtractIDFromCompletion(params.Resume)
 
-	// Resolve to full UUID and get project path
+	// Resolve to full UUID and get project path, via the harness's
+	// conversation source (CC's cwd-indexed resolver, or another harness's
+	// ConvStore — e.g. Codex's rollout/state DB).
 	var fullConvID string
 	var convProjectPath string
 	if shortID != "" {
-		convInfo := clcommon.ResolveConvID(shortID, params.Global, cwd)
-		if convInfo != nil {
-			fullConvID = convInfo.SessionID
-			convProjectPath = convInfo.ProjectPath
-		} else {
-			if params.Global {
-				return fmt.Errorf("conversation %s not found", shortID)
-			}
-			return fmt.Errorf("conversation %s not found in current project (use -g to search all projects)", shortID)
+		var err error
+		fullConvID, convProjectPath, err = resolveResumeConv(h, shortID, params.Global, cwd)
+		if err != nil {
+			return err
 		}
 		// Use conversation's project directory instead of cwd
 		if convProjectPath != "" {
@@ -250,7 +334,28 @@ func runNew(params *NewParams) error {
 	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
-	claudeCmd := buildClaudeCmd(envExports, fullConvID, effort, model, extraArgs)
+	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
+	// confines writes to the cwd subtree, so a cwd at/above $HOME would make
+	// ~/.tclaude / ~/.codex / ~/.claude writable and defeat the protection.
+	// Refuse that rather than spawn an agent with a false sense of
+	// containment. No-op for harnesses/modes that don't write outside cwd.
+	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandboxMode, cwd, home) {
+		return fmt.Errorf("refusing to launch a %s agent in %q under --sandbox %s: "+
+			"that cwd contains your tclaude/Codex/Claude state dirs, which the sandbox would make writable "+
+			"(defeating it). Run the agent from a project subdirectory, or pass --sandbox %s to opt out of the sandbox",
+			h.Name, cwd, sandboxMode, harness.SandboxDangerFull)
+	}
+
+	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+		EnvExports:     envExports,
+		ResumeID:       fullConvID,
+		Effort:         effort,
+		Model:          model,
+		ExtraArgs:      extraArgs,
+		SandboxMode:    sandboxMode,
+		ApprovalPolicy: approvalPolicy,
+		AutoReview:     autoReview,
+	})
 
 	// Create tmux session with claude
 	// Use tmux new-session -d to create detached
@@ -282,7 +387,11 @@ func runNew(params *NewParams) error {
 	// Get the PID of claude in the tmux session
 	pid := ParsePIDFromTmux(tmuxSession)
 
-	// Create session state (starts as idle, waiting for user input)
+	// Create session state (starts as idle, waiting for user input).
+	// Tag it with the harness it was spawned under so the tag is set on
+	// the row's first write rather than relying on the DB default —
+	// today always "claude"; the same line carries "codex" once
+	// --harness selects a different harness.
 	state := &SessionState{
 		ID:          sessionID,
 		TmuxSession: tmuxSession,
@@ -290,6 +399,13 @@ func runNew(params *NewParams) error {
 		Cwd:         cwd,
 		ConvID:      fullConvID,
 		Status:      StatusIdle,
+		Harness:     h.Name,
+		// Record the resolved launch sandbox mode so the dashboard can
+		// badge it (JOH-162). "" for a harness with no launch sandbox flag
+		// (Claude Code) — stored verbatim, never coalesced. This is the
+		// only write of the column; it can't be re-derived from the
+		// harness's own files later.
+		SandboxMode: sandboxMode,
 		Created:     time.Now(),
 		Updated:     time.Now(),
 	}
@@ -310,38 +426,40 @@ func runNew(params *NewParams) error {
 	return AttachToSession(sessionID, tmuxSession, false)
 }
 
-// buildClaudeCmd assembles the `claude` invocation runNew runs inside
-// tmux: env exports + the claude binary, an optional --resume, an
-// optional --effort and --model (each appended only when an explicit
-// value was chosen — empty leaves claude on its own default), then any
-// post-`--` passthrough args. effort and model are validated single
-// tokens, but everything is shell-quoted anyway; the passthrough args
-// are shell-quoted individually. Kept pure so the "unset omits the
-// flag" guarantee is unit-testable without tmux.
-func buildClaudeCmd(envExports, fullConvID, effort, model string, extraArgs []string) string {
-	claudeCmd := envExports + "claude"
-	if fullConvID != "" {
-		claudeCmd += " --resume " + fullConvID
-	}
-	if effort != "" {
-		// Quote defensively even though effort is a validated single
-		// token: this string is handed to `sh -c`, so quoting keeps the
-		// safety local here rather than trusting every caller to have
-		// validated first. For a clean level it is a no-op.
-		claudeCmd += " --effort " + clcommon.ShellQuoteArg(effort)
-	}
-	if model != "" {
-		// Quoting is load-bearing here, not just defensive: the `[1m]`
-		// aliases contain brackets, which sh would otherwise treat as a
-		// glob pattern.
-		claudeCmd += " --model " + clcommon.ShellQuoteArg(model)
-	}
-	if len(extraArgs) > 0 {
-		quoted := make([]string, len(extraArgs))
-		for i, a := range extraArgs {
-			quoted[i] = clcommon.ShellQuoteArg(a)
+// The CC launch-command builder lives behind the harness seam now —
+// see claudeSpawner.BuildCommand in pkg/claude/harness/claude.go.
+
+// resolveResumeConv resolves a --resume id prefix to a full conversation
+// id + its project path, using the harness's own conversation source:
+// Claude Code keeps the established cwd-indexed resolver
+// (clcommon.ResolveConvID, unchanged); any other harness resolves through
+// its ConvStore (Codex reads its rollout files + state DB, not
+// ~/.claude/projects). A conversation that doesn't resolve is an error;
+// `global` widens the search beyond the current project.
+func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd string) (fullConvID, projectPath string, err error) {
+	if h.Name == harness.DefaultName {
+		convInfo := clcommon.ResolveConvID(shortID, global, cwd)
+		if convInfo == nil {
+			return "", "", resumeNotFoundErr(shortID, global)
 		}
-		claudeCmd += " " + strings.Join(quoted, " ")
+		return convInfo.SessionID, convInfo.ProjectPath, nil
 	}
-	return claudeCmd
+	if !h.SupportsConvs() {
+		return "", "", fmt.Errorf("harness %q cannot resolve a conversation to resume", h.Name)
+	}
+	ref, err := h.Convs.Resolve(shortID, cwd, global)
+	if err != nil {
+		return "", "", err
+	}
+	if ref == nil {
+		return "", "", resumeNotFoundErr(shortID, global)
+	}
+	return ref.ConvID, ref.ProjectPath, nil
+}
+
+func resumeNotFoundErr(shortID string, global bool) error {
+	if global {
+		return fmt.Errorf("conversation %s not found", shortID)
+	}
+	return fmt.Errorf("conversation %s not found in current project (use -g to search all projects)", shortID)
 }

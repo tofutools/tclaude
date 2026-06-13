@@ -28,6 +28,11 @@ type ConvIndexRow struct {
 	IsSidechain      bool
 	IndexedAt        time.Time
 	ArchivedAt       time.Time // zero = active; non-zero = archived (soft-deleted)
+	// Harness is the coding tool this conversation belongs to (e.g.
+	// "claude", "codex"). Empty is treated as DefaultHarness ("claude")
+	// on write; the scan path sets it so the column self-heals on every
+	// rescan (schema v56).
+	Harness string
 }
 
 // IsArchived reports whether this conv has been soft-deleted via
@@ -50,12 +55,22 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 		sidechain = 1
 	}
 
+	// An empty Harness defaults to "claude" so the first INSERT writes the
+	// same value the column DEFAULT would, rather than an empty string.
+	// This only affects the INSERT — harness is deliberately NOT in the
+	// ON-CONFLICT UPDATE below (see there) — so a caller that doesn't know
+	// the harness can't blank an existing tag.
+	harness := row.Harness
+	if harness == "" {
+		harness = DefaultHarness
+	}
+
 	_, err = db.Exec(`INSERT INTO conv_index
 		(conv_id, project_dir, full_path, file_mtime, file_size,
 		 first_prompt, summary, custom_title, message_count,
 		 created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		 git_branch_startup)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 git_branch_startup, harness)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(conv_id) DO UPDATE SET
 		 project_dir=excluded.project_dir, full_path=excluded.full_path,
 		 file_mtime=excluded.file_mtime, file_size=excluded.file_size,
@@ -65,10 +80,17 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 		 git_branch=excluded.git_branch, project_path=excluded.project_path,
 		 is_sidechain=excluded.is_sidechain, indexed_at=excluded.indexed_at,
 		 git_branch_startup=excluded.git_branch_startup`,
+		// harness is intentionally OMITTED from this UPDATE — the same
+		// "set once on INSERT, never overwrite on rescan" pattern as
+		// archived_at (see SetConvIndexArchived). A conversation's harness
+		// is immutable, and the routine scan path is harness-blind (the
+		// Claude Code scanner builds rows without a harness, coalesced to
+		// 'claude'); updating it here would clobber a 'codex' tag the
+		// Codex scanner set on INSERT back to 'claude' on the next rescan.
 		row.ConvID, row.ProjectDir, row.FullPath, row.FileMtime, row.FileSize,
 		row.FirstPrompt, row.Summary, row.CustomTitle, row.MessageCount,
 		row.Created, row.Modified, row.GitBranch, row.ProjectPath,
-		sidechain, row.IndexedAt.Format(time.RFC3339Nano), row.GitBranchStartup)
+		sidechain, row.IndexedAt.Format(time.RFC3339Nano), row.GitBranchStartup, harness)
 	return err
 }
 
@@ -82,7 +104,7 @@ func ListConvIndex(projectDir string) ([]*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at, git_branch_startup
+		archived_at, git_branch_startup, harness
 		FROM conv_index WHERE project_dir = ?`, projectDir)
 	if err != nil {
 		return nil, err
@@ -102,7 +124,7 @@ func ListAllConvIndex() ([]*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at, git_branch_startup
+		archived_at, git_branch_startup, harness
 		FROM conv_index`)
 	if err != nil {
 		return nil, err
@@ -129,7 +151,7 @@ func ListRecentConvIndex(limit int) ([]*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at, git_branch_startup
+		archived_at, git_branch_startup, harness
 		FROM conv_index
 		WHERE is_sidechain = 0 AND archived_at = ''
 		ORDER BY file_mtime DESC LIMIT ?`, limit)
@@ -151,7 +173,7 @@ func GetConvIndex(convID string) (*ConvIndexRow, error) {
 	row := db.QueryRow(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at, git_branch_startup
+		archived_at, git_branch_startup, harness
 		FROM conv_index WHERE conv_id = ?`, convID)
 
 	return scanConvIndexRow(row)
@@ -167,7 +189,7 @@ func FindConvIndexByPrefix(prefix string) (*ConvIndexRow, error) {
 	rows, err := db.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
 		first_prompt, summary, custom_title, message_count,
 		created, modified, git_branch, project_path, is_sidechain, indexed_at,
-		archived_at, git_branch_startup
+		archived_at, git_branch_startup, harness
 		FROM conv_index WHERE conv_id LIKE ? || '%'`, prefix)
 	if err != nil {
 		return nil, err
@@ -256,7 +278,7 @@ func scanOneConvIndex(s interface{ Scan(...any) error }) (*ConvIndexRow, error) 
 	err := s.Scan(&r.ConvID, &r.ProjectDir, &r.FullPath, &r.FileMtime, &r.FileSize,
 		&r.FirstPrompt, &r.Summary, &r.CustomTitle, &r.MessageCount,
 		&r.Created, &r.Modified, &r.GitBranch, &r.ProjectPath,
-		&sidechain, &indexedAt, &archivedAt, &r.GitBranchStartup)
+		&sidechain, &indexedAt, &archivedAt, &r.GitBranchStartup, &r.Harness)
 	if err != nil {
 		return nil, err
 	}

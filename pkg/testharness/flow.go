@@ -64,8 +64,8 @@ func NewFlow(
 // concrete type satisfying agentd.Spawner satisfies this too, so a
 // flow_setup_test.go can do `agentd.Spawn = mocks.Spawner` directly.
 type SpawnerLike interface {
-	SpawnNew(label, cwd, effort, model string) error
-	SpawnResume(convID, cwd, effort, model string) error
+	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
+	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
 }
 
 // Mocks bundles the default boundary impls for the v2 simulators.
@@ -104,7 +104,16 @@ type simSpawner struct {
 	w *World
 }
 
-func (s *simSpawner) SpawnNew(label, cwd, effort, model string) error {
+// SpawnNew builds the harness-appropriate pane sim, writes the SessionRow
+// the production hook callback would have written, and registers in
+// TmuxSim. harness=="codex" routes to a CodexSim + a harness="codex" row;
+// everything else (""/"claude") keeps the CCSim path byte-for-byte as
+// before the seam, so the production Spawner signature is satisfied with no
+// behaviour change for Claude Code.
+func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	if harness == codexHarnessName {
+		return s.spawnNewCodex(label, cwd, effort, model, sandbox, approval, autoReview)
+	}
 	cc := NewCCSim(s.t, s.w.HomeDir, cwd)
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
 	// stable key the hook callback tracks conv-id rotations against.
@@ -112,11 +121,14 @@ func (s *simSpawner) SpawnNew(label, cwd, effort, model string) error {
 	if err := cc.Start(); err != nil {
 		return err
 	}
-	// Capture the effort and model the spawn path threaded through,
-	// keyed by the new conv-id, so a flow test can assert them — the
-	// same way the cwd is observable via the SessionRow written below.
+	// Capture the effort, model and sandbox the spawn path threaded
+	// through, keyed by the new conv-id, so a flow test can assert them —
+	// the same way the cwd is observable via the SessionRow written below.
 	s.w.RecordSpawnEffort(cc.ConvID, effort)
 	s.w.RecordSpawnModel(cc.ConvID, model)
+	s.w.RecordSpawnSandbox(cc.ConvID, sandbox)
+	s.w.RecordSpawnApproval(cc.ConvID, approval)
+	s.w.RecordSpawnAutoReview(cc.ConvID, autoReview)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
 	// with the .jsonl's actual on-disk location. Otherwise an empty
 	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
@@ -135,7 +147,13 @@ func (s *simSpawner) SpawnNew(label, cwd, effort, model string) error {
 	return nil
 }
 
-func (s *simSpawner) SpawnResume(convID, cwd, effort, model string) error {
+// SpawnResume re-attaches the matching sim by harness. A Codex conv
+// relaunches its CodexSim (located by conv-id, or hydrated from the
+// on-disk rollout); everything else re-attaches a CCSim exactly as before.
+func (s *simSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	if harness == codexHarnessName {
+		return s.spawnResumeCodex(convID, cwd, effort, model, sandbox, approval, autoReview)
+	}
 	cc := s.w.CCs.GetByConvID(convID)
 	if cc == nil {
 		cc = HydrateCCSim(s.t, s.w.HomeDir, convID, cwd)
@@ -144,11 +162,14 @@ func (s *simSpawner) SpawnResume(convID, cwd, effort, model string) error {
 	if err := cc.Start(); err != nil {
 		return err
 	}
-	// Same observability as SpawnNew: capture the effort and model the
-	// resume path threaded through, keyed by the conv-id, so flow tests
-	// can assert model inheritance on resume / clone-copy paths.
+	// Same observability as SpawnNew: capture the effort, model and sandbox
+	// the resume path threaded through, keyed by the conv-id, so flow tests
+	// can assert inheritance on resume / clone-copy paths.
 	s.w.RecordSpawnEffort(convID, effort)
 	s.w.RecordSpawnModel(convID, model)
+	s.w.RecordSpawnSandbox(convID, sandbox)
+	s.w.RecordSpawnApproval(convID, approval)
+	s.w.RecordSpawnAutoReview(convID, autoReview)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
@@ -163,6 +184,95 @@ func (s *simSpawner) SpawnResume(convID, cwd, effort, model string) error {
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
+	return nil
+}
+
+// codexHarnessName is the harness tag the production spawn path threads
+// through for a Codex agent (matches harness.CodexName). Kept as a local
+// literal so testharness stays free of a harness-package import, the same
+// decoupling the package keeps from agentd.
+const codexHarnessName = "codex"
+
+// spawnNewCodex is SpawnNew's `--harness codex` branch: it builds a
+// CodexSim (owns a date-indexed rollout .jsonl, implements PaneSim), writes
+// the harness="codex" SessionRow the production hook callback would have
+// written, registers in TmuxSim, and stashes the sim in World.Codexes.
+func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox, approval string, autoReview bool) error {
+	cx := NewCodexSim(s.t, s.w.HomeDir, cwd)
+	if err := cx.Start(); err != nil {
+		return err
+	}
+	// Model Codex's own session-start behaviour: a real `codex` process
+	// creates this session's `threads` row at startup (cwd/model stamped,
+	// no first message or rename yet). Seeding it here means the out-of-band
+	// rename the lifecycle path performs — ConvStore.SetTitle UPDATEs
+	// threads.title — has a row to land on, so a spawned/reincarnated Codex
+	// pane's rename persists end-to-end instead of warning "no threads row".
+	// Title/FirstUserMessage start empty so codexIsRename reads "not yet
+	// renamed" until the lifecycle rename writes a real title.
+	if err := cx.WriteThreadRow(CodexThreadSeed{
+		Cwd:       cx.Cwd,
+		Model:     model,
+		CreatedAt: cx.CreatedUnix(),
+		UpdatedAt: cx.CreatedUnix(),
+	}); err != nil {
+		return err
+	}
+	// Mirror the CCSim path's observability: capture the effort/model/sandbox
+	// the spawn threaded, keyed by the new conv-id.
+	s.w.RecordSpawnEffort(cx.ConvID, effort)
+	s.w.RecordSpawnModel(cx.ConvID, model)
+	s.w.RecordSpawnSandbox(cx.ConvID, sandbox)
+	s.w.RecordSpawnApproval(cx.ConvID, approval)
+	s.w.RecordSpawnAutoReview(cx.ConvID, autoReview)
+	if err := db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: label,
+		ConvID:      cx.ConvID,
+		Cwd:         cx.Cwd,
+		Status:      "running",
+		// The tag the whole soft-stop / resume / identity path keys on:
+		// harnessForConv resolves this to the Codex harness so a stop
+		// injects `/quit`, and resume relaunches `--harness codex`.
+		Harness: codexHarnessName,
+	}); err != nil {
+		return err
+	}
+	s.w.Tmux.Register(label, cx.Cwd, cx)
+	s.w.Codexes.Set(label, cx)
+	return nil
+}
+
+// spawnResumeCodex is SpawnResume's `--harness codex` branch: it re-attaches
+// the existing CodexSim (or hydrates one from the on-disk rollout) under a
+// fresh resume label, mirroring `codex resume <id>` reopening the rollout.
+func (s *simSpawner) spawnResumeCodex(convID, cwd, effort, model, sandbox, approval string, autoReview bool) error {
+	cx := s.w.Codexes.GetByConvID(convID)
+	if cx == nil {
+		cx = HydrateCodexSim(s.t, s.w.HomeDir, convID, cwd)
+		s.w.Codexes.SetByConvID(cx)
+	}
+	if err := cx.Start(); err != nil {
+		return err
+	}
+	s.w.RecordSpawnEffort(convID, effort)
+	s.w.RecordSpawnModel(convID, model)
+	s.w.RecordSpawnSandbox(convID, sandbox)
+	s.w.RecordSpawnApproval(convID, approval)
+	s.w.RecordSpawnAutoReview(convID, autoReview)
+	label := generateResumeLabel()
+	if err := db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: label,
+		ConvID:      convID,
+		Cwd:         cx.Cwd,
+		Status:      "running",
+		Harness:     codexHarnessName,
+	}); err != nil {
+		return err
+	}
+	s.w.Tmux.Register(label, cx.Cwd, cx)
+	s.w.Codexes.Set(label, cx)
 	return nil
 }
 
@@ -322,6 +432,35 @@ func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch 
 	f.World.CCs.Set(label, cc)
 }
 
+// HaveAliveCodexSession is the Codex analog of HaveAliveSession: it stands
+// up a live Codex-tagged session DETERMINISTICALLY — a CodexSim with a real
+// rollout, an alive tmux registration, and a harness="codex" SessionRow —
+// WITHOUT the async spawn post-init (no background /rename to race). Use it
+// when a lifecycle test needs a Codex agent whose state is fully settled
+// before the test acts (rename, reincarnate, compact). Returns the sim so
+// the test can seed its threads state row (WriteThreadRow) or read back a
+// rename (ThreadTitle).
+func (f *Flow) HaveAliveCodexSession(convID, label, tmuxSession, cwd string) *CodexSim {
+	f.T.Helper()
+	cx := NewCodexSimWithID(f.T, f.World.HomeDir, convID, cwd)
+	if err := cx.Start(); err != nil {
+		f.T.Fatalf("HaveAliveCodexSession: cx.Start: %v", err)
+	}
+	if err := db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: tmuxSession,
+		ConvID:      convID,
+		Cwd:         cwd,
+		Status:      "running",
+		Harness:     codexHarnessName,
+	}); err != nil {
+		f.T.Fatalf("HaveAliveCodexSession: %v", err)
+	}
+	f.World.Tmux.Register(tmuxSession, cwd, cx)
+	f.World.Codexes.Set(label, cx)
+	return cx
+}
+
 // MarkOffline flips a tmux session off (handler side believes it's
 // down). Useful between an action that left the conv online and an
 // action that requires it offline (resume).
@@ -368,6 +507,31 @@ func (f *Flow) Spawn(group, name string) SpawnResp {
 	return resp
 }
 
+// SpawnHarness drives POST /v1/groups/{group}/spawn for a specific
+// harness (e.g. "codex"). It is Spawn plus a `harness` field in the body,
+// so the daemon resolves the spawn against that harness's registry and the
+// simSpawner builds the matching pane sim. Like Spawn it fatals on a
+// non-200 so a spawn-path regression surfaces at the call site.
+func (f *Flow) SpawnHarness(group, name, harness string) SpawnResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost,
+		"/v1/groups/"+group+"/spawn",
+		map[string]any{"name": name, "harness": harness})
+	var resp SpawnResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	if rec.Code != http.StatusOK {
+		f.T.Fatalf("SpawnHarness(%q,%q,%q): status=%d body=%s", group, name, harness, rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		f.T.Fatalf("SpawnHarness decode: %v body=%s", err, rec.Body.String())
+	}
+	if resp.ConvID == "" || resp.TmuxSession == "" {
+		f.T.Fatalf("SpawnHarness missing conv_id/tmux_session: %s", rec.Body.String())
+	}
+	return resp
+}
+
 // SpawnWith drives POST /v1/groups/{group}/spawn with an arbitrary
 // JSON body and returns the parsed outcome WITHOUT fatal-on-error — so
 // tests can exercise the failure paths (bad cwd, missing group, …).
@@ -406,6 +570,53 @@ func (f *Flow) Resume(convID string) ResumeResp {
 		f.T.Fatalf("Resume decode: %v body=%s", err, rec.Body.String())
 	}
 	return resp
+}
+
+// StopResp parses POST /v1/agent/{conv}/stop. Action distinguishes the
+// graceful soft-stop ("soft_stopped") from the harness-has-no-soft-exit
+// hard kill ("killed_no_soft_exit"), a force kill ("killed"), and the
+// already-offline no-op ("skipped:already_offline").
+type StopResp struct {
+	ConvID  string `json:"conv_id"`
+	Action  string `json:"action"`
+	TmuxSes string `json:"tmux_session"`
+	Detail  string `json:"detail,omitempty"`
+	Code    int    `json:"-"`
+	Raw     []byte `json:"-"`
+}
+
+// Stop drives POST /v1/agent/{conv}/stop. force=true passes ?force=1 for
+// a hard kill-session; force=false is the soft stop (inject the harness's
+// SoftExitCommand — CC's /exit, Codex's /quit). Fatals on a non-200.
+func (f *Flow) Stop(convID string, force bool) StopResp {
+	f.T.Helper()
+	path := "/v1/agent/" + convID + "/stop"
+	if force {
+		path += "?force=1"
+	}
+	rec := f.do(http.MethodPost, path, nil)
+	var resp StopResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	if rec.Code != http.StatusOK {
+		f.T.Fatalf("Stop(%q,force=%v): status=%d body=%s", convID, force, rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		f.T.Fatalf("Stop decode: %v body=%s", err, rec.Body.String())
+	}
+	return resp
+}
+
+// AssertSoftStopped asserts a Stop took the graceful soft-exit path
+// (action "soft_stopped"), NOT the harness-has-no-soft-exit hard-kill
+// fallback ("killed_no_soft_exit") or a force kill. This is the
+// acceptance bar for a Codex graceful stop: the daemon must have injected
+// `/quit`, not fallen back to kill-session.
+func (f *Flow) AssertSoftStopped(r StopResp) {
+	f.T.Helper()
+	if r.Action != "soft_stopped" {
+		f.T.Errorf("Stop action = %q, want %q (raw=%s)", r.Action, "soft_stopped", r.Raw)
+	}
 }
 
 // ClearResp carries the conv-ids either side of a simulated /clear.
@@ -488,6 +699,42 @@ func (f *Flow) ReincarnateWith(target string, body map[string]any) ReincarnateRe
 	resp.Raw = rec.Body.Bytes()
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	return resp
+}
+
+// RenameResp parses POST /v1/agent/{conv}/rename. Returns WITHOUT
+// fatal-on-error so tests can assert both the success (200) and the
+// no-store / rejected-title failure paths.
+type RenameResp struct {
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+	Code   int    `json:"-"`
+	Raw    []byte `json:"-"`
+}
+
+// Rename drives POST /v1/agent/{conv}/rename with an explicit title.
+func (f *Flow) Rename(convID, title string) RenameResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/rename", map[string]any{"title": title})
+	var resp RenameResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp
+}
+
+// CompactResp parses POST /v1/agent/{conv}/compact. Code/Raw carry the
+// daemon's response so a test can assert the harness-unsupported 400 (a
+// harness with no CompactCommand) as readily as the CC success path.
+type CompactResp struct {
+	Code int    `json:"-"`
+	Raw  []byte `json:"-"`
+}
+
+// Compact drives POST /v1/agent/{conv}/compact WITHOUT fatal-on-error.
+func (f *Flow) Compact(convID string) CompactResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/compact", nil)
+	return CompactResp{Code: rec.Code, Raw: rec.Body.Bytes()}
 }
 
 // CloneResp parses POST /v1/agent/{target}/clone. Note: clone has no

@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -1123,15 +1124,15 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 				"the allowed characters.")
 		return
 	}
-	if !injectSlashCommand(target, "/rename "+body.Title, "") {
+	if !deliverRename(target, body.Title) {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"target conv "+short8(target)+" has no live tmux session to inject /rename into")
+			"could not deliver rename to conv "+short8(target)+" (no live tmux session to inject into, or the harness's title store rejected it)")
 		return
 	}
 	resp := map[string]any{
 		"conv_id": target,
 		"title":   body.Title,
-		"note":    "rename submitted via tmux send-keys; CC will write the new title on its next turn",
+		"note":    "rename delivered; the harness will surface the new title on its next turn",
 	}
 	if caller != "" && caller != target {
 		resp["caller_conv"] = caller
@@ -1139,24 +1140,42 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleWhoamiCompact injects `/compact` into the caller's own CC pane.
-// Optional follow-up text is queued as a fresh prompt right after.
-// Permission-gated on `self.compact`.
+// compactToken is the lifecycle-slash selector for compaction: the
+// target harness's compact command (CC's `/compact`), or "" when the
+// harness has no scriptable compaction. nil-safe so a bare descriptor
+// can't panic the handler.
+func compactToken(h *harness.Harness) string {
+	if h == nil || h.Life == nil {
+		return ""
+	}
+	return h.Life.CompactCommand()
+}
+
+// handleWhoamiCompact injects the caller harness's compact command into
+// the caller's own pane. Optional follow-up text is queued as a fresh
+// prompt right after. Permission-gated on `self.compact`.
 func handleWhoamiCompact(w http.ResponseWriter, r *http.Request) {
-	handleSelfSlash(w, r, PermSelfCompact, "/compact", "compact")
+	handleSelfSlash(w, r, PermSelfCompact, compactToken, "compact")
 }
 
-// handleAgentCompact injects `/compact` into ANOTHER agent's CC pane.
-// Routed via handleAgentByConv (the dispatcher resolves targetConv from
-// the URL). Auth: agent.compact slug OR caller is owner of a group
-// containing target. Same body shape as the self variant.
+// handleAgentCompact injects the target harness's compact command into
+// ANOTHER agent's pane. Routed via handleAgentByConv (the dispatcher
+// resolves targetConv from the URL). Auth: agent.compact slug OR caller
+// is owner of a group containing target. Same body shape as the self
+// variant.
 func handleAgentCompact(w http.ResponseWriter, r *http.Request, targetConv string) {
-	handleAgentSlash(w, r, PermAgentCompact, targetConv, "/compact", "compact")
+	handleAgentSlash(w, r, PermAgentCompact, targetConv, compactToken, "compact")
 }
 
-// handleSelfSlash factors out self-targeted slash-command handlers like
-// /compact.
-func handleSelfSlash(w http.ResponseWriter, r *http.Request, perm, slash, label string) {
+// slashToken selects a harness's lifecycle slash command (e.g. its
+// compact command) for a given target harness, returning "" when the
+// harness does not support that action.
+type slashToken func(*harness.Harness) string
+
+// handleSelfSlash factors out self-targeted lifecycle-slash handlers like
+// /compact. The command itself is sourced from the target harness via
+// token (resolved once the target conv — and thus its harness — is known).
+func handleSelfSlash(w http.ResponseWriter, r *http.Request, perm string, token slashToken, label string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
@@ -1166,16 +1185,19 @@ func handleSelfSlash(w http.ResponseWriter, r *http.Request, perm, slash, label 
 		return
 	}
 	if convID == "" {
+		// No calling conv to resolve a harness from; name the default
+		// harness's command in the guidance message.
+		slash := token(harness.Default())
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"this endpoint operates on the calling agent's own conversation; humans should use Claude Code's "+slash+" directly, or use POST /v1/agent/{conv}/"+strings.TrimPrefix(slash, "/")+" to act on another agent")
+			"this endpoint operates on the calling agent's own conversation; humans should use the harness's "+slash+" directly, or use POST /v1/agent/{conv}/"+label+" to act on another agent")
 		return
 	}
-	runSlashOrchestration(w, r, convID, convID, slash, label)
+	runSlashOrchestration(w, r, convID, convID, token, label)
 }
 
 // handleAgentSlash is the cross-agent counterpart to handleSelfSlash.
 // Auth via requireCrossAgentPermission (slug OR owner-of-group).
-func handleAgentSlash(w http.ResponseWriter, r *http.Request, perm, targetConv, slash, label string) {
+func handleAgentSlash(w http.ResponseWriter, r *http.Request, perm, targetConv string, token slashToken, label string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
@@ -1184,7 +1206,7 @@ func handleAgentSlash(w http.ResponseWriter, r *http.Request, perm, targetConv, 
 	if !ok {
 		return
 	}
-	runSlashOrchestration(w, r, targetConv, caller, slash, label)
+	runSlashOrchestration(w, r, targetConv, caller, token, label)
 }
 
 // runSlashOrchestration validates the optional follow_up body, injects
@@ -1192,7 +1214,7 @@ func handleAgentSlash(w http.ResponseWriter, r *http.Request, perm, targetConv, 
 // response. caller is recorded in the response for cross-agent calls
 // so the audit trail has both sides; for self the value is the same as
 // target.
-func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, caller, slash, label string) {
+func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, caller string, token slashToken, label string) {
 	var body struct {
 		FollowUp string `json:"follow_up"`
 	}
@@ -1209,6 +1231,16 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 				"and other control characters are not allowed (each newline would be "+
 				"treated as a submit by tmux send-keys, splitting the prompt). Strip "+
 				"control chars and resubmit.")
+		return
+	}
+	// Source the slash command from the target's harness so a pane is
+	// never typed a command it can't parse. "" = the harness has no such
+	// command (e.g. a harness without scriptable compaction).
+	h := harnessForConv(target)
+	slash := token(h)
+	if slash == "" {
+		writeError(w, http.StatusBadRequest, "unsupported",
+			"harness "+h.Name+" does not support "+label)
 		return
 	}
 	if !injectSlashCommand(target, slash, body.FollowUp) {
@@ -1416,6 +1448,18 @@ func isValidRenameTitle(t string) bool {
 	if strings.Contains(t, "  ") {
 		return false
 	}
+	return renameTitleCharsetOK(t)
+}
+
+// renameTitleCharsetOK reports whether every rune in t is in the rename
+// title's allowed charset — no length or spacing checks. It is the
+// injection-safety core shared by isValidRenameTitle (which layers on a
+// 64-char cap + no-double-space readability rule) and isValidRenameSink
+// (the length-exempt send-keys gate). Allowed: [A-Za-z0-9_\-\[\]{}() ].
+// Anything `tmux send-keys` could interpret as a control sequence —
+// newlines, tabs, slashes, quotes, NUL, unicode — is rejected, so a
+// title that passes can never carry a premature Enter into a pane.
+func renameTitleCharsetOK(t string) bool {
 	for _, r := range t {
 		switch {
 		case r >= 'a' && r <= 'z':
@@ -1430,6 +1474,25 @@ func isValidRenameTitle(t string) bool {
 		}
 	}
 	return true
+}
+
+// isValidRenameSink is the charset-only rename gate used on the
+// send-keys injection path for titles that may legitimately exceed
+// isValidRenameTitle's 64-char cap. A reincarnate/clone carry title is
+// `<predecessor-title>-r-<N>` / `<predecessor-title>-x` — a predecessor
+// already at the 64-char display max would push the suffixed title past
+// the cap, so reusing isValidRenameTitle here would reject a perfectly
+// legitimate title (and, pre-JOH-177, the reincarnate path injected with
+// NO gate at all rather than over-reject). The injection-relevant
+// property is the CHARSET — reject any rune `tmux send-keys` would treat
+// as an early submit / control sequence — not the length, so this keeps
+// the charset rule and drops the cap. An empty title is rejected
+// (nothing to inject; callers fall back to leaving the pane unnamed).
+func isValidRenameSink(t string) bool {
+	if t == "" {
+		return false
+	}
+	return renameTitleCharsetOK(t)
 }
 
 // --- /v1/messages/{id} (GET) and /v1/messages/{id}/reply (POST) ---

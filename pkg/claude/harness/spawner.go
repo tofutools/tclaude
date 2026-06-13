@@ -1,0 +1,82 @@
+package harness
+
+// SpawnSpec is a harness-agnostic description of a session launch. The
+// caller (e.g. `tclaude session new`) owns the env and resolves the
+// resume id; the Spawner turns this into the concrete shell command the
+// tmux pane runs. Fields left at their zero value are omitted from the
+// command, so "unset" reliably means "let the harness use its own
+// default".
+type SpawnSpec struct {
+	// EnvExports is a pre-built `export K=V; …` prefix prepended verbatim
+	// to the command. The caller assembles it (tclaude identity env +
+	// any pass-through), so the Spawner stays agnostic about which vars
+	// matter to which harness.
+	EnvExports string
+	// ResumeID is the full conversation id to resume, or "" to start a
+	// fresh session. The flag/sub-command form is harness-specific
+	// (`claude --resume <id>` vs `codex resume <id>`).
+	ResumeID string
+	// Effort is a validated, normalized reasoning-effort token, or "" to
+	// omit the flag entirely. Validate via ModelCatalog.ValidateEffort
+	// before building the spec.
+	Effort string
+	// Model is a validated, normalized model token, or "" to omit the
+	// flag entirely. Validate via ModelCatalog.ValidateModel first.
+	Model string
+	// ExtraArgs are post-`--` pass-through args, appended last and
+	// shell-quoted individually by the Spawner.
+	ExtraArgs []string
+	// BypassHookTrust, when true, asks the harness to run its configured
+	// hooks without requiring persisted hook trust for this invocation —
+	// a headless escape hatch for automation that already vets its hook
+	// sources. Codex maps this to `--dangerously-bypass-hook-trust`;
+	// harnesses without the concept ignore it. Defaults to false (trust is
+	// enforced); it is a deliberate supply-chain trade-off (repo-local
+	// `./.codex` hooks become trusted), so callers opt in explicitly.
+	BypassHookTrust bool
+	// SandboxMode names the launch-time OS-sandbox mode for harnesses that
+	// take one (Codex's `--sandbox {read-only|workspace-write|
+	// danger-full-access}`). "" omits the flag entirely; the Spawner emits
+	// `--sandbox <mode>` per-spawn so the user's config.toml/profiles stay
+	// untouched. Harnesses without a launch sandbox flag (Claude Code —
+	// settings.json-driven) ignore it. Validate via Harness.Sandbox /
+	// ResolveSandboxMode before building the spec. See JOH-192 +
+	// docs/plans/harness-independence.md §D.
+	SandboxMode string
+	// ApprovalPolicy names the launch-time approval policy for harnesses that
+	// take one (Codex's `--ask-for-approval {untrusted|on-failure|on-request|
+	// never}`). "" omits the flag entirely; the Spawner emits
+	// `--ask-for-approval <policy>` per-spawn so the user's config.toml/
+	// profiles stay untouched. The daemon spawn path resolves it to the
+	// harness's non-escalating default (Codex: `never`) so an unattended pane
+	// can't deadlock on an approval prompt; harnesses without a launch
+	// approval flag (Claude Code) ignore it. Validate via Harness.Approval /
+	// ResolveApprovalPolicy before building the spec. See JOH-200 +
+	// docs/plans/harness-independence.md §E.
+	ApprovalPolicy string
+	// AutoReview, when true, asks the harness to route approval prompts to its
+	// guardian subagent (which auto-decides in the human's place) instead of
+	// the human. Codex maps this to `-c approvals_reviewer=auto_review`;
+	// harnesses without a guardian (Claude Code) ignore it. It is an
+	// orthogonal axis to ApprovalPolicy — that decides WHEN Codex asks, this
+	// decides WHO answers — so the two compose. Defaults to false (the human,
+	// Codex's `user` default); it is an experimental, undocumented-upstream
+	// opt-in, so callers enable it explicitly. Gate via Harness.Approval /
+	// ResolveAutoReview before building the spec. See JOH-200 part 2 +
+	// docs/plans/harness-independence.md §E.
+	AutoReview bool
+}
+
+// Spawner builds the in-tmux launch command for a harness from a
+// SpawnSpec, and names the harness binary for the pass-through path
+// (`--help`/`--version`, run directly without tmux).
+type Spawner interface {
+	// Binary is the executable name (e.g. "claude", "codex").
+	Binary() string
+	// BuildCommand returns the shell command string the tmux pane runs
+	// under `sh -c`. The result must be safe to hand to `sh -c`: any
+	// value that could carry shell metacharacters (model aliases with
+	// `[1m]` brackets, pass-through args) is shell-quoted by the
+	// implementation.
+	BuildCommand(spec SpawnSpec) string
+}

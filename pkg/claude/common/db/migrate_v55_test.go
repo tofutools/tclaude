@@ -82,16 +82,22 @@ func TestMigrateV54toV55_HealsHalfAppliedRun(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT model_id FROM sessions WHERE id = 'sess-1'`).Scan(&modelID))
 	assert.Equal(t, "claude-fable-5", modelID, "existing column data survives the healing run")
 
-	// And a second run on the now-complete schema is a clean no-op
-	// path through migrate(): version matches, nothing executes.
-	require.NoError(t, migrate(d), "migrate() on the healed DB")
+	// And a second run of the v55 migration on the now-complete schema
+	// converges: the pragma probe finds model_id, skips the ALTER, and
+	// the version stays 55. (We re-run the specific step rather than the
+	// full migrate() chain because this synthetic fixture is sessions-
+	// only — later migrations touch other tables it deliberately omits.)
+	require.NoError(t, migrateV54toV55(d), "re-run of v55 on the healed DB")
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
+	assert.Equal(t, 55, ver, "re-run is a converging no-op, stays at 55")
 }
 
 // TestMigrateV54toV55_FreshSchemaRoundTrips builds a fresh DB through
 // the full migrate() chain and round-trips model_id through the
 // production helpers the statusline hook and inheritedLaunchFlags use.
-// Carries the literal currentVersion pin — a tripwire the next
-// migration's author moves forward into their own v56 test.
+// The literal currentVersion pin (the "next migration moves it forward"
+// tripwire) now lives in the v56 test; here we only assert the fresh DB
+// reaches whatever the current head is.
 func TestMigrateV54toV55_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -100,8 +106,8 @@ func TestMigrateV54toV55_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion pin moved forward to the v56 test
-	// (TestMigrateV55toV56_FreshSchemaRoundTrips) — the next migration's
+	// The literal currentVersion pin moved forward to the v57 test
+	// (TestMigrateV56toV57_FreshSchemaRoundTrips) — the next migration's
 	// author carries it on, per the comment above.
 
 	require.NoError(t, SaveSession(&SessionRow{ID: "sess-1", TmuxSession: "t1", Status: "running"}))

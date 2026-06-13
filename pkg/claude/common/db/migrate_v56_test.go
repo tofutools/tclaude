@@ -56,6 +56,11 @@ func TestMigrateV55toV56_HealsHalfAppliedRun(t *testing.T) {
 			updated_at TEXT NOT NULL
 		);
 		INSERT INTO dashboard_prefs (key, value, updated_at) VALUES ('tclaude.dash.group.x', '1', '2026-06-01T00:00:00Z');
+		-- sessions + conv_index exist in any real DB by this point; seed
+		-- them so the full migrate() at the end can run the later harness
+		-- migration (v57), which ALTERs both.
+		CREATE TABLE sessions (id TEXT PRIMARY KEY);
+		CREATE TABLE conv_index (conv_id TEXT PRIMARY KEY);
 	`)
 	require.NoError(t, err, "seed half-applied v55 schema")
 
@@ -69,15 +74,17 @@ func TestMigrateV55toV56_HealsHalfAppliedRun(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT value FROM dashboard_prefs WHERE key = 'tclaude.dash.group.x'`).Scan(&value))
 	assert.Equal(t, "1", value, "existing row survives the healing run")
 
-	// A second run through migrate() is a clean no-op: version matches.
-	require.NoError(t, migrate(d), "migrate() on the healed DB")
+	// A run through the full migrate() chain then carries the healed DB the
+	// rest of the way to head — the later harness migration (v57) lands its
+	// columns on the seeded sessions + conv_index — and must not error.
+	require.NoError(t, migrate(d), "migrate() advances the healed DB to head")
 }
 
 // TestMigrateV55toV56_FreshSchemaRoundTrips builds a fresh DB through the
 // full migrate() chain and round-trips a pref through the production
-// Set/List/Delete helpers. Carries the literal currentVersion pin — a
-// tripwire the next migration's author moves forward into their own v57
-// test.
+// Set/List/Delete helpers. The literal currentVersion pin now lives in
+// the v57 test (TestMigrateV56toV57_FreshSchemaRoundTrips) — the harness
+// migration that landed on top of this one; this test defers to the head.
 func TestMigrateV55toV56_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -86,7 +93,6 @@ func TestMigrateV55toV56_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 56, currentVersion, "currentVersion is 56")
 
 	// Upsert two keys, overwrite one, delete the other; List reflects it.
 	require.NoError(t, SetDashboardPref("tclaude.dash.sort", `{"col":"name"}`))

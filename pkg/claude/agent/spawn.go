@@ -10,7 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -71,6 +71,43 @@ type SpawnRequest struct {
 	// default; a non-empty value must be one of clcommon.ValidModels.
 	// Same single-sourced wire contract as Effort above.
 	Model string `json:"model,omitempty"`
+
+	// Harness picks which coding harness the spawned agent runs — ""
+	// (or "claude") = Claude Code, the default; "codex" = OpenAI Codex CLI
+	// (JOH-160). It forwards to `tclaude session new --harness <h>`. The
+	// daemon validates it against the harness registry and validates the
+	// Effort/Model fields above through the chosen harness's own catalog
+	// (so a Codex spawn is checked against Codex's rules, not Claude's).
+	Harness string `json:"harness,omitempty"`
+
+	// SandboxMode picks the launch-time OS-sandbox mode for a harness that
+	// takes one (Codex's --sandbox). Empty resolves to the harness's secure
+	// default (Codex: workspace-write — writes confined to cwd+/tmp+$TMPDIR,
+	// network denied), so a daemon-owned Codex agent is sandboxed by
+	// default; danger-full-access opts out. Forwarded to `tclaude session
+	// new --sandbox <mode>`. Not applicable to Claude Code (settings.json-
+	// driven), which rejects a non-empty value. See JOH-192.
+	SandboxMode string `json:"sandbox,omitempty"`
+
+	// ApprovalPolicy picks the launch-time approval policy for a harness that
+	// takes one (Codex's --ask-for-approval). Empty resolves to the harness's
+	// non-escalating default (Codex: never), so a daemon-owned Codex agent —
+	// detached, with no human at its TUI — never deadlocks on an approval
+	// prompt no one can answer. Forwarded to `tclaude session new
+	// --ask-for-approval <policy>`. Not applicable to Claude Code
+	// (settings.json-driven), which rejects a non-empty value. See JOH-200 +
+	// docs/plans/harness-independence.md §E.
+	ApprovalPolicy string `json:"approval,omitempty"`
+
+	// AutoReview opts the spawned agent into the harness's guardian subagent
+	// (Codex's `-c approvals_reviewer=auto_review`), which auto-decides approval
+	// prompts in the human's place — the orthogonal "who answers" axis to
+	// ApprovalPolicy's "when to ask". false (the default) keeps the human as
+	// reviewer. The daemon gates it on the chosen harness having an approvals
+	// subsystem (Codex); requesting it for Claude Code is a 400. Forwarded to
+	// `tclaude session new --auto-review`. Experimental/undocumented upstream,
+	// hence an explicit opt-in. See JOH-200 part 2.
+	AutoReview bool `json:"auto_review,omitempty"`
 
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
@@ -133,8 +170,29 @@ type SpawnParams struct {
 	// (which assigns the first free letter in field order) cannot steal
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
-	Effort string `long:"effort" optional:"true" help:"Claude reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = claude's own default (no flag passed)"`
-	Model  string `long:"model" optional:"true" help:"Claude model for the new agent: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan, or a full model ID (e.g. claude-fable-5). Unset = the group's default model, else claude's own default"`
+	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent: low|medium|high|xhigh|max. Unset = the harness's own default (no flag passed)"`
+	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = the group's default model, else the harness's own default"`
+
+	// Harness picks the coding harness the new agent runs. Declared last
+	// (no explicit short) for the same reason as Effort/Model — boa's
+	// short-flag enricher must not steal a letter from an existing field.
+	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude (default) | codex. Effort/model are validated against the chosen harness's own rules"`
+
+	// Sandbox is the launch-time OS-sandbox mode for a harness that takes
+	// one (Codex). Declared last (no explicit short) for the same reason as
+	// the fields above.
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode for the new agent: read-only|workspace-write|danger-full-access. Unset = the harness's secure default (Codex: workspace-write). Not applicable to claude"`
+
+	// Approval is the launch-time approval policy for a harness that takes
+	// one (Codex). Declared last (no explicit short) for the same reason as
+	// the fields above. Unset resolves to the non-escalating default (never)
+	// so the detached agent can't deadlock on an approval prompt (JOH-200).
+	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy for the new agent: untrusted|on-failure|on-request|never. Unset = the harness's non-escalating default (Codex: never) so the unattended agent never blocks on a prompt. Not applicable to claude"`
+
+	// AutoReview is a bool flag declared last (no explicit short) for the same
+	// reason as the fields above — boa's short-flag enricher must not steal a
+	// letter. Experimental opt-in (off by default). See JOH-200 part 2.
+	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route the new agent's Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -233,17 +291,54 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Resolve --harness (default Claude Code) so --effort/--model are
+	// validated against the chosen harness's own rules — a Codex spawn
+	// accepts a Codex model and rejects a Claude Code slug, and vice
+	// versa. An unknown/not-spawnable harness fails fast here.
+	h, err := harness.ResolveSpawnable(strings.TrimSpace(p.Harness))
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	// Validate --effort client-side so a typo fails fast with a clear
 	// message instead of reaching the daemon (where an invalid level
 	// would otherwise surface only as a conv-id-poll timeout once the
 	// forked `tclaude session new --effort <bad>` exits non-zero).
-	effort, err := clcommon.ValidateEffort(p.Effort)
+	effort, err := h.Models.ValidateEffort(p.Effort)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
 	// Same fail-fast treatment for --model.
-	model, err := clcommon.ValidateModel(p.Model)
+	model, err := h.Models.ValidateModel(p.Model)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
+	// Resolve --sandbox to the harness's secure default (Codex:
+	// workspace-write) when unset, validate an explicit value, and reject a
+	// mode for a harness with no launch sandbox flag (claude). The daemon
+	// re-resolves + applies the cwd-safety guard server-side.
+	sandboxMode, err := harness.ResolveSandboxMode(h, p.Sandbox)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
+	// Resolve --ask-for-approval to the harness's non-escalating default
+	// (Codex: never) when unset, validate an explicit value, and reject a
+	// policy for a harness with no launch approval flag (claude). The non-
+	// escalating default is what keeps the detached, unattended pane from
+	// deadlocking on an approval prompt (JOH-200). The daemon re-resolves it
+	// server-side.
+	approvalPolicy, err := harness.ResolveApprovalPolicy(h, p.Approval)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
+	// Gate the experimental --auto-review opt-in: allowed only for a harness
+	// with an approvals subsystem (Codex); requesting it for claude fails fast
+	// here with a clear message. The daemon re-gates server-side.
+	autoReview, err := harness.ResolveAutoReview(h, p.AutoReview)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
@@ -266,6 +361,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		AutoFocus:      p.AutoFocus,
 		Effort:         effort,
 		Model:          model,
+		Harness:        h.Name,
+		SandboxMode:    sandboxMode,
+		ApprovalPolicy: approvalPolicy,
+		AutoReview:     autoReview,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the
