@@ -84,6 +84,7 @@ func TestSessionNewArgs_Sandbox(t *testing.T) {
 	}{
 		{"new", sessionNewArgs("lbl", "/tmp/x", "", "", "codex", "workspace-write", "", false, false)},
 		{"resume", sessionResumeArgs("conv-1", "/tmp/x", "", "", "codex", "workspace-write", "", false)},
+		{"resume-profile", sessionResumeArgs("conv-1", "/tmp/x", "", "", "codex", harness.CodexAgentProfile, "", false)},
 	} {
 		if slices.Contains(tc.args, "--sandbox") {
 			t.Fatalf("%s: codex workspace-write must NOT emit --sandbox, got %v", tc.name, tc.args)
