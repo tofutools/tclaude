@@ -437,6 +437,22 @@ func installHooksForHarness(h *harness.Harness) error {
 	if note := h.Hooks.TrustNote(); note != "" {
 		fmt.Printf("  ⚠ %s\n", note)
 	}
+	// For Codex, also install the tclaude-managed permission profile that lets a
+	// sandboxed, daemon-spawned Codex agent reach the agentd Unix socket
+	// (JOH-207) — without it a workspace-write agent can't run `tclaude agent …`
+	// at all. It is a prerequisite for agent coordination, so it belongs in the
+	// baseline alongside the Codex hooks rather than behind an opt-in flag. The
+	// spawn path also self-heals it (belt-and-suspenders); installing it here
+	// makes it discoverable. A standalone <name>.config.toml file, so it never
+	// touches the user's own config.toml. A failure is a warning, not fatal —
+	// the spawn-time ensure is the real guarantee.
+	if h.Name == harness.CodexName {
+		if path, perr := harness.EnsureCodexAgentProfile(); perr != nil {
+			fmt.Printf("  ⚠ could not install the agentd permission profile: %v\n", perr)
+		} else {
+			fmt.Printf("✓ Installed agentd permission profile (%s)\n", path)
+		}
+	}
 	return nil
 }
 

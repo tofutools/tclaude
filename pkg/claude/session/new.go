@@ -57,6 +57,16 @@ type NewParams struct {
 	// (settings.json-driven), which errors if it is set. See JOH-192.
 	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
 
+	// PermissionProfile selects a tclaude-managed Codex permission profile to
+	// run under, emitted as `codex -p <name>`. It is how the daemon keeps a
+	// sandboxed Codex agent able to reach the agentd socket (JOH-207): the
+	// daemon spawn path passes it (the tclaude-agent profile) in place of
+	// --sandbox workspace-write, because Codex ignores permission profiles when
+	// a --sandbox is present and only a profile can allowlist the socket. It is
+	// mutually exclusive with --sandbox; the managed profile name is ensured on
+	// disk before launch. Not applicable to Claude Code. Rarely set by hand.
+	PermissionProfile string `long:"permission-profile" optional:"true" help:"Codex permission profile to run under (codex -p <name>); mutually exclusive with --sandbox. Not applicable to claude"`
+
 	// Approval selects a harness's launch-time approval policy (Codex's
 	// --ask-for-approval). On a direct `session new` it is opt-in: unset emits
 	// no flag, so Codex uses the user's own config.toml (the human running
@@ -150,6 +160,18 @@ func RunNew(params *NewParams) error {
 	return runNew(params)
 }
 
+// sandboxDescr returns the human-facing launch-containment descriptor for the
+// session row / error messages: the permission-profile name when one is set
+// (the JOH-207 path — `codex -p <name>`), otherwise the --sandbox mode (which
+// may itself be ""). The two are mutually exclusive upstream, so at most one
+// is non-empty.
+func sandboxDescr(sandboxMode, permissionProfile string) string {
+	if permissionProfile != "" {
+		return permissionProfile
+	}
+	return sandboxMode
+}
+
 // JoinGroupHandler implements `--join-group`. Set by the agent package's
 // init() to avoid a session→agent import cycle (agent already depends on
 // session for AttachToSession). When nil, --join-group falls back to a
@@ -200,6 +222,37 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Sandbox = sandboxMode
+
+	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
+	// is mutually exclusive with --sandbox. The daemon spawn path passes the
+	// managed tclaude-agent profile here IN PLACE OF --sandbox workspace-write
+	// so a sandboxed agent can still reach the agentd socket (JOH-207) — Codex
+	// ignores a permission profile whenever a --sandbox is present, and only a
+	// profile can allowlist that one Unix socket. The name is charset-validated
+	// (it becomes a launch arg / filename / TOML key).
+	profile, err := harness.ValidateCodexProfileName(params.PermissionProfile)
+	if err != nil {
+		return err
+	}
+	params.PermissionProfile = profile
+	if profile != "" {
+		if sandboxMode != "" {
+			return fmt.Errorf("--permission-profile and --sandbox are mutually exclusive: " +
+				"Codex ignores a permission profile when --sandbox is set")
+		}
+		if h.Name != harness.CodexName {
+			return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
+		}
+		// Ensure the managed profile file exists before launch (self-healing —
+		// works even if `tclaude setup` was never run). Only the tclaude-owned
+		// profile is auto-created; any other name must already be defined by
+		// the user's own config.
+		if profile == harness.CodexAgentProfile {
+			if _, eerr := harness.EnsureCodexAgentProfile(); eerr != nil {
+				return fmt.Errorf("ensure codex permission profile %q: %w", profile, eerr)
+			}
+		}
+	}
 
 	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
 	// trust-root reason as --sandbox above: a direct `tclaude session new` is
@@ -349,11 +402,17 @@ func runNew(params *NewParams) error {
 	// ~/.tclaude / ~/.codex / ~/.claude writable and defeat the protection.
 	// Refuse that rather than spawn an agent with a false sense of
 	// containment. No-op for harnesses/modes that don't write outside cwd.
-	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandboxMode, cwd, home) {
-		return fmt.Errorf("refusing to launch a %s agent in %q under --sandbox %s: "+
+	// The managed tclaude-agent profile extends :workspace (same cwd-subtree
+	// writability), so guard it exactly as workspace-write.
+	guardMode := sandboxMode
+	if params.PermissionProfile == harness.CodexAgentProfile {
+		guardMode = harness.SandboxWorkspaceWrite
+	}
+	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(guardMode, cwd, home) {
+		return fmt.Errorf("refusing to launch a %s agent in %q under workspace-write containment (%s): "+
 			"that cwd contains your tclaude/Codex/Claude state dirs, which the sandbox would make writable "+
-			"(defeating it). Run the agent from a project subdirectory, or pass --sandbox %s to opt out of the sandbox",
-			h.Name, cwd, sandboxMode, harness.SandboxDangerFull)
+			"(defeating it). Run the agent from a project subdirectory, or use sandbox %s to opt out of the sandbox",
+			h.Name, cwd, sandboxDescr(sandboxMode, params.PermissionProfile), harness.SandboxDangerFull)
 	}
 
 	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
@@ -361,11 +420,12 @@ func runNew(params *NewParams) error {
 		ResumeID:       fullConvID,
 		Effort:         effort,
 		Model:          model,
-		ExtraArgs:      extraArgs,
-		SandboxMode:    sandboxMode,
-		ApprovalPolicy: approvalPolicy,
-		AutoReview:     autoReview,
-		InitialPrompt:  params.InitialPrompt,
+		ExtraArgs:         extraArgs,
+		SandboxMode:       sandboxMode,
+		PermissionProfile: params.PermissionProfile,
+		ApprovalPolicy:    approvalPolicy,
+		AutoReview:        autoReview,
+		InitialPrompt:     params.InitialPrompt,
 	})
 
 	// Create tmux session with claude
@@ -411,12 +471,13 @@ func runNew(params *NewParams) error {
 		ConvID:      fullConvID,
 		Status:      StatusIdle,
 		Harness:     h.Name,
-		// Record the resolved launch sandbox mode so the dashboard can
-		// badge it (JOH-162). "" for a harness with no launch sandbox flag
-		// (Claude Code) — stored verbatim, never coalesced. This is the
-		// only write of the column; it can't be re-derived from the
-		// harness's own files later.
-		SandboxMode: sandboxMode,
+		// Record the resolved launch sandbox descriptor so the dashboard can
+		// badge it (JOH-162): the --sandbox mode, or — when the agent runs
+		// under a managed permission profile (codex -p <name>, the JOH-207
+		// path) — the profile name. "" for a harness with no launch sandbox
+		// flag (Claude Code). Stored verbatim, never coalesced; this is the
+		// only write of the column, so it can't be re-derived later.
+		SandboxMode: sandboxDescr(sandboxMode, params.PermissionProfile),
 		Created:     time.Now(),
 		Updated:     time.Now(),
 	}

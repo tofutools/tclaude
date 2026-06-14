@@ -1395,7 +1395,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string
 		args = append(args, "--model", model)
 	}
 	args = appendHarnessFlag(args, harness)
-	args = appendSandboxFlag(args, sandbox)
+	args = appendSandboxArgs(args, harness, sandbox)
 	args = appendApprovalFlag(args, approval)
 	args = appendAutoReviewFlag(args, autoReview)
 	args = appendInitialPromptFlag(args, harness)
@@ -1419,7 +1419,7 @@ func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval st
 		args = append(args, "--model", model)
 	}
 	args = appendHarnessFlag(args, harness)
-	args = appendSandboxFlag(args, sandbox)
+	args = appendSandboxArgs(args, harness, sandbox)
 	args = appendApprovalFlag(args, approval)
 	args = appendAutoReviewFlag(args, autoReview)
 	return args
@@ -1466,6 +1466,25 @@ func appendInitialPromptFlag(args []string, h string) []string {
 	return args
 }
 
+// appendSandboxArgs adds the launch-containment flag(s) to a `tclaude session
+// new` argv. For a Codex spawn whose resolved sandbox mode is the
+// workspace-write secure default, it emits `--permission-profile tclaude-agent`
+// INSTEAD of `--sandbox`: that managed profile gives the same workspace-write
+// containment AND allowlists the agentd Unix socket, so the spawned agent can
+// run `tclaude agent …` (JOH-207). Codex ignores a permission profile whenever
+// a `--sandbox`/sandbox_mode is present, so the two can't be combined. All
+// other cases — read-only, danger-full-access, or a non-Codex harness — fall
+// back to `--sandbox`. (read-only/danger-full-access stay on `--sandbox` for
+// now; mapping them onto profiles too is a tracked follow-up.) h is the param
+// name because sessionNewArgs shadows the harness package with a `harness`
+// string parameter.
+func appendSandboxArgs(args []string, h, sandbox string) []string {
+	if h == harness.CodexName && sandbox == harness.SandboxWorkspaceWrite {
+		return appendPermissionProfileFlag(args, harness.CodexAgentProfile)
+	}
+	return appendSandboxFlag(args, sandbox)
+}
+
 // appendSandboxFlag adds `--sandbox <mode>` to a `tclaude session new` argv
 // when a mode is set. "" omits it (no sandbox handling — Claude Code, or a
 // caller that didn't resolve one). The mode is a validated enum resolved at
@@ -1474,6 +1493,18 @@ func appendInitialPromptFlag(args []string, h string) []string {
 func appendSandboxFlag(args []string, mode string) []string {
 	if mode != "" {
 		args = append(args, "--sandbox", mode)
+	}
+	return args
+}
+
+// appendPermissionProfileFlag adds `--permission-profile <name>` to a `tclaude
+// session new` argv when a profile is set. "" omits it. The name is a
+// validated identifier (a tclaude-owned constant on the daemon path), never
+// user free-text, so it is safe as a bare arg; the forked `tclaude session
+// new` re-validates and ensures the managed profile file exists.
+func appendPermissionProfileFlag(args []string, profile string) []string {
+	if profile != "" {
+		args = append(args, "--permission-profile", profile)
 	}
 	return args
 }

@@ -94,11 +94,17 @@ safe and non-blocking:
 
 - **`--sandbox`** — `read-only` | `workspace-write` | `danger-full-access`.
   Daemon-spawned Codex agents (via `agent spawn`, resume, clone, reincarnate)
-  default to **`workspace-write`**, which makes only the working directory (plus
-  `/tmp`/`$TMPDIR`) writable and denies network by default — `$HOME` stays
-  read-only, so the agent can't tamper with `~/.tclaude`, `~/.codex`, or
-  `~/.claude`. A direct `tclaude session new --harness codex` is *your* session,
-  so it does **not** inject a default — it respects your `config.toml`.
+  default to **`workspace-write`** containment, which makes only the working
+  directory (plus `/tmp`/`$TMPDIR`) writable — `$HOME` stays read-only, so the
+  agent can't tamper with `~/.tclaude`, `~/.codex`, or `~/.claude`. To reach
+  that default, the daemon launches with a tclaude-managed **permission
+  profile** (`codex -p tclaude-agent`) rather than the raw `--sandbox` flag:
+  Codex's `workspace-write` sandbox otherwise blocks the agentd Unix socket, so
+  a sandboxed agent couldn't run `tclaude agent …` at all. The profile gives the
+  same workspace-write containment **plus** an allowlist for exactly that socket
+  (JOH-207). `read-only` and `danger-full-access` still use the plain `--sandbox`
+  flag. A direct `tclaude session new --harness codex` is *your* session, so it
+  does **not** inject a default — it respects your `config.toml`.
 - **`--ask-for-approval`** — daemon-spawned Codex agents default to **`never`**
   so an unattended pane with no human at the keyboard can't deadlock waiting for
   an approval prompt. A direct `session new` again respects your config.
@@ -107,9 +113,12 @@ safe and non-blocking:
   (fail-closed). Off by default; the underlying Codex key is still experimental,
   so treat it as unstable.
 
-These are launch-time flags only — tclaude never edits your `~/.codex/config.toml`
-or profiles. See `docs/plans/harness-independence.md` §D/§E for the full
-research behind the defaults.
+These are launch-time flags only — tclaude never edits your `~/.codex/config.toml`.
+The one file it manages is a standalone `~/.codex/tclaude-agent.config.toml`
+(the permission profile above), installed by `tclaude setup` and self-healed at
+spawn time; your own config and profiles are left untouched. The research behind
+the defaults lives in the `tclaude-harness-independence` Linear project
+(JOH-166/JOH-167/JOH-200/JOH-207).
 
 ## What stays the same across harnesses
 

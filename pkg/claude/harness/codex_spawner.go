@@ -46,7 +46,22 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// `--model`. No value, so nothing to quote.
 		cmd += " --dangerously-bypass-hook-trust"
 	}
-	if spec.SandboxMode != "" {
+	if spec.PermissionProfile != "" {
+		// `-p <name>` layers $CODEX_HOME/<name>.config.toml, whose
+		// default_permissions activates a permissions profile for THIS spawn
+		// only (the TUI/exec have no `-P` flag; selection is via
+		// default_permissions). tclaude uses this INSTEAD of `--sandbox` for a
+		// daemon-spawned agent that must reach the agentd socket: Codex ignores
+		// permission profiles whenever a `--sandbox`/sandbox_mode is present,
+		// and only the profile model can allowlist that one Unix socket
+		// (JOH-207). Mutually exclusive with SandboxMode (the spec builder sets
+		// one or the other) — emitting both would let `--sandbox` silently void
+		// the profile, so the profile wins and `--sandbox` is omitted. Accepted
+		// on both a fresh `codex` and `codex resume <id>` (shared option,
+		// verified against codex-cli 0.139.0). The value is a validated profile
+		// name, never free text, but quoted defensively.
+		cmd += " -p " + clcommon.ShellQuoteArg(spec.PermissionProfile)
+	} else if spec.SandboxMode != "" {
 		// `--sandbox {read-only|workspace-write|danger-full-access}` selects
 		// Codex's OS-native sandbox for THIS invocation only — a per-spawn
 		// flag, so the user's config.toml sandbox_mode/profiles are left
@@ -76,8 +91,7 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// Accepted on both a fresh `codex` and `codex resume <id>`. The value
 		// is a TOML-quoted string (matching Codex's own `-c model="o3"`
 		// convention) and the whole `key="value"` is shell-quoted as one arg.
-		// Experimental/undocumented upstream, hence opt-in (JOH-200 part 2);
-		// see docs/plans/harness-independence.md §E.
+		// Experimental/undocumented upstream, hence opt-in (JOH-200 part 2).
 		cmd += " -c " + clcommon.ShellQuoteArg(codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
 	}
 	if spec.Model != "" {
