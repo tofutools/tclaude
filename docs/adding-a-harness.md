@@ -134,8 +134,8 @@ ValidatePolicy(policy string) (string, error)
 Leave both `nil` if your harness configures sandboxing/approvals out of band
 (like Claude Code via `settings.json`); the spawn path then passes no flag and
 rejects an explicit one. Codex implements both as launch flags — see the matrix
-on [Harnesses](harnesses.md) and the research in
-`docs/plans/harness-independence.md` §D/§E.
+on [Harnesses](harnesses.md) (the research lives in the
+`tclaude-harness-independence` Linear project).
 
 ## Wiring it up
 
@@ -168,8 +168,7 @@ on [Harnesses](harnesses.md) and the research in
    pins multi-step coordination through the daemon. Codex's `CodexSim` is the
    model: a sim that owns the harness's real on-disk conversation format, with
    the daemon and all production read paths exercised unchanged. Every new
-   capability gets a `pkg/claude/agentd/*_flow_test.go` scenario. See
-   `docs/plans/testharness-v2.md`.
+   capability gets a `pkg/claude/agentd/*_flow_test.go` scenario.
 
 ## A note on naming
 
@@ -186,6 +185,6 @@ not smuggled into a feature change.
 ## Further reading
 
 - **[Harnesses](harnesses.md)** — the user-facing overview + capability matrix.
-- `docs/plans/harness-independence.md` — the full design doc and research pool
-  (coupling inventory, Codex CLI facts, sandbox/approval analysis).
+- The `tclaude-harness-independence` Linear project — the design intent and
+  research pool (coupling inventory, Codex CLI facts, sandbox/approval analysis).
 - `pkg/claude/harness/` — the contracts and the `claude` / `codex` implementations.

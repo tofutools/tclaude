@@ -121,8 +121,7 @@ func writeUnconfirmed(w http.ResponseWriter) {
 	writeError(w, http.StatusForbidden, "unconfirmed",
 		"unconfirmed caller: not a known agent, and no valid operator token. "+
 			"If you are the human operator, set TCLAUDE_HUMAN_TOKEN to the "+
-			"operator token printed on the agentd startup banner, then retry. "+
-			"See docs/plans/agentd.md.")
+			"operator token printed on the agentd startup banner, then retry.")
 }
 
 // writeUnidentified writes the fail-closed 401 for a peer whose PID could

@@ -283,4 +283,3 @@ on the `/v1` socket have no path to them.
 
 - [Agent Coordination](agent.md) — the `tclaude agent` CLI, `agentd`, groups,
   permissions, and the approval popup the dashboard shares a port with.
-- `docs/plans/agentd.md` — daemon design (peer-cred identity, socket layout).

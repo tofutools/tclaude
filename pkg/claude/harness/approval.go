@@ -16,8 +16,8 @@ import (
 // The contract mirrors SandboxCatalog: name the secure default policy and
 // validate/normalize a requested one. "Secure" here means *non-escalating* —
 // an unattended/detached pane must never block on an approval prompt no human
-// can answer (the deadlock from docs/plans/harness-independence.md §E,
-// JOH-167). The default is paired with the sandbox default (JOH-192): non-
+// can answer (the deadlock from JOH-167). The default is paired with the
+// sandbox default (JOH-192): non-
 // escalating approvals are only safe because writes are sandbox-confined.
 type ApprovalCatalog interface {
 	// DefaultPolicy is the policy a tclaude-spawned (unattended) agent runs

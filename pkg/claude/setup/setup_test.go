@@ -306,7 +306,6 @@ func TestSandboxDocCrossReferencesConsistent(t *testing.T) {
 	root := findRepoRoot(t)
 	base := filepath.Base(sandboxHardeningDocPath) // sandbox-hardening.md
 	for _, ref := range []string{
-		filepath.Join("docs", "plans", "agentd.md"),
 		filepath.Join("docs", "index.md"),
 	} {
 		body, err := os.ReadFile(filepath.Join(root, ref))
