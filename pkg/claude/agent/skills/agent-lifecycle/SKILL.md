@@ -1,22 +1,15 @@
 ---
 name: agent-lifecycle
 description: >-
-  Manage your own context window via `tclaude agent context-info`, `tclaude
-  agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and
-  `tclaude agent clone [follow-up]`. The mechanics a long-running agent uses to
-  act on context pressure. `compact` is a /compact slash-injection that
-  preserves identity but compacts history blindly (lossy, slow, undirected) —
-  kept mainly for compatibility. `reincarnate` replaces self with a fresh agent
-  instance that inherits identity and lets you choose what context carries
-  forward (the preferred mechanism for most tasks) — REQUIRES a follow-up so
-  the fresh pane isn't idle. `clone` forks self into a sibling that inherits
-  identity AND optionally the conversation history when the harness supports it
-  — the original keeps running. WHEN and whether to use them — and at what
-  context %, if any — is a policy that belongs to your project/operator; this
-  skill documents the capability, it does not prescribe a cadence or threshold.
-  Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent
-  (requires the matching `agent.<verb>` slug, OR being an owner of a group
-  containing the target).
+  Manage your own context window via `tclaude agent context-info`, `compact`,
+  `reincarnate`, and `clone`. Use when you need context pressure details, a
+  /compact injection, a fresh successor that inherits identity, or a sibling
+  agent that keeps the original running. `reincarnate` requires a follow-up so
+  the new pane is not idle. Context thresholds and cadence are project/operator
+  policy; this skill documents the capability, not when to invoke it. Manager
+  pattern: every verb accepts `--target <peer>` to act on another agent
+  (requires the matching `agent.<verb>` slug, OR ownership of a group containing
+  the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
