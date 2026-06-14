@@ -1500,19 +1500,21 @@ func appendInitialPromptFlag(args []string, h string) []string {
 }
 
 // appendSandboxArgs adds the launch-containment flag(s) to a `tclaude session
-// new` argv. For a Codex spawn whose resolved sandbox mode is the
-// workspace-write secure default, it emits `--permission-profile tclaude-agent`
-// INSTEAD of `--sandbox`: that managed profile gives the same workspace-write
-// containment AND allowlists the agentd Unix socket, so the spawned agent can
-// run `tclaude agent …` (JOH-207). Codex ignores a permission profile whenever
-// a `--sandbox`/sandbox_mode is present, so the two can't be combined. All
-// other cases — read-only, danger-full-access, or a non-Codex harness — fall
-// back to `--sandbox`. (read-only/danger-full-access stay on `--sandbox` for
-// now; mapping them onto profiles too is a tracked follow-up.) h is the param
-// name because sessionNewArgs shadows the harness package with a `harness`
-// string parameter.
+// new` argv. For a Codex spawn whose resolved mode is the managed-profile
+// pseudo-mode (SandboxManagedProfile — the secure default), it emits
+// `--permission-profile tclaude-agent` INSTEAD of `--sandbox`: that managed
+// profile gives workspace-write containment AND allowlists the agentd Unix
+// socket, so the spawned agent can run `tclaude agent …` (JOH-207). Codex
+// ignores a permission profile whenever a `--sandbox`/sandbox_mode is present,
+// so the two can't be combined. All other cases — the raw workspace-write,
+// read-only, or danger-full-access `--sandbox` modes, or a non-Codex harness —
+// fall back to `--sandbox`. (Those raw modes intentionally do NOT get the
+// managed profile, so a caller can pick Codex's native containment; note an
+// agent under a raw `--sandbox` mode cannot reach the agentd socket.) h is the
+// param name because sessionNewArgs shadows the harness package with a
+// `harness` string parameter.
 func appendSandboxArgs(args []string, h, sandbox string) []string {
-	if h == harness.CodexName && sandbox == harness.SandboxWorkspaceWrite {
+	if h == harness.CodexName && sandbox == harness.SandboxManagedProfile {
 		return appendPermissionProfileFlag(args, harness.CodexAgentProfile)
 	}
 	return appendSandboxFlag(args, sandbox)

@@ -77,7 +77,7 @@ instead of slash-command injection).
 | **Graceful stop** | ✅ `/exit` | ✅ `/quit` |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ one-time trust) |
-| **OS sandbox at spawn** | ⚙️ configured in `settings.json` | ✅ `--sandbox` flag, secure default for agents |
+| **OS sandbox at spawn** | ⚙️ configured in `settings.json` | ✅ managed profile (default) or raw `--sandbox` flag |
 | **Approval posture at spawn** | ⚙️ configured in `settings.json` | ✅ `--ask-for-approval` flag, non-blocking default for agents |
 | **Guardian auto-review** | ❌ not applicable | ⚙️ opt-in `--auto-review` (experimental) |
 | **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items |
@@ -92,22 +92,28 @@ Codex has a built-in OS-level sandbox and an approval policy, both selectable at
 launch. tclaude uses them to keep **unattended, daemon-spawned** Codex agents
 safe and non-blocking:
 
-- **`--sandbox`** — `read-only` | `workspace-write` | `danger-full-access`.
-  Daemon-spawned Codex agents (via `agent spawn`, resume, clone, reincarnate)
-  default to **`workspace-write`** containment, which makes only the working
-  directory (plus `/tmp`/`$TMPDIR`) writable — `$HOME` stays read-only, so the
-  agent can't tamper with `~/.tclaude`, `~/.codex`, or `~/.claude`. To reach
-  that default, the daemon launches with a tclaude-managed **permission
-  profile** (`codex -p tclaude-agent`) rather than the raw `--sandbox` flag:
-  Codex's `workspace-write` sandbox otherwise blocks the agentd Unix socket, so
-  a sandboxed agent couldn't run `tclaude agent …` at all. The profile gives the
-  same workspace-write containment **plus** an allowlist for exactly that socket
-  (JOH-207). At spawn time, when the launch directory is inside a Git repo, the
-  profile also grants write access to that repo's Git common dir so agents can
-  commit from linked worktrees while the rest of `$HOME` stays read-only.
-  `read-only` and `danger-full-access` still use the plain `--sandbox` flag. A
-  direct `tclaude session new --harness codex` is *your* session, so it does
-  **not** inject a default — it respects your `config.toml`.
+- **Launch containment** — the spawn dialog (and `--sandbox`) offers four
+  options: **`tclaude-agent`** (the recommended default), plus the three raw
+  Codex modes `workspace-write` | `read-only` | `danger-full-access`.
+  - **`tclaude-agent`** is *not* a Codex `--sandbox` mode — it selects a
+    tclaude-managed **permission profile** launched as `codex -p tclaude-agent`.
+    It gives the same `workspace-write` containment (only the working directory
+    plus `/tmp`/`$TMPDIR` writable; `$HOME` read-only, so the agent can't tamper
+    with `~/.tclaude`, `~/.codex`, or `~/.claude`) **plus** an allowlist for
+    exactly the agentd Unix socket — which the raw `--sandbox` modes block, so
+    only under this profile can a sandboxed agent run `tclaude agent …`. At spawn
+    time, when the launch directory is inside a Git repo, the profile also grants
+    write access to that repo's Git common dir so agents can commit from linked
+    worktrees while the rest of `$HOME` stays read-only (JOH-207). Daemon-spawned
+    Codex agents (via `agent spawn`, resume, clone, reincarnate) default to it.
+  - **`workspace-write` / `read-only` / `danger-full-access`** are passed through
+    as the raw `--sandbox` flag. They do **not** get the agentd-socket allowlist
+    (Codex ignores permission profiles when `--sandbox` is set), so an agent
+    under one of these modes can't reach `tclaude agent`; `danger-full-access`
+    turns the sandbox off entirely. `--sandbox tclaude-agent` is accepted as a
+    shorthand and normalized to the managed profile.
+  - A direct `tclaude session new --harness codex` is *your* session, so it does
+    **not** inject a default — it respects your `config.toml`.
 - **`--ask-for-approval`** — daemon-spawned Codex agents default to **`never`**
   so an unattended pane with no human at the keyboard can't deadlock waiting for
   an approval prompt. A direct `session new` again respects your config.

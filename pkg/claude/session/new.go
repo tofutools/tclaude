@@ -47,15 +47,17 @@ type NewParams struct {
 	// rest of runNew stays harness-agnostic.
 	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
 
-	// Sandbox selects a harness's launch-time OS-sandbox mode (Codex's
-	// --sandbox). On a direct `session new` it is opt-in: unset emits no
-	// flag, so Codex uses the user's own config.toml sandbox_mode (the human
-	// running session new is the trust root — tclaude doesn't override their
-	// config). Pass a value to sandbox explicitly. The daemon spawn path
-	// (agentd / `agent spawn`) defaults it to workspace-write instead, since
-	// a spawned agent is the untrusted party. Not applicable to Claude Code
-	// (settings.json-driven), which errors if it is set. See JOH-192.
-	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+	// Sandbox selects a harness's launch containment (Codex's --sandbox). On a
+	// direct `session new` it is opt-in: unset emits no flag, so Codex uses the
+	// user's own config.toml sandbox_mode (the human running session new is the
+	// trust root — tclaude doesn't override their config). Pass a value
+	// explicitly. The special value tclaude-agent (SandboxManagedProfile) is a
+	// shorthand that is normalized to --permission-profile tclaude-agent, not a
+	// raw Codex mode. The daemon spawn path (agentd / `agent spawn`) defaults it
+	// to that managed profile instead, since a spawned agent is the untrusted
+	// party. Not applicable to Claude Code (settings.json-driven), which errors
+	// if it is set. See JOH-192 / JOH-207.
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex launch containment: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
 
 	// PermissionProfile selects a tclaude-managed Codex permission profile to
 	// run under, emitted as `codex -p <name>`. It is how the daemon keeps a
@@ -233,6 +235,25 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Sandbox = sandboxMode
+
+	// Normalize the managed-profile pseudo-mode. SandboxManagedProfile is the
+	// dashboard/daemon way of selecting `codex -p tclaude-agent` through the one
+	// sandbox dropdown, but it is the profile name, not a real Codex --sandbox
+	// value — so on the direct CLI translate `--sandbox tclaude-agent` into
+	// --permission-profile here, converging both paths on the profile rather than
+	// emitting a bogus literal `--sandbox tclaude-agent` Codex would reject. (The
+	// daemon never reaches this: appendSandboxArgs already passes
+	// --permission-profile.) A conflicting explicit --permission-profile is a real
+	// error; an equal one is harmless.
+	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+		if up := strings.TrimSpace(params.PermissionProfile); up != "" && up != harness.CodexAgentProfile {
+			return fmt.Errorf("--sandbox %s selects the managed %s profile and conflicts with --permission-profile %s",
+				harness.SandboxManagedProfile, harness.CodexAgentProfile, up)
+		}
+		params.PermissionProfile = harness.CodexAgentProfile
+		sandboxMode = ""
+		params.Sandbox = ""
+	}
 
 	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
 	// is mutually exclusive with --sandbox. The daemon spawn path passes the

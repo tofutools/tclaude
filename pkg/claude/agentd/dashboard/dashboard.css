@@ -1127,6 +1127,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
   min-height: 80px; max-height: 220px; resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* Live per-option help under a spawn-dialog control (e.g. the Sandbox
+   selector): a muted one-liner that updates with the selection. The "warn"
+   variant flags an option with a caveat the operator should notice — for the
+   sandbox modes, losing agentd reachability or turning the sandbox off. */
+.spawn-field-hint { font-size: 11px; color: #7d8590; line-height: 1.4; }
+.spawn-field-hint:empty { display: none; }
+.spawn-field-hint.warn { color: #f0883e; }
+.spawn-field-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px; background: #161b22; padding: 1px 4px; border-radius: 3px;
+}
 .cron-create-target {
   flex: 1; display: flex; flex-direction: column; gap: 6px;
 }

@@ -65,36 +65,39 @@ func TestSessionNewArgs_Harness(t *testing.T) {
 }
 
 // TestSessionNewArgs_Sandbox covers the launch-containment flags. An unset
-// mode emits neither flag. For a Codex spawn/resume at the workspace-write
-// secure default, the argv carries `--permission-profile tclaude-agent`
-// INSTEAD of `--sandbox`: that managed profile gives the same workspace-write
+// mode emits neither flag. The managed-profile pseudo-mode
+// (SandboxManagedProfile, the secure default) carries `--permission-profile
+// tclaude-agent` INSTEAD of `--sandbox`: that profile gives workspace-write
 // containment AND allowlists the agentd socket, so the agent can run `tclaude
-// agent …` while sandboxed (JOH-207). read-only / danger-full-access still
-// fall back to `--sandbox <mode>`. Modes are resolved + cwd-guarded at the
-// spawn boundary, so by the argv builder they are validated enums.
+// agent …` while sandboxed (JOH-207). The three RAW Codex modes —
+// workspace-write, read-only, danger-full-access — fall back to `--sandbox
+// <mode>` (no socket access). Modes are resolved + cwd-guarded at the spawn
+// boundary, so by the argv builder they are validated enums.
 func TestSessionNewArgs_Sandbox(t *testing.T) {
 	// Unset → neither flag.
 	if a := sessionNewArgs("lbl", "/tmp/x", "", "", "codex", "", "", false, false); slices.Contains(a, "--sandbox") || slices.Contains(a, "--permission-profile") {
 		t.Fatalf("unset sandbox must omit --sandbox and --permission-profile, got %v", a)
 	}
-	// workspace-write → managed permission profile, NOT --sandbox (new + resume).
+	// The managed-profile pseudo-mode → managed permission profile, NOT
+	// --sandbox (new + resume).
 	for _, tc := range []struct {
 		name string
 		args []string
 	}{
-		{"new", sessionNewArgs("lbl", "/tmp/x", "", "", "codex", "workspace-write", "", false, false)},
-		{"resume", sessionResumeArgs("conv-1", "/tmp/x", "", "", "codex", "workspace-write", "", false)},
+		{"new", sessionNewArgs("lbl", "/tmp/x", "", "", "codex", harness.SandboxManagedProfile, "", false, false)},
+		{"resume", sessionResumeArgs("conv-1", "/tmp/x", "", "", "codex", harness.SandboxManagedProfile, "", false)},
 	} {
 		if slices.Contains(tc.args, "--sandbox") {
-			t.Fatalf("%s: codex workspace-write must NOT emit --sandbox, got %v", tc.name, tc.args)
+			t.Fatalf("%s: codex managed profile must NOT emit --sandbox, got %v", tc.name, tc.args)
 		}
 		i := slices.Index(tc.args, "--permission-profile")
 		if i < 0 || i+1 >= len(tc.args) || tc.args[i+1] != harness.CodexAgentProfile {
-			t.Fatalf("%s: codex workspace-write must append `--permission-profile %s`, got %v", tc.name, harness.CodexAgentProfile, tc.args)
+			t.Fatalf("%s: codex managed profile must append `--permission-profile %s`, got %v", tc.name, harness.CodexAgentProfile, tc.args)
 		}
 	}
-	// read-only / danger-full-access → still `--sandbox <mode>`, no profile.
-	for _, mode := range []string{harness.SandboxReadOnly, harness.SandboxDangerFull} {
+	// The raw Codex modes (incl. workspace-write now) → `--sandbox <mode>`, no
+	// profile.
+	for _, mode := range []string{harness.SandboxWorkspaceWrite, harness.SandboxReadOnly, harness.SandboxDangerFull} {
 		args := sessionNewArgs("lbl", "/tmp/x", "", "", "codex", mode, "", false, false)
 		if i := slices.Index(args, "--sandbox"); i < 0 || i+1 >= len(args) || args[i+1] != mode {
 			t.Fatalf("codex %s must append `--sandbox %s`, got %v", mode, mode, args)
