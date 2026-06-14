@@ -83,14 +83,14 @@ func GetProcessName(pid int) string {
 // the coding-harness ancestor — a parent named "claude"/"node" (Claude
 // Code runs as node) or any other registered harness binary (e.g.
 // "codex"). Returns its PID, or 0 if none is found. The harness-aware match
-// (isHarnessProcessName) is what lets a Codex hook callback record a real
+// (IsHarnessProcessName) is what lets a Codex hook callback record a real
 // PID instead of 0 (JOH-160); a non-tmux row at PID 0 is otherwise reaped
 // as a false-positive.
 func FindClaudePID() int {
 	pid := os.Getppid()
 	for pid > 1 {
 		name := GetProcessName(pid)
-		if isHarnessProcessName(name) {
+		if IsHarnessProcessName(name) {
 			return pid
 		}
 		pid = GetParentPID(pid)
