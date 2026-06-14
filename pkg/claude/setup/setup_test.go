@@ -36,13 +36,14 @@ func captureStdout(t *testing.T, fn func()) string {
 
 // tempHome points HOME (and USERPROFILE, which os.UserHomeDir reads on
 // Windows) at a fresh temp dir so setup's writes — ~/.claude/settings.json,
-// ~/.claude/skills/, ~/.agents/skills/, ~/.tclaude/config.json — land in an isolated,
-// throwaway tree instead of the developer's real home.
+// ~/.claude/skills/, ~/.agents/skills/, ~/.codex/skills/, ~/.tclaude/config.json
+// — land in an isolated, throwaway tree instead of the developer's real home.
 func tempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+	t.Setenv("CODEX_HOME", "")
 	return dir
 }
 
@@ -50,12 +51,14 @@ func assertSkillsInstalled(t *testing.T, home string) {
 	t.Helper()
 	assert.DirExists(t, filepath.Join(home, ".claude", "skills", "agent-coord"))
 	assert.DirExists(t, filepath.Join(home, ".agents", "skills", "agent-coord"))
+	assert.DirExists(t, filepath.Join(home, ".codex", "skills", "agent-coord"))
 }
 
 func assertNoSkills(t *testing.T, home string) {
 	t.Helper()
 	assert.NoDirExists(t, filepath.Join(home, ".claude", "skills"))
 	assert.NoDirExists(t, filepath.Join(home, ".agents", "skills"))
+	assert.NoDirExists(t, filepath.Join(home, ".codex", "skills"))
 }
 
 func assertBundledPermsGranted(t *testing.T) {

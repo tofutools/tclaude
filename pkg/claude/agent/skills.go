@@ -2,10 +2,12 @@ package agent
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // skillsFS holds the canonical skill files shipped with the binary. The CLI
@@ -42,10 +44,36 @@ func InstallSkills(force bool) ([]InstalledSkill, error) {
 	return installSkillsInHome(filepath.Join(".claude", "skills"), force)
 }
 
-// InstallCodexSkills writes every bundled skill into ~/.agents/skills/<name>/,
-// Codex CLI's user-scope skill directory.
+// InstallCodexSkills writes every bundled skill into Codex's user-scope skill
+// directories. Codex's current public docs name ~/.agents/skills; current
+// Codex CLI skill tooling installs into $CODEX_HOME/skills, defaulting to
+// ~/.codex/skills. Install both so /skills sees the bundle across layouts.
 func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
-	return installSkillsInHome(filepath.Join(".agents", "skills"), force)
+	roots, err := codexSkillRoots()
+	if err != nil {
+		return nil, err
+	}
+
+	var installed []InstalledSkill
+	var firstExistsErr error
+	for _, root := range roots {
+		got, err := installSkillsInRoot(root, force)
+		installed = append(installed, got...)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, ErrSkillExists) {
+			if firstExistsErr == nil {
+				firstExistsErr = ErrSkillExists
+			}
+			continue
+		}
+		return installed, err
+	}
+	if firstExistsErr != nil {
+		return installed, firstExistsErr
+	}
+	return installed, nil
 }
 
 func installSkillsInHome(relRoot string, force bool) ([]InstalledSkill, error) {
@@ -53,11 +81,14 @@ func installSkillsInHome(relRoot string, force bool) ([]InstalledSkill, error) {
 	if err != nil {
 		return nil, fmt.Errorf("user home: %w", err)
 	}
+	return installSkillsInRoot(filepath.Join(home, relRoot), force)
+}
 
+func installSkillsInRoot(root string, force bool) ([]InstalledSkill, error) {
 	var installed []InstalledSkill
 	var firstExistsErr error
 	for _, name := range bundledSkills {
-		dst := filepath.Join(home, relRoot, name)
+		dst := filepath.Join(root, name)
 		if !force {
 			if _, err := os.Stat(dst); err == nil {
 				if firstExistsErr == nil {
@@ -75,6 +106,32 @@ func installSkillsInHome(relRoot string, force bool) ([]InstalledSkill, error) {
 		return installed, firstExistsErr
 	}
 	return installed, nil
+}
+
+func codexSkillRoots() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("user home: %w", err)
+	}
+
+	agentsRoot := filepath.Join(home, ".agents", "skills")
+	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	if codexHome == "" {
+		codexHome = filepath.Join(home, ".codex")
+	}
+	codexRoot := filepath.Join(codexHome, "skills")
+
+	seen := make(map[string]bool, 2)
+	var roots []string
+	for _, root := range []string{agentsRoot, codexRoot} {
+		clean := filepath.Clean(root)
+		if seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		roots = append(roots, clean)
+	}
+	return roots, nil
 }
 
 // writeSkillTree copies the embedded skills/<name>/ subtree into dst.

@@ -268,7 +268,8 @@ one.
 The agent skills (this one, `agent-rename`, …) are bundled into the
 `tclaude` binary. Materialise them under the supported user skill roots
 (`~/.claude/skills/<name>/` for Claude Code and
-`~/.agents/skills/<name>/` for Codex CLI) with:
+`~/.agents/skills/<name>/` plus `$CODEX_HOME/skills/<name>/` for
+Codex CLI) with:
 
 ```bash
 tclaude setup --install-agent-skills
