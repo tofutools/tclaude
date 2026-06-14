@@ -199,7 +199,6 @@ tclaude task run -- --dangerously-skip-permissions
 | `-d, --detached`      | Start detached (don't attach to session)                     |
 | `-C, --dir <path>`    | Directory containing task files (defaults to current)        |
 | `-w, --watch`         | Watch for new tasks instead of exiting when TODO.md is empty |
-| `-c, --compact <pct>` | Auto-compact at this context usage percentage (overrides config) |
 
 > **Note:** The `-C, --dir` flag is available on all task subcommands (`add`, `list`, `run`) and the parent `task` command itself.
 

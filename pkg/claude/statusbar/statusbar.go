@@ -12,13 +12,11 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -256,8 +254,8 @@ func run() error {
 		ctxPct = int(*input.ContextWindow.UsedPercentage)
 	}
 
-	// Store context-window snapshot in DB for auto-compact + the agent
-	// context-info CLI + the dashboard meter. Only write when the
+	// Store context-window snapshot in DB for the context nudge + the
+	// agent context-info CLI + the dashboard meter. Only write when the
 	// statusline actually carried context data: Claude Code emits
 	// renders whose context_window block is empty (e.g. before a
 	// turn's first API response), and writing those all-zero values
@@ -312,12 +310,8 @@ func run() error {
 	}
 
 	var line2 []string
-	compactThreshold := autoCompactThreshold()
 	ctxLabel := fmt.Sprintf("%d%%", ctxPct)
-	if compactThreshold > 0 {
-		ctxLabel = fmt.Sprintf("%d%%/%d%%", ctxPct, compactThreshold)
-	}
-	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct, compactThreshold), ctxLabel))
+	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct), ctxLabel))
 
 	// Rate limits from Claude Code's statusline input (subscription plan) or cost (API plan).
 	// Falls back to Anthropic usage API (cached) when statusline input lacks rate limit data
@@ -545,11 +539,10 @@ func getPRInfo(branch string) (number int, url, state string) {
 	return pr.Number, pr.URL, strings.ToLower(pr.State)
 }
 
-// contextBar returns a progress bar for context usage with a compaction marker.
-// When compactThreshold is set (>0), the full bar represents 0-threshold%,
-// so it fills completely as usage approaches the compact limit.
-// Otherwise uses the default compaction buffer (~16.5%) with a ▒ zone.
-func contextBar(pct int, compactThreshold int) string {
+// contextBar returns a progress bar for context usage with a compaction
+// marker: a two-zone bar where the trailing compaction buffer (~16.5%)
+// is rendered as a ▒ zone.
+func contextBar(pct int) string {
 	if pct < 0 {
 		pct = 0
 	}
@@ -557,30 +550,7 @@ func contextBar(pct int, compactThreshold int) string {
 		pct = 100
 	}
 
-	// Custom threshold: full bar represents 0 to threshold
-	if compactThreshold > 0 {
-		effectiveMax := float64(compactThreshold)
-		usageFraction := float64(pct) / effectiveMax * 100
-		filled := int(math.Round(float64(pct) / effectiveMax * float64(barWidth)))
-		if filled > barWidth {
-			filled = barWidth
-		}
-
-		color := colorGreen
-		if usageFraction >= 85 {
-			color = colorRed
-		} else if usageFraction >= 60 {
-			color = colorYellow
-		}
-
-		empty := barWidth - filled
-		return fmt.Sprintf("%s%s%s%s%s",
-			color, strings.Repeat("█", filled),
-			colorDim, strings.Repeat("░", empty),
-			colorReset)
-	}
-
-	// Default: two-zone bar with compaction buffer as ▒
+	// Two-zone bar with compaction buffer as ▒
 	effectiveMax := 100.0 - compactionBuffer
 	compactionCells := int(math.Round(compactionBuffer * float64(barWidth) / 100))
 	usableCells := barWidth - compactionCells
@@ -656,16 +626,4 @@ func resetTimer(t time.Time) string {
 		return fmt.Sprintf("%s(%dh%dm)%s", colorDim, h, m, colorReset)
 	}
 	return fmt.Sprintf("%s(%dm)%s", colorDim, m, colorReset)
-}
-
-// autoCompactThreshold returns the auto-compact percentage threshold,
-// checking the CLI env var first, then the config file. Returns 0 if not set.
-func autoCompactThreshold() int {
-	if v, err := strconv.Atoi(os.Getenv("TCLAUDE_AUTO_COMPACT")); err == nil && v > 0 {
-		return v
-	}
-	if cfg, err := config.Load(); err == nil && cfg.AutoCompactPercent != nil {
-		return *cfg.AutoCompactPercent
-	}
-	return 0
 }

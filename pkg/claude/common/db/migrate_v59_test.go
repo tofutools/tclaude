@@ -104,9 +104,8 @@ func TestMigrateV58toV59_HealsHalfAppliedRun(t *testing.T) {
 
 // TestMigrateV58toV59_FreshSchemaRoundTrips builds a fresh DB through the
 // full migrate() chain and round-trips a pending spawn through the
-// production Insert/Get/List/Delete helpers. Carries the literal
-// currentVersion pin — the tripwire the next migration's author moves
-// forward into their own v60 test.
+// production Insert/Get/List/Delete helpers. (The literal currentVersion
+// pin moved forward to migrate_v60_test.go, per convention.)
 func TestMigrateV58toV59_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -115,7 +114,6 @@ func TestMigrateV58toV59_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 59, currentVersion, "currentVersion is 59")
 
 	ps := &PendingSpawn{
 		Label:          "spwn-roundtrip",

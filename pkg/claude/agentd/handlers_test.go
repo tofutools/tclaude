@@ -87,13 +87,13 @@ func TestPickWithLiveness(t *testing.T) {
 
 // TestContextPctLookupByConvID locks down the conv-id → session-id
 // resolution chain that backs /v1/whoami/context. The original bug:
-// the handler queried GetCompactState with the conv-id directly, but
+// the handler queried context state with the conv-id directly, but
 // context_pct is keyed by tclaude session ID (the statusbar hook only
 // has TCLAUDE_SESSION_ID at write time). Result was always 0.
 //
 // This test exercises the full chain — write context_pct via the
 // statusbar path (by session ID), look the row up by conv-id, then
-// read compact state by the row's session ID — the same shape the
+// read context_pct by the row's session ID — the same shape the
 // handler runs.
 func TestContextPctLookupByConvID(t *testing.T) {
 	setupTestDB(t)
@@ -115,21 +115,20 @@ func TestContextPctLookupByConvID(t *testing.T) {
 	rows, err := db.FindSessionsByConvID(convID)
 	require.NoError(t, err, "FindSessionsByConvID")
 	require.Len(t, rows, 1, "expected 1 session row for conv")
-	pct, pending, err := db.GetCompactState(rows[0].ID)
-	require.NoError(t, err, "GetCompactState")
+	pct, err := db.GetContextPct(rows[0].ID)
+	require.NoError(t, err, "GetContextPct")
 	assert.Equal(t, 47.0, pct, "context_pct via conv-id lookup")
-	assert.Equal(t, float64(0), pending, "compact_pending")
 
-	// Regression guard: querying compact state with the conv-id
+	// Regression guard: querying context state with the conv-id
 	// directly (the buggy path) must not return the populated value.
 	// Different keys: the row's id is "tmux-label-1", the conv-id is
 	// "conv-aaaa-bbbb". The buggy lookup will either error (sql: no
 	// rows) or return zero — either is fine, what matters is it does
 	// NOT return 47.0.
-	pctBuggy, _, errBuggy := db.GetCompactState(convID)
+	pctBuggy, errBuggy := db.GetContextPct(convID)
 	if errBuggy == nil {
 		assert.NotEqual(t, 47.0, pctBuggy,
-			"buggy path (GetCompactState by conv-id) should not return populated value")
+			"buggy path (GetContextPct by conv-id) should not return populated value")
 	}
 }
 

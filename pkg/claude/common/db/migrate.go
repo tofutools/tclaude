@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 59
+const currentVersion = 60
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -385,6 +385,51 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 60 {
+		if err := migrateV59toV60(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV59toV60 drops sessions.compact_pending — the bookkeeping flag
+// of the removed auto-compact feature. Auto-compact CAS-claimed this
+// column then injected `/compact` into the pane on Stop; the feature was
+// removed because that injection fired at confusing moments across both
+// harnesses. Nothing reads or writes the column any more, so it is
+// dropped to keep the schema honest.
+//
+// Guarded behind a pragma_table_info probe (the migrateV56toV57
+// convention): SQLite has no DROP COLUMN IF EXISTS, and a re-run (or a
+// DB that somehow never had the column) must converge rather than wedge
+// on "no such column". Rides one transaction with the version bump.
+func migrateV59toV60(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v59→v60 (drop compact_pending): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveCol int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'compact_pending'`,
+	).Scan(&haveCol); err != nil {
+		return fmt.Errorf("migrate v59→v60 (drop compact_pending): probe column: %w", err)
+	}
+	if haveCol > 0 {
+		if _, err := tx.Exec(`ALTER TABLE sessions DROP COLUMN compact_pending`); err != nil {
+			return fmt.Errorf("migrate v59→v60 (drop compact_pending): drop column: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 60`); err != nil {
+		return fmt.Errorf("migrate v59→v60 (drop compact_pending): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v59→v60 (drop compact_pending): commit: %w", err)
+	}
 	return nil
 }
 

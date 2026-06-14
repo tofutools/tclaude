@@ -250,7 +250,6 @@ type contextInfoResp struct {
 	TokensInput       int64   `json:"tokens_input"`
 	TokensOutput      int64   `json:"tokens_output"`
 	ContextWindowSize int64   `json:"context_window_size"`
-	CompactPending    float64 `json:"compact_pending"`
 	Model             string  `json:"model,omitempty"`
 	CallerConv        string  `json:"caller_conv,omitempty"`
 }
@@ -267,7 +266,6 @@ type groupContextEntry struct {
 	TokensInput       int64   `json:"tokens_input"`
 	TokensOutput      int64   `json:"tokens_output"`
 	ContextWindowSize int64   `json:"context_window_size"`
-	CompactPending    float64 `json:"compact_pending,omitempty"`
 	Model             string  `json:"model,omitempty"`
 }
 
@@ -319,11 +317,6 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 		// Statusline hook hasn't fired with the new fields yet (or
 		// running pre-v2.1.132 Claude Code). Fall back to percentage-only.
 		fmt.Fprintf(stdout, "context: %.0f%% (abs token data not available yet — wait for next CC turn)\n", resp.ContextPct)
-	}
-	if resp.CompactPending > 0 {
-		fmt.Fprintf(stdout, "compact: pending (claimed at unix %.0f)\n", resp.CompactPending)
-	} else {
-		fmt.Fprintln(stdout, "compact: idle")
 	}
 	if resp.Model != "" {
 		fmt.Fprintf(stdout, "model:   %s\n", resp.Model)

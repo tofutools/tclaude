@@ -35,7 +35,6 @@ tclaude session new -d
 | `-C, --dir <path>` | Directory to start the session in                       |
 | `--resume <id>`    | Resume an existing conversation                          |
 | `--label <name>`   | Custom label for the session                             |
-| `--compact <pct>`  | Auto-compact at this context usage percentage (see below) |
 
 ### session ls
 
@@ -161,50 +160,9 @@ Sessions report their status via Claude hooks:
 | `error`               | 🔴 Red    | Last turn ended in an error          |
 | `exited`              | ⚫ Gray    | Session has ended                    |
 
-## Auto-Compact
-
-Claude Code compacts context at ~83% usage (200K window) or ~95% (1M window) by default. With larger context windows, this can lead to context rot, higher costs, and slower responses. Auto-compact lets you trigger `/compact` at a lower threshold.
-
-When enabled, the status bar tracks context usage and the Stop hook sends `/compact` via tmux when the threshold is exceeded. After compaction, the state resets so it can trigger again.
-
-### Per-session (CLI flag)
-
-```bash
-# Compact at 50% context usage
-tclaude --compact 50
-
-# Also works with session new and task run
-tclaude session new --compact 40
-tclaude task run --compact 60
-```
-
-### Global (config file)
-
-Set `auto_compact_percent` in `~/.tclaude/config.json`:
-
-```json
-{
-  "auto_compact_percent": 50
-}
-```
-
-### Environment variable
-
-The `TCLAUDE_AUTO_COMPACT` environment variable can also set the threshold. This is what the `--compact` flag sets internally, but you can set it directly if needed.
-
-```bash
-export TCLAUDE_AUTO_COMPACT=50
-```
-
-**Priority order:** env var > config file. The `--compact` CLI flag sets the env var for the tmux session.
-
-### Status bar
-
-When auto-compact is configured, the status bar shows the threshold alongside context usage (e.g. `30%/50%`) and the context bar rescales so it fills completely as usage approaches the limit.
-
 ## Pre-compact guard
 
-The pre-compact guard is the inverse of auto-compact: instead of triggering compaction earlier, it **refuses Claude Code's own automatic compaction until context has grown past a floor.**
+The pre-compact guard **refuses Claude Code's own automatic compaction until context has grown past a floor.**
 
 It exists because Claude Code can compact *too early*. CC sizes its compaction window from the model class, defaulting to **200K even on a 1M-context model**, so a 1M session can auto-compact at the 200K boundary — about **20% of the 1M status bar**. If you'd rather let context accrue and then [reincarnate](agent.md) (a directed handoff) than have CC blindly summarise at 20%, the guard holds compaction off until a chosen level.
 
