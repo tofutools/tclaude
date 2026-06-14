@@ -57,6 +57,42 @@ func TestDashboardCodexUsage_SurfacedInSnapshot(t *testing.T) {
 	assert.NotEmpty(t, snap.Usage.Codex.SevenDay.ResetsAt, "codex weekly resets_at populated")
 }
 
+// Scenario: Codex usage must NOT vanish just because Codex has been idle a
+// while. Unlike the Claude readout (kept fresh by a network poller), Codex
+// figures come from rollouts that only update when Codex runs — so the readout
+// has to persist on the last-known snapshot until each window actually resets,
+// not expire on a short wall-clock cap. A rollout last touched ~40 minutes ago
+// (well past the Claude 30-min cap), with both windows still open, must still
+// surface. Regression guard for the staleness model.
+func TestDashboardCodexUsage_PersistsWhileWindowOpen(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	usage := testharness.CodexTokenUsage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}
+
+	cx := testharness.NewCodexSim(t, f.World.HomeDir, f.World.HomeDir)
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteTokenCountRateLimits(usage, usage,
+		&testharness.CodexRateLimitWindowSeed{UsedPercent: 22, WindowMinutes: 300, ResetsAt: time.Now().Add(3 * time.Hour)},
+		&testharness.CodexRateLimitWindowSeed{UsedPercent: 9, WindowMinutes: 10080, ResetsAt: time.Now().Add(6 * 24 * time.Hour)},
+	))
+	// Codex last ran ~40 minutes ago — past the old 30-min cap that would have
+	// hidden it.
+	idle := time.Now().Add(-40 * time.Minute)
+	require.NoError(t, os.Chtimes(cx.RolloutPath, idle, idle))
+
+	agentd.RefreshCodexUsageForTest()
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	require.NotNil(t, snap.Usage.Codex, "codex usage persists ~40 min after the last Codex turn")
+	require.True(t, snap.Usage.Codex.Available)
+	require.NotNil(t, snap.Usage.Codex.FiveHour, "5h window still open ⇒ still shown")
+	assert.Equal(t, 22.0, snap.Usage.Codex.FiveHour.Pct)
+	require.NotNil(t, snap.Usage.Codex.SevenDay, "weekly window still open ⇒ still shown")
+	assert.Equal(t, 9.0, snap.Usage.Codex.SevenDay.Pct)
+}
+
 // Scenario: Codex usage degrades gracefully — the dashboard omits the Codex
 // line (usage.codex == null) rather than showing a broken state — across the
 // ways the data goes missing, all reached via the real /api/snapshot surface:
@@ -90,20 +126,20 @@ func TestDashboardCodexUsage_UnavailableDegradesGracefully(t *testing.T) {
 	snap = fetchDashSnapshot(t, mux)
 	assert.Nil(t, snap.Usage.Codex, "no codex line when no token_count carries usable rate limits")
 
-	// Case 3: a rollout carrying real rate limits, but the file is older than
-	// the 30-min staleness cap — the scan skips it, so a long-idle Codex
-	// degrades to nothing rather than showing stale figures.
+	// Case 3: a rollout carrying real rate limits, but the file predates the
+	// max-age window (older than the weekly window, so it can only describe
+	// already-reset windows) — the scan skips it.
 	cxStale := testharness.NewCodexSim(t, f.World.HomeDir, f.World.HomeDir)
 	require.NoError(t, cxStale.Start())
 	require.NoError(t, cxStale.WriteTokenCountRateLimits(usage, usage,
 		&testharness.CodexRateLimitWindowSeed{UsedPercent: 30, WindowMinutes: 300, ResetsAt: time.Now().Add(time.Hour)},
 		&testharness.CodexRateLimitWindowSeed{UsedPercent: 20, WindowMinutes: 10080, ResetsAt: time.Now().Add(48 * time.Hour)},
 	))
-	old := time.Now().Add(-31 * time.Minute)
-	require.NoError(t, os.Chtimes(cxStale.RolloutPath, old, old), "backdate the rollout past the staleness cap")
+	old := time.Now().Add(-9 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(cxStale.RolloutPath, old, old), "backdate the rollout past the max-age window")
 	agentd.RefreshCodexUsageForTest()
 	snap = fetchDashSnapshot(t, mux)
-	assert.Nil(t, snap.Usage.Codex, "no codex line when the rollout is older than the staleness cap")
+	assert.Nil(t, snap.Usage.Codex, "no codex line when the rollout is older than the weekly window")
 
 	// Case 4: a fresh snapshot whose windows have already reset — the figures
 	// predate the reset and Codex hasn't run since, so they are dropped

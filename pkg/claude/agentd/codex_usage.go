@@ -17,6 +17,19 @@ import (
 // to walk ~/.codex/sessions itself, and the snapshot collector applies the
 // same staleness cap the Claude readout uses.
 
+// codexUsageMaxAge bounds how far back a rollout snapshot may be observed and
+// still feed the readout. Unlike the Claude usage cap (usageStaleAfter, 30
+// min) — which is safe only because a network poller keeps that cache fresh
+// regardless of activity — Codex usage comes from rollouts that update ONLY
+// when Codex runs. A 30-min cap would make the Codex line vanish 30 min after
+// the last Codex turn, hiding a weekly figure that is still entirely valid.
+// So the cap is the weekly window length plus margin: a snapshot older than
+// that can only describe windows that have themselves already reset (caught
+// per-window by codexUsageWindowFor). Within that span, each window's own
+// resets_at is the real expiry, so the readout persists across idle periods
+// and each window drops out exactly when it resets.
+const codexUsageMaxAge = 8 * 24 * time.Hour
+
 var (
 	codexUsageMu   sync.RWMutex
 	codexUsageData *harness.CodexUsage // last successful scan; nil = none known
@@ -56,17 +69,17 @@ func startCodexUsagePoller(stop <-chan struct{}) {
 
 // refreshCodexUsage scans recent Codex rollouts for the latest rate-limit
 // snapshot and stores it for collectCodexUsageSnapshot to read. Only rollouts
-// touched within the staleness window are read (older ones can't beat the
-// staleness cap anyway), bounding the scan to recently-active sessions. A
-// failed scan is expected when Codex isn't installed and never surfaces beyond
-// a debug log; the snapshot just omits the Codex line.
+// touched within codexUsageMaxAge are read (an older one can only describe
+// already-reset windows), bounding the scan to sessions recent enough to still
+// matter. A failed scan is expected when Codex isn't installed and never
+// surfaces beyond a debug log; the snapshot just omits the Codex line.
 func refreshCodexUsage() {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		slog.Debug("codex usage poller: home dir unresolved; skipping", "error", err)
 		return
 	}
-	u, err := harness.LatestCodexUsage(home, time.Now().Add(-usageStaleAfter))
+	u, err := harness.LatestCodexUsage(home, time.Now().Add(-codexUsageMaxAge))
 	if err != nil {
 		slog.Debug("codex usage poller: scan failed; dashboard omits the codex line", "error", err)
 		return
@@ -78,15 +91,15 @@ func refreshCodexUsage() {
 
 // collectCodexUsageSnapshot formats the last-known Codex rate limits for
 // /api/snapshot, or returns nil — the graceful "no Codex line" state — when
-// none are known, the data has gone stale past usageStaleAfter, or every
-// window has already reset. The staleness check is against the rollout event's
-// own timestamp (Observed), so a long-idle Codex degrades to nothing rather
-// than showing hours-old figures, exactly like the Claude readout.
+// none are known, the snapshot predates codexUsageMaxAge, or every window has
+// already reset. The real per-window expiry is each window's resets_at (see
+// codexUsageWindowFor); the Observed-age check here is only a backstop for a
+// window that arrived without a reset timestamp, so it can't linger forever.
 func collectCodexUsageSnapshot() *codexDashboardUsage {
 	codexUsageMu.RLock()
 	u := codexUsageData
 	codexUsageMu.RUnlock()
-	if u == nil || u.Observed.IsZero() || time.Since(u.Observed) > usageStaleAfter {
+	if u == nil || u.Observed.IsZero() || time.Since(u.Observed) > codexUsageMaxAge {
 		return nil
 	}
 	fh := codexUsageWindowFor(u.FiveHour)

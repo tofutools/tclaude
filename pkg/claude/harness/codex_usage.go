@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -84,8 +85,15 @@ func withinWindow(got, want int) bool {
 // LatestCodexUsage scans Codex rollouts under home (~/.codex/sessions) for the
 // most recent token_count event carrying a populated rate_limits block and
 // returns its resolved windows. Only rollouts modified at/after since are
-// read — older files cannot hold a fresher snapshot than the caller would
-// accept, and bounding the scan to recently-active sessions keeps it cheap.
+// read — `since` bounds the scan to "could this still describe an unreset
+// window?" (the caller passes ~the weekly window length), so a long-idle
+// account's weekly figure survives while truly ancient files are skipped.
+//
+// Rollouts are read newest-mtime first and the scan stops as soon as no
+// remaining file could hold a newer snapshot: a file last written no later
+// than the best observation can't (its embedded event timestamps are ≤ its
+// mtime), so the common case reads just the one active rollout rather than
+// every recent file to EOF.
 //
 // Returns (nil, nil) — the normal "no Codex usage to show" state — when Codex
 // has never run, no recent rollout carries rate limits, or the sessions dir is
@@ -97,13 +105,29 @@ func LatestCodexUsage(home string, since time.Time) (*CodexUsage, error) {
 	}
 	// One rollout per session id: during the .jsonl→.jsonl.zst compression
 	// window both files exist for the same uuid, and reading both is wasted
-	// work for an account-wide figure.
-	var best *CodexUsage
+	// work for an account-wide figure. Keep only those touched at/after since.
+	type rolloutStat struct {
+		path  string
+		mtime time.Time
+	}
+	var stats []rolloutStat
 	for _, p := range dedupCodexRollouts(paths) {
-		if fi, statErr := os.Stat(p); statErr == nil && fi.ModTime().Before(since) {
+		fi, statErr := os.Stat(p)
+		if statErr != nil || fi.ModTime().Before(since) {
 			continue
 		}
-		u, err := latestCodexUsageInRollout(p)
+		stats = append(stats, rolloutStat{path: p, mtime: fi.ModTime()})
+	}
+	sort.Slice(stats, func(i, j int) bool { return stats[i].mtime.After(stats[j].mtime) })
+
+	var best *CodexUsage
+	for _, st := range stats {
+		// Newest-first: once we hold a snapshot, a file whose mtime is no later
+		// than that observation cannot contain a newer event, so stop.
+		if best != nil && !st.mtime.After(best.Observed) {
+			break
+		}
+		u, err := latestCodexUsageInRollout(st.path)
 		if err != nil {
 			continue // tolerate one unreadable rollout, keep scanning siblings
 		}
