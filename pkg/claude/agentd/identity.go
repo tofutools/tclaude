@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -31,12 +33,12 @@ type peerKey struct{}
 // classify().
 //
 //   - PID is the process that opened the socket. 0 if peerPID failed.
-//   - ConvID is the current conv-id of the nearest claude/node ancestor,
-//     read from ~/.claude/sessions/<pid>.json (or, as a fallback, from
-//     the sessions table by host pid). Empty when the caller has no
-//     claude ancestor *or* when the ancestor's conv-id couldn't be
+//   - ConvID is the current conv-id of the nearest coding-harness ancestor,
+//     read from $TCLAUDE_SESSION_ID, ~/.claude/sessions/<pid>.json, or
+//     the sessions table by host pid. Empty when the caller has no
+//     harness ancestor *or* when the ancestor's conv-id couldn't be
 //     resolved.
-//   - HasClaudeAncestor is true iff a claude/node ancestor was observed
+//   - HasClaudeAncestor is true iff a coding-harness ancestor was observed
 //     anywhere in the pid tree, regardless of conv-id resolvability.
 //   - HumanTokenValid is true iff the request carried a valid operator
 //     token (see humantoken.go).
@@ -69,15 +71,15 @@ type callerClass int
 const (
 	// classUnidentified: the peer PID could not be read. Fail closed → 401.
 	classUnidentified callerClass = iota
-	// classAgent: a confirmed Claude Code caller with a resolved conv-id.
+	// classAgent: a confirmed harness caller with a resolved conv-id.
 	classAgent
-	// classAgentUnknown: a Claude Code ancestor is present but its conv-id
+	// classAgentUnknown: a harness ancestor is present but its conv-id
 	// could not be resolved. Fail closed → 403; never treated as the human.
 	classAgentUnknown
 	// classHuman: the human operator — either the cookie-authenticated
 	// dashboard, or a CLI caller presenting a valid operator token.
 	classHuman
-	// classUnconfirmed: no Claude Code ancestor and no valid operator
+	// classUnconfirmed: no harness ancestor and no valid operator
 	// token. Fail closed → 403. Before the fail-closed model this case was
 	// assumed to be the human (fail-open) — that assumption is now gone.
 	classUnconfirmed
@@ -88,12 +90,12 @@ const (
 //
 //   - DashboardHuman first: a cookie-authenticated dashboard delegation
 //     (asDashboardHumanPeer) is the human regardless of process tree.
-//   - A Claude Code ancestor wins over any operator token. The human
-//     exports TCLAUDE_HUMAN_TOKEN into their shell, so a CC session
+//   - A harness ancestor wins over any operator token. The human
+//     exports TCLAUDE_HUMAN_TOKEN into their shell, so a harness session
 //     launched from that shell inherits it; if the token could promote a
 //     caller, such an agent would escalate to human. An agent-family
 //     caller is therefore never offered the token branch.
-//   - Only a caller with no CC ancestor is eligible to be the human, and
+//   - Only a caller with no harness ancestor is eligible to be the human, and
 //     only with a valid token. Anything else is classUnconfirmed → 403.
 func classify(p *peer) callerClass {
 	if p.DashboardHuman {
@@ -131,11 +133,11 @@ func writeUnidentified(w http.ResponseWriter) {
 		"could not determine peer PID; refusing the request")
 }
 
-// writeAgentUnknown writes the fail-closed 403 for a caller with a Claude
-// Code ancestor whose conv-id could not be resolved.
+// writeAgentUnknown writes the fail-closed 403 for a caller with a harness
+// ancestor whose conv-id could not be resolved.
 func writeAgentUnknown(w http.ResponseWriter) {
 	writeError(w, http.StatusForbidden, "auth",
-		"caller has a Claude Code ancestor but no resolvable conv-id")
+		"caller has a coding-harness ancestor but no resolvable conv-id")
 }
 
 // authedCaller resolves a request to either the human operator or a
@@ -168,7 +170,7 @@ func authedCaller(w http.ResponseWriter, r *http.Request) (convID string, isHuma
 // human-consent layer here — the dashboard human legitimately holds no
 // operator token, so DashboardHuman is set explicitly and classify()
 // returns classHuman for it. (Without this the synthetic peer would have
-// no CC ancestor and no token → classUnconfirmed → 403.)
+// no harness ancestor and no token → classUnconfirmed → 403.)
 //
 // Used by handleDashboardCronCreate / dashboardCronPatch when they
 // delegate to handleCronCreate / handleCronPatch — same DB writes,
@@ -179,8 +181,8 @@ func asDashboardHumanPeer(r *http.Request) *http.Request {
 }
 
 // withIdentity is the per-request middleware that resolves the connecting
-// peer's PID, walks the process tree to a claude/node ancestor, reads its
-// per-pid session file, verifies any operator token the request carries,
+// peer's PID, walks the process tree to a coding-harness ancestor, resolves
+// its conv-id, verifies any operator token the request carries,
 // and attaches the result to the request context. Handlers turn that
 // peer into an authorization decision via classify().
 //
@@ -233,14 +235,14 @@ func enrollCallerOnce(convID string) {
 }
 
 // requireAgent enforces that the caller is a confirmed agent (classAgent:
-// a resolved Claude Code conv-id). Returns the conv-id and true on
+// a resolved harness conv-id). Returns the conv-id and true on
 // success, or writes 401 and returns false. The human operator and
 // unconfirmed callers are refused — this endpoint has no human path.
 func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 	p := peerFromContext(r.Context())
 	if classify(p) != classAgent {
 		writeError(w, http.StatusUnauthorized, "auth",
-			"this endpoint requires an agent identity (a resolved Claude Code conv-id)")
+			"this endpoint requires an agent identity (a resolved harness conv-id)")
 		return "", false
 	}
 	return p.ConvID, true
@@ -400,7 +402,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 		return "", true
 	case classAgentUnknown:
 		writeError(w, http.StatusForbidden, "auth",
-			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate permission")
+			"caller has a coding-harness ancestor but no resolvable conv-id; cannot evaluate permission")
 		return "", false
 	case classUnconfirmed:
 		writeUnconfirmed(w)
@@ -548,21 +550,25 @@ func parseAskHumanHeader(r *http.Request) time.Duration {
 	return 0
 }
 
-// convIDForPID walks up from pid to the nearest claude/node ancestor.
+// convIDForPID walks up from pid to the nearest coding-harness ancestor.
 // Returns the ancestor's conv-id plus a flag indicating whether any
-// claude/node was observed at all. The conv-id comes from the ancestor's
-// per-pid ~/.claude/sessions/<pid>.json; if that file is missing or
-// unreadable, it falls back to agentd's own sessions table keyed by host
-// pid (so a freshly-started agent whose session file hasn't landed yet
+// harness was observed at all. The conv-id comes from the ancestor's
+// $TCLAUDE_SESSION_ID mapped through agentd's own sessions table, then
+// from Claude Code's per-pid ~/.claude/sessions/<pid>.json. If neither
+// path works, it falls back to agentd's own sessions table keyed by host
+// pid (so a freshly-started CC agent whose session file hasn't landed yet
 // is still identified, rather than mis-classified as unidentifiable).
 // Callers use hasAncestor to distinguish "really the human" (no ancestor)
 // from "agent we can't identify" (ancestor present, conv-id unresolved).
 func convIDForPID(pid int) (convID string, hasAncestor bool) {
 	cur := pid
 	for cur > 1 {
-		name := session.GetProcessName(cur)
-		if name == "claude" || name == "node" {
+		name := identityProcessName(cur)
+		if isIdentityHarnessProcessName(name) {
 			hasAncestor = true
+			if id := convIDFromProcEnv(cur); id != "" {
+				return id, true
+			}
 			if id := readSessionFile(cur); id != "" {
 				return id, true
 			}
@@ -573,9 +579,47 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 				return row.ConvID, true
 			}
 		}
-		cur = session.GetParentPID(cur)
+		cur = identityParentPID(cur)
 	}
 	return "", hasAncestor
+}
+
+var (
+	identityProcessName = session.GetProcessName
+	identityParentPID   = session.GetParentPID
+	identityProcEnv     = func(pid int) ([]byte, error) {
+		return os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	}
+)
+
+func isIdentityHarnessProcessName(name string) bool {
+	return name == "node" || slices.Contains(harness.SpawnBinaries(), name)
+}
+
+func convIDFromProcEnv(pid int) string {
+	sessionID := procEnvValue(pid, "TCLAUDE_SESSION_ID")
+	if sessionID == "" {
+		return ""
+	}
+	row, err := db.LoadSession(sessionID)
+	if err != nil || row == nil || row.ConvID == "" {
+		return ""
+	}
+	return row.ConvID
+}
+
+func procEnvValue(pid int, key string) string {
+	data, err := identityProcEnv(pid)
+	if err != nil || len(data) == 0 || key == "" {
+		return ""
+	}
+	prefix := key + "="
+	for _, part := range strings.Split(string(data), "\x00") {
+		if strings.HasPrefix(part, prefix) {
+			return strings.TrimPrefix(part, prefix)
+		}
+	}
+	return ""
 }
 
 // readSessionFile loads ~/.claude/sessions/<pid>.json and returns
