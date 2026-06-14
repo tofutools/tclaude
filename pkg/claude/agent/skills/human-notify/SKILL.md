@@ -1,6 +1,14 @@
 ---
 name: human-notify
-description: Reach the human via `tclaude agent notify-human "<message>"` — the message lands in the agentd dashboard's Messages tab, where the human reads it off the busy terminal. Permission-gated on the `human.notify` slug (group owners also pass); the human grants the slug to a trusted coordinating agent (e.g. the PO), so an agent with neither the slug nor group ownership cannot post to the channel. Use to send the human status updates or questions that need a human decision. NOT for agent-to-agent messaging — that is the `agent-coord` skill.
+description: >-
+  Reach the human via `tclaude agent notify-human "<message>"` — the message
+  lands in the agentd dashboard's Messages tab, where the human reads it off
+  the busy terminal. Permission-gated on the `human.notify` slug (group owners
+  also pass); the human grants the slug to a trusted coordinating agent (e.g.
+  the PO), so an agent with neither the slug nor group ownership cannot post to
+  the channel. Use to send the human status updates or questions that need a
+  human decision. NOT for agent-to-agent messaging — that is the `agent-coord`
+  skill.
 ---
 
 # Notifying the human

@@ -1,6 +1,15 @@
 ---
 name: agent-schedule
-description: Schedule recurring nudges and check-ins via `tclaude agent cron {ls, add, rm, logs}`. The agentd scheduler ticks every 30s and fires due jobs as agent_messages (when sender + target share a group) or direct tmux send-keys (solo target). Use to set up periodic status pings to peer agents (e.g. a Product Owner agent pinging workers every 10 minutes), self-check-ins, or any task that's currently a `/loop` or external cron. Self-targeted scheduling needs `self.schedule` (default-granted alongside the other self-lifecycle slugs); cross-agent scheduling needs `agent.schedule` OR being an owner of a group containing the target.
+description: >-
+  Schedule recurring nudges and check-ins via `tclaude agent cron {ls, add, rm,
+  logs}`. The agentd scheduler ticks every 30s and fires due jobs as
+  agent_messages (when sender + target share a group) or direct tmux send-keys
+  (solo target). Use to set up periodic status pings to peer agents (e.g. a
+  Product Owner agent pinging workers every 10 minutes), self-check-ins, or any
+  task that's currently a `/loop` or external cron. Self-targeted scheduling
+  needs `self.schedule` (default-granted alongside the other self-lifecycle
+  slugs); cross-agent scheduling needs `agent.schedule` OR being an owner of a
+  group containing the target.
 ---
 
 # Recurring scheduled jobs
