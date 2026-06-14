@@ -216,6 +216,57 @@ function renderVirtualRetiredGroup(g) {
   `;
 }
 
+// renderVirtualPendingGroup renders the synthetic "Pending" group —
+// dashboard spawns whose conv-id hasn't materialised yet (JOH-205 inc2).
+// Each row is a live-but-gated spawn keyed on its LABEL (it has no
+// conv-id yet); its only action is the focus button, which opens the pane
+// (POST /api/pending/focus/{label}) so the operator can clear the startup
+// gate. Not a drag source or target — a pending spawn isn't an agent yet,
+// so there is nothing to drag into a group. Defaults OPEN: it's an alert,
+// so the rows should be visible without a click (collapsible all the same,
+// persisted like every other group). The empty branch is defensive — the
+// caller (tabs.js) only builds this group when there are pending spawns.
+function renderVirtualPendingGroup(g) {
+  const members = g.members || [];
+  const key = g.key || g.name;
+  const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) !== '0';
+  const body = members.length === 0
+    ? '<div class="muted">(no pending spawns)</div>'
+    : `
+        <table>
+          <thead><tr><th></th><th>label</th><th>name</th><th>group</th><th>dir</th><th>age</th><th></th></tr></thead>
+          <tbody>
+            ${members.map(p => {
+              const focusBtn = p.online
+                ? `<button class="primary" data-act="focus-pending" data-label="${esc(p.label)}" title="Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.">focus</button>`
+                : `<button disabled title="This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.">focus</button>`;
+              return `
+              <tr>
+                <td>${onlineDot(p.online)}</td>
+                <td class="id">${esc(p.label)}</td>
+                <td><span class="rowname">${esc(p.name || p.role || '(unnamed)')}</span></td>
+                <td>${esc(p.group || '(none)')}</td>
+                <td><span class="muted" title="${esc(p.cwd || '')}">${esc(p.cwd ? shortCwd(p.cwd) : '')}</span></td>
+                <td><span class="last-hook">${esc(p.created_at ? relTime(p.created_at) : '')}</span></td>
+                <td><div class="row-actions">${focusBtn}</div></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+  return `
+    <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
+      <summary>
+        <strong class="group-name">${esc(g.name)}</strong>
+        <span class="group-virtual-badge" title="A virtual group, not a real one — dashboard spawns waiting to clear a startup gate (untrusted dir / config prompt / OpenAI auth). Click a row's focus button to open its pane and clear the gate; it then becomes a normal agent.">virtual</span>
+        <span class="muted">— ${members.length} pending spawn${members.length === 1 ? '' : 's'}</span>
+      </summary>
+      <div class="subtable">
+        ${body}
+      </div>
+    </details>
+  `;
+}
+
 // groupNotifyMenuItem renders the per-group OS-notification toggle as a
 // ⚙ options-menu row. It used to be a 🔔/🔕 chip in the group summary's
 // header strip, but that strip was getting crowded, so the control moved
@@ -283,6 +334,7 @@ function renderGroups(groups) {
   return groups.map(g => {
     if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)
       : g.retired ? renderVirtualRetiredGroup(g)
+      : g.pending ? renderVirtualPendingGroup(g)
       : renderVirtualGroup(g);
     const members = g.members || [];
     // Offline visibility: per-group override falls back to the

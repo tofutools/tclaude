@@ -63,9 +63,11 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 	if noCopyConv {
 		label = generateSpawnLabel()
 		// A clone is a relaunch, not a fresh opt-in, so it never engages the
-		// experimental auto-review guardian (autoReview=false) — same rationale
-		// as approvalForHarness re-defaulting rather than carrying per-conv state.
-		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false); err != nil {
+		// experimental auto-review guardian (autoReview=false) nor pre-trusts the
+		// cwd (trustDir=false — that edits ~/.codex/config.toml and is an explicit
+		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
+		// rather than carrying per-conv state.
+		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false, false); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),

@@ -127,9 +127,9 @@ type gatedCodexSpawner struct {
 	sims map[string]*testharness.CodexSim
 }
 
-func (s *gatedCodexSpawner) SpawnNew(label, cwd, effort, model, harnessName, sandbox, approval string, autoReview bool) error {
+func (s *gatedCodexSpawner) SpawnNew(label, cwd, effort, model, harnessName, sandbox, approval string, autoReview, trustDir bool) error {
 	if harnessName != "codex" {
-		return s.inner.SpawnNew(label, cwd, effort, model, harnessName, sandbox, approval, autoReview)
+		return s.inner.SpawnNew(label, cwd, effort, model, harnessName, sandbox, approval, autoReview, trustDir)
 	}
 	// Build the sim but do NOT Start it: no rollout (the spawn poll's
 	// conv-store discovery finds nothing) and not alive yet.

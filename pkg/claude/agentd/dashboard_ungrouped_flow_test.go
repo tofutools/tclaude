@@ -20,6 +20,7 @@ type dashSnapshot struct {
 	Ungrouped            []dashAgent        `json:"ungrouped"`
 	Conversations        []dashConversation `json:"conversations"`
 	Retired              []dashRetired      `json:"retired"`
+	Pending              []dashPending      `json:"pending"`
 	Usage                dashUsage          `json:"usage"`
 	Harnesses            []dashHarness      `json:"harnesses"`
 	NotificationsEnabled bool               `json:"notifications_enabled"`
@@ -39,6 +40,20 @@ type dashRetired struct {
 	Online       bool   `json:"online"`
 	RetiredBy    string `json:"retired_by,omitempty"`
 	RetireReason string `json:"retire_reason,omitempty"`
+}
+
+// dashPending mirrors agentd.dashboardPending — a not-yet-enrolled
+// dashboard spawn surfaced on the snapshot's pending[] list (JOH-205).
+type dashPending struct {
+	Label     string `json:"label"`
+	Group     string `json:"group,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Descr     string `json:"descr,omitempty"`
+	Online    bool   `json:"online"`
+	Cwd       string `json:"cwd,omitempty"`
+	Harness   string `json:"harness,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 type dashGroup struct {

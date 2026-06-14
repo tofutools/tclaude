@@ -110,8 +110,41 @@ function retiredVisible() {
   return el ? el.checked : true;
 }
 
+// The virtual "Pending" group — dashboard spawns whose conv-id has not
+// materialised yet (the pending_spawns table — JOH-205 inc2). A pending
+// Codex agent has a live tmux pane but is stuck behind a startup gate
+// (untrusted dir, new-hooks-config prompt, OpenAI auth modal), so it
+// never took the first turn that exposes its conv-id and is not an
+// enrolled agent yet. Surfaced so the operator can SEE it and focus its
+// pane to clear the gate; the pending_spawn sweeper then promotes it into
+// a real agent.
+//
+// Unlike the other virtual groups this is an actionable ALERT, not a drag
+// target: the caller (tabs.js) only builds it when there are pending
+// spawns, so there is no persistent empty box, and it has no opt-out
+// checkbox — a gated spawn must always surface.
+const PENDING_LABEL = 'Pending';
+const PENDING_VKEY = ' pending-virtual';
+
+// virtualPendingGroup builds the synthetic group from the snapshot's
+// pending[] rows. The `pending` flag is the discriminator renderGroups
+// keys off to pick the pending-row renderer (focus button only).
+function virtualPendingGroup(pending) {
+  const rows = (pending || []).slice();
+  return {
+    name: PENDING_LABEL,
+    key: PENDING_VKEY,
+    virtual: true,
+    pending: true,
+    descr: 'spawns waiting to clear a startup gate',
+    members: rows,
+    online: rows.filter(p => p.online).length,
+  };
+}
+
 export {
   virtualUngroupedGroup, ungroupedVisible,
   virtualConversationsGroup, conversationsVisible,
   virtualRetiredGroup, retiredVisible,
+  virtualPendingGroup,
 };

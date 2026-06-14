@@ -336,7 +336,17 @@ type snapshotPayload struct {
 	// conversation data is intact; the dashboard offers a "reinstate"
 	// button. Kept separate from Agents so a retired agent never shows
 	// on the live roster.
-	Retired     []dashboardRetiredAgent `json:"retired"`
+	Retired []dashboardRetiredAgent `json:"retired"`
+	// Pending: dashboard spawns whose conv-id has not materialised yet
+	// (the pending_spawns table — JOH-205 inc2). A pending Codex agent
+	// has a live tmux pane but is stuck behind a startup gate (untrusted
+	// dir, new-hooks-config prompt, OpenAI auth modal), so it never took
+	// the first turn that exposes its conv-id and is NOT an enrolled
+	// agent yet. Surfaced as a distinct list so the operator can SEE it
+	// and click its focus button to open the pane and clear the gate;
+	// the sweeper then promotes it into Agents. Empty slice (not nil) so
+	// JS .map() / .length are safe.
+	Pending     []dashboardPending      `json:"pending"`
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
 	Cron        []dashboardCronJob      `json:"cron"`
@@ -600,6 +610,38 @@ type dashboardRetiredAgent struct {
 	RetiredAt    string `json:"retired_at,omitempty"`
 	RetiredBy    string `json:"retired_by,omitempty"`
 	RetireReason string `json:"retire_reason,omitempty"`
+}
+
+// dashboardPending is the snapshot view of one not-yet-enrolled
+// dashboard spawn (a pending_spawns row). It carries what the dashboard
+// needs to render the pending agent and drive its focus button: the
+// spawn Label (which is the session-row id AND the focus key — a pending
+// agent has no conv-id), its intended group/role/name/descr, whether its
+// tmux pane is still alive, and where it is gated (Cwd). Leaner than
+// dashboardAgent — a pending spawn has no groups/permissions/sudo to show.
+type dashboardPending struct {
+	// Label is the spawn label = the session-row id. The focus button
+	// keys on THIS (not a conv-id, which does not exist yet).
+	Label string `json:"label"`
+	// Group is the resolved name of the group the spawn will join (from
+	// the row's group_id), or "" for an ungrouped spawn.
+	Group string `json:"group,omitempty"`
+	Role  string `json:"role,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Descr string `json:"descr,omitempty"`
+	// Online reports whether the spawn's tmux pane is still alive — a
+	// pending row whose pane has died (operator closed it, or the spawn
+	// crashed) is stale and can no longer be focused to clear the gate.
+	Online bool `json:"online"`
+	// Cwd is where the agent is gated (from its session row), so the
+	// operator sees which untrusted dir to trust. Harness is the spawn's
+	// harness ("codex" in practice — Claude Code fires its hook at launch
+	// and never lands here). Both empty when no session row exists yet.
+	Cwd     string `json:"cwd,omitempty"`
+	Harness string `json:"harness,omitempty"`
+	// CreatedAt is the RFC3339Nano spawn time (how long it has been
+	// pending), used to sort newest-first and show age.
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // dashboardSudoEntry is the wire shape for one active sudo grant in
@@ -1111,6 +1153,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	out.Conversations = collectConversationsSnapshot(activeAgents, retiredAgents, aliveSessions)
 	out.Retired = collectRetiredSnapshot(retiredAgents, aliveSessions)
+	out.Pending = collectPendingSnapshot(aliveSessions)
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
@@ -1208,6 +1251,52 @@ func collectRetiredSnapshot(retired []*db.AgentEnrollment, aliveSessions map[str
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].RetiredAt > out[j].RetiredAt // newest first
+	})
+	return out
+}
+
+// collectPendingSnapshot turns the pending_spawns rows into the
+// dashboard's "Pending" list — dashboard spawns whose conv-id has not
+// materialised yet (a live tmux pane stuck behind a startup gate). Each
+// carries the spawn label (the focus key — there is no conv-id), the
+// resolved group name, the spawn descriptors, and — from the spawn's
+// session row — whether its pane is still alive and where it is gated.
+// Newest spawn first, so the agent the operator just clicked sits at the
+// top. aliveSessions is the snapshot-shaped alive set the caller
+// pre-fetched; this function never spawns its own tmux probe. Returns an
+// empty slice (not nil) so JS .map() / .length are safe.
+func collectPendingSnapshot(aliveSessions map[string]struct{}) []dashboardPending {
+	out := []dashboardPending{}
+	pendings, err := db.ListPendingSpawns()
+	if err != nil {
+		return out
+	}
+	names := loadGroupNames()
+	for _, p := range pendings {
+		dp := dashboardPending{
+			Label:     p.Label,
+			Group:     names[p.GroupID],
+			Role:      p.Role,
+			Name:      p.Name,
+			Descr:     p.Descr,
+			CreatedAt: p.CreatedAt,
+		}
+		// The session row (keyed by label, since the conv-id is the very
+		// thing that hasn't materialised) tells us whether the pane is
+		// still alive and where the agent is gated. A pending row with no
+		// session row, or a dead pane, renders as offline — stale, no
+		// longer focusable.
+		if sess, err := db.LoadSession(p.Label); err == nil && sess != nil {
+			if sess.TmuxSession != "" {
+				_, dp.Online = aliveSessions[sess.TmuxSession]
+			}
+			dp.Cwd = sess.Cwd
+			dp.Harness = sess.Harness
+		}
+		out = append(out, dp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt > out[j].CreatedAt // newest first
 	})
 	return out
 }
