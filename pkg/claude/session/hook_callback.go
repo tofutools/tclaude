@@ -831,15 +831,11 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		}
 	}
 
-	// Update PID if stale
-	if state.PID > 0 && !IsProcessAlive(state.PID) {
-		if newPID := FindClaudePID(); newPID > 0 {
-			state.PID = newPID
-		}
-	} else if state.PID == 0 {
-		if newPID := FindClaudePID(); newPID > 0 {
-			state.PID = newPID
-		}
+	// Keep the row keyed by the real harness process, not tmux's shell
+	// wrapper pane PID. Spawn records #{pane_pid}; hooks run under the
+	// harness, so FindClaudePID can correct wrapper-shaped rows.
+	if newPID := FindClaudePID(); newPID > 0 && state.PID != newPID {
+		state.PID = newPID
 	}
 
 	// Save updated state

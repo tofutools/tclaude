@@ -557,6 +557,9 @@ func parseAskHumanHeader(r *http.Request) time.Duration {
 var (
 	procName   = session.GetProcessName
 	procParent = session.GetParentPID
+	procEnv    = func(pid int) ([]byte, error) {
+		return os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	}
 )
 
 // convIDForPID walks up from pid to the nearest coding-harness ancestor —
@@ -566,15 +569,15 @@ var (
 // walk FindClaudePID uses to record the host pid).
 //
 // Returns the ancestor's conv-id plus a flag indicating whether any such
-// ancestor was observed at all. For Claude Code the conv-id comes from the
-// ancestor's per-pid ~/.claude/sessions/<pid>.json; if that file is missing
-// or unreadable — always, for Codex, which writes no such file — it falls
-// back to agentd's own sessions table keyed by host pid (so a freshly
-// started agent whose session file hasn't landed yet, and every Codex
-// agent, is still identified rather than mis-classified as unidentifiable).
-// The sessions row is keyed by the same harness-ancestor pid this walk
-// reaches: the hook callback records FindClaudePID() (JOH-160), which walks
-// to the identical ancestor.
+// ancestor was observed at all. The conv-id comes first from the harness
+// process's $TCLAUDE_SESSION_ID mapped through agentd's sessions table.
+// That session-id key is stable even when tmux initially records the shell
+// wrapper PID rather than the real harness PID. If the env path is missing,
+// Claude Code's per-pid ~/.claude/sessions/<pid>.json is tried next; if
+// that file is missing or unreadable — always, for Codex, which writes no
+// such file — it falls back to agentd's own sessions table keyed by host pid.
+// The hook callbacks also correct wrapper-shaped session rows to the real
+// harness PID, so the PID fallback converges after the first hook.
 //
 // Callers use hasAncestor to distinguish "really the human" (no ancestor)
 // from "agent we can't identify" (ancestor present, conv-id unresolved).
@@ -584,6 +587,9 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 		name := procName(cur)
 		if session.IsHarnessProcessName(name) {
 			hasAncestor = true
+			if id := convIDFromProcEnv(cur); id != "" {
+				return id, true
+			}
 			if id := readSessionFile(cur); id != "" {
 				return id, true
 			}
@@ -597,6 +603,32 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 		cur = procParent(cur)
 	}
 	return "", hasAncestor
+}
+
+func convIDFromProcEnv(pid int) string {
+	sessionID := procEnvValue(pid, "TCLAUDE_SESSION_ID")
+	if sessionID == "" {
+		return ""
+	}
+	row, err := db.LoadSession(sessionID)
+	if err != nil || row == nil || row.ConvID == "" {
+		return ""
+	}
+	return row.ConvID
+}
+
+func procEnvValue(pid int, key string) string {
+	data, err := procEnv(pid)
+	if err != nil || len(data) == 0 || key == "" {
+		return ""
+	}
+	prefix := key + "="
+	for _, part := range strings.Split(string(data), "\x00") {
+		if strings.HasPrefix(part, prefix) {
+			return strings.TrimPrefix(part, prefix)
+		}
+	}
+	return ""
 }
 
 // readSessionFile loads ~/.claude/sessions/<pid>.json and returns
