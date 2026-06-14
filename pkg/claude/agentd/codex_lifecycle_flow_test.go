@@ -87,7 +87,10 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	f.AssertSentContains(spawn.TmuxTarget(), "/quit", 2*time.Second)
 
 	// `/quit` took the pane down: the CodexSim's quit handler flipped it
-	// dead, so has-session now reports offline.
-	assert.False(t, f.World.Tmux.IsAlive(spawn.TmuxSession),
+	// dead, so has-session now reports offline. Poll because send-keys
+	// delivery and command dispatch can lag very slightly on macOS CI.
+	require.Eventually(t, func() bool {
+		return !f.World.Tmux.IsAlive(spawn.TmuxSession)
+	}, 2*time.Second, 10*time.Millisecond,
 		"after a graceful /quit the codex pane must be offline")
 }
