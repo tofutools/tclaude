@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -382,9 +383,16 @@ func runNew(params *NewParams) error {
 	// at startup, so the [projects."<cwd>"] trust entry must already be there
 	// or the agent freezes on the trust-folder modal (JOH-205). Opt-in only
 	// (the early gate guarantees the harness is Codex); atomic + idempotent.
+	//
+	// Best-effort: pre-trust is an optimisation over the focus-button fallback
+	// — if it fails (an FS error, or a config shape the editor refuses to touch
+	// rather than corrupt), the agent still launches and the operator can clear
+	// the trust-folder modal on the pending pane via the dashboard focus button
+	// (Part A). So warn and continue rather than fail the spawn.
 	if params.TrustDir && h.Name == harness.CodexName {
 		if err := harness.EnsureCodexDirTrusted(cwd); err != nil {
-			return fmt.Errorf("pre-trust launch dir for codex: %w", err)
+			slog.Warn("could not pre-trust the launch dir for codex; the trust-folder modal may appear — clear it via the dashboard focus button",
+				"cwd", cwd, "err", err)
 		}
 	}
 

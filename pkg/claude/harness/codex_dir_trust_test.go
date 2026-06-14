@@ -165,6 +165,63 @@ func TestPlanCodexDirTrust_RejectsRelativeDirAtFileLayer(t *testing.T) {
 	require.Error(t, err, "a non-absolute project dir is rejected")
 }
 
+// The high-severity case the cold review found: a dir already keyed under
+// `projects` in a NON-header form (Codex writes the header form, but a config
+// can be hand-edited). Appending a second [projects."dir"] table would produce
+// a duplicate key → invalid TOML, so the editor must REFUSE rather than corrupt
+// — and must never emit a duplicate.
+func TestPlanCodexDirTrust_RefusesDirKeyedUnderPlainProjectsTable(t *testing.T) {
+	// [projects] parent table with a dotted "dir".trust_level body key.
+	existing := "[projects]\n\"/a/b\".trust_level = \"trusted\"\n"
+	changed, out, err := planCodexDirTrust([]byte(existing), "/a/b")
+	require.Error(t, err, "dir keyed under a plain [projects] table must be refused, not duplicated")
+	assert.False(t, changed)
+	assert.Nil(t, out)
+}
+
+func TestPlanCodexDirTrust_RefusesDirInPlainProjectsInlineTable(t *testing.T) {
+	existing := "[projects]\n\"/a/b\" = { trust_level = \"trusted\" }\n"
+	_, _, err := planCodexDirTrust([]byte(existing), "/a/b")
+	require.Error(t, err, "dir as an inline table under [projects] must be refused")
+}
+
+func TestPlanCodexDirTrust_RefusesDirAsTopLevelDottedKey(t *testing.T) {
+	for _, existing := range []string{
+		"projects.\"/a/b\".trust_level = \"trusted\"\n",       // dotted sub-key
+		"projects.\"/a/b\" = { trust_level = \"trusted\" }\n", // inline table
+	} {
+		_, _, err := planCodexDirTrust([]byte(existing), "/a/b")
+		require.Errorf(t, err, "top-level dotted projects.\"dir\" must be refused; config=%q", existing)
+	}
+}
+
+// Not over-broad: a plain [projects] table that keys OTHER dirs must NOT block
+// adding ours — [projects] + [projects."/a/b"] is valid TOML (distinct keys).
+func TestPlanCodexDirTrust_AppendsAlongsidePlainProjectsTableForOtherDir(t *testing.T) {
+	existing := "[projects]\n\"/other\".trust_level = \"trusted\"\n"
+	changed, out, err := planCodexDirTrust([]byte(existing), "/a/b")
+	require.NoError(t, err, "a [projects] table keyed for a different dir must not block ours")
+	require.True(t, changed)
+	s := string(out)
+	assert.Contains(t, s, `[projects."/a/b"]`)
+	assert.Contains(t, s, `"/other".trust_level = "trusted"`, "the other dir's entry is preserved")
+}
+
+// ensureDirTrustedInFile preserves the existing file mode rather than widening
+// it (the cold review's medium finding): a 0600 config stays 0600.
+func TestEnsureDirTrustedInFile_PreservesFileMode(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(cfg, []byte("model = \"gpt-5\"\n"), 0o600))
+
+	require.NoError(t, ensureDirTrustedInFile(cfg, "/proj/x"))
+
+	fi, err := os.Stat(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(),
+		"a 0600 config must not be widened by the trust write")
+}
+
 // ensureDirTrustedInFile end-to-end: it creates a missing config, is
 // atomic (the target only ever appears complete), and is idempotent (a
 // second call writes nothing).

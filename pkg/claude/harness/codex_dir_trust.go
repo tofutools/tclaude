@@ -111,7 +111,14 @@ func ensureDirTrustedInFile(configPath, projectDir string) error {
 		return nil // already trusted — clean no-op (idempotent)
 	}
 
-	return atomicWriteFile(configPath, out, 0o644)
+	// Preserve the existing file's mode — a user who chmod'd config.toml to
+	// 0600 (Codex config can carry auth-adjacent settings) must not have it
+	// silently widened. Fall back to 0644 only when creating the file fresh.
+	perm := os.FileMode(0o644)
+	if fi, statErr := os.Stat(configPath); statErr == nil {
+		perm = fi.Mode().Perm()
+	}
+	return atomicWriteFile(configPath, out, perm)
 }
 
 // planCodexDirTrust is the pure core: given the current config bytes and an
@@ -140,12 +147,26 @@ func planCodexDirTrust(data []byte, projectDir string) (bool, []byte, error) {
 	}
 
 	if hdrIdx == -1 {
-		// No table for this dir yet. Refuse if `projects` is bound in a
-		// conflicting form, where adding a [projects."dir"] subtable would
-		// produce invalid TOML (duplicate key) — better to surface an error
-		// than corrupt the user's config.
+		// No [projects."dir"] table header for this dir. Before appending one,
+		// refuse (rather than corrupt) two cases where the append would
+		// produce invalid TOML — a duplicate key:
+		//   1. `projects` bound in a conflicting form (inline table / scalar /
+		//      [[projects]] array-of-tables): a [projects."dir"] subtable then
+		//      redefines `projects`.
+		//   2. THIS dir already keyed under `projects` in a NON-header form —
+		//      a top-level dotted `projects."dir"…`, or a `"dir"…` key inside a
+		//      plain [projects] table. Codex always writes the header form we
+		//      match above, so this only arises in a hand-edited config; the
+		//      dir may well already be trusted there, so appending a second
+		//      definition would both corrupt the file AND be redundant.
+		// The caller treats this error as non-fatal (pre-trust is best-effort —
+		// the operator can still clear the modal via the dashboard focus
+		// button), so a refusal degrades gracefully rather than failing a spawn.
 		if conflictsWithProjectsTable(lines) {
-			return false, nil, fmt.Errorf("codex dir-trust: refusing to edit config — `projects` is defined in a conflicting form (inline table / scalar / array-of-tables); trust %q by hand", projectDir)
+			return false, nil, fmt.Errorf("codex dir-trust: refusing to edit config — `projects` is defined in a conflicting form (inline table / scalar / array-of-tables); trust %q via the Codex modal instead", projectDir)
+		}
+		if dirKeyedUnderProjectsNonHeader(lines, projectDir) {
+			return false, nil, fmt.Errorf("codex dir-trust: %q is already keyed under [projects] in a form tclaude won't edit (a dotted or inline-table entry); leave it as-is (it may already be trusted) or fix it via the Codex modal", projectDir)
 		}
 		out := append([]string{}, lines...)
 		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
@@ -224,6 +245,56 @@ func conflictsWithProjectsTable(lines []string) bool {
 		// `projects.x = …` (key != "projects") keeps it a table and is fine.
 		if currentTable == "" {
 			if key, _, ok := tomlKeyValue(t); ok && key == "projects" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dirKeyedUnderProjectsNonHeader reports whether projectDir is already keyed
+// under `projects` in a form OTHER than the `[projects."dir"]` table header
+// (which the caller has already ruled out). Two such forms exist:
+//
+//   - a top-level dotted key `projects."dir"…` (e.g. `projects."dir".trust_level
+//     = "trusted"` or `projects."dir" = { … }`);
+//   - a key `"dir"…` inside a plain `[projects]` table.
+//
+// In either form, appending a `[projects."dir"]` table would define the same
+// key twice → invalid TOML. We can't safely splice these arbitrary shapes, so
+// the caller refuses. Path comparison uses the same TOML-quoted spelling we
+// would write, and the trailing quote in the quoted key prevents a prefix
+// match of `/a/b` against `/a/bc`.
+func dirKeyedUnderProjectsNonHeader(lines []string, projectDir string) bool {
+	qDir := tomlQuote(projectDir)   // "/a/b"
+	topPrefix := "projects." + qDir // projects."/a/b"
+	currentTable := ""
+	for _, raw := range lines {
+		t := strings.TrimSpace(raw)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		if name, ok := tomlTableHeader(t); ok {
+			currentTable = name
+			continue
+		}
+		if name, ok := tomlArrayTableHeader(t); ok {
+			currentTable = name
+			continue
+		}
+		key, _, ok := tomlKeyValue(t)
+		if !ok {
+			continue
+		}
+		switch currentTable {
+		case "":
+			// Top-level: `projects."dir"` exactly, or `projects."dir".<sub>`.
+			if key == topPrefix || strings.HasPrefix(key, topPrefix+".") {
+				return true
+			}
+		case "projects":
+			// Inside a plain [projects] table: `"dir"` exactly, or `"dir".<sub>`.
+			if key == qDir || strings.HasPrefix(key, qDir+".") {
 				return true
 			}
 		}
@@ -442,6 +513,13 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename temp config into place: %w", err)
+	}
+	// fsync the parent directory so the rename itself is durable across a hard
+	// crash (the file content is already fsync'd above). Best-effort: a
+	// directory that can't be opened/synced doesn't undo the successful write.
+	if d, derr := os.Open(dir); derr == nil {
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }
