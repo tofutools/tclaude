@@ -217,3 +217,81 @@ func TestConvIDForPID_NoHarnessAncestorStaysHuman(t *testing.T) {
 		classify(&peer{PID: peerPID, HasClaudeAncestor: false}),
 		"no ancestor and no token is still unconfirmed, not an agent")
 }
+
+// TestConvIDForPID_FollowsRowConvAcrossClear documents the /clear case. A
+// /clear rotates the agent's conv-id but keeps the SAME process and pane, so
+// the hook callback updates the SAME session row in place — located by the
+// stable TCLAUDE_SESSION_ID label, conv-id advanced + identity migrated
+// (issue #192), pid unchanged (the sh pane). Because the resolver reads the
+// row's CURRENT conv-id (it caches nothing), it follows the rotation: a
+// /clear'd agent resolves to its new conversation, never the retired one.
+func TestConvIDForPID_FollowsRowConvAcrossClear(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID  = 4201
+		codexPID = 4150
+		paneSh   = 4140 // the pane sh pid the row stays keyed by across /clear
+	)
+
+	// Pre-/clear: the spawn row keyed by the pane sh pid, on conv A.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "clearsess", PID: paneSh, ConvID: "conv-A", Harness: "codex", Status: "working",
+	}))
+
+	fakeProcTree{
+		name:   map[int]string{peerPID: "tclaude", codexPID: "codex", paneSh: "sh"},
+		parent: map[int]int{peerPID: codexPID, codexPID: paneSh},
+	}.install(t)
+
+	got, ok := convIDForPID(peerPID)
+	assert.True(t, ok)
+	assert.Equal(t, "conv-A", got, "before /clear: the original conv")
+
+	// /clear advances the SAME row's conv-id in place (id and pane pid
+	// unchanged; SaveSession upserts on the primary key).
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "clearsess", PID: paneSh, ConvID: "conv-B", Harness: "codex", Status: "working",
+	}))
+
+	got, ok = convIDForPID(peerPID)
+	assert.True(t, ok)
+	assert.Equal(t, "conv-B", got, "after /clear: follows the row to the new conv, not the stale one")
+}
+
+// TestConvIDForPID_ReincarnationNewPaneIgnoresStaleRow documents the
+// reincarnation case. Reincarnation spawns a FRESH pane (a new pane_pid) for
+// the successor conv while the predecessor's row may linger. The walk from
+// the new harness reaches only the new pane's pids, so it resolves the
+// successor conv — a stale predecessor row, keyed by a pane pid the new
+// process tree never touches, cannot bleed in.
+func TestConvIDForPID_ReincarnationNewPaneIgnoresStaleRow(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID   = 5301
+		newCodex  = 5250
+		newPaneSh = 5240
+		oldPaneSh = 5140 // predecessor pane — not in the successor's tree
+	)
+
+	// Stale predecessor row, still keyed by the old pane pid.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "old", PID: oldPaneSh, ConvID: "conv-old", Harness: "codex", Status: "exited",
+	}))
+	// Fresh reincarnated row keyed by the new pane pid, carrying the
+	// migrated identity's new conv-id.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "new", PID: newPaneSh, ConvID: "conv-new", Harness: "codex", Status: "working",
+	}))
+
+	fakeProcTree{
+		name:   map[int]string{peerPID: "tclaude", newCodex: "codex", newPaneSh: "sh"},
+		parent: map[int]int{peerPID: newCodex, newCodex: newPaneSh},
+	}.install(t)
+
+	got, ok := convIDForPID(peerPID)
+	assert.True(t, ok)
+	assert.Equal(t, "conv-new", got,
+		"resolves the successor via the new pane pid; the stale predecessor row is unreachable")
+}
