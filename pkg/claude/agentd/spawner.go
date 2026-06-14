@@ -26,8 +26,16 @@ package agentd
 // the human's place; false (the default) leaves the human as reviewer. It is an
 // experimental, undocumented-upstream opt-in, only ever true via an explicit
 // request — relaunch paths (resume/clone/reincarnate) pass false (JOH-200 part 2).
+//
+// trustDir (SpawnNew only) opts into pre-trusting the launch dir for Codex:
+// the forked `tclaude session new --trust-dir` writes the [projects."<cwd>"]
+// trust entry into ~/.codex/config.toml before launch so a detached pane
+// doesn't freeze on the trust-folder modal (JOH-205). false (the default)
+// leaves the modal in place. It is fresh-spawn-only — relaunch paths
+// (reincarnate/clone) pass false, the same as autoReview — so SpawnResume has
+// no such parameter (a resumed conv's dir was already its own at first launch).
 type Spawner interface {
-	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
+	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error
 	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
 }
 
@@ -43,8 +51,8 @@ var Spawn Spawner = LiveSpawner{}
 // it (e.g., a recording proxy).
 type LiveSpawner struct{}
 
-func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
-	return liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview)
+func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
+	return liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview, trustDir)
 }
 func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
 	return liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval, autoReview)

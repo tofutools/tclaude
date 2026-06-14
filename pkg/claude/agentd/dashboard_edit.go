@@ -55,6 +55,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hide/", handleDashboardHideAPI)
 	mux.HandleFunc("/api/term/", handleDashboardTermAPI)
 	mux.HandleFunc("/api/open-window/", handleDashboardOpenWindowAPI)
+	mux.HandleFunc("/api/pending/focus/", handleDashboardPendingFocusAPI)
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/permissions", handleDashboardPermissionsAPI)

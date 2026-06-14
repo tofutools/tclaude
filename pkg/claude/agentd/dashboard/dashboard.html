@@ -1040,6 +1040,9 @@
       <span class="cron-create-label">Sandbox</span>
       <select id="agent-spawn-sandbox"></select>
     </label>
+    <label class="cron-create-enabled" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">
+      <input id="agent-spawn-trust-dir" type="checkbox" /> Pre-trust this directory for Codex — skip the trust-folder modal (edits ~/.codex/config.toml)
+    </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
       <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 chars)" spellcheck="false"></textarea>

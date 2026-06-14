@@ -156,6 +156,15 @@ function applySpawnHarness(harnessName) {
     sandSel.value = h.default_sandbox || h.sandbox_modes[0];
   }
 
+  // Codex-only: the opt-in "pre-trust this dir" checkbox (JOH-205). It edits
+  // the user's ~/.codex/config.toml, so it is OFF by default and never
+  // auto-checked; hiding it for a non-Codex harness also clears it so the
+  // choice can't leak across a harness switch. Gated on the harness name, the
+  // same way the body below gates `harness !== 'claude'`.
+  const isCodexHarness = !!(h && h.name === 'codex');
+  $('#agent-spawn-trust-dir-row').style.display = isCodexHarness ? '' : 'none';
+  if (!isCodexHarness) $('#agent-spawn-trust-dir').checked = false;
+
   // Rebuild the Effort menu for this harness (data-driven off the catalog),
   // then re-apply the effort remembered for the now-active model control.
   populateSpawnEffortSelect(h);
@@ -431,6 +440,10 @@ async function submitAgentSpawn() {
     // human picks otherwise.
     if (harness && harness !== 'claude') body.harness = harness;
     if (sandbox) body.sandbox = sandbox;
+    // Opt-in dir-trust (Codex only): the daemon pre-trusts the cwd by editing
+    // ~/.codex/config.toml, so it is sent ONLY when the human explicitly
+    // ticked the checkbox — never defaulted.
+    if (harness === 'codex' && $('#agent-spawn-trust-dir').checked) body.trust_dir = true;
     if (sel.path && wtRepo && wtRepo !== cwd) {
       body.cwd = cwd;
       body.worktree_path = sel.path;
