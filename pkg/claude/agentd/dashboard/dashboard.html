@@ -216,6 +216,14 @@
         <span class="cfg-hint">Auto-run <code>/compact</code> once context usage reaches this percent. Off = no auto-compact.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Pre-compact guard</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-precompact-enabled" /> enabled</label>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-precompact-blockmanual" /> also block manual <code>/compact</code></label>
+        <span class="cfg-hint">Refuses Claude Code's <em>automatic</em> compaction until used context reaches a per-window floor — so a 1M session doesn't compact at the 200K boundary (~20% of the 1M bar). Lets context grow (and you reincarnate) first. Fails open when usage is unknown. By default only auto-compaction is blocked, never a <code>/compact</code> you type yourself.</span>
+        <span class="cfg-hint" style="padding-left:0">Floors — for each context-window size (tokens), the minimum used context (tokens) required before compaction is allowed. Empty = built-in defaults (150k of 200k, 800k of 1M).</span>
+        <div class="cfg-list" id="cfg-precompact-thresholds"></div>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Record hooks</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-record-hooks" /> log every hook callback payload</label>
         <span class="cfg-hint">Debugging aid — verbose; leave off for normal use.</span>
