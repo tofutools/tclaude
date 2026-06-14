@@ -32,27 +32,71 @@ func (f fakeProcTree) install(t *testing.T) {
 	t.Cleanup(func() { procName, procParent = prevName, prevParent })
 }
 
-// TestConvIDForPID_CodexAncestorResolvesViaDB is the JOH-206 regression:
-// a Codex agent's socket peer walks up to a "codex" ancestor (not
-// claude/node), and — because Codex writes no per-pid session file — its
-// conv-id is resolved from agentd's sessions table, keyed by the same
-// codex host pid the hook callback recorded. Before the fix the walk only
-// matched claude/node, so the codex ancestor was missed and the caller got
-// no identity (whoami → (unnamed), inbox → 403).
-func TestConvIDForPID_CodexAncestorResolvesViaDB(t *testing.T) {
+// TestConvIDForPID_CodexAncestorResolvesViaPaneShPID is the JOH-206
+// regression. A Codex agent's socket peer walks up to a "codex" ancestor
+// (not claude/node) and — because Codex writes no per-pid session file — its
+// conv-id comes from agentd's sessions table. The decisive detail this test
+// pins: the spawn row is keyed by the tmux pane_pid, which is the
+// `sh -c "… codex"` wrapper, and codex runs as that sh's DIRECT CHILD
+// (verified live: codex pid 205165 was a child of sh pane pid 205164). So
+// FindSessionByPID at the codex pid misses; the conv-id must resolve via the
+// codex ancestor's PARENT pid — the pane sh, which is the row key.
+func TestConvIDForPID_CodexAncestorResolvesViaPaneShPID(t *testing.T) {
 	setupTestDB(t)
 
 	const (
 		peerPID  = 4101 // the `tclaude agent` CLI process over the socket
-		shPID    = 4090 // codex's shell wrapper
-		codexPID = 4050 // the codex runtime — what the walk must recognise
+		codexPID = 4050 // the codex runtime — recognised as the harness ancestor
+		paneSh   = 4040 // the `sh -c "… codex"` pane wrapper = the tmux pane_pid
 	)
 	const convID = "11111111-2222-3333-4444-555555555555"
 
-	// The sessions row the hook callback would have written: keyed by the
-	// codex host pid (FindClaudePID), conv-id populated after the seed turn.
+	// The spawn row `tclaude session new` actually writes: keyed by the
+	// pane_pid (ParsePIDFromTmux) — the sh wrapper, NOT the codex pid.
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID:      "codexsess",
+		PID:     paneSh,
+		ConvID:  convID,
+		Harness: "codex",
+		Status:  "working",
+	}))
+
+	fakeProcTree{
+		name: map[int]string{peerPID: "tclaude", codexPID: "codex", paneSh: "sh"},
+		parent: map[int]int{
+			peerPID:  codexPID,
+			codexPID: paneSh, // codex is the pane sh's direct child
+			// paneSh's parent is unmapped → walk ends at init.
+		},
+	}.install(t)
+
+	gotConv, hasAncestor := convIDForPID(peerPID)
+	assert.True(t, hasAncestor, "codex ancestor must be recognised")
+	assert.Equal(t, convID, gotConv, "conv-id resolves via the codex ancestor's parent (pane sh) pid")
+
+	// And the real authorization chokepoint accepts it as an agent — the
+	// surface whoami / inbox gate on.
+	p := &peer{PID: peerPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor}
+	assert.Equal(t, classAgent, classify(p))
+}
+
+// TestConvIDForPID_CodexAncestorResolvesViaOwnPID covers the variant where
+// the sessions row is keyed by the harness pid itself — the pane shell
+// exec'd into the harness (so pane_pid == the codex pid), or a hook
+// corrected the row to FindClaudePID(). The direct
+// FindSessionByPID(harness pid) lookup must still resolve it, so the fix
+// works regardless of whether an sh wrapper survives between pane and codex.
+func TestConvIDForPID_CodexAncestorResolvesViaOwnPID(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID  = 7101
+		codexPID = 7050
+	)
+	const convID = "22222222-3333-4444-5555-666666666666"
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:      "codexsess2",
 		PID:     codexPID,
 		ConvID:  convID,
 		Harness: "codex",
@@ -60,26 +104,54 @@ func TestConvIDForPID_CodexAncestorResolvesViaDB(t *testing.T) {
 	}))
 
 	fakeProcTree{
-		name: map[int]string{
-			peerPID:  "tclaude",
-			shPID:    "sh",
-			codexPID: "codex",
-		},
-		parent: map[int]int{
-			peerPID: shPID,
-			shPID:   codexPID,
-			// codexPID's parent is unmapped → walk ends at init.
-		},
+		name:   map[int]string{peerPID: "tclaude", codexPID: "codex"},
+		parent: map[int]int{peerPID: codexPID},
 	}.install(t)
 
 	gotConv, hasAncestor := convIDForPID(peerPID)
-	assert.True(t, hasAncestor, "codex ancestor must be recognised")
-	assert.Equal(t, convID, gotConv, "conv-id resolved from the sessions table")
+	assert.True(t, hasAncestor)
+	assert.Equal(t, convID, gotConv, "conv-id resolves via the harness pid directly")
+}
 
-	// And the real authorization chokepoint accepts it as an agent — the
-	// surface whoami / inbox gate on.
-	p := &peer{PID: peerPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor}
-	assert.Equal(t, classAgent, classify(p))
+// TestConvIDForPID_HarnessNameWithoutRecordedRowIsAgentUnknown is the
+// un-forgeability guard, and the reason this fix resolves identity from the
+// sessions table (host pids the daemon recorded at spawn) rather than from
+// the harness process's own environment. A caller that merely *names* a
+// process "codex" but whose pid AND parent pid map to no recorded row gets
+// hasAncestor=true but NO conv-id → classAgentUnknown (403). It can never
+// inherit another agent's identity by choosing a process name or planting an
+// env var, because neither feeds the lookup — proven live: `cp tclaude
+// /tmp/codex && TCLAUDE_SESSION_ID=<victim> /tmp/codex agent whoami` resolved
+// to the victim under the env approach this replaces.
+func TestConvIDForPID_HarnessNameWithoutRecordedRowIsAgentUnknown(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		forgedPID = 8101 // an attacker-controlled process renamed "codex"
+		shellPID  = 8050 // its real parent — no recorded session row
+	)
+
+	// A decoy row for a DIFFERENT session, keyed by a pid the attacker
+	// cannot make its ancestor. It must never be returned.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:      "victim",
+		PID:     9999,
+		ConvID:  "victim-conv",
+		Harness: "codex",
+		Status:  "working",
+	}))
+
+	fakeProcTree{
+		name:   map[int]string{forgedPID: "codex", shellPID: "sh"},
+		parent: map[int]int{forgedPID: shellPID},
+	}.install(t)
+
+	gotConv, hasAncestor := convIDForPID(forgedPID)
+	assert.True(t, hasAncestor, "a codex-named process counts as a harness ancestor")
+	assert.Empty(t, gotConv, "but resolves to no conv-id without a recorded row")
+	assert.Equal(t, classAgentUnknown,
+		classify(&peer{PID: forgedPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor}),
+		"fail closed: a forged harness name never inherits another agent's identity")
 }
 
 // TestConvIDForPID_ClaudeAncestorViaSessionFile guards that the Claude
