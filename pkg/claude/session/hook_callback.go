@@ -35,8 +35,9 @@ type HookCallbackInput struct {
 	PermissionMode       string          `json:"permission_mode,omitempty"`
 	HookEventName        string          `json:"hook_event_name"`
 	NotificationType     string          `json:"notification_type,omitempty"`
-	Reason               string          `json:"reason,omitempty"` // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
-	Source               string          `json:"source,omitempty"` // SessionStart: startup | resume | clear | compact
+	Reason               string          `json:"reason,omitempty"`  // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
+	Source               string          `json:"source,omitempty"`  // SessionStart: startup | resume | clear | compact
+	Trigger              string          `json:"trigger,omitempty"` // PreCompact: auto | manual
 	Message              string          `json:"message,omitempty"`
 	Prompt               string          `json:"prompt,omitempty"`
 	StopHookActive       bool            `json:"stop_hook_active,omitempty"`
@@ -388,6 +389,15 @@ func runHookCallback() error {
 		}
 	} else {
 		return fmt.Errorf("no input received on stdin")
+	}
+
+	// PreCompact is a gate, not a status transition: it may write a
+	// {"decision":"block"} back to Claude Code to refuse an early
+	// auto-compaction. Handle it on its own path (it does not flow
+	// through ApplyHook's status machinery) and emit any decision to
+	// the hook's stdout.
+	if input.HookEventName == "PreCompact" {
+		return decidePreCompact(input, envSessionID, os.Stdout)
 	}
 
 	return ApplyHook(input, envSessionID)
@@ -1108,6 +1118,121 @@ func autoRegisterSessionFromHook(input HookCallbackInput) *SessionState {
 		return nil
 	}
 	return state
+}
+
+// preCompactDecision is the JSON Claude Code reads from a PreCompact
+// hook's stdout. No output (or an empty Decision) lets compaction
+// proceed; Decision "block" with a Reason refuses it. See
+// https://code.claude.com/docs/en/hooks ("PreCompact" — Blocks
+// compaction).
+type preCompactDecision struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// decidePreCompact implements the pre-compact guard. It refuses an
+// auto-compaction whose conversation has not yet reached the configured
+// per-window context floor by writing {"decision":"block",...} to w
+// (the hook's stdout). It fails OPEN — writes nothing, letting
+// compaction proceed — whenever the guard is off, the trigger is not
+// guarded, or the data needed to judge is missing. It never forces a
+// compaction; it can only delay an early one.
+//
+// envSessionID is TCLAUDE_SESSION_ID, the key the statusline hook
+// stores the context snapshot under (statusbar.UpdateContextSnapshot).
+func decidePreCompact(input HookCallbackInput, envSessionID string, w io.Writer) error {
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Warn("pre-compact guard: config load failed, allowing compaction", "error", err, "module", "hooks")
+		return nil
+	}
+	g := cfg.PreCompactGuard
+	thresholds := g.ResolvedThresholds() // nil when the guard is nil/disabled
+	if thresholds == nil {
+		return nil // guard off → allow
+	}
+
+	// Only Claude Code's automatic compaction is guarded by default; a
+	// manual /compact the human typed is honoured unless block_manual is
+	// set. An unknown/empty trigger is treated as "not auto" → allow, so
+	// we never block a compaction we cannot classify.
+	guarded := input.Trigger == "auto" || (input.Trigger == "manual" && g.BlockManual)
+	if !guarded {
+		return nil
+	}
+
+	if envSessionID == "" {
+		return nil // not a tclaude-launched session → no snapshot → allow
+	}
+	snap, err := db.GetContextSnapshot(envSessionID)
+	if err != nil {
+		slog.Warn("pre-compact guard: failed to read context snapshot, allowing compaction",
+			"error", err, "session_id", envSessionID, "module", "hooks")
+		return nil
+	}
+	window := snap.ContextWindowSize
+	if window <= 0 || snap.ContextPct <= 0 {
+		return nil // no usable usage data yet → allow
+	}
+	minTokens, ok := preCompactFloor(thresholds, window)
+	if !ok {
+		return nil // no threshold matches this window → allow
+	}
+
+	usedTokens := int64(snap.ContextPct / 100.0 * float64(window))
+	if usedTokens >= minTokens {
+		return nil // enough context has accrued → allow
+	}
+
+	reason := fmt.Sprintf(
+		"tclaude pre-compact guard: refused %s compaction — context is ~%.0f%% (~%d of %d tokens), below the %d-token floor for this window. Let context grow (or reincarnate) before compacting; adjust pre_compact_guard in ~/.tclaude/config.json to change or disable this.",
+		input.Trigger, snap.ContextPct, usedTokens, window, minTokens,
+	)
+	slog.Info("pre-compact guard: blocked compaction",
+		"conv_id", input.ConvID,
+		"session_id", envSessionID,
+		"trigger", input.Trigger,
+		"context_pct", snap.ContextPct,
+		"window", window,
+		"used_tokens", usedTokens,
+		"min_tokens", minTokens,
+		"module", "hooks",
+	)
+	if err := json.NewEncoder(w).Encode(preCompactDecision{Decision: "block", Reason: reason}); err != nil {
+		return fmt.Errorf("pre-compact guard: failed to write block decision: %w", err)
+	}
+	return nil
+}
+
+// preCompactFloor returns the MinTokens floor to apply for a context
+// window of windowSize, choosing the configured threshold whose
+// window_size is the closest match by ratio. Claude Code reports a
+// model's real window (≈200000 or ≈1000000); matching by nearest ratio
+// rather than exact equality tolerates a reported window that differs
+// slightly from the round numbers the thresholds are keyed by (e.g.
+// 1048576 vs 1000000). A best match more than 2× away in either
+// direction is rejected (ok=false) so a ladder listing only one window
+// class never silently governs a wildly different window.
+func preCompactFloor(thresholds []config.PreCompactThreshold, windowSize int64) (int64, bool) {
+	var best config.PreCompactThreshold
+	var bestRatio float64
+	found := false
+	for _, t := range thresholds {
+		if t.WindowSize <= 0 {
+			continue
+		}
+		r := float64(windowSize) / float64(t.WindowSize)
+		if r < 1 {
+			r = 1 / r // ratio ≥ 1 regardless of direction
+		}
+		if !found || r < bestRatio {
+			best, bestRatio, found = t, r, true
+		}
+	}
+	if !found || bestRatio > 2.0 {
+		return 0, false
+	}
+	return best.MinTokens, true
 }
 
 // handleAutoCompact checks if auto-compaction should be triggered on Stop.

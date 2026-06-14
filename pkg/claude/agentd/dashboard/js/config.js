@@ -130,10 +130,72 @@ function readCfgTransitionList() {
   return out;
 }
 
+// cfgThresholdRow / renderCfgThresholdList / readCfgThresholdList edit
+// the pre_compact_guard floor ladder: one (window_size → min_tokens)
+// pair per row.
+function cfgThresholdRow(windowSize, minTokens) {
+  const row = document.createElement('div');
+  row.className = 'cfg-list-row';
+  const mk = (val, ph, role) => {
+    const i = document.createElement('input');
+    i.type = 'number';
+    i.min = '1';
+    i.value = (val != null && val !== '') ? val : '';
+    i.placeholder = ph;
+    i.setAttribute('aria-label', ph);
+    i.autocomplete = 'off';
+    i.dataset.role = role;
+    i.style.minWidth = '170px';
+    return i;
+  };
+  const arrow = document.createElement('span');
+  arrow.className = 'cfg-arrow';
+  arrow.textContent = '→';
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'cfg-row-del';
+  del.textContent = '×';
+  del.title = 'Remove';
+  del.addEventListener('click', () => row.remove());
+  row.appendChild(mk(windowSize, 'window size (tokens)', 'window'));
+  row.appendChild(arrow);
+  row.appendChild(mk(minTokens, 'min used tokens before compaction', 'min'));
+  row.appendChild(del);
+  return row;
+}
+function renderCfgThresholdList(values) {
+  const c = $('#cfg-precompact-thresholds');
+  c.innerHTML = '';
+  (values || []).forEach(t => c.appendChild(cfgThresholdRow(t.window_size, t.min_tokens)));
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'cfg-list-add';
+  add.textContent = '+ add floor';
+  add.addEventListener('click', () => {
+    const row = cfgThresholdRow('', '');
+    c.insertBefore(row, add);
+    row.querySelector('input').focus();
+  });
+  c.appendChild(add);
+}
+function readCfgThresholdList() {
+  const out = [];
+  $$('#cfg-precompact-thresholds .cfg-list-row').forEach(row => {
+    const w = row.querySelector('input[data-role=window]').value.trim();
+    const m = row.querySelector('input[data-role=min]').value.trim();
+    // A row with either side filled is kept so a half-filled row
+    // surfaces as a server validation error instead of silently
+    // vanishing; a fully blank row is dropped.
+    if (w || m) out.push({ window_size: parseInt(w, 10) || 0, min_tokens: parseInt(m, 10) || 0 });
+  });
+  return out;
+}
+
 // syncCfgEnables greys out the companion inputs of any unchecked
 // enable toggle, so the form reads the way it behaves.
 function syncCfgEnables() {
   $('#cfg-autocompact-pct').disabled = !$('#cfg-autocompact-enabled').checked;
+  $('#cfg-precompact-blockmanual').disabled = !$('#cfg-precompact-enabled').checked;
   const rl = $('#cfg-ratelimit-enabled').checked;
   $('#cfg-ratelimit-5h').disabled = !rl;
   $('#cfg-ratelimit-7d').disabled = !rl;
@@ -150,6 +212,10 @@ function populateConfigForm(cfg) {
   const acp = cfg.auto_compact_percent;
   $('#cfg-autocompact-enabled').checked = acp != null;
   $('#cfg-autocompact-pct').value = acp != null ? acp : '';
+  const pcg = cfg.pre_compact_guard || {};
+  $('#cfg-precompact-enabled').checked = !!pcg.enabled;
+  $('#cfg-precompact-blockmanual').checked = !!pcg.block_manual;
+  renderCfgThresholdList(pcg.thresholds || []);
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
   $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
 
@@ -205,6 +271,18 @@ function assembleConfig() {
   if (term) cfg.terminal = term; else delete cfg.terminal;
   if ($('#cfg-autocompact-enabled').checked) cfg.auto_compact_percent = cfgInt('cfg-autocompact-pct', 80);
   else delete cfg.auto_compact_percent;
+
+  // pre_compact_guard. Clone the existing block so a future sub-field
+  // with no widget round-trips. Keep block_manual / floors the user
+  // entered even while disabled, so toggling off→on round-trips; drop
+  // the whole block when nothing is left to keep.
+  const pcg = (cfg.pre_compact_guard && typeof cfg.pre_compact_guard === 'object') ? cfg.pre_compact_guard : {};
+  if ($('#cfg-precompact-enabled').checked) pcg.enabled = true; else delete pcg.enabled;
+  if ($('#cfg-precompact-blockmanual').checked) pcg.block_manual = true; else delete pcg.block_manual;
+  const pcgFloors = readCfgThresholdList();
+  if (pcgFloors.length) pcg.thresholds = pcgFloors; else delete pcg.thresholds;
+  if (Object.keys(pcg).length) cfg.pre_compact_guard = pcg; else delete cfg.pre_compact_guard;
+
   cfg.record_hooks = $('#cfg-record-hooks').checked;
 
   // focus is an optional block. Clone the existing one so a future
@@ -544,7 +622,7 @@ function bindConfigTab() {
   });
   $('#cfg-reload').addEventListener('click', loadConfigTab);
   $('#cfg-save').addEventListener('click', saveConfig);
-  ['cfg-autocompact-enabled', 'cfg-ratelimit-enabled',
+  ['cfg-autocompact-enabled', 'cfg-precompact-enabled', 'cfg-ratelimit-enabled',
     'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);
   });

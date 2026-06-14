@@ -16,12 +16,13 @@ import (
 
 // Config represents the tclaude configuration file structure.
 type Config struct {
-	Notifications      *NotificationConfig `json:"notifications,omitempty"`
-	AutoCompactPercent *int                `json:"auto_compact_percent,omitempty"`
-	LogLevel           string              `json:"log_level,omitempty"`
-	RecordHooks        bool                `json:"record_hooks,omitempty"`
-	RateLimit          *RateLimitConfig    `json:"ratelimit,omitempty"`
-	Agent              *AgentConfig        `json:"agent,omitempty"`
+	Notifications      *NotificationConfig    `json:"notifications,omitempty"`
+	AutoCompactPercent *int                   `json:"auto_compact_percent,omitempty"`
+	PreCompactGuard    *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
+	LogLevel           string                 `json:"log_level,omitempty"`
+	RecordHooks        bool                   `json:"record_hooks,omitempty"`
+	RateLimit          *RateLimitConfig       `json:"ratelimit,omitempty"`
+	Agent              *AgentConfig           `json:"agent,omitempty"`
 
 	// Terminal names the terminal emulator the agentd dashboard's
 	// spawn auto-focus / shell-attach feature should open — "ghostty",
@@ -293,6 +294,66 @@ func (c *ContextNudgeConfig) Resolved() (enabled bool, minPct, intervalPct int) 
 		intervalPct = defaultContextNudgeIntervalPct
 	}
 	return true, minPct, intervalPct
+}
+
+// PreCompactGuardConfig controls the PreCompact hook that refuses an
+// auto-compaction while the conversation's used context is still below
+// a per-window-size floor. Its purpose is to stop Claude Code from
+// compacting a 1M-context session at the 200K boundary (CC's default
+// for non-extended models, which fires at ~20% of the 1M status bar):
+// the guard lets context accrue to a chosen level — at which point the
+// operator typically reincarnates — before compaction is allowed.
+//
+// It only ever PREVENTS an early compaction; it never forces one. The
+// guard fails OPEN: when it is disabled, or the data needed to judge
+// (the session's stored context snapshot) is missing, or no threshold
+// matches the conversation's window, compaction is allowed.
+type PreCompactGuardConfig struct {
+	// Enabled turns the guard on. Off (the default) installs the
+	// PreCompact hook but always allows compaction, so toggling this
+	// at runtime needs no hook re-install.
+	Enabled bool `json:"enabled"`
+	// BlockManual also guards a manual `/compact` (trigger="manual").
+	// Default false: only Claude Code's automatic compaction is
+	// refused, never a compaction the human typed themselves.
+	BlockManual bool `json:"block_manual,omitempty"`
+	// Thresholds maps a context-window size (tokens) to the minimum
+	// used-context (tokens) required before auto-compaction is allowed
+	// on that window. Empty → DefaultPreCompactThresholds.
+	Thresholds []PreCompactThreshold `json:"thresholds,omitempty"`
+}
+
+// PreCompactThreshold is one (window, floor) pair: on a context window
+// of WindowSize tokens, compaction is refused until used context
+// reaches MinTokens.
+type PreCompactThreshold struct {
+	WindowSize int64 `json:"window_size"`
+	MinTokens  int64 `json:"min_tokens"`
+}
+
+// DefaultPreCompactThresholds is the built-in floor ladder used when
+// the guard is enabled but no thresholds are configured: hold off
+// auto-compaction until 150K/200K (75%) on a standard window and
+// 800K/1M (80%) on an extended window.
+func DefaultPreCompactThresholds() []PreCompactThreshold {
+	return []PreCompactThreshold{
+		{WindowSize: 200_000, MinTokens: 150_000},
+		{WindowSize: 1_000_000, MinTokens: 800_000},
+	}
+}
+
+// ResolvedThresholds returns the effective floor ladder — the
+// configured thresholds when present, the built-in defaults otherwise.
+// Returns nil when the guard is nil or disabled so callers can tell
+// "off" from "on with defaults".
+func (g *PreCompactGuardConfig) ResolvedThresholds() []PreCompactThreshold {
+	if g == nil || !g.Enabled {
+		return nil
+	}
+	if len(g.Thresholds) > 0 {
+		return g.Thresholds
+	}
+	return DefaultPreCompactThresholds()
 }
 
 // SudoConfig overrides the hardcoded sudo defaults globally. Each
@@ -626,6 +687,25 @@ func Validate(c *Config) []string {
 	if c.AutoCompactPercent != nil {
 		if p := *c.AutoCompactPercent; p < 1 || p > 100 {
 			errs = append(errs, fmt.Sprintf("auto_compact_percent %d is out of range (1–100)", p))
+		}
+	}
+
+	if g := c.PreCompactGuard; g != nil {
+		// Only validate the explicit ladder; an enabled guard with no
+		// thresholds falls back to the built-in defaults, which are
+		// known-good. A configured threshold must be a sane (window,
+		// floor) pair: positive sizes and a floor that fits inside the
+		// window (a floor ≥ window can never be reached, so the guard
+		// would block every compaction forever).
+		for i, t := range g.Thresholds {
+			switch {
+			case t.WindowSize <= 0:
+				errs = append(errs, fmt.Sprintf("pre_compact_guard.thresholds[%d].window_size must be positive", i))
+			case t.MinTokens <= 0:
+				errs = append(errs, fmt.Sprintf("pre_compact_guard.thresholds[%d].min_tokens must be positive", i))
+			case t.MinTokens >= t.WindowSize:
+				errs = append(errs, fmt.Sprintf("pre_compact_guard.thresholds[%d].min_tokens (%d) must be less than window_size (%d)", i, t.MinTokens, t.WindowSize))
+			}
 		}
 	}
 

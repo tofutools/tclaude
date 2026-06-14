@@ -202,6 +202,33 @@ export TCLAUDE_AUTO_COMPACT=50
 
 When auto-compact is configured, the status bar shows the threshold alongside context usage (e.g. `30%/50%`) and the context bar rescales so it fills completely as usage approaches the limit.
 
+## Pre-compact guard
+
+The pre-compact guard is the inverse of auto-compact: instead of triggering compaction earlier, it **refuses Claude Code's own automatic compaction until context has grown past a floor.**
+
+It exists because Claude Code can compact *too early*. CC sizes its compaction window from the model class, defaulting to **200K even on a 1M-context model**, so a 1M session can auto-compact at the 200K boundary — about **20% of the 1M status bar**. If you'd rather let context accrue and then [reincarnate](agent.md) (a directed handoff) than have CC blindly summarise at 20%, the guard holds compaction off until a chosen level.
+
+How it works: tclaude installs a `PreCompact` hook that, when the guard is enabled, compares the conversation's used context against a per-window-size floor and returns a `block` decision to Claude Code if it's still below the floor. It is **fail-open** — if the guard is off, the trigger can't be classified, or the context snapshot is missing, compaction proceeds. It only ever *delays* an early compaction; it never forces one. By default it blocks only Claude Code's **automatic** compaction, never a `/compact` you type yourself (set `block_manual` to also guard manual compaction).
+
+Enable it in `~/.tclaude/config.json` or via the dashboard **Config** tab:
+
+```json
+{
+  "pre_compact_guard": {
+    "enabled": true,
+    "block_manual": false,
+    "thresholds": [
+      { "window_size": 200000,  "min_tokens": 150000 },
+      { "window_size": 1000000, "min_tokens": 800000 }
+    ]
+  }
+}
+```
+
+`thresholds` maps a context-window size (tokens) to the minimum used context (tokens) required before compaction is allowed on that window. Omit `thresholds` to use the built-in defaults shown above (hold off until 150K/200K and 800K/1M). The reported window is matched to the nearest configured size, so a slightly-off window (e.g. 1048576) still resolves to its class.
+
+> Note: the guard refuses an *early* compaction; it does not move CC's trigger point. If CC re-attempts auto-compaction every turn past its boundary, the guard refuses each attempt (and logs it to `~/.tclaude/output.log`) until the floor is reached.
+
 ## Tmux Integration
 
 tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. 

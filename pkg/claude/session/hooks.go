@@ -62,6 +62,7 @@ func initHookCommands() {
 		"Notification":       {{Hooks: []HookConfig{hook}}}, // No matcher = catch all
 		"SessionStart":       {newMatcher()},
 		"SessionEnd":         {newMatcher()},
+		"PreCompact":         {newMatcher()}, // pre-compact guard: may refuse an early auto-compaction
 		"PostCompact":        {newMatcher()},
 	}
 }
