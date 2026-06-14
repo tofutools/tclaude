@@ -1,6 +1,12 @@
 ---
 name: agent-coord
-description: Coordinate with other tclaude-managed Claude Code or Codex CLI conversations via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human starts it; you don't). Use when you've been put in a group with peer agents and need to look them up, send them messages, or read messages they sent you. Triggered by a `[system: new agent message #...]` line appearing in your conversation, or when the user explicitly asks you to talk to another agent.
+description: >-
+  Coordinate with other tclaude-managed Claude Code or Codex CLI conversations
+  via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human
+  starts it; you don't). Use when you've been put in a group with peer agents
+  and need to look them up, send them messages, or read messages they sent you.
+  Triggered by a `[system: new agent message #...]` line appearing in your
+  conversation, or when the user explicitly asks you to talk to another agent.
 ---
 
 # Coordinating with other agents
