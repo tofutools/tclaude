@@ -834,6 +834,8 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		return err
 	}
 
+	persistCodexWorkspaceSnapshot(state, input)
+
 	// Lift Codex's context-window telemetry off its rollout onto the
 	// sessions row. Claude Code gets these figures from its statusbar; a
 	// Codex session has no command-statusline, so the hook is where
@@ -1010,6 +1012,77 @@ func persistCodexContextTelemetry(state *SessionState, input HookCallbackInput) 
 	if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
 		slog.Warn("codex-telemetry: failed to update context snapshot",
 			"session_id", state.ID, "error", err, "module", "hooks")
+	}
+}
+
+// persistCodexWorkspaceSnapshot is Codex's replacement for the Claude Code
+// statusline workspace write. Codex has no command-backed statusline payload,
+// but every hook carries the session cwd, so resolve git there at hook time and
+// publish the same agent_workspace row the dashboard already reads. The first
+// branch observed also seeds conv_index.git_branch_startup; later observations
+// update only the current branch so the UI can keep showing "init" vs "now".
+func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput) {
+	if state == nil || state.Harness != harness.CodexName || state.ConvID == "" {
+		return
+	}
+	if input.ConvID != "" && input.ConvID != state.ConvID {
+		return
+	}
+
+	cwd := input.Cwd
+	if cwd == "" {
+		cwd = state.Cwd
+	}
+	if cwd == "" {
+		return
+	}
+
+	worktreeRoot, branch := GitLocationOf(cwd)
+	now := time.Now()
+	if err := db.UpsertAgentWorkspace(db.AgentWorkspace{
+		ConvID:    state.ConvID,
+		Cwd:       cwd,
+		Branch:    branch,
+		UpdatedAt: now,
+	}); err != nil {
+		slog.Warn("codex-workspace: failed to upsert agent_workspace",
+			"conv_id", state.ConvID, "error", err, "module", "hooks")
+	}
+	if branch == "" {
+		return
+	}
+
+	projectDir := worktreeRoot
+	if projectDir == "" {
+		projectDir = cwd
+	}
+	fullPath := input.TranscriptPath
+	var fileMtime, fileSize int64
+	if fullPath != "" {
+		if info, err := os.Stat(fullPath); err == nil {
+			fileMtime = info.ModTime().Unix()
+			fileSize = info.Size()
+			projectDir = filepath.Dir(fullPath)
+		}
+	}
+	if err := db.UpsertConvIndexBranchSnapshot(&db.ConvIndexRow{
+		ConvID:           state.ConvID,
+		ProjectDir:       projectDir,
+		FullPath:         fullPath,
+		FileMtime:        fileMtime,
+		FileSize:         fileSize,
+		GitBranch:        branch,
+		GitBranchStartup: branch,
+		ProjectPath:      cwd,
+		Harness:          harness.CodexName,
+		IndexedAt:        now,
+	}); err != nil {
+		slog.Warn("codex-workspace: failed to upsert conv_index branch snapshot",
+			"conv_id", state.ConvID, "branch", branch, "error", err, "module", "hooks")
+	}
+	if err := db.AppendConvBranchHistoryHook(state.ConvID, branch, worktreeRoot); err != nil {
+		slog.Warn("codex-workspace: failed to record branch history",
+			"conv_id", state.ConvID, "branch", branch, "error", err, "module", "hooks")
 	}
 }
 

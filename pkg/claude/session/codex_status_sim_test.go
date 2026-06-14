@@ -1,11 +1,15 @@
 package session_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -83,4 +87,74 @@ func TestApplyHook_CodexLiveStatusPipeline(t *testing.T) {
 	// The harness tag survives the read-modify-write of every hook.
 	assert.Equal(t, "codex", attn.Harness, "harness preserved through PermissionRequest")
 	assert.Equal(t, "codex", done.Harness, "harness preserved through Stop")
+}
+
+func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	repo := filepath.Join(home, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	runGit(t, repo, "init", "-b", "main")
+	runGit(t, repo, "config", "user.email", "tclaude-test@example.invalid")
+	runGit(t, repo, "config", "user.name", "tclaude test")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "init")
+
+	const convID = "019ec004-4250-79b1-9ade-ebaea4159002"
+	const sessionID = "agent-codex-branch"
+	cx := testharness.NewCodexSimWithID(t, home, convID, repo)
+	require.NoError(t, cx.Start())
+
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:      sessionID,
+		ConvID:  convID,
+		Status:  session.StatusIdle,
+		Harness: "codex",
+		Cwd:     repo,
+	}))
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "SessionStart",
+		ConvID:         convID,
+		Cwd:            repo,
+		TranscriptPath: cx.RolloutPath,
+	}, sessionID))
+
+	ws, err := db.GetAgentWorkspace(convID)
+	require.NoError(t, err)
+	assert.Equal(t, repo, ws.Cwd)
+	assert.Equal(t, "main", ws.Branch, "Codex hooks publish the launch-dir branch")
+
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "main", row.GitBranch)
+	assert.Equal(t, "main", row.GitBranchStartup, "first observed Codex branch becomes init")
+
+	runGit(t, repo, "checkout", "-b", "feature-x")
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "Stop",
+		ConvID:         convID,
+		Cwd:            repo,
+		TranscriptPath: cx.RolloutPath,
+	}, sessionID))
+
+	ws, err = db.GetAgentWorkspace(convID)
+	require.NoError(t, err)
+	assert.Equal(t, "feature-x", ws.Branch,
+		"Codex current branch refreshes from git even when the rollout did not grow")
+
+	loc := agent.ResolveLocation(convID)
+	assert.Equal(t, "feature-x", loc.CurrentBranch, "dashboard resolver sees Codex current branch")
+	assert.Equal(t, "main", loc.StartupBranch, "dashboard resolver keeps Codex init branch stable")
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
 }

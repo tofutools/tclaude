@@ -70,14 +70,15 @@ func harnessNativeTitle(convID string) (string, bool) {
 	return title, true
 }
 
-// sandboxForHarness returns the launch sandbox mode the daemon re-applies
+// sandboxForHarness returns the launch containment token the daemon re-applies
 // when it relaunches an existing conv (resume / clone / reincarnate). The
-// mode is not persisted per-conv, so a Codex agent that was spawned
-// sandboxed must be re-defaulted to its secure mode (workspace-write) on
-// relaunch rather than coming back unsandboxed; a harness with no launch
-// sandbox flag (Claude Code) or an unknown tag yields "" (omit the flag).
-// A $HOME cwd is still re-checked by the forked `tclaude session new`'s own
-// guard, so this needn't repeat it.
+// mode/profile is not persisted per-conv, so a Codex agent must be
+// re-defaulted to tclaude's managed permission profile on relaunch rather than
+// coming back unsandboxed or with a plain workspace-write sandbox that cannot
+// reach the agentd socket. A harness with no launch sandbox/profile flag
+// (Claude Code) or an unknown tag yields "" (omit the flag). A $HOME cwd is
+// still re-checked by the forked `tclaude session new`'s own guard, so this
+// needn't repeat it.
 //
 // Deliberate: this always re-defaults to the secure mode and does NOT
 // preserve a per-conv override — an agent originally spawned with an explicit
@@ -86,6 +87,9 @@ func harnessNativeTitle(convID string) (string, bool) {
 // not a dropped-state bug. Per-conv mode persistence, if ever wanted, would be
 // a separate feature.
 func sandboxForHarness(name string) string {
+	if strings.TrimSpace(name) == harness.CodexName {
+		return harness.SandboxManagedProfile
+	}
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsSandbox() {
 		return h.Sandbox.DefaultMode()
 	}

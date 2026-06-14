@@ -94,6 +94,73 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 	return err
 }
 
+// UpsertConvIndexBranchSnapshot records an out-of-band branch observation for
+// a conversation without clobbering title/prompt metadata owned by the normal
+// conversation scanners. This is used by harnesses whose live branch is not
+// stamped into every turn (Codex stores it outside the rollout file): the
+// latest observation updates git_branch, while git_branch_startup is filled
+// only once so the dashboard's immutable "init" branch stays stable.
+func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
+	if row == nil || row.ConvID == "" || row.GitBranch == "" {
+		return nil
+	}
+	conn, err := Open()
+	if err != nil {
+		return err
+	}
+	if row.IndexedAt.IsZero() {
+		row.IndexedAt = time.Now()
+	}
+	if row.GitBranchStartup == "" {
+		row.GitBranchStartup = row.GitBranch
+	}
+	harness := row.Harness
+	if harness == "" {
+		harness = DefaultHarness
+	}
+	_, err = conn.Exec(`INSERT INTO conv_index
+		(conv_id, project_dir, full_path, file_mtime, file_size,
+		 git_branch, project_path, indexed_at, git_branch_startup, harness)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(conv_id) DO UPDATE SET
+		 git_branch=excluded.git_branch,
+		 git_branch_startup=CASE
+		   WHEN conv_index.git_branch_startup = '' OR conv_index.git_branch_startup IS NULL
+		   THEN excluded.git_branch_startup
+		   ELSE conv_index.git_branch_startup
+		 END,
+		 project_path=CASE
+		   WHEN conv_index.project_path = '' OR conv_index.project_path IS NULL
+		   THEN excluded.project_path
+		   ELSE conv_index.project_path
+		 END,
+		 project_dir=CASE
+		   WHEN conv_index.project_dir = '' OR conv_index.project_dir IS NULL
+		   THEN excluded.project_dir
+		   ELSE conv_index.project_dir
+		 END,
+		 full_path=CASE
+		   WHEN conv_index.full_path = '' OR conv_index.full_path IS NULL
+		   THEN excluded.full_path
+		   ELSE conv_index.full_path
+		 END,
+		 file_mtime=CASE
+		   WHEN conv_index.file_mtime = 0
+		   THEN excluded.file_mtime
+		   ELSE conv_index.file_mtime
+		 END,
+		 file_size=CASE
+		   WHEN conv_index.file_size = 0
+		   THEN excluded.file_size
+		   ELSE conv_index.file_size
+		 END,
+		 indexed_at=excluded.indexed_at`,
+		row.ConvID, row.ProjectDir, row.FullPath, row.FileMtime, row.FileSize,
+		row.GitBranch, row.ProjectPath, row.IndexedAt.Format(time.RFC3339Nano),
+		row.GitBranchStartup, harness)
+	return err
+}
+
 // ListConvIndex returns all conversation index entries for a project directory.
 func ListConvIndex(projectDir string) ([]*ConvIndexRow, error) {
 	db, err := Open()

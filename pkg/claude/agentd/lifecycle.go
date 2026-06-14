@@ -178,12 +178,19 @@ func resumeOneConv(convID string) memberOpResult {
 		return res
 	}
 	// Look up the recorded cwd so resume lands the agent in the
-	// directory they were last running in — falls back to "" which
-	// makes `tclaude session new` use its own default — and the
-	// model + effort it last reported running on, so the resumed
-	// agent comes back on its own model instead of claude's default
-	// (rows are updated_at DESC; [0] is the conv's freshest session).
+	// directory they were last running in, and the model + effort it
+	// last reported running on, so the resumed agent comes back on its
+	// own model instead of claude's default (rows are updated_at DESC;
+	// [0] is the conv's freshest session).
+	//
+	// A session row is the best source, but not the only one: older/imported
+	// offline conversations can be resumable with only conv_index metadata.
+	// Conversely, an enrolled/grouped agent with no session row and no
+	// conv_index row is just an orphaned intent; launching a default Claude
+	// resume for that id would fail in the child process while this handler
+	// lies to the UI with "resumed".
 	cwd, effort, model, harnessName := "", "", "", ""
+	hasResumeMetadata := false
 	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
 		cwd = rows[0].Cwd
 		effort, model = inheritedLaunchFlags(rows[0].ID)
@@ -193,6 +200,23 @@ func resumeOneConv(convID string) memberOpResult {
 		// instead of looking in ~/.claude/projects. An untagged/claude row
 		// leaves it "" so the flag is omitted.
 		harnessName = rows[0].Harness
+		hasResumeMetadata = true
+	} else if row, err := db.GetConvIndex(convID); err == nil && row != nil {
+		cwd = row.ProjectPath
+		if cwd == "" {
+			cwd = row.ProjectDir
+		}
+		harnessName = row.Harness
+		hasResumeMetadata = true
+	} else if ref, ok := resolveResumeConvFromHarnessStores(convID); ok {
+		cwd = ref.ProjectPath
+		harnessName = ref.Harness
+		hasResumeMetadata = true
+	}
+	if !hasResumeMetadata {
+		res.Action = "error"
+		res.Detail = "no resumable session metadata for this agent (no sessions row, conversation index row, or harness-native conversation); delete/recreate the orphaned agent or restore it from a real conversation"
+		return res
 	}
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so autoReview=false.
@@ -203,6 +227,25 @@ func resumeOneConv(convID string) memberOpResult {
 		res.Action = "resumed"
 	}
 	return res
+}
+
+func resolveResumeConvFromHarnessStores(convID string) (*harness.ConvRef, bool) {
+	for _, name := range harness.Names() {
+		h, ok := harness.Get(name)
+		if !ok || !h.SupportsConvs() {
+			continue
+		}
+		ref, err := h.Convs.Resolve(convID, "", true)
+		if err != nil {
+			slog.Warn("resume: harness conversation lookup failed",
+				"conv", convID, "harness", name, "error", err)
+			continue
+		}
+		if ref != nil {
+			return ref, true
+		}
+	}
+	return nil, false
 }
 
 // groupRetireResp is the response shape of the bulk groups.retire

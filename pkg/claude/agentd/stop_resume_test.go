@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // Ensures that stopping a conv that has no live tmux session returns
@@ -58,18 +64,22 @@ func TestHandleAgentStop_NoSlugDenies(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code, "body=%s", w.Body.String())
 }
 
-// Resume on a target whose conv-id resolves but isn't online should
-// attempt the spawn. We can't fully exercise the spawn in a unit
-// test (no real tmux), so the outcome is either `resumed` (if the
-// spawn subprocess started) or `error` (if `tclaude` isn't in $PATH).
-// Either way it must NOT be the offline-skip sentinel — that's the
-// stop semantics, not resume's.
+// Resume on a target whose conv-id resolves and has resumable metadata should
+// attempt the spawn. The spawner is faked here so the test does not fork a
+// real `tclaude session new` subprocess.
 func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "worker-conv-id-12345678",
 	})
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      "worker-conv-id-12345678",
+		ProjectPath: "/tmp/worker",
+		IndexedAt:   time.Now(),
+	}))
 	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"), "grant")
 
 	w := httptest.NewRecorder()
@@ -81,18 +91,9 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode")
-	action, _ := resp["action"].(string)
-	switch action {
-	case "resumed", "error":
-		// Acceptable — resumed means the subprocess started; error means
-		// the spawn helper rejected the call (e.g. tclaude binary missing
-		// in test sandbox).
-	case "skipped:already_offline", "skipped:already_online", "skipped:no_conv_id":
-		t.Errorf("unexpected sentinel %q; resume should attempt spawn for offline target with valid conv-id",
-			action)
-	default:
-		t.Errorf("unexpected action %q; full body=%s", action, w.Body.String())
-	}
+	assert.Equal(t, "resumed", resp["action"], "full body=%s", w.Body.String())
+	assert.Equal(t, "worker-conv-id-12345678", rec.convID)
+	assert.Equal(t, "/tmp/worker", rec.cwd)
 }
 
 // stopOneConv is the helper shared between the bulk and single-conv
@@ -113,4 +114,104 @@ func TestResumeOneConv_EmptyConvIDSkips(t *testing.T) {
 	setupTestDB(t)
 	res := resumeOneConv("")
 	assert.Equal(t, "skipped:no_conv_id", res.Action, "action")
+}
+
+func TestResumeOneConv_OrphanWithoutSessionOrIndexErrors(t *testing.T) {
+	setupTestDB(t)
+	res := resumeOneConv("orphan-conv-id-12345678")
+	assert.Equal(t, "error", res.Action, "action")
+	assert.Contains(t, res.Detail, "no resumable session metadata")
+}
+
+func TestResumeOneConv_UsesConvIndexWhenSessionMissing(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
+	const convID = "codex-conv-id-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      convID,
+		ProjectPath: "/tmp/codex-work",
+		Harness:     harness.CodexName,
+		IndexedAt:   time.Now(),
+	}))
+
+	res := resumeOneConv(convID)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.Equal(t, convID, rec.convID)
+	assert.Equal(t, "/tmp/codex-work", rec.cwd)
+	assert.Equal(t, harness.CodexName, rec.harness)
+	assert.Equal(t, harness.CodexAgentProfile, rec.sandbox)
+	assert.Equal(t, "never", rec.approval)
+}
+
+func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	cwd := filepath.Join(home, "repo")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+
+	const convID = "019ec663-3bef-7c41-abf8-ad956ed94a01"
+	cx := testharness.NewCodexSimWithID(t, home, convID, cwd)
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
+		Cwd:       cwd,
+		CreatedAt: cx.CreatedUnix(),
+		UpdatedAt: cx.CreatedUnix(),
+	}))
+
+	res := resumeOneConv(convID)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.Equal(t, convID, rec.convID)
+	assert.Equal(t, cwd, rec.cwd)
+	assert.Equal(t, harness.CodexName, rec.harness)
+}
+
+type recordingResumeSpawner struct {
+	convID, cwd, effort, model, harness, sandbox, approval string
+	autoReview                                             bool
+}
+
+func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
+	t.Helper()
+	rec := &recordingResumeSpawner{}
+	prev := Spawn
+	Spawn = rec
+	t.Cleanup(func() { Spawn = prev })
+	return rec
+}
+
+func (s *recordingResumeSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
+	return nil
+}
+
+func (s *recordingResumeSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+	s.convID = convID
+	s.cwd = cwd
+	s.effort = effort
+	s.model = model
+	s.harness = harness
+	s.sandbox = sandbox
+	s.approval = approval
+	s.autoReview = autoReview
+	return nil
+}
+
+func TestResumeOneConv_ConvIndexProjectDirFallback(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
+	const convID = "claude-conv-id-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:     convID,
+		ProjectDir: "/tmp/claude-project",
+		IndexedAt:  time.Now(),
+	}))
+
+	res := resumeOneConv(convID)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.Equal(t, "/tmp/claude-project", rec.cwd)
+	assert.True(t, rec.harness == "" || strings.EqualFold(rec.harness, harness.DefaultName))
 }
