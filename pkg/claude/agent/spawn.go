@@ -80,13 +80,16 @@ type SpawnRequest struct {
 	// (so a Codex spawn is checked against Codex's rules, not Claude's).
 	Harness string `json:"harness,omitempty"`
 
-	// SandboxMode picks the launch-time OS-sandbox mode for a harness that
-	// takes one (Codex's --sandbox). Empty resolves to the harness's secure
-	// default (Codex: workspace-write — writes confined to cwd+/tmp+$TMPDIR,
-	// network denied), so a daemon-owned Codex agent is sandboxed by
-	// default; danger-full-access opts out. Forwarded to `tclaude session
-	// new --sandbox <mode>`. Not applicable to Claude Code (settings.json-
-	// driven), which rejects a non-empty value. See JOH-192.
+	// SandboxMode picks the launch containment for a harness that takes one
+	// (Codex). Empty resolves to the harness's secure default — for Codex the
+	// managed tclaude-agent profile (workspace-write containment PLUS the
+	// agentd-socket allowlist, so the agent can still run `tclaude agent …`),
+	// forwarded as `--permission-profile tclaude-agent`. The raw Codex modes
+	// (workspace-write|read-only|danger-full-access) are forwarded as `tclaude
+	// session new --sandbox <mode>` and do NOT get the socket allowlist;
+	// danger-full-access opts out of the sandbox entirely. Not applicable to
+	// Claude Code (settings.json-driven), which rejects a non-empty value. See
+	// JOH-192 / JOH-207.
 	SandboxMode string `json:"sandbox,omitempty"`
 
 	// ApprovalPolicy picks the launch-time approval policy for a harness that
@@ -191,7 +194,7 @@ type SpawnParams struct {
 	// Sandbox is the launch-time OS-sandbox mode for a harness that takes
 	// one (Codex). Declared last (no explicit short) for the same reason as
 	// the fields above.
-	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode for the new agent: read-only|workspace-write|danger-full-access. Unset = the harness's secure default (Codex: workspace-write). Not applicable to claude"`
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex launch containment for the new agent: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Unset = the secure default (Codex: tclaude-agent). Not applicable to claude"`
 
 	// Approval is the launch-time approval policy for a harness that takes
 	// one (Codex). Declared last (no explicit short) for the same reason as

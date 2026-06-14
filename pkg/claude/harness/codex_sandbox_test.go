@@ -3,24 +3,40 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // TestCodexSandbox_DefaultMode pins the secure default: a tclaude-spawned
-// Codex agent runs under workspace-write (writes confined to cwd+/tmp+
-// $TMPDIR, $HOME read-only, network denied), never a full-access mode.
+// Codex agent runs under the managed tclaude-agent profile (SandboxManagedProfile)
+// — workspace-write containment (writes confined to cwd+/tmp+$TMPDIR, $HOME
+// read-only, network denied) PLUS the agentd-socket allowlist — never a raw
+// full-access mode.
 func TestCodexSandbox_DefaultMode(t *testing.T) {
-	if got := (codexSandbox{}).DefaultMode(); got != SandboxWorkspaceWrite {
-		t.Fatalf("codex default sandbox = %q, want %q", got, SandboxWorkspaceWrite)
+	if got := (codexSandbox{}).DefaultMode(); got != SandboxManagedProfile {
+		t.Fatalf("codex default sandbox = %q, want %q", got, SandboxManagedProfile)
 	}
 }
 
-// TestCodexSandbox_ValidateMode accepts the three real Codex modes (and ""
-// = caller substitutes the default) and rejects anything else with a
-// message naming the valid set.
+// TestCodexSandbox_Modes pins the spawn-dialog option set + order: the
+// recommended managed profile first (it must equal DefaultMode so the dialog
+// pre-selects it), then Codex's three raw --sandbox modes.
+func TestCodexSandbox_Modes(t *testing.T) {
+	want := []string{SandboxManagedProfile, SandboxWorkspaceWrite, SandboxReadOnly, SandboxDangerFull}
+	if got := (codexSandbox{}).Modes(); !slices.Equal(got, want) {
+		t.Fatalf("Modes() = %v, want %v", got, want)
+	}
+	if got := (codexSandbox{}).Modes()[0]; got != (codexSandbox{}).DefaultMode() {
+		t.Fatalf("Modes()[0] = %q must equal DefaultMode() %q (dialog pre-select)", got, (codexSandbox{}).DefaultMode())
+	}
+}
+
+// TestCodexSandbox_ValidateMode accepts the managed-profile pseudo-mode, the
+// three real Codex modes (and "" = caller substitutes the default) and rejects
+// anything else with a message naming the valid set.
 func TestCodexSandbox_ValidateMode(t *testing.T) {
-	for _, ok := range []string{"", SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFull, "  workspace-write  "} {
+	for _, ok := range []string{"", SandboxManagedProfile, SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFull, "  workspace-write  "} {
 		got, err := (codexSandbox{}).ValidateMode(ok)
 		if err != nil {
 			t.Errorf("ValidateMode(%q) errored: %v", ok, err)
@@ -35,9 +51,9 @@ func TestCodexSandbox_ValidateMode(t *testing.T) {
 }
 
 // TestResolveSandboxMode covers the single spawn-boundary entry point:
-// Codex defaults an empty request to workspace-write and validates an
-// explicit one; a harness without a launch sandbox flag (Claude Code)
-// resolves empty to "" and rejects any explicit mode.
+// Codex defaults an empty request to the managed tclaude-agent profile and
+// validates an explicit one; a harness without a launch sandbox flag (Claude
+// Code) resolves empty to "" and rejects any explicit mode.
 func TestResolveSandboxMode(t *testing.T) {
 	codex, err := Resolve(CodexName)
 	if err != nil {
@@ -45,9 +61,9 @@ func TestResolveSandboxMode(t *testing.T) {
 	}
 	claude := Default()
 
-	// Codex: unset → secure default.
-	if got, err := ResolveSandboxMode(codex, ""); err != nil || got != SandboxWorkspaceWrite {
-		t.Fatalf("ResolveSandboxMode(codex, \"\") = %q,%v; want %q,nil", got, err, SandboxWorkspaceWrite)
+	// Codex: unset → secure default (the managed profile).
+	if got, err := ResolveSandboxMode(codex, ""); err != nil || got != SandboxManagedProfile {
+		t.Fatalf("ResolveSandboxMode(codex, \"\") = %q,%v; want %q,nil", got, err, SandboxManagedProfile)
 	}
 	// Codex: explicit (incl. the opt-out) validated + passed through.
 	if got, err := ResolveSandboxMode(codex, SandboxDangerFull); err != nil || got != SandboxDangerFull {
@@ -87,6 +103,11 @@ func TestValidateSandboxMode(t *testing.T) {
 	if got, err := ValidateSandboxMode(codex, SandboxReadOnly); err != nil || got != SandboxReadOnly {
 		t.Fatalf("ValidateSandboxMode(codex, read-only) = %q,%v; want %q,nil", got, err, SandboxReadOnly)
 	}
+	// Codex: the managed-profile pseudo-mode validates + passes through (the
+	// direct CLI later normalizes it to --permission-profile).
+	if got, err := ValidateSandboxMode(codex, SandboxManagedProfile); err != nil || got != SandboxManagedProfile {
+		t.Fatalf("ValidateSandboxMode(codex, %s) = %q,%v; want %q,nil", SandboxManagedProfile, got, err, SandboxManagedProfile)
+	}
 	// Codex: junk → error.
 	if _, err := ValidateSandboxMode(codex, "nope"); err == nil {
 		t.Fatalf("ValidateSandboxMode(codex, nope) must error")
@@ -101,10 +122,11 @@ func TestValidateSandboxMode(t *testing.T) {
 }
 
 // TestCodexSandboxCwdConflict pins the cwd-safety guard: a writable Codex
-// sandbox (workspace-write) confines writes to the cwd subtree, so a cwd
-// at/above $HOME (or at/above a protected state dir) exposes those dirs
-// and must be refused; a project subdirectory, a read-only sandbox, and
-// the danger-full-access opt-out never conflict.
+// sandbox — raw workspace-write OR the managed profile (which extends
+// :workspace, the same posture) — confines writes to the cwd subtree, so a cwd
+// at/above $HOME (or at/above a protected state dir) exposes those dirs and must
+// be refused; a project subdirectory, a read-only sandbox, and the
+// danger-full-access opt-out never conflict.
 func TestCodexSandboxCwdConflict(t *testing.T) {
 	home := "/home/dev"
 	cases := []struct {
@@ -119,8 +141,11 @@ func TestCodexSandboxCwdConflict(t *testing.T) {
 		{SandboxWorkspaceWrite, filepath.Join(home, "projects"), false}, // a normal project root
 		{SandboxWorkspaceWrite, "/home/dev-other", false},               // sibling, not a prefix match
 		{SandboxWorkspaceWrite, filepath.Join(home, "projects", "x"), false},
-		{SandboxReadOnly, home, false},   // read-only can't write
-		{SandboxDangerFull, home, false}, // explicit opt-out
+		{SandboxManagedProfile, home, true},                             // managed profile == workspace-write posture
+		{SandboxManagedProfile, filepath.Join(home, ".tclaude"), true},  // protected dir under the profile
+		{SandboxManagedProfile, filepath.Join(home, "projects"), false}, // normal project root, safe
+		{SandboxReadOnly, home, false},                                  // read-only can't write
+		{SandboxDangerFull, home, false},                                // explicit opt-out
 		{SandboxWorkspaceWrite, "", false},
 	}
 	for _, c := range cases {

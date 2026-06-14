@@ -149,10 +149,13 @@ function applySpawnHarness(harnessName) {
   sandboxRow.style.display = canSandbox ? '' : 'none';
   if (canSandbox) {
     const sandSel = $('#agent-spawn-sandbox');
+    // The default mode (Codex: the managed tclaude-agent profile) is flagged
+    // "(recommended)" in its label — data-driven off default_sandbox, so no
+    // mode name is hardcoded here. The option value stays the raw mode token.
     sandSel.innerHTML = h.sandbox_modes
-      .map(m => `<option value="${esc(m)}">${esc(m)}</option>`)
+      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_sandbox ? ' (recommended)' : ''}</option>`)
       .join('');
-    // Pre-select the harness's secure default (workspace-write for Codex).
+    // Pre-select the harness's secure default (the managed profile for Codex).
     sandSel.value = h.default_sandbox || h.sandbox_modes[0];
   }
 

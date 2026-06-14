@@ -18,29 +18,50 @@ const (
 	SandboxDangerFull     = "danger-full-access"
 )
 
-// codexSandbox is Codex's SandboxCatalog. The default is workspace-write —
-// the mode whose writable roots (cwd + /tmp + $TMPDIR, $HOME read-only)
-// already deny the daemon-state writes tclaude's CC sandbox-hardening asks
-// operators to configure by hand, so a tclaude-spawned Codex agent gets the
-// guardrail-integrity property for free.
+// SandboxManagedProfile is a spawn-UI *pseudo-mode* — NOT one of Codex's
+// real `--sandbox` modes. It selects tclaude's managed permission profile
+// (`codex -p tclaude-agent`) instead of a raw `--sandbox` flag, and is the
+// recommended default for a daemon-spawned Codex agent: unlike every real
+// `--sandbox` mode (which makes Codex ignore permission profiles, including
+// the Unix-socket allowlist), the profile gives the same workspace-write
+// containment AND keeps the agentd socket reachable, so the agent can still
+// run `tclaude agent …` while sandboxed (JOH-207).
+//
+// Its value is deliberately the profile name (CodexAgentProfile): the
+// dashboard sandbox dropdown carries it verbatim, the spawn boundary
+// (appendSandboxArgs) translates it to `--permission-profile`, and a direct
+// `tclaude session new --sandbox tclaude-agent` is normalized to the same
+// profile rather than emitted as a bogus literal `--sandbox` value. It is
+// never passed to Codex's `--sandbox` flag.
+const SandboxManagedProfile = CodexAgentProfile
+
+// codexSandbox is Codex's SandboxCatalog. The default is the managed
+// permission profile (SandboxManagedProfile) — workspace-write containment
+// (cwd + /tmp + $TMPDIR writable, $HOME read-only, network denied) plus the
+// agentd-socket allowlist — so a tclaude-spawned Codex agent gets the
+// guardrail-integrity property *and* stays able to coordinate via `tclaude
+// agent`. The three raw `--sandbox` modes remain selectable for callers that
+// want Codex's native containment without the managed profile.
 type codexSandbox struct{}
 
-func (codexSandbox) DefaultMode() string { return SandboxWorkspaceWrite }
+func (codexSandbox) DefaultMode() string { return SandboxManagedProfile }
 
-// Modes lists Codex's sandbox modes for spawn UIs, least → most
-// permissive. A fresh slice each call so a caller can't mutate the set.
+// Modes lists the launch-containment options for spawn UIs: the recommended
+// managed profile first (the spawn default), then Codex's three raw
+// `--sandbox` modes. A fresh slice each call so a caller can't mutate the
+// set.
 func (codexSandbox) Modes() []string {
-	return []string{SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFull}
+	return []string{SandboxManagedProfile, SandboxWorkspaceWrite, SandboxReadOnly, SandboxDangerFull}
 }
 
 func (codexSandbox) ValidateMode(mode string) (string, error) {
 	mode = strings.TrimSpace(mode)
 	switch mode {
-	case "", SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFull:
+	case "", SandboxManagedProfile, SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFull:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("invalid codex sandbox mode %q (want %s|%s|%s)",
-			mode, SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFull)
+		return "", fmt.Errorf("invalid codex sandbox mode %q (want %s|%s|%s|%s)",
+			mode, SandboxManagedProfile, SandboxWorkspaceWrite, SandboxReadOnly, SandboxDangerFull)
 	}
 }
 
@@ -50,14 +71,15 @@ func (codexSandbox) ValidateMode(mode string) (string, error) {
 // agent's own writes — defeating the protection the sandbox is supposed to
 // provide.
 //
-// It is true only for the *writable* sandboxed mode (workspace-write) when
-// cwd is at or above one of those protected dirs: workspace-write's
-// writable root is the cwd subtree, so a cwd that contains a protected dir
-// makes it writable. read-only can't write; danger-full-access is the
-// explicit no-sandbox opt-out (the caller already accepted full access), so
-// neither conflicts. The spawn boundary calls this with the resolved,
-// absolute cwd and home (os.UserHomeDir()); a cwd strictly *inside* a
-// normal project dir (e.g. ~/projects/foo) never conflicts.
+// It is true only for the *writable* sandboxed modes — workspace-write and
+// the managed profile (SandboxManagedProfile, which extends :workspace, the
+// same cwd-subtree writability) — when cwd is at or above one of those
+// protected dirs: their writable root is the cwd subtree, so a cwd that
+// contains a protected dir makes it writable. read-only can't write;
+// danger-full-access is the explicit no-sandbox opt-out (the caller already
+// accepted full access), so neither conflicts. The spawn boundary calls this
+// with the resolved, absolute cwd and home (os.UserHomeDir()); a cwd strictly
+// *inside* a normal project dir (e.g. ~/projects/foo) never conflicts.
 //
 // Both cwd and home are passed through filepath.EvalSymlinks first, because
 // Codex confines writes to the *resolved* real path: a cwd like
@@ -66,7 +88,7 @@ func (codexSandbox) ValidateMode(mode string) (string, error) {
 // path) fall back to the cleaned path rather than skipping the guard — the
 // check stays fail-closed.
 func CodexSandboxCwdConflict(mode, cwd, home string) bool {
-	if mode != SandboxWorkspaceWrite || cwd == "" || home == "" {
+	if (mode != SandboxWorkspaceWrite && mode != SandboxManagedProfile) || cwd == "" || home == "" {
 		return false
 	}
 	cwd, home = resolveSymlinks(cwd), resolveSymlinks(home)

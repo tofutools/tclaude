@@ -55,8 +55,8 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, codex.CanRename, "codex renames out-of-band via ConvStore — must stay renameable")
 	assert.True(t, codex.CanCompact, "codex supports /compact")
 	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
-	assert.Equal(t, []string{"read-only", "workspace-write", "danger-full-access"}, codex.SandboxModes)
-	assert.Equal(t, "workspace-write", codex.DefaultSandbox, "secure default pre-selected")
+	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.SandboxModes)
+	assert.Equal(t, "tclaude-agent", codex.DefaultSandbox, "managed-profile default pre-selected")
 }
 
 // Scenario: a per-agent harness + sandbox badge needs the snapshot to

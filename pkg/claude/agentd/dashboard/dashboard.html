@@ -1037,7 +1037,7 @@
         <option value="max">max</option>
       </select>
     </label>
-    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch-time OS sandbox for the new agent (Codex's --sandbox). workspace-write (the secure default) confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
+    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent (Codex). tclaude-agent (the recommended default) runs under tclaude's managed permission profile: workspace-write containment PLUS access to the agentd socket, so the agent can still coordinate via `tclaude agent`. The raw Codex --sandbox modes do NOT get that socket access: workspace-write confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
       <span class="cron-create-label">Sandbox</span>
       <select id="agent-spawn-sandbox"></select>
     </label>
