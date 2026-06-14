@@ -194,7 +194,6 @@ function readCfgThresholdList() {
 // syncCfgEnables greys out the companion inputs of any unchecked
 // enable toggle, so the form reads the way it behaves.
 function syncCfgEnables() {
-  $('#cfg-autocompact-pct').disabled = !$('#cfg-autocompact-enabled').checked;
   $('#cfg-precompact-blockmanual').disabled = !$('#cfg-precompact-enabled').checked;
   const rl = $('#cfg-ratelimit-enabled').checked;
   $('#cfg-ratelimit-5h').disabled = !rl;
@@ -209,9 +208,6 @@ function populateConfigForm(cfg) {
   cfg = cfg || {};
   $('#cfg-log-level').value = cfg.log_level || 'info';
   $('#cfg-terminal').value = cfg.terminal || '';
-  const acp = cfg.auto_compact_percent;
-  $('#cfg-autocompact-enabled').checked = acp != null;
-  $('#cfg-autocompact-pct').value = acp != null ? acp : '';
   const pcg = cfg.pre_compact_guard || {};
   $('#cfg-precompact-enabled').checked = !!pcg.enabled;
   $('#cfg-precompact-blockmanual').checked = !!pcg.block_manual;
@@ -269,8 +265,6 @@ function assembleConfig() {
   cfg.log_level = $('#cfg-log-level').value;
   const term = $('#cfg-terminal').value.trim();
   if (term) cfg.terminal = term; else delete cfg.terminal;
-  if ($('#cfg-autocompact-enabled').checked) cfg.auto_compact_percent = cfgInt('cfg-autocompact-pct', 80);
-  else delete cfg.auto_compact_percent;
 
   // pre_compact_guard. Clone the existing block so a future sub-field
   // with no widget round-trips. Keep block_manual / floors the user
@@ -622,7 +616,7 @@ function bindConfigTab() {
   });
   $('#cfg-reload').addEventListener('click', loadConfigTab);
   $('#cfg-save').addEventListener('click', saveConfig);
-  ['cfg-autocompact-enabled', 'cfg-precompact-enabled', 'cfg-ratelimit-enabled',
+  ['cfg-precompact-enabled', 'cfg-ratelimit-enabled',
     'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);
   });

@@ -17,7 +17,6 @@ import (
 // Config represents the tclaude configuration file structure.
 type Config struct {
 	Notifications      *NotificationConfig    `json:"notifications,omitempty"`
-	AutoCompactPercent *int                   `json:"auto_compact_percent,omitempty"`
 	PreCompactGuard    *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
 	LogLevel           string                 `json:"log_level,omitempty"`
 	RecordHooks        bool                   `json:"record_hooks,omitempty"`
@@ -682,12 +681,6 @@ func Validate(c *Config) []string {
 	case "", "debug", "info", "warn", "error":
 	default:
 		errs = append(errs, fmt.Sprintf("log_level %q is not one of debug, info, warn, error", c.LogLevel))
-	}
-
-	if c.AutoCompactPercent != nil {
-		if p := *c.AutoCompactPercent; p < 1 || p > 100 {
-			errs = append(errs, fmt.Sprintf("auto_compact_percent %d is out of range (1–100)", p))
-		}
 	}
 
 	if g := c.PreCompactGuard; g != nil {

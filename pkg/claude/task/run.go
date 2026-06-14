@@ -31,7 +31,6 @@ type RunParams struct {
 	Dir      string `short:"C" long:"dir" optional:"true" help:"Directory containing task files (defaults to current directory)"`
 	Detached bool   `short:"d" long:"detached" help:"Start detached (don't attach to session)"`
 	Watch    bool   `short:"w" long:"watch" help:"Watch for new tasks instead of exiting when TODO.md is empty"`
-	Compact  int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
 }
 
 func RunCmd() *cobra.Command {
@@ -94,12 +93,12 @@ func runRun(params *RunParams) error {
 	}
 
 	// Run in tmux session
-	return runInTmux(cwd, taskDir, params.Detached, params.Watch, excludeTaskFiles, params.Compact)
+	return runInTmux(cwd, taskDir, params.Detached, params.Watch, excludeTaskFiles)
 }
 
 // runInTmux starts the task runner inside a tmux session.
 // cwd is the working directory where Claude runs; taskDir is where task files live.
-func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool, compact int) error {
+func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool) error {
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return err
 	}
@@ -120,9 +119,6 @@ func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool, comp
 	}
 	if !excludeTaskFiles {
 		additionalEnv["TCLAUDE_TASK_EXPLICIT_DIR"] = "1"
-	}
-	if compact > 0 {
-		additionalEnv["TCLAUDE_AUTO_COMPACT"] = fmt.Sprintf("%d", compact)
 	}
 
 	envExports := clcommon.BuildEnvExports(additionalEnv)

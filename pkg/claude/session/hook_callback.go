@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -462,8 +461,8 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	//
 	// Foreign events must be dropped wholesale: processing one flips the
 	// live session's status (a notified "Exited" for a 2-second `claude
-	// mcp get`; an idle stamp from the child's Stop that can trigger
-	// auto-compact mid-turn), and the conv-advance logic below would
+	// mcp get`; an idle stamp from the child's Stop that can fire a
+	// context nudge mid-turn), and the conv-advance logic below would
 	// read the rotation as a /clear and migrate the agent's identity
 	// onto the throwaway conv — observed in production as a live agent
 	// retired "superseded by <conv> (clear)" where <conv> was a plugin
@@ -603,13 +602,12 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// state on its own — nothing else has to reset it.
 		//
 		// Deliberately NOT setting stopped=true (unlike the Stop case):
-		// the stopped branch drives auto-compact, the context nudge and
-		// the task-runner signal — all of which would "act on" the
-		// error (typing /compact or a nudge into a broken pane, or
-		// reporting a half-finished task as done). Acting on an error
-		// is explicitly out of scope here. The status transition and
-		// the desktop notification (notify.OnStateTransition below)
-		// both fire regardless of the stopped flag.
+		// the stopped branch drives the context nudge and the task-runner
+		// signal — both of which would "act on" the error (typing a nudge
+		// into a broken pane, or reporting a half-finished task as done).
+		// Acting on an error is explicitly out of scope here. The status
+		// transition and the desktop notification (notify.OnStateTransition
+		// below) both fire regardless of the stopped flag.
 		state.Status = StatusError
 		state.StatusDetail = input.ErrorType
 		if state.StatusDetail == "" {
@@ -696,12 +694,15 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		}
 
 	case "PostCompact":
-		// Reset auto-compact state so it can trigger again next time
+		// A compaction just happened — zero the pre-compaction context_pct
+		// (the statusline hook will report the new, smaller figure) and the
+		// nudged_pct ladder so the context nudge re-arms from scratch on the
+		// next climb.
 		if envSessionID != "" {
 			if err := db.ResetCompact(envSessionID); err != nil {
 				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
 			} else {
-				slog.Info("auto-compact state reset", "session_id", envSessionID, "module", "hooks")
+				slog.Info("post-compact state reset", "session_id", envSessionID, "module", "hooks")
 			}
 		}
 		if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
@@ -727,8 +728,8 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			// at e.g. "working: UserPromptSubmit". CC's idle detection
 			// runs on its own ~60s timer, so recovery is delayed, not
 			// instant. Deliberately NOT setting stopped=true — that
-			// branch types /compact and context-nudges into the pane,
-			// which would collide with a user mid-typing.
+			// branch context-nudges into the pane, which would collide
+			// with a user mid-typing.
 			state.Status = StatusIdle
 			state.StatusDetail = ""
 		default:
@@ -748,24 +749,13 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 
 	if stopped && harnessUsesSlashContextControls(state.Harness) {
-		// Check auto-compact threshold first — when a session's
-		// context_pct has crossed BOTH the auto-compact threshold and
-		// a nudge threshold, the compact takes precedence (it's the
-		// actionable response; the nudge would be advice that's about
-		// to be invalidated by the compact). handleContextNudge's
-		// "compact_pending > 0 → skip" guard relies on
-		// handleAutoCompact running first to set the flag.
-		//
-		// Both inject CC slash commands (`/compact`, and a nudge that
-		// names `/compact` / `/reincarnate`) into the agent's pane. They
-		// only ran before JOH-170 because context_pct stayed 0 for
-		// non-CC harnesses — nothing populated it. Now that
-		// persistCodexContextTelemetry (below) DOES populate it for
-		// Codex, gate the injections on the harness actually
-		// understanding those commands, or a Codex pane would be typed
-		// `/compact` it can't parse. Harness-aware compaction/nudging is
-		// future work (Codex Lifecycle).
-		handleAutoCompact(input, envSessionID)
+		// The context nudge injects a hint that names `/reincarnate` into
+		// the agent's pane. It only ran before JOH-170 because context_pct
+		// stayed 0 for non-CC harnesses — nothing populated it. Now that
+		// persistCodexContextTelemetry (below) DOES populate it for Codex,
+		// gate the injection on the harness actually understanding those
+		// commands, or a Codex pane would be typed a hint it can't act on.
+		// Harness-aware nudging is future work (Codex Lifecycle).
 		handleContextNudge(input, envSessionID)
 	}
 
@@ -962,12 +952,12 @@ func getConvTitle(convID, cwd string) string {
 }
 
 // harnessUsesSlashContextControls reports whether a session's harness
-// understands the context-management slash commands the stopped-hook path
-// types into the pane (`/compact`, plus the nudge that names `/compact` /
-// `/reincarnate`). It folds to the harness's compact capability. An empty or
-// unknown harness preserves the legacy Claude Code behaviour — the
-// overwhelmingly common case, and the safe default since CC understands the
-// commands.
+// understands the context-management commands the stopped-hook path's
+// context nudge names in the hint it types into the pane (`/reincarnate`).
+// It folds to the harness's compact capability as a proxy for "understands
+// context-management controls". An empty or unknown harness preserves the
+// legacy Claude Code behaviour — the overwhelmingly common case, and the
+// safe default since CC understands the commands.
 func harnessUsesSlashContextControls(name string) bool {
 	h, err := harness.Resolve(name)
 	if err != nil || h == nil {
@@ -1229,77 +1219,12 @@ func preCompactFloor(thresholds []config.PreCompactThreshold, windowSize int64) 
 	return best.MinTokens, true
 }
 
-// handleAutoCompact checks if auto-compaction should be triggered on Stop.
-// Reads the config threshold and the session's stored context_pct,
-// then CAS-claims compact_pending and sends /compact via tmux keys.
-func handleAutoCompact(input HookCallbackInput, sessionID string) {
-	if sessionID == "" {
-		return
-	}
-
-	// CLI env var overrides config file
-	var threshold float64
-	if envVal := os.Getenv("TCLAUDE_AUTO_COMPACT"); envVal != "" {
-		if v, err := strconv.Atoi(envVal); err == nil && v > 0 {
-			threshold = float64(v)
-		}
-	}
-	if threshold == 0 {
-		cfg, err := config.Load()
-		if err != nil || cfg.AutoCompactPercent == nil {
-			return
-		}
-		threshold = float64(*cfg.AutoCompactPercent)
-	}
-
-	contextPct, _, err := db.GetCompactState(sessionID)
-	if err != nil {
-		slog.Warn("auto-compact: failed to read compact state", "error", err, "module", "hooks")
-		return
-	}
-
-	if contextPct < threshold {
-		return
-	}
-
-	// CAS: only one Stop hook should trigger compaction
-	claimed, err := db.TryClaimCompact(sessionID)
-	if err != nil {
-		slog.Warn("auto-compact: failed to claim", "error", err, "module", "hooks")
-		return
-	}
-	if !claimed {
-		slog.Debug("auto-compact: already claimed", "session_id", sessionID, "module", "hooks")
-		return
-	}
-
-	// Send /compact to the tmux session
-	tmuxSession := GetCurrentTmuxSession()
-	if tmuxSession == "" {
-		slog.Warn("auto-compact: not in a tmux session", "module", "hooks")
-		return
-	}
-
-	slog.Info("auto-compact: triggering /compact",
-		"session_id", sessionID,
-		"tmux_session", tmuxSession,
-		"context_pct", contextPct,
-		"threshold", threshold,
-		"module", "hooks",
-	)
-
-	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "/compact", "Enter")
-	if err := cmd.Run(); err != nil {
-		slog.Error("auto-compact: failed to send keys", "error", err, "module", "hooks")
-	}
-}
-
 // nextNudgeTarget computes which threshold percentile, if any, the
 // context-nudge Stop-hook path should fire at given the current
 // context_pct and the (min, interval) ladder. Returns 0 when no nudge
 // should fire (below min, or invalid config). Caps at 90 so the agent
 // gets a final "you're really running out" tap before the next gulp
-// pushes it into auto-compact / hard-stop territory.
+// pushes it into hard-stop territory.
 //
 // Examples (min=30, interval=10):
 //
@@ -1334,10 +1259,9 @@ func formatContextNudgeMessage(target int) string {
 }
 
 // handleContextNudge fires an opt-in "consider reincarnating" hint
-// when the agent's context crosses a configured threshold. Sibling of
-// handleAutoCompact: both run in the Stop-hook path, both read the
-// stored context_pct, both deliver via tmux send-keys into the
-// agent's own pane.
+// when the agent's context crosses a configured threshold. Runs in the
+// Stop-hook path, reads the stored context_pct, and delivers via tmux
+// send-keys into the agent's own pane.
 //
 // Skips when:
 //   - the feature isn't enabled in config
@@ -1345,8 +1269,6 @@ func formatContextNudgeMessage(target int) string {
 //   - context_pct is below the configured min
 //   - the same-or-higher threshold has already been fired
 //     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
-//   - compact_pending is already set (the agent is about to compact
-//     anyway, no point typing extra text into its pane)
 func handleContextNudge(input HookCallbackInput, sessionID string) {
 	if sessionID == "" {
 		return
@@ -1361,16 +1283,10 @@ func handleContextNudge(input HookCallbackInput, sessionID string) {
 		return
 	}
 
-	contextPct, compactPending, err := db.GetCompactState(sessionID)
+	contextPct, err := db.GetContextPct(sessionID)
 	if err != nil {
-		slog.Warn("context-nudge: failed to read compact state",
+		slog.Warn("context-nudge: failed to read context_pct",
 			"error", err, "module", "hooks")
-		return
-	}
-	if compactPending > 0 {
-		// /compact has already been claimed; the next-turn behaviour is
-		// going to drop context_pct soon anyway, so suppress the nudge
-		// to avoid stepping on the auto-compact path.
 		return
 	}
 

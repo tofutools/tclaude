@@ -956,8 +956,7 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 // has an audit trail in ~/.tclaude/output.log. send-keys is the one
 // channel through which tclaude can make a pane do something the agent
 // did not type itself, so "where did that /compact come from?" must be
-// answerable after the fact from the log alone. See also the auto-compact
-// path in session/hook_callback.go, which logs its own distinct line.
+// answerable after the fact from the log alone.
 //
 // Note: when used with /compact, the follow-up bytes queue in the pty
 // until CC resumes reading after the slash command settles. We don't
@@ -1411,7 +1410,6 @@ func writeContextInfo(w http.ResponseWriter, convID, caller string) {
 		"tokens_input":        snap.TokensInput,
 		"tokens_output":       snap.TokensOutput,
 		"context_window_size": snap.ContextWindowSize,
-		"compact_pending":     snap.CompactPending,
 		"model":               snap.Model,
 	}
 	if caller != "" && caller != convID {
@@ -2627,7 +2625,6 @@ type groupContextEntry struct {
 	TokensInput       int64   `json:"tokens_input"`
 	TokensOutput      int64   `json:"tokens_output"`
 	ContextWindowSize int64   `json:"context_window_size"`
-	CompactPending    float64 `json:"compact_pending,omitempty"`
 	Model             string  `json:"model,omitempty"`
 }
 
@@ -2672,7 +2669,6 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 			TokensInput:       snap.TokensInput,
 			TokensOutput:      snap.TokensOutput,
 			ContextWindowSize: snap.ContextWindowSize,
-			CompactPending:    snap.CompactPending,
 			Model:             snap.Model,
 		})
 	}

@@ -155,6 +155,14 @@ func TestCodexGitCommonDir_LinkedWorktree(t *testing.T) {
 		t.Skip("git not installed")
 	}
 	root := t.TempDir()
+	// On macOS t.TempDir() hands back a /var/folders/... path, but /var is a
+	// symlink to /private/var; git's rev-parse resolves that symlink in the
+	// path it prints. Resolve the root here too so the expected path is built
+	// in the same (resolved) form git returns — otherwise got=/private/var/…
+	// vs want=/var/… mismatches on macOS only.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	repo := filepath.Join(root, "repo")
 	wt := filepath.Join(root, "wt")
 	runGit := func(dir string, args ...string) {
