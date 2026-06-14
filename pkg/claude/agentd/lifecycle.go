@@ -101,7 +101,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
-		if injectSlashCommand(convID, exitCmd, "") {
+		if injectSlashCommand(convID, exitCmd, "", "soft-exit") {
 			res.Action = "soft_stopped"
 		} else {
 			res.Action = "error"

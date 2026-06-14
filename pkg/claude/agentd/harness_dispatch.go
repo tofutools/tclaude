@@ -141,7 +141,7 @@ func deliverRename(convID, title string) bool {
 				"conv", convID, "harness", h.Name)
 			return false
 		}
-		return injectSlashCommand(convID, h.Life.RenameCommand()+" "+title, "")
+		return injectSlashCommand(convID, h.Life.RenameCommand()+" "+title, "", "rename")
 	}
 
 	// Out-of-band rename (direct title store): no live pane needed.
