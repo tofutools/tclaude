@@ -1,6 +1,12 @@
 ---
 name: agent-coord
-description: Coordinate with other tclaude-managed Claude Code or Codex CLI conversations via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human starts it; you don't). Use when you've been put in a group with peer agents and need to look them up, send them messages, or read messages they sent you. Triggered by a `[system: new agent message #...]` line appearing in your conversation, or when the user explicitly asks you to talk to another agent.
+description: >-
+  Coordinate with other tclaude-managed Claude Code or Codex CLI conversations
+  via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human
+  starts it; you don't). Use when you've been put in a group with peer agents
+  and need to look them up, send them messages, or read messages they sent you.
+  Triggered by a `[system: new agent message #...]` line appearing in your
+  conversation, or when the user explicitly asks you to talk to another agent.
 ---
 
 # Coordinating with other agents
@@ -268,7 +274,8 @@ one.
 The agent skills (this one, `agent-rename`, …) are bundled into the
 `tclaude` binary. Materialise them under the supported user skill roots
 (`~/.claude/skills/<name>/` for Claude Code and
-`~/.agents/skills/<name>/` for Codex CLI) with:
+`~/.agents/skills/<name>/` plus `$CODEX_HOME/skills/<name>/` for
+Codex CLI) with:
 
 ```bash
 tclaude setup --install-agent-skills

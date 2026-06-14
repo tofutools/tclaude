@@ -32,6 +32,13 @@ type SandboxCatalog interface {
 	// harness owns its own mode set — the SandboxCatalog parallel to
 	// ModelCatalog.Models / EffortLevels.
 	Modes() []string
+	// ModeHelp returns a one-line human description of a mode for spawn UIs
+	// — notably its agentd-socket reachability, the property that surprises
+	// operators (a raw `--sandbox` mode blocks the socket, so the agent
+	// can't run `tclaude agent …`) — or "" for an unrecognized mode. The
+	// copy lives here, beside the modes it describes, so the dashboard
+	// renders it verbatim and it can't drift from what Modes() lists.
+	ModeHelp(mode string) string
 }
 
 // ResolveSandboxMode is the entry point the *daemon* spawn boundaries

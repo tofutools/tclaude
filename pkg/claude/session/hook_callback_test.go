@@ -386,9 +386,9 @@ func TestRunHookCallback_PendingConvHookStillProcessed(t *testing.T) {
 // PostCompact is exempt from the foreign-process guard: it may
 // legitimately arrive carrying a rotated conv-id (compaction can
 // rotate the conversation before the SessionStart(compact) is
-// processed), and all it does is reset per-env-session compact state —
-// it returns before any status or conv mutation. The observable proof
-// it passed the guard: compact_pending is zeroed.
+// processed), and all it does is reset per-env-session post-compaction
+// state — it returns before any status or conv mutation. The observable
+// proof it passed the guard: the nudged_pct ladder is zeroed.
 func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -399,9 +399,8 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 		ConvID: "conv-pc",
 		Status: StatusWorking,
 	}))
-	claimed, err := db.TryClaimCompact("pc-sess")
-	require.NoError(t, err)
-	require.True(t, claimed, "precondition: compact_pending claimed")
+	require.NoError(t, db.SetNudgedPct("pc-sess", 70),
+		"precondition: nudged_pct stamped")
 
 	feedHook(t, "pc-sess", map[string]any{
 		"session_id":      "conv-pc-rotated",
@@ -409,10 +408,10 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 		"cwd":             dir,
 	})
 
-	_, pending, err := db.GetCompactState("pc-sess")
+	nudged, err := db.GetNudgedPct("pc-sess")
 	require.NoError(t, err)
-	assert.Zero(t, pending,
-		"PostCompact with a rotated conv-id must still reset compact state")
+	assert.Zero(t, nudged,
+		"PostCompact with a rotated conv-id must still reset post-compaction state")
 
 	got, err := LoadSessionState("pc-sess")
 	require.NoError(t, err)

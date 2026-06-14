@@ -38,6 +38,8 @@ type groupOpResp struct {
 	Members []memberOpResult `json:"members"`
 }
 
+const daemonSoftExitReason = "soft_exit"
+
 // handleGroupStop ends every member's running tmux session.
 //
 // Modes:
@@ -102,6 +104,14 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
 		if injectSlashCommand(convID, exitCmd, "", "soft-exit") {
+			if h.Name == harness.CodexName {
+				// Codex has no SessionEnd hook; without this, the reaper
+				// would preserve status but classify daemon /quit as a crash.
+				if err := db.SetSessionExitReason(sess.ID, daemonSoftExitReason); err != nil {
+					slog.Warn("failed to record daemon soft-exit reason",
+						"session", sess.ID, "conv", convID, "error", err)
+				}
+			}
 			res.Action = "soft_stopped"
 		} else {
 			res.Action = "error"
@@ -1533,19 +1543,21 @@ func appendInitialPromptFlag(args []string, h string) []string {
 }
 
 // appendSandboxArgs adds the launch-containment flag(s) to a `tclaude session
-// new` argv. For a Codex spawn/resume using tclaude's managed profile — or the
-// older workspace-write sentinel — it emits `--permission-profile
-// tclaude-agent` INSTEAD of `--sandbox`: that managed profile gives the same
-// workspace-write containment AND allowlists the agentd Unix socket, so the
-// spawned agent can run `tclaude agent …` (JOH-207). Codex ignores a
-// permission profile whenever a `--sandbox`/sandbox_mode is present, so the
-// two can't be combined. All other cases — read-only, danger-full-access, or a
-// non-Codex harness — fall back to `--sandbox`. (read-only/danger-full-access
-// stay on `--sandbox` for now; mapping them onto profiles too is a tracked
-// follow-up.) h is the param name because sessionNewArgs shadows the harness
-// package with a `harness` string parameter.
+// new` argv. For a Codex spawn whose resolved mode is the managed-profile
+// pseudo-mode (SandboxManagedProfile — the secure default), it emits
+// `--permission-profile tclaude-agent` INSTEAD of `--sandbox`: that managed
+// profile gives workspace-write containment AND allowlists the agentd Unix
+// socket, so the spawned agent can run `tclaude agent …` (JOH-207). Codex
+// ignores a permission profile whenever a `--sandbox`/sandbox_mode is present,
+// so the two can't be combined. All other cases — the raw workspace-write,
+// read-only, or danger-full-access `--sandbox` modes, or a non-Codex harness —
+// fall back to `--sandbox`. (Those raw modes intentionally do NOT get the
+// managed profile, so a caller can pick Codex's native containment; note an
+// agent under a raw `--sandbox` mode cannot reach the agentd socket.) h is the
+// param name because sessionNewArgs shadows the harness package with a
+// `harness` string parameter.
 func appendSandboxArgs(args []string, h, sandbox string) []string {
-	if h == harness.CodexName && (sandbox == harness.CodexAgentProfile || sandbox == harness.SandboxWorkspaceWrite) {
+	if h == harness.CodexName && sandbox == harness.SandboxManagedProfile {
 		return appendPermissionProfileFlag(args, harness.CodexAgentProfile)
 	}
 	return appendSandboxFlag(args, sandbox)

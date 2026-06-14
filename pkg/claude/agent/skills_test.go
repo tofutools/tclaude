@@ -1,0 +1,63 @@
+package agent
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+)
+
+func TestInstallCodexSkillsInstallsBothUserRoots(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "custom-codex")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	installed, err := InstallCodexSkills(true)
+
+	require.NoError(t, err)
+	assert.Len(t, installed, len(bundledSkills)*2)
+	assert.DirExists(t, filepath.Join(home, ".agents", "skills", "agent-coord"))
+	assert.DirExists(t, filepath.Join(codexHome, "skills", "agent-coord"))
+}
+
+func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {
+	type frontmatter struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+	}
+
+	for _, name := range bundledSkills {
+		t.Run(name, func(t *testing.T) {
+			data, err := skillsFS.ReadFile("skills/" + name + "/SKILL.md")
+			require.NoError(t, err)
+
+			raw, err := skillFrontmatter(data)
+			require.NoError(t, err)
+
+			var got frontmatter
+			require.NoError(t, yaml.Unmarshal([]byte(raw), &got))
+			assert.Equal(t, name, got.Name)
+			assert.NotEmpty(t, got.Description)
+		})
+	}
+}
+
+func skillFrontmatter(data []byte) (string, error) {
+	const marker = "---\n"
+	text := string(data)
+	if !strings.HasPrefix(text, marker) {
+		return "", fmt.Errorf("missing opening frontmatter marker")
+	}
+	rest := strings.TrimPrefix(text, marker)
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return "", fmt.Errorf("missing closing frontmatter marker")
+	}
+	return rest[:end], nil
+}

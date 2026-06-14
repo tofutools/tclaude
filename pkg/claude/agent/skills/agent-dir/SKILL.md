@@ -1,6 +1,15 @@
 ---
 name: agent-dir
-description: Report — or open a terminal in — the directory an agent is working in, via `tclaude agent dir`. A tool-using agent cannot read tclaude's "where am I building" state or spawn a terminal window from a tool; tclaude agentd tracks the most-recent dir you've edited files in (the PostToolUse hook records it) and, being outside your sandbox, can open a terminal there. Use when the user asks "what directory are you working in / building in", "where are you", "open a terminal here / in the repo", or "/agent-dir". Manager pattern: `tclaude agent dir <peer>` reports another agent's dir; `tclaude agent dir <peer> --open` opens a terminal in it.
+description: >-
+  Report — or open a terminal in — the directory an agent is working in, via
+  `tclaude agent dir`. A tool-using agent cannot read tclaude's "where am I
+  building" state or spawn a terminal window from a tool; tclaude agentd tracks
+  the most-recent dir you've edited files in (the PostToolUse hook records it)
+  and, being outside your sandbox, can open a terminal there. Use when the user
+  asks "what directory are you working in / building in", "where are you",
+  "open a terminal here / in the repo", or "/agent-dir". Manager pattern:
+  `tclaude agent dir <peer>` reports another agent's dir; `tclaude agent dir
+  <peer> --open` opens a terminal in it.
 ---
 
 # Reporting where you're working

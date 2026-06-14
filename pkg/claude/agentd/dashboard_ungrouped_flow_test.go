@@ -82,15 +82,15 @@ type dashMember struct {
 }
 
 type dashAgent struct {
-	ConvID        string    `json:"conv_id"`
-	Title         string    `json:"title"`
-	Branch        string    `json:"branch,omitempty"`
-	StartupDir    string    `json:"startup_dir,omitempty"`
-	StartupBranch string    `json:"startup_branch,omitempty"`
-	CurrentDir    string    `json:"current_dir,omitempty"`
-	BranchURL     string    `json:"branch_url,omitempty"`
-	BranchPRNum   int       `json:"branch_pr_number,omitempty"`
-	BranchPRURL   string    `json:"branch_pr_url,omitempty"`
+	ConvID          string    `json:"conv_id"`
+	Title           string    `json:"title"`
+	Branch          string    `json:"branch,omitempty"`
+	StartupDir      string    `json:"startup_dir,omitempty"`
+	StartupBranch   string    `json:"startup_branch,omitempty"`
+	CurrentDir      string    `json:"current_dir,omitempty"`
+	BranchURL       string    `json:"branch_url,omitempty"`
+	BranchPRNum     int       `json:"branch_pr_number,omitempty"`
+	BranchPRURL     string    `json:"branch_pr_url,omitempty"`
 	BranchPRState   string    `json:"branch_pr_state,omitempty"`
 	Online          bool      `json:"online"`
 	Groups          []string  `json:"groups"`
@@ -101,15 +101,16 @@ type dashAgent struct {
 
 // dashHarness mirrors the relevant fields of agentd.dashboardHarness.
 type dashHarness struct {
-	Name           string   `json:"name"`
-	DisplayName    string   `json:"display_name"`
-	Models         []string `json:"models"`
-	EffortLevels   []string `json:"effort_levels"`
-	SandboxModes   []string `json:"sandbox_modes"`
-	DefaultSandbox string   `json:"default_sandbox"`
-	CanRename      bool     `json:"can_rename"`
-	CanCompact     bool     `json:"can_compact"`
-	CanSandbox     bool     `json:"can_sandbox"`
+	Name            string            `json:"name"`
+	DisplayName     string            `json:"display_name"`
+	Models          []string          `json:"models"`
+	EffortLevels    []string          `json:"effort_levels"`
+	SandboxModes    []string          `json:"sandbox_modes"`
+	DefaultSandbox  string            `json:"default_sandbox"`
+	SandboxModeHelp map[string]string `json:"sandbox_mode_help"`
+	CanRename       bool              `json:"can_rename"`
+	CanCompact      bool              `json:"can_compact"`
+	CanSandbox      bool              `json:"can_sandbox"`
 }
 
 // dashState mirrors the relevant fields of agentd.agentState.

@@ -26,7 +26,6 @@ type NewParams struct {
 	Global           bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
 	Label            string `long:"label" optional:"true" help:"Custom label for the session"`
 	Detached         bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
-	Compact          int    `long:"compact" optional:"true" help:"Auto-compact at this context usage percentage (overrides config)"`
 	WaitForRateLimit bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
 	// Effort sets Claude Code's reasoning effort for the session via
@@ -48,15 +47,17 @@ type NewParams struct {
 	// rest of runNew stays harness-agnostic.
 	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
 
-	// Sandbox selects a harness's launch-time OS-sandbox mode (Codex's
-	// --sandbox). On a direct `session new` it is opt-in: unset emits no
-	// flag, so Codex uses the user's own config.toml sandbox_mode (the human
-	// running session new is the trust root — tclaude doesn't override their
-	// config). Pass a value to sandbox explicitly. The daemon spawn path
-	// (agentd / `agent spawn`) defaults it to workspace-write instead, since
-	// a spawned agent is the untrusted party. Not applicable to Claude Code
-	// (settings.json-driven), which errors if it is set. See JOH-192.
-	Sandbox string `long:"sandbox" optional:"true" help:"Codex OS-sandbox mode: read-only|workspace-write|danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+	// Sandbox selects a harness's launch containment (Codex's --sandbox). On a
+	// direct `session new` it is opt-in: unset emits no flag, so Codex uses the
+	// user's own config.toml sandbox_mode (the human running session new is the
+	// trust root — tclaude doesn't override their config). Pass a value
+	// explicitly. The special value tclaude-agent (SandboxManagedProfile) is a
+	// shorthand that is normalized to --permission-profile tclaude-agent, not a
+	// raw Codex mode. The daemon spawn path (agentd / `agent spawn`) defaults it
+	// to that managed profile instead, since a spawned agent is the untrusted
+	// party. Not applicable to Claude Code (settings.json-driven), which errors
+	// if it is set. See JOH-192 / JOH-207.
+	Sandbox string `long:"sandbox" optional:"true" help:"Codex launch containment: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
 
 	// PermissionProfile selects a tclaude-managed Codex permission profile to
 	// run under, emitted as `codex -p <name>`. It is how the daemon keeps a
@@ -235,6 +236,25 @@ func runNew(params *NewParams) error {
 	}
 	params.Sandbox = sandboxMode
 
+	// Normalize the managed-profile pseudo-mode. SandboxManagedProfile is the
+	// dashboard/daemon way of selecting `codex -p tclaude-agent` through the one
+	// sandbox dropdown, but it is the profile name, not a real Codex --sandbox
+	// value — so on the direct CLI translate `--sandbox tclaude-agent` into
+	// --permission-profile here, converging both paths on the profile rather than
+	// emitting a bogus literal `--sandbox tclaude-agent` Codex would reject. (The
+	// daemon never reaches this: appendSandboxArgs already passes
+	// --permission-profile.) A conflicting explicit --permission-profile is a real
+	// error; an equal one is harmless.
+	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+		if up := strings.TrimSpace(params.PermissionProfile); up != "" && up != harness.CodexAgentProfile {
+			return fmt.Errorf("--sandbox %s selects the managed %s profile and conflicts with --permission-profile %s",
+				harness.SandboxManagedProfile, harness.CodexAgentProfile, up)
+		}
+		params.PermissionProfile = harness.CodexAgentProfile
+		sandboxMode = ""
+		params.Sandbox = ""
+	}
+
 	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
 	// is mutually exclusive with --sandbox. The daemon spawn path passes the
 	// managed tclaude-agent profile here IN PLACE OF --sandbox workspace-write
@@ -254,15 +274,6 @@ func runNew(params *NewParams) error {
 		}
 		if h.Name != harness.CodexName {
 			return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
-		}
-		// Ensure the managed profile file exists before launch (self-healing —
-		// works even if `tclaude setup` was never run). Only the tclaude-owned
-		// profile is auto-created; any other name must already be defined by
-		// the user's own config.
-		if profile == harness.CodexAgentProfile {
-			if _, eerr := harness.EnsureCodexAgentProfile(); eerr != nil {
-				return fmt.Errorf("ensure codex permission profile %q: %w", profile, eerr)
-			}
 		}
 	}
 
@@ -414,9 +425,6 @@ func runNew(params *NewParams) error {
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID": sessionID,
 	}
-	if params.Compact > 0 {
-		additionalEnv["TCLAUDE_AUTO_COMPACT"] = fmt.Sprintf("%d", params.Compact)
-	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
 	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
@@ -435,6 +443,18 @@ func runNew(params *NewParams) error {
 			"that cwd contains your tclaude/Codex/Claude state dirs, which the sandbox would make writable "+
 			"(defeating it). Run the agent from a project subdirectory, or use sandbox %s to opt out of the sandbox",
 			h.Name, cwd, sandboxDescr(sandboxMode, params.PermissionProfile), harness.SandboxDangerFull)
+	}
+
+	// Ensure the managed profile file exists before launch (self-healing —
+	// works even if `tclaude setup` was never run). This lives after cwd
+	// resolution so the profile can add a narrow write grant for the launch
+	// repo's Git common dir, which linked worktrees need for `git commit`.
+	// Only the tclaude-owned profile is auto-created; any other name must
+	// already be defined by the user's own config.
+	if params.PermissionProfile == harness.CodexAgentProfile {
+		if _, eerr := harness.EnsureCodexAgentProfileForCwd(cwd); eerr != nil {
+			return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, eerr)
+		}
 	}
 
 	// Pre-trust the launch dir for Codex when the operator opted in
@@ -456,10 +476,10 @@ func runNew(params *NewParams) error {
 	}
 
 	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports:     envExports,
-		ResumeID:       fullConvID,
-		Effort:         effort,
-		Model:          model,
+		EnvExports:        envExports,
+		ResumeID:          fullConvID,
+		Effort:            effort,
+		Model:             model,
 		ExtraArgs:         extraArgs,
 		SandboxMode:       sandboxMode,
 		PermissionProfile: params.PermissionProfile,
@@ -491,6 +511,11 @@ func runNew(params *NewParams) error {
 	// This ensures the title persists and is visible for window focus
 	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
 	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+
+	// Enable tmux mouse-wheel scrollback for this session when the harness
+	// relies on tmux for history (Codex CLI). Scoped to this session only so
+	// Claude Code panes — which own their scrollback — are untouched (JOH-213).
+	ConfigureTmuxScrollback(tmuxSession, h)
 
 	// Configure keybindings for session navigation (idempotent)
 	ConfigureTmuxKeybindings()

@@ -1,6 +1,15 @@
 ---
 name: agent-rename
-description: Rename your own tclaude-managed conversation via `tclaude agent rename "<title>"`. tclaude agentd applies the harness-specific rename path on your behalf (Claude Code uses `/rename` injection; Codex CLI updates its title store), gated on the `self.rename` permission. Use when the user asks you to rename the conversation/session/agent, or when you decide to give yourself a clearer name (e.g. after taking on a new role in a group). Manager pattern: `tclaude agent rename "<title>" --target <peer>` renames ANOTHER agent (requires the `agent.rename` slug, OR being an owner of a group containing the target).
+description: >-
+  Rename your own tclaude-managed conversation via `tclaude agent rename
+  "<title>"`. tclaude agentd applies the harness-specific rename path on your
+  behalf (Claude Code uses `/rename` injection; Codex CLI updates its title
+  store), gated on the `self.rename` permission. Use when the user asks you to
+  rename the conversation/session/agent, or when you decide to give yourself a
+  clearer name (e.g. after taking on a new role in a group). Manager pattern:
+  `tclaude agent rename "<title>" --target <peer>` renames ANOTHER agent
+  (requires the `agent.rename` slug, OR being an owner of a group containing the
+  target).
 ---
 
 # Renaming yourself

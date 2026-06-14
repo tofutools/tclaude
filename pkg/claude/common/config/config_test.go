@@ -47,8 +47,6 @@ func TestValidate_RejectsBadValues(t *testing.T) {
 		want string
 	}{
 		{"bad log level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
-		{"auto-compact too high", func(c *Config) { p := 150; c.AutoCompactPercent = &p }, "auto_compact_percent"},
-		{"auto-compact too low", func(c *Config) { p := 0; c.AutoCompactPercent = &p }, "auto_compact_percent"},
 		{"clone cooldown unparseable", func(c *Config) { c.Agent = &AgentConfig{CloneCooldown: "soon"} }, "clone_cooldown"},
 		{"negative spawn max", func(c *Config) { n := -1; c.Agent = &AgentConfig{SpawnMaxPerHour: &n} }, "spawn_max_per_hour"},
 		{"bad sudo duration", func(c *Config) { c.Agent = &AgentConfig{Sudo: &SudoConfig{MaxDuration: "ages"}} }, "sudo.max_duration"},

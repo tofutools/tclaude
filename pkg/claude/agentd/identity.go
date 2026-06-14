@@ -557,27 +557,39 @@ func parseAskHumanHeader(r *http.Request) time.Duration {
 var (
 	procName   = session.GetProcessName
 	procParent = session.GetParentPID
-	procEnv    = func(pid int) ([]byte, error) {
-		return os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
-	}
 )
 
 // convIDForPID walks up from pid to the nearest coding-harness ancestor —
 // any harness runtime (claude, codex, …) or "node" (Claude Code runs as
 // node), recognised by session.IsHarnessProcessName, so a Codex agent is
-// identified the same way a Claude Code one is (JOH-206; matching the same
-// walk FindClaudePID uses to record the host pid).
+// identified the same way a Claude Code one is (JOH-206).
 //
 // Returns the ancestor's conv-id plus a flag indicating whether any such
-// ancestor was observed at all. The conv-id comes first from the harness
-// process's $TCLAUDE_SESSION_ID mapped through agentd's sessions table.
-// That session-id key is stable even when tmux initially records the shell
-// wrapper PID rather than the real harness PID. If the env path is missing,
-// Claude Code's per-pid ~/.claude/sessions/<pid>.json is tried next; if
-// that file is missing or unreadable — always, for Codex, which writes no
-// such file — it falls back to agentd's own sessions table keyed by host pid.
-// The hook callbacks also correct wrapper-shaped session rows to the real
-// harness PID, so the PID fallback converges after the first hook.
+// ancestor was observed at all. The conv-id is resolved, in order, from:
+//
+//  1. Claude Code's per-pid ~/.claude/sessions/<pid>.json at the ancestor
+//     (CC writes it under its own — node — pid; Codex writes no such file).
+//  2. agentd's sessions table keyed by the ancestor's own host pid — the
+//     case where the pane shell exec'd into the harness, so pane_pid IS the
+//     harness pid, plus any hook-corrected row keyed by FindClaudePID().
+//  3. agentd's sessions table keyed by the ancestor's PARENT host pid.
+//
+// Step 3 is the load-bearing one for Codex (JOH-206). The spawn row is keyed
+// by the tmux pane_pid (ParsePIDFromTmux at `tclaude session new`), and a
+// harness launches as `sh -c "export …; <harness> …"` — a compound command
+// the shell never exec-optimises — so the pane_pid is that `sh` wrapper and
+// the harness runs as its direct child. The walk therefore reaches the
+// harness one hop *below* the recorded pid; its parent is the pane shell the
+// row is keyed by. (Verified live: a codex process was the direct child of
+// the `sh` pane whose pid the session row carried, pid 205165 under 205164.)
+//
+// Resolution is intentionally bound to host pids the daemon itself recorded
+// at spawn — facts a sandboxed caller cannot choose. It must NOT read the
+// caller's process environment for a session-id, the way an earlier cut did:
+// the walk matches the first harness-NAMED ancestor, and a caller controls
+// both a process's name and its environment, so a renamed `codex` process
+// carrying a planted TCLAUDE_SESSION_ID would impersonate any agent whose
+// session-id it knows. Keying only on recorded host pids closes that.
 //
 // Callers use hasAncestor to distinguish "really the human" (no ancestor)
 // from "agent we can't identify" (ancestor present, conv-id unresolved).
@@ -585,48 +597,32 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 	cur := pid
 	for cur > 1 {
 		name := procName(cur)
+		parent := procParent(cur)
 		if session.IsHarnessProcessName(name) {
 			hasAncestor = true
-			if id := convIDFromProcEnv(cur); id != "" {
-				return id, true
-			}
 			if id := readSessionFile(cur); id != "" {
 				return id, true
 			}
-			// Fallback: agentd's sessions table maps host pid → conv-id
-			// (written by the hook callback). Accuracy fallback only — a
-			// sessions row is produced by agentd's own spawn/hook path.
-			if row, err := db.FindSessionByPID(cur); err == nil && row != nil && row.ConvID != "" {
-				return row.ConvID, true
+			if id := sessionConvByPID(cur); id != "" {
+				return id, true
+			}
+			if id := sessionConvByPID(parent); id != "" {
+				return id, true
 			}
 		}
-		cur = procParent(cur)
+		cur = parent
 	}
 	return "", hasAncestor
 }
 
-func convIDFromProcEnv(pid int) string {
-	sessionID := procEnvValue(pid, "TCLAUDE_SESSION_ID")
-	if sessionID == "" {
-		return ""
-	}
-	row, err := db.LoadSession(sessionID)
-	if err != nil || row == nil || row.ConvID == "" {
-		return ""
-	}
-	return row.ConvID
-}
-
-func procEnvValue(pid int, key string) string {
-	data, err := procEnv(pid)
-	if err != nil || len(data) == 0 || key == "" {
-		return ""
-	}
-	prefix := key + "="
-	for _, part := range strings.Split(string(data), "\x00") {
-		if strings.HasPrefix(part, prefix) {
-			return strings.TrimPrefix(part, prefix)
-		}
+// sessionConvByPID returns the conv-id of the most-recently-updated sessions
+// row whose recorded host pid is hostPID, or "" when none matches (or the
+// match has no conv-id yet). The sessions table is keyed by the tmux pane_pid
+// recorded at spawn; convIDForPID probes both the harness ancestor's own pid
+// and its parent's because the harness runs one hop below that pane_pid.
+func sessionConvByPID(hostPID int) string {
+	if row, err := db.FindSessionByPID(hostPID); err == nil && row != nil {
+		return row.ConvID
 	}
 	return ""
 }

@@ -209,13 +209,6 @@
         <span class="cfg-hint">When on, focusing an agent that has no open window does nothing, instead of opening a new terminal attached to it. Use a row's "open window" action to open one explicitly. Off (default) = open-on-focus.</span>
       </div>
       <div class="cfg-field">
-        <span class="cfg-label">Auto-compact</span>
-        <label class="cfg-inline"><input type="checkbox" id="cfg-autocompact-enabled" /> enabled</label>
-        <input type="number" id="cfg-autocompact-pct" min="1" max="100" placeholder="80" aria-label="Auto-compact percent" />
-        <span>% context</span>
-        <span class="cfg-hint">Auto-run <code>/compact</code> once context usage reaches this percent. Off = no auto-compact.</span>
-      </div>
-      <div class="cfg-field">
         <span class="cfg-label">Pre-compact guard</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-precompact-enabled" /> enabled</label>
         <label class="cfg-inline"><input type="checkbox" id="cfg-precompact-blockmanual" /> also block manual <code>/compact</code></label>
@@ -1044,9 +1037,15 @@
         <option value="max">max</option>
       </select>
     </label>
-    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch-time OS sandbox for the new agent (Codex's --sandbox). workspace-write (the secure default) confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
+    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent (Codex). tclaude-agent (the recommended default) runs under tclaude's managed permission profile: workspace-write containment PLUS access to the agentd socket, so the agent can still coordinate via `tclaude agent`. The raw Codex --sandbox modes do NOT get that socket access: workspace-write confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
       <span class="cron-create-label">Sandbox</span>
-      <select id="agent-spawn-sandbox"></select>
+      <div class="cron-create-target">
+        <select id="agent-spawn-sandbox"></select>
+        <!-- Live help for the selected mode (esp. agentd reachability),
+             set from the harness catalog's sandbox_mode_help by
+             applySpawnSandboxHint(). -->
+        <div id="agent-spawn-sandbox-hint" class="spawn-field-hint"></div>
+      </div>
     </label>
     <label class="cron-create-enabled" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">
       <input id="agent-spawn-trust-dir" type="checkbox" /> Pre-trust this directory for Codex — skip the trust-folder modal (edits ~/.codex/config.toml)

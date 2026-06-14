@@ -88,7 +88,7 @@ func harnessNativeTitle(convID string) (string, bool) {
 // a separate feature.
 func sandboxForHarness(name string) string {
 	if strings.TrimSpace(name) == harness.CodexName {
-		return harness.CodexAgentProfile
+		return harness.SandboxManagedProfile
 	}
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsSandbox() {
 		return h.Sandbox.DefaultMode()

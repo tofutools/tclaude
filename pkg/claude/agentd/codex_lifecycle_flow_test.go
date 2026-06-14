@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -85,9 +86,39 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	stop := f.AsHuman().Stop(spawn.ConvID, false)
 	f.AssertSoftStopped(stop)
 	f.AssertSentContains(spawn.TmuxTarget(), "/quit", 2*time.Second)
+	reason, err := db.GetSessionExitReason(sessions[0].ID)
+	require.NoError(t, err, "GetSessionExitReason")
+	assert.Equal(t, "soft_exit", reason,
+		"daemon soft-stop must record a clean reason before the reaper sees Codex disappear")
 
 	// `/quit` took the pane down: the CodexSim's quit handler flipped it
 	// dead, so has-session now reports offline.
 	assert.False(t, f.World.Tmux.IsAlive(spawn.TmuxSession),
 		"after a graceful /quit the codex pane must be offline")
+
+	// Codex has no SessionEnd hook, so the reaper is what persists
+	// status=exited after /quit. It must preserve the daemon's clean
+	// reason instead of stamping exit_reason=unexpected, which the
+	// dashboard renders as "crashed".
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the stopped Codex session should be reaped")
+	reason, err = db.GetSessionExitReason(sessions[0].ID)
+	require.NoError(t, err, "GetSessionExitReason after reaper")
+	assert.Equal(t, "soft_exit", reason,
+		"reaper must preserve the daemon-recorded clean Codex shutdown reason")
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	var got *dashMember
+	for _, g := range snap.Groups {
+		for i := range g.Members {
+			if g.Members[i].ConvID == spawn.ConvID {
+				got = &g.Members[i]
+			}
+		}
+	}
+	require.NotNil(t, got, "stopped Codex worker should still be listed in its group")
+	assert.False(t, got.Online, "stopped Codex worker should be offline")
+	assert.Equal(t, "soft_exit", got.State.ExitReason,
+		"dashboard must render daemon-stopped Codex as offline, not crashed")
 }

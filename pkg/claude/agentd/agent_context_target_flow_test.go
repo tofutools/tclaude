@@ -20,7 +20,6 @@ type ctxInfo struct {
 	TokensInput       int64   `json:"tokens_input"`
 	TokensOutput      int64   `json:"tokens_output"`
 	ContextWindowSize int64   `json:"context_window_size"`
-	CompactPending    float64 `json:"compact_pending"`
 	CallerConv        string  `json:"caller_conv"`
 }
 

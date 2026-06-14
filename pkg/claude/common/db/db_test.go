@@ -236,8 +236,8 @@ func TestUpdateContextSnapshotEmptyDoesNotClobber(t *testing.T) {
 
 // TestSaveSessionPreservesOutOfBandColumns locks down the dashboard
 // context-meter dropout fix. The context-window columns and the
-// compact bookkeeping are owned by the statusline hook
-// (UpdateContextSnapshot) and the compact path — NOT by SaveSession.
+// nudge bookkeeping are owned by the statusline hook
+// (UpdateContextSnapshot) and the context-nudge path — NOT by SaveSession.
 // A state-tracking hook (Stop -> idle, UserPromptSubmit, every
 // PreToolUse tick) calls SaveSession to update status, and that write
 // must leave the out-of-band columns alone. It used to wipe them:
@@ -249,12 +249,10 @@ func TestSaveSessionPreservesOutOfBandColumns(t *testing.T) {
 	s := &SessionRow{ID: "keep-001", ConvID: "conv-keep", Status: "working", CreatedAt: time.Now()}
 	require.NoError(t, SaveSession(s), "initial SaveSession")
 
-	// The statusline hook and the compact path write out-of-band
+	// The statusline hook and the context-nudge path write out-of-band
 	// columns SaveSession does not own.
 	require.NoError(t, UpdateContextSnapshot("keep-001", 24.0, 241_000, 5_000, 1_000_000), "context snapshot")
-	claimed, err := TryClaimCompact("keep-001")
-	require.NoError(t, err, "TryClaimCompact")
-	require.True(t, claimed, "compact claim")
+	require.NoError(t, SetNudgedPct("keep-001", 50), "SetNudgedPct")
 
 	// A state-tracking hook re-saves the row to flip status (e.g. the
 	// Stop hook marking the agent idle). None of the out-of-band
@@ -269,7 +267,9 @@ func TestSaveSessionPreservesOutOfBandColumns(t *testing.T) {
 	assert.Equal(t, int64(241_000), snap.TokensInput, "tokens_input survives")
 	assert.Equal(t, int64(5_000), snap.TokensOutput, "tokens_output survives")
 	assert.Equal(t, int64(1_000_000), snap.ContextWindowSize, "context_window_size survives")
-	assert.NotZero(t, snap.CompactPending, "compact_pending survives")
+	nudged, err := GetNudgedPct("keep-001")
+	require.NoError(t, err, "GetNudgedPct")
+	assert.Equal(t, 50.0, nudged, "nudged_pct survives")
 
 	// The status update itself still landed.
 	reloaded, err := LoadSession("keep-001")
@@ -277,37 +277,26 @@ func TestSaveSessionPreservesOutOfBandColumns(t *testing.T) {
 	assert.Equal(t, "idle", reloaded.Status, "status update applied")
 }
 
-func TestCompactStateRoundTrip(t *testing.T) {
+func TestContextPctRoundTrip(t *testing.T) {
 	setupTestDB(t)
 
 	s := &SessionRow{ID: "ctx-001", CreatedAt: time.Now()}
 	require.NoError(t, SaveSession(s), "SaveSession")
 
-	// Default values: 0/0 right after insert.
-	pct, pending, err := GetCompactState("ctx-001")
-	require.NoError(t, err, "GetCompactState")
-	require.True(t, pct == 0 && pending == 0, "default state = (%v, %v), want (0, 0)", pct, pending)
+	// Default value: 0 right after insert.
+	pct, err := GetContextPct("ctx-001")
+	require.NoError(t, err, "GetContextPct")
+	require.Equal(t, 0.0, pct, "default context_pct")
 
 	// Update context_pct via the statusbar path.
 	require.NoError(t, UpdateContextPct("ctx-001", 47.0), "UpdateContextPct")
-	pct, pending, _ = GetCompactState("ctx-001")
-	require.True(t, pct == 47.0 && pending == 0, "post-pct state = (%v, %v), want (47, 0)", pct, pending)
+	pct, _ = GetContextPct("ctx-001")
+	require.Equal(t, 47.0, pct, "context_pct after UpdateContextPct")
 
-	// Claim compact: first call wins, second is a no-op.
-	claimed, err := TryClaimCompact("ctx-001")
-	require.NoError(t, err, "TryClaimCompact")
-	require.True(t, claimed, "first TryClaimCompact should win")
-	pct, pending, _ = GetCompactState("ctx-001")
-	require.True(t, pct == 47.0 && pending != 0, "post-claim state = (%v, %v), want pct=47 pending>0", pct, pending)
-
-	again, err := TryClaimCompact("ctx-001")
-	require.NoError(t, err, "TryClaimCompact (re)")
-	require.False(t, again, "second TryClaimCompact must not win after a pending claim")
-
-	// ResetCompact wipes both fields back to zero.
+	// ResetCompact (called on PostCompact) zeroes context_pct back out.
 	require.NoError(t, ResetCompact("ctx-001"), "ResetCompact")
-	pct, pending, _ = GetCompactState("ctx-001")
-	require.True(t, pct == 0 && pending == 0, "post-reset state = (%v, %v), want (0, 0)", pct, pending)
+	pct, _ = GetContextPct("ctx-001")
+	require.Equal(t, 0.0, pct, "context_pct after ResetCompact")
 }
 
 // TestNudgedPct exercises the new sessions.nudged_pct column: it
@@ -341,8 +330,8 @@ func TestNudgedPct(t *testing.T) {
 	require.NoError(t, ResetCompact("nudge-001"), "ResetCompact")
 	got, _ = GetNudgedPct("nudge-001")
 	assert.Equal(t, float64(0), got, "after ResetCompact, nudged_pct")
-	pct, pending, _ := GetCompactState("nudge-001")
-	assert.True(t, pct == 0 && pending == 0, "after ResetCompact, compact state = (%v, %v); want (0, 0)", pct, pending)
+	pct, _ := GetContextPct("nudge-001")
+	assert.Equal(t, 0.0, pct, "after ResetCompact, context_pct")
 }
 
 func TestNotifyState(t *testing.T) {

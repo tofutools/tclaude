@@ -208,6 +208,14 @@ func runServe(p *serveParams) error {
 	// Shares the daemon-wide stop channel.
 	startUsagePoller(cronStop)
 
+	// Codex subscription-usage poller. Codex has no usage API wired into
+	// tclaude, so this lifts the 5h/weekly rate limits off Codex's local
+	// rollout files into an in-memory snapshot the dashboard reads beside
+	// the Claude figures. Cheap (only recently-touched rollouts are read)
+	// and a no-op when Codex isn't installed. Shares the daemon-wide stop
+	// channel.
+	startCodexUsagePoller(cronStop)
+
 	// Live conv_index monitor. One fsnotify watcher over
 	// ~/.claude/projects/ keeps the conv_index SQLite cache fresh as
 	// conversation .jsonl files change, so the dashboard (and any other

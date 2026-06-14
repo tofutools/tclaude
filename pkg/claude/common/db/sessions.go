@@ -40,11 +40,10 @@ type SessionRow struct {
 // SaveSession owns (the state-tracking set: id … harness, sandbox_mode).
 // It deliberately does NOT touch the
 // context-window columns (context_pct, tokens_input, tokens_output,
-// context_window_size) or the compact bookkeeping (compact_pending,
-// nudged_pct). Those are out-of-band: owned by the statusline hook
-// (UpdateContextSnapshot) and the compact path, written on a different
-// cadence from the state-tracking hooks that call SaveSession on every
-// tick.
+// context_window_size) or the nudge bookkeeping (nudged_pct). Those are
+// out-of-band: owned by the statusline hook (UpdateContextSnapshot) and
+// the context-nudge path, written on a different cadence from the
+// state-tracking hooks that call SaveSession on every tick.
 //
 // This used to be INSERT OR REPLACE — which deletes and re-inserts the
 // whole row, silently resetting every out-of-band column to its
@@ -364,15 +363,15 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 	return res.RowsAffected()
 }
 
-// SetSessionExitReason records why a session ended — the `reason` from
-// a graceful SessionEnd hook (logout / prompt_input_exit /
-// bypass_permissions_disabled / other; clear and resume are non-exits
-// and never recorded). It is row-scoped: the SessionEnd
-// hook resolves the exact row whose process exited, and SaveSession
-// bumps that row's updated_at so stateForConv picks it. It is also
-// authoritative — a real SessionEnd overrides any 'unexpected' a reaper
-// sweep stamped in a narrow race. Cleared by ClearSessionExitReasonByConv
-// when the conversation comes back alive.
+// SetSessionExitReason records why a session ended — usually the
+// `reason` from a graceful SessionEnd hook (logout / prompt_input_exit /
+// bypass_permissions_disabled / other), or a daemon-owned clean reason
+// when a harness has no SessionEnd-style shutdown hook. It is row-scoped:
+// the caller resolves the exact row whose process exited, and SaveSession
+// or the reaper bumps that row's updated_at so stateForConv picks it. It
+// is also authoritative — a real SessionEnd overrides any 'unexpected' a
+// reaper sweep stamped in a narrow race. Cleared by
+// ClearSessionExitReasonByConv when the conversation comes back alive.
 func SetSessionExitReason(id, reason string) error {
 	d, err := Open()
 	if err != nil {
@@ -765,7 +764,6 @@ type ContextSnapshot struct {
 	TokensInput       int64
 	TokensOutput      int64
 	ContextWindowSize int64
-	CompactPending    float64
 	// Model is the LLM model display name the session last reported
 	// running on (from the statusline hook). "" until the statusbar
 	// has ticked at least once. Rides on the same row read so the
@@ -800,53 +798,38 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	}
 	var s ContextSnapshot
 	err = db.QueryRow(
-		`SELECT context_pct, tokens_input, tokens_output, context_window_size, compact_pending, model, model_id, effort_level, cost_usd
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, model, model_id, effort_level, cost_usd
 		 FROM sessions WHERE id = ?`, sessionID).
-		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.CompactPending, &s.Model, &s.ModelID, &s.EffortLevel, &s.CostUSD)
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.Model, &s.ModelID, &s.EffortLevel, &s.CostUSD)
 	return s, err
 }
 
-// TryClaimCompact atomically sets compact_pending to the current unix timestamp
-// if it is currently 0. Returns true if the claim was made (caller should send /compact).
-func TryClaimCompact(sessionID string) (bool, error) {
-	db, err := Open()
-	if err != nil {
-		return false, err
-	}
-	now := float64(time.Now().Unix())
-	result, err := db.Exec(
-		`UPDATE sessions SET compact_pending = ? WHERE id = ? AND compact_pending = 0`,
-		now, sessionID)
-	if err != nil {
-		return false, err
-	}
-	n, _ := result.RowsAffected()
-	return n > 0, nil
-}
-
-// ResetCompact clears compact_pending and zeroes context_pct for a session.
-// Also zeroes nudged_pct so a compacted session can be re-nudged from
-// scratch as its context climbs again.
+// ResetCompact zeroes context_pct and nudged_pct for a session after a
+// compaction. Zeroing nudged_pct lets a compacted session be re-nudged
+// from scratch as its context climbs again; zeroing context_pct clears
+// the pre-compaction figure until the statusline hook reports the new,
+// smaller one.
 func ResetCompact(sessionID string) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
 	_, err = db.Exec(`UPDATE sessions
-		SET compact_pending = 0, context_pct = 0, nudged_pct = 0
+		SET context_pct = 0, nudged_pct = 0
 		WHERE id = ?`, sessionID)
 	return err
 }
 
-// GetCompactState returns the context_pct and compact_pending values for a session.
-func GetCompactState(sessionID string) (contextPct float64, compactPending float64, err error) {
+// GetContextPct returns the stored context_pct for a session.
+func GetContextPct(sessionID string) (float64, error) {
 	db, err := Open()
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-	err = db.QueryRow(`SELECT context_pct, compact_pending FROM sessions WHERE id = ?`, sessionID).
-		Scan(&contextPct, &compactPending)
-	return
+	var contextPct float64
+	err = db.QueryRow(`SELECT context_pct FROM sessions WHERE id = ?`, sessionID).
+		Scan(&contextPct)
+	return contextPct, err
 }
 
 // GetNudgedPct returns the highest threshold the context-nudge path

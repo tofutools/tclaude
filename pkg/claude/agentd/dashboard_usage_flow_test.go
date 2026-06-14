@@ -26,6 +26,17 @@ type dashUsage struct {
 	// TodayCostUSD is the same aggregate windowed to the current local
 	// day — the top bar's "(today)" figure beside "(mtd)".
 	TodayCostUSD float64 `json:"today_cost_usd"`
+	// Codex mirrors agentd.codexDashboardUsage — the Codex account's
+	// subscription windows, lifted from Codex's local rollout files.
+	// nil when Codex has no recent usage data.
+	Codex *dashCodexUsage `json:"codex"`
+}
+
+// dashCodexUsage mirrors agentd.codexDashboardUsage.
+type dashCodexUsage struct {
+	Available bool          `json:"available"`
+	FiveHour  *dashUsageWin `json:"five_hour"`
+	SevenDay  *dashUsageWin `json:"seven_day"`
 }
 
 // dashUsageWin mirrors agentd.usageWindow — one rolling-limit window.

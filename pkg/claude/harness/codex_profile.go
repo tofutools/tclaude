@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -11,8 +12,10 @@ import (
 // CodexAgentProfile is the name of the tclaude-managed Codex permission
 // profile that a daemon-spawned (sandboxed, unattended) Codex agent runs
 // under. It mirrors the built-in `:workspace` posture (cwd-subtree writable,
-// $HOME read-only) and additionally allowlists the agentd Unix socket so the
-// agent can run `tclaude agent …` (JOH-207).
+// $HOME read-only), additionally allowlists the agentd Unix socket so the
+// agent can run `tclaude agent …` (JOH-207), and at spawn time grants the
+// launch repository's Git common dir so the agent can commit from a linked
+// worktree without making the rest of $HOME writable.
 //
 // It is realised as a layered config-profile file the Spawner selects with
 // `codex -p <name>` — NOT a `--sandbox` flag — because the two sandbox models
@@ -87,15 +90,21 @@ func CodexAgentProfilePath() (string, error) {
 }
 
 // codexAgentProfileContent renders the managed profile's TOML for the given
-// absolute agentd socket path. The path is embedded as a TOML basic-string
-// key, so a path carrying a double-quote, backslash, or control char is
-// rejected rather than allowed to corrupt the file (an absolute socket path
-// never contains those — defence in depth against a malformed $HOME).
+// absolute agentd socket path. When gitCommonDir is non-empty, it is granted
+// filesystem write access so the agent can run `git commit` inside a linked
+// worktree whose .git file points outside the workspace root. Paths are
+// embedded as TOML basic-string keys, so a path carrying a double-quote,
+// backslash, or control char is rejected rather than allowed to corrupt the
+// file (absolute Unix paths never contain those — defence in depth against a
+// malformed $HOME or cwd).
 //
 // The profile:
 //   - extends the built-in `:workspace` profile (cwd-subtree writable, $HOME
 //     read-only) — the same containment tclaude's previous `--sandbox
 //     workspace-write` gave, so the guardrail-integrity property is preserved;
+//   - optionally allows writes to the current repository's Git common dir
+//     (objects/refs/logs), preserving the rest of $HOME as read-only while
+//     letting a worker commit its own changes;
 //   - enables the network sandbox and allowlists exactly the agentd socket.
 //     `network.enabled = true` is REQUIRED for the Unix-socket allowlist to
 //     take effect (verified: with it unset the socket connect is denied). It
@@ -103,12 +112,14 @@ func CodexAgentProfilePath() (string, error) {
 //     socket-only is a tracked follow-up;
 //   - sets `default_permissions` so `codex -p <name>` activates the profile —
 //     the TUI/exec have no `-P` flag, so selection is via default_permissions.
-func codexAgentProfileContent(socketPath string) (string, error) {
-	if !filepath.IsAbs(socketPath) {
-		return "", fmt.Errorf("agentd socket path %q is not absolute", socketPath)
+func codexAgentProfileContent(socketPath, gitCommonDir string) (string, error) {
+	if err := validateCodexProfilePath("agentd socket path", socketPath); err != nil {
+		return "", err
 	}
-	if strings.ContainsAny(socketPath, "\"\\") || strings.ContainsFunc(socketPath, func(r rune) bool { return r < 0x20 }) {
-		return "", fmt.Errorf("agentd socket path %q contains characters unsafe for a TOML key", socketPath)
+	if gitCommonDir != "" {
+		if err := validateCodexProfilePath("git common dir", gitCommonDir); err != nil {
+			return "", err
+		}
 	}
 	p := CodexAgentProfile
 	var b strings.Builder
@@ -119,11 +130,25 @@ func codexAgentProfileContent(socketPath string) (string, error) {
 	fmt.Fprintf(&b, "default_permissions = %q\n\n", p)
 	fmt.Fprintf(&b, "[permissions.%s]\n", p)
 	fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
+	if gitCommonDir != "" {
+		fmt.Fprintf(&b, "[permissions.%s.filesystem]\n", p)
+		fmt.Fprintf(&b, "%q = \"write\"\n\n", gitCommonDir)
+	}
 	fmt.Fprintf(&b, "[permissions.%s.network]\n", p)
 	fmt.Fprintf(&b, "enabled = true\n\n")
 	fmt.Fprintf(&b, "[permissions.%s.network.unix_sockets]\n", p)
 	fmt.Fprintf(&b, "%q = \"allow\"\n", socketPath)
 	return b.String(), nil
+}
+
+func validateCodexProfilePath(label, path string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%s %q is not absolute", label, path)
+	}
+	if strings.ContainsAny(path, "\"\\") || strings.ContainsFunc(path, func(r rune) bool { return r < 0x20 }) {
+		return fmt.Errorf("%s %q contains characters unsafe for a TOML key", label, path)
+	}
+	return nil
 }
 
 // EnsureCodexAgentProfile writes the managed tclaude-agent profile file (for
@@ -138,14 +163,33 @@ func EnsureCodexAgentProfile() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return ensureCodexAgentProfile(sock)
+	return ensureCodexAgentProfile(sock, "")
+}
+
+// EnsureCodexAgentProfileForCwd is the spawn-time variant of
+// EnsureCodexAgentProfile. It preserves the base tclaude-agent posture and, if
+// cwd is inside a Git repository, adds a write grant for that repository's Git
+// common dir. That is the narrow extra permission `git commit` needs from a
+// linked worktree whose .git pointer targets metadata outside the workspace
+// root. If cwd is not in a Git repo (or git cannot answer), the base profile is
+// written.
+func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
+	sock, err := defaultAgentdSocketPath()
+	if err != nil {
+		return "", err
+	}
+	gitCommonDir, err := codexGitCommonDir(cwd)
+	if err != nil {
+		return "", err
+	}
+	return ensureCodexAgentProfile(sock, gitCommonDir)
 }
 
 // ensureCodexAgentProfile is the socket-path-injected core of
 // EnsureCodexAgentProfile, split out so tests can drive it without depending
 // on the caller's $HOME layout.
-func ensureCodexAgentProfile(socketPath string) (string, error) {
-	content, err := codexAgentProfileContent(socketPath)
+func ensureCodexAgentProfile(socketPath, gitCommonDir string) (string, error) {
+	content, err := codexAgentProfileContent(socketPath, gitCommonDir)
 	if err != nil {
 		return "", err
 	}
@@ -171,6 +215,29 @@ func ensureCodexAgentProfile(socketPath string) (string, error) {
 	return path, nil
 }
 
+func codexGitCommonDir(cwd string) (string, error) {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return "", nil
+	}
+	cmd := exec.Command("git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	out, err := cmd.Output()
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return "", nil
+		}
+		return "", fmt.Errorf("resolve git common dir for %q: %w", cwd, err)
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("git common dir for %q resolved to non-absolute path %q", cwd, dir)
+	}
+	return filepath.Clean(dir), nil
+}
+
 // CodexAgentProfileStatus reports the managed profile's on-disk state WITHOUT
 // writing — for `tclaude setup --check`, which must stay read-only. It returns
 // the file path, whether it exists (present), and whether its bytes match the
@@ -181,9 +248,18 @@ func CodexAgentProfileStatus() (path string, present, current bool, err error) {
 	if err != nil {
 		return "", false, false, err
 	}
-	want, err := codexAgentProfileContent(sock)
+	baseWant, err := codexAgentProfileContent(sock, "")
 	if err != nil {
 		return "", false, false, err
+	}
+	var acceptable []string
+	acceptable = append(acceptable, baseWant)
+	if cwd, gerr := os.Getwd(); gerr == nil {
+		if gitCommonDir, gerr := codexGitCommonDir(cwd); gerr == nil && gitCommonDir != "" {
+			if want, gerr := codexAgentProfileContent(sock, gitCommonDir); gerr == nil {
+				acceptable = append(acceptable, want)
+			}
+		}
 	}
 	path, err = CodexAgentProfilePath()
 	if err != nil {
@@ -196,5 +272,10 @@ func CodexAgentProfileStatus() (path string, present, current bool, err error) {
 		}
 		return path, false, false, rerr
 	}
-	return path, true, string(cur) == want, nil
+	for _, want := range acceptable {
+		if string(cur) == want {
+			return path, true, true, nil
+		}
+	}
+	return path, true, false, nil
 }
