@@ -112,3 +112,37 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 		t.Fatalf("ensure did not self-heal a corrupted profile file")
 	}
 }
+
+// TestCodexAgentProfileStatus covers the read-only `setup --check` helper:
+// missing before install, present+current after EnsureCodexAgentProfile, and
+// present-but-not-current when the file is corrupted (without writing).
+func TestCodexAgentProfileStatus(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	want := filepath.Join(home, "tclaude-agent.config.toml")
+
+	// Missing → not present, not current, no error.
+	path, present, current, err := CodexAgentProfileStatus()
+	if err != nil || present || current || path != want {
+		t.Fatalf("missing: got path=%q present=%v current=%v err=%v", path, present, current, err)
+	}
+
+	// After ensure → present + current.
+	if _, err := EnsureCodexAgentProfile(); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if _, present, current, err := CodexAgentProfileStatus(); err != nil || !present || !current {
+		t.Fatalf("installed: present=%v current=%v err=%v", present, current, err)
+	}
+
+	// Corrupted → present but NOT current; the check must not rewrite it.
+	if err := os.WriteFile(want, []byte("garbage\n"), 0o600); err != nil {
+		t.Fatalf("corrupt: %v", err)
+	}
+	if _, present, current, err := CodexAgentProfileStatus(); err != nil || !present || current {
+		t.Fatalf("stale: present=%v current=%v err=%v", present, current, err)
+	}
+	if cur, _ := os.ReadFile(want); string(cur) != "garbage\n" {
+		t.Fatalf("status() must be read-only, but it rewrote the file")
+	}
+}

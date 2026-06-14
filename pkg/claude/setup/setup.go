@@ -473,6 +473,22 @@ func checkHooksForHarness(h *harness.Harness) {
 	} else {
 		fmt.Printf("✗ Missing hooks: %v\n", missing)
 	}
+	// For Codex, also report the managed agentd permission profile (the
+	// JOH-207 baseline artifact installed by installHooksForHarness), so a
+	// missing/stale profile is surfaced here rather than only at spawn time.
+	// Read-only: --check never writes; the spawn path self-heals it.
+	if h.Name == harness.CodexName {
+		switch path, present, current, perr := harness.CodexAgentProfileStatus(); {
+		case perr != nil:
+			fmt.Printf("⚠ could not check the agentd permission profile: %v\n", perr)
+		case !present:
+			fmt.Printf("✗ agentd permission profile missing (%s) — run `tclaude setup` (the spawn path also self-heals it)\n", path)
+		case !current:
+			fmt.Printf("⚠ agentd permission profile stale (%s) — run `tclaude setup` to refresh\n", path)
+		default:
+			fmt.Printf("✓ agentd permission profile installed (%s)\n", path)
+		}
+	}
 }
 
 // installAgentSkills writes the bundled agent-* skills into

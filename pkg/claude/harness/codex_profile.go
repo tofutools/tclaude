@@ -161,8 +161,40 @@ func ensureCodexAgentProfile(socketPath string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("create codex config dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	// Atomic write (temp + rename, same dir) so a concurrent spawn or an
+	// interrupted setup can never make Codex read a half-written TOML — it sees
+	// either the old file or the complete new one. Reuses the harness package's
+	// atomicWriteFile, same as EnsureCodexDirTrusted.
+	if err := atomicWriteFile(path, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// CodexAgentProfileStatus reports the managed profile's on-disk state WITHOUT
+// writing — for `tclaude setup --check`, which must stay read-only. It returns
+// the file path, whether it exists (present), and whether its bytes match the
+// canonical content EnsureCodexAgentProfile would write (current). A present
+// but non-current file is a stale/corrupt profile the next spawn self-heals.
+func CodexAgentProfileStatus() (path string, present, current bool, err error) {
+	sock, err := defaultAgentdSocketPath()
+	if err != nil {
+		return "", false, false, err
+	}
+	want, err := codexAgentProfileContent(sock)
+	if err != nil {
+		return "", false, false, err
+	}
+	path, err = CodexAgentProfilePath()
+	if err != nil {
+		return "", false, false, err
+	}
+	cur, rerr := os.ReadFile(path)
+	if rerr != nil {
+		if os.IsNotExist(rerr) {
+			return path, false, false, nil
+		}
+		return path, false, false, rerr
+	}
+	return path, true, string(cur) == want, nil
 }
