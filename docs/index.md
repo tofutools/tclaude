@@ -79,7 +79,7 @@ The `--install-*` flags add extras **on top of** the baseline — they don't rep
 
 | Flag | Adds | When you want it |
 |------|------|------------------|
-| `--install-agent-skills` | Materialises the bundled `agent-*` skills into `~/.claude/skills/` for Claude Code and `~/.agents/skills/` for Codex CLI so agents know about the coordination commands. | Using [Agent Coordination](agent.md) |
+| `--install-agent-skills` | Materialises the bundled `agent-*` skills into `~/.claude/skills/` for Claude Code and both `~/.agents/skills/` and `$CODEX_HOME/skills` (default `~/.codex/skills`) for Codex CLI so agents know about the coordination commands. | Using [Agent Coordination](agent.md) |
 | `--install-default-agent-permissions` | Grants the `self.*` permission slugs those skills exercise (`self.rename`, `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`) as agent defaults. | Using [Agent Coordination](agent.md) |
 | `--install-sandbox-hardening` | Adds the `sandbox.*` / `permissions.deny` entries that deny agents direct access to agentd's state. Append-only and idempotent. | Only if you run agents inside the [Claude Code sandbox](sandbox-hardening.md) |
 | `--install-all` | Every extra above. | You want it all |

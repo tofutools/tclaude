@@ -61,7 +61,7 @@ type Params struct {
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install every optional extra (equivalent to passing all --install-* flags) on top of the baseline setup."`
-	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into Claude Code and Codex CLI user skill directories. Idempotent; overwrites existing if present."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the self.* permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
 

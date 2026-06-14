@@ -31,6 +31,11 @@ func init() {
 		Life:        codexLifecycle{},
 		Sandbox:     codexSandbox{},
 		Approval:    codexApproval{},
+		// Codex's TUI scrolls through the terminal rather than rendering its
+		// own scrollback, so a tmux pane needs mouse mode on for the wheel to
+		// reach history (Claude Code, which owns its scrollback, leaves this
+		// off). See JOH-213 + session.ConfigureTmuxScrollback.
+		TmuxScrollback: true,
 	})
 }
 

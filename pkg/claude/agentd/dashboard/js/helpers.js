@@ -503,13 +503,14 @@ function notifyMenuItem(m) {
 // member. focus + hide stay at the TOP LEVEL — the window pair,
 // disabled when the agent is offline — and everything heavier (term,
 // clone, reincarnate, edit, the owner toggle, sudo, permissions,
-// notifications, cron, remove-from-group) is collected behind the ⚙
-// options cog so the row stays uncluttered. The cog is always present
-// and enabled.
+// notifications, cron, remove-from-group, retire) is collected behind
+// the ⚙ options cog so the row stays uncluttered. The cog is always
+// present and enabled.
 function memberActions(g, m) {
   const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
-    + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m) + removeMemberButton(g, m);
+    + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m) + removeMemberButton(g, m)
+    + retireMemberButton(m);
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
 // cloneAgentButton renders a "clone" button for any row that
@@ -652,19 +653,37 @@ function ownerToggleButton(g, m) {
 function removeMemberButton(g, m) {
   return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Remove from group">remove</button>`;
 }
+// retireMemberButton renders the "retire" lifecycle action — the
+// ⚙-menu twin of dragging the row onto the virtual Retired group.
+// Both dispatch the same retire-agent path (case 'retire-agent' in
+// row-actions.js) and the same retireConfirm modal (shutdown + worktree
+// checkboxes), so they ask the identical question; the button just
+// spares the operator the long drag-to-Retired when many groups and
+// agents are on screen. Retire demotes the agent back to a plain
+// conversation, revoking its group memberships and permission grants —
+// reversible via reinstate, though stripped grants are not restored.
+// Styled `warn` (a reversible demotion) so it reads as heavier than the
+// reversible group actions above it yet lighter than the permanent
+// `danger` delete. Always present and enabled — retiring an offline
+// agent is valid (shutdown is then a no-op), matching the drag gesture.
+function retireMemberButton(m) {
+  return `<button class="warn" data-act="retire-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).">retire</button>`;
+}
 
 // ungroupedMemberActions renders the per-row action cell for a row in
 // the virtual "Ungrouped" group. Like memberActions it keeps focus +
 // hide at the top level and collects the rest behind the ⚙ options
 // cog, but it deliberately OMITS every group-affecting button (the
 // edit panel, owner toggle, remove-from-group) — the agent belongs to
-// no group — and the menu's destructive action is delete-agent rather
-// than remove-from-group. Powering the agent up/down is the status
+// no group. It keeps retire (demote to a plain conversation) and its
+// destructive action is delete-agent rather than remove-from-group.
+// Powering the agent up/down is the status
 // dot's job; renaming is the click-to-edit name cell. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m) {
   const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m)
+    + retireMemberButton(m)
     + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }

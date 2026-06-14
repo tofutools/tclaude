@@ -79,6 +79,18 @@ type Harness struct {
 	// spawned (unattended) pane can't deadlock on an approval prompt no human
 	// can answer — see JOH-200.
 	Approval ApprovalCatalog
+
+	// TmuxScrollback marks a harness that relies on tmux for scroll-back
+	// history rather than rendering its own. The spawn path turns tmux mouse
+	// mode on for *that session only* so the wheel scrolls the pane's
+	// copy-mode buffer (see WantsTmuxScrollback + session.ConfigureTmuxScrollback).
+	//
+	// Claude Code leaves this false: it is a full-screen TUI that owns its
+	// offscreen rendering and mouse-wheel handling, so tmux mouse mode would
+	// fight it. Codex CLI sets it true — its TUI scrolls through the terminal,
+	// which without mouse mode means the wheel does nothing in a tmux pane.
+	// See JOH-213.
+	TmuxScrollback bool
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
@@ -155,6 +167,15 @@ func (h *Harness) SupportsApproval() bool {
 // Hooks.Install, and skips with a message when false.
 func (h *Harness) SupportsHooks() bool {
 	return h != nil && h.Hooks != nil
+}
+
+// WantsTmuxScrollback reports whether the spawn path should enable tmux
+// mouse mode for this harness's panes so the wheel scrolls the scroll-back
+// buffer. False for a harness that renders its own scrollback (Claude
+// Code); true for one that leans on the terminal/tmux for it (Codex CLI).
+// See the TmuxScrollback field and session.ConfigureTmuxScrollback (JOH-213).
+func (h *Harness) WantsTmuxScrollback() bool {
+	return h != nil && h.TmuxScrollback
 }
 
 // registry holds the registered harnesses keyed by Name. Populated from

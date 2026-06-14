@@ -2,6 +2,7 @@ package harness
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ import (
 // default_permissions so `codex -p <name>` activates it).
 func TestCodexAgentProfileContent(t *testing.T) {
 	sock := "/home/dev/.tclaude/agentd.sock"
-	got, err := codexAgentProfileContent(sock)
+	got, err := codexAgentProfileContent(sock, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -32,6 +33,28 @@ func TestCodexAgentProfileContent(t *testing.T) {
 	}
 }
 
+// TestCodexAgentProfileContent_WithGitCommonDir pins the repo-scoped grant
+// that lets a sandboxed Codex worker commit from a linked worktree without
+// making the rest of $HOME writable.
+func TestCodexAgentProfileContent_WithGitCommonDir(t *testing.T) {
+	got, err := codexAgentProfileContent(
+		"/home/dev/.tclaude/agentd.sock",
+		"/home/dev/git/project/.git",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		`[permissions.tclaude-agent.filesystem]`,
+		`"/home/dev/git/project/.git" = "write"`,
+		`[permissions.tclaude-agent.network]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("profile content missing %q\n--- got ---\n%s", want, got)
+		}
+	}
+}
+
 // TestCodexAgentProfileContent_RejectsUnsafePath: a non-absolute path or one
 // carrying a TOML-key-breaking character is refused rather than allowed to
 // corrupt the file.
@@ -42,8 +65,18 @@ func TestCodexAgentProfileContent_RejectsUnsafePath(t *testing.T) {
 		"/home/dev/\t/agentd.sock",       // control char
 		`/home/dev\agentd.sock`,          // backslash
 	} {
-		if _, err := codexAgentProfileContent(bad); err == nil {
+		if _, err := codexAgentProfileContent(bad, ""); err == nil {
 			t.Fatalf("expected rejection of unsafe socket path %q", bad)
+		}
+	}
+	for _, bad := range []string{
+		"relative/.git",            // not absolute
+		`/home/d"v/project/.git`,   // embedded double-quote
+		"/home/dev/project/\t.git", // control char
+		`/home/dev/project\.git`,   // backslash
+	} {
+		if _, err := codexAgentProfileContent("/home/dev/.tclaude/agentd.sock", bad); err == nil {
+			t.Fatalf("expected rejection of unsafe git common dir %q", bad)
 		}
 	}
 }
@@ -74,7 +107,7 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 	t.Setenv("CODEX_HOME", home)
 
 	sock := "/home/dev/.tclaude/agentd.sock"
-	path, err := ensureCodexAgentProfile(sock)
+	path, err := ensureCodexAgentProfile(sock, "")
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -86,13 +119,13 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	content, _ := codexAgentProfileContent(sock)
+	content, _ := codexAgentProfileContent(sock, "")
 	if string(first) != content {
 		t.Fatalf("written content mismatch\n--- got ---\n%s\n--- want ---\n%s", first, content)
 	}
 
 	// Idempotent: second call leaves identical bytes.
-	if _, err := ensureCodexAgentProfile(sock); err != nil {
+	if _, err := ensureCodexAgentProfile(sock, ""); err != nil {
 		t.Fatalf("ensure (2nd): %v", err)
 	}
 	again, _ := os.ReadFile(path)
@@ -104,12 +137,53 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("garbage\n"), 0o600); err != nil {
 		t.Fatalf("corrupt: %v", err)
 	}
-	if _, err := ensureCodexAgentProfile(sock); err != nil {
+	if _, err := ensureCodexAgentProfile(sock, ""); err != nil {
 		t.Fatalf("ensure (heal): %v", err)
 	}
 	healed, _ := os.ReadFile(path)
 	if string(healed) != content {
 		t.Fatalf("ensure did not self-heal a corrupted profile file")
+	}
+}
+
+// TestCodexGitCommonDir_LinkedWorktree pins the linked-worktree case that
+// breaks `git commit` under Codex's default protected-.git sandboxing: the
+// writable path must be the repository's common .git dir, not the per-worktree
+// metadata dir.
+func TestCodexGitCommonDir_LinkedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	wt := filepath.Join(root, "wt")
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+		}
+	}
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	runGit(repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGit(repo, "add", "README.md")
+	runGit(repo, "-c", "user.name=tclaude", "-c", "user.email=tclaude@example.invalid",
+		"commit", "-m", "init")
+	runGit(repo, "worktree", "add", "-b", "wt", wt)
+
+	got, err := codexGitCommonDir(wt)
+	if err != nil {
+		t.Fatalf("codexGitCommonDir: %v", err)
+	}
+	want := filepath.Join(repo, ".git")
+	if got != want {
+		t.Fatalf("git common dir = %q, want %q", got, want)
 	}
 }
 

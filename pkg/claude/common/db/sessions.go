@@ -363,15 +363,15 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 	return res.RowsAffected()
 }
 
-// SetSessionExitReason records why a session ended — the `reason` from
-// a graceful SessionEnd hook (logout / prompt_input_exit /
-// bypass_permissions_disabled / other; clear and resume are non-exits
-// and never recorded). It is row-scoped: the SessionEnd
-// hook resolves the exact row whose process exited, and SaveSession
-// bumps that row's updated_at so stateForConv picks it. It is also
-// authoritative — a real SessionEnd overrides any 'unexpected' a reaper
-// sweep stamped in a narrow race. Cleared by ClearSessionExitReasonByConv
-// when the conversation comes back alive.
+// SetSessionExitReason records why a session ended — usually the
+// `reason` from a graceful SessionEnd hook (logout / prompt_input_exit /
+// bypass_permissions_disabled / other), or a daemon-owned clean reason
+// when a harness has no SessionEnd-style shutdown hook. It is row-scoped:
+// the caller resolves the exact row whose process exited, and SaveSession
+// or the reaper bumps that row's updated_at so stateForConv picks it. It
+// is also authoritative — a real SessionEnd overrides any 'unexpected' a
+// reaper sweep stamped in a narrow race. Cleared by
+// ClearSessionExitReasonByConv when the conversation comes back alive.
 func SetSessionExitReason(id, reason string) error {
 	d, err := Open()
 	if err != nil {

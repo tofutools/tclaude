@@ -51,8 +51,9 @@ neither is refused. See [Identity](#identity).
 - **`tclaude setup`** — registers hooks and the agentd socket path.
 - **`tclaude setup --install-agent-skills`** — materialises the
   bundled `agent-*` skills under `~/.claude/skills/` for Claude Code
-  and `~/.agents/skills/` for Codex CLI. Without these skills
-  installed, agents won't know to use these commands.
+  and both `~/.agents/skills/` and `$CODEX_HOME/skills` (default
+  `~/.codex/skills`) for Codex CLI. Without these skills installed,
+  agents won't know to use these commands.
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
   `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`) as
@@ -540,7 +541,8 @@ with care.
 ## Bundled skills
 
 Six skills ship with the binary and install to `~/.claude/skills/`
-for Claude Code and `~/.agents/skills/` for Codex CLI via
+for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
+(default `~/.codex/skills`) for Codex CLI, via
 `tclaude setup --install-agent-skills`:
 
 - **`agent-coord`** — the day-to-day "talk to other agents" skill.

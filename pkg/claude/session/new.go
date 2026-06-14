@@ -254,15 +254,6 @@ func runNew(params *NewParams) error {
 		if h.Name != harness.CodexName {
 			return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
 		}
-		// Ensure the managed profile file exists before launch (self-healing —
-		// works even if `tclaude setup` was never run). Only the tclaude-owned
-		// profile is auto-created; any other name must already be defined by
-		// the user's own config.
-		if profile == harness.CodexAgentProfile {
-			if _, eerr := harness.EnsureCodexAgentProfile(); eerr != nil {
-				return fmt.Errorf("ensure codex permission profile %q: %w", profile, eerr)
-			}
-		}
 	}
 
 	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
@@ -433,6 +424,18 @@ func runNew(params *NewParams) error {
 			h.Name, cwd, sandboxDescr(sandboxMode, params.PermissionProfile), harness.SandboxDangerFull)
 	}
 
+	// Ensure the managed profile file exists before launch (self-healing —
+	// works even if `tclaude setup` was never run). This lives after cwd
+	// resolution so the profile can add a narrow write grant for the launch
+	// repo's Git common dir, which linked worktrees need for `git commit`.
+	// Only the tclaude-owned profile is auto-created; any other name must
+	// already be defined by the user's own config.
+	if params.PermissionProfile == harness.CodexAgentProfile {
+		if _, eerr := harness.EnsureCodexAgentProfileForCwd(cwd); eerr != nil {
+			return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, eerr)
+		}
+	}
+
 	// Pre-trust the launch dir for Codex when the operator opted in
 	// (--trust-dir), BEFORE the pane starts: Codex reads ~/.codex/config.toml
 	// at startup, so the [projects."<cwd>"] trust entry must already be there
@@ -452,10 +455,10 @@ func runNew(params *NewParams) error {
 	}
 
 	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports:     envExports,
-		ResumeID:       fullConvID,
-		Effort:         effort,
-		Model:          model,
+		EnvExports:        envExports,
+		ResumeID:          fullConvID,
+		Effort:            effort,
+		Model:             model,
 		ExtraArgs:         extraArgs,
 		SandboxMode:       sandboxMode,
 		PermissionProfile: params.PermissionProfile,
@@ -487,6 +490,11 @@ func runNew(params *NewParams) error {
 	// This ensures the title persists and is visible for window focus
 	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
 	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+
+	// Enable tmux mouse-wheel scrollback for this session when the harness
+	// relies on tmux for history (Codex CLI). Scoped to this session only so
+	// Claude Code panes — which own their scrollback — are untouched (JOH-213).
+	ConfigureTmuxScrollback(tmuxSession, h)
 
 	// Configure keybindings for session navigation (idempotent)
 	ConfigureTmuxKeybindings()
