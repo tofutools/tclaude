@@ -1039,7 +1039,13 @@
     </label>
     <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent (Codex). tclaude-agent (the recommended default) runs under tclaude's managed permission profile: workspace-write containment PLUS access to the agentd socket, so the agent can still coordinate via `tclaude agent`. The raw Codex --sandbox modes do NOT get that socket access: workspace-write confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
       <span class="cron-create-label">Sandbox</span>
-      <select id="agent-spawn-sandbox"></select>
+      <div class="cron-create-target">
+        <select id="agent-spawn-sandbox"></select>
+        <!-- Live help for the selected mode (esp. agentd reachability),
+             set from the harness catalog's sandbox_mode_help by
+             applySpawnSandboxHint(). -->
+        <div id="agent-spawn-sandbox-hint" class="spawn-field-hint"></div>
+      </div>
     </label>
     <label class="cron-create-enabled" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">
       <input id="agent-spawn-trust-dir" type="checkbox" /> Pre-trust this directory for Codex — skip the trust-folder modal (edits ~/.codex/config.toml)

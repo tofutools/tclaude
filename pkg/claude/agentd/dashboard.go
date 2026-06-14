@@ -429,8 +429,14 @@ type dashboardHarness struct {
 	// Code) — the dialog hides the sandbox selector for it.
 	SandboxModes []string `json:"sandbox_modes"`
 	// DefaultSandbox is the secure default mode the spawn dialog
-	// pre-selects (Codex: workspace-write). "" when SandboxModes is empty.
+	// pre-selects (Codex: the managed tclaude-agent profile). "" when
+	// SandboxModes is empty.
 	DefaultSandbox string `json:"default_sandbox"`
+	// SandboxModeHelp maps each sandbox mode value to a one-line description
+	// the dialog shows as a live hint for the selected option (notably its
+	// agentd-socket reachability). {} (not null) when the harness has no
+	// launch sandbox, so the JS lookup is always safe.
+	SandboxModeHelp map[string]string `json:"sandbox_mode_help"`
 	// CanRename / CanCompact mirror Harness.CanRename / CanCompact — the
 	// deliverable-action predicates the per-row controls gate on. Note
 	// CanRename is true for Codex (it renames via its ConvStore even
@@ -467,9 +473,13 @@ func buildHarnessCatalog() []dashboardHarness {
 		if dh.Models == nil {
 			dh.Models = []string{} // JSON [] not null, so JS .map() is safe
 		}
+		dh.SandboxModeHelp = map[string]string{}
 		if h.SupportsSandbox() {
 			dh.SandboxModes = h.Sandbox.Modes()
 			dh.DefaultSandbox = h.Sandbox.DefaultMode()
+			for _, m := range dh.SandboxModes {
+				dh.SandboxModeHelp[m] = h.Sandbox.ModeHelp(m)
+			}
 		} else {
 			dh.SandboxModes = []string{}
 		}

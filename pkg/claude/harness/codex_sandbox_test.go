@@ -32,6 +32,30 @@ func TestCodexSandbox_Modes(t *testing.T) {
 	}
 }
 
+// TestCodexSandbox_ModeHelp pins that every selectable mode has a non-empty
+// one-line description (the spawn dialog renders it as a live hint), that the
+// raw --sandbox modes carry the ⚠ caveat marker (no agentd / sandbox-off) while
+// the recommended managed profile does not, and that an unknown mode yields "".
+func TestCodexSandbox_ModeHelp(t *testing.T) {
+	sb := codexSandbox{}
+	for _, m := range sb.Modes() {
+		if strings.TrimSpace(sb.ModeHelp(m)) == "" {
+			t.Errorf("ModeHelp(%q) is empty; every selectable mode needs help text", m)
+		}
+	}
+	if strings.Contains(sb.ModeHelp(SandboxManagedProfile), "⚠") {
+		t.Errorf("ModeHelp(%s) must NOT carry the ⚠ caveat marker (it's the safe default)", SandboxManagedProfile)
+	}
+	for _, m := range []string{SandboxWorkspaceWrite, SandboxReadOnly, SandboxDangerFull} {
+		if !strings.Contains(sb.ModeHelp(m), "⚠") {
+			t.Errorf("ModeHelp(%s) must carry the ⚠ caveat marker", m)
+		}
+	}
+	if got := sb.ModeHelp("nope"); got != "" {
+		t.Errorf("ModeHelp(unknown) = %q, want \"\"", got)
+	}
+}
+
 // TestCodexSandbox_ValidateMode accepts the managed-profile pseudo-mode, the
 // three real Codex modes (and "" = caller substitutes the default) and rejects
 // anything else with a message naming the valid set.

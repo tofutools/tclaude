@@ -157,6 +157,9 @@ function applySpawnHarness(harnessName) {
       .join('');
     // Pre-select the harness's secure default (the managed profile for Codex).
     sandSel.value = h.default_sandbox || h.sandbox_modes[0];
+    applySpawnSandboxHint(h);
+  } else {
+    applySpawnSandboxHint(null);
   }
 
   // Codex-only: the opt-in "pre-trust this dir" checkbox (JOH-205). It edits
@@ -172,6 +175,23 @@ function applySpawnHarness(harnessName) {
   // then re-apply the effort remembered for the now-active model control.
   populateSpawnEffortSelect(h);
   applyRememberedEffort(activeSpawnModelEl().value);
+}
+
+// applySpawnSandboxHint sets the live help line under the Sandbox selector to
+// the catalog's description of the currently-selected mode — especially its
+// agentd-socket reachability, the thing that surprises operators. A description
+// carrying the "⚠" caveat marker (the raw --sandbox modes, which can't reach
+// agentd, and danger-full-access, which disables the sandbox) is shown in the
+// warn colour. Passing null (a harness with no launch sandbox) clears it.
+function applySpawnSandboxHint(h) {
+  const hintEl = $('#agent-spawn-sandbox-hint');
+  if (!hintEl) return;
+  const help = (h && h.sandbox_mode_help) || {};
+  const text = help[$('#agent-spawn-sandbox').value] || '';
+  // Trusted catalog copy (not user input): escape, then render `…` spans as
+  // <code> so the `tclaude agent` references read as code.
+  hintEl.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
+  hintEl.classList.toggle('warn', text.includes('⚠'));
 }
 
 // spawnAutoFocusPref reads the persisted "auto focus" checkbox state
@@ -502,6 +522,11 @@ function bindAgentSpawnModal() {
   // control becomes active).
   $('#agent-spawn-harness').addEventListener('change', (e) => {
     applySpawnHarness(e.target.value);
+  });
+  // Picking a different sandbox mode refreshes the live help line (its
+  // agentd-reachability caveat changes per mode).
+  $('#agent-spawn-sandbox').addEventListener('change', () => {
+    applySpawnSandboxHint(spawnHarnessByName($('#agent-spawn-harness').value));
   });
   // Switching the Model re-applies that model's remembered effort (or
   // resets to Default when it has none), so each model carries its own
