@@ -2171,17 +2171,23 @@ body.slop .slop-hud {
 }
 
 /* ─── Side pull-lever (body.slop, slop-spectacle.js) ────────────────
-   A casino lever pinned to the right edge. Hidden in the plain
-   dashboard. The gold stick drops on .slop-lever-pulled (added for the
-   yank's duration) then springs back. */
+   A casino lever pinned to the left edge. Hidden in the plain
+   dashboard, and shown only while the Groups tab is active — the slot
+   machines it spins live on that tab, so on any other tab the lever
+   would do nothing visible. Tab switches only toggle .active on the
+   <main> sections (bindTabs + the programmatic switches in
+   row-actions.js / modal-templates.js), so gating via :has() tracks
+   every switch path without JS. The gold stick drops on
+   .slop-lever-pulled (added for the yank's duration) then springs
+   back. */
 #slop-lever { display: none; }
-body.slop #slop-lever {
+body.slop:has(#tab-groups.active) #slop-lever {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   position: fixed;
-  right: 10px;
+  left: 10px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 9997;
