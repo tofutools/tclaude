@@ -26,10 +26,8 @@ func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	if sess == nil || !alive || sess.Harness != harness.CodexName || sess.ID == "" || sess.ConvID == "" {
 		return
 	}
-	if current, err := db.GetContextSnapshot(sess.ID); err == nil && snapshotPopulated(current) {
-		if !claimCodexContextRefresh(sess.ID, time.Now()) {
-			return
-		}
+	if !claimCodexContextRefresh(sess.ID, time.Now()) {
+		return
 	}
 
 	home, err := os.UserHomeDir()
@@ -52,7 +50,6 @@ func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 			"session_id", sess.ID, "error", err, "module", "agentd")
 		return
 	}
-	markCodexContextRefresh(sess.ID, time.Now())
 }
 
 func claimCodexContextRefresh(sessionID string, now time.Time) bool {
@@ -66,15 +63,6 @@ func claimCodexContextRefresh(sessionID string, now time.Time) bool {
 	}
 	codexContextRefreshMu.last[sessionID] = now
 	return true
-}
-
-func markCodexContextRefresh(sessionID string, now time.Time) {
-	codexContextRefreshMu.Lock()
-	defer codexContextRefreshMu.Unlock()
-	if codexContextRefreshMu.last == nil {
-		codexContextRefreshMu.last = map[string]time.Time{}
-	}
-	codexContextRefreshMu.last[sessionID] = now
 }
 
 func sessionRowAliveIn(sess *db.SessionRow, aliveSet map[string]struct{}) bool {

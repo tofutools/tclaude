@@ -88,7 +88,10 @@ func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) 
 	const label = "spwn-codexctx"
 
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetCodexContextRefreshForTest()
 
+	// Given: a live Codex agent whose rollout has token_count telemetry,
+	// but whose Stop hook has not persisted that telemetry to SQLite yet.
 	f := newFlow(t)
 	f.HaveGroup("codex-squad")
 	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexctx", "/tmp/codexctx")
@@ -101,10 +104,10 @@ func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) 
 		testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000},
 	))
 
-	// No Stop hook / db.UpdateContextSnapshot call here: the dashboard read
-	// itself should lift the latest Codex token_count into the session row.
+	// When: the dashboard snapshot is read.
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
+	// Then: both dashboard surfaces get the read-through Codex snapshot.
 	agentRow := findDashAgent(snap, conv)
 	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
 	assert.InDelta(t, 25.0, agentRow.State.ContextPct, 0.001, "Agents[] context_pct")
@@ -115,6 +118,9 @@ func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) 
 	memberRow := findDashMember(snap, "codex-squad", conv)
 	require.NotNil(t, memberRow, "agent %s missing from group codex-squad members", conv)
 	assert.InDelta(t, 25.0, memberRow.State.ContextPct, 0.001, "Members[] context_pct")
+	assert.Equal(t, int64(49000), memberRow.State.TokensInput, "Members[] tokens_input")
+	assert.Equal(t, int64(1000), memberRow.State.TokensOutput, "Members[] tokens_output")
+	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
 }
 
 // Scenario: a freshly-spawned agent whose statusline hook has not yet
