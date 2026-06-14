@@ -231,6 +231,23 @@ func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, default
 	return func() { gitInfoResolver = prev }
 }
 
+// SetAsyncSpawnInlineGraceForTest shrinks the non-blocking spawn's
+// conv-id inline grace so a flow test can drive the JOH-205 inc2 pending
+// path — a spawn whose conv-id never materialises returns PENDING and
+// records a pending_spawns row — without waiting the production multi-second
+// grace. Returns a restore closure for t.Cleanup.
+func SetAsyncSpawnInlineGraceForTest(d time.Duration) func() {
+	prev := asyncSpawnInlineGrace
+	asyncSpawnInlineGrace = d
+	return func() { asyncSpawnInlineGrace = prev }
+}
+
+// RunPendingSpawnSweepForTest runs one pending-spawn sweep synchronously,
+// so a flow test can deterministically trigger the back-fill that enrolls a
+// pending spawn once its conv-id has materialised — without starting the
+// sweeper's goroutine or waiting its interval.
+func RunPendingSpawnSweepForTest() { sweepPendingSpawns() }
+
 // SessionReaperHandle wraps a sessionReaper so flow tests can drive
 // ticks deterministically without starting its goroutine.
 type SessionReaperHandle struct{ r *sessionReaper }

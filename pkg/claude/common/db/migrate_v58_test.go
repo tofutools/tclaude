@@ -87,9 +87,9 @@ func TestMigrateV57toV58_HealsHalfAppliedRun(t *testing.T) {
 
 // TestMigrateV57toV58_FreshSchemaRoundTrips builds a fresh DB through the
 // full migrate() chain and round-trips sandbox_mode through the production
-// SaveSession / LoadSession helpers. Carries the literal currentVersion pin
-// — the tripwire the next migration's author moves forward into their own
-// v59 test.
+// SaveSession / LoadSession helpers. The literal currentVersion pin moved
+// forward to the v59 test (TestMigrateV58toV59_FreshSchemaRoundTrips) — the
+// next migration's author carries it on, per that convention.
 func TestMigrateV57toV58_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -98,7 +98,6 @@ func TestMigrateV57toV58_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 58, currentVersion, "currentVersion is 58")
 
 	// A session saved without a sandbox mode round-trips as "" (no sandbox
 	// — Claude Code, or a Codex session launched outside the daemon spawn

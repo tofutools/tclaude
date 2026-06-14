@@ -15,6 +15,23 @@ func TestSessionNewArgs_EffortOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+// TestSessionNewArgs_CodexGetsInitialPromptSeed checks the JOH-205 first-turn
+// seed: a daemon-spawned Codex carries `--initial-prompt <seed>` so it takes a
+// turn (materialising its conv-id) without a human, while Claude Code — which
+// reports its conv-id at launch — never gets the seed.
+func TestSessionNewArgs_CodexGetsInitialPromptSeed(t *testing.T) {
+	codex := sessionNewArgs("lbl", "/tmp/x", "", "", "codex", "workspace-write", "never", false)
+	i := slices.Index(codex, "--initial-prompt")
+	if i < 0 || i+1 >= len(codex) || codex[i+1] != codexSpawnSeedPrompt {
+		t.Fatalf("codex spawn must carry --initial-prompt %q, got %v", codexSpawnSeedPrompt, codex)
+	}
+
+	// Default harness (Claude Code) reports its conv-id at launch — no seed.
+	if cc := sessionNewArgs("lbl", "/tmp/x", "", "", "", "", "", false); slices.Contains(cc, "--initial-prompt") {
+		t.Fatalf("Claude Code must NOT get an initial-prompt seed, got %v", cc)
+	}
+}
+
 // TestSessionNewArgs_EffortIncludedWhenSet verifies an explicit level is
 // passed through as `--effort <level>` to the forked session.
 func TestSessionNewArgs_EffortIncludedWhenSet(t *testing.T) {

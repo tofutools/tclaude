@@ -716,6 +716,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
+		// The HTTP spawn endpoint (dashboard + `tclaude agent spawn`) is
+		// non-blocking: a spawn whose conv-id does not materialise within the
+		// inline grace becomes a PENDING agent rather than hanging the request
+		// — the JOH-205 spawn-freeze fix. The group-template instantiator
+		// builds its own params and leaves this false, so it stays synchronous
+		// (it needs the conv-id for owner/permission grants).
+		Async: true,
 	}
 	// An omitted include_group_context flag means opt-in — every spawn
 	// path inherits the group context by default, the same way it
@@ -806,8 +813,22 @@ type spawnParams struct {
 	// reply-to is *where its brief-replies route*; a coordinator can
 	// hand a worker off by setting them apart.
 	SpawnedByConv string
-	// Timeout bounds the conv-id poll; <= 0 falls back to 30s.
+	// Timeout bounds the conv-id poll; <= 0 falls back to 30s. On the
+	// synchronous path it is the hard deadline before a spawn fails; on the
+	// Async path the poll is capped at the shorter asyncSpawnInlineGrace
+	// before the spawn goes pending.
 	Timeout time.Duration
+	// Async makes executeSpawn non-blocking: when the conv-id has not
+	// materialised within asyncSpawnInlineGrace, instead of failing it records
+	// the spawn in pending_spawns and returns a PENDING outcome (empty
+	// conv-id) for the sweeper to back-fill. The HTTP spawn endpoint sets it;
+	// the group-template instantiator leaves it false so its owner/permission
+	// grants on the conv-id keep working. Tradeoff: a gated Codex instantiated
+	// via a template therefore still polls the full Timeout and hard-fails —
+	// the freeze class is not eliminated on that path — but those grants need
+	// the conv-id synchronously, so it stays blocking by design. See JOH-205
+	// inc2.
+	Async bool
 }
 
 // spawnOutcome is the success result of executeSpawn.
@@ -827,18 +848,42 @@ type spawnFailure struct {
 	Msg    string
 }
 
+// asyncSpawnInlineGrace bounds how long a non-blocking (Async) spawn waits
+// for the conv-id before returning a PENDING agent. CC reports its conv-id
+// via an immediate launch hook, and a trusted-dir Codex — self-starting its
+// first turn from inc1's launch seed — materialises its rollout (and thus
+// conv-id) within a second or two; this grace comfortably covers both, so the
+// common case still returns a real conv-id inline. A spawn stuck behind a
+// startup gate (untrusted dir / new-hooks-config / OpenAI auth modal) blows
+// the grace and goes pending instead of hanging the request — the sweeper
+// enrolls it once the operator clears the gate. The synchronous template path
+// ignores this and keeps the full Timeout.
+//
+// A var, not a const, so a flow test can shrink it (SetAsyncSpawnInlineGrace-
+// ForTest) and drive the pending path without a multi-second real wait.
+var asyncSpawnInlineGrace = 6 * time.Second
+
 // executeSpawn runs the validated spawn sequence: it forks a detached
-// `tclaude session new`, polls the sessions table for the conv-id,
-// joins the conv to the group, records the pending display name,
-// optionally opens a terminal, drops the startup briefing into the new
-// agent's inbox, and kicks off the post-init /rename + welcome
-// injection. It is the single code path behind both the
+// `tclaude session new`, polls the sessions table for the conv-id, and —
+// once the conv-id is known — joins the conv to the group, records the
+// pending display name, drops the startup briefing into the new agent's
+// inbox, and kicks off the post-init /rename + welcome injection (the
+// shared finishSpawnEnrollment tail). It optionally opens a terminal as soon
+// as the pane exists. It is the single code path behind both the
 // /v1/groups/{name}/spawn endpoint and the group-template instantiator.
 //
-// Returns either an outcome or a typed failure — never both. The agent
-// is fully spawned and group-joined on success; on a post-membership
-// best-effort failure (pending name, auto-focus, inbox insert) it still
-// succeeds, those steps only log.
+// On the Async path (the HTTP endpoint) a conv-id that does not materialise
+// within asyncSpawnInlineGrace does not fail: the spawn is recorded in
+// pending_spawns and returned as a PENDING outcome (empty conv-id) for the
+// sweeper to enroll later. On the synchronous path (the template
+// instantiator, which needs the conv-id for grants) a timeout is still a hard
+// failure.
+//
+// Returns either an outcome or a typed failure — never both. On an inline
+// success the agent is fully spawned and group-joined (post-membership
+// best-effort steps — pending name, inbox insert — only log on failure); on
+// an Async PENDING success the outcome carries an empty conv-id and the agent
+// is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure) {
 	timeout := p.Timeout
 	if timeout <= 0 {
@@ -869,20 +914,53 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			"failed to launch tclaude session new: " + err.Error()}
 	}
 
+	// Auto-focus closure: when the caller asked for it, open a terminal
+	// window attached to the freshly-spawned agent — via `tclaude session
+	// attach`, never raw tmux, so the reattached session keeps its tclaude
+	// features. A detached spawn has no window of its own, so this is what
+	// lets the human watch and talk to the new agent right away and, for a
+	// pending Codex spawn, clear whatever startup gate (dir-trust /
+	// new-hooks-config / OpenAI auth modal) is holding its first turn.
+	//
+	// It is label-based and conv-id-independent, so it fires the moment the
+	// pane exists — before the conv-id, which is precisely when a gated pane
+	// needs a human at it. Fired at most once; best-effort, a failure to pop
+	// a window is logged, never bubbled.
+	focused := false
+	focusSpawn := func() {
+		if !p.AutoFocus || focused {
+			return
+		}
+		focused = true
+		if err := openTerminal(openAttachCmd(label)); err != nil {
+			slog.Warn("spawn: auto-focus terminal failed to open",
+				"label", label, "error", err)
+		}
+	}
+
 	// Poll the sessions table for the conv-id. The hook callback writes it
 	// shortly after the harness actually starts inside tmux — for Claude
 	// Code that is an immediate SessionStart hook, so this poll wins.
 	//
-	// Codex fires NO hook until the first user turn, so the hook-written
-	// conv-id never lands for a freshly-spawned, idle Codex agent and this
-	// poll would otherwise hang the whole timeout (the JOH-205 spawn-freeze).
-	// Codex DOES write its rollout (carrying the session-id) ~1s after
-	// launch, so once the grace elapses we fall back to discovering the
-	// conv-id from the harness conv store and persist it ourselves. The
-	// harness is resolved once; an empty/unknown --harness yields a nil
+	// Codex fires NO hook until its first user turn. inc1's launch seed makes
+	// a trusted-dir Codex self-submit that turn, so its rollout (carrying the
+	// session-id) materialises within a second or two and the discovery
+	// fallback below resolves the conv-id inline. A Codex held behind a
+	// startup gate (untrusted dir / new-hooks-config / OpenAI auth modal)
+	// never takes that turn, so its conv-id never materialises — polling it to
+	// the full timeout was the JOH-205 spawn-freeze. An Async (dashboard)
+	// spawn therefore polls only asyncSpawnInlineGrace before going pending;
+	// the synchronous template path keeps the full timeout, since its caller
+	// needs the conv-id for owner/permission grants.
+	//
+	// The harness is resolved once; an empty/unknown --harness yields a nil
 	// descriptor and discoverSpawnedConvID no-ops, leaving CC on the hook.
 	launchedAt := time.Now()
-	deadline := launchedAt.Add(timeout)
+	pollBudget := timeout
+	if p.Async && asyncSpawnInlineGrace < pollBudget {
+		pollBudget = asyncSpawnInlineGrace
+	}
+	deadline := launchedAt.Add(pollBudget)
 	spawnHarness, _ := harness.Get(p.Harness)
 	var convID, tmuxSession string
 	var lastDiscoveryScan time.Time
@@ -890,6 +968,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
 			tmuxSession = s.TmuxSession
+			if tmuxSession != "" {
+				focusSpawn() // pane is up — open it now, conv-id or not
+			}
 			if s.ConvID != "" {
 				convID = s.ConvID
 				break
@@ -912,12 +993,77 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	if convID == "" {
-		return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
-			"spawned session " + label + " but conv-id never materialised within " + timeout.String() +
-				" — the session may still come up; check `tclaude session attach " + label + "`"}
+
+	// Conv-id resolved within the poll: finish enrollment inline and return a
+	// fully-spawned agent — the CC and seeded-Codex common case, unchanged by
+	// the non-blocking refactor.
+	if convID != "" {
+		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
+			return nil, fail
+		}
+		return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession}, nil
 	}
 
+	// Conv-id did not materialise within the poll. An Async (dashboard) spawn
+	// records its full enrollment intent in pending_spawns and returns a
+	// PENDING outcome (empty conv-id) — the operator can already see + focus
+	// the pane (auto-focus fired above as soon as it came up) to clear the
+	// gate, and the sweeper back-fills the enrollment once the conv-id
+	// appears. Restart-safe: the row carries everything finishSpawnEnrollment
+	// needs.
+	if p.Async {
+		focusSpawn() // belt-and-suspenders: open the pane even if it came up slow
+		pending := &db.PendingSpawn{
+			Label:          label,
+			GroupID:        g.ID,
+			Role:           p.Role,
+			Descr:          p.Descr,
+			Name:           p.Name,
+			InitialMessage: p.InitialMessage,
+			GroupContext:   p.GroupContext,
+			ReplyToConv:    p.ReplyToConv,
+			SpawnedByConv:  p.SpawnedByConv,
+			WorktreePath:   p.WorktreePath,
+			WorktreeBranch: p.WorktreeBranch,
+		}
+		if err := db.InsertPendingSpawn(pending); err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io",
+				"spawned session " + label + " but failed to record it as pending: " + err.Error()}
+		}
+		slog.Info("spawn: conv-id not yet materialised; recorded pending spawn",
+			"label", label, "group", g.Name, "harness", p.Harness)
+		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession}, nil
+	}
+
+	// Synchronous (template) path: the caller needs the conv-id now, so a
+	// timeout is a hard failure — unchanged from before inc2.
+	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
+		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
+			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+// finishSpawnEnrollment completes a spawn once its conv-id is known: it joins
+// the conv to the group, records the requested display name, drops the
+// startup briefing into the new agent's inbox, and kicks off the post-init
+// /rename + welcome injection. It is the shared tail of executeSpawn — run
+// inline when the conv-id resolves during the spawn poll, and run later by
+// the pending-spawn sweeper once a gated Codex finally takes its first turn
+// and its conv-id materialises. For the sweeper path g and p are
+// reconstructed from the persisted pending_spawns row.
+//
+// It deliberately does NOT auto-focus: the terminal is opened by executeSpawn
+// at spawn time (label-based, conv-id-independent), so a pending spawn is
+// already focusable while it waits.
+//
+// Returns a typed failure only for the membership write — the one step the
+// agent cannot do without; the later steps (pending name, inbox insert) are
+// best-effort and only log, since the agent is already spawned and grouped.
+//
+// SAFETY: runSpawnPostInit's pane injection (send-keys) runs ONLY from here,
+// i.e. only after the conv-id exists — which for Codex means after it cleared
+// its startup gates and took its first turn. That preserves JOH-205's
+// no-send-keys-before-connection property through the non-blocking refactor.
+func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spawnFailure {
 	// Membership add. Permission gating already happened in the caller;
 	// this is just the DB write.
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
@@ -926,7 +1072,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Role:    p.Role,
 		Descr:   p.Descr,
 	}); err != nil {
-		return nil, &spawnFailure{http.StatusInternalServerError, "io",
+		return &spawnFailure{http.StatusInternalServerError, "io",
 			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 	}
 
@@ -945,21 +1091,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if err := db.SetEnrollmentPendingName(convID, name); err != nil {
 			slog.Warn("spawn: failed to record pending name",
 				"conv", convID, "name", name, "error", err)
-		}
-	}
-
-	// Auto-focus: when the caller asked for it, open a terminal window
-	// attached to the freshly-spawned agent. A detached spawn has no
-	// window of its own, so this is what lets the human watch and talk
-	// to the new agent right away — via `tclaude session attach`, never
-	// raw tmux, so the reattached session keeps its tclaude features.
-	//
-	// Best-effort: the agent spawned fine regardless, so a failure to
-	// pop a window is logged, never bubbled.
-	if p.AutoFocus {
-		if err := openTerminal(openAttachCmd(label)); err != nil {
-			slog.Warn("spawn: auto-focus terminal failed to open",
-				"conv", convID, "label", label, "error", err)
 		}
 	}
 
@@ -1006,7 +1137,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			p.SpawnedByConv)
 	})
 
-	return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession}, nil
+	return nil
 }
 
 // runSpawnPostInit fires asynchronously after a successful spawn. It
@@ -1267,6 +1398,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string
 	args = appendSandboxFlag(args, sandbox)
 	args = appendApprovalFlag(args, approval)
 	args = appendAutoReviewFlag(args, autoReview)
+	args = appendInitialPromptFlag(args, harness)
 	return args
 }
 
@@ -1302,6 +1434,34 @@ func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval st
 func appendHarnessFlag(args []string, h string) []string {
 	if h != "" && h != harness.DefaultName {
 		args = append(args, "--harness", h)
+	}
+	return args
+}
+
+// codexSpawnSeedPrompt is the first-turn prompt a daemon-spawned Codex pane
+// submits to ITSELF at launch. Codex generates its conversation id at launch
+// but only persists/exposes it (rollout file, threads row, hooks) once a turn
+// runs (JOH-205); an unattended pane has no human to type that first message,
+// so without a seed the conv-id never materialises and the spawn hangs. The
+// prompt is deliberately inert — it asks the agent to acknowledge and WAIT, so
+// the turn happens (materialising the id) without the agent acting before its
+// real identity/role/task briefing arrives via the post-connection welcome +
+// inbox. It does not touch the agentd socket, so it is unaffected by JOH-207.
+const codexSpawnSeedPrompt = "[tclaude] You are being started as a managed agent. " +
+	"Reply with a brief acknowledgement to confirm you are up, then wait — your identity, role, and task " +
+	"briefing will be delivered to you next. Do not take any other action until you receive it."
+
+// appendInitialPromptFlag seeds a daemon-spawned Codex pane with the first-turn
+// prompt above so its conv-id materialises without a human (JOH-205). Emitted
+// only for Codex — Claude Code reports its conv-id at launch (SessionStart
+// hook) and needs no seed. It lives on the daemon spawn path (sessionNewArgs),
+// NOT the shared `tclaude session new` entrypoint, so a human's direct
+// `session new` never gets a seed and still types their own first message. The
+// forked `session new` re-validates; codexSpawner emits the positional [PROMPT]
+// only on a fresh launch, so a resume (where the id is already known) ignores it.
+func appendInitialPromptFlag(args []string, h string) []string {
+	if h == harness.CodexName {
+		args = append(args, "--initial-prompt", codexSpawnSeedPrompt)
 	}
 	return args
 }
