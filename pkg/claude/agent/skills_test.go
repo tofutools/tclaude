@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +28,8 @@ func TestInstallCodexSkillsInstallsBothUserRoots(t *testing.T) {
 }
 
 func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {
+	const maxCodexDescriptionChars = 1024
+
 	type frontmatter struct {
 		Name        string `yaml:"name"`
 		Description string `yaml:"description"`
@@ -44,6 +47,7 @@ func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {
 			require.NoError(t, yaml.Unmarshal([]byte(raw), &got))
 			assert.Equal(t, name, got.Name)
 			assert.NotEmpty(t, got.Description)
+			assert.LessOrEqual(t, utf8.RuneCountInString(got.Description), maxCodexDescriptionChars)
 		})
 	}
 }
