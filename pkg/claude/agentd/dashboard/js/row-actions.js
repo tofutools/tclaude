@@ -345,6 +345,19 @@ function bindRowActions() {
           toast(`window opened: ${label}`);
           return;
         }
+        case 'focus-pending': {
+          // Open the pane of a PENDING spawn (JOH-205) — keyed on its
+          // LABEL, since a pending agent has no conv-id yet. Opening the
+          // pane lets the operator clear the startup gate; the sweeper
+          // then promotes it into a real agent, which the 2s poll picks
+          // up — so skip the immediate refresh.
+          const r = await fetch(`/api/pending/focus/${encodeURIComponent(label)}`, {
+            method: 'POST', credentials: 'same-origin',
+          });
+          if (!r.ok) { toast(`Focus failed: ${await r.text()}`, true); return; }
+          toast(`opened pending spawn: ${label}`);
+          return;
+        }
         case 'term-dir': {
           // Click on a CWD path cell — the cell already names one
           // specific directory, so open a terminal there straight

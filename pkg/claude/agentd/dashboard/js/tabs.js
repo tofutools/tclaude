@@ -13,6 +13,7 @@ import {
   virtualUngroupedGroup, ungroupedVisible,
   virtualConversationsGroup, conversationsVisible,
   virtualRetiredGroup, retiredVisible,
+  virtualPendingGroup,
 } from './virtual-groups.js';
 import { renderGroups } from './render.js';
 
@@ -68,6 +69,15 @@ function renderGroupsTab() {
   // group stays visible even when empty (a no-text filter never
   // hides it; a text filter narrows it like any group).
   const list = realGroups.slice();
+  // The virtual "Pending" group is PREPENDED so a just-spawned agent
+  // still stuck behind a startup gate (JOH-205) is the first thing the
+  // operator sees — it's an actionable alert, not a routine bucket. Only
+  // built when there are pending spawns: no opt-out checkbox and no
+  // persistent empty box (unlike the other virtual groups below).
+  const pending = lastSnapshot.pending || [];
+  if (pending.length) {
+    list.unshift(virtualPendingGroup(pending));
+  }
   if (ungroupedVisible()) {
     list.push(virtualUngroupedGroup(lastSnapshot.ungrouped || []));
   }

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -85,6 +86,17 @@ type NewParams struct {
 	// opt-in on the direct `session new` path as on the daemon path —
 	// experimental/undocumented upstream. See JOH-200 part 2.
 	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
+
+	// TrustDir opts into pre-trusting the launch cwd for Codex, so a
+	// detached pane doesn't freeze on Codex's "do you trust this folder?"
+	// onboarding modal (JOH-205). It writes [projects."<cwd>"] trust_level =
+	// "trusted" into the user's ~/.codex/config.toml BEFORE launch — the
+	// only mechanism Codex exposes (no per-invocation flag). OFF by default
+	// and NEVER auto-defaulted on any path: editing the user's config.toml
+	// is a side effect they must explicitly request (dashboard checkbox /
+	// this flag). No-op for Claude Code (no dir-trust concept). The write is
+	// atomic + idempotent (harness.EnsureCodexDirTrusted).
+	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory for Codex by writing [projects.\"<cwd>\"] trust_level=\"trusted\" into ~/.codex/config.toml, so a detached pane doesn't freeze on the trust-folder modal. Off by default; edits your Codex config, so opt-in only. Not applicable to claude"`
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
@@ -279,6 +291,16 @@ func runNew(params *NewParams) error {
 	}
 	params.AutoReview = autoReview
 
+	// Gate --trust-dir the same way: pre-trusting the launch cwd is a
+	// Codex-only concept (Claude Code has no "trust this folder?" modal), and
+	// unlike the flags above it edits the user's ~/.codex/config.toml, so it
+	// is strictly opt-in and never defaulted on any path. Setting it for
+	// another harness errors here; the actual write happens just before
+	// launch, once cwd is resolved.
+	if _, err := harness.ResolveTrustDir(h, params.TrustDir); err != nil {
+		return err
+	}
+
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
 			return fmt.Errorf("--join-group is not wired up in this binary")
@@ -413,6 +435,24 @@ func runNew(params *NewParams) error {
 			"that cwd contains your tclaude/Codex/Claude state dirs, which the sandbox would make writable "+
 			"(defeating it). Run the agent from a project subdirectory, or use sandbox %s to opt out of the sandbox",
 			h.Name, cwd, sandboxDescr(sandboxMode, params.PermissionProfile), harness.SandboxDangerFull)
+	}
+
+	// Pre-trust the launch dir for Codex when the operator opted in
+	// (--trust-dir), BEFORE the pane starts: Codex reads ~/.codex/config.toml
+	// at startup, so the [projects."<cwd>"] trust entry must already be there
+	// or the agent freezes on the trust-folder modal (JOH-205). Opt-in only
+	// (the early gate guarantees the harness is Codex); atomic + idempotent.
+	//
+	// Best-effort: pre-trust is an optimisation over the focus-button fallback
+	// — if it fails (an FS error, or a config shape the editor refuses to touch
+	// rather than corrupt), the agent still launches and the operator can clear
+	// the trust-folder modal on the pending pane via the dashboard focus button
+	// (Part A). So warn and continue rather than fail the spawn.
+	if params.TrustDir && h.Name == harness.CodexName {
+		if err := harness.EnsureCodexDirTrusted(cwd); err != nil {
+			slog.Warn("could not pre-trust the launch dir for codex; the trust-folder modal may appear — clear it via the dashboard focus button",
+				"cwd", cwd, "err", err)
+		}
 	}
 
 	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{

@@ -108,6 +108,17 @@ type SpawnRequest struct {
 	// hence an explicit opt-in. See JOH-200 part 2.
 	AutoReview bool `json:"auto_review,omitempty"`
 
+	// TrustDir opts the spawned agent into pre-trusting its launch directory
+	// for Codex: the daemon writes [projects."<cwd>"] trust_level = "trusted"
+	// into the user's ~/.codex/config.toml BEFORE launch, so a detached pane
+	// doesn't freeze on Codex's "do you trust this folder?" onboarding modal
+	// (JOH-205). false (the default) leaves the modal in place — to be cleared
+	// by focusing the pending pane. Unlike SandboxMode/ApprovalPolicy this
+	// edits the user's config.toml, so it is strictly opt-in (dashboard
+	// checkbox / `--trust-dir`) and NEVER defaulted. Codex-only; requesting it
+	// for Claude Code is a 400. Forwarded to `tclaude session new --trust-dir`.
+	TrustDir bool `json:"trust_dir,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely

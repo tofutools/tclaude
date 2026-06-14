@@ -693,6 +693,18 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Gate the opt-in dir-trust request: it is Codex-only (pre-trusting the
+	// cwd in ~/.codex/config.toml) and, unlike sandbox/approval, edits the
+	// user's config — so requesting it for a harness with no trust modal
+	// (Claude Code) is a 400 here rather than a flag silently dropped. Off by
+	// default and never auto-defaulted; only an explicit dashboard checkbox /
+	// CLI flag sets it. See JOH-205 inc4.
+	trustDir, tdErr := harness.ResolveTrustDir(h, body.TrustDir)
+	if tdErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_trust_dir", tdErr.Error())
+		return
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
@@ -713,6 +725,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
 		AutoReview:     autoReview,
+		TrustDir:       trustDir,
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
@@ -798,6 +811,15 @@ type spawnParams struct {
 	// the params; experimental/undocumented upstream, so only an explicit
 	// opt-in sets it true. See JOH-200 part 2.
 	AutoReview bool
+	// TrustDir opts the spawn into pre-trusting its launch cwd for Codex,
+	// forwarding `--trust-dir` to `tclaude session new` so the daemon writes
+	// the [projects."<cwd>"] trust entry into ~/.codex/config.toml before
+	// launch and a detached pane doesn't freeze on the trust-folder modal
+	// (JOH-205). false (the default) leaves the modal in place. Codex-only and
+	// strictly opt-in (it edits the user's config) — gated at the spawn
+	// boundary (handleGroupSpawn → harness.ResolveTrustDir) and never set on a
+	// relaunch (reincarnate/clone), exactly like AutoReview.
+	TrustDir bool
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -909,7 +931,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode, p.ApprovalPolicy, p.AutoReview); err != nil {
+	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode, p.ApprovalPolicy, p.AutoReview, p.TrustDir); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -1358,8 +1380,8 @@ func generateSpawnLabel() string {
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default.
-func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
-	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview)
+func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
+	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview, trustDir)
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
@@ -1383,7 +1405,7 @@ func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox, ap
 // an explicit value was chosen; an empty value leaves claude on its own
 // default. Kept pure so it can be unit-tested without forking a
 // subprocess.
-func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) []string {
+func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) []string {
 	args := []string{"session", "new", "-d", "--global", "--label", label}
 	if cwd != "" {
 		args = append(args, "-C", cwd)
@@ -1398,6 +1420,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string
 	args = appendSandboxArgs(args, harness, sandbox)
 	args = appendApprovalFlag(args, approval)
 	args = appendAutoReviewFlag(args, autoReview)
+	args = appendTrustDirFlag(args, trustDir)
 	args = appendInitialPromptFlag(args, harness)
 	return args
 }
@@ -1536,6 +1559,20 @@ func appendAutoReviewFlag(args []string, autoReview bool) []string {
 	return args
 }
 
+// appendTrustDirFlag adds `--trust-dir` to a `tclaude session new` argv when
+// the spawn opted into pre-trusting its launch dir for Codex. false (the
+// default) omits it, so an ordinary spawn leaves Codex's trust-folder modal in
+// place. It is a boolean flag — no value — gated at the spawn boundary
+// (harness.ResolveTrustDir rejects it for a non-Codex harness), and the forked
+// `tclaude session new` re-validates and performs the actual ~/.codex/config.toml
+// write. Opt-in only because it edits the user's config (JOH-205 inc4).
+func appendTrustDirFlag(args []string, trustDir bool) []string {
+	if trustDir {
+		args = append(args, "--trust-dir")
+	}
+	return args
+}
+
 // liveSpawnNew runs `tclaude session new -d --global --label <label>`
 // as a fully-detached subprocess. Same detachment story as
 // liveSpawnResume — see its doc comment for the full rationale on
@@ -1544,13 +1581,13 @@ func appendAutoReviewFlag(args []string, autoReview bool) []string {
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
-	// effort, model, sandbox, approval and autoReview are validated at the spawn
-	// boundary (handleGroupSpawn / the `agent spawn` CLI) before they reach here;
-	// the forked `tclaude session new` re-validates too, though by then
-	// a bad value would only surface as a non-zero exit in the daemon
+func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
+	// effort, model, sandbox, approval, autoReview and trustDir are validated at
+	// the spawn boundary (handleGroupSpawn / the `agent spawn` CLI) before they
+	// reach here; the forked `tclaude session new` re-validates too, though by
+	// then a bad value would only surface as a non-zero exit in the daemon
 	// log. sessionNewArgs omits each flag entirely when its value is "" / false.
-	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval, autoReview)...)
+	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval, autoReview, trustDir)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	// Capture stderr so a silent subprocess failure (PATH issue, bad

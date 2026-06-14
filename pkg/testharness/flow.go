@@ -64,7 +64,7 @@ func NewFlow(
 // concrete type satisfying agentd.Spawner satisfies this too, so a
 // flow_setup_test.go can do `agentd.Spawn = mocks.Spawner` directly.
 type SpawnerLike interface {
-	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
+	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error
 	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
 }
 
@@ -110,9 +110,9 @@ type simSpawner struct {
 // everything else (""/"claude") keeps the CCSim path byte-for-byte as
 // before the seam, so the production Spawner signature is satisfied with no
 // behaviour change for Claude Code.
-func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
+func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
 	if harness == codexHarnessName {
-		return s.spawnNewCodex(label, cwd, effort, model, sandbox, approval, autoReview)
+		return s.spawnNewCodex(label, cwd, effort, model, sandbox, approval, autoReview, trustDir)
 	}
 	cc := NewCCSim(s.t, s.w.HomeDir, cwd)
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
@@ -129,6 +129,7 @@ func (s *simSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, appro
 	s.w.RecordSpawnSandbox(cc.ConvID, sandbox)
 	s.w.RecordSpawnApproval(cc.ConvID, approval)
 	s.w.RecordSpawnAutoReview(cc.ConvID, autoReview)
+	s.w.RecordSpawnTrustDir(cc.ConvID, trustDir)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
 	// with the .jsonl's actual on-disk location. Otherwise an empty
 	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
@@ -197,7 +198,7 @@ const codexHarnessName = "codex"
 // CodexSim (owns a date-indexed rollout .jsonl, implements PaneSim), writes
 // the harness="codex" SessionRow the production hook callback would have
 // written, registers in TmuxSim, and stashes the sim in World.Codexes.
-func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox, approval string, autoReview bool) error {
+func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox, approval string, autoReview, trustDir bool) error {
 	cx := NewCodexSim(s.t, s.w.HomeDir, cwd)
 	if err := cx.Start(); err != nil {
 		return err
@@ -225,6 +226,7 @@ func (s *simSpawner) spawnNewCodex(label, cwd, effort, model, sandbox, approval 
 	s.w.RecordSpawnSandbox(cx.ConvID, sandbox)
 	s.w.RecordSpawnApproval(cx.ConvID, approval)
 	s.w.RecordSpawnAutoReview(cx.ConvID, autoReview)
+	s.w.RecordSpawnTrustDir(cx.ConvID, trustDir)
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
 		TmuxSession: label,

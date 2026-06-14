@@ -41,6 +41,7 @@ type World struct {
 	spawnSandboxes  map[string]string
 	spawnApprovals  map[string]string
 	spawnAutoReview map[string]bool
+	spawnTrustDir   map[string]bool
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -66,6 +67,7 @@ func New(t *testing.T) *World {
 		spawnSandboxes:  map[string]string{},
 		spawnApprovals:  map[string]string{},
 		spawnAutoReview: map[string]bool{},
+		spawnTrustDir:   map[string]bool{},
 	}
 }
 
@@ -160,6 +162,27 @@ func (w *World) SpawnAutoReview(convID string) (bool, bool) {
 	defer w.spawnMu.Unlock()
 	a, ok := w.spawnAutoReview[convID]
 	return a, ok
+}
+
+// RecordSpawnTrustDir captures the opt-in dir-trust flag a simSpawner.SpawnNew
+// received, keyed by the new conv-id, so a flow test can assert the
+// `--trust-dir` the spawn path threaded through (JOH-205 inc4). The default
+// (false) is recorded too. The sim runs in-process, so the actual
+// ~/.codex/config.toml write does NOT happen here — that is covered by the
+// harness package's editor unit tests; this only proves the flag's plumbing.
+func (w *World) RecordSpawnTrustDir(convID string, trustDir bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnTrustDir[convID] = trustDir
+}
+
+// SpawnTrustDir returns the dir-trust opt-in recorded for a spawned conv-id
+// and whether a spawn for that conv was observed.
+func (w *World) SpawnTrustDir(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	td, ok := w.spawnTrustDir[convID]
+	return td, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the
