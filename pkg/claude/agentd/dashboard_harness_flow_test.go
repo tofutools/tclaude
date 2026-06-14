@@ -53,7 +53,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.NotNil(t, codex.Models, "codex models is [] not null for JS .map safety")
 	assert.NotEmpty(t, codex.EffortLevels, "codex offers effort/reasoning levels")
 	assert.True(t, codex.CanRename, "codex renames out-of-band via ConvStore — must stay renameable")
-	assert.False(t, codex.CanCompact, "codex has no compaction command")
+	assert.True(t, codex.CanCompact, "codex supports /compact")
 	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
 	assert.Equal(t, []string{"read-only", "workspace-write", "danger-full-access"}, codex.SandboxModes)
 	assert.Equal(t, "workspace-write", codex.DefaultSandbox, "secure default pre-selected")

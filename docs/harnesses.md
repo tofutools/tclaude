@@ -64,8 +64,8 @@ writes the config so Codex's first-run trust prompt covers it. Re-running
 
 Each harness exposes a different surface. tclaude detects what a harness can do
 through capability flags and degrades gracefully where a harness lacks a feature
-(for example, Codex has no in-pane compaction, so the compact command is simply
-unavailable for Codex conversations rather than failing oddly).
+(for example, Codex has no in-pane rename, so renames use Codex's title store
+instead of slash-command injection).
 
 | Capability | `claude` — Claude Code | `codex` — Codex CLI |
 |---|---|---|
@@ -73,7 +73,7 @@ unavailable for Codex conversations rather than failing oddly).
 | **Resume** | ✅ `claude --resume <id>` | ✅ `codex resume <id>` |
 | **Conversation list & search** (`conv ls`/`search`) | ✅ cwd-indexed `.jsonl` | ✅ date-indexed rollout + state DB |
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) |
-| **Compact** | ✅ in-pane `/compact` | ❌ no in-pane compaction |
+| **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` |
 | **Graceful stop** | ✅ `/exit` | ✅ `/quit` |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ one-time trust) |

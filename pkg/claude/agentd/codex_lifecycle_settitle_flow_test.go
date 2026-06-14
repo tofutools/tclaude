@@ -15,16 +15,14 @@ import (
 // JOH-161 — the Codex lifecycle verbs, harness-aware, exercised through the
 // daemon mux against a CodexSim. Companion to TestCodexAgent_SpawnMessage-
 // GracefulStop (JOH-160 spawn/stop): these pin the degraded/native-store
-// paths the brief calls out — compact is a no-op (unsupported), rename goes
-// to the native title store (threads.title) with NOTHING typed into the
+// paths the brief calls out — compact uses Codex's native `/compact`, rename
+// goes to the native title store (threads.title) with NOTHING typed into the
 // pane, and reincarnate carries both the codex identity and the title via
-// SetTitle/Title. The critical invariant: no Codex pane is ever sent a
-// slash command it can't parse.
+// SetTitle/Title.
 
-// Codex exposes no scriptable compaction (Lifecycle.CompactCommand == ""),
-// so a /compact request must be REFUSED with a clear "unsupported" — never
-// typed into the pane as an unparseable `/compact` line.
-func TestCodexAgent_CompactUnsupported(t *testing.T) {
+// Codex exposes `/compact`, so the daemon should use the same harness-aware
+// slash injection path it uses for Claude Code.
+func TestCodexAgent_CompactInjectsNativeCommand(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	const conv = "019ec004-0000-0000-0000-000000000001"
@@ -32,15 +30,9 @@ func TestCodexAgent_CompactUnsupported(t *testing.T) {
 	f.HaveMember("crew", conv)
 
 	res := f.AsHuman().Compact(conv)
-	require.Equal(t, http.StatusBadRequest, res.Code,
-		"compact on a codex agent must be rejected as unsupported; body=%s", res.Raw)
-	assert.Contains(t, string(res.Raw), "does not support compact")
-
-	// The gate fires before any injection: no /compact ever reached the pane.
-	for _, sk := range f.World.Tmux.Sent() {
-		assert.NotContains(t, sk.Text, "/compact",
-			"a codex pane must never be typed /compact")
-	}
+	require.Equal(t, http.StatusOK, res.Code,
+		"compact on a codex agent must succeed; body=%s", res.Raw)
+	f.AssertSentContains("tmux-codex-1:0.0", "/compact", 2*time.Second)
 }
 
 // Codex has no in-pane rename command, so a rename writes threads.title

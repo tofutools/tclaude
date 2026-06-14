@@ -21,7 +21,7 @@ tclaude setup --install-agent-skills --install-default-agent-permissions
 
 | Flag | Adds | When you want it |
 |------|------|------------------|
-| `--install-agent-skills` | Bundled `agent-*` skills in `~/.claude/skills/` | Using the agent coordination features |
+| `--install-agent-skills` | Bundled `agent-*` skills in `~/.claude/skills/` and `~/.agents/skills/` | Using the agent coordination features |
 | `--install-default-agent-permissions` | Grants the `self.*` slugs those skills use | Using the agent coordination features |
 | `--install-sandbox-hardening` | Locks down agentd state in the Claude Code sandbox | Only if you run agents inside the CC sandbox |
 | `--install-all` | Everything above | You want it all |

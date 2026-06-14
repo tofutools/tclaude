@@ -1,6 +1,6 @@
 ---
 name: agent-lifecycle
-description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and `tclaude agent clone [follow-up]`. The mechanics a long-running agent uses to act on context pressure. `compact` is a /compact slash-injection that preserves identity but compacts history blindly (lossy, slow, undirected) — kept mainly for compatibility. `reincarnate` replaces self with a fresh CC instance that inherits identity and lets you choose what context carries forward (the preferred mechanism for most tasks) — REQUIRES a follow-up so the fresh pane isn't idle. `clone` forks self into a sibling that inherits identity AND optionally the conv jsonl — the original keeps running. WHEN and whether to use them — and at what context %, if any — is a policy that belongs to your project/operator; this skill documents the capability, it does not prescribe a cadence or threshold. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
+description: Manage your own context window via `tclaude agent context-info`, `tclaude agent compact [follow-up]`, `tclaude agent reincarnate <follow-up>`, and `tclaude agent clone [follow-up]`. The mechanics a long-running agent uses to act on context pressure. `compact` is a /compact slash-injection that preserves identity but compacts history blindly (lossy, slow, undirected) — kept mainly for compatibility. `reincarnate` replaces self with a fresh agent instance that inherits identity and lets you choose what context carries forward (the preferred mechanism for most tasks) — REQUIRES a follow-up so the fresh pane isn't idle. `clone` forks self into a sibling that inherits identity AND optionally the conversation history when the harness supports it — the original keeps running. WHEN and whether to use them — and at what context %, if any — is a policy that belongs to your project/operator; this skill documents the capability, it does not prescribe a cadence or threshold. Manager pattern: every verb accepts `--target <peer>` to act on ANOTHER agent (requires the matching `agent.<verb>` slug, OR being an owner of a group containing the target).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
@@ -10,7 +10,7 @@ You have three commands for managing your own context window:
 | Command                                            | What it does                                                                                                                              |
 |----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
 | `tclaude agent context-info`                       | Print the current context_pct + any pending /compact claim (self by default; `--target <peer>` reads one agent, `--group <name>` lists a whole team) |
-| `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued.                                            |
+| `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued. |
 | `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
 | `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. |
 
@@ -25,9 +25,9 @@ default-granted by `tclaude setup --install-default-agent-permissions`
 — see "Permission setup" below.
 
 The absolute token estimate (`~470k of ~1.0M`) assumes a **1M context
-window** — the percentage is the authoritative signal that Claude Code
-itself computes. On a 200k-window model the absolute number is off by
-5x, but the percentage threshold-based decision is still correct.
+window** — the percentage is the authoritative signal that the harness
+reports. On a smaller-window model the absolute number can be off, but
+the percentage threshold-based decision is still correct.
 
 ## When to reincarnate (or compact) — your project's call, not this skill's
 
@@ -39,7 +39,7 @@ policy decision, and it belongs to — in roughly this order of authority:
 
 - a **direct instruction from the human** at the moment ("reincarnate
   and pick up from X"),
-- your **project's** conventions (`CLAUDE.md`, the group's norms),
+- your **project's** conventions (`AGENTS.md`, `CLAUDE.md`, the group's norms),
 - the operator's **global settings / context**,
 - and the **task at hand** — a tight, focused task tolerates a fuller
   window than a sprawling exploratory one.
@@ -68,9 +68,9 @@ off work, the charset/delivery rules, and the manager pattern.
 
 ## Compact vs. reincarnate vs. clone
 
-- `compact` — CC summarises the prior turns and replaces them with a
+- `compact` — the harness summarises the prior turns and replaces them with a
   short recap, in place. Identity, conv-id, name, and most state survive.
-  Its fundamental limitation is that it is **undirected**: CC has no way
+  Its fundamental limitation is that it is **undirected**: the harness has no way
   of knowing what you'll care about *going forward* — that you only need
   a subset of the history, or that you're deliberately tuning context for
   a specific follow-up task. It just compacts the conversation in
@@ -78,7 +78,7 @@ off work, the charset/delivery rules, and the manager pattern.
   pass over the whole window — **slowly**; you then keep accumulating in
   the same conversation. Kept mainly for compatibility; in practice
   `reincarnate` is almost always the better choice.
-- `reincarnate` — the daemon spawns a fresh CC instance, migrates your
+- `reincarnate` — the daemon spawns a fresh agent instance, migrates your
   identity (groups, per-conv permissions, ownerships) onto the new
   conv-id, and soft-stops the old one. The new agent keeps your identity
   but doesn't drag the old message log along — it starts with **only the
@@ -134,7 +134,7 @@ others should) adopt:
 - Pass the path of that file as your follow-up prompt: e.g.
   `tclaude agent reincarnate "reload /tmp/task-foo-notes.md and
   continue from the 'Next' section."`
-- The project's `CLAUDE.md` (or equivalent) should document the
+- The project's `AGENTS.md`, `CLAUDE.md`, or equivalent should document the
   expected location of these handoff notes so a freshly-reincarnated
   agent knows where to look without prompting from the human.
 
@@ -213,8 +213,8 @@ thing to point `--file` at.
 
 For `compact` and `clone` the follow-up prompt is optional; for
 `reincarnate` it is **required** (see above). For `compact` the
-follow-up queues in the tmux pty until CC resumes reading after the
-slash command settles — **timing is not guaranteed**, it may land in
+follow-up queues in the tmux pty until the harness resumes reading after
+the slash command settles — **timing is not guaranteed**, it may land in
 a still-busy textarea on unlucky timing. For `reincarnate` the
 follow-up is delivered through the agent message-flush pipeline (or
 by direct keystroke injection if you're not in any group) once the
@@ -230,10 +230,9 @@ The daemon migrates onto the new conv-id:
 
 What is **not** migrated:
 
-- CC's conversation title (set via `/rename` inside CC). The new
-  agent can self-rename in its follow-up if the human-readable name
-  matters.
-- CC's actual message history (that's the whole point — fresh
+- The harness conversation title. The new agent can self-rename in its
+  follow-up if the human-readable name matters.
+- The harness's actual message history (that's the whole point — fresh
   context).
 - Task state — the agent must persist that to disk, see above.
 
@@ -323,35 +322,35 @@ way.
 
 ## What can go wrong
 
-- **Compact: follow-up landed on wrong screen.** If CC was mid-render
+- **Compact: follow-up landed on wrong screen.** If the harness was mid-render
   when the follow-up keys arrived, they may have submitted prematurely
   or been treated as paste-mode (Enter becomes newline, no submit).
   If you depend on tight ordering, omit the follow-up and run a
   separate `tclaude agent` command on the next turn.
 - **Reincarnate: human's terminal stays attached to the old session.**
-  The old tmux session goes away when CC processes the soft `/exit`,
-  so the human's terminal will see the pane close. They need to
+  The old tmux session goes away when the harness processes its soft-exit
+  command, so the human's terminal will see the pane close. They need to
   attach to the new session to follow you. The reincarnate response
   includes the attach command.
-- **Reincarnate: spawn timeout.** If the new CC session doesn't
+- **Reincarnate: spawn timeout.** If the new agent session doesn't
   produce a conv-id within ~30s, you get a 504. The spawned pane may
   still come up — the human can `tclaude session attach <label>` to
   inspect.
 - **Mid-conversation typing is lost.** As with `compact` and `rename`,
   any text you'd typed but not submitted in the old pane is lost when
   it gets the `/exit` injection.
-- **No live tmux session.** `no_tmux` 503 means you started CC
+- **No live tmux session.** `no_tmux` 503 means you started
   outside `tclaude` and there's no pane the daemon can reach. Ask the
   human to wrap your session via tclaude.
 
 ## Why separate commands instead of just calling /compact
 
 Slash commands inside the TUI aren't part of your tool surface. Even
-if you wrote `/compact` in chat, CC would treat it as plain text. The
-daemon owns the tmux side and is outside your sandbox, so it can do
-the keystroke injection (and the cross-pane orchestration that
-reincarnate needs) that you can't. Same architecture as
-`agent-rename`.
+if you wrote `/compact` in chat, a harness that supports it would treat
+it as plain text. The daemon owns the tmux side and is outside your
+sandbox, so it can do the keystroke injection (and the cross-pane
+orchestration that reincarnate needs) that you can't. Same architecture
+as `agent-rename`.
 
 ## Manager pattern: act on ANOTHER agent
 

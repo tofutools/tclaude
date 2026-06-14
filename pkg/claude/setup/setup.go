@@ -61,15 +61,14 @@ type Params struct {
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install every optional extra (equivalent to passing all --install-* flags) on top of the baseline setup."`
-	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into ~/.claude/skills/. Idempotent; overwrites existing if present."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into Claude Code and Codex CLI user skill directories. Idempotent; overwrites existing if present."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the self.* permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
 
 	// Harness selects which coding harness's hooks to install/check
 	// (default "claude" → ~/.claude/settings.json; "codex" →
 	// ~/.codex/hooks.json, via the harness HookInstaller seam). Other
-	// setup steps (status bar, protocol handler, skills) stay
-	// Claude-Code-specific for now.
+	// setup steps keep their own compatibility gates.
 	Harness string `long:"harness" optional:"true" help:"Coding harness whose hooks to install: claude (default) | codex"`
 }
 
@@ -491,17 +490,25 @@ func checkHooksForHarness(h *harness.Harness) {
 	}
 }
 
-// installAgentSkills writes the bundled agent-* skills into
-// ~/.claude/skills/<name>/. Idempotent: overwrites existing installs.
+// installAgentSkills writes the bundled agent-* skills into user-scope skill
+// directories for supported agent harnesses. Idempotent: overwrites existing
+// installs.
 // The CLI prints each destination so the user knows where to look if
 // they want to inspect or edit them locally.
 func installAgentSkills() error {
 	installed, err := agent.InstallSkills(true)
 	if err != nil {
-		return fmt.Errorf("install agent skills: %w", err)
+		return fmt.Errorf("install Claude Code agent skills: %w", err)
 	}
 	for _, s := range installed {
-		fmt.Printf("✓ Installed %s skill at %s\n", s.Name, s.Path)
+		fmt.Printf("✓ Installed %s skill for Claude Code at %s\n", s.Name, s.Path)
+	}
+	codexInstalled, err := agent.InstallCodexSkills(true)
+	if err != nil {
+		return fmt.Errorf("install Codex CLI agent skills: %w", err)
+	}
+	for _, s := range codexInstalled {
+		fmt.Printf("✓ Installed %s skill for Codex CLI at %s\n", s.Name, s.Path)
 	}
 	fmt.Println("  Run `tclaude agentd serve` (in a non-sandboxed shell) for live delivery.")
 	return nil

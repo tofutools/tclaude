@@ -1,15 +1,16 @@
 ---
 name: agent-rename
-description: Rename your own Claude Code conversation via `tclaude agent rename "<title>"`. The slash command `/rename` runs inside the CC TUI so you can't call it directly; tclaude agentd injects it into your tmux pane on your behalf, gated on the `self.rename` permission. Use when the user asks you to rename the conversation/session/agent, or when you decide to give yourself a clearer name (e.g. after taking on a new role in a group). Manager pattern: `tclaude agent rename "<title>" --target <peer>` renames ANOTHER agent (requires the `agent.rename` slug, OR being an owner of a group containing the target).
+description: Rename your own tclaude-managed conversation via `tclaude agent rename "<title>"`. tclaude agentd applies the harness-specific rename path on your behalf (Claude Code uses `/rename` injection; Codex CLI updates its title store), gated on the `self.rename` permission. Use when the user asks you to rename the conversation/session/agent, or when you decide to give yourself a clearer name (e.g. after taking on a new role in a group). Manager pattern: `tclaude agent rename "<title>" --target <peer>` renames ANOTHER agent (requires the `agent.rename` slug, OR being an owner of a group containing the target).
 ---
 
 # Renaming yourself
 
-Claude Code's `/rename` slash command runs inside the TUI and is not
-callable from a tool. `tclaude agent rename` works around this by
-asking the local `tclaude agentd` daemon to inject `/rename <title>`
-into your own tmux pane via `send-keys`. The next CC turn picks up
-the new title.
+`tclaude agent rename` asks the local `tclaude agentd` daemon to apply
+the rename through the right mechanism for your harness. For Claude
+Code, the daemon injects `/rename <title>` into your tmux pane because
+the slash command is not callable from a tool. For Codex CLI, the
+daemon updates Codex's title store directly because Codex has no
+in-pane rename command.
 
 ## Prerequisite: daemon must be running
 
@@ -80,10 +81,11 @@ characters**, with these extra rules:
   unicode, no control characters.
 
 This is a hard security constraint enforced by the daemon, not a
-style preference: the title becomes literal `tmux send-keys` input,
-so anything in it would land in the input box. A permissive charset
-would let an agent sneak a newline + another `/<command>` into a
-"rename" and execute arbitrary slash commands.
+style preference: for harnesses renamed by pane injection, the title
+becomes literal `tmux send-keys` input, so anything in it would land
+in the input box. A permissive charset would let an agent sneak a
+newline + another `/<command>` into a "rename" and execute arbitrary
+slash commands.
 
 Examples that work:
 
@@ -103,28 +105,29 @@ characters.
 
 ## What can go wrong
 
-- **Mid-conversation typing is lost.** The mechanic is literal
-  keystroke injection into your input box: anything you'd typed but
-  not submitted gets prepended to the `/rename` command. Don't rename
-  while you have unsubmitted input in your textarea.
+- **Mid-conversation typing can be lost on injection-based harnesses.**
+  For Claude Code the mechanic is literal keystroke injection into
+  your input box: anything you'd typed but not submitted gets
+  prepended to the `/rename` command. Don't rename while you have
+  unsubmitted input in your textarea.
 
 - **No live tmux session.** If the daemon can't find an alive tmux
   session for your conv-id, you'll get `no_tmux` 503. This usually
-  means you started CC outside of `tclaude` and there's no tmux pane
-  to inject into. Ask the human to wrap your session via tclaude.
+  means you started outside of `tclaude` and there's no tmux pane for
+  the daemon to reach. Ask the human to wrap your session via tclaude.
 
-- **CC catches up on the next turn.** The new title is reflected in
-  the JSONL on the next CC turn after `/rename` lands. Tools that
-  read the conv-index right after `tclaude agent rename` returns may
-  still see the old title for a beat.
+- **Claude Code catches up on the next turn.** For Claude Code, the
+  new title is reflected in the JSONL on the next turn after `/rename`
+  lands. Tools that read the conv-index right after `tclaude agent
+  rename` returns may still see the old title for a beat.
 
 ## Why a separate command instead of just calling /rename
 
 You're a tool-using agent — slash commands inside the TUI aren't part
-of your tool surface. Even if you wrote `/rename foo` in chat, CC
-would treat it as plain text, not a command. The daemon owns the
-tmux side and is outside your sandbox, so it can do the keystroke
-injection that you can't.
+of your tool surface. Even if you wrote `/rename foo` in chat, a
+harness that supports slash commands would treat it as plain text, not
+a command. The daemon owns the tmux side and the harness-specific title
+store updates, so it can do the operation that you can't.
 
 ## Manager pattern: rename ANOTHER agent
 
