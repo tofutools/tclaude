@@ -95,8 +95,7 @@ type SpawnRequest struct {
 	// detached, with no human at its TUI — never deadlocks on an approval
 	// prompt no one can answer. Forwarded to `tclaude session new
 	// --ask-for-approval <policy>`. Not applicable to Claude Code
-	// (settings.json-driven), which rejects a non-empty value. See JOH-200 +
-	// docs/plans/harness-independence.md §E.
+	// (settings.json-driven), which rejects a non-empty value. See JOH-200.
 	ApprovalPolicy string `json:"approval,omitempty"`
 
 	// AutoReview opts the spawned agent into the harness's guardian subagent

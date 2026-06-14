@@ -40,9 +40,20 @@ type SpawnSpec struct {
 	// `--sandbox <mode>` per-spawn so the user's config.toml/profiles stay
 	// untouched. Harnesses without a launch sandbox flag (Claude Code —
 	// settings.json-driven) ignore it. Validate via Harness.Sandbox /
-	// ResolveSandboxMode before building the spec. See JOH-192 +
-	// docs/plans/harness-independence.md §D.
+	// ResolveSandboxMode before building the spec. See JOH-192.
 	SandboxMode string
+	// PermissionProfile names a tclaude-managed Codex permission profile to run
+	// under, realised as `codex -p <name>` (a layered config-profile file whose
+	// default_permissions activates the profile for this spawn only). It is the
+	// path the daemon uses to keep a sandboxed Codex agent able to reach the
+	// agentd socket (JOH-207): unlike `--sandbox`, a permission profile can
+	// allowlist that one Unix socket. It is MUTUALLY EXCLUSIVE with SandboxMode
+	// — Codex ignores permission profiles whenever a `--sandbox`/sandbox_mode is
+	// present — so the spec builder sets one or the other; the Spawner emits
+	// `-p` and omits `--sandbox` when this is set. "" omits it. Harnesses with
+	// no permission-profile concept (Claude Code) ignore it. See JOH-207 +
+	// harness.CodexAgentProfile.
+	PermissionProfile string
 	// ApprovalPolicy names the launch-time approval policy for harnesses that
 	// take one (Codex's `--ask-for-approval {untrusted|on-failure|on-request|
 	// never}`). "" omits the flag entirely; the Spawner emits
@@ -51,8 +62,7 @@ type SpawnSpec struct {
 	// harness's non-escalating default (Codex: `never`) so an unattended pane
 	// can't deadlock on an approval prompt; harnesses without a launch
 	// approval flag (Claude Code) ignore it. Validate via Harness.Approval /
-	// ResolveApprovalPolicy before building the spec. See JOH-200 +
-	// docs/plans/harness-independence.md §E.
+	// ResolveApprovalPolicy before building the spec. See JOH-200.
 	ApprovalPolicy string
 	// AutoReview, when true, asks the harness to route approval prompts to its
 	// guardian subagent (which auto-decides in the human's place) instead of
@@ -62,8 +72,7 @@ type SpawnSpec struct {
 	// decides WHO answers — so the two compose. Defaults to false (the human,
 	// Codex's `user` default); it is an experimental, undocumented-upstream
 	// opt-in, so callers enable it explicitly. Gate via Harness.Approval /
-	// ResolveAutoReview before building the spec. See JOH-200 part 2 +
-	// docs/plans/harness-independence.md §E.
+	// ResolveAutoReview before building the spec. See JOH-200 part 2.
 	AutoReview bool
 	// InitialPrompt is an optional first-turn prompt the harness submits
 	// ITSELF at launch (the harness's own positional [PROMPT] arg) — not a

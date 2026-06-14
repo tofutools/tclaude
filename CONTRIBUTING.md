@@ -102,4 +102,3 @@ See `CLAUDE.md` for the full architecture map. High-level:
   notify, …).
 - `pkg/testharness/` — flow-test DSL (CCSim + TmuxSim + Given/When/Then).
 - `pkg/common/` — generic utilities (dirs, locking, size parsing).
-- `docs/plans/` — design docs.

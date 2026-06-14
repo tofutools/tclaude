@@ -13,7 +13,6 @@ import (
 // subsystem (Codex) and thread `--auto-review` through the spawn path; an
 // ordinary spawn leaves it OFF (the human reviews), and a Claude Code spawn —
 // which has no guardian — must reject the opt-in rather than silently drop it.
-// See docs/plans/harness-independence.md §E.
 //
 // These pin the spawned argv's auto-review opt-in via the simSpawner's recorded
 // flag — the same surface the sandbox/approval flow tests assert against.

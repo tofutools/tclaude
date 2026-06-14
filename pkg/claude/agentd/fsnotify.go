@@ -337,8 +337,7 @@ func (m *convMonitor) reindexDir(dir string, known map[string]bool) int {
 // the same call covers writes, creates, and removes.
 //
 // This is the single seam where a "conv changed" event would be
-// published for the future SSE / dashboard-push PR (see
-// docs/plans .../dashboard-realtime-push.md). PR 1 has exactly one
+// published for the future SSE / dashboard-push PR. PR 1 has exactly one
 // effect — the conv_index refresh — and deliberately builds no
 // broadcaster / fan-out around it.
 func (m *convMonitor) reindex(path string) {

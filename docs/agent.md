@@ -589,6 +589,3 @@ embeds.
 ## See also
 
 - [Agent Dashboard](dashboard.md) — the browser operations console.
-- `docs/plans/agent-coord.md` — design doc for `tclaude agent`.
-- `docs/plans/agentd.md` — design doc for the daemon (identity
-  classification, socket layout).

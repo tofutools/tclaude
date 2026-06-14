@@ -208,3 +208,36 @@ func TestCodexSpawner_SandboxFlag(t *testing.T) {
 		t.Fatalf("resume must carry the resume subcommand + `--sandbox danger-full-access`, got %q", gotR)
 	}
 }
+
+// TestCodexSpawner_PermissionProfileFlag verifies the JOH-207 launch surface:
+// a PermissionProfile is emitted as `-p <name>` (on fresh + resume), is
+// mutually exclusive with --sandbox (the profile wins so a stray SandboxMode
+// can't silently void it — Codex ignores a profile when --sandbox is present),
+// and is omitted when unset.
+func TestCodexSpawner_PermissionProfileFlag(t *testing.T) {
+	// Unset → no -p.
+	if got := (codexSpawner{}).BuildCommand(SpawnSpec{}); strings.Contains(got, " -p ") {
+		t.Fatalf("unset profile must omit -p, got %q", got)
+	}
+	// Fresh spawn with a profile → `-p <name>`, no --sandbox.
+	got := (codexSpawner{}).BuildCommand(SpawnSpec{PermissionProfile: CodexAgentProfile})
+	if !strings.Contains(got, "-p "+CodexAgentProfile) {
+		t.Fatalf("fresh spawn must emit `-p %s`, got %q", CodexAgentProfile, got)
+	}
+	if strings.Contains(got, "--sandbox") {
+		t.Fatalf("a profile spawn must NOT also emit --sandbox, got %q", got)
+	}
+	// Resume with a profile (shared global flag).
+	gotR := (codexSpawner{}).BuildCommand(SpawnSpec{ResumeID: "abc-123", PermissionProfile: CodexAgentProfile})
+	if !strings.Contains(gotR, "resume abc-123") || !strings.Contains(gotR, "-p "+CodexAgentProfile) {
+		t.Fatalf("resume must carry the resume subcommand + `-p %s`, got %q", CodexAgentProfile, gotR)
+	}
+	// Mutual exclusion: profile wins, --sandbox is dropped even if both set.
+	gotBoth := (codexSpawner{}).BuildCommand(SpawnSpec{PermissionProfile: CodexAgentProfile, SandboxMode: SandboxWorkspaceWrite})
+	if strings.Contains(gotBoth, "--sandbox") {
+		t.Fatalf("profile+sandbox: --sandbox must be dropped (Codex would void the profile), got %q", gotBoth)
+	}
+	if !strings.Contains(gotBoth, "-p "+CodexAgentProfile) {
+		t.Fatalf("profile+sandbox: the profile must still be emitted, got %q", gotBoth)
+	}
+}

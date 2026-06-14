@@ -13,8 +13,7 @@ import (
 
 // The operator token positively authenticates the human operator on the
 // CLI / Unix-socket path, so the daemon can fail closed instead of
-// assuming "no Claude Code ancestor => human". See docs/plans/agentd.md,
-// "Security model".
+// assuming "no Claude Code ancestor => human".
 //
 // THREAT MODEL — do not over-claim. The token is a real boundary only in
 // composition with the OS sandbox. A sandboxed (bwrap PID-namespace) agent

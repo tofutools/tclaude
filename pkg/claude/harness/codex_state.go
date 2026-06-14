@@ -18,8 +18,8 @@ import (
 // read path to assemble from the rollout head alone.
 
 // codexThread is the subset of a `threads` row the read path consumes. The
-// column set is the one verified against a real Codex v0.139 DB (see
-// docs/plans/codex-convstore.md); nullable columns are read through
+// column set is the one verified against a real Codex v0.139 DB; nullable
+// columns are read through
 // sql.Null* so a sparse row (or a slightly older schema) still scans.
 type codexThread struct {
 	ID               string
