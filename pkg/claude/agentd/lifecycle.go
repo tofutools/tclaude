@@ -1267,6 +1267,7 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string
 	args = appendSandboxFlag(args, sandbox)
 	args = appendApprovalFlag(args, approval)
 	args = appendAutoReviewFlag(args, autoReview)
+	args = appendInitialPromptFlag(args, harness)
 	return args
 }
 
@@ -1302,6 +1303,34 @@ func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval st
 func appendHarnessFlag(args []string, h string) []string {
 	if h != "" && h != harness.DefaultName {
 		args = append(args, "--harness", h)
+	}
+	return args
+}
+
+// codexSpawnSeedPrompt is the first-turn prompt a daemon-spawned Codex pane
+// submits to ITSELF at launch. Codex generates its conversation id at launch
+// but only persists/exposes it (rollout file, threads row, hooks) once a turn
+// runs (JOH-205); an unattended pane has no human to type that first message,
+// so without a seed the conv-id never materialises and the spawn hangs. The
+// prompt is deliberately inert — it asks the agent to acknowledge and WAIT, so
+// the turn happens (materialising the id) without the agent acting before its
+// real identity/role/task briefing arrives via the post-connection welcome +
+// inbox. It does not touch the agentd socket, so it is unaffected by JOH-207.
+const codexSpawnSeedPrompt = "[tclaude] You are being started as a managed agent. " +
+	"Reply with a brief acknowledgement to confirm you are up, then wait — your identity, role, and task " +
+	"briefing will be delivered to you next. Do not take any other action until you receive it."
+
+// appendInitialPromptFlag seeds a daemon-spawned Codex pane with the first-turn
+// prompt above so its conv-id materialises without a human (JOH-205). Emitted
+// only for Codex — Claude Code reports its conv-id at launch (SessionStart
+// hook) and needs no seed. It lives on the daemon spawn path (sessionNewArgs),
+// NOT the shared `tclaude session new` entrypoint, so a human's direct
+// `session new` never gets a seed and still types their own first message. The
+// forked `session new` re-validates; codexSpawner emits the positional [PROMPT]
+// only on a fresh launch, so a resume (where the id is already known) ignores it.
+func appendInitialPromptFlag(args []string, h string) []string {
+	if h == harness.CodexName {
+		args = append(args, "--initial-prompt", codexSpawnSeedPrompt)
 	}
 	return args
 }

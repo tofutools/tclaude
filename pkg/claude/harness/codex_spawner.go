@@ -101,6 +101,20 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		}
 		cmd += " " + strings.Join(quoted, " ")
 	}
+	// `codex [OPTIONS] [PROMPT]` — a trailing positional the interactive TUI
+	// submits itself at launch (verified against codex-cli 0.139.0:
+	// "[PROMPT]  Optional user prompt to start the session"). This is how a
+	// Codex spawn takes its first turn without a human keystroke, so its
+	// conv-id materialises (JOH-205) — Codex self-submits, so the prompt
+	// queues safely behind any startup modal (dir-trust / hooks / auth) and
+	// tclaude never has to send-keys an unconfirmed pane. Only on a FRESH
+	// launch: `codex resume <id>` continues an existing conversation whose
+	// id is already known, so it needs no seed (and resume's positional-
+	// prompt handling differs). Quoted as a single arg so the whole prompt
+	// is one [PROMPT], never split into stray flags/words.
+	if spec.InitialPrompt != "" && spec.ResumeID == "" {
+		cmd += " " + clcommon.ShellQuoteArg(spec.InitialPrompt)
+	}
 	return cmd
 }
 

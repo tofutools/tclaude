@@ -83,6 +83,16 @@ type NewParams struct {
 	Name      string `long:"name" optional:"true" help:"Name for the new agent in --join-group (e.g. 'reviewer'); becomes its conversation title"`
 	Role      string `long:"role" optional:"true" help:"Role tag for the new member in --join-group (e.g. 'tech-lead')"`
 	Descr     string `long:"descr" optional:"true" help:"Description of the new member's purpose in --join-group"`
+
+	// InitialPrompt is a first-turn prompt the harness submits itself at
+	// launch (its own positional [PROMPT] arg) — used for a harness whose
+	// conv-id is only knowable after the first turn (Codex). The daemon
+	// spawn path sets it so a freshly-spawned Codex takes a turn on its own
+	// and its conv-id materialises without a human typing the first message
+	// (JOH-205); a direct human `session new` leaves it empty and types
+	// their own first message. Ignored by a harness that reports its conv-id
+	// at launch (Claude Code) and on a --resume. See codexSpawner.BuildCommand.
+	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (Codex needs this to materialise its conv-id; Claude Code ignores it). Daemon spawns set it automatically"`
 }
 
 func NewCmd() *cobra.Command {
@@ -355,6 +365,7 @@ func runNew(params *NewParams) error {
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
 		AutoReview:     autoReview,
+		InitialPrompt:  params.InitialPrompt,
 	})
 
 	// Create tmux session with claude

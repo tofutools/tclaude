@@ -85,6 +85,35 @@ func TestCodexSpawner_BypassHookTrust(t *testing.T) {
 	}
 }
 
+// TestCodexSpawner_InitialPrompt covers the JOH-205 first-turn seed: a fresh
+// launch appends InitialPrompt as the trailing positional [PROMPT], shell-
+// quoted as a single arg, so Codex self-submits its first turn (materialising
+// the conv-id without a human keystroke). A resume never emits it — the
+// conv-id is already known — and an empty prompt is omitted entirely.
+func TestCodexSpawner_InitialPrompt(t *testing.T) {
+	// Empty: a bare fresh launch stays exactly "codex" — no dangling positional.
+	empty := codexSpawner{}.BuildCommand(SpawnSpec{InitialPrompt: ""})
+	if empty != "codex" {
+		t.Fatalf("empty initial prompt must be omitted (bare %q), got %q", "codex", empty)
+	}
+
+	// Fresh launch: the seed is the trailing, shell-quoted positional, and it
+	// coexists with flags (here --model) without disturbing them.
+	got := codexSpawner{}.BuildCommand(SpawnSpec{InitialPrompt: "read your inbox", Model: "gpt-5"})
+	if !strings.HasSuffix(got, " 'read your inbox'") && !strings.HasSuffix(got, ` "read your inbox"`) {
+		t.Fatalf("fresh launch must append the seed as the trailing shell-quoted positional, got %q", got)
+	}
+	if !strings.Contains(got, "--model gpt-5") {
+		t.Fatalf("seed prompt must coexist with flags, got %q", got)
+	}
+
+	// Resume: the conv-id is already known, so no first-turn kick is emitted.
+	got = codexSpawner{}.BuildCommand(SpawnSpec{ResumeID: "sess-1", InitialPrompt: "read your inbox"})
+	if strings.Contains(got, "read your inbox") {
+		t.Fatalf("resume must NOT emit an initial-prompt seed, got %q", got)
+	}
+}
+
 // TestCodexModels covers the catalog (JOH-155): pass-through of a Codex
 // model, rejection of a Claude Code slug, and tclaude effort levels
 // accepted (validated like CC; mapped to Codex reasoning by the spawner).

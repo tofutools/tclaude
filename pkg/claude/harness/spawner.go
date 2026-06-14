@@ -65,6 +65,20 @@ type SpawnSpec struct {
 	// ResolveAutoReview before building the spec. See JOH-200 part 2 +
 	// docs/plans/harness-independence.md §E.
 	AutoReview bool
+	// InitialPrompt is an optional first-turn prompt the harness submits
+	// ITSELF at launch (the harness's own positional [PROMPT] arg) — not a
+	// tclaude send-keys injection. It exists for a harness whose conv-id is
+	// only knowable after the first turn (Codex generates the id at launch
+	// but persists/exposes it — rollout file, threads row, hooks — only once
+	// a turn runs; see JOH-205): seeding a turn at launch lets the conv-id
+	// materialise without a human typing the first message, while keeping
+	// tclaude hands-off the pane until a hook/file confirms the session is
+	// past its startup gates (dir-trust / hooks-config / auth prompts). The
+	// harness self-submits, so the seed safely queues behind those modals.
+	// "" omits it; harnesses that report their conv-id at launch (Claude
+	// Code's SessionStart hook) ignore it. Emitted only for a fresh launch,
+	// never a resume.
+	InitialPrompt string
 }
 
 // Spawner builds the in-tmux launch command for a harness from a
