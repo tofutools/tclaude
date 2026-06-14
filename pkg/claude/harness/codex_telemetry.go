@@ -57,9 +57,12 @@ type codexTokenCountInfo struct {
 
 // codexTokenCountEvent is the `event_msg` payload of a token_count line. The
 // outer envelope's type is event_msg; this inner type selects token_count.
+// RateLimits is a sibling of Info carrying the account-wide subscription
+// limits; codex_usage.go reads it while the telemetry path here reads Info.
 type codexTokenCountEvent struct {
-	Type string              `json:"type"`
-	Info codexTokenCountInfo `json:"info"`
+	Type       string              `json:"type"`
+	Info       codexTokenCountInfo `json:"info"`
+	RateLimits *codexRateLimits    `json:"rate_limits"`
 }
 
 // CodexContextTelemetry locates convID's rollout under home and returns the

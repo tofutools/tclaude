@@ -374,6 +374,59 @@ func (c *CodexSim) WriteTokenCount(total, last CodexTokenUsage) error {
 	})
 }
 
+// CodexRateLimitWindowSeed describes one rate-limit window for
+// WriteTokenCountRateLimits — a subscription account's 5-hour (≈300 min) or
+// weekly (≈10080 min) bucket. A zero ResetsAt writes resets_at:0 (the
+// "no reset timestamp" shape).
+type CodexRateLimitWindowSeed struct {
+	UsedPercent   float64
+	WindowMinutes int
+	ResetsAt      time.Time
+}
+
+// WriteTokenCountRateLimits writes a token_count event carrying the given
+// rate_limits windows (either may be nil). Where WriteTokenCount's default
+// block models a free account's lone 30-day window, this lets a test model a
+// subscription account's 5-hour + weekly limits — the shape the dashboard's
+// Codex usage readout (agentd/codex_usage.go) consumes off the rollout.
+func (c *CodexSim) WriteTokenCountRateLimits(total, last CodexTokenUsage, primary, secondary *CodexRateLimitWindowSeed) error {
+	return c.appendLine("event_msg", map[string]any{
+		"type": "token_count",
+		"info": map[string]any{
+			"total_token_usage":    total,
+			"last_token_usage":     last,
+			"model_context_window": c.ContextWindow,
+		},
+		"rate_limits": map[string]any{
+			"limit_id":                "codex",
+			"limit_name":              nil,
+			"primary":                 codexRateLimitSeedToMap(primary),
+			"secondary":               codexRateLimitSeedToMap(secondary),
+			"credits":                 nil,
+			"individual_limit":        nil,
+			"plan_type":               "plus",
+			"rate_limit_reached_type": nil,
+		},
+	})
+}
+
+// codexRateLimitSeedToMap renders a window seed as the on-disk rate-limit
+// window object, or nil (a JSON null slot) when the seed is nil.
+func codexRateLimitSeedToMap(s *CodexRateLimitWindowSeed) any {
+	if s == nil {
+		return nil
+	}
+	resets := int64(0)
+	if !s.ResetsAt.IsZero() {
+		resets = s.ResetsAt.Unix()
+	}
+	return map[string]any{
+		"used_percent":   s.UsedPercent,
+		"window_minutes": s.WindowMinutes,
+		"resets_at":      resets,
+	}
+}
+
 // CompleteTask writes a task_complete event closing the current turn.
 func (c *CodexSim) CompleteTask(lastAgentMessage string) error {
 	c.mu.Lock()

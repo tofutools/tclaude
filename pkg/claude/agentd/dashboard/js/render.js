@@ -689,6 +689,29 @@ function costTokenHTML(today, mtd) {
     + '<span class="ulabel">api</span>' + parts.join(' ') + '</span>';
 }
 
+// subscriptionWindowsHTML builds the 5h/7d window tokens for one usage
+// source (the Claude top-level fields, or the nested .codex object —
+// both share the {available, five_hour, seven_day} shape). Returns an
+// array of token strings, empty when the source reports nothing.
+function subscriptionWindowsHTML(src) {
+  const wins = [];
+  if (src && src.available) {
+    if (src.five_hour) wins.push(usageWindowHTML('5h', src.five_hour));
+    if (src.seven_day) wins.push(usageWindowHTML('7d', src.seven_day));
+  }
+  return wins;
+}
+
+// usageLineHTML wraps one labelled readout line for the two-line
+// Claude/Codex layout: a right-aligned monospace source label (so the
+// colons stack — "Claude:" over " Codex:") followed by that source's
+// window tokens. An empty label keeps the column width so a trailing
+// cost line aligns its tokens under the windows above.
+function usageLineHTML(label, tokens) {
+  return '<span class="uline"><span class="usrc">' + esc(label) + '</span>'
+    + tokens.join('') + '</span>';
+}
+
 // renderUsage paints the top-bar readout from snapshot.usage:
 // subscription windows when available, plus the month-to-date API
 // cost summed across agent sessions when any was recorded — an
@@ -696,24 +719,48 @@ function costTokenHTML(today, mtd) {
 // replaces "usage: n/a" there; an account with both shows them side
 // by side. Only when neither exists does it degrade to a muted
 // "usage: n/a" rather than a broken or error state.
+//
+// When Codex usage is present (snapshot.usage.codex), the readout
+// switches to a labelled two-line layout — "Claude" over "Codex",
+// monospace-aligned so the windows line up in one column — instead of
+// the single unlabelled row the Claude-only case keeps.
 function renderUsage(u) {
   const el = $('#usage');
   if (!el) return;
-  const wins = [];
   const titles = [];
-  if (u && u.available) {
-    if (u.five_hour) wins.push(usageWindowHTML('5h', u.five_hour));
-    if (u.seven_day) wins.push(usageWindowHTML('7d', u.seven_day));
-    if (wins.length) titles.push('Subscription usage limits — 5-hour and 7-day rolling windows');
-  }
+
+  const claudeWins = subscriptionWindowsHTML(u);
+  if (claudeWins.length) titles.push('Claude subscription usage limits — 5-hour and 7-day rolling windows');
+  const codexWins = subscriptionWindowsHTML(u && u.codex);
+  if (codexWins.length) titles.push('Codex subscription usage limits — 5-hour and weekly rolling windows');
+
   const mtd = Number((u && u.total_cost_usd) || 0);
   const today = Number((u && u.today_cost_usd) || 0);
-  if (mtd > 0) {
-    wins.push(costTokenHTML(today, mtd));
+  const costHTML = mtd > 0 ? costTokenHTML(today, mtd) : '';
+  if (costHTML) {
     let t = `API cost month-to-date: $${mtd.toFixed(4)}, summed across agent sessions recorded in tclaude's DB`;
     if (today > 0) t += ` · today: $${today.toFixed(4)}`;
     titles.push(t + ' · click to open the Costs tab');
   }
+
+  // Codex data present → labelled two-line (Claude / Codex) layout, with
+  // the cost token on its own column-aligned line below when there is one.
+  if (codexWins.length) {
+    el.classList.add('multiline');
+    const lines = [];
+    if (claudeWins.length) lines.push(usageLineHTML('Claude:', claudeWins));
+    lines.push(usageLineHTML('Codex:', codexWins));
+    if (costHTML) lines.push(usageLineHTML('', [costHTML]));
+    el.classList.remove('na');
+    el.innerHTML = lines.join('');
+    el.title = titles.join(' · ');
+    return;
+  }
+
+  // Claude only → the original single unlabelled row (windows then cost).
+  el.classList.remove('multiline');
+  const wins = claudeWins.slice();
+  if (costHTML) wins.push(costHTML);
   if (wins.length) {
     el.classList.remove('na');
     el.innerHTML = wins.join('');

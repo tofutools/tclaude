@@ -49,6 +49,14 @@ type dashboardUsage struct {
 	// figure beside the "(mtd)" headline; 0 (nothing spent today, or a
 	// subscription account) renders no today figure.
 	TodayCostUSD float64 `json:"today_cost_usd,omitempty"`
+	// Codex is the Codex account's subscription usage, lifted from Codex's
+	// local rollout files (see codex_usage.go). nil — the field is omitted
+	// — when Codex isn't installed or has no recent usage data, so the top
+	// bar shows only the Claude readout. When present, the dashboard
+	// renders a labelled "Claude" / "Codex" two-line readout. The fields
+	// above stay Claude's (historical names), so an existing client that
+	// doesn't know about Codex is unaffected.
+	Codex *codexDashboardUsage `json:"codex,omitempty"`
 }
 
 // usageWindow is one rolling-limit bucket: percent consumed plus the
@@ -102,7 +110,7 @@ func refreshUsage() {
 // "n/a" state — when the cache is missing, carries no rolling-limit
 // buckets (e.g. an API-billing account), or has gone stale.
 func collectUsageSnapshot() dashboardUsage {
-	out := dashboardUsage{TotalCostUSD: monthToDateCost(), TodayCostUSD: todayCost()}
+	out := dashboardUsage{TotalCostUSD: monthToDateCost(), TodayCostUSD: todayCost(), Codex: collectCodexUsageSnapshot()}
 	cached := usageapi.Peek()
 	if cached == nil || cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > usageStaleAfter {
 		return out

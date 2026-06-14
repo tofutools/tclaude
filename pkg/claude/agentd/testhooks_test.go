@@ -104,6 +104,15 @@ func SetPopupBaseURLForTest(url string) func() {
 	return func() { popupBaseURL = prev }
 }
 
+// RefreshCodexUsageForTest runs one Codex usage scan synchronously — the
+// same work startCodexUsagePoller does on its timer — so a flow test can
+// populate the in-memory snapshot from rollouts it just wrote under the
+// test $HOME, then assert the result on /api/snapshot without standing up
+// the poller goroutine.
+func RefreshCodexUsageForTest() {
+	refreshCodexUsage()
+}
+
 // StubApprovalForTest swaps the human-approval popup with a stub that
 // returns `decision` immediately. Returns a restore function. The
 // approvalRequest type stays unexported; the stub closes over `decision`
