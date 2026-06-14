@@ -12,8 +12,7 @@ import (
 // approval posture — otherwise any boundary-crossing tool call surfaces an
 // approval prompt no one can answer and the agent deadlocks forever. The fix
 // is to default the spawn's `--ask-for-approval` to `never` (safe because the
-// agent is sandbox-confined by default, JOH-192). See
-// docs/plans/harness-independence.md §E.
+// agent is sandbox-confined by default, JOH-192).
 //
 // These pin the spawned Codex argv's approval posture, observed via the
 // simSpawner's recorded approval policy — the same surface the sandbox/effort/

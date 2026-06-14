@@ -77,7 +77,7 @@ type Harness struct {
 	// Code → settings.json), in which case the spawn path passes no approval
 	// flag and rejects an explicit policy. The default exists so a daemon-
 	// spawned (unattended) pane can't deadlock on an approval prompt no human
-	// can answer — see JOH-200 + docs/plans/harness-independence.md §E.
+	// can answer — see JOH-200.
 	Approval ApprovalCatalog
 }
 

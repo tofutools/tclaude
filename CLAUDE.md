@@ -69,7 +69,7 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 
 ## Harnesses
 
-tclaude drives more than one coding harness. **Claude Code** is the default; **OpenAI Codex CLI** is the second. User docs: `docs/harnesses.md` (overview + capability matrix) and `docs/adding-a-harness.md` (contributor recipe). Design + research: `docs/plans/harness-independence.md` (Linear project `tclaude-harness-independence`).
+tclaude drives more than one coding harness. **Claude Code** is the default; **OpenAI Codex CLI** is the second. User docs: `docs/harnesses.md` (overview + capability matrix) and `docs/adding-a-harness.md` (contributor recipe). Design + research live in the `tclaude-harness-independence` Linear project.
 
 **The seam (`pkg/claude/harness`)** is deliberately *not* one monolithic interface — the same feature is distributed differently per harness (a rename is `/rename` → `.jsonl` turn for CC, but an out-of-band title-store write for Codex). So it models focused, capability-segregated contracts composed by a `Harness` descriptor with `Supports*`/`Can*` capability flags (a `nil` sub-contract = "unsupported"; callers gate on the flag and degrade gracefully). Contracts: `Spawner` (launch/resume command), `ModelCatalog` (validate model/effort), `Lifecycle` (in-pane slash tokens — `RenameCommand`/`CompactCommand`/`SoftExitCommand`, `""` = unsupported), `ConvStore` (assemble conversations from the harness's full storage model — *not* "parse the one file"), `HookInstaller` (install/check/repair the callback + trust), `SandboxCatalog` + `ApprovalCatalog` (Codex launch-time `--sandbox` / `--ask-for-approval`, both `nil` for CC).
 
@@ -115,8 +115,6 @@ t.Cleanup(func() { clcommon.Default = prevTmux })
 
 When discovering a new CC or tmux quirk that bites in production, **encode it in the simulator** — `cc.OnInput` for behavior, `cc.SetCommandDelay` for timing — so the regression fails the relevant flow test. Over time the sims accrete the institutional knowledge of "things that have surprised us."
 
-See `docs/plans/testharness-v2.md` for the full design.
-
 ## Code review
 
 CodeRabbit reviews every PR automatically, but it is frequently rate-limited or out of usage credits. When that happens its status check still goes **green** — but as a no-review *skip*, not a review or an approval. A green CodeRabbit check does not by itself mean the PR was reviewed.
@@ -144,8 +142,7 @@ memory** (deliberately not committed here, to avoid leaking internal locations).
 fresh agent picking up coordination should read its memory for the current Linear
 setup, and keep the board current as work ships.
 
-## Active design docs
-
-- `docs/plans/agent-coord.md` — design for `tclaude agent` (cross-session messaging, groups, inbox).
-- `docs/plans/agentd.md` — design for `tclaude agentd` HTTP-over-Unix-socket daemon. Identity comes from socket peer credentials (`LOCAL_PEERPID` / `SO_PEERCRED`), not tokens; tmux delivery happens out-of-sandbox.
-- `docs/plans/harness-independence.md` — design for making tclaude harness-agnostic (drive Codex CLI + others, not just Claude Code). Lean plan + knowledge pool; phased M1–M5. Linear project `tclaude-harness-independence`.
+Design intent, research, and roadmaps live in Linear (e.g. the
+`tclaude-harness-independence` project), not in-repo — this repo carries code,
+the user docs under `docs/`, and the inline rationale in code comments (which
+cite the relevant Linear issue IDs).

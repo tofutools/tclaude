@@ -8,8 +8,8 @@ import (
 // Codex approval policies — openai/codex `AskForApproval` exposed as the
 // `--ask-for-approval` CLI value enum (kebab-case), verified firsthand
 // against rust-v0.139.0 (utils/cli/src/approval_mode_cli_arg.rs;
-// tui/src/cli.rs `--ask-for-approval`/`-a`). See
-// docs/plans/harness-independence.md §E (JOH-167) for the oversight research.
+// tui/src/cli.rs `--ask-for-approval`/`-a`). See JOH-167 for the oversight
+// research.
 //
 //   - never        : never ask the user; execution failures return to the
 //                    model. The ONLY non-escalating posture — the one safe
@@ -59,8 +59,7 @@ func (codexApproval) ValidatePolicy(policy string) (string, error) {
 // `approvals_reviewer`, set via `-c approvals_reviewer=auto_review`; the value
 // has a legacy alias `guardian_subagent`). The guardian fail-closes to Denied
 // on timeout/error/malformed and has a per-turn circuit breaker; `/approve`
-// is the human override. See docs/plans/harness-independence.md §E (JOH-167)
-// and JOH-200 part 2.
+// is the human override. See JOH-167 and JOH-200 part 2.
 //
 // It is plumbed as a per-spawn opt-in bool (SpawnSpec.AutoReview) rather than
 // a free-text config because tclaude only ever wants the canonical

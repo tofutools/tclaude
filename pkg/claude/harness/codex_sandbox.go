@@ -7,8 +7,8 @@ import (
 )
 
 // Codex sandbox modes — openai/codex `SandboxMode` (kebab-case), verified
-// firsthand against rust-v0.139.0 (see docs/plans/harness-independence.md
-// §D). workspace-write writes only cwd + /tmp + $TMPDIR ($HOME read-only)
+// firsthand against rust-v0.139.0. workspace-write writes only cwd + /tmp +
+// $TMPDIR ($HOME read-only)
 // with network denied: the secure default for a tclaude-spawned agent.
 // read-only adds no writes; danger-full-access disables the sandbox and is
 // never a default — explicit opt-in only.
