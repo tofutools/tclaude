@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 58
+const currentVersion = 59
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -379,6 +379,68 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 59 {
+		if err := migrateV58toV59(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV58toV59 adds pending_spawns — the durable record of a dashboard
+// spawn whose conv-id has not materialised yet (JOH-205 inc2). A Codex
+// agent generates its conv-id at launch but only persists/exposes it after
+// its first turn; an unattended pane stuck behind a startup gate (untrusted
+// dir, a new-hooks-config prompt, the OpenAI auth modal) never takes that
+// turn, so executeSpawn cannot resolve the conv-id synchronously. Rather
+// than hang the request or orphan the pane, the dashboard spawn records its
+// full enrollment intent here keyed by spawn label, returns a PENDING agent
+// the operator can find + focus to clear the gate, and a sweeper back-fills
+// the enrollment once the conv-id appears.
+//
+// The row carries everything finishSpawnEnrollment needs to complete the
+// enrollment later WITHOUT the original request in memory — restart-safe:
+// the group (group_id), the display/role/descr, the briefing inputs
+// (initial_message, group_context, reply_to_conv), the spawner attribution
+// (spawned_by_conv), and the worktree pair the welcome line references.
+// label is the spawn label, which is also the session-row id, so the
+// sweeper resolves the conv-id via LoadSession(label).
+//
+// CREATE TABLE IF NOT EXISTS is idempotent, so a half-applied earlier run
+// converges on re-run (the migrateV55toV56 convention); the whole thing
+// rides one transaction with the version bump.
+func migrateV58toV59(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v58→v59 (add pending_spawns): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS pending_spawns (
+			label           TEXT PRIMARY KEY,
+			group_id        INTEGER NOT NULL,
+			role            TEXT NOT NULL DEFAULT '',
+			descr           TEXT NOT NULL DEFAULT '',
+			name            TEXT NOT NULL DEFAULT '',
+			initial_message TEXT NOT NULL DEFAULT '',
+			group_context   TEXT NOT NULL DEFAULT '',
+			reply_to_conv   TEXT NOT NULL DEFAULT '',
+			spawned_by_conv TEXT NOT NULL DEFAULT '',
+			worktree_path   TEXT NOT NULL DEFAULT '',
+			worktree_branch TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL
+		);
+
+		UPDATE schema_version SET version = 59;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v58→v59 (add pending_spawns): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v58→v59 (add pending_spawns): commit: %w", err)
+	}
 	return nil
 }
 

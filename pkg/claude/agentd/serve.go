@@ -179,6 +179,16 @@ func runServe(p *serveParams) error {
 	// channel.
 	startSessionReaper(cronStop)
 
+	// Pending-spawn sweeper. Finishes enrollment for non-blocking spawns
+	// whose conv-id materialised only after the spawn returned PENDING —
+	// the JOH-205 inc2 back-fill: a Codex held behind a startup gate
+	// (untrusted dir / new-hooks-config / OpenAI auth modal) takes no first
+	// turn, so its conv-id never appears synchronously; once the operator
+	// clears the gate and the first turn lands, this sweep enrolls the agent
+	// and drops the pending_spawns row. Restart-safe. Shares the daemon-wide
+	// stop channel.
+	startPendingSpawnSweeper(cronStop)
+
 	// Size-based rotation of ~/.tclaude/output.log. agentd holds the
 	// log fd for its whole life, so rotation renames the file and
 	// reopens a fresh one in-process. Shares the daemon-wide stop
