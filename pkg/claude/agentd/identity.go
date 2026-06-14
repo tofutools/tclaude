@@ -179,10 +179,11 @@ func asDashboardHumanPeer(r *http.Request) *http.Request {
 }
 
 // withIdentity is the per-request middleware that resolves the connecting
-// peer's PID, walks the process tree to a claude/node ancestor, reads its
-// per-pid session file, verifies any operator token the request carries,
-// and attaches the result to the request context. Handlers turn that
-// peer into an authorization decision via classify().
+// peer's PID, walks the process tree to a coding-harness ancestor (claude,
+// codex, … or node), reads its per-pid session file or falls back to the
+// sessions table for its conv-id, verifies any operator token the request
+// carries, and attaches the result to the request context. Handlers turn
+// that peer into an authorization decision via classify().
 //
 // Resolving a non-empty conv-id also opportunistically flushes any
 // nudges queued for this conv while it was offline. The flush is
@@ -548,20 +549,40 @@ func parseAskHumanHeader(r *http.Request) time.Duration {
 	return 0
 }
 
-// convIDForPID walks up from pid to the nearest claude/node ancestor.
-// Returns the ancestor's conv-id plus a flag indicating whether any
-// claude/node was observed at all. The conv-id comes from the ancestor's
-// per-pid ~/.claude/sessions/<pid>.json; if that file is missing or
-// unreadable, it falls back to agentd's own sessions table keyed by host
-// pid (so a freshly-started agent whose session file hasn't landed yet
-// is still identified, rather than mis-classified as unidentifiable).
+// procName / procParent are the process-tree walk primitives convIDForPID
+// uses, indirected through package vars so a unit test can stand up a
+// synthetic ancestor chain (e.g. a codex ancestor over a sessions row)
+// without real /proc. Production points them at the session package's
+// /proc readers.
+var (
+	procName   = session.GetProcessName
+	procParent = session.GetParentPID
+)
+
+// convIDForPID walks up from pid to the nearest coding-harness ancestor —
+// any harness runtime (claude, codex, …) or "node" (Claude Code runs as
+// node), recognised by session.IsHarnessProcessName, so a Codex agent is
+// identified the same way a Claude Code one is (JOH-206; matching the same
+// walk FindClaudePID uses to record the host pid).
+//
+// Returns the ancestor's conv-id plus a flag indicating whether any such
+// ancestor was observed at all. For Claude Code the conv-id comes from the
+// ancestor's per-pid ~/.claude/sessions/<pid>.json; if that file is missing
+// or unreadable — always, for Codex, which writes no such file — it falls
+// back to agentd's own sessions table keyed by host pid (so a freshly
+// started agent whose session file hasn't landed yet, and every Codex
+// agent, is still identified rather than mis-classified as unidentifiable).
+// The sessions row is keyed by the same harness-ancestor pid this walk
+// reaches: the hook callback records FindClaudePID() (JOH-160), which walks
+// to the identical ancestor.
+//
 // Callers use hasAncestor to distinguish "really the human" (no ancestor)
 // from "agent we can't identify" (ancestor present, conv-id unresolved).
 func convIDForPID(pid int) (convID string, hasAncestor bool) {
 	cur := pid
 	for cur > 1 {
-		name := session.GetProcessName(cur)
-		if name == "claude" || name == "node" {
+		name := procName(cur)
+		if session.IsHarnessProcessName(name) {
 			hasAncestor = true
 			if id := readSessionFile(cur); id != "" {
 				return id, true
@@ -573,7 +594,7 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 				return row.ConvID, true
 			}
 		}
-		cur = session.GetParentPID(cur)
+		cur = procParent(cur)
 	}
 	return "", hasAncestor
 }

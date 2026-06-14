@@ -75,14 +75,14 @@ func GetProcessName(pid int) string {
 // the coding-harness ancestor — a parent named "claude"/"node" (Claude
 // Code runs as node) or any other registered harness binary (e.g.
 // "codex"). Returns its PID, or 0 if none is found. The harness-aware match
-// (isHarnessProcessName) is what lets a Codex hook callback record a real
+// (IsHarnessProcessName) is what lets a Codex hook callback record a real
 // PID instead of 0 (JOH-160).
 func FindClaudePID() int {
 	pid := os.Getppid()
 	// Windows uses PID 0 for System Idle Process
 	for pid > 0 {
 		name := GetProcessName(pid)
-		if isHarnessProcessName(name) {
+		if IsHarnessProcessName(name) {
 			return pid
 		}
 		newPid := GetParentPID(pid)
