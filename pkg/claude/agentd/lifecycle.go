@@ -38,6 +38,8 @@ type groupOpResp struct {
 	Members []memberOpResult `json:"members"`
 }
 
+const daemonSoftExitReason = "soft_exit"
+
 // handleGroupStop ends every member's running tmux session.
 //
 // Modes:
@@ -102,6 +104,14 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
 		if injectSlashCommand(convID, exitCmd, "", "soft-exit") {
+			if h.Name == harness.CodexName {
+				// Codex has no SessionEnd hook; without this, the reaper
+				// would preserve status but classify daemon /quit as a crash.
+				if err := db.SetSessionExitReason(sess.ID, daemonSoftExitReason); err != nil {
+					slog.Warn("failed to record daemon soft-exit reason",
+						"session", sess.ID, "conv", convID, "error", err)
+				}
+			}
 			res.Action = "soft_stopped"
 		} else {
 			res.Action = "error"
