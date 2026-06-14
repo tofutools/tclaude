@@ -787,6 +787,7 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 	// surface it regardless of liveness: a frozen context_pct for an
 	// exited agent is genuinely informative ("it died at 80%"), unlike
 	// a frozen "idle" status that would mislabel a dead agent.
+	refreshCodexContextSnapshotOnRead(pick, alive)
 	if snap, err := db.GetContextSnapshot(pick.ID); err == nil {
 		out.ContextPct = snap.ContextPct
 		out.TokensInput = snap.TokensInput

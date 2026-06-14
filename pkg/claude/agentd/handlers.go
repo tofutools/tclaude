@@ -1437,6 +1437,7 @@ func contextSnapshotForConvIn(convID string, aliveSet map[string]struct{}) (snap
 	if sess == nil {
 		return db.ContextSnapshot{}, "", false
 	}
+	refreshCodexContextSnapshotOnRead(sess, sessionRowAliveIn(sess, aliveSet))
 	if s, err := db.GetContextSnapshot(sess.ID); err == nil {
 		snap = s
 	}

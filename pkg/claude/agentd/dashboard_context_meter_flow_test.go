@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // findDashAgent returns the snapshot's Agents[] row for a conv-id.
@@ -75,6 +76,50 @@ func TestDashboardSnapshot_ContextMeterUsageSurfaced(t *testing.T) {
 	memberRow := findDashMember(snap, "squad", conv)
 	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
 	assert.Equal(t, 60.0, memberRow.State.ContextPct, "Members[] context_pct")
+	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
+}
+
+// Regression: Codex has no command-backed statusline, so waiting for the
+// turn-ending hook could leave the dashboard meter stale until a later hook
+// happened to persist rollout telemetry. A live Codex session should refresh
+// from its latest rollout token_count when /api/snapshot reads it.
+func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) {
+	const conv = "019ec004-4250-79b1-9ade-ebaea4170180"
+	const label = "spwn-codexctx"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	agentd.ResetCodexContextRefreshForTest()
+
+	// Given: a live Codex agent whose rollout has token_count telemetry,
+	// but whose Stop hook has not persisted that telemetry to SQLite yet.
+	f := newFlow(t)
+	f.HaveGroup("codex-squad")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexctx", "/tmp/codexctx")
+	cx.ContextWindow = 200000
+	f.HaveMember("codex-squad", conv)
+
+	require.NoError(t, cx.WriteUserInput("do the codex thing"))
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{InputTokens: 120000, OutputTokens: 8000, TotalTokens: 128000},
+		testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000},
+	))
+
+	// When: the dashboard snapshot is read.
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	// Then: both dashboard surfaces get the read-through Codex snapshot.
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+	assert.InDelta(t, 25.0, agentRow.State.ContextPct, 0.001, "Agents[] context_pct")
+	assert.Equal(t, int64(49000), agentRow.State.TokensInput, "Agents[] tokens_input")
+	assert.Equal(t, int64(1000), agentRow.State.TokensOutput, "Agents[] tokens_output")
+	assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize, "Agents[] context_window_size")
+
+	memberRow := findDashMember(snap, "codex-squad", conv)
+	require.NotNil(t, memberRow, "agent %s missing from group codex-squad members", conv)
+	assert.InDelta(t, 25.0, memberRow.State.ContextPct, 0.001, "Members[] context_pct")
+	assert.Equal(t, int64(49000), memberRow.State.TokensInput, "Members[] tokens_input")
+	assert.Equal(t, int64(1000), memberRow.State.TokensOutput, "Members[] tokens_output")
 	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
 }
 

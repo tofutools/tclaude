@@ -70,6 +70,15 @@ func SetInjectSettleDelayForTest(d time.Duration) func() {
 	return func() { injectSettleDelay = prev }
 }
 
+// ResetCodexContextRefreshForTest clears the process-local Codex context
+// refresh throttle. Flow tests reset the DB between scenarios; clearing this
+// cache keeps repeated runs of the same session label deterministic.
+func ResetCodexContextRefreshForTest() {
+	codexContextRefreshMu.Lock()
+	defer codexContextRefreshMu.Unlock()
+	codexContextRefreshMu.last = nil
+}
+
 // AsHumanPeer attaches a synthetic peer context that classify() resolves
 // to the human operator (classHuman) — modelling a CLI caller holding a
 // valid operator token. All permission gates pass.
