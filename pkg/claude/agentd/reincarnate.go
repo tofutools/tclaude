@@ -462,7 +462,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// with no soft-exit command (Lifecycle.SoftExitCommand == "") is
 	// left for a hard kill rather than typed a command it can't parse.
 	if h := harnessForConv(target); h.SupportsSoftExit() {
-		_ = injectSlashCommand(target, h.Life.SoftExitCommand(), "")
+		_ = injectSlashCommand(target, h.Life.SoftExitCommand(), "", "reincarnate-exit")
 	}
 
 	resp := map[string]any{

@@ -949,6 +949,16 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 // If followUp is non-empty, it is sent as a fresh prompt right after the
 // slash submit. Returns true on successful delivery.
 //
+// reason is a short human-readable label of WHAT triggered this injection
+// (e.g. "self-compact", "compact (caller=ab12cd34)", "soft-exit",
+// "rename"). It is recorded in the success log line so that every
+// slash command tclaude types into a pane — most importantly /compact —
+// has an audit trail in ~/.tclaude/output.log. send-keys is the one
+// channel through which tclaude can make a pane do something the agent
+// did not type itself, so "where did that /compact come from?" must be
+// answerable after the fact from the log alone. See also the auto-compact
+// path in session/hook_callback.go, which logs its own distinct line.
+//
 // Note: when used with /compact, the follow-up bytes queue in the pty
 // until CC resumes reading after the slash command settles. We don't
 // wait for the slash to complete — there's no clean way to detect it
@@ -956,7 +966,7 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 // unlucky timing; agents that depend on tight ordering should poll
 // context-info and submit the follow-up themselves once compact has
 // resolved.
-func injectSlashCommand(convID, line, followUp string) bool {
+func injectSlashCommand(convID, line, followUp, reason string) bool {
 	candidates, err := db.FindSessionsByConvID(convID)
 	if err != nil {
 		return false
@@ -973,9 +983,16 @@ func injectSlashCommand(convID, line, followUp string) bool {
 	}
 	target := sess.TmuxSession + ":0.0"
 	if err := injectTextAndSubmit(target, line); err != nil {
-		slog.Warn("slash-command inject failed", "error", err, "tmux", sess.TmuxSession)
+		slog.Warn("slash-command inject failed", "error", err, "tmux", sess.TmuxSession, "line", line, "reason", reason)
 		return false
 	}
+	slog.Info("slash-command injected via send-keys",
+		"conv_id", convID,
+		"line", line,
+		"reason", reason,
+		"tmux_session", sess.TmuxSession,
+		"has_follow_up", followUp != "",
+	)
 	if followUp != "" {
 		if err := injectTextAndSubmit(target, followUp); err != nil {
 			slog.Warn("slash-command follow-up failed", "error", err, "tmux", sess.TmuxSession)
@@ -1095,7 +1112,7 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 			"your role is — e.g. \"fix-bug-abc-123\", \"working-on-new-ui\", or \"worker-agent-a\". " +
 			"Allowed: 1-64 characters from [A-Za-z0-9_-[]{}() ] only; single spaces ok, " +
 			"no slashes / quotes / newlines / unicode.]"
-		if !injectSlashCommand(target, nudge, "") {
+		if !injectSlashCommand(target, nudge, "", "auto-rename-nudge") {
 			writeError(w, http.StatusServiceUnavailable, "no_tmux",
 				"target conv "+short8(target)+" has no live tmux session to inject auto-rename nudge into")
 			return
@@ -1209,6 +1226,24 @@ func handleAgentSlash(w http.ResponseWriter, r *http.Request, perm, targetConv s
 	runSlashOrchestration(w, r, targetConv, caller, token, label)
 }
 
+// slashReason renders the audit "reason" recorded when a lifecycle slash
+// (e.g. /compact) is injected into a pane, capturing WHO drove it so the
+// output.log line answers "where did that /compact come from?":
+//   - caller == ""      → a human via the dashboard / an owner over the
+//     socket (cross-agent handlers return "" for the human peer class).
+//   - caller == target  → an agent acting on its own conversation.
+//   - otherwise         → a cross-agent call; the caller conv is named.
+func slashReason(label, caller, target string) string {
+	switch caller {
+	case "":
+		return label + " (human/dashboard)"
+	case target:
+		return "self-" + label
+	default:
+		return label + " (caller=" + short8(caller) + ")"
+	}
+}
+
 // runSlashOrchestration validates the optional follow_up body, injects
 // the slash command into the target's pane, and writes the JSON
 // response. caller is recorded in the response for cross-agent calls
@@ -1243,7 +1278,7 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			"harness "+h.Name+" does not support "+label)
 		return
 	}
-	if !injectSlashCommand(target, slash, body.FollowUp) {
+	if !injectSlashCommand(target, slash, body.FollowUp, slashReason(label, caller, target)) {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
 			"target conv "+short8(target)+" has no live tmux session to inject "+slash+" into")
 		return
