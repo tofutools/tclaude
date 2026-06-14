@@ -1,15 +1,15 @@
 ---
 name: agent-dir
-description: Report — or open a terminal in — the directory an agent is working in, via `tclaude agent dir`. Claude Code can't read its own "where am I building" state or spawn a terminal window from a tool; tclaude agentd tracks the most-recent dir you've edited files in (the PostToolUse hook records it) and, being outside your sandbox, can open a terminal there. Use when the user asks "what directory are you working in / building in", "where are you", "open a terminal here / in the repo", or "/agent-dir". Manager pattern: `tclaude agent dir <peer>` reports another agent's dir; `tclaude agent dir <peer> --open` opens a terminal in it.
+description: Report — or open a terminal in — the directory an agent is working in, via `tclaude agent dir`. A tool-using agent cannot read tclaude's "where am I building" state or spawn a terminal window from a tool; tclaude agentd tracks the most-recent dir you've edited files in (the PostToolUse hook records it) and, being outside your sandbox, can open a terminal there. Use when the user asks "what directory are you working in / building in", "where are you", "open a terminal here / in the repo", or "/agent-dir". Manager pattern: `tclaude agent dir <peer>` reports another agent's dir; `tclaude agent dir <peer> --open` opens a terminal in it.
 ---
 
 # Reporting where you're working
 
-Claude Code records a single launch `cwd` in its conversation jsonl —
-the directory it was started in. But that's often *not* where you're
-actually building: started in `~/git`, you might spend the whole
-session editing files under `~/git/some-repo/pkg/...`. A tool can't
-read either value back, and definitely can't open a terminal window.
+tclaude records the directory where the agent harness was launched.
+But that's often *not* where you're actually building: started in
+`~/git`, you might spend the whole session editing files under
+`~/git/some-repo/pkg/...`. A tool can't read tclaude's tracked value
+back directly, and definitely can't open a terminal window.
 
 `tclaude agent dir` fills both gaps. It asks the local `tclaude agentd`
 daemon, which tracks three directories per agent:
@@ -23,7 +23,7 @@ daemon, which tracks three directories per agent:
   root. Falls back to the start dir when the current dir isn't in a
   git repo. This is the right one when you want "the repo I'm in",
   not the deep subdir of the last file.
-- **start** (`--start`) — where Claude Code was launched.
+- **start** (`--start`) — where the agent harness was launched.
 
 ## Prerequisite: daemon must be running
 
@@ -99,7 +99,7 @@ is likewise ungated; it's the human's machine and they asked.
 
 ## Why a separate command
 
-You're a tool-using agent: you can't introspect Claude Code's own cwd,
-and you can't open OS windows. The daemon owns both the tracking (fed
-by the hook) and the terminal side (outside your sandbox), so it does
-what you can't.
+You're a tool-using agent: you can't introspect tclaude's tracked
+agent directory directly, and you can't open OS windows. The daemon
+owns both the tracking (fed by the hook) and the terminal side (outside
+your sandbox), so it does what you can't.

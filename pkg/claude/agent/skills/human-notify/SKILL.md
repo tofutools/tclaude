@@ -29,7 +29,7 @@ notifications are enabled and can be silenced with
 ## It is an extra channel, not a replacement
 
 Keep doing your normal terminal output. Your regular responses in your
-own terminal / Claude Code output are still your primary channel — the
+own terminal / agent harness output are still your primary channel — the
 human reads them when they are at the keyboard. `notify-human` does
 **not** replace that and is not where your routine reporting goes:
 print your normal output as always. `notify-human` is an *extra*,

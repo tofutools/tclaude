@@ -9,11 +9,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// harnessUsesSlashContextControls gates the stopped-hook path's CC slash
-// injections (/compact + the nudge naming /compact·/reincarnate) on the
-// harness understanding them. Claude Code does; Codex (no registered
-// Lifecycle) does not; an empty/unknown harness falls back to the legacy CC
-// behaviour so the common path is never accidentally muted.
+// harnessUsesSlashContextControls gates the stopped-hook path's context
+// control injections (/compact + the nudge naming /compact·/reincarnate) on
+// the harness understanding them. Claude Code and Codex both expose
+// /compact; an empty/unknown harness falls back to the legacy CC behaviour so
+// the common path is never accidentally muted.
 func TestHarnessUsesSlashContextControls(t *testing.T) {
 	cases := []struct {
 		harness string
@@ -21,7 +21,7 @@ func TestHarnessUsesSlashContextControls(t *testing.T) {
 	}{
 		{"", true},                         // untagged ⇒ legacy CC behaviour
 		{"claude", true},                   // CC has /compact
-		{"codex", false},                   // Codex has no compact command
+		{"codex", true},                    // Codex has /compact
 		{"definitely-not-a-harness", true}, // unknown ⇒ safe CC default
 	}
 	for _, c := range cases {
@@ -30,13 +30,9 @@ func TestHarnessUsesSlashContextControls(t *testing.T) {
 	}
 }
 
-// Regression for the gate JOH-170 had to add: populating context_pct for a
-// Codex session must NOT re-arm the CC auto-compact /compact injection
-// against a Codex pane. With context_pct over the threshold and
-// auto-compact enabled, a Stop hook on a Codex session must leave
-// compact_pending unclaimed; the identical Claude Code session must claim
-// it (proving the test would catch a removed gate, not just an inert path).
-func TestApplyHook_StopGatesAutoCompactByHarness(t *testing.T) {
+// Populating context_pct for a Codex session should now allow the same
+// auto-compact path as Claude Code because Codex exposes /compact.
+func TestApplyHook_StopAllowsAutoCompactForCodex(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
@@ -71,7 +67,7 @@ func TestApplyHook_StopGatesAutoCompactByHarness(t *testing.T) {
 
 	_, codexPending, err := db.GetCompactState("cdx")
 	require.NoError(t, err)
-	assert.Zero(t, codexPending, "Codex Stop must NOT claim auto-compact (no /compact injection)")
+	assert.Greater(t, codexPending, 0.0, "Codex Stop claims auto-compact")
 
 	_, claudePending, err := db.GetCompactState("cld")
 	require.NoError(t, err)

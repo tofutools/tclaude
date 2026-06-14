@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 )
 
-// skillsFS holds the canonical skill files shipped with the binary. The
-// CLI `tclaude setup --install-agent-skills` materialises them into
-// ~/.claude/skills/ on demand, since `go install` strips the source tree
-// and we can't symlink something that's no longer on disk.
+// skillsFS holds the canonical skill files shipped with the binary. The CLI
+// `tclaude setup --install-agent-skills` materialises them into each supported
+// agent harness's user skill directory on demand, since `go install` strips the
+// source tree and we can't symlink something that's no longer on disk.
 //
 //go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md skills/agent-lifecycle/SKILL.md skills/agent-schedule/SKILL.md skills/agent-dir/SKILL.md skills/human-notify/SKILL.md
 var skillsFS embed.FS
@@ -30,7 +30,7 @@ var bundledSkills = []string{
 
 // InstalledSkill describes a skill that was written to disk.
 type InstalledSkill struct {
-	Name string // skill name (also the directory under ~/.claude/skills/)
+	Name string // skill name (also the install directory basename)
 	Path string // absolute path to the installed skill directory
 }
 
@@ -39,6 +39,16 @@ type InstalledSkill struct {
 // is skipped and ErrSkillExists is returned alongside whatever did install
 // successfully.
 func InstallSkills(force bool) ([]InstalledSkill, error) {
+	return installSkillsInHome(filepath.Join(".claude", "skills"), force)
+}
+
+// InstallCodexSkills writes every bundled skill into ~/.agents/skills/<name>/,
+// Codex CLI's user-scope skill directory.
+func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
+	return installSkillsInHome(filepath.Join(".agents", "skills"), force)
+}
+
+func installSkillsInHome(relRoot string, force bool) ([]InstalledSkill, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("user home: %w", err)
@@ -47,7 +57,7 @@ func InstallSkills(force bool) ([]InstalledSkill, error) {
 	var installed []InstalledSkill
 	var firstExistsErr error
 	for _, name := range bundledSkills {
-		dst := filepath.Join(home, ".claude", "skills", name)
+		dst := filepath.Join(home, relRoot, name)
 		if !force {
 			if _, err := os.Stat(dst); err == nil {
 				if firstExistsErr == nil {

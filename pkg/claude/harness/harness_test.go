@@ -84,7 +84,7 @@ func TestSupports_NilContracts(t *testing.T) {
 // ConvStore, so CanRename() must be true for it — gating the dashboard's
 // rename control on SupportsRename alone would wrongly hide a working
 // feature. Compact has no out-of-band fallback, so CanCompact() tracks
-// SupportsCompact exactly: Codex (no `/compact`) is false.
+// SupportsCompact exactly: Claude Code and Codex both expose `/compact`.
 func TestCanRenameCompact(t *testing.T) {
 	claude := Default()
 	if !claude.CanRename() || !claude.CanCompact() {
@@ -104,8 +104,8 @@ func TestCanRenameCompact(t *testing.T) {
 	if !codex.CanRename() {
 		t.Fatalf("codex must be renameable via its ConvStore (CanRename), even without /rename")
 	}
-	if codex.CanCompact() {
-		t.Fatalf("codex has no compaction command, so CanCompact must be false")
+	if !codex.CanCompact() {
+		t.Fatalf("codex supports /compact, so CanCompact must be true")
 	}
 
 	// A bare descriptor (no Lifecycle, no ConvStore) and a nil receiver

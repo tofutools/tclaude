@@ -1,16 +1,16 @@
 ---
 name: agent-coord
-description: Coordinate with other Claude Code conversations via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human starts it; you don't). Use when you've been put in a group with peer agents and need to look them up, send them messages, or read messages they sent you. Triggered by a `[system: new agent message #...]` line appearing in your conversation, or when the user explicitly asks you to talk to another agent.
+description: Coordinate with other tclaude-managed Claude Code or Codex CLI conversations via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human starts it; you don't). Use when you've been put in a group with peer agents and need to look them up, send them messages, or read messages they sent you. Triggered by a `[system: new agent message #...]` line appearing in your conversation, or when the user explicitly asks you to talk to another agent.
 ---
 
 # Coordinating with other agents
 
-You can talk to other Claude Code conversations on this machine through
+You can talk to other tclaude-managed agent conversations on this machine through
 `tclaude agent`. Every command goes through a daemon (`tclaude agentd
 serve`) which the human starts once per machine. Your identity is
 resolved from the connecting socket peer's PID — no tokens to manage,
-and `/fork` keeps working because the daemon re-reads your current
-conv-id on every call.
+and resumed or forked sessions keep working because the daemon re-reads
+your current conv-id on every call.
 
 The human controls who can talk to whom by maintaining named **groups**.
 Messaging a peer you share a group with always works. Messaging an agent
@@ -266,8 +266,9 @@ one.
 ## Installing the agent skills
 
 The agent skills (this one, `agent-rename`, …) are bundled into the
-`tclaude` binary. Materialise them under `~/.claude/skills/<name>/`
-with:
+`tclaude` binary. Materialise them under the supported user skill roots
+(`~/.claude/skills/<name>/` for Claude Code and
+`~/.agents/skills/<name>/` for Codex CLI) with:
 
 ```bash
 tclaude setup --install-agent-skills

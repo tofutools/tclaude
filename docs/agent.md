@@ -50,8 +50,9 @@ neither is refused. See [Identity](#identity).
 
 - **`tclaude setup`** — registers hooks and the agentd socket path.
 - **`tclaude setup --install-agent-skills`** — materialises the
-  bundled `agent-*` skills under `~/.claude/skills/`. Without these
-  skills installed, agents won't know to use these commands.
+  bundled `agent-*` skills under `~/.claude/skills/` for Claude Code
+  and `~/.agents/skills/` for Codex CLI. Without these skills
+  installed, agents won't know to use these commands.
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
   `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`) as
@@ -91,7 +92,7 @@ clones you trigger yourself (CLI or dashboard) are never rate-limited.
 # 1. Run the daemon in a separate (non-sandboxed) terminal.
 tclaude agentd serve
 
-# 2. Install the agent skills so CC agents know about these commands.
+# 2. Install the agent skills so agents know about these commands.
 tclaude setup --install-agent-skills
 
 # 3. As the human, set up a group and add some sessions.
@@ -99,7 +100,7 @@ tclaude agent groups create reviewer-team --descr "code review crew"
 tclaude agent groups add reviewer-team <conv1> --role tech-lead
 tclaude agent groups add reviewer-team <conv2> --role test-runner
 
-# 4. From inside a CC session, an agent can now reach peers.
+# 4. From inside an agent session, an agent can now reach peers.
 tclaude agent ls
 tclaude agent message lead "Can you review PR #42?"
 
@@ -539,7 +540,8 @@ with care.
 ## Bundled skills
 
 Six skills ship with the binary and install to `~/.claude/skills/`
-via `tclaude setup --install-agent-skills`:
+for Claude Code and `~/.agents/skills/` for Codex CLI via
+`tclaude setup --install-agent-skills`:
 
 - **`agent-coord`** — the day-to-day "talk to other agents" skill.
   Triggered by `[system: new agent message #...]` nudges and by user

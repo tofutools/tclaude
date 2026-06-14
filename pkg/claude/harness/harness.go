@@ -126,9 +126,9 @@ func (h *Harness) CanRename() bool {
 // CanCompact reports whether a context-compaction is deliverable for this
 // harness. Unlike rename there is no out-of-band fallback — compaction is
 // only ever an in-pane slash command — so this is exactly SupportsCompact.
-// A harness without it (Codex, which has no `/compact`) must have every
-// compaction affordance hidden, and the daemon's compact endpoint already
-// refuses it; this is the matching UI-side predicate.
+// A harness without it must have every compaction affordance hidden, and the
+// daemon's compact endpoint already refuses it; this is the matching UI-side
+// predicate.
 func (h *Harness) CanCompact() bool {
 	return h.SupportsCompact()
 }

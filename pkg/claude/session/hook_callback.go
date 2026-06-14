@@ -962,11 +962,9 @@ func getConvTitle(convID, cwd string) string {
 }
 
 // harnessUsesSlashContextControls reports whether a session's harness
-// understands the CC-style context-management slash commands the stopped-
-// hook path types into the pane (`/compact`, plus the nudge that names
-// `/compact` / `/reincarnate`). It folds to the harness's compact
-// capability: Claude Code has `/compact`; Codex does not (its Lifecycle is
-// unregistered), so those injections are suppressed for it. An empty or
+// understands the context-management slash commands the stopped-hook path
+// types into the pane (`/compact`, plus the nudge that names `/compact` /
+// `/reincarnate`). It folds to the harness's compact capability. An empty or
 // unknown harness preserves the legacy Claude Code behaviour — the
 // overwhelmingly common case, and the safe default since CC understands the
 // commands.
