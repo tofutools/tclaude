@@ -492,6 +492,11 @@ func runNew(params *NewParams) error {
 	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
 	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
 
+	// Enable tmux mouse-wheel scrollback for this session when the harness
+	// relies on tmux for history (Codex CLI). Scoped to this session only so
+	// Claude Code panes — which own their scrollback — are untouched (JOH-213).
+	ConfigureTmuxScrollback(tmuxSession, h)
+
 	// Configure keybindings for session navigation (idempotent)
 	ConfigureTmuxKeybindings()
 

@@ -119,3 +119,29 @@ func TestCanRenameCompact(t *testing.T) {
 		t.Fatalf("nil harness must report no deliverable rename/compact")
 	}
 }
+
+// TestWantsTmuxScrollback pins the per-harness scroll-back trait the spawn
+// path gates the per-session tmux mouse toggle on (JOH-213): Claude Code
+// renders its own scrollback (false), Codex CLI leans on tmux for it (true).
+// A bare descriptor and a nil receiver fold to false rather than panicking.
+func TestWantsTmuxScrollback(t *testing.T) {
+	if Default().WantsTmuxScrollback() {
+		t.Fatalf("claude renders its own scrollback; WantsTmuxScrollback must be false")
+	}
+
+	codex, ok := Get(CodexName)
+	if !ok {
+		t.Fatalf("codex harness not registered")
+	}
+	if !codex.WantsTmuxScrollback() {
+		t.Fatalf("codex leans on tmux for scrollback; WantsTmuxScrollback must be true")
+	}
+
+	if (&Harness{Name: "bare"}).WantsTmuxScrollback() {
+		t.Fatalf("bare harness must not request tmux scrollback")
+	}
+	var nilH *Harness
+	if nilH.WantsTmuxScrollback() {
+		t.Fatalf("nil harness must not request tmux scrollback")
+	}
+}
