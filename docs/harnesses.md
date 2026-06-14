@@ -102,9 +102,12 @@ safe and non-blocking:
   Codex's `workspace-write` sandbox otherwise blocks the agentd Unix socket, so
   a sandboxed agent couldn't run `tclaude agent …` at all. The profile gives the
   same workspace-write containment **plus** an allowlist for exactly that socket
-  (JOH-207). `read-only` and `danger-full-access` still use the plain `--sandbox`
-  flag. A direct `tclaude session new --harness codex` is *your* session, so it
-  does **not** inject a default — it respects your `config.toml`.
+  (JOH-207). At spawn time, when the launch directory is inside a Git repo, the
+  profile also grants write access to that repo's Git common dir so agents can
+  commit from linked worktrees while the rest of `$HOME` stays read-only.
+  `read-only` and `danger-full-access` still use the plain `--sandbox` flag. A
+  direct `tclaude session new --harness codex` is *your* session, so it does
+  **not** inject a default — it respects your `config.toml`.
 - **`--ask-for-approval`** — daemon-spawned Codex agents default to **`never`**
   so an unattended pane with no human at the keyboard can't deadlock waiting for
   an approval prompt. A direct `session new` again respects your config.
