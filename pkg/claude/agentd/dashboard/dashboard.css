@@ -294,21 +294,36 @@ details[open] > summary::before { content: "▼ "; }
 #usage .ucost { cursor: pointer; }
 #usage .ucost:hover .ucost-amt { text-decoration: underline; }
 /* Two-line Claude/Codex layout (when Codex usage is present): stack the
-   labelled lines vertically, right-aligned so they hang off the same
-   edge as the single-line readout. Each .uline is the former horizontal
-   row; .usrc is the monospace source label, right-aligned to a fixed
-   width so "Claude:" / " Codex:" colons stack and the windows form one
-   aligned column. */
-#usage.multiline { flex-direction: column; align-items: flex-end; gap: 2px; }
-#usage .uline { display: inline-flex; align-items: center; gap: 12px; white-space: nowrap; }
-#usage .usrc {
+   labelled lines vertically, right-aligned so they hang off the same edge
+   as the single-line readout. Each .uline is the former horizontal row.
+   The whole block is monospace so every field can reserve a fixed `ch`
+   width — and because each field is sized to its WORST case (not auto-
+   sized to current content), the two rows align field-for-field AND the
+   layout never shifts as a countdown ticks 2h50m → 45m → 5m or a percent
+   crosses 99→100. */
+#usage.multiline {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#usage .uline { display: inline-flex; align-items: center; gap: 12px; white-space: nowrap; }
+/* Source label ("Claude:" / "Codex:") — right-aligned in a box wide enough
+   for the longest label so the colons stack and "Codex:" gains its leading
+   space. inline-block (not a bare inline span) so min-width/text-align
+   actually apply. */
+#usage .usrc {
+  display: inline-block;
   color: #7d8590;
   text-align: right;
-  /* Wide enough to hold the longest label ("Claude:") so every label
-     right-aligns within the same box and the colons stack. */
-  min-width: 4.5em;
+  min-width: 7ch; /* "Claude:" */
 }
+/* Per-field column widths inside each window, worst-case sized so 5h/7d,
+   the bars, the percents, and the reset hints all line up between the two
+   rows and don't reflow over time. */
+#usage.multiline .ulabel { display: inline-block; min-width: 2ch; }            /* "5h" / "7d" */
+#usage.multiline .upct   { display: inline-block; min-width: 4ch; text-align: right; } /* up to "100%" */
+#usage.multiline .urem   { display: inline-block; min-width: 7ch; }            /* up to "(6d23h)" / "(reset)" */
 
 /* -- Costs tab ------------------------------------------------------
    Per-day spend bars in the same money-green as the cost tokens.

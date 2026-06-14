@@ -658,8 +658,11 @@ function usageBar(pct) {
 // mini bar, percent, and the remaining-time hint.
 function usageWindowHTML(label, win) {
   const pct = win.pct || 0;
+  // No leading space before .urem: .uw is a flex row whose `gap` owns the
+  // spacing, and a literal space would become a stray anonymous flex item
+  // that throws off the monospace column widths in the two-line layout.
   const rem = win.remaining
-    ? ' <span class="urem">(' + esc(win.remaining) + ')</span>' : '';
+    ? '<span class="urem">(' + esc(win.remaining) + ')</span>' : '';
   return '<span class="uw"><span class="ulabel">' + label + '</span>'
     + '<span class="ubar">' + usageBar(pct) + '</span>'
     + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';
