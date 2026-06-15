@@ -149,8 +149,8 @@ function barColHTML(day, usd, scaleMax, projected, showLabel) {
   if (projected) cls.push('projected');
   const tip = !(usd > 0) ? ''
     : projected
-      ? `${day} — projected ~$${usd.toFixed(2)}`
-      : `${day} — $${usd.toFixed(4)}`;
+      ? `${day} — projected ~${fmtUSD(usd)}`
+      : `${day} — ${fmtUSD(usd)}`;
   return `<div class="${cls.join(' ')}"${tip ? ` data-tip="${esc(tip)}"` : ''}>`
     + `<div class="cost-bararea"><div class="cost-bar" style="height:${pct}%"></div></div>`
     + `<div class="cost-day">${showLabel ? date.getDate() : ''}</div>`
