@@ -105,12 +105,23 @@ function isWeekendKey(key) {
 // weekend days that are projected at zero). Returns null when the
 // month has no elapsed weekdays yet (a month starting on a weekend)
 // or nothing has been spent — no basis to extrapolate from.
+//
+// The weekday denominator starts at the later of the month's first day
+// (data.from) and tclaude's first-ever costed day (data.first_day):
+// when the very first use was this month, the empty days before it
+// would drag the average toward zero and project far too low, so they
+// are excluded; when earlier-month history exists those leading zeros
+// are genuine idle weekdays and stay in the denominator (start = the
+// 1st). The numerator (total_usd) is unaffected — there is by
+// definition no spend before the first-ever costed day.
 function monthProjection(data) {
   const now = new Date();
   const todayKey = dayKey(now);
+  const startKey = data.first_day && data.first_day > data.from
+    ? data.first_day : data.from;
   let weekdaysElapsed = 0;
   for (const d of data.days) {
-    if (d.day <= todayKey && !isWeekendKey(d.day)) weekdaysElapsed++;
+    if (d.day >= startKey && d.day <= todayKey && !isWeekendKey(d.day)) weekdaysElapsed++;
   }
   if (!weekdaysElapsed || !(data.total_usd > 0)) return null;
   const perWeekday = data.total_usd / weekdaysElapsed;

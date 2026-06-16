@@ -81,6 +81,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("/api/costs?from=", "costs.js fetches the costs endpoint")
 	must("function monthProjection", "month projection implemented")
 	must("isWeekendKey", "weekends excluded from the projection")
+	must("data.first_day", "projection anchors the weekday average at the first-ever costed day")
 	must("bindCostsTab", "tab binder exported")
 
 	// dashboard.js: the module is actually imported and bound.
