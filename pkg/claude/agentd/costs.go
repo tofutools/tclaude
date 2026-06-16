@@ -70,6 +70,24 @@ func sumCostDeltas(deltas []costDelta, from, to string) float64 {
 	return total
 }
 
+// firstCostDay returns the earliest day carrying recorded spend across
+// all deltas — tclaude's first-ever costed day — or "" when nothing
+// has ever been spent. The Costs tab's month projection uses it to
+// anchor the per-weekday average: when the first-ever spend was this
+// month, the empty days before it must not dilute the average (a fresh
+// install would otherwise project far too low); when earlier-month
+// history exists, those leading zeros are genuine idle weekdays and
+// stay in the denominator. Deltas need not be sorted.
+func firstCostDay(deltas []costDelta) string {
+	first := ""
+	for _, d := range deltas {
+		if first == "" || d.day < first {
+			first = d.day
+		}
+	}
+	return first
+}
+
 // costDayPoint is one bar of the Costs tab chart: total spend across
 // all agents on one local day.
 type costDayPoint struct {
@@ -101,10 +119,14 @@ type costAgentRow struct {
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
 // one point for every calendar day in [from, to] — so the chart can
-// render gaps as empty bars without client-side date math.
+// render gaps as empty bars without client-side date math. FirstDay is
+// the earliest day carrying any recorded spend across all history (not
+// just this span); the Costs tab's month projection uses it to decide
+// where the per-weekday average starts (see firstCostDay).
 type costsResponse struct {
 	From     string         `json:"from"`
 	To       string         `json:"to"`
+	FirstDay string         `json:"first_day,omitempty"`
 	Days     []costDayPoint `json:"days"`
 	Agents   []costAgentRow `json:"agents"`
 	TotalUSD float64        `json:"total_usd"`
@@ -176,7 +198,7 @@ func collectCosts(from time.Time) (costsResponse, error) {
 		total += d.usd
 	}
 
-	out := costsResponse{From: fromKey, To: toKey, TotalUSD: total,
+	out := costsResponse{From: fromKey, To: toKey, FirstDay: firstCostDay(deltas), TotalUSD: total,
 		Days: []costDayPoint{}, Agents: []costAgentRow{}}
 	for day := from; ; day = day.AddDate(0, 0, 1) {
 		key := day.Format(costDayKey)

@@ -18,6 +18,7 @@ import (
 type costsResp struct {
 	From     string          `json:"from"`
 	To       string          `json:"to"`
+	FirstDay string          `json:"first_day"`
 	Days     []costsRespDay  `json:"days"`
 	Agents   []costsRespConv `json:"agents"`
 	TotalUSD float64         `json:"total_usd"`
@@ -74,6 +75,7 @@ func TestDashboardCosts_DailySeriesAndBreakdown(t *testing.T) {
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
 	assert.Equal(t, monthStart, out.From, "default span starts at the first of the month")
 	assert.Equal(t, today, out.To, "span ends today")
+	assert.Equal(t, today, out.FirstDay, "first-ever costed day is today — all seeded spend landed today")
 
 	require.NotEmpty(t, out.Days, "zero-filled day series present")
 	assert.Equal(t, monthStart, out.Days[0].Day, "series starts at from")
@@ -150,6 +152,8 @@ func TestDashboardCosts_AgentOrderingAndModels(t *testing.T) {
 
 	from := time.Now().AddDate(0, 0, -9).Format("2006-01-02")
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)
+
+	assert.Equal(t, oldDay, out.FirstDay, "first-ever costed day is C's historical row, the earliest across all history")
 
 	require.Len(t, out.Agents, 3, "one breakdown row per conv")
 	assert.Equal(t, convB, out.Agents[0].ConvID, "today's agents first; B was costed last (and outspent A), so it leads")
