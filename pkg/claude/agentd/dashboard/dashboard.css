@@ -911,6 +911,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .filter-bar label.filter-toggle:hover { color: #d4d4d4; }
 .filter-bar label.filter-toggle input { cursor: pointer; margin: 0; }
+/* A toggle disabled because it doesn't apply to the current view (e.g.
+   the Costs tab's "fill empty weekdays", inert outside the month span):
+   dimmed, no hover lift, not-allowed cursor. */
+.filter-bar label.filter-toggle.disabled { opacity: 0.4; cursor: not-allowed; }
+.filter-bar label.filter-toggle.disabled:hover { color: #7d8590; }
+.filter-bar label.filter-toggle.disabled input { cursor: not-allowed; }
 /* View popover — collapses the per-tab "show offline / ungrouped /
    retired / conversations" toggles behind a single 'view' button so
    the filter bar stays compact. The button + popover are siblings

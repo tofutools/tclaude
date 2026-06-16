@@ -9,6 +9,16 @@
 // visible — cost history doesn't move on the 2s snapshot cadence.
 
 import { $, $$, esc, shortId } from './helpers.js';
+import { dashPrefs } from './prefs.js';
+
+// Sticky toggle: when on, the month projection fills the empty weekdays
+// before tclaude's first run this month at the per-weekday average, so
+// the figure reads as a representative full month ("projected average
+// month cost") instead of one dragged low by starting mid-month. Only
+// the "This month" span has a projection, so it's the only span the
+// toggle affects. Persisted server-side via dashPrefs (see prefs.js).
+const FILL_WEEKDAYS_KEY = 'tclaude.dash.costs.fillEmptyWeekdays';
+let fillEmptyWeekdays = false;
 
 // The selectable date spans. "month" is the calendar month to date
 // (the only span that gets a projection); the rest are trailing
@@ -114,7 +124,19 @@ function isWeekendKey(key) {
 // are genuine idle weekdays and stay in the denominator (start = the
 // 1st). The numerator (total_usd) is unaffected — there is by
 // definition no spend before the first-ever costed day.
-function monthProjection(data) {
+//
+// When `fillEmpty` is on, those excluded leading weekdays (the ones in
+// [data.from, startKey) — empty by definition, since nothing was spent
+// before the first costed day) are projected at the per-weekday average
+// too. The figure then represents a representative *full* month
+// (perWeekday × every weekday in the month) — "projected average month
+// cost" — rather than the current month skewed low by a mid-month start.
+// Only the leading empties are filled: idle weekdays after the first run
+// are already in the denominator, so projecting them again would double
+// count and overshoot perWeekday × total weekdays. The returned `total`
+// switches with the flag; `leadingFill` (day → projected usd) lets the
+// chart render those columns as projected bars.
+function monthProjection(data, fillEmpty) {
   const now = new Date();
   const todayKey = dayKey(now);
   const startKey = data.first_day && data.first_day > data.from
@@ -137,11 +159,30 @@ function monthProjection(data) {
     projectedRemaining += usd;
     future.push({ day: key, cost_usd: usd });
   }
+
+  // Leading empty weekdays: the calendar weekdays before the first
+  // costed day this month (data.from .. startKey, exclusive). Only
+  // populated when the first run was this month (startKey > data.from);
+  // with earlier-month history startKey is the 1st and there is no
+  // leading region. data.days is ascending from data.from.
+  const leadingFill = {};
+  let leadingTotal = 0;
+  for (const d of data.days) {
+    if (d.day >= startKey) break;
+    if (!isWeekendKey(d.day)) {
+      leadingFill[d.day] = perWeekday;
+      leadingTotal += perWeekday;
+    }
+  }
+
+  const totalNoFill = data.total_usd + projectedRemaining;
   return {
     perWeekday,
     weekdaysElapsed,
     future,
-    total: data.total_usd + projectedRemaining,
+    fillEmpty: !!fillEmpty,
+    leadingFill,
+    total: fillEmpty ? totalNoFill + leadingTotal : totalNoFill,
   };
 }
 
@@ -188,7 +229,14 @@ function yAxisHTML(scaleMax) {
 }
 
 function renderChart(data, proj) {
-  const actual = data.days.map(d => ({ ...d, projected: false }));
+  // With the fill toggle on, the leading empty weekdays render as
+  // projected (hollow) bars at the per-weekday average instead of empty
+  // actual columns, so the chart matches the "average month" total.
+  const fill = (proj && proj.fillEmpty) ? proj.leadingFill : null;
+  const actual = data.days.map(d =>
+    fill && fill[d.day] != null
+      ? { day: d.day, cost_usd: fill[d.day], projected: true }
+      : { ...d, projected: false });
   const future = (proj ? proj.future : []).map(d => ({ ...d, projected: true }));
   const all = actual.concat(future);
   if (!all.length) {
@@ -217,8 +265,13 @@ function renderSummary(data, proj) {
   const bits = [`<span class="cost-total">Total: <strong>${esc(fmtUSD(data.total_usd))}</strong></span>`,
     `<span class="muted">${esc(data.from)} → ${esc(data.to)}</span>`];
   if (proj) {
-    bits.push(`<span class="cost-proj" title="Spend so far divided by elapsed weekdays (${proj.weekdaysElapsed}), extrapolated over the month's remaining weekdays — weekends excluded from the estimate.">`
-      + `Projected month total: <strong>~${esc(fmtUSD(proj.total))}</strong>`
+    const label = proj.fillEmpty ? 'Projected avg month total' : 'Projected month total';
+    const tip = `Spend so far divided by elapsed weekdays (${proj.weekdaysElapsed}), extrapolated over the month's remaining weekdays — weekends excluded from the estimate.`
+      + (proj.fillEmpty
+        ? ' The empty weekdays before the first run this month are also filled at the per-weekday average, so this reflects a representative full month.'
+        : '');
+    bits.push(`<span class="cost-proj" title="${esc(tip)}">`
+      + `${label}: <strong>~${esc(fmtUSD(proj.total))}</strong>`
       + ` <span class="muted">(${esc(fmtUSD(proj.perWeekday))}/weekday)</span></span>`);
   }
   $('#costs-summary').innerHTML = bits.join('<span class="cost-sep">·</span>');
@@ -265,7 +318,7 @@ async function loadCosts() {
     if (!r.ok) throw new Error(await r.text() || r.status);
     const data = await r.json();
     if (seq !== loadSeq) return; // superseded by a newer load
-    const proj = span === 'month' ? monthProjection(data) : null;
+    const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays) : null;
     renderSummary(data, proj);
     renderChart(data, proj);
     renderTable(data);
@@ -284,6 +337,19 @@ function costsTabActive() {
   return $('#tab-costs').classList.contains('active');
 }
 
+// syncFillToggle enables the "fill empty weekdays" checkbox only on the
+// month span (the only span with a projection) and dims it otherwise, so
+// toggling it on a trailing-window span — where it would do nothing —
+// reads as inert rather than broken.
+function syncFillToggle() {
+  const cb = $('#costs-fill-weekdays');
+  const label = $('#costs-fill-weekdays-label');
+  if (!cb || !label) return;
+  const active = currentSpan === 'month';
+  cb.disabled = !active;
+  label.classList.toggle('disabled', !active);
+}
+
 // bindCostsTab wires the tab: load on activation, reload on span
 // change, slow re-poll off the snapshot tick while visible.
 function bindCostsTab() {
@@ -292,9 +358,24 @@ function bindCostsTab() {
     b.addEventListener('click', () => {
       currentSpan = b.dataset.span;
       $$('#costs-spans button').forEach(x => x.classList.toggle('active', x === b));
+      syncFillToggle();
       loadCosts();
     });
   });
+  // "Fill empty weekdays" toggle — restores its persisted state (off
+  // when never touched), reloads on change. dashPrefs is loaded before
+  // this binder runs (boot awaits initDashPrefs), so the read is warm.
+  const fillToggle = $('#costs-fill-weekdays');
+  if (fillToggle) {
+    fillEmptyWeekdays = dashPrefs.getItem(FILL_WEEKDAYS_KEY) === '1';
+    fillToggle.checked = fillEmptyWeekdays;
+    fillToggle.addEventListener('change', () => {
+      fillEmptyWeekdays = fillToggle.checked;
+      dashPrefs.setItem(FILL_WEEKDAYS_KEY, fillEmptyWeekdays ? '1' : '0');
+      loadCosts();
+    });
+  }
+  syncFillToggle();
   document.addEventListener('tclaude:snapshot', () => {
     if (costsTabActive() && Date.now() - lastFetchedAt > REPOLL_MS) loadCosts();
   });

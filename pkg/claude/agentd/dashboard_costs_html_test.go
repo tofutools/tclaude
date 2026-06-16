@@ -108,3 +108,46 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("<th>Model</th>", "model column header present")
 	must("a.model", "model field rendered from the API row")
 }
+
+// TestDashboardHTML_CostsFillEmptyWeekdaysWired guards the Costs tab's
+// "fill empty weekdays" toggle across dashboard.html (the checkbox),
+// costs.js (the persisted flag, the leading-weekday fill in the month
+// projection, the chart + summary switch) and dashboard.css (the
+// disabled-toggle styling). The toggle turns the month figure from
+// "projected current month cost" (mid-month start skews it low) into
+// "projected average month cost" by filling the empty weekdays before
+// the first run this month at the per-weekday average. Pieces span
+// three files with no JS test runner, so this asserts on the embedded
+// concatenation at `go test ./...`.
+func TestDashboardHTML_CostsFillEmptyWeekdaysWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+
+	// dashboard.html: the checkbox + its label live in the span bar.
+	must(`id="costs-fill-weekdays"`, "fill-empty-weekdays checkbox present")
+	must(`id="costs-fill-weekdays-label"`, "checkbox label present (toggled disabled off the month span)")
+	must("fill empty weekdays", "checkbox label text present")
+
+	// costs.js: the toggle is persisted server-side via dashPrefs and
+	// passed into the projection.
+	must("tclaude.dash.costs.fillEmptyWeekdays", "toggle persisted under its own pref key")
+	must("monthProjection(data, fillEmptyWeekdays)", "projection receives the fill flag")
+	must("function monthProjection(data, fillEmpty)", "projection takes the fill flag")
+
+	// costs.js: the projection builds the leading-weekday fill and the
+	// chart renders those columns as projected bars; the summary label
+	// switches to the average-month wording when on.
+	must("leadingFill", "projection computes the leading empty-weekday fill")
+	must("Projected avg month total", "summary switches to the average-month label when filling")
+
+	// costs.js: the toggle is inert (disabled) on the non-month spans
+	// that have no projection.
+	must("function syncFillToggle", "toggle disabled off the month span")
+
+	// dashboard.css: a disabled toggle is visibly dimmed.
+	must(".filter-bar label.filter-toggle.disabled", "disabled toggle styled")
+}
