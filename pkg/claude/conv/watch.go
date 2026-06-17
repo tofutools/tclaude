@@ -17,7 +17,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
-	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -88,6 +87,7 @@ type watchModel struct {
 	filtered       []SessionEntry                   // After search filter
 	activeSessions map[string]*session.SessionState // convID -> session
 	groupsByConv   map[string][]string              // convID -> group names; empty if no groups configured
+	pendingByConv  map[string]string                // convID -> spawn-time agent name; title fallback (convDisplayTitle)
 
 	// Navigation
 	cursor         int
@@ -1026,6 +1026,7 @@ func (m *watchModel) setEntries(allEntries []SessionEntry) {
 	m.applySearchFilter()
 	m.refreshActiveSessions()
 	m.refreshGroups()
+	m.refreshPending()
 }
 
 // refreshGroups reloads agent group memberships from the DB. Errors are
@@ -1036,6 +1037,17 @@ func (m *watchModel) refreshGroups() {
 		return
 	}
 	m.groupsByConv = g
+}
+
+// refreshPending reloads spawn-time agent names from the DB. Errors are
+// non-fatal — the worst that happens is a not-yet-renamed agent shows its
+// first prompt instead of its designated name (convDisplayTitle).
+func (m *watchModel) refreshPending() {
+	p, err := db.PendingNamesByConv()
+	if err != nil {
+		return
+	}
+	m.pendingByConv = p
 }
 
 // hasGroups reports whether any conv in the current entry list belongs to a
@@ -1728,8 +1740,9 @@ func (m *watchModel) orderedColumns() []colDef {
 		colDef{visible: true, col: titleCol,
 			cell: func(m *watchModel, e SessionEntry) string {
 				// Canonical "[title]: prompt" rendering — shared with conv ls
-				// and the web dashboard via convindex.FormatConvTitle.
-				return convindex.FormatConvTitle(e.CustomTitle, e.Summary, e.FirstPrompt)
+				// and the web dashboard via convindex.FormatConvTitle — with
+				// the agent pending-name fallback (convDisplayTitle).
+				return convDisplayTitle(e, m.pendingByConv)
 			}},
 		colDef{key: colKeySize, visible: m.colVisible(colKeySize, true),
 			col:  table.Column{Header: "SIZE", Width: 8, SortKey: "size"},
