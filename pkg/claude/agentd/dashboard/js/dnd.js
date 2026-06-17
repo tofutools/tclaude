@@ -61,6 +61,29 @@ function updateDndPill(e, info) {
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
 }
 function bindDnd() {
+  // The whole <tr> is draggable="true", so a press on an in-row control
+  // (focus / hide eye, the ⚙ cog and its menu items, the status dot, the
+  // click-to-edit name / cwd / role cells, the promote / reinstate
+  // buttons) plus even a 1px cursor wobble makes the browser start
+  // dragging the ROW instead of firing that control's click — the
+  // focus/unfocus button then silently "does nothing".
+  //
+  // We can't fix this in dragstart: native DnD fires dragstart at the
+  // drag SOURCE NODE — the <tr> itself — so e.target there is always the
+  // row, never the control that was pressed, and a closest('button') test
+  // would never match. pointerdown, by contrast, targets the actual
+  // element under the cursor, and it fires BEFORE the drag is initiated.
+  // So gate draggability here: if the press landed on an interactive
+  // descendant, turn the row's draggable OFF for this gesture so the
+  // click lands; a press on a plain cell (id, last-hook, descr, …) leaves
+  // it ON so the row can still be dragged between groups. Each 2s
+  // re-render rebuilds the row with draggable="true", re-arming it.
+  document.addEventListener('pointerdown', (e) => {
+    const row = e.target.closest('.dnd-draggable');
+    if (!row) return;
+    const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable]');
+    row.draggable = !(ctl && row.contains(ctl));
+  });
   document.addEventListener('dragstart', (e) => {
     const row = e.target.closest('.dnd-draggable');
     if (!row) return;
