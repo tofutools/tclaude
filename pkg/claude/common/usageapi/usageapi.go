@@ -572,7 +572,10 @@ func fetchWithRateLimitRetry(token string) (*Response, error) {
 	return resp, nil
 }
 
-// buildCachedUsage converts an API Response to a CachedUsage.
+// buildCachedUsage converts an API Response to a CachedUsage. Windows the
+// response omits are carried forward from the last-known cache (see
+// carryForwardWindows) so the dashboard's 5h/7d bars don't flicker out the
+// instant a poll happens to drop a bucket.
 func buildCachedUsage(resp *Response) *CachedUsage {
 	now := time.Now()
 	cached := &CachedUsage{
@@ -594,7 +597,48 @@ func buildCachedUsage(resp *Response) *CachedUsage {
 	if resp.ExtraUsage != nil {
 		cached.ExtraUsage = resp.ExtraUsage
 	}
+	carryForwardWindows(cached, loadCacheStale(), now)
 	return cached
+}
+
+// carryForwardWindows fills in any rolling-limit window that a fresh
+// reading omitted with the last-known one from prev. The Anthropic usage
+// API (and Claude Code's statusline) drops a window's bucket when it has
+// nothing fresh to report, which made the dashboard's 7d (weekly) bar
+// flicker out even while there was still usage inside the window. Rather
+// than vanishing the bar the moment one poll omits it, we hold the
+// last-known bucket — but only while it still describes real, current
+// usage: see carryForwardWindow for the per-window rule. now is injected
+// for tests.
+func carryForwardWindows(fresh, prev *CachedUsage, now time.Time) {
+	if prev == nil {
+		return
+	}
+	fresh.FiveHour = carryForwardWindow(fresh.FiveHour, prev.FiveHour, now)
+	fresh.SevenDay = carryForwardWindow(fresh.SevenDay, prev.SevenDay, now)
+	fresh.SevenDaySonnet = carryForwardWindow(fresh.SevenDaySonnet, prev.SevenDaySonnet, now)
+}
+
+// carryForwardWindow decides which bucket to keep for a single window. A
+// fresh reading always wins. When the fresh reading omits the window, the
+// previous bucket is carried forward only while it still represents
+// nonzero usage whose window has not yet reset — i.e. the usage it
+// describes hasn't aged out. A zero, missing, or past-reset previous
+// bucket is dropped (returns nil), so the bar disappears once there's
+// genuinely been no usage within the window. For the 7d window this is
+// exactly "keep it as long as there's nonzero usage within the last 7
+// days"; the 5h window self-bounds at its own (much shorter) reset.
+func carryForwardWindow(fresh, prev *CachedBucket, now time.Time) *CachedBucket {
+	if fresh != nil {
+		return fresh
+	}
+	if prev == nil || prev.Pct <= 0 {
+		return nil
+	}
+	if prev.ResetsAt.IsZero() || !prev.ResetsAt.After(now) {
+		return nil
+	}
+	return prev
 }
 
 // RefreshCache updates the cache if stale. Called from hooks when the user is
@@ -640,8 +684,13 @@ func UpdateFromStatusLine(fiveHour, sevenDay, sevenDaySonnet *CachedBucket) {
 		FetchedAt:      now,
 		LastAttemptAt:  now,
 	}
+	existing := loadCacheStale()
+	// Carry forward any window this statusline render omitted (e.g. the 7d
+	// bucket the API drops when it has nothing fresh to report) so the
+	// dashboard bars don't flicker out — see carryForwardWindows.
+	carryForwardWindows(cached, existing, now)
 	// Preserve extra usage data from any existing cache entry
-	if existing := loadCacheStale(); existing != nil {
+	if existing != nil {
 		cached.ExtraUsage = existing.ExtraUsage
 	}
 	saveCache(cached)
