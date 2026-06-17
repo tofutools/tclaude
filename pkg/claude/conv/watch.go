@@ -2162,6 +2162,32 @@ func sortEntriesByModifiedDesc(entries []SessionEntry) {
 
 // --- Session/worktree helpers ---
 
+// resumeLaunchCmd resolves a conversation's recorded harness and builds the
+// in-tmux launch command that resumes it, mirroring the spawn path
+// (session.runNew): the harness's Spawner turns a SpawnSpec{ResumeID,…} into
+// the concrete launch form — `claude --resume <id>` for Claude Code, the
+// `codex resume <id>` SUBCOMMAND for Codex — so watch-mode resume is no longer
+// hardcoded to Claude Code (JOH-217). EnvExports carries TCLAUDE_SESSION_ID
+// alongside the inherited environment, exactly like the spawn path, and the
+// passthrough args ride SpawnSpec.ExtraArgs so the Spawner shell-quotes them.
+//
+// ResolveSpawnable also gates on resume support: a harness with no Spawner
+// can't be relaunched, so an unknown/unspawnable tag fails with a clear error
+// here rather than silently spawning `claude --resume` against a foreign conv
+// id. An empty tag resolves to the default harness (Claude Code).
+func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) (string, *harness.Harness, error) {
+	h, err := harness.ResolveSpawnable(harnessName)
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
+	}
+	cmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+		EnvExports: clcommon.BuildEnvExports(map[string]string{"TCLAUDE_SESSION_ID": sessionID}),
+		ResumeID:   convID,
+		ExtraArgs:  extraArgs,
+	})
+	return cmd, h, nil
+}
+
 func createSessionForConv(conv *SessionEntry) error {
 	if err := session.CheckTmuxInstalled(); err != nil {
 		return err
@@ -2181,20 +2207,21 @@ func createSessionForConv(conv *SessionEntry) error {
 	sessionID := conv.SessionID[:8]
 	tmuxSession := sessionID
 
-	claudeCmd := fmt.Sprintf("TCLAUDE_SESSION_ID=%s claude --resume %s", sessionID, conv.SessionID)
-	if extraArgs := clcommon.ExtractClaudeExtraArgs(); len(extraArgs) > 0 {
-		quoted := make([]string, len(extraArgs))
-		for i, a := range extraArgs {
-			quoted[i] = clcommon.ShellQuoteArg(a)
-		}
-		claudeCmd += " " + strings.Join(quoted, " ")
+	// Resume through the conv's recorded harness, not a hardcoded
+	// `claude --resume`: a Codex conv selected in the watch view must be
+	// relaunched with `codex resume <id>`, the way the web-dashboard / agentd
+	// resume path already does (JOH-217). Resolution failures (an unspawnable
+	// or unknown harness) surface here rather than spawning a broken command.
+	launchCmd, h, err := resumeLaunchCmd(conv.Harness, sessionID, conv.SessionID, clcommon.ExtractClaudeExtraArgs())
+	if err != nil {
+		return err
 	}
 
 	tmuxArgs := []string{
 		"new-session", "-d",
 		"-s", tmuxSession,
 		"-c", cwd,
-		"sh", "-c", claudeCmd,
+		"sh", "-c", launchCmd,
 	}
 
 	cmd := clcommon.TmuxCommand(tmuxArgs...)
@@ -2206,10 +2233,9 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 
 	pid := session.ParsePIDFromTmux(tmuxSession)
-	// TODO(harness): carry Harness on resume — see JOH-155. Fresh
-	// SessionState (no Harness) saved over the existing row, coalescing a
-	// non-claude tag back to "claude". Inert today (claude --resume only);
-	// fix when codex resume lands.
+	// Carry the resolved harness onto the saved row so a non-claude tag is not
+	// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
+	// watch-resume path now that codex resume lands here.
 	state := &session.SessionState{
 		ID:          sessionID,
 		TmuxSession: tmuxSession,
@@ -2217,6 +2243,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		Cwd:         cwd,
 		ConvID:      conv.SessionID,
 		Status:      session.StatusIdle,
+		Harness:     h.Name,
 		Created:     time.Now(),
 		Updated:     time.Now(),
 	}

@@ -130,10 +130,13 @@ func runResumeWithSession(convInfo *clcommon.ConvInfo, projectPath, displayName 
 
 	// Get PID and save state (starts as idle, waiting for user input)
 	pid := session.ParsePIDFromTmux(tmuxSession)
-	// TODO(harness): carry Harness on resume — see JOH-155. This builds a
-	// fresh SessionState (no Harness) and SaveSessionState's over the
-	// existing row, coalescing a non-claude tag back to "claude". Inert
-	// today (this path is claude --resume only); fix when codex resume lands.
+	// NOTE(harness): unlike the watch-mode resume (createSessionForConv, made
+	// harness-aware in JOH-217), this `tclaude conv resume` path is still
+	// Claude-only — and inert for non-claude convs — because its resolver,
+	// clcommon.ResolveConvID, reads only the Claude Code conv_index and so can
+	// never return a Codex conv to reach this code. Making it harness-aware
+	// (resolve through every harness's ConvStore, then build via resumeLaunchCmd
+	// like the watch path) is a separate follow-up gated on that resolver.
 	state := &session.SessionState{
 		ID:          sessionID,
 		TmuxSession: tmuxSession,
