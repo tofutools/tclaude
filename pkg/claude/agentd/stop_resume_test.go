@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -183,19 +184,19 @@ func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
 	return rec
 }
 
-func (s *recordingResumeSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
+func (s *recordingResumeSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	return nil
 }
 
-func (s *recordingResumeSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
-	s.convID = convID
-	s.cwd = cwd
-	s.effort = effort
-	s.model = model
-	s.harness = harness
-	s.sandbox = sandbox
-	s.approval = approval
-	s.autoReview = autoReview
+func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	s.convID = args.ConvID
+	s.cwd = args.Cwd
+	s.effort = args.Effort
+	s.model = args.Model
+	s.harness = args.Harness
+	s.sandbox = args.Sandbox
+	s.approval = args.Approval
+	s.autoReview = args.AutoReview
 	return nil
 }
 
