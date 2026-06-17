@@ -20,6 +20,14 @@
 // is enabled, and we start/stop in response to its `tclaude:slopsound`
 // event so one button mutes both the FX and the music. The <audio
 // controls> here remains a finer play/volume control when sound is on.
+//
+// "Now playing" song name: browsers don't expose the stream's ICY
+// metadata to script, so we can't read the title off the <audio>. Instead
+// agentd proxies SomaFM's tiny recent-songs feed at /api/slop/nowplaying
+// (see dashboard_slop_nowplaying.go); we poll it while music plays and
+// show "♪ Artist — Title" with the title linking to a YouTube search for
+// the track. Best-effort: a blip just leaves the last song shown, and an
+// empty feed hides the song line — the music is unaffected either way.
 
 import { isSlopActive } from './slop.js';
 import { isSlopSoundEnabled } from './slop-audio.js';
@@ -75,9 +83,21 @@ function startMusic() {
   if (cancelUnmuteArm) cancelUnmuteArm();
   host.replaceChildren();
 
+  // Now-playing block: a dynamic song line (filled by the poller below,
+  // empty until the first successful fetch) above the static station line.
   const label = document.createElement('div');
   label.className = 'vegas-nowplaying';
-  label.textContent = '♪ Now playing — ' + VEGAS_STREAM.label;
+
+  const songLine = document.createElement('div');
+  songLine.className = 'vegas-song';
+  songLine.id = 'vegas-song';
+
+  const stationLine = document.createElement('div');
+  stationLine.className = 'vegas-station';
+  stationLine.textContent = '♪ ' + VEGAS_STREAM.label;
+
+  label.appendChild(songLine);
+  label.appendChild(stationLine);
 
   const audio = document.createElement('audio');
   audio.src = VEGAS_STREAM.src;
@@ -104,6 +124,70 @@ function startMusic() {
   host.appendChild(label);
   host.appendChild(audio);
   playWithSound(audio);
+  startNowPlayingPoll();
+}
+
+// ─── Now-playing poller ────────────────────────────────────────────────
+// Polls /api/slop/nowplaying (agentd's SomaFM proxy) while music plays and
+// paints "♪ Artist — Title" into #vegas-song, the title linking to a
+// YouTube search for the track. Independent of playback state, so the song
+// still shows while the stream is armed-muted before the first gesture.
+const NOWPLAYING_POLL_MS = 30000;
+let nowPlayingTimer = null;
+let lastNowPlayingKey = null;
+
+function startNowPlayingPoll() {
+  stopNowPlayingPoll();
+  lastNowPlayingKey = null;
+  refreshNowPlaying();
+  nowPlayingTimer = setInterval(refreshNowPlaying, NOWPLAYING_POLL_MS);
+}
+
+function stopNowPlayingPoll() {
+  if (nowPlayingTimer) { clearInterval(nowPlayingTimer); nowPlayingTimer = null; }
+  lastNowPlayingKey = null;
+}
+
+async function refreshNowPlaying() {
+  const el = document.getElementById('vegas-song');
+  if (!el) return; // player torn down between polls
+  try {
+    const r = await fetch('/api/slop/nowplaying', { credentials: 'same-origin' });
+    if (!r.ok) return; // transient — keep the last song shown
+    renderNowPlaying(el, await r.json());
+  } catch { /* offline / blip — keep the last song shown */ }
+}
+
+function renderNowPlaying(el, data) {
+  const title = ((data && data.title) || '').trim();
+  const artist = ((data && data.artist) || '').trim();
+  if (!title && !artist) {
+    // Empty feed — hide the line rather than show a stale track.
+    el.replaceChildren();
+    lastNowPlayingKey = null;
+    return;
+  }
+  const key = artist + '' + title;
+  if (key === lastNowPlayingKey) return; // unchanged — no DOM churn
+  lastNowPlayingKey = key;
+
+  el.replaceChildren();
+  el.append('♪ ');
+  if (artist) el.append(artist + ' — ');
+
+  const url = (data && data.search_url) || '';
+  if (title && url) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = title;
+    if (data && data.album) a.title = 'Album: ' + data.album + ' — search YouTube ↗';
+    else a.title = 'Search YouTube for this track ↗';
+    el.appendChild(a);
+  } else if (title) {
+    el.append(title);
+  }
 }
 
 // playWithSound starts the stream audibly. From a toggle click we hold a
@@ -143,6 +227,7 @@ function armMutedUntilGesture(audio) {
 }
 
 function stopMusic() {
+  stopNowPlayingPoll();
   if (cancelUnmuteArm) cancelUnmuteArm();
   const host = document.getElementById('vegas-player');
   if (!host) return;

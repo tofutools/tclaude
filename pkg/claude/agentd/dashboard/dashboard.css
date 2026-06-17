@@ -1907,11 +1907,30 @@ body.slop nav button[data-tab="vegas"] { display: block; }
   text-align: center;
 }
 .vegas-nowplaying {
-  color: #ffe88c;
-  font-size: 14px;
   margin-bottom: 14px;
   letter-spacing: 0.4px;
-  text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
+}
+/* The live song line (filled by the now-playing poller in vegas.js). The
+   min-height reserves space so the player doesn't jump when the first
+   track lands; it stays empty until then. */
+.vegas-song {
+  color: #fff3c4;
+  font-size: 16px;
+  font-weight: 600;
+  min-height: 20px;
+  margin-bottom: 4px;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
+}
+.vegas-song a {
+  color: #ffe88c;
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(255, 232, 140, 0.5);
+}
+.vegas-song a:hover { color: #fff; border-bottom-color: #fff; }
+.vegas-station {
+  color: #c9a86b;
+  font-size: 13px;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.3);
 }
 #vegas-player audio { width: 100%; }
 .vegas-error { color: #ffb3b3; font-size: 13px; }
