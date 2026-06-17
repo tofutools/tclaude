@@ -18,8 +18,8 @@
 // The radio is also governed by the master sound switch slop-audio.js
 // owns (the 🔇/🔊 button in the header): we only auto-start when sound
 // is enabled, and we start/stop in response to its `tclaude:slopsound`
-// event so one button mutes both the FX and the music. The <audio
-// controls> here remains a finer play/volume control when sound is on.
+// event so one button mutes both the FX and the music. The custom
+// play/pause button here is a finer per-track control when sound is on.
 //
 // "Now playing" song name: browsers don't expose the stream's ICY
 // metadata to script, so we can't read the title off the <audio>. Instead
@@ -42,8 +42,8 @@ import { isSlopSoundEnabled } from './slop-audio.js';
 // header-icon click that turns slop on satisfies that (startMusic runs
 // inside that click's call stack). A bare ?slop=1 page load — e.g.
 // `tclaude agentd serve --slop` — has no gesture yet, so we start muted
-// and unmute on the first interaction (see playWithSound). The <audio
-// controls> also gives the user a manual play/volume fallback.
+// and unmute on the first interaction (see playWithSound). The custom
+// play button also gives the user a manual way to start it.
 const VEGAS_STREAM = {
   src: 'https://ice1.somafm.com/illstreet-128-mp3',
   label: 'SomaFM — Illinois Street Lounge',
@@ -83,8 +83,11 @@ function startMusic() {
   if (cancelUnmuteArm) cancelUnmuteArm();
   host.replaceChildren();
 
-  // Now-playing block: a dynamic song line (filled by the poller below,
-  // empty until the first successful fetch) above the static station line.
+  // Now-playing "stereo display": a dynamic song readout (artist / title /
+  // time-on-air, filled by the poller below — empty until the first
+  // successful fetch) above the static station line. It sits above the
+  // play/pause transport so the player reads as a filled card rather than
+  // an empty box, now the (meaningless live-stream) seek bar is gone.
   const label = document.createElement('div');
   label.className = 'vegas-nowplaying';
 
@@ -94,44 +97,76 @@ function startMusic() {
 
   const stationLine = document.createElement('div');
   stationLine.className = 'vegas-station';
-  stationLine.textContent = '♪ ' + VEGAS_STREAM.label;
+  stationLine.textContent = '📻 ' + VEGAS_STREAM.label;
 
   label.appendChild(songLine);
   label.appendChild(stationLine);
 
+  // The <audio> is a controls-less engine — we draw our own chrome below.
+  // The native <audio controls> bar can't be themed to the casino card,
+  // and with the (meaningless live-stream) seek bar hidden it rendered as
+  // a big empty white pill.
   const audio = document.createElement('audio');
   audio.src = VEGAS_STREAM.src;
   audio.autoplay = true;
-  audio.controls = true;
   audio.preload = 'auto';
   audio.setAttribute('aria-label', VEGAS_STREAM.label);
   audio.volume = musicVolume / 100;
   // A dead/unreachable stream should explain itself rather than sit as a
   // silent broken control.
   audio.addEventListener('error', () => showStreamError(host), { once: true });
-  // The native <audio controls> volume slider is a second way to set the
-  // same value — surface its changes so slop-volume.js can mirror them
-  // onto the popover slider and persist. volumechange also fires for
-  // muted-flips and for our own setMusicVolume writes; the listener
-  // de-dupes by value, so those are harmless no-ops.
-  audio.addEventListener('volumechange', () => {
-    const pct = Math.round(audio.volume * 100);
-    if (pct === musicVolume) return;
-    musicVolume = pct;
-    document.dispatchEvent(new CustomEvent('tclaude:slopmusicvol', { detail: { volume: pct } }));
+
+  // Custom play/pause transport. Volume lives in the header mixer
+  // (slop-volume.js's 🎚️ popover), so play/pause is the only control the
+  // player itself needs.
+  const transport = document.createElement('div');
+  transport.className = 'vegas-transport';
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'vegas-play';
+  transport.appendChild(playBtn);
+
+  // "Active" = audibly playing (not paused, not muted). The armed-muted
+  // autoplay of a gestureless ?slop=1 load reads as not-yet-active, so the
+  // button shows ▶ to invite the click that brings the sound up.
+  const syncPlayBtn = () => {
+    const active = !audio.paused && !audio.muted;
+    playBtn.textContent = active ? '⏸' : '▶';
+    playBtn.setAttribute('aria-label', active ? 'Pause' : 'Play');
+  };
+  playBtn.addEventListener('click', () => {
+    // Decide from the button's shown intent, not the post-event audio
+    // state: the document-level unmute arm (armMutedUntilGesture) fires on
+    // this same gesture and would otherwise flip a "play" into a pause.
+    if (playBtn.getAttribute('aria-label') === 'Play') {
+      audio.muted = false;
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
   });
+  audio.addEventListener('play', syncPlayBtn);
+  audio.addEventListener('pause', syncPlayBtn);
+  audio.addEventListener('playing', syncPlayBtn);
+  // Mute flips (the arm muting on a gestureless load, then unmuting on the
+  // first interaction) fire volumechange but not play/pause — keep the icon
+  // honest about whether sound is actually coming out.
+  audio.addEventListener('volumechange', syncPlayBtn);
+  syncPlayBtn();
 
   host.appendChild(label);
   host.appendChild(audio);
+  host.appendChild(transport);
   playWithSound(audio);
   startNowPlayingPoll();
 }
 
 // ─── Now-playing poller ────────────────────────────────────────────────
 // Polls /api/slop/nowplaying (agentd's SomaFM proxy) while music plays and
-// paints "♪ Artist — Title" into #vegas-song, the title linking to a
-// YouTube search for the track. Independent of playback state, so the song
-// still shows while the stream is armed-muted before the first gesture.
+// paints the song readout into #vegas-song — an artist line, the title (a
+// link to a YouTube search for the track), and a time-on-air line.
+// Independent of playback state, so the song still shows while the stream
+// is armed-muted before the first gesture.
 //
 // The "· 1:23" after the title is REAL time-on-air, counted up from the
 // track's actual start (the feed's start timestamp) by a 1s ticker. It is
@@ -190,12 +225,21 @@ function renderNowPlaying(el, data) {
   songStartedAt = started > 0 ? started : null;
 
   el.replaceChildren();
-  el.append('♪ ');
-  if (artist) el.append(artist + ' — ');
 
+  // Artist line (♪ Artist), above the title.
+  if (artist) {
+    const artistLine = document.createElement('div');
+    artistLine.className = 'vegas-artist';
+    artistLine.textContent = '♪ ' + artist;
+    el.appendChild(artistLine);
+  }
+
+  // Title line — the focal point. With a prebuilt search URL it links to a
+  // YouTube search for the track; otherwise it's plain text.
   const url = (data && data.search_url) || '';
   if (title && url) {
     const a = document.createElement('a');
+    a.className = 'vegas-title';
     a.href = url;
     a.target = '_blank';
     a.rel = 'noopener';
@@ -204,21 +248,25 @@ function renderNowPlaying(el, data) {
     else a.title = 'Search YouTube for this track ↗';
     el.appendChild(a);
   } else if (title) {
-    el.append(title);
+    const t = document.createElement('div');
+    t.className = 'vegas-title';
+    t.textContent = title;
+    el.appendChild(t);
   }
 
-  // Elapsed counter — only when we actually know the start time.
+  // Time-on-air line ("· 1:23 on air") — only when we know the start time.
   if (songStartedAt != null) {
-    const sep = document.createElement('span');
-    sep.className = 'vegas-elapsed-sep';
-    sep.textContent = ' · ';
+    const elapsedLine = document.createElement('div');
+    elapsedLine.className = 'vegas-elapsed-line';
+    elapsedLine.append('· ');
     const elapsed = document.createElement('span');
     elapsed.className = 'vegas-elapsed';
     elapsed.id = 'vegas-elapsed';
     elapsed.title = 'Time on air (track started ' +
       new Date(songStartedAt * 1000).toLocaleTimeString() + ')';
-    el.appendChild(sep);
-    el.appendChild(elapsed);
+    elapsedLine.appendChild(elapsed);
+    elapsedLine.append(' on air');
+    el.appendChild(elapsedLine);
     tickElapsed(); // paint immediately, don't wait a second
   }
 }

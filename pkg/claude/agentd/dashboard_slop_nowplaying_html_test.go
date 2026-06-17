@@ -27,6 +27,12 @@ func TestDashboardHTML_NowPlaying(t *testing.T) {
 	must("'vegas-song'", "vegas.js targets the #vegas-song line")
 	must("vegas-station", "vegas.js renders the static station line")
 
+	// The stereo-display readout the poller paints into #vegas-song: an
+	// artist line above the title (the focal point). These fill the player
+	// card so it doesn't read as an empty box.
+	must("'vegas-artist'", "vegas.js paints the artist line")
+	must("'vegas-title'", "vegas.js paints the title line")
+
 	// The render path: a YouTube-search link opened in a new tab. rel
 	// noopener guards the opened tab; target _blank keeps the dashboard.
 	must("search_url", "vegas.js links the title to the prebuilt search URL")
@@ -47,10 +53,15 @@ func TestDashboardHTML_NowPlaying(t *testing.T) {
 
 	// CSS hooks for the lines + the elapsed counter.
 	must(".vegas-song {", "the song line is styled")
+	must(".vegas-title {", "the title line is styled")
 	must(".vegas-station {", "the station line is styled")
 	must(".vegas-elapsed {", "the elapsed counter is styled")
 
-	// The misleading native seek bar is hidden — a live stream has no
-	// song position to fill, so the elapsed counter is the only indicator.
-	must("-webkit-media-controls-timeline", "the native live-stream seek bar is hidden")
+	// The transport is a custom themed play/pause button. The native
+	// <audio controls> bar was replaced — it couldn't be themed and, with
+	// the meaningless live-stream seek bar hidden, rendered as an empty
+	// white pill. Volume lives in the header mixer, not the player.
+	must("'vegas-transport'", "vegas.js builds the custom transport row")
+	must("'vegas-play'", "vegas.js builds the play/pause button")
+	must(".vegas-play {", "the play/pause button is styled")
 }
