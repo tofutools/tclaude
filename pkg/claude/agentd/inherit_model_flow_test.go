@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,6 +48,38 @@ func TestReincarnate_InheritsLiveModelAndEffort(t *testing.T) {
 	effort, ok := f.World.SpawnEffort(r.NewConv)
 	require.True(t, ok)
 	assert.Equal(t, "high", effort, "successor must run the predecessor's effort")
+}
+
+// Scenario: a Codex worker records an OpenAI model id and Codex reasoning
+// effort. Inheritance must validate those through the Codex harness catalog,
+// not Claude Code's model aliases, or every Codex successor would silently
+// fall back to the default model.
+func TestReincarnate_CodexInheritsLiveModelAndEffort(t *testing.T) {
+	f := newFlow(t)
+
+	const oldConv = "019ec004-4250-79b1-9ade-ebaea41591aa"
+	const oldLabel = "spwn-codex-old"
+	f.HaveAliveCodexSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	now := time.Now().Format(time.RFC3339)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      oldConv,
+		ProjectDir:  "/tmp/work",
+		ProjectPath: "/tmp/work",
+		FirstPrompt: "codex work",
+		Created:     now,
+		Modified:    now,
+		Harness:     "codex",
+	}))
+	reportModel(t, oldLabel, "gpt-5-codex", "high")
+
+	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
+
+	model, ok := f.World.SpawnModel(r.NewConv)
+	require.True(t, ok, "no spawn recorded for Codex successor conv %s", r.NewConv)
+	assert.Equal(t, "gpt-5-codex", model, "Codex successor must run the predecessor's model")
+	effort, ok := f.World.SpawnEffort(r.NewConv)
+	require.True(t, ok)
+	assert.Equal(t, "high", effort, "Codex successor must run the predecessor's effort")
 }
 
 // Scenario: the predecessor ran a 1M-context variant. The statusline's

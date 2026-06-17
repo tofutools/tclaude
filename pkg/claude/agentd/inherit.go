@@ -1,8 +1,8 @@
 package agentd
 
 import (
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // oneMillionContextWindow is the context_window_size Claude Code
@@ -16,22 +16,22 @@ const oneMillionContextWindow = 1_000_000
 // bring the agent back on the same LLM model (and reasoning effort)
 // its predecessor was running, rather than claude's default.
 //
-// Source of truth is the predecessor's session row, which the
-// statusline hook keeps current on every render: model_id is the full
-// Claude model ID (model.id — unlike the display name it round-trips
-// into `claude --model`), effort_level the live reasoning effort. A
-// `[1m]` suffix is appended when the context-window snapshot says the
-// predecessor ran the 1M-token variant — the ID itself doesn't carry
-// the window selection. This deliberately tracks the LIVE model, not
-// the launch-time flag: a mid-life /model switch is part of the state
-// the successor inherits.
+// Source of truth is the predecessor's session row, which the statusline
+// hook keeps current for Claude Code and the Codex hook/launch path keeps
+// current for Codex: model_id is the machine-facing model token that
+// round-trips into the harness's --model flag, effort_level the live or
+// launch-time reasoning effort. For Claude Code only, a `[1m]` suffix is
+// appended when the context-window snapshot says the predecessor ran the
+// 1M-token variant — the ID itself doesn't carry the window selection.
+// This deliberately tracks the LIVE model when the harness reports it,
+// not just the launch-time flag: a mid-life /model switch is part of the
+// state the successor inherits.
 //
-// Fail-open by design: a missing row, a never-ticked statusbar (older
-// Claude Code without model.id included), or a value ValidateModel /
-// ValidateEffort won't vouch for all collapse to "" — the spawn then
-// omits the flag and claude resolves its own default, exactly the
-// pre-inheritance behaviour. Inheritance must never make a spawn fail
-// that would have succeeded without it.
+// Fail-open by design: a missing row, a never-ticked statusbar/hook, or a
+// value the recorded harness's ModelCatalog won't vouch for all collapse
+// to "" — the spawn then omits the flag and the harness resolves its own
+// default, exactly the pre-inheritance behaviour. Inheritance must never
+// make a spawn fail that would have succeeded without it.
 //
 // Known imprecision, accepted: a predecessor launched with
 // `--model opusplan` reports whichever concrete model it is currently
@@ -42,16 +42,24 @@ func inheritedLaunchFlags(sessionID string) (effort, model string) {
 	if err != nil {
 		return "", ""
 	}
+
+	h := harness.MustGet(harness.DefaultName)
+	if row, err := db.LoadSession(sessionID); err == nil {
+		if resolved, err := harness.Resolve(row.Harness); err == nil {
+			h = resolved
+		}
+	}
+
 	model = snap.ModelID
-	if model != "" && snap.ContextWindowSize == oneMillionContextWindow {
+	if h.Name == harness.DefaultName && model != "" && snap.ContextWindowSize == oneMillionContextWindow {
 		model += "[1m]"
 	}
-	if v, err := clcommon.ValidateModel(model); err == nil {
+	if v, err := h.Models.ValidateModel(model); err == nil {
 		model = v
 	} else {
 		model = ""
 	}
-	if v, err := clcommon.ValidateEffort(snap.EffortLevel); err == nil {
+	if v, err := h.Models.ValidateEffort(snap.EffortLevel); err == nil {
 		effort = v
 	}
 	return effort, model

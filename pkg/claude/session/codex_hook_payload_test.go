@@ -16,8 +16,9 @@ import (
 // hook_event_name, permission_mode, source, tool_name, tool_input, prompt,
 // last_assistant_message, stop_hook_active, agent_id/agent_type — match
 // Claude Code's field-for-field, so the same HookCallbackInput struct
-// decodes both. Codex-only extras (model, turn_id, tool_use_id,
-// tool_response) are simply ignored.
+// decodes both. Codex's model is retained so the shared callback can publish
+// it to the dashboard; other Codex-only extras (turn_id, tool_use_id,
+// tool_response) are still ignored.
 func TestHookCallbackInput_ParsesCodexPayloads(t *testing.T) {
 	t.Run("SessionStart", func(t *testing.T) {
 		// transcript_path is a nullable string in Codex's schema; null must
@@ -36,6 +37,7 @@ func TestHookCallbackInput_ParsesCodexPayloads(t *testing.T) {
 		assert.Equal(t, "abc-123", in.ConvID)
 		assert.Equal(t, "/home/u/proj", in.Cwd)
 		assert.Equal(t, "SessionStart", in.HookEventName)
+		assert.Equal(t, "gpt-5-codex", in.Model)
 		assert.Equal(t, "startup", in.Source)
 		assert.Equal(t, "", in.TranscriptPath, "null transcript_path decodes to empty")
 	})
@@ -56,6 +58,7 @@ func TestHookCallbackInput_ParsesCodexPayloads(t *testing.T) {
 		var in HookCallbackInput
 		require.NoError(t, json.Unmarshal([]byte(payload), &in))
 		assert.Equal(t, "PreToolUse", in.HookEventName)
+		assert.Equal(t, "gpt-5-codex", in.Model)
 		assert.Equal(t, "shell", in.ToolName)
 		assert.Equal(t, "dontAsk", in.PermissionMode, "Codex's dontAsk mode parses (PermissionMode is a free string)")
 		assert.JSONEq(t, `{"command": "ls -la"}`, string(in.ToolInput))
@@ -76,6 +79,7 @@ func TestHookCallbackInput_ParsesCodexPayloads(t *testing.T) {
 		var in HookCallbackInput
 		require.NoError(t, json.Unmarshal([]byte(payload), &in))
 		assert.Equal(t, "Stop", in.HookEventName)
+		assert.Equal(t, "gpt-5-codex", in.Model)
 		assert.Equal(t, "done", in.LastAssistantMessage)
 		assert.True(t, in.StopHookActive)
 	})
@@ -96,6 +100,7 @@ func TestHookCallbackInput_ParsesCodexPayloads(t *testing.T) {
 		var in HookCallbackInput
 		require.NoError(t, json.Unmarshal([]byte(payload), &in))
 		assert.Equal(t, "UserPromptSubmit", in.HookEventName)
+		assert.Equal(t, "gpt-5-codex", in.Model)
 		assert.Equal(t, "fix the bug", in.Prompt)
 		assert.Equal(t, "ag1", in.AgentID)
 		assert.Equal(t, "subagent", in.AgentType)
@@ -115,6 +120,7 @@ func TestHookCallbackInput_ParsesCodexPayloads(t *testing.T) {
 		var in HookCallbackInput
 		require.NoError(t, json.Unmarshal([]byte(payload), &in))
 		assert.Equal(t, "PermissionRequest", in.HookEventName)
+		assert.Equal(t, "gpt-5-codex", in.Model)
 		assert.Equal(t, "apply_patch", in.ToolName)
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Scenario: the LLM model an agent runs on — written to the sessions
@@ -69,4 +70,41 @@ func TestDashboardSnapshot_ModelEmptyWhenNotReported(t *testing.T) {
 	agentRow := findDashAgent(snap, conv)
 	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
 	assert.Equal(t, "", agentRow.State.Model, "no-tick agent should report empty model")
+}
+
+// Scenario: Codex has no command-backed statusline, but its hook payloads
+// carry the current model and tclaude's launch path knows the explicit
+// reasoning effort it passed to Codex. Those values should land in the same
+// session columns the dashboard already renders for Claude Code.
+func TestDashboardSnapshot_CodexModelAndEffortSurfaced(t *testing.T) {
+	const conv = "019ec004-4250-79b1-9ade-ebaea41590aa"
+	const label = "spwn-codx-model"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codx-model", "/tmp/codx-model")
+	f.HaveMember("squad", conv)
+
+	require.NoError(t, db.UpdateSessionEffort(label, "high"), "seed Codex launch effort")
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "SessionStart",
+		ConvID:         conv,
+		Cwd:            "/tmp/codx-model",
+		Model:          "gpt-5-codex",
+		TranscriptPath: cx.RolloutPath,
+	}, label))
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+	assert.Equal(t, "gpt-5-codex", agentRow.State.Model, "Agents[] Codex model")
+	assert.Equal(t, "high", agentRow.State.EffortLevel, "Agents[] Codex effort level")
+
+	memberRow := findDashMember(snap, "squad", conv)
+	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
+	assert.Equal(t, "gpt-5-codex", memberRow.State.Model, "Members[] Codex model")
+	assert.Equal(t, "high", memberRow.State.EffortLevel, "Members[] Codex effort level")
 }
