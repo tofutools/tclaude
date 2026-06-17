@@ -28,6 +28,11 @@ func run() int {
 	return 0
 }
 
+// appVersion reports the version from the Go module build info
+// (bi.Main.Version), which is populated for `go install <module>@version`
+// builds. Builds from an extracted source tree (e.g. the Homebrew
+// build-from-source formula) carry no module version, so they report
+// "unknown-(no version)".
 func appVersion() string {
 	bi, hasBuilInfo := debug.ReadBuildInfo()
 	if !hasBuilInfo {
