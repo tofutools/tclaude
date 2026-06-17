@@ -8,6 +8,17 @@ Coding-harness CLI extensions and utilities — tmux-based session management, c
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```bash
+brew install tofutools/tap/tclaude
+```
+
+This pulls in `tmux` automatically and builds `tclaude` from source (the Go
+toolchain is fetched as a build dependency). Then run setup as below.
+
+### go install
+
 Requires [Go](https://go.dev/dl/) 1.26+ and [tmux](https://github.com/tmux/tmux) (`tclaude setup` can install tmux for you on macOS).
 
 ```bash
