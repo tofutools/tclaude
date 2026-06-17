@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -200,8 +201,11 @@ func RunSearch(params *SearchParams, stdout, stderr *os.File) int {
 		return 0
 	}
 
-	// Display results using shared table renderer
-	RenderTable(stdout, entries, params.Global, params.Long, matchCounts, nil)
+	// Display results using shared table renderer. Pull spawn-time agent
+	// names so a not-yet-renamed agent shows its designated name as a title
+	// fallback (convDisplayTitle); best-effort, a nil map just skips it.
+	pendingByConv, _ := db.PendingNamesByConv()
+	RenderTable(stdout, entries, params.Global, params.Long, matchCounts, nil, pendingByConv)
 
 	// Show context if requested
 	if params.Long || params.Context > 0 {

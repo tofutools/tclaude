@@ -218,6 +218,34 @@ func ListRetiredAgents() ([]*AgentEnrollment, error) {
 	return listEnrollments(`retired_at != ''`)
 }
 
+// PendingNamesByConv returns conv_id → pending_name for every enrollment
+// that recorded a non-empty spawn-time name. It is the bulk counterpart to
+// GetEnrollment(...).PendingName, for listing surfaces that need the
+// designated agent name as a display fallback (e.g. a Codex agent whose title
+// write hasn't landed) without a per-row query. Conversations with no
+// enrollment, or no pending name, are simply absent from the map.
+func PendingNamesByConv() (map[string]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT conv_id, pending_name FROM agent_enrollment
+		WHERE pending_name IS NOT NULL AND pending_name != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]string)
+	for rows.Next() {
+		var convID, name string
+		if err := rows.Scan(&convID, &name); err != nil {
+			return nil, err
+		}
+		out[convID] = name
+	}
+	return out, rows.Err()
+}
+
 func listEnrollments(where string) ([]*AgentEnrollment, error) {
 	d, err := Open()
 	if err != nil {
