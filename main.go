@@ -28,14 +28,23 @@ func run() int {
 	return 0
 }
 
-// appVersion reports the version from the Go module build info
-// (bi.Main.Version), which is populated for `go install <module>@version`
-// builds. Builds from an extracted source tree (e.g. the Homebrew
-// build-from-source formula) carry no module version, so they report
-// "unknown-(no version)".
+// version, when non-empty, is the version stamped at build time via
+// -ldflags "-X main.version=...". Both the GoReleaser release builds and the
+// Homebrew formula inject it. It is empty for a plain `go build`.
+var version string
+
+// appVersion reports the build-time stamped version if present, else falls
+// back to the Go module build info (bi.Main.Version), which is populated for
+// `go install <module>@version` builds. Builds from an extracted source tree
+// with no stamp (e.g. a bare `go build`) report Go's "(devel)" marker, or
+// "unknown-(no version)" when even that is absent.
 func appVersion() string {
-	bi, hasBuilInfo := debug.ReadBuildInfo()
-	if !hasBuilInfo {
+	if version != "" {
+		return version
+	}
+
+	bi, hasBuildInfo := debug.ReadBuildInfo()
+	if !hasBuildInfo {
 		return "unknown-(no build info)"
 	}
 
