@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 60
+const currentVersion = 61
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -391,6 +391,70 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 61 {
+		if err := migrateV60toV61(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV60toV61 adds spawn_profiles — the store behind reusable Spawn
+// Profiles (JOH-210). A profile is a named, saved bundle of the dashboard's
+// spawn-agent dialog (most fields, NOT cwd / worktree): pressing Spawn in a
+// group with a default profile pre-fills the dialog from it, and the daemon
+// resolves a group's default profile server-side to fill blank LAUNCH fields
+// for non-dialog spawns (group templates) — replacing the per-group
+// `default_model` column and its Claude-only validation/inheritance (#343).
+//
+// Each profile field is OPTIONAL — an unset field loads blank / leaves the
+// launch default. Text fields use "" for unset. The five toggles
+// (auto_review, trust_dir, sync_worktree, auto_focus,
+// include_group_default_context) are NULLABLE so the schema can tell "unset"
+// (NULL → leave the dialog's own default) from an explicit off (0) or on (1);
+// the Go layer maps that to a *bool.
+//
+// CREATE TABLE IF NOT EXISTS is idempotent, so a half-applied earlier run
+// converges on re-run (the migrateV55toV56 convention); the whole thing rides
+// one transaction with the version bump.
+func migrateV60toV61(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v60→v61 (add spawn_profiles): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS spawn_profiles (
+			id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+			name                          TEXT NOT NULL UNIQUE,
+			harness                       TEXT NOT NULL DEFAULT '',
+			model                         TEXT NOT NULL DEFAULT '',
+			effort                        TEXT NOT NULL DEFAULT '',
+			sandbox                       TEXT NOT NULL DEFAULT '',
+			approval                      TEXT NOT NULL DEFAULT '',
+			auto_review                   INTEGER,
+			trust_dir                     INTEGER,
+			agent_name                    TEXT NOT NULL DEFAULT '',
+			role                          TEXT NOT NULL DEFAULT '',
+			descr                         TEXT NOT NULL DEFAULT '',
+			initial_message               TEXT NOT NULL DEFAULT '',
+			sync_worktree                 INTEGER,
+			auto_focus                    INTEGER,
+			include_group_default_context INTEGER,
+			created_at                    TEXT NOT NULL,
+			updated_at                    TEXT NOT NULL
+		);
+
+		UPDATE schema_version SET version = 61;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v60→v61 (add spawn_profiles): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v60→v61 (add spawn_profiles): commit: %w", err)
+	}
 	return nil
 }
 

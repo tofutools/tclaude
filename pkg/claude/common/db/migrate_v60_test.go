@@ -99,7 +99,6 @@ func TestMigrateV59toV60_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 60, currentVersion, "currentVersion is 60")
 
 	var haveCol int
 	require.NoError(t, d.QueryRow(
