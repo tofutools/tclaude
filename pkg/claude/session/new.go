@@ -550,6 +550,17 @@ func runNew(params *NewParams) error {
 	if err := SaveSessionState(state); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
+	if h.Name == harness.CodexName {
+		if err := db.UpdateSessionModel(sessionID, model); err != nil {
+			slog.Warn("failed to seed Codex session model", "session_id", sessionID, "error", err)
+		}
+		if err := db.UpdateSessionModelID(sessionID, model); err != nil {
+			slog.Warn("failed to seed Codex session model id", "session_id", sessionID, "error", err)
+		}
+		if err := db.UpdateSessionEffort(sessionID, effort); err != nil {
+			slog.Warn("failed to seed Codex session effort", "session_id", sessionID, "error", err)
+		}
+	}
 
 	fmt.Printf("Created session %s\n", sessionID)
 	fmt.Printf("  Directory: %s\n", cwd)

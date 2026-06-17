@@ -39,6 +39,7 @@ type HookCallbackInput struct {
 	Trigger              string          `json:"trigger,omitempty"` // PreCompact: auto | manual
 	Message              string          `json:"message,omitempty"`
 	Prompt               string          `json:"prompt,omitempty"`
+	Model                string          `json:"model,omitempty"`
 	StopHookActive       bool            `json:"stop_hook_active,omitempty"`
 	ToolName             string          `json:"tool_name,omitempty"`
 	ToolInput            json.RawMessage `json:"tool_input,omitempty"`
@@ -832,6 +833,17 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	slog.Info("updating session", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 	if err := SaveSessionState(state); err != nil {
 		return err
+	}
+
+	if state.Harness == harness.CodexName && input.Model != "" {
+		if err := db.UpdateSessionModel(state.ID, input.Model); err != nil {
+			slog.Warn("codex-model: failed to update session model",
+				"session_id", state.ID, "error", err, "module", "hooks")
+		}
+		if err := db.UpdateSessionModelID(state.ID, input.Model); err != nil {
+			slog.Warn("codex-model: failed to update session model id",
+				"session_id", state.ID, "error", err, "module", "hooks")
+		}
 	}
 
 	persistCodexWorkspaceSnapshot(state, input)

@@ -54,6 +54,7 @@ func TestApplyHook_CodexLiveStatusPipeline(t *testing.T) {
 			HookEventName: event,
 			ConvID:        convID,
 			Cwd:           "/home/u/proj",
+			Model:         "gpt-5-codex",
 			ToolName:      tool,
 		}, sessionID))
 	}
@@ -87,6 +88,11 @@ func TestApplyHook_CodexLiveStatusPipeline(t *testing.T) {
 	// The harness tag survives the read-modify-write of every hook.
 	assert.Equal(t, "codex", attn.Harness, "harness preserved through PermissionRequest")
 	assert.Equal(t, "codex", done.Harness, "harness preserved through Stop")
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-5-codex", snap.Model, "Codex hook model is surfaced like statusline model")
+	assert.Equal(t, "gpt-5-codex", snap.ModelID, "Codex hook model is reusable as the launch model id")
 }
 
 func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
