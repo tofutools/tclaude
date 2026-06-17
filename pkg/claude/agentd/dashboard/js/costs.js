@@ -277,25 +277,34 @@ function renderSummary(data, proj) {
   $('#costs-summary').innerHTML = bits.join('<span class="cost-sep">·</span>');
 }
 
+// renderTable draws the per-agent breakdown. The API splits a
+// conversation that spent across several days into one row per day, so a
+// resume shows its true per-day spend (e.g. $16.44 the day it started,
+// $3.64 the day it was continued) instead of one double-counted lump.
+// The earlier-day slices carry `continued`, rendered with a ↩ marker so
+// it's clear they belong to the same conversation as a newer row above.
+// The footer counts distinct conversations, not rows, so a multi-day
+// agent still reads as one agent.
 function renderTable(data) {
   const agents = data.agents || [];
   if (!agents.length) {
     $('#costs-table').innerHTML = '';
     return;
   }
+  const nAgents = new Set(agents.map(a => a.conv_id)).size;
   $('#costs-table').innerHTML = `
     <table>
       <thead><tr><th>Agent</th><th>Cost</th><th>Model</th><th>Last activity</th></tr></thead>
       <tbody>
         ${agents.map(a => `
-          <tr>
-            <td><span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
+          <tr${a.continued ? ' class="cost-continued"' : ''}>
+            <td>${a.continued ? '<span class="cost-cont" title="Continued conversation — earlier day of an agent shown above">↩</span> ' : ''}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
             <td><span class="muted">${esc(a.model || '')}</span></td>
             <td><span class="muted">${esc(fmtLastActivity(a))}</span></td>
           </tr>`).join('')}
         <tr class="cost-total-row">
-          <td><span class="muted">total (${agents.length} agent${agents.length === 1 ? '' : 's'})</span></td>
+          <td><span class="muted">total (${nAgents} agent${nAgents === 1 ? '' : 's'})</span></td>
           <td><span class="cost-amt">${esc(fmtUSD(data.total_usd))}</span></td>
           <td></td>
           <td></td>

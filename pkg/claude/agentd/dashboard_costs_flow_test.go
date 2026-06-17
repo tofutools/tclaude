@@ -30,7 +30,9 @@ type costsRespDay struct {
 type costsRespConv struct {
 	ConvID       string  `json:"conv_id"`
 	Title        string  `json:"title"`
+	Day          string  `json:"day"`
 	CostUSD      float64 `json:"cost_usd"`
+	Continued    bool    `json:"continued"`
 	LastDay      string  `json:"last_day"`
 	LastActivity string  `json:"last_activity"`
 	Model        string  `json:"model"`
@@ -47,12 +49,17 @@ func fetchCosts(t *testing.T, mux http.Handler, query string) costsResp {
 }
 
 // Scenario: the Costs tab opens. Two agents have accrued API cost —
-// one across two sessions (a reincarnation), one of which is already
-// retired and its sessions row deleted. GET /api/costs must return a
-// zero-filled daily series from the first of the month through today
-// with today's bar carrying the combined spend, plus a per-agent
-// breakdown grouped by conv and sorted by cost — retired history
-// included, since session_cost_daily outlives the sessions rows.
+// one resumed within the same day under a second session, whose
+// sessions row is already retired and deleted. Because Claude Code's
+// cost is cumulative per conversation, the resume's snapshot includes
+// the first session's spend, so the conversation's true cost is its
+// high-water cumulative (1.25), NOT the per-session sum — and the
+// retired session's surviving daily row is exactly what carries that
+// high-water value. GET /api/costs must return a zero-filled daily
+// series from the first of the month through today with today's bar
+// carrying the combined spend, plus a per-conversation breakdown —
+// retired history included, since session_cost_daily outlives the
+// sessions rows.
 func TestDashboardCosts_DailySeriesAndBreakdown(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t)
@@ -60,11 +67,13 @@ func TestDashboardCosts_DailySeriesAndBreakdown(t *testing.T) {
 	const convA = "wcsa-1111-2222-3333-4444"
 	const convB = "wcsb-1111-2222-3333-4444"
 
-	// Agent A: two sessions (think reincarnation) — one still live, one
-	// whose sessions row is gone. The daily rows must carry both.
+	// Agent A: started under wcs-a1 (cumulative 1.00), resumed the same
+	// day under wcs-a2 whose cumulative carries forward to 1.25. wcs-a2 —
+	// the one holding the higher cumulative — is then retired and deleted;
+	// its surviving daily row is what keeps A's cost at the full 1.25.
 	seedAgentCostSession(t, "wcs-a1", convA, 1.00)
-	seedAgentCostSession(t, "wcs-a2", convA, 0.25)
-	require.NoError(t, db.DeleteSession("wcs-a2"), "retire one of A's sessions")
+	seedAgentCostSession(t, "wcs-a2", convA, 1.25)
+	require.NoError(t, db.DeleteSession("wcs-a2"), "retire the resume session that held the high-water cumulative")
 	// Agent B: a single cheaper session.
 	seedAgentCostSession(t, "wcs-b1", convB, 0.50)
 
@@ -81,24 +90,84 @@ func TestDashboardCosts_DailySeriesAndBreakdown(t *testing.T) {
 	assert.Equal(t, monthStart, out.Days[0].Day, "series starts at from")
 	last := out.Days[len(out.Days)-1]
 	assert.Equal(t, today, last.Day, "series ends at to")
-	assert.InDelta(t, 1.75, last.CostUSD, 1e-9, "today's bar carries all spend recorded today")
+	assert.InDelta(t, 1.75, last.CostUSD, 1e-9, "today's bar carries all spend recorded today (A 1.25 + B 0.50)")
 	assert.Equal(t, len(out.Days), daysInclusive(t, monthStart, today), "one point per calendar day, gaps zero-filled")
 
-	// Look the rows up by conv rather than by index: ordering is by
-	// last-activity time now (exercised by AgentOrderingAndModels), and
-	// this scenario is about the sums — A's spend includes its retired
-	// session's history, which outlives the deleted sessions row.
-	require.Len(t, out.Agents, 2, "one breakdown row per conv")
+	// Both conversations spent only today, so each is a single breakdown
+	// row. Look them up by conv: ordering is by last-activity time
+	// (exercised by AgentOrderingAndModels), and this scenario is about
+	// the sums — A's cost is its high-water cumulative, carried by the
+	// deleted resume session's surviving daily row.
+	require.Len(t, out.Agents, 2, "one breakdown row per conversation (each spent on a single day)")
 	byConv := map[string]costsRespConv{}
 	for _, a := range out.Agents {
 		byConv[a.ConvID] = a
 	}
-	assert.InDelta(t, 1.25, byConv[convA].CostUSD, 1e-9, "A's two sessions summed, retired one included")
+	assert.InDelta(t, 1.25, byConv[convA].CostUSD, 1e-9, "A's high-water cumulative, NOT the per-session sum (1.00+1.25)")
+	assert.False(t, byConv[convA].Continued, "a single-day conversation is not flagged continued")
+	assert.Equal(t, today, byConv[convA].Day)
 	assert.Equal(t, today, byConv[convA].LastDay)
 	assert.NotEmpty(t, byConv[convA].LastActivity, "live session's spend carries a precise last-activity time")
 	assert.InDelta(t, 0.50, byConv[convB].CostUSD, 1e-9)
 
 	assert.InDelta(t, 1.75, out.TotalUSD, 1e-9, "span total matches the series")
+}
+
+// Scenario: a single conversation resumed across days — the shape that
+// motivated this fix. It started yesterday (cumulative $16.44) and was
+// resumed today under a new tclaude session id, whose snapshot carries
+// the cumulative forward to $20.08. The per-session baseline
+// double-counted this as $16.44 + $20.08 = $36.53; per-conversation
+// baselining must instead report the true $20.08, split across two
+// breakdown rows — $16.44 the day it started, $3.64 the day it was
+// continued — with the earlier-day slice flagged Continued and the
+// daily chart carrying the same per-day split.
+func TestDashboardCosts_MultiDayResumeSplitsAndFlags(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const conv = "wcmd-1111-2222-3333-4444"
+	now := time.Now()
+	day1 := now.AddDate(0, 0, -1)
+	d1 := day1.Format("2006-01-02")
+	d2 := now.Format("2006-01-02")
+
+	// Two sessions of ONE conversation: yesterday's spawn (16.44) and
+	// today's resume under a new session id, cumulative carried forward
+	// (20.08). Seeded directly with explicit days/timestamps — the
+	// production write path can only ever stamp "today".
+	conn, err := db.Open()
+	require.NoError(t, err)
+	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
+		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+		"spwn-md1", d1, conv, 16.44, day1.Format(time.RFC3339Nano),
+		"md-resume", d2, conv, 20.08, now.Format(time.RFC3339Nano))
+	require.NoError(t, err, "seed a two-day resume")
+
+	from := now.AddDate(0, 0, -7).Format("2006-01-02")
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)
+
+	assert.InDelta(t, 20.08, out.TotalUSD, 1e-9,
+		"conversation total is its final cumulative, not the per-session-doubled 36.53")
+
+	// One row per day for the single conversation, newest first.
+	require.Len(t, out.Agents, 2, "the conversation splits into one breakdown row per day")
+	assert.Equal(t, conv, out.Agents[0].ConvID)
+	assert.Equal(t, d2, out.Agents[0].Day, "today's slice leads (most recent activity)")
+	assert.InDelta(t, 3.64, out.Agents[0].CostUSD, 1e-9, "today's slice is the rise only (20.08 - 16.44)")
+	assert.False(t, out.Agents[0].Continued, "the latest-day slice is not flagged continued")
+	assert.Equal(t, conv, out.Agents[1].ConvID)
+	assert.Equal(t, d1, out.Agents[1].Day, "yesterday's slice follows")
+	assert.InDelta(t, 16.44, out.Agents[1].CostUSD, 1e-9, "yesterday carries the day-one spend")
+	assert.True(t, out.Agents[1].Continued, "the earlier-day slice is flagged as a continuation")
+
+	// The daily chart gets the genuine per-day split too.
+	byDay := map[string]float64{}
+	for _, dp := range out.Days {
+		byDay[dp.Day] = dp.CostUSD
+	}
+	assert.InDelta(t, 16.44, byDay[d1], 1e-9, "yesterday's bar")
+	assert.InDelta(t, 3.64, byDay[d2], 1e-9, "today's bar is the rise only, not the full cumulative")
 }
 
 // Scenario: explicit spans. A from date in the past widens the series

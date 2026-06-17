@@ -139,22 +139,27 @@ func TestUpdateSessionCost_UnknownSessionWritesNothing(t *testing.T) {
 // bar's month-to-date read) to the SAME fixture and totals as agentd's
 // TestCostDeltasFromRows — the SQL closed form (windowed peak minus
 // prior high-water, clamped at zero) and the Go day-by-day delta walk
-// must agree, or the top-bar headline drifts from the Costs tab.
+// must agree, or the top-bar headline drifts from the Costs tab. The
+// aggregate groups PER CONVERSATION, so a conv resumed under a new
+// session id is not double-counted.
 func TestSumCostSinceDay(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "open db")
 	for _, r := range []CostDailyRow{
-		// Session a (conv-1): plain growth across three days.
-		{SessionID: "a", Day: "2026-06-01", ConvID: "conv-1", CostUSD: 1.00},
-		{SessionID: "a", Day: "2026-06-02", ConvID: "conv-1", CostUSD: 1.00}, // ticked, spent nothing
-		{SessionID: "a", Day: "2026-06-03", ConvID: "conv-1", CostUSD: 2.50},
-		// Session b (conv-1, e.g. a reincarnation): cumulative restarts at 0.
-		{SessionID: "b", Day: "2026-06-03", ConvID: "conv-1", CostUSD: 0.40},
-		// Session c (conv-2): dips after /clear, then recovers past the max.
-		{SessionID: "c", Day: "2026-06-01", ConvID: "conv-2", CostUSD: 3.00},
-		{SessionID: "c", Day: "2026-06-02", ConvID: "conv-2", CostUSD: 1.00}, // dip — never negative
-		{SessionID: "c", Day: "2026-06-03", ConvID: "conv-2", CostUSD: 3.50}, // only the rise above 3.00 counts
+		// conv-1: grows under session a1, resumed the NEXT day under a new
+		// session whose cumulative carries forward (includes the 2.50).
+		{SessionID: "sess-a1", Day: "2026-06-01", ConvID: "conv-1", CostUSD: 1.00},
+		{SessionID: "sess-a1", Day: "2026-06-02", ConvID: "conv-1", CostUSD: 1.00}, // ticked, spent nothing
+		{SessionID: "sess-a1", Day: "2026-06-03", ConvID: "conv-1", CostUSD: 2.50},
+		{SessionID: "sess-a2", Day: "2026-06-04", ConvID: "conv-1", CostUSD: 4.00}, // resume — cumulative continues
+		// conv-2: resumed twice the SAME day under a new session.
+		{SessionID: "sess-b1", Day: "2026-06-03", ConvID: "conv-2", CostUSD: 2.00},
+		{SessionID: "sess-b2", Day: "2026-06-03", ConvID: "conv-2", CostUSD: 5.00},
+		// conv-3: dips, then recovers past the max.
+		{SessionID: "sess-c1", Day: "2026-06-01", ConvID: "conv-3", CostUSD: 3.00},
+		{SessionID: "sess-c1", Day: "2026-06-02", ConvID: "conv-3", CostUSD: 1.00}, // dip — never negative
+		{SessionID: "sess-c1", Day: "2026-06-03", ConvID: "conv-3", CostUSD: 3.50}, // only the rise above 3.00 counts
 	} {
 		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
 			VALUES (?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD)
@@ -163,14 +168,19 @@ func TestSumCostSinceDay(t *testing.T) {
 
 	total, err := SumCostSinceDay("2026-06-01")
 	require.NoError(t, err)
-	assert.InDelta(t, 6.40, total, 1e-9, "whole history — matches sumCostDeltas unbounded")
+	assert.InDelta(t, 12.50, total, 1e-9, "whole history — matches sumCostDeltas unbounded")
 
-	total, err = SumCostSinceDay("2026-06-02")
+	total, err = SumCostSinceDay("2026-06-03")
 	require.NoError(t, err)
-	assert.InDelta(t, 2.40, total, 1e-9,
-		"windowed: a grows 1.50 over its 06-01 baseline, b starts at 0.40, c's dip clamps to its 0.50 recovery")
+	assert.InDelta(t, 8.50, total, 1e-9,
+		"windowed: conv-1 rises 1.50+1.50, conv-2's same-day resume counts 5.00 once, conv-3 clamps to 0.50")
 
 	total, err = SumCostSinceDay("2026-06-04")
+	require.NoError(t, err)
+	assert.InDelta(t, 1.50, total, 1e-9,
+		"conv-1's resume day counts only its rise over the prior high-water (4.00 - 2.50)")
+
+	total, err = SumCostSinceDay("2026-06-05")
 	require.NoError(t, err)
 	assert.Zero(t, total, "no snapshots in window sums to 0")
 }
@@ -185,9 +195,11 @@ func TestSumCostSinceDay_EmptyDB(t *testing.T) {
 	assert.Zero(t, total)
 }
 
-// TestAllCostDailyRows_OrderAndEmpty pins the (session_id, day)
-// ordering the delta aggregation depends on, and the clean empty
-// state (a subscription-only install has no daily rows at all).
+// TestAllCostDailyRows_OrderAndEmpty pins the (conv-key, day, session_id)
+// ordering the delta aggregation depends on — all of a conversation's
+// sessions grouped together so the per-day delta walk can carry one
+// high-water baseline across a resume — and the clean empty state (a
+// subscription-only install has no daily rows at all).
 func TestAllCostDailyRows_OrderAndEmpty(t *testing.T) {
 	setupTestDB(t)
 
@@ -195,15 +207,15 @@ func TestAllCostDailyRows_OrderAndEmpty(t *testing.T) {
 	require.NoError(t, err, "AllCostDailyRows on empty DB")
 	assert.Empty(t, rows, "no rows on a fresh DB")
 
-	// Seed out of order across two sessions and three days via direct
-	// SQL — only the day key matters, and UpdateSessionCost can only
-	// ever write "today".
+	// Seed out of order: one conversation (c1) spread across two sessions
+	// and two days, plus a second conversation (c2). Direct SQL — only the
+	// day key matters, and UpdateSessionCost can only ever write "today".
 	d, err := Open()
 	require.NoError(t, err, "open db")
 	for _, r := range []CostDailyRow{
 		{SessionID: "s2", Day: "2026-06-02", ConvID: "c2", CostUSD: 1},
-		{SessionID: "s1", Day: "2026-06-03", ConvID: "c1", CostUSD: 3},
-		{SessionID: "s1", Day: "2026-06-01", ConvID: "c1", CostUSD: 2},
+		{SessionID: "s1", Day: "2026-06-03", ConvID: "c1", CostUSD: 3}, // c1, later day
+		{SessionID: "s3", Day: "2026-06-01", ConvID: "c1", CostUSD: 2}, // c1, earlier day, DIFFERENT session
 	} {
 		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
 			VALUES (?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD)
@@ -213,6 +225,10 @@ func TestAllCostDailyRows_OrderAndEmpty(t *testing.T) {
 	rows, err = AllCostDailyRows()
 	require.NoError(t, err, "AllCostDailyRows")
 	require.Len(t, rows, 3)
-	assert.Equal(t, []string{"s1", "s1", "s2"}, []string{rows[0].SessionID, rows[1].SessionID, rows[2].SessionID}, "session order")
-	assert.Equal(t, []string{"2026-06-01", "2026-06-03", "2026-06-02"}, []string{rows[0].Day, rows[1].Day, rows[2].Day}, "day order within session")
+	assert.Equal(t, []string{"c1", "c1", "c2"}, []string{rows[0].ConvID, rows[1].ConvID, rows[2].ConvID},
+		"a conversation's rows group together regardless of session id")
+	assert.Equal(t, []string{"2026-06-01", "2026-06-03", "2026-06-02"}, []string{rows[0].Day, rows[1].Day, rows[2].Day},
+		"day ascending within a conversation")
+	assert.Equal(t, []string{"s3", "s1", "s2"}, []string{rows[0].SessionID, rows[1].SessionID, rows[2].SessionID},
+		"c1's two sessions stay adjacent, ordered by day not session id")
 }

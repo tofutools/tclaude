@@ -392,6 +392,11 @@ details[open] > summary::before { content: "▼ "; }
   padding-top: 3px;
 }
 .cost-amt { color: #6e9c7d; }
+/* Earlier-day slice of a multi-day conversation: a dim ↩ marker and a
+   faintly recessed row, so a continued agent reads as belonging to the
+   newer row above it rather than as a separate agent. */
+.cost-cont { color: #6e7681; font-size: 12px; }
+#costs-table tr.cost-continued td:first-child { padding-left: 14px; }
 #costs-table .cost-total-row td { border-top: 1px solid #2a3340; }
 .empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
 .row-actions {
