@@ -221,3 +221,95 @@ func TestRunSearch_CodexMetadataMatch(t *testing.T) {
 	out := readFileContents(t, stdout.Name())
 	assert.Contains(t, out, "cccccccc", "codex conv matched on its first-prompt metadata")
 }
+
+// --- conv ls -w (watch mode) ------------------------------------------------
+
+// hasConvWithPrefix reports whether any entry's SessionID starts with prefix.
+func hasConvWithPrefix(entries []SessionEntry, prefix string) bool {
+	for _, e := range entries {
+		if strings.HasPrefix(e.SessionID, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// JOH-208: the interactive watch view (`conv ls -w`) must merge non-Claude
+// (Codex) convs the same way the plain `conv ls` path does — in BOTH watch
+// loaders: fullReloadConversations (disk+DB, initial load / `r` refresh) and
+// reloadFromDB (the DB-poll fast path). Before the fix the loaders were
+// Claude-only, so a Codex conv showed in `conv ls` but vanished from `-w`.
+func TestWatchLoaders_MergeNonClaudeHarness_Scoped(t *testing.T) {
+	home := setupHarnessTestHome(t)
+	cwd := filepath.Join(home, "proj")
+	writeClaudeConv(t, cwd, "11111111-1111-1111-1111-111111111111", "hello from claude")
+	writeCodexRollout(t, home, "22222222-2222-2222-2222-222222222222", cwd, "hello from codex")
+
+	m := &watchModel{
+		searchInput:      newSearchInput(),
+		global:           false,
+		projectPath:      cwd,
+		claudeProjectDir: GetClaudeProjectPath(cwd),
+	}
+
+	// Initial load / `r` refresh: disk + DB scan.
+	m.fullReloadConversations()
+	assert.True(t, hasConvWithPrefix(m.entries, "11111111"), "claude conv present after fullReloadConversations")
+	assert.True(t, hasConvWithPrefix(m.entries, "22222222"), "codex conv present after fullReloadConversations")
+
+	// DB-poll fast path: fullReloadConversations above upserted the Claude
+	// conv into conv_index, so reloadFromDB serves it from the cache; the
+	// Codex conv has no (non-stub) cache row and must be merged live. This
+	// exercises the bug's core: passing the real cwd, not claudeProjectDir.
+	m.reloadFromDB()
+	assert.True(t, hasConvWithPrefix(m.entries, "11111111"), "claude conv present after reloadFromDB")
+	assert.True(t, hasConvWithPrefix(m.entries, "22222222"), "codex conv present after reloadFromDB")
+}
+
+// A Codex-only dir (no Claude project dir at all) must still surface its conv
+// in the watch view — the scoped loader must not bail when the encoded Claude
+// project dir is absent.
+func TestWatchLoaders_CodexOnlyDir_Scoped(t *testing.T) {
+	home := setupHarnessTestHome(t)
+	cwd := filepath.Join(home, "codexonly")
+	writeCodexRollout(t, home, "33333333-3333-3333-3333-333333333333", cwd, "codex only here")
+
+	m := &watchModel{
+		searchInput:      newSearchInput(),
+		global:           false,
+		projectPath:      cwd,
+		claudeProjectDir: GetClaudeProjectPath(cwd),
+	}
+
+	m.fullReloadConversations()
+	assert.True(t, hasConvWithPrefix(m.entries, "33333333"), "codex conv present even with no Claude project dir")
+}
+
+// Global watch mode merges Codex across all dirs too.
+func TestWatchLoaders_MergeNonClaudeHarness_Global(t *testing.T) {
+	home := setupHarnessTestHome(t)
+	cwd := filepath.Join(home, "proj")
+	writeClaudeConv(t, cwd, "11111111-1111-1111-1111-111111111111", "hello from claude")
+	writeCodexRollout(t, home, "22222222-2222-2222-2222-222222222222", cwd, "hello from codex")
+
+	m := &watchModel{
+		searchInput: newSearchInput(),
+		global:      true,
+	}
+
+	m.fullReloadConversations()
+	assert.True(t, hasConvWithPrefix(m.entries, "11111111"), "claude conv present in global fullReloadConversations")
+	assert.True(t, hasConvWithPrefix(m.entries, "22222222"), "codex conv present in global fullReloadConversations")
+
+	m.reloadFromDB()
+	assert.True(t, hasConvWithPrefix(m.entries, "22222222"), "codex conv present in global reloadFromDB (no duplicate-free merge regressions)")
+
+	// And no duplicate codex rows from the conv_index stub + live merge.
+	codexCount := 0
+	for _, e := range m.entries {
+		if strings.HasPrefix(e.SessionID, "22222222") {
+			codexCount++
+		}
+	}
+	assert.Equal(t, 1, codexCount, "codex conv appears exactly once (conv_index stub is skipped, not double-counted)")
+}
