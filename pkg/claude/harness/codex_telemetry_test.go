@@ -67,6 +67,23 @@ func TestCodexContextTelemetry_NoTokenCountYet(t *testing.T) {
 	assert.Zero(t, snap.Pct)
 }
 
+// Codex writes the effective reasoning effort into turn_context before any
+// token_count exists. The dashboard should still be able to show it for a
+// just-started session.
+func TestCodexEffortLevel_NoTokenCountYet(t *testing.T) {
+	home := codexTestHome(t)
+	const id = "019ec004-4250-79b1-9ade-ebaea41354aa"
+	cx := testharness.NewCodexSimWithID(t, home, id, "/home/u/proj")
+	cx.Effort = "xhigh"
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteUserInput("hello"))
+
+	effort, ok, err := harness.CodexEffortLevel(home, id)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "xhigh", effort)
+}
+
 // No rollout for the id ⇒ (zero, false, nil): a just-spawned session whose
 // rollout has not materialised is the normal "nothing yet" state.
 func TestCodexContextTelemetry_NoRollout(t *testing.T) {

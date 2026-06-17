@@ -994,9 +994,12 @@ func persistCodexContextTelemetry(state *SessionState, input HookCallbackInput) 
 	}
 
 	var (
-		snap harness.ContextTelemetry
-		ok   bool
-		err  error
+		snap      harness.ContextTelemetry
+		ok        bool
+		err       error
+		effort    string
+		effortOK  bool
+		effortErr error
 	)
 	// Fast path: the hook payload's transcript_path is this session's
 	// rollout, so read it straight — no ~/.codex/sessions walk. Guarded by
@@ -1005,6 +1008,7 @@ func persistCodexContextTelemetry(state *SessionState, input HookCallbackInput) 
 	// rollout path (older payload, unexpected shape).
 	if p := input.TranscriptPath; p != "" && harness.IsCodexRolloutPath(p) {
 		snap, ok, err = harness.CodexTelemetryFromRollout(p)
+		effort, effortOK, effortErr = harness.CodexEffortFromRollout(p)
 	} else {
 		home, herr := os.UserHomeDir()
 		if herr != nil {
@@ -1012,18 +1016,27 @@ func persistCodexContextTelemetry(state *SessionState, input HookCallbackInput) 
 			return
 		}
 		snap, ok, err = harness.CodexContextTelemetry(home, state.ConvID)
+		effort, effortOK, effortErr = harness.CodexEffortLevel(home, state.ConvID)
 	}
 	if err != nil {
 		slog.Warn("codex-telemetry: failed to read rollout telemetry",
 			"conv_id", state.ConvID, "error", err, "module", "hooks")
-		return
 	}
-	if !ok {
-		return
+	if ok {
+		if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
+			slog.Warn("codex-telemetry: failed to update context snapshot",
+				"session_id", state.ID, "error", err, "module", "hooks")
+		}
 	}
-	if err := db.UpdateContextSnapshot(state.ID, snap.Pct, snap.TokensInput, snap.TokensOutput, snap.WindowSize); err != nil {
-		slog.Warn("codex-telemetry: failed to update context snapshot",
-			"session_id", state.ID, "error", err, "module", "hooks")
+	if effortErr != nil {
+		slog.Warn("codex-telemetry: failed to read rollout effort",
+			"session_id", state.ID, "error", effortErr, "module", "hooks")
+	}
+	if effortOK {
+		if err := db.UpdateSessionEffort(state.ID, effort); err != nil {
+			slog.Warn("codex-telemetry: failed to update session effort",
+				"session_id", state.ID, "error", err, "module", "hooks")
+		}
 	}
 }
 

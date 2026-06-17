@@ -93,6 +93,7 @@ func TestApplyHook_CodexLiveStatusPipeline(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-5-codex", snap.Model, "Codex hook model is surfaced like statusline model")
 	assert.Equal(t, "gpt-5-codex", snap.ModelID, "Codex hook model is reusable as the launch model id")
+	assert.Equal(t, "high", snap.EffortLevel, "Codex rollout effort is surfaced like statusline effort")
 }
 
 func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
