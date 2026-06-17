@@ -29,12 +29,23 @@ Powerful session and conversation management for agentic coding CLIs. tclaude is
 
 ## Installation
 
+Installing tclaude is **two steps regardless of method**: install the binary, then run `tclaude setup` to configure it. Setup is not optional — without it tclaude has no Claude Code hooks, status bar, or notification handler, so session tracking and notifications won't work.
+
 ### Prerequisites
 
-- [Go](https://go.dev/dl/) 1.26+ (for `go install`)
-- [tmux](https://github.com/tmux/tmux) — required for session management. `tclaude setup` offers to install it for you on macOS (via Homebrew) and prints package-manager hints on Linux.
+- [Go](https://go.dev/dl/) 1.26+ (for `go install`, and as a build dependency for the Homebrew formula)
+- [tmux](https://github.com/tmux/tmux) — required for session management. `tclaude setup` offers to install it for you on macOS (via Homebrew) and prints package-manager hints on Linux. (Homebrew pulls in `tmux` automatically.)
 
 ### 1. Install the binary
+
+=== "Homebrew"
+
+    macOS / Linux. Pulls in `tmux` automatically and builds `tclaude` from
+    source (the Go toolchain is fetched as a build dependency).
+
+    ```bash
+    brew install tofutools/tap/tclaude
+    ```
 
 === "go install"
 
@@ -56,6 +67,8 @@ Powerful session and conversation management for agentic coding CLIs. tclaude is
     ```
 
 ### 2. Run setup
+
+Run this once after installing, no matter how you installed the binary:
 
 ```bash
 # Baseline setup + the two extras most users want
