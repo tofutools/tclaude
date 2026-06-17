@@ -42,14 +42,11 @@ func TestDashboardHTML_SlopVolume(t *testing.T) {
 	}
 	must("#slop-volume-pop", "dashboard.css styles the mixer popover")
 
-	// The two audio owners expose the setters the mixer drives.
+	// The two audio owners expose the setters the mixer drives. The 🎵
+	// slider is the sole music-volume control — the Vegas player itself is
+	// play/pause only — so setMusicVolume must stay exported.
 	must("export function setMusicVolume", "vegas.js exposes the music-volume setter")
 	must("export function setEffectsVolume", "slop-audio.js exposes the FX-volume setter")
-
-	// The native <audio controls> volume is mirrored back through the
-	// tclaude:slopmusicvol event — pin both the emitter and a listener.
-	must("new CustomEvent('tclaude:slopmusicvol'", "vegas.js surfaces native volume drags")
-	must("addEventListener('tclaude:slopmusicvol'", "slop-volume mirrors native volume drags")
 
 	// Persistence endpoint — the JS side of the path; the Go mux side is
 	// covered functionally in dashboard_slop_test.go.

@@ -1883,20 +1883,9 @@ body.slop .slop-machine[data-status="exited"] {
    #vegas-player on slop-enable and removes it on disable. */
 nav button[data-tab="vegas"] { display: none; }
 body.slop nav button[data-tab="vegas"] { display: block; }
-.vegas-intro {
-  text-align: center;
-  color: #ffe88c;
-  font-size: 15px;
-  margin: 4px 0 16px;
-  text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
-}
-.vegas-hint {
-  text-align: center;
-  color: #c9a86b;
-  font-size: 12px;
-  margin-top: 12px;
-}
-#vegas-player {
+/* The card holds the welcome intro (its header) above the dynamic player
+   content (song/station/audio, injected into #vegas-player by vegas.js). */
+.vegas-card {
   max-width: 720px;
   margin: 0 auto;
   padding: 22px;
@@ -1906,14 +1895,104 @@ body.slop nav button[data-tab="vegas"] { display: block; }
   box-shadow: 0 0 24px rgba(255, 215, 0, 0.25);
   text-align: center;
 }
-.vegas-nowplaying {
+.vegas-intro {
   color: #ffe88c;
-  font-size: 14px;
-  margin-bottom: 14px;
-  letter-spacing: 0.4px;
+  font-size: 15px;
+  margin: 0;
   text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
 }
-#vegas-player audio { width: 100%; }
+.vegas-hint {
+  text-align: center;
+  color: #c9a86b;
+  font-size: 12px;
+  margin-top: 12px;
+}
+/* #vegas-player is just the dynamic content holder now (the card styling
+   moved to .vegas-card). The gap below the intro only appears once vegas.js
+   has injected content, so a muted/empty player shows just the intro header
+   with no dead space. :empty matches because stopMusic/replaceChildren
+   leaves it with zero children. */
+#vegas-player:not(:empty) { margin-top: 16px; }
+.vegas-nowplaying {
+  margin-bottom: 14px;
+  letter-spacing: 0.4px;
+}
+/* The dynamic song readout (filled by the now-playing poller in vegas.js):
+   an artist line, the title (focal point + YouTube-search link) and a
+   time-on-air line. min-height reserves space so the player doesn't jump
+   when the first track lands; it stays empty until then. */
+.vegas-song {
+  min-height: 24px;
+  margin-bottom: 12px;
+}
+.vegas-artist {
+  color: #fff3c4;
+  font-size: 14px;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.4);
+}
+.vegas-title {
+  display: inline-block;
+  color: #fff3c4;
+  font-size: 18px;
+  font-weight: 700;
+  margin: 2px 0;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
+}
+.vegas-song a {
+  color: #ffe88c;
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(255, 232, 140, 0.5);
+}
+.vegas-song a:hover { color: #fff; border-bottom-color: #fff; }
+/* Time-on-air line (real elapsed, not a progress bar — the live stream has
+   no duration). Tabular figures so the seconds don't jitter. */
+.vegas-elapsed-line {
+  color: #c9a86b;
+  font-size: 12px;
+}
+.vegas-elapsed { font-variant-numeric: tabular-nums; }
+/* The station line doubles as the divider between the song readout above
+   and the native transport below — its top border is the rule in the
+   display. */
+.vegas-station {
+  color: #c9a86b;
+  font-size: 13px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 215, 0, 0.22);
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.3);
+}
+/* The <audio> is a controls-less engine — hidden; the .vegas-transport
+   button below is the rendered chrome. (UA stylesheets already hide a
+   controls-less audio element; this is explicit for clarity.) */
+#vegas-player audio { display: none; }
+/* Custom play/pause transport, themed to the casino card. It replaces the
+   native <audio controls> bar, which couldn't be themed and — with the
+   meaningless live-stream seek bar hidden — rendered as an empty white
+   pill. Volume lives in the header mixer, so this is just play/pause. */
+.vegas-transport {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+.vegas-play {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #ffd700;
+  background: radial-gradient(circle at 32% 30%, #ffe88c 0%, #f0c419 55%, #c9920a 100%);
+  color: #2a0808;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 0 14px rgba(255, 215, 0, 0.4);
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+.vegas-play:hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.65);
+}
+.vegas-play:active { transform: scale(0.97); }
 .vegas-error { color: #ffb3b3; font-size: 13px; }
 .vegas-error a { color: #ffe88c; }
 

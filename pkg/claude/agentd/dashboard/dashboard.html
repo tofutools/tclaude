@@ -390,8 +390,14 @@
        turns on and tears it down when slop turns off, so the music stops
        the moment you leave the mode. -->
   <section id="tab-vegas">
-    <p class="vegas-intro">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
-    <div id="vegas-player"></div>
+    <!-- The welcome line lives INSIDE the card (its header) so the card is
+         self-contained: when sound is muted vegas.js never builds the
+         player, and an empty #vegas-player would otherwise leave this text
+         floating above a blank gold box. -->
+    <div class="vegas-card">
+      <p class="vegas-intro">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
+      <div id="vegas-player"></div>
+    </div>
     <p class="vegas-hint">Music plays as long as slop mode is on — leave the mode (click the 🎰 in the header) to stop it.</p>
     <!-- High-rollers leaderboard — slop-credits.js renders agent jackpot
          rankings (this session) in here, with a 🔥 on any agent on a

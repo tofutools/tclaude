@@ -17,9 +17,9 @@
 // in localStorage (slop-audio.js) — on/off is a per-browser whim,
 // volume is calibration.
 //
-// The native <audio controls> volume in the Vegas tab sets the same
-// value: vegas.js emits `tclaude:slopmusicvol` when the user drags it,
-// and we mirror that onto the slider and persist it too.
+// This is the sole music-volume control: the Vegas tab's player is
+// play/pause only (its native <audio controls> volume was removed), so
+// the 🎵 slider here drives setMusicVolume(vegas.js) directly.
 
 import { isSlopActive } from './slop.js';
 import { setEffectsVolume } from './slop-audio.js';
@@ -140,17 +140,6 @@ export function bindSlopVolume() {
   if (f) f.addEventListener('input', () => {
     touched = true;
     effects = Math.min(100, Math.max(0, parseInt(f.value, 10) || 0));
-    apply();
-    schedulePersist();
-  });
-
-  // The Vegas tab's native <audio controls> volume drag — mirror it
-  // onto the music slider and persist it like our own.
-  document.addEventListener('tclaude:slopmusicvol', (e) => {
-    const v = e.detail && e.detail.volume;
-    if (!Number.isFinite(v)) return;
-    touched = true;
-    music = Math.min(100, Math.max(0, v));
     apply();
     schedulePersist();
   });
