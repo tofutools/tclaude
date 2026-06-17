@@ -166,3 +166,78 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Keep the Homebrew tap (tofutools/homebrew-tap) in sync with each release.
+  # The formula builds from source, so all we bump is the source-tarball URL
+  # and its sha256. Requires a HOMEBREW_TAP_TOKEN secret (a PAT / fine-grained
+  # token with Contents:write on tofutools/homebrew-tap); without it this job
+  # no-ops so releases are never blocked on the tap.
+  homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: [version, release]
+    permissions:
+      contents: read
+    steps:
+      - name: Check for tap token
+        id: guard
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set - skipping Homebrew tap update."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout tap
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: tofutools/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        if: steps.guard.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/tofutools/tclaude/archive/refs/tags/${VERSION}.tar.gz"
+          # GitHub's auto-generated source tarball can lag the tag by a few
+          # seconds, so retry until it's downloadable.
+          ok=false
+          for i in $(seq 1 12); do
+            if curl -fsSL --remove-on-error "$url" -o src.tgz; then ok=true; break; fi
+            echo "source tarball not ready yet (attempt $i), retrying..."
+            sleep 5
+          done
+          if [ "$ok" != true ]; then
+            echo "source tarball never became available: $url" >&2
+            exit 1
+          fi
+          sha="$(sha256sum src.tgz | cut -d' ' -f1)"
+          rm -f src.tgz
+          sed -i \
+            -e "s|^  url \".*\"|  url \"${url}\"|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"${sha}\"|" \
+            tap/Formula/tclaude.rb
+          echo "Updated formula:"
+          grep -E '^[[:space:]]+(url|sha256)' tap/Formula/tclaude.rb
+
+      - name: Commit and push
+        if: steps.guard.outputs.enabled == 'true'
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Formula already up to date."
+            exit 0
+          fi
+          git add Formula/tclaude.rb
+          git commit -m "tclaude ${{ needs.version.outputs.new_version }}"
+          git push
