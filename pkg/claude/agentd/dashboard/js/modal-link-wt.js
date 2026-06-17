@@ -4,7 +4,7 @@
 // this modal and the spawn modals). Extracted from dashboard.js in the
 // Stage 2 module split.
 
-import { $, esc, shortCwd } from './helpers.js';
+import { $, esc, shortCwd, syncSelectTitle } from './helpers.js';
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
 // Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
@@ -223,11 +223,18 @@ async function wtRefresh(prefix, repo, noneLabel) {
   (data.worktrees || []).forEach(wt => {
     const br = wt.branch || '(detached)';
     const tag = wt.is_main ? ' [main]' : '';
-    opts.push(`<option value="wt:${esc(wt.path)}" data-branch="${esc(wt.branch || '')}">${esc(br)}${tag} — ${esc(shortCwd(wt.path))}</option>`);
+    // The visible label shortens the path (shortCwd), but the option's
+    // title carries the full branch + untruncated path so hovering the
+    // closed <select> reveals the whole thing — see syncSelectTitle.
+    const full = `${br}${tag} — ${wt.path}`;
+    opts.push(`<option value="wt:${esc(wt.path)}" data-branch="${esc(wt.branch || '')}" title="${esc(full)}">${esc(br)}${tag} — ${esc(shortCwd(wt.path))}</option>`);
   });
   opts.push(`<option value="${WT_NEW}">+ create new worktree…</option>`);
   select.innerHTML = opts.join('');
   select.disabled = false;
+  // Repopulation doesn't fire `change`, so refresh the closed-box tooltip
+  // to match the now-selected option (the leading "no worktree" on load).
+  syncSelectTitle(select);
   const base = $(`#${prefix}-wt-base`);
   base.innerHTML = (data.branches || []).map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
   if (data.default_branch) base.value = data.default_branch;

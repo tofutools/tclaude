@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { groupDefaultContext } from './modal-templates.js';
 import {
@@ -63,6 +63,10 @@ function updateSpawnModelDefaultLabel(groupName) {
   } else {
     opt.textContent = "Default (claude's own)";
   }
+  // The Default label changed under a possibly-unchanged selection (no
+  // `change` event), so refresh the closed-box tooltip — this label can
+  // be long enough to clip in the width-limited field.
+  syncSelectTitle($('#agent-spawn-model'));
 }
 
 // ---- Harness selection --------------------------------------------------
@@ -541,6 +545,12 @@ function bindAgentSpawnModal() {
   $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
   $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
   bindWtPicker('agent-spawn');
+  // Keep every <select> in the modal tooltip-synced (one delegated change
+  // listener + an initial pass) so a clipped label stays readable on hover.
+  bindSelectTitles($('#agent-spawn-modal'));
+  // Remember the dialog's dragged size (the .cron-create-modal card carries
+  // the resize grip) across reopens and restarts.
+  makeModalResizable($('#agent-spawn-modal .cron-create-modal'), 'tclaude.dash.modalSize.agent-spawn');
   // Name-sync wiring: typing in the name mirrors into the
   // worktree branch; toggling the checkbox re-applies the sync;
   // hand-editing the branch or picking a worktree by hand turns the
@@ -680,6 +690,8 @@ function bindCloneAgentModal() {
   $('#clone-agent-cancel').addEventListener('click', closeCloneAgentModal);
   $('#clone-agent-submit').addEventListener('click', submitCloneAgent);
   bindWtPicker('clone-agent');
+  bindSelectTitles($('#clone-agent-modal'));
+  makeModalResizable($('#clone-agent-modal .cron-create-modal'), 'tclaude.dash.modalSize.clone-agent');
   bindBackdropDiscard('clone-agent-modal', closeCloneAgentModal);
 }
 
