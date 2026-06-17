@@ -1254,21 +1254,31 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	}
 	target := sess.TmuxSession + ":0.0"
 
-	// Rename first — see the doc comment. Skipped when name is empty or
-	// not a valid rename title (some callers pass human-friendly names
-	// that don't fit the rename charset); the welcome below still
-	// materialises the conversation in that case. deliverRename routes
-	// through the harness (CC injects its rename command; a direct-write
-	// harness uses its title store) — the charset gate stays here, since
-	// deliverRename only routes, it does not validate.
-	if name != "" && isValidRenameTitle(name) {
+	// Apply the agent's name as the conversation title. The two harness
+	// rename styles bracket the welcome injection differently:
+	//
+	//   - In-pane (Claude Code's /rename): inject FIRST, so the rename turn
+	//     lands on the .jsonl before any other turn (see below). The charset
+	//     gate lives in deliverRename; isValidRenameTitle pre-validates here.
+	//   - Out-of-band title store (Codex's threads.title): the harness only
+	//     materialises the conversation's row once the FIRST message (the
+	//     welcome) has been processed, so the title write must wait until
+	//     AFTER the welcome — and retry until the row exists. Done below.
+	//
+	// Skipped when name is empty or not a valid rename title (some callers
+	// pass human-friendly names that don't fit the rename charset); the
+	// welcome below still materialises the conversation in that case.
+	h := harnessForConv(convID)
+	renameWanted := name != "" && isValidRenameTitle(name)
+	if name != "" && !renameWanted {
+		slog.Warn("spawn: name not a valid rename title; skipping rename",
+			"conv", convID, "name", name)
+	}
+	if renameWanted && h.SupportsRename() {
 		if !deliverRename(convID, name) {
 			slog.Warn("spawn: rename delivery failed",
 				"conv", convID, "name", name)
 		}
-	} else if name != "" {
-		slog.Warn("spawn: name not a valid rename title; skipping rename",
-			"conv", convID, "name", name)
 	}
 
 	// Welcome: a single-line [system: ...] turn orienting the agent
@@ -1282,6 +1292,14 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		return
 	}
 
+	// Out-of-band title harness (Codex): now that the welcome has been
+	// submitted, persist the name into the title store, retrying until the
+	// harness has created the conversation's row (JOH-216). Runs in its own
+	// goroutine so the bounded retry never delays the rest of post-init.
+	if renameWanted && !h.SupportsRename() && h.SupportsConvs() {
+		goBackground(func() { persistSpawnTitle(convID, name) })
+	}
+
 	// The startup briefing (group context + task brief) already sits in
 	// the agent's inbox — the handler inserted the agent_messages row
 	// before this goroutine fired. The welcome line above named its
@@ -1292,6 +1310,46 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			slog.Warn("spawn: failed to mark startup context delivered",
 				"conv", convID, "msg_id", spawnContextMsgID, "error", err)
 		}
+	}
+}
+
+// spawnTitlePersist* bound the post-welcome retry that writes an out-of-band
+// harness's title (Codex's threads.title). Codex creates the conversation's
+// row only after the first message is processed, so the write may need a few
+// seconds of retries; the timeout is generous because the cost of a stray
+// retry loop is one idle background goroutine.
+const (
+	spawnTitlePersistTimeout  = 30 * time.Second
+	spawnTitlePersistInterval = 1 * time.Second
+)
+
+// persistSpawnTitle writes name into an out-of-band harness's title store
+// (ConvStore.SetTitle), retrying until the harness has materialised the
+// conversation's row or the timeout elapses. It is the spawn-path counterpart
+// to the in-pane /rename: for Codex the threads row does not exist until the
+// spawn welcome (the first message) has been processed, so a single
+// spawn-time write hits zero rows and is silently lost, leaving the agent
+// showing its raw first prompt instead of its name (JOH-216).
+//
+// SetTitle is called directly (not deliverRename) so a not-yet-materialised
+// row produces one final warning rather than a warning per retry.
+func persistSpawnTitle(convID, name string) {
+	h := harnessForConv(convID)
+	if h.Convs == nil {
+		return
+	}
+	deadline := time.Now().Add(spawnTitlePersistTimeout)
+	for {
+		err := h.Convs.SetTitle(convID, name)
+		if err == nil {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			slog.Warn("spawn: out-of-band title never persisted; conversation row never materialised",
+				"conv", convID, "name", name, "harness", h.Name, "error", err)
+			return
+		}
+		time.Sleep(spawnTitlePersistInterval)
 	}
 }
 

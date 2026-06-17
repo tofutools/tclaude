@@ -349,7 +349,8 @@ func RunSearchEmbeddings(params *SearchEmbeddingsParams, stdout, stderr *os.File
 	for i, r := range results {
 		entries[i] = r.Entry
 	}
-	RenderTable(stdout, entries, params.Global, params.Long, nil, nil)
+	pendingByConv, _ := db.PendingNamesByConv()
+	RenderTable(stdout, entries, params.Global, params.Long, nil, nil, pendingByConv)
 
 	fmt.Fprintf(stdout, "\n%d result(s)\n", len(results))
 	return 0

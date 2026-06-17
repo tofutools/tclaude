@@ -16,9 +16,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -86,6 +87,7 @@ type watchModel struct {
 	filtered       []SessionEntry                   // After search filter
 	activeSessions map[string]*session.SessionState // convID -> session
 	groupsByConv   map[string][]string              // convID -> group names; empty if no groups configured
+	pendingByConv  map[string]string                // convID -> spawn-time agent name; title fallback (convDisplayTitle)
 
 	// Navigation
 	cursor         int
@@ -135,6 +137,14 @@ type watchModel struct {
 	height      int
 	confirmMode watchConfirmMode
 	helpView    bool
+
+	// Column selector (the `c` overlay). colOverrides maps a toggleable
+	// column key to an explicit show/hide that shadows the column's smart
+	// auto-default; absent keys follow the auto rule. Loaded from / persisted
+	// to ~/.tclaude/config.json so choices stick across launches.
+	columnSelector bool
+	columnCursor   int
+	colOverrides   map[string]bool
 
 	// Settings
 	global      bool   // Search all projects
@@ -242,7 +252,23 @@ func initialWatchModel(global bool, since, before string) watchModel {
 		since:            since,
 		before:           before,
 		viewportHeight:   20, // Will be adjusted based on terminal size
+		colOverrides:     loadColumnOverrides(),
 	}
+}
+
+// loadColumnOverrides reads the persisted watch-view column visibility
+// overrides from ~/.tclaude/config.json. A load error or absent block yields
+// an empty map (every column follows its auto-default).
+func loadColumnOverrides() map[string]bool {
+	overrides := map[string]bool{}
+	cfg, err := config.Load()
+	if err != nil || cfg.ConvWatch == nil {
+		return overrides
+	}
+	for k, v := range cfg.ConvWatch.Columns {
+		overrides[k] = v
+	}
+	return overrides
 }
 
 // --- tea.Model interface (pointer receiver) ---
@@ -331,6 +357,31 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle help view
 		if m.helpView {
 			m.helpView = false
+			return m, nil
+		}
+
+		// Handle column selector overlay (the `c` menu)
+		if m.columnSelector {
+			toggleable := m.toggleableColumns()
+			switch msg.String() {
+			case "up", "k":
+				if m.columnCursor > 0 {
+					m.columnCursor--
+				}
+			case "down", "j":
+				if m.columnCursor < len(toggleable)-1 {
+					m.columnCursor++
+				}
+			case " ", "space":
+				if m.columnCursor < len(toggleable) {
+					c := toggleable[m.columnCursor]
+					m.setColumnOverride(c.key, !c.visible)
+				}
+			case "r":
+				m.resetColumnOverrides()
+			case "enter", "c", "esc", "q", "ctrl+c":
+				m.columnSelector = false
+			}
 			return m, nil
 		}
 
@@ -552,6 +603,12 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.semanticChecking = true
 			return m, m.semanticPreCheck()
+		case "c":
+			// Open the column-selector overlay. Lets the user show/hide the
+			// optional columns (harness, groups, size, modified, project)
+			// and persists the choice.
+			m.columnSelector = true
+			m.columnCursor = 0
 		case "x":
 			// Toggle visibility of archived (-x) convs. Default-hidden;
 			// useful when forensically tracking down a reincarnated
@@ -767,6 +824,9 @@ func (m *watchModel) View() tea.View {
 	if m.helpView {
 		return tea.View{Content: m.renderHelpView(), AltScreen: true}
 	}
+	if m.columnSelector {
+		return tea.View{Content: m.renderColumnSelector(), AltScreen: true}
+	}
 
 	var b strings.Builder
 
@@ -826,9 +886,16 @@ func (m *watchModel) View() tea.View {
 		return tea.View{Content: b.String(), AltScreen: true}
 	}
 
-	// Build table using shared column definitions
+	// Build table from a single ordered column list, so the headers and the
+	// row cells are guaranteed to stay in lockstep.
 	tableWidth := max(m.width-3, 60)
-	cols := m.columns()
+	defs := m.orderedColumns()
+	cols := make([]table.Column, 0, len(defs))
+	for _, d := range defs {
+		if d.visible {
+			cols = append(cols, d.col)
+		}
+	}
 	tbl := table.New(cols...)
 	tbl.Padding = 3
 	tbl.SetTerminalWidth(tableWidth)
@@ -840,40 +907,11 @@ func (m *watchModel) View() tea.View {
 	tbl.Sort = m.sort.ToConfig(cols)
 
 	for _, e := range m.filtered {
-		sessionMark := "  "
-		if state, ok := m.activeSessions[e.SessionID]; ok {
-			tmuxAlive := state.TmuxSession != "" && session.IsTmuxSessionAlive(state.TmuxSession)
-			if !tmuxAlive {
-				sessionMark = " ◉"
-			} else if state.Attached > 0 {
-				sessionMark = "⚡"
-			} else {
-				sessionMark = " ▷"
+		cells := make([]string, 0, len(cols))
+		for _, d := range defs {
+			if d.visible {
+				cells = append(cells, d.cell(m, e))
 			}
-		}
-
-		id := e.SessionID[:8]
-		modified := formatDate(e.Modified)
-		// Canonical "[title]: prompt" rendering — shared with conv ls
-		// and the web dashboard via convindex.FormatConvTitle.
-		title := convindex.FormatConvTitle(e.CustomTitle, e.Summary, e.FirstPrompt)
-		size := formatFileSize(e.FileSize)
-
-		var cells []string
-		if m.global {
-			cells = []string{sessionMark, id, e.ProjectPath, title, size, modified}
-		} else {
-			cells = []string{sessionMark, id, title, size, modified}
-		}
-		if m.hasGroups() {
-			cells = append(cells, strings.Join(m.groupsByConv[e.SessionID], ","))
-		}
-		if m.semanticMode {
-			score := ""
-			if s, ok := m.semanticScores[e.SessionID]; ok {
-				score = fmt.Sprintf("%.4f", s)
-			}
-			cells = append(cells, score)
 		}
 		tbl.AddRow(table.Row{Cells: cells})
 	}
@@ -901,7 +939,7 @@ func (m *watchModel) View() tea.View {
 		} else if m.semanticMode {
 			b.WriteString(wHelpStyle.Render("  s new search • / text search • esc exit • h help • esc/q quit"))
 		} else {
-			b.WriteString(wHelpStyle.Render("  / search • s semantic • enter attach • h help • esc/q quit"))
+			b.WriteString(wHelpStyle.Render("  / search • s semantic • c columns • enter attach • h help • esc/q quit"))
 		}
 	}
 	b.WriteString("\n")
@@ -988,6 +1026,7 @@ func (m *watchModel) setEntries(allEntries []SessionEntry) {
 	m.applySearchFilter()
 	m.refreshActiveSessions()
 	m.refreshGroups()
+	m.refreshPending()
 }
 
 // refreshGroups reloads agent group memberships from the DB. Errors are
@@ -998,6 +1037,17 @@ func (m *watchModel) refreshGroups() {
 		return
 	}
 	m.groupsByConv = g
+}
+
+// refreshPending reloads spawn-time agent names from the DB. Errors are
+// non-fatal — the worst that happens is a not-yet-renamed agent shows its
+// first prompt instead of its designated name (convDisplayTitle).
+func (m *watchModel) refreshPending() {
+	p, err := db.PendingNamesByConv()
+	if err != nil {
+		return
+	}
+	m.pendingByConv = p
 }
 
 // hasGroups reports whether any conv in the current entry list belongs to a
@@ -1630,39 +1680,233 @@ func (m *watchModel) stopSession(state *session.SessionState) error {
 
 // --- Column definitions ---
 
-func (m *watchModel) columns() []table.Column {
-	showGroups := m.hasGroups()
+// Toggleable column keys — the stable identifiers persisted in
+// config.ConvWatchConfig.Columns and shown in the `c` selector overlay.
+const (
+	colKeyHarness  = "harness"
+	colKeyProject  = "project"
+	colKeySize     = "size"
+	colKeyModified = "modified"
+	colKeyGroups   = "groups"
+)
+
+// colDef fully describes one watch-view column: its display order, current
+// visibility, table header/layout, and how to extract its cell text for a
+// row. A non-empty key marks the column as user-toggleable (and is its
+// persistence/selector identifier); an empty key is a structural column
+// (status mark, ID, title, semantic score) that the user cannot hide.
+//
+// Both columns() (the headers) and the View row builder iterate the SAME
+// orderedColumns() slice, so a column can never appear in the header but be
+// missing from the cells (or vice versa) — the divergence that an earlier
+// twin-switch layout invited.
+type colDef struct {
+	key     string
+	visible bool
+	col     table.Column
+	cell    func(m *watchModel, e SessionEntry) string
+}
+
+// orderedColumns returns every column in display order with its resolved
+// visibility, header spec, and cell extractor. Toggleable columns resolve
+// their visibility through colVisible (explicit override else auto-default);
+// mode-gated columns (PROJECT in global mode, SCORE in semantic mode) are
+// only emitted when that mode is active.
+func (m *watchModel) orderedColumns() []colDef {
+	nonClaude := m.hasNonClaudeHarness()
+	grouped := m.hasGroups()
+
+	defs := []colDef{
+		{visible: true, col: table.Column{Header: "", Width: 2},
+			cell: func(m *watchModel, e SessionEntry) string { return m.sessionMark(e) }},
+		{visible: true, col: table.Column{Header: "ID", Width: 10, SortKey: "id"},
+			cell: func(m *watchModel, e SessionEntry) string { return e.SessionID[:8] }},
+		{key: colKeyHarness, visible: m.colVisible(colKeyHarness, nonClaude),
+			col:  table.Column{Header: "HARNESS", Width: 8},
+			cell: func(m *watchModel, e SessionEntry) string { return harnessBadge(e.Harness) }},
+	}
+
 	if m.global {
-		cols := []table.Column{
-			{Header: "", Width: 2},
-			{Header: "ID", Width: 10, SortKey: "id"},
-			{Header: "PROJECT", MinWidth: 20, Weight: 0.4, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"},
-			{Header: "TITLE/PROMPT", MinWidth: 30, Weight: 0.6, Truncate: true, SortKey: "title"},
-			{Header: "SIZE", Width: 8, SortKey: "size"},
-			{Header: "MODIFIED", Width: 16, SortKey: "modified"},
-		}
-		if showGroups {
-			cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true, SortKey: "groups"})
-		}
-		if m.semanticMode {
-			cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})
-		}
-		return cols
+		defs = append(defs, colDef{key: colKeyProject, visible: m.colVisible(colKeyProject, true),
+			col:  table.Column{Header: "PROJECT", MinWidth: 20, Weight: 0.4, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"},
+			cell: func(m *watchModel, e SessionEntry) string { return e.ProjectPath }})
 	}
-	cols := []table.Column{
-		{Header: "", Width: 2},
-		{Header: "ID", Width: 10, SortKey: "id"},
-		{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"},
-		{Header: "SIZE", Width: 8, SortKey: "size"},
-		{Header: "MODIFIED", Width: 16, SortKey: "modified"},
+
+	titleCol := table.Column{Header: "TITLE/PROMPT", MinWidth: 30, Truncate: true, SortKey: "title"}
+	if m.global {
+		titleCol.Weight = 0.6 // share the flexible width with PROJECT
 	}
-	if showGroups {
-		cols = append(cols, table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true, SortKey: "groups"})
-	}
+	defs = append(defs,
+		colDef{visible: true, col: titleCol,
+			cell: func(m *watchModel, e SessionEntry) string {
+				// Canonical "[title]: prompt" rendering — shared with conv ls
+				// and the web dashboard via convindex.FormatConvTitle — with
+				// the agent pending-name fallback (convDisplayTitle).
+				return convDisplayTitle(e, m.pendingByConv)
+			}},
+		colDef{key: colKeySize, visible: m.colVisible(colKeySize, true),
+			col:  table.Column{Header: "SIZE", Width: 8, SortKey: "size"},
+			cell: func(m *watchModel, e SessionEntry) string { return formatFileSize(e.FileSize) }},
+		colDef{key: colKeyModified, visible: m.colVisible(colKeyModified, true),
+			col:  table.Column{Header: "MODIFIED", Width: 16, SortKey: "modified"},
+			cell: func(m *watchModel, e SessionEntry) string { return formatDate(e.Modified) }},
+		colDef{key: colKeyGroups, visible: m.colVisible(colKeyGroups, grouped),
+			col:  table.Column{Header: "GROUPS", MinWidth: 6, Weight: 0.3, Truncate: true, SortKey: "groups"},
+			cell: func(m *watchModel, e SessionEntry) string { return strings.Join(m.groupsByConv[e.SessionID], ",") }},
+	)
+
 	if m.semanticMode {
-		cols = append(cols, table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight})
+		defs = append(defs, colDef{visible: true, col: table.Column{Header: "SCORE", Width: 10, Align: table.AlignRight},
+			cell: func(m *watchModel, e SessionEntry) string {
+				if s, ok := m.semanticScores[e.SessionID]; ok {
+					return fmt.Sprintf("%.4f", s)
+				}
+				return ""
+			}})
+	}
+	return defs
+}
+
+// columns returns the visible table headers, derived from orderedColumns.
+func (m *watchModel) columns() []table.Column {
+	defs := m.orderedColumns()
+	cols := make([]table.Column, 0, len(defs))
+	for _, d := range defs {
+		if d.visible {
+			cols = append(cols, d.col)
+		}
 	}
 	return cols
+}
+
+// colVisible resolves a toggleable column's visibility: an explicit user
+// override (from the selector / config) wins, otherwise the smart auto value.
+func (m *watchModel) colVisible(key string, auto bool) bool {
+	if v, ok := m.colOverrides[key]; ok {
+		return v
+	}
+	return auto
+}
+
+// hasNonClaudeHarness reports whether any loaded conv belongs to a harness
+// other than Claude Code — the auto-default that surfaces the HARNESS column.
+func (m *watchModel) hasNonClaudeHarness() bool {
+	for _, e := range m.entries {
+		if e.Harness != "" && e.Harness != harness.DefaultName {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionMark returns the leading status glyph for a conv's row.
+func (m *watchModel) sessionMark(e SessionEntry) string {
+	state, ok := m.activeSessions[e.SessionID]
+	if !ok {
+		return "  "
+	}
+	switch {
+	case state.TmuxSession == "" || !session.IsTmuxSessionAlive(state.TmuxSession):
+		return " ◉"
+	case state.Attached > 0:
+		return "⚡"
+	default:
+		return " ▷"
+	}
+}
+
+// --- Column selector ---
+
+// toggleCol is one row in the column-selector overlay.
+type toggleCol struct {
+	key     string
+	label   string
+	visible bool
+}
+
+// toggleableColumns lists the user-toggleable columns in display order with
+// their current effective visibility — the rows the `c` overlay renders.
+// Mode-gated columns (PROJECT) are only listed when applicable.
+func (m *watchModel) toggleableColumns() []toggleCol {
+	var out []toggleCol
+	for _, d := range m.orderedColumns() {
+		if d.key == "" {
+			continue // structural column — not user-toggleable
+		}
+		out = append(out, toggleCol{key: d.key, label: d.col.Header, visible: d.visible})
+	}
+	return out
+}
+
+// setColumnOverride records an explicit show/hide for a column and persists it.
+func (m *watchModel) setColumnOverride(key string, visible bool) {
+	if m.colOverrides == nil {
+		m.colOverrides = map[string]bool{}
+	}
+	m.colOverrides[key] = visible
+	m.persistColumnPrefs()
+}
+
+// resetColumnOverrides drops every explicit override, returning all columns to
+// their smart auto-defaults, and persists the cleared state.
+func (m *watchModel) resetColumnOverrides() {
+	m.colOverrides = map[string]bool{}
+	m.persistColumnPrefs()
+}
+
+// persistColumnPrefs writes the current overrides to ~/.tclaude/config.json.
+// Best-effort: a failed write only costs the persistence, not the in-session
+// state. Uses config.Update so a concurrent writer's change isn't dropped.
+func (m *watchModel) persistColumnPrefs() {
+	overrides := make(map[string]bool, len(m.colOverrides))
+	for k, v := range m.colOverrides {
+		overrides[k] = v
+	}
+	if _, err := config.Update(func(cfg *config.Config, _ error) error {
+		if cfg.ConvWatch == nil {
+			cfg.ConvWatch = &config.ConvWatchConfig{}
+		}
+		if len(overrides) == 0 {
+			cfg.ConvWatch.Columns = nil
+		} else {
+			cfg.ConvWatch.Columns = overrides
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("watch: failed to persist column preferences", "error", err)
+		m.statusMsg = "Failed to save column prefs: " + err.Error()
+	}
+}
+
+// renderColumnSelector renders the `c` overlay: a checklist of toggleable
+// columns with the cursor row highlighted.
+func (m *watchModel) renderColumnSelector() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(wSearchStyle.Render("  Columns"))
+	b.WriteString("\n\n")
+
+	toggleable := m.toggleableColumns()
+	if m.columnCursor >= len(toggleable) {
+		m.columnCursor = 0
+	}
+	for i, c := range toggleable {
+		box := "[ ]"
+		if c.visible {
+			box = "[x]"
+		}
+		row := box + " " + c.label
+		if i == m.columnCursor {
+			b.WriteString("  " + wSelectedStyle.Render("▸ "+row) + "\n")
+		} else {
+			b.WriteString("    " + row + "\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(wHelpStyle.Render("  ↑/↓ move • space toggle • r reset to defaults • enter/esc/c close"))
+	b.WriteString("\n")
+	return b.String()
 }
 
 // --- Help view ---
@@ -1699,6 +1943,7 @@ func (m *watchModel) renderHelpView() string {
 	b.WriteString("    del/^D    Delete conversation (with confirmation)\n")
 	b.WriteString("              If has session: y=delete+stop, s=stop only, n=cancel\n")
 	b.WriteString("    x         Toggle archived (-x) convs (default: hidden)\n")
+	b.WriteString("    c         Choose visible columns (persisted)\n")
 	b.WriteString("    r         Refresh conversation list\n")
 	b.WriteString("\n")
 

@@ -185,8 +185,13 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 	// drop the column.
 	groupsByConv, _ := db.GroupNamesByConv()
 
+	// Pull spawn-time agent names so a not-yet-renamed agent shows its
+	// designated name rather than its raw first prompt (convDisplayTitle).
+	// Best-effort: a nil map just skips the fallback.
+	pendingByConv, _ := db.PendingNamesByConv()
+
 	// Display using table
-	RenderTable(stdout, allEntries, params.Global, params.Long, nil, groupsByConv)
+	RenderTable(stdout, allEntries, params.Global, params.Long, nil, groupsByConv, pendingByConv)
 
 	return 0
 }
@@ -230,7 +235,10 @@ func getTerminalWidth() int {
 // matchCounts is optional - if provided, adds a "Matches" column.
 // groupsByConv is optional - if any conv has at least one group,
 // adds a "Groups" column. Pass nil or an empty map to skip.
-func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool, matchCounts []int, groupsByConv map[string][]string) {
+// pendingByConv is optional - it supplies the spawn-time agent name used as a
+// title fallback when a conv has no real custom title (see convDisplayTitle);
+// pass nil to skip the fallback.
+func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool, matchCounts []int, groupsByConv map[string][]string, pendingByConv map[string]string) {
 	showGroups := false
 	for _, e := range entries {
 		if len(groupsByConv[e.SessionID]) > 0 {
@@ -308,8 +316,9 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	// Add rows
 	for i, e := range entries {
 		// Canonical "[title]: prompt" rendering — shared with conv ls -w
-		// and the web dashboard via convindex.FormatConvTitle.
-		displayText := truncatePrompt(convindex.FormatConvTitle(e.CustomTitle, e.Summary, e.FirstPrompt), promptWidth)
+		// and the web dashboard via convindex.FormatConvTitle, with the
+		// agent pending-name fallback (convDisplayTitle).
+		displayText := truncatePrompt(convDisplayTitle(e, pendingByConv), promptWidth)
 		modified := formatDate(e.Modified)
 
 		row := table.Row{e.SessionID[:8]}
@@ -334,6 +343,22 @@ func RenderTable(stdout *os.File, entries []SessionEntry, showProject, long bool
 	}
 
 	t.Render()
+}
+
+// convDisplayTitle renders a conv's canonical "[title]: prompt" string,
+// falling back to the agent's spawn-time pending name when the conv has no
+// real custom title. This mirrors the dashboard's title resolution
+// (agent.FreshTitle: custom title → pending name → summary → first prompt),
+// so a not-yet-renamed agent — e.g. a Codex agent whose out-of-band title
+// write hasn't landed (JOH-216) — shows its designated name instead of its
+// raw first prompt. pendingByConv may be nil; a conv absent from it falls
+// through to the normal summary/first-prompt rendering unchanged.
+func convDisplayTitle(e SessionEntry, pendingByConv map[string]string) string {
+	custom := e.CustomTitle
+	if custom == "" {
+		custom = pendingByConv[e.SessionID]
+	}
+	return convindex.FormatConvTitle(custom, e.Summary, e.FirstPrompt)
 }
 
 // harnessBadge renders the harness label for the conv list. An empty

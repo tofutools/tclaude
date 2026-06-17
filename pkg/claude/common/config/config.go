@@ -46,6 +46,21 @@ type Config struct {
 	// volumes. Absent block / absent keys mean full volume — see
 	// ResolvedSlopVolumes.
 	Slop *SlopConfig `json:"slop,omitempty"`
+
+	// ConvWatch holds persisted UI preferences for the interactive
+	// `tclaude conv ls -w` watch view. Absent → all defaults.
+	ConvWatch *ConvWatchConfig `json:"conv_watch,omitempty"`
+}
+
+// ConvWatchConfig holds the watch view's persisted UI preferences.
+type ConvWatchConfig struct {
+	// Columns is the set of explicit column-visibility overrides, keyed by
+	// column key ("harness", "project", "size", "modified", "groups"). A
+	// key present here shadows that column's smart auto-default (e.g.
+	// HARNESS auto-shows only when a non-Claude conv is present); an absent
+	// key follows the auto rule. Written by the in-view column selector
+	// (the `c` overlay); unknown keys are ignored by readers.
+	Columns map[string]bool `json:"columns,omitempty"`
 }
 
 // SlopConfig holds the slop-mode audio knobs. Both volumes are percent
