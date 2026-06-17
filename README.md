@@ -8,22 +8,33 @@ Coding-harness CLI extensions and utilities — tmux-based session management, c
 
 ## Install
 
-### Homebrew (macOS / Linux)
+Installing tclaude is **two steps regardless of method**: install the binary, then run `tclaude setup` to configure it. Setup is not optional — without it tclaude has no Claude Code hooks, status bar, or clickable-notification handler, so session tracking and notifications won't work.
+
+### 1. Install the binary
+
+Pick whichever you prefer:
+
+**Homebrew (macOS / Linux)**
 
 ```bash
 brew install tofutools/tap/tclaude
 ```
 
-This pulls in `tmux` automatically and builds `tclaude` from source (the Go
-toolchain is fetched as a build dependency). Then run setup as below.
+Pulls in `tmux` automatically and builds `tclaude` from source (the Go toolchain is fetched as a build dependency).
 
-### go install
-
-Requires [Go](https://go.dev/dl/) 1.26+ and [tmux](https://github.com/tmux/tmux) (`tclaude setup` can install tmux for you on macOS).
+**go install** — requires [Go](https://go.dev/dl/) 1.26+ and [tmux](https://github.com/tmux/tmux) (`tclaude setup` can install tmux for you on macOS).
 
 ```bash
 go install github.com/tofutools/tclaude@latest
+```
 
+**Prebuilt binary** — prefer not to build from source? Grab one for your platform (Linux amd64/arm64, macOS arm64) from the [Releases page](https://github.com/tofutools/tclaude/releases) and put it on your `PATH`.
+
+### 2. Run setup
+
+Run this once after installing, no matter how you installed:
+
+```bash
 # Baseline setup + the two extras most users want
 tclaude setup --install-agent-skills --install-default-agent-permissions
 ```
@@ -36,8 +47,6 @@ tclaude setup --install-agent-skills --install-default-agent-permissions
 | `--install-default-agent-permissions` | Grants the `self.*` slugs those skills use | Using the agent coordination features |
 | `--install-sandbox-hardening` | Locks down agentd state in the Claude Code sandbox | Only if you run agents inside the CC sandbox |
 | `--install-all` | Everything above | You want it all |
-
-Prefer not to build from source? Grab a prebuilt binary for your platform (Linux amd64/arm64, macOS arm64) from the [Releases page](https://github.com/tofutools/tclaude/releases), put it on your `PATH`, then run `tclaude setup`.
 
 See the **[Installation guide](https://tofutools.github.io/tclaude/#installation)** for the full walkthrough.
 
