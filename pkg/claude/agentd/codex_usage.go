@@ -104,7 +104,11 @@ func collectCodexUsageSnapshot() *codexDashboardUsage {
 	}
 	fh := codexUsageWindowFor(u.FiveHour)
 	wk := codexUsageWindowFor(u.Weekly)
-	if fh == nil && wk == nil {
+	// Same "show both bars or neither" rule as the Claude readout: when one
+	// window is still open the other renders as a 0% bar rather than
+	// vanishing, so the 5h and weekly bars never appear independently.
+	fh, wk, ok := pairUsageWindows(fh, wk)
+	if !ok {
 		return nil
 	}
 	return &codexDashboardUsage{Available: true, FiveHour: fh, SevenDay: wk}

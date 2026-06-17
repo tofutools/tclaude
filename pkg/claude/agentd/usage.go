@@ -106,24 +106,72 @@ func refreshUsage() {
 // collectUsageSnapshot reads the last-known subscription usage figures
 // from the SQLite cache and formats them for /api/snapshot. It never
 // makes a network call (usageapi.Peek is a pure DB read), so the
-// snapshot handler stays cheap. Returns Available=false — the graceful
-// "n/a" state — when the cache is missing, carries no rolling-limit
-// buckets (e.g. an API-billing account), or has gone stale.
+// snapshot handler stays cheap. The 5h and 7d windows are surfaced as a
+// pair or not at all (see pairUsageWindows): when either is live the
+// other rides along, reset/absent reading as a 0% bar. Returns
+// Available=false — the graceful "n/a" state — when the cache is missing,
+// has gone stale, or carries no live rolling-limit window at all (an
+// API-billing account, or a subscription account idle long enough that
+// both windows have reset).
 func collectUsageSnapshot() dashboardUsage {
 	out := dashboardUsage{TotalCostUSD: monthToDateCost(), TodayCostUSD: todayCost(), Codex: collectCodexUsageSnapshot()}
 	cached := usageapi.Peek()
 	if cached == nil || cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > usageStaleAfter {
 		return out
 	}
-	fh := usageWindowFor(cached.FiveHour)
-	sd := usageWindowFor(cached.SevenDay)
-	if fh == nil && sd == nil {
+	now := time.Now()
+	fh := liveUsageWindow(cached.FiveHour, now)
+	sd := liveUsageWindow(cached.SevenDay, now)
+	fh, sd, ok := pairUsageWindows(fh, sd)
+	if !ok {
 		return out
 	}
 	out.Available = true
 	out.FiveHour = fh
 	out.SevenDay = sd
 	return out
+}
+
+// liveUsageWindow returns the wire shape for a cached bucket only while it
+// still represents live usage: present, nonzero, and not past its own
+// reset. An absent, zero, or already-reset bucket returns nil — the caller
+// then renders it as a 0% bar (see pairUsageWindows), so e.g. a 5h window
+// whose 5 hours have elapsed reads as 0 rather than a stale percentage.
+// The reset check here also makes the 2-second snapshot self-correct the
+// instant a window resets, ahead of the 3-minute usage poll that drops it
+// from the cache.
+func liveUsageWindow(b *usageapi.CachedBucket, now time.Time) *usageWindow {
+	if b == nil || b.Pct <= 0 {
+		return nil
+	}
+	if b.ResetsAt.IsZero() || !b.ResetsAt.After(now) {
+		return nil
+	}
+	return usageWindowFor(b)
+}
+
+// pairUsageWindows enforces the dashboard's "show both bars or neither"
+// rule. Given the live 5h and 7d windows (nil meaning reset, absent, or
+// zero), it returns the pair to render and whether anything is worth
+// showing: when at least one window is live, both come back with a missing
+// one zero-filled (a 0% bar) so the 5h and 7d bars never appear or vanish
+// independently; when neither is live it reports ok=false and the caller
+// degrades to the muted "usage: n/a" (or cost-only) state.
+func pairUsageWindows(fh, sd *usageWindow) (outFh, outSd *usageWindow, ok bool) {
+	if fh == nil && sd == nil {
+		return nil, nil, false
+	}
+	return usageWindowOrZero(fh), usageWindowOrZero(sd), true
+}
+
+// usageWindowOrZero returns w, or a zeroed window (0%, no reset/remaining)
+// when w is nil, so a reset or missing window renders as a 0% bar instead
+// of disappearing.
+func usageWindowOrZero(w *usageWindow) *usageWindow {
+	if w != nil {
+		return w
+	}
+	return &usageWindow{}
 }
 
 // monthToDateCost sums the recorded API cost since the start of the
