@@ -21,8 +21,9 @@ const costDayKey = "2006-01-02"
 
 // costDelta is one recovered slice of actual spend: on this local day,
 // the agent (conv) spent this many dollars. Derived from consecutive
-// cumulative snapshots of a session; multiple sessions of the same
-// conv simply contribute separate deltas.
+// cumulative snapshots, baselined per conversation — so multiple
+// sessions of the same conv (a resume) telescope into one running
+// total rather than each re-counting the conversation's cumulative.
 type costDelta struct {
 	day       string
 	convID    string
@@ -31,22 +32,35 @@ type costDelta struct {
 	updatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 }
 
-// costDeltasFromRows turns cumulative (session, day) snapshots into
-// per-day spend deltas. Rows must be ordered (session_id, day) — the
-// order AllCostDailyRows returns. Within a session, a day's spend is
-// its snapshot minus the highest snapshot of any earlier day; the
-// session's first day carries its whole cumulative value (for rows
-// born in the v51 backfill that means pre-existing history lands on
-// the migration day). The high-water baseline clamps the /clear edge:
-// a cumulative figure that dips and recovers only counts the rise
-// above the previous maximum, never a negative day.
+// costDeltasFromRows turns cumulative (conv, day) snapshots into per-day
+// spend deltas. Rows must be ordered (conv-key, day, session_id) — the
+// order AllCostDailyRows returns. The high-water baseline is carried per
+// CONVERSATION, not per session: Claude Code's total_cost_usd is
+// cumulative across the whole conversation and persists across resume, so
+// when a conv is resumed under a new tclaude session (a new day, or just
+// a fresh pane) that session's first snapshot already includes the prior
+// spend. Baselining per conv recovers only the genuine rise — the
+// session's first day no longer re-counts the conversation's whole
+// cumulative, which was the multi-day (and same-day double-resume)
+// double-count bug. The conv-key falls back to session_id for the rare
+// row with no denormalised conv_id, so unrelated sessions never merge.
+// A day's spend is its snapshot minus the conversation's high-water mark
+// across all earlier rows; the conversation's first day carries its whole
+// cumulative value (for rows born in the v51 backfill that means
+// pre-existing history lands on the migration day). The high-water
+// baseline clamps a dip-and-recover: only the rise above the previous
+// maximum counts, never a negative day.
 func costDeltasFromRows(rows []db.CostDailyRow) []costDelta {
 	var out []costDelta
-	prevSession := ""
+	prevKey := ""
 	baseline := 0.0
 	for _, r := range rows {
-		if r.SessionID != prevSession {
-			prevSession = r.SessionID
+		key := r.ConvID
+		if key == "" {
+			key = r.SessionID
+		}
+		if key != prevKey {
+			prevKey = key
 			baseline = 0
 		}
 		if d := r.CostUSD - baseline; d > 0 {
@@ -95,23 +109,31 @@ type costDayPoint struct {
 	CostUSD float64 `json:"cost_usd"`
 }
 
-// costAgentRow is one row of the Costs tab's per-agent breakdown:
-// spend within the requested span, grouped by conversation (the
-// dashboard's notion of an agent). Title resolves through the same
+// costAgentRow is one row of the Costs tab's per-agent breakdown: spend
+// by one conversation (the dashboard's notion of an agent) on one local
+// day within the requested span. A conversation that spent across
+// several days yields one row per day, so a resume reads as the genuine
+// per-day split (e.g. $16.44 the day it started, $3.64 the day it was
+// continued) instead of one lump. Continued marks the earlier-day
+// slices of such a multi-day conversation — every slice except its
+// latest day in the span — so the surface can flag them (a ↩ icon) as
+// continuations of the row shown above. Title resolves through the same
 // cached lookup the snapshot uses; a conv deleted since the spend was
-// recorded keeps its history under the "(unknown)" placeholder.
-// Model is the display name reported by the agent's most recent
-// costed session in the span — "latest model wins" when sessions ran
-// different models; empty when no live sessions row still carries one.
-// LastActivity is the wall-clock time (RFC3339Nano) of the agent's
-// most recent spend on LastDay — the finer-grained timestamp the
+// recorded keeps its history under the "(unknown)" placeholder. Model
+// is the display name reported by the day's most recent costed session;
+// empty when no live sessions row still carries one. Day is the slice's
+// local calendar day; LastActivity is the wall-clock time (RFC3339Nano)
+// of the slice's most recent spend — the finer-grained timestamp the
 // breakdown shows and sorts on; "" when unknown (pre-v53 history whose
 // session was already gone), in which case the surface falls back to
-// LastDay's calendar date.
+// LastDay. LastDay equals Day (the slice's only day) and is kept for
+// the wire's existing last-activity fallback.
 type costAgentRow struct {
 	ConvID       string  `json:"conv_id"`
 	Title        string  `json:"title"`
+	Day          string  `json:"day"`
 	CostUSD      float64 `json:"cost_usd"`
+	Continued    bool    `json:"continued,omitempty"`
 	LastDay      string  `json:"last_day"`
 	LastActivity string  `json:"last_activity,omitempty"`
 	Model        string  `json:"model"`
@@ -159,41 +181,49 @@ func collectCosts(from time.Time) (costsResponse, error) {
 	}
 
 	byDay := map[string]float64{}
-	type agentAgg struct {
-		usd     float64
-		lastDay string
-		// lastActivity is the RFC3339Nano time of the agent's last spend
-		// on lastDay — the finest-grained "last activity" the breakdown
-		// can show. A newer day always replaces it; a same-day delta only
-		// raises it. "" when no contributing row carried a timestamp.
+	type sliceAgg struct {
+		usd float64
+		// lastActivity is the RFC3339Nano time of the slice's last spend —
+		// the finest-grained "last activity" the breakdown can show; a
+		// later same-day stamp raises it. "" when no contributing row
+		// carried a timestamp.
 		lastActivity string
-		// model of the latest-day session with a known model; modelDay
-		// tracks that day so a model-less session (its row deleted, or
-		// no statusline tick yet) never blanks an older known value.
-		model    string
-		modelDay string
+		// model of the slice's latest-stamped session with a known model;
+		// modelAt tracks that stamp so a model-less session (its row
+		// deleted, or no statusline tick yet) never blanks a value recorded
+		// earlier the same day.
+		model   string
+		modelAt string
 	}
-	byConv := map[string]*agentAgg{}
+	// One aggregate per (conv, day): a conversation that spent across
+	// several days breaks into one row per day, so a resume shows its true
+	// per-day split rather than one lump.
+	type sliceKey struct{ conv, day string }
+	bySlice := map[sliceKey]*sliceAgg{}
+	// Latest in-span day each conv spent on — drives the Continued flag:
+	// every slice below a conv's latest day is an earlier continuation.
+	convMaxDay := map[string]string{}
 	total := 0.0
 	for _, d := range deltas {
 		if d.day < fromKey || d.day > toKey {
 			continue
 		}
 		byDay[d.day] += d.usd
-		a := byConv[d.convID]
+		k := sliceKey{d.convID, d.day}
+		a := bySlice[k]
 		if a == nil {
-			a = &agentAgg{}
-			byConv[d.convID] = a
+			a = &sliceAgg{}
+			bySlice[k] = a
 		}
 		a.usd += d.usd
-		switch {
-		case d.day > a.lastDay:
-			a.lastDay, a.lastActivity = d.day, d.updatedAt
-		case d.day == a.lastDay && d.updatedAt > a.lastActivity:
+		if d.updatedAt > a.lastActivity {
 			a.lastActivity = d.updatedAt
 		}
-		if m := models[d.sessionID]; m != "" && d.day >= a.modelDay {
-			a.model, a.modelDay = m, d.day
+		if m := models[d.sessionID]; m != "" && d.updatedAt >= a.modelAt {
+			a.model, a.modelAt = m, d.updatedAt
+		}
+		if d.day > convMaxDay[d.convID] {
+			convMaxDay[d.convID] = d.day
 		}
 		total += d.usd
 	}
@@ -207,12 +237,14 @@ func collectCosts(from time.Time) (costsResponse, error) {
 		}
 		out.Days = append(out.Days, costDayPoint{Day: key, CostUSD: byDay[key]})
 	}
-	for convID, a := range byConv {
+	for k, a := range bySlice {
 		out.Agents = append(out.Agents, costAgentRow{
-			ConvID:       convID,
-			Title:        agent.CachedTitle(convID),
+			ConvID:       k.conv,
+			Title:        agent.CachedTitle(k.conv),
+			Day:          k.day,
 			CostUSD:      a.usd,
-			LastDay:      a.lastDay,
+			Continued:    k.day < convMaxDay[k.conv],
+			LastDay:      k.day,
 			LastActivity: a.lastActivity,
 			Model:        a.model,
 		})

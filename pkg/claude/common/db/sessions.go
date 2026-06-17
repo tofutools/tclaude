@@ -706,12 +706,18 @@ type CostDailyRow struct {
 // (a "2006-01-02" key) — the top bar's month-to-date figure, computed
 // DB-side so the 2s snapshot tick never scans cost history into Go.
 //
-// Per session, spend within the window is the peak cumulative snapshot
-// in the window minus the high-water mark before it, clamped at zero —
-// the closed form of the day-by-day delta walk agentd's Costs tab
-// aggregation performs (rises above a running maximum telescope to
-// final-peak − initial-peak), so the two surfaces always agree. The
-// agentd unit tests pin both to the same fixture.
+// Per conversation (NOT per session), spend within the window is the
+// peak cumulative snapshot in the window minus the high-water mark
+// before it, clamped at zero — the closed form of the day-by-day delta
+// walk agentd's Costs tab aggregation performs (rises above a running
+// maximum telescope to final-peak − initial-peak), so the two surfaces
+// always agree. Grouping per conversation is what defeats the
+// resume-across-sessions double-count: Claude Code's cumulative cost
+// persists across resume, so a conv resumed under a new session id must
+// not have that session's whole cumulative counted afresh. The grouping
+// key falls back to session_id for the rare row with no denormalised
+// conv_id, so unrelated sessions never merge. The agentd unit tests pin
+// both surfaces to the same fixture.
 func SumCostSinceDay(fromDay string) (float64, error) {
 	db, err := Open()
 	if err != nil {
@@ -720,27 +726,31 @@ func SumCostSinceDay(fromDay string) (float64, error) {
 	var total float64
 	err = db.QueryRow(`
 		SELECT COALESCE(SUM(MAX(0, w.peak - COALESCE(b.base, 0))), 0)
-		FROM (SELECT session_id, MAX(cost_usd) AS peak
-		      FROM session_cost_daily WHERE day >= ? GROUP BY session_id) w
-		LEFT JOIN (SELECT session_id, MAX(cost_usd) AS base
-		           FROM session_cost_daily WHERE day < ? GROUP BY session_id) b
-		  ON b.session_id = w.session_id`, fromDay, fromDay).Scan(&total)
+		FROM (SELECT COALESCE(NULLIF(conv_id, ''), session_id) AS k, MAX(cost_usd) AS peak
+		      FROM session_cost_daily WHERE day >= ? GROUP BY k) w
+		LEFT JOIN (SELECT COALESCE(NULLIF(conv_id, ''), session_id) AS k, MAX(cost_usd) AS base
+		           FROM session_cost_daily WHERE day < ? GROUP BY k) b
+		  ON b.k = w.k`, fromDay, fromDay).Scan(&total)
 	return total, err
 }
 
 // AllCostDailyRows returns every session_cost_daily row ordered by
-// (session_id, day) — the order the cost aggregation walks to turn
-// cumulative snapshots into per-day deltas. The table stays small
-// (sessions × active days, API-priced sessions only), so callers read
-// it whole and aggregate in Go rather than encoding the windowed
-// delta logic in SQL.
+// (conv-key, day, session_id) — the order the cost aggregation walks to
+// turn cumulative snapshots into per-day deltas. The conv-key groups all
+// of a conversation's sessions together (falling back to session_id for
+// the rare row with no denormalised conv_id) so the per-day delta walk
+// can carry one high-water baseline across a resume; day then session
+// orders within a conversation. The table stays small (sessions × active
+// days, API-priced sessions only), so callers read it whole and
+// aggregate in Go rather than encoding the windowed delta logic in SQL.
 func AllCostDailyRows() ([]CostDailyRow, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, updated_at
-		FROM session_cost_daily ORDER BY session_id, day`)
+		FROM session_cost_daily
+		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, session_id`)
 	if err != nil {
 		return nil, err
 	}

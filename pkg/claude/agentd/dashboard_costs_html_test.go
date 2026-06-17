@@ -107,6 +107,13 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// Breakdown table: the per-agent model column.
 	must("<th>Model</th>", "model column header present")
 	must("a.model", "model field rendered from the API row")
+
+	// Continued-conversation marker: a multi-day conversation splits into
+	// one row per day, and the earlier-day slices carry `continued`,
+	// rendered with a ↩ marker styled by .cost-cont.
+	must("a.continued", "continuation flag read from the API row")
+	must("↩", "continuation marker glyph rendered")
+	must(".cost-cont", "continuation marker styled")
 }
 
 // TestDashboardHTML_CostsFillEmptyWeekdaysWired guards the Costs tab's
