@@ -79,7 +79,7 @@ instead of slash-command injection).
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ one-time trust) |
 | **OS sandbox at spawn** | ⚙️ configured in `settings.json` | ✅ managed profile (default) or raw `--sandbox` flag |
 | **Approval posture at spawn** | ⚙️ configured in `settings.json` | ✅ `--ask-for-approval` flag, non-blocking default for agents |
-| **Guardian auto-review** | ❌ not applicable | ⚙️ opt-in `--auto-review` (experimental) |
+| **Auto-approve review** | ⚙️ `auto` permission mode (model classifier) | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) |
 | **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items |
 | **Dashboard** | ✅ | ✅ (with a harness badge + per-harness spawn menu) |
 
