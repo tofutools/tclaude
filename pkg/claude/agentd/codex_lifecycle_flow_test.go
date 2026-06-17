@@ -68,6 +68,20 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	// resolves to the intended --name either way.
 	f.AssertGroupMember("codex-crew", spawn.ConvID, "codex-worker", 5*time.Second)
 
+	// Drain the post-spawn welcome injection BEFORE anything else types
+	// into this pane. runSpawnPostInit fires asynchronously (goBackground)
+	// and injects a [system: …] welcome via injectTextAndSubmit — the
+	// bracket text, then a trailing Enter. The CodexSim accumulates
+	// keystrokes into ONE buffer until an Enter flushes it, so if the
+	// welcome's Enter is still in flight when the soft-stop below injects
+	// `/quit`, the two interleave: the welcome's Enter flushes a line that
+	// no longer starts with `/quit`, the quit handler's MarkDead never
+	// runs, and the pane stays alive — the rare macOS-CI flake this test
+	// hit. Waiting for the background goroutine guarantees the welcome has
+	// fully landed (turn written, buffer drained) so the message nudge and
+	// `/quit` below — both synchronous — can't race it.
+	agentd.WaitForBackgroundForTest()
+
 	// Message it: a grouped peer sends; the message lands in the Codex
 	// worker's inbox and nudges its live pane — proving the messaging
 	// transport is harness-agnostic.
@@ -92,8 +106,10 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 		"daemon soft-stop must record a clean reason before the reaper sees Codex disappear")
 
 	// `/quit` took the pane down: the CodexSim's quit handler flipped it
-	// dead, so has-session now reports offline. Poll because send-keys
-	// delivery and command dispatch can lag very slightly on macOS CI.
+	// dead, so has-session now reports offline. With the welcome drained
+	// above, the `/quit` injection no longer races it on the input buffer,
+	// so MarkDead runs synchronously during the stop; the short poll stays
+	// only as a defensive guard against send-keys settle timing.
 	require.Eventually(t, func() bool {
 		return !f.World.Tmux.IsAlive(spawn.TmuxSession)
 	}, 2*time.Second, 10*time.Millisecond,
