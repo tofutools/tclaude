@@ -85,11 +85,12 @@ func TestDashboardSnapshot_CodexModelAndEffortSurfaced(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("squad")
 	cx := f.HaveAliveCodexSession(conv, label, "tmux-codx-model", "/tmp/codx-model")
+	cx.Effort = "high"
+	require.NoError(t, cx.WriteUserInput("start"))
 	f.HaveMember("squad", conv)
 
-	require.NoError(t, db.UpdateSessionEffort(label, "high"), "seed Codex launch effort")
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
-		HookEventName:  "SessionStart",
+		HookEventName:  "Stop",
 		ConvID:         conv,
 		Cwd:            "/tmp/codx-model",
 		Model:          "gpt-5-codex",

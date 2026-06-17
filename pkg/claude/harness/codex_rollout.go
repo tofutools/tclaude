@@ -60,8 +60,14 @@ type codexEventMsg struct {
 // uses it as the model fallback (and cwd fallback) when there is no
 // threads-DB row.
 type codexTurnContext struct {
-	Model string `json:"model"`
-	Cwd   string `json:"cwd"`
+	Model             string `json:"model"`
+	Cwd               string `json:"cwd"`
+	Effort            string `json:"effort"`
+	CollaborationMode struct {
+		Settings struct {
+			ReasoningEffort string `json:"reasoning_effort"`
+		} `json:"settings"`
+	} `json:"collaboration_mode"`
 }
 
 // codexRollout is the subset of a rollout's head the read path harvests —
@@ -162,6 +168,63 @@ func openCodexRollout(path string) (io.ReadCloser, error) {
 		return &zstdReadCloser{zr: zr, f: f}, nil
 	}
 	return f, nil
+}
+
+// CodexEffortLevel locates convID's rollout under home and returns the most
+// recent reasoning-effort level recorded in its turn_context snapshots.
+func CodexEffortLevel(home, convID string) (string, bool, error) {
+	path, err := findCodexRollout(home, convID)
+	if err != nil {
+		return "", false, err
+	}
+	if path == "" {
+		return "", false, nil
+	}
+	return CodexEffortFromRollout(path)
+}
+
+// CodexEffortFromRollout returns the latest non-empty reasoning effort found
+// in a rollout's turn_context payloads. Codex has used both
+// payload.effort and payload.collaboration_mode.settings.reasoning_effort
+// across sampled versions, so accept either.
+func CodexEffortFromRollout(path string) (string, bool, error) {
+	rc, err := openCodexRollout(path)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = rc.Close() }()
+
+	scanner := bufio.NewScanner(rc)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutLineBytes)
+	var latest string
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var env codexEnvelope
+		if json.Unmarshal(line, &env) != nil || env.Type != "turn_context" {
+			continue
+		}
+		var tc codexTurnContext
+		if json.Unmarshal(env.Payload, &tc) != nil {
+			continue
+		}
+		effort := tc.Effort
+		if effort == "" {
+			effort = tc.CollaborationMode.Settings.ReasoningEffort
+		}
+		if v, err := (codexModels{}).ValidateEffort(effort); err == nil && v != "" {
+			latest = v
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", false, fmt.Errorf("scan codex rollout %s: %w", path, err)
+	}
+	if latest == "" {
+		return "", false, nil
+	}
+	return latest, true, nil
 }
 
 // zstdReadCloser couples a zstd decoder to its backing file so a single

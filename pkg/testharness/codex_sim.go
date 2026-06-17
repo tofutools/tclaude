@@ -77,10 +77,12 @@ type CodexSim struct {
 	Cwd         string
 	RolloutPath string
 
-	// Model / CliVersion / ContextWindow stamp the lines the read path
-	// reads for harness/model/context% resolution. Defaults match the
-	// sampled v0.139 session; override before Start to model another.
+	// Model / Effort / CliVersion / ContextWindow stamp the lines the read
+	// path reads for harness/model/effort/context% resolution. Defaults
+	// match the sampled v0.139 session; override before Start to model
+	// another.
 	Model         string
+	Effort        string
 	CliVersion    string
 	ContextWindow int
 
@@ -141,6 +143,7 @@ func NewCodexSimWithID(t *testing.T, home, convID, cwd string) *CodexSim {
 		Cwd:           cwd,
 		RolloutPath:   codexRolloutPath(home, convID, created),
 		Model:         "gpt-5.5",
+		Effort:        "high",
 		CliVersion:    "0.139.0",
 		ContextWindow: 258400,
 		createdAt:     created,
@@ -535,6 +538,15 @@ func (c *CodexSim) turnContextPayload(turnID string) map[string]any {
 		},
 		"model":       c.Model,
 		"personality": "pragmatic",
+		"collaboration_mode": map[string]any{
+			"mode": "default",
+			"settings": map[string]any{
+				"model":            c.Model,
+				"reasoning_effort": c.Effort,
+			},
+		},
+		"effort":  c.Effort,
+		"summary": "auto",
 	}
 }
 
