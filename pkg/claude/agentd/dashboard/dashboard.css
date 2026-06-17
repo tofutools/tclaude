@@ -1927,12 +1927,32 @@ body.slop nav button[data-tab="vegas"] { display: block; }
   border-bottom: 1px dotted rgba(255, 232, 140, 0.5);
 }
 .vegas-song a:hover { color: #fff; border-bottom-color: #fff; }
+/* Elapsed-time counter (real time-on-air, not a progress bar — the live
+   stream has no duration). Tabular figures so the seconds don't jitter. */
+.vegas-elapsed-sep { color: #c9a86b; }
+.vegas-elapsed {
+  color: #c9a86b;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
 .vegas-station {
   color: #c9a86b;
   font-size: 13px;
   text-shadow: 0 0 6px rgba(255, 215, 0, 0.3);
 }
 #vegas-player audio { width: 100%; }
+/* The radio is a live stream: it has no per-song duration, so the native
+   <audio> seek bar has no real position to show — it just pins at the end,
+   and its time readout counts the whole listening session, not the track.
+   Hide the timeline + time displays (Chromium/Safari) so the elapsed
+   counter next to the song name is the one honest position indicator;
+   play/pause + volume stay. Browsers without these pseudo-elements (e.g.
+   Firefox) keep the native bar — a harmless fallback. */
+#vegas-player audio::-webkit-media-controls-timeline,
+#vegas-player audio::-webkit-media-controls-current-time-display,
+#vegas-player audio::-webkit-media-controls-time-remaining-display {
+  display: none;
+}
 .vegas-error { color: #ffb3b3; font-size: 13px; }
 .vegas-error a { color: #ffe88c; }
 

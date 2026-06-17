@@ -132,20 +132,35 @@ function startMusic() {
 // paints "♪ Artist — Title" into #vegas-song, the title linking to a
 // YouTube search for the track. Independent of playback state, so the song
 // still shows while the stream is armed-muted before the first gesture.
+//
+// The "· 1:23" after the title is REAL time-on-air, counted up from the
+// track's actual start (the feed's start timestamp) by a 1s ticker. It is
+// NOT a progress bar: SomaFM exposes no song duration, so there's no honest
+// percent-complete to fill. The native <audio> seek bar is even less
+// meaningful for a live stream (no fixed length, and its time readout is
+// the whole listening session, not the song) — dashboard.css hides that
+// bar so this counter is the one position indicator.
 const NOWPLAYING_POLL_MS = 30000;
 let nowPlayingTimer = null;
+let elapsedTimer = null;
 let lastNowPlayingKey = null;
+let songStartedAt = null; // unix seconds the current track went on air, or null
 
 function startNowPlayingPoll() {
   stopNowPlayingPoll();
   lastNowPlayingKey = null;
+  songStartedAt = null;
   refreshNowPlaying();
   nowPlayingTimer = setInterval(refreshNowPlaying, NOWPLAYING_POLL_MS);
+  // A separate 1s tick advances the elapsed counter between the 30s polls.
+  elapsedTimer = setInterval(tickElapsed, 1000);
 }
 
 function stopNowPlayingPoll() {
   if (nowPlayingTimer) { clearInterval(nowPlayingTimer); nowPlayingTimer = null; }
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
   lastNowPlayingKey = null;
+  songStartedAt = null;
 }
 
 async function refreshNowPlaying() {
@@ -165,11 +180,14 @@ function renderNowPlaying(el, data) {
     // Empty feed — hide the line rather than show a stale track.
     el.replaceChildren();
     lastNowPlayingKey = null;
+    songStartedAt = null;
     return;
   }
   const key = artist + '' + title;
   if (key === lastNowPlayingKey) return; // unchanged — no DOM churn
   lastNowPlayingKey = key;
+  const started = Number(data && data.started_at) || 0;
+  songStartedAt = started > 0 ? started : null;
 
   el.replaceChildren();
   el.append('♪ ');
@@ -188,6 +206,40 @@ function renderNowPlaying(el, data) {
   } else if (title) {
     el.append(title);
   }
+
+  // Elapsed counter — only when we actually know the start time.
+  if (songStartedAt != null) {
+    const sep = document.createElement('span');
+    sep.className = 'vegas-elapsed-sep';
+    sep.textContent = ' · ';
+    const elapsed = document.createElement('span');
+    elapsed.className = 'vegas-elapsed';
+    elapsed.id = 'vegas-elapsed';
+    elapsed.title = 'Time on air (track started ' +
+      new Date(songStartedAt * 1000).toLocaleTimeString() + ')';
+    el.appendChild(sep);
+    el.appendChild(elapsed);
+    tickElapsed(); // paint immediately, don't wait a second
+  }
+}
+
+// tickElapsed advances the elapsed counter from songStartedAt. Clamped at
+// 0 so listener buffering / clock skew can't show a negative time.
+function tickElapsed() {
+  const el = document.getElementById('vegas-elapsed');
+  if (!el || songStartedAt == null) return;
+  let sec = Math.floor(Date.now() / 1000) - songStartedAt;
+  if (sec < 0) sec = 0;
+  el.textContent = formatElapsed(sec);
+}
+
+// formatElapsed renders seconds as m:ss (or h:mm:ss past an hour).
+function formatElapsed(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const ss = String(sec % 60).padStart(2, '0');
+  if (h) return h + ':' + String(m).padStart(2, '0') + ':' + ss;
+  return m + ':' + ss;
 }
 
 // playWithSound starts the stream audibly. From a toggle click we hold a

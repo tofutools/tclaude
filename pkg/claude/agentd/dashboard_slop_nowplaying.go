@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,21 +54,31 @@ const (
 
 // nowPlaying is the wire shape the dashboard renders. Empty fields render
 // as "no song line"; SearchURL is a prebuilt "go hear this exact track"
-// link the title links to.
+// link the title links to. StartedAt is the unix second the track went on
+// air (from the feed) — the dashboard counts elapsed "time on air" up from
+// it. It is 0 when the feed omits/garbles the timestamp, which the UI
+// reads as "no elapsed counter".
+//
+// Note there is no song *duration* anywhere in SomaFM's metadata, so there
+// is no honest percent-complete to send — hence an elapsed counter, not a
+// 0→length progress bar (a live stream has no per-song length anyway).
 type nowPlaying struct {
 	Title     string `json:"title"`
 	Artist    string `json:"artist"`
 	Album     string `json:"album"`
 	SearchURL string `json:"search_url"`
+	StartedAt int64  `json:"started_at"`
 }
 
 // somaSongsDoc is the subset of SomaFM's songs XML we parse. encoding/xml
-// unwraps the CDATA in each field for us.
+// unwraps the CDATA in each field for us. <date> is the unix second the
+// track started.
 type somaSongsDoc struct {
 	Songs []struct {
 		Title  string `xml:"title"`
 		Artist string `xml:"artist"`
 		Album  string `xml:"album"`
+		Date   string `xml:"date"`
 	} `xml:"song"`
 }
 
@@ -200,11 +211,18 @@ func parseNowPlaying(raw []byte) (*nowPlaying, error) {
 	if title == "" && artist == "" {
 		return nil, nil
 	}
+	// A bad/absent <date> just means "no elapsed counter" — never fail the
+	// whole track over it.
+	var startedAt int64
+	if n, err := strconv.ParseInt(strings.TrimSpace(s.Date), 10, 64); err == nil && n > 0 {
+		startedAt = n
+	}
 	return &nowPlaying{
 		Title:     title,
 		Artist:    artist,
 		Album:     strings.TrimSpace(s.Album),
 		SearchURL: youtubeSearchURL(artist, title),
+		StartedAt: startedAt,
 	}, nil
 }
 

@@ -70,6 +70,10 @@ func TestParseNowPlaying_FirstSongAndLatin1(t *testing.T) {
 	assert.Equal(t, "André Previn", np.Artist)
 	assert.Equal(t, "Live", np.Album)
 
+	// The first song's <date> is its start time — the dashboard counts
+	// elapsed time up from it.
+	assert.Equal(t, int64(1781704016), np.StartedAt)
+
 	// The search link points at YouTube for "Artist Title", URL-escaped.
 	assert.True(t, strings.HasPrefix(np.SearchURL, "https://www.youtube.com/results?search_query="),
 		"search_url must be a YouTube search, got %q", np.SearchURL)
@@ -85,6 +89,23 @@ func TestParseNowPlaying_EmptyAndBlankAreNoSong(t *testing.T) {
 		np, err := parseNowPlaying([]byte(feed))
 		require.NoError(t, err, name)
 		assert.Nil(t, np, "%s must produce no song", name)
+	}
+}
+
+func TestParseNowPlaying_StartedAtDegradesToZero(t *testing.T) {
+	// A missing or garbled <date> must not drop the track — it just means
+	// "no elapsed counter" (StartedAt 0), which the UI reads as "hide it".
+	cases := map[string]string{
+		"no date":      `<?xml version="1.0" encoding="ISO-8859-1"?><songs><song><title><![CDATA[T]]></title><artist><![CDATA[A]]></artist></song></songs>`,
+		"garbage date": `<?xml version="1.0" encoding="ISO-8859-1"?><songs><song><title><![CDATA[T]]></title><artist><![CDATA[A]]></artist><date>not-a-number</date></song></songs>`,
+		"zero date":    `<?xml version="1.0" encoding="ISO-8859-1"?><songs><song><title><![CDATA[T]]></title><artist><![CDATA[A]]></artist><date>0</date></song></songs>`,
+	}
+	for name, feed := range cases {
+		np, err := parseNowPlaying([]byte(feed))
+		require.NoError(t, err, name)
+		require.NotNil(t, np, "%s: the track must survive a bad date", name)
+		assert.Equal(t, "T", np.Title, name)
+		assert.Equal(t, int64(0), np.StartedAt, "%s: bad date → no elapsed", name)
 	}
 }
 

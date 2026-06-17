@@ -37,7 +37,20 @@ func TestDashboardHTML_NowPlaying(t *testing.T) {
 	must("startNowPlayingPoll();", "the poll starts when the player is built")
 	must("stopNowPlayingPoll();", "the poll stops when music stops")
 
-	// CSS hooks for the two lines.
+	// Elapsed counter: real time-on-air from the feed's start timestamp,
+	// ticked every second (not a progress bar — the live stream has no
+	// duration).
+	must("started_at", "vegas.js reads the track start timestamp")
+	must("'vegas-elapsed'", "vegas.js targets the elapsed-time element")
+	must("function tickElapsed", "the 1s elapsed ticker exists")
+	must("function formatElapsed", "elapsed seconds are formatted m:ss")
+
+	// CSS hooks for the lines + the elapsed counter.
 	must(".vegas-song {", "the song line is styled")
 	must(".vegas-station {", "the station line is styled")
+	must(".vegas-elapsed {", "the elapsed counter is styled")
+
+	// The misleading native seek bar is hidden — a live stream has no
+	// song position to fill, so the elapsed counter is the only indicator.
+	must("-webkit-media-controls-timeline", "the native live-stream seek bar is hidden")
 }
