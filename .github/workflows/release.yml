@@ -9,6 +9,11 @@ on:
       - 'mkdocs.yml'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
+    inputs:
+      homebrew_only:
+        description: "Only sync the Homebrew tap to the latest release (skip test/build/release)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,6 +25,7 @@ concurrency:
 jobs:
   test:
     name: Test
+    if: ${{ inputs.homebrew_only != true }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -43,6 +49,7 @@ jobs:
 
   version:
     name: Generate Version
+    if: ${{ inputs.homebrew_only != true }}
     runs-on: ubuntu-latest
     needs: test
     permissions:
@@ -77,6 +84,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.os }})
+    if: ${{ inputs.homebrew_only != true }}
     runs-on: ${{ matrix.os }}
     needs: version
     strategy:
@@ -125,6 +133,7 @@ jobs:
 
   release:
     name: Release
+    if: ${{ inputs.homebrew_only != true }}
     runs-on: ubuntu-latest
     needs: [version, build]
     permissions:
@@ -170,10 +179,20 @@ jobs:
   # Keep the Homebrew tap (tofutools/homebrew-tap) in sync with each release.
   # The formula builds from source, so all we bump is the source-tarball URL
   # and its sha256. Requires a HOMEBREW_TAP_TOKEN secret (a PAT / fine-grained
-  # token with Contents:write on tofutools/homebrew-tap); without it this job
-  # no-ops so releases are never blocked on the tap.
+  # token with Contents:write on tofutools/homebrew-tap); on the release path,
+  # a missing token no-ops so releases are never blocked on the tap.
+  #
+  # Run it on its own — without cutting a release — via the Actions "Run
+  # workflow" button with the "homebrew_only" box ticked (or:
+  #   gh workflow run release.yml -f homebrew_only=true
+  # ). In that mode it syncs the formula to the LATEST published release and a
+  # missing token is a hard error (you asked for it explicitly).
   homebrew:
     name: Update Homebrew tap
+    # Runs after a normal release, OR standalone when homebrew_only is set
+    # (in which case test/version/build/release are skipped, so this gates on
+    # !cancelled() rather than success of those jobs).
+    if: ${{ !cancelled() && (inputs.homebrew_only == true || (needs.version.result == 'success' && needs.release.result == 'success')) }}
     runs-on: ubuntu-latest
     needs: [version, release]
     permissions:
@@ -183,8 +202,13 @@ jobs:
         id: guard
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_ONLY: ${{ inputs.homebrew_only }}
         run: |
           if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            if [ "${HOMEBREW_ONLY}" = "true" ]; then
+              echo "::error::HOMEBREW_TAP_TOKEN is not set (or empty)."
+              exit 1
+            fi
             echo "HOMEBREW_TAP_TOKEN not set - skipping Homebrew tap update."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
@@ -200,12 +224,22 @@ jobs:
           path: tap
 
       - name: Update formula
+        id: formula
         if: steps.guard.outputs.enabled == 'true'
         env:
+          # Empty on the homebrew_only path (the version job is skipped); we
+          # then resolve the latest published release tag instead.
           VERSION: ${{ needs.version.outputs.new_version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          url="https://github.com/tofutools/tclaude/archive/refs/tags/${VERSION}.tar.gz"
+          version="${VERSION}"
+          if [ -z "${version}" ]; then
+            version="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)"
+            echo "Resolved latest release: ${version}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          url="https://github.com/tofutools/tclaude/archive/refs/tags/${version}.tar.gz"
           # GitHub's auto-generated source tarball can lag the tag by a few
           # seconds, so retry until it's downloadable.
           ok=false
@@ -239,5 +273,5 @@ jobs:
             exit 0
           fi
           git add Formula/tclaude.rb
-          git commit -m "tclaude ${{ needs.version.outputs.new_version }}"
+          git commit -m "tclaude ${{ steps.formula.outputs.version }}"
           git push
