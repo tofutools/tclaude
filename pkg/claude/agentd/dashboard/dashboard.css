@@ -1883,20 +1883,9 @@ body.slop .slop-machine[data-status="exited"] {
    #vegas-player on slop-enable and removes it on disable. */
 nav button[data-tab="vegas"] { display: none; }
 body.slop nav button[data-tab="vegas"] { display: block; }
-.vegas-intro {
-  text-align: center;
-  color: #ffe88c;
-  font-size: 15px;
-  margin: 4px 0 16px;
-  text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
-}
-.vegas-hint {
-  text-align: center;
-  color: #c9a86b;
-  font-size: 12px;
-  margin-top: 12px;
-}
-#vegas-player {
+/* The card holds the welcome intro (its header) above the dynamic player
+   content (song/station/audio, injected into #vegas-player by vegas.js). */
+.vegas-card {
   max-width: 720px;
   margin: 0 auto;
   padding: 22px;
@@ -1906,6 +1895,24 @@ body.slop nav button[data-tab="vegas"] { display: block; }
   box-shadow: 0 0 24px rgba(255, 215, 0, 0.25);
   text-align: center;
 }
+.vegas-intro {
+  color: #ffe88c;
+  font-size: 15px;
+  margin: 0;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
+}
+.vegas-hint {
+  text-align: center;
+  color: #c9a86b;
+  font-size: 12px;
+  margin-top: 12px;
+}
+/* #vegas-player is just the dynamic content holder now (the card styling
+   moved to .vegas-card). The gap below the intro only appears once vegas.js
+   has injected content, so a muted/empty player shows just the intro header
+   with no dead space. :empty matches because stopMusic/replaceChildren
+   leaves it with zero children. */
+#vegas-player:not(:empty) { margin-top: 16px; }
 .vegas-nowplaying {
   margin-bottom: 14px;
   letter-spacing: 0.4px;
