@@ -43,8 +43,9 @@ func TestSessionReaper_MarksDeadSessionExited(t *testing.T) {
 // Scenario: a live session's pane dies with no SessionEnd hook — an
 // unclean death. The reaper must not only mark it exited but stamp
 // exit_reason='unexpected', the signal the dashboard renders as
-// "crashed". A graceful /exit would have recorded its own reason via
-// the SessionEnd hook and the reaper would have skipped the row.
+// "crashed" for Claude Code. A graceful /exit would have recorded its
+// own reason via the SessionEnd hook and the reaper would have skipped
+// the row.
 func TestSessionReaper_StampsUnexpectedExitReason(t *testing.T) {
 	f := newFlow(t)
 
@@ -61,6 +62,29 @@ func TestSessionReaper_StampsUnexpectedExitReason(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "unexpected", reason,
 		"a session reaped with no recorded SessionEnd reason is stamped unexpected")
+}
+
+// Scenario: a Codex pane disappears with no recorded reason. Codex has
+// no reliable SessionEnd hook, so a normal terminal close reaches the
+// reaper looking exactly like "no reason recorded". That must render as
+// plain offline, not crashed, unless another path recorded a specific
+// failure reason first.
+func TestSessionReaper_CodexCloseWithoutReasonStaysPlainOffline(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "codx-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "codex-worker")
+	f.HaveAliveCodexSession(conv, "spwn-codx", "tmux-codx", "/tmp/codx")
+	f.MarkOffline("tmux-codx")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead Codex session should be reaped")
+	assert.Equal(t, "exited", statusOf(t, "spwn-codx"))
+
+	reason, err := db.GetSessionExitReason("spwn-codx")
+	require.NoError(t, err)
+	assert.Equal(t, "", reason,
+		"a Codex session reaped without an explicit reason must stay plain offline")
 }
 
 // Scenario: the reaper witnesses a session alive on one tick and dead

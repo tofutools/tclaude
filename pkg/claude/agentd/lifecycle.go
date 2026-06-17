@@ -105,8 +105,8 @@ func stopOneConv(convID string, force bool) memberOpResult {
 		exitCmd := h.Life.SoftExitCommand()
 		if injectSlashCommand(convID, exitCmd, "", "soft-exit") {
 			if h.Name == harness.CodexName {
-				// Codex has no SessionEnd hook; without this, the reaper
-				// would preserve status but classify daemon /quit as a crash.
+				// Codex has no SessionEnd hook; record daemon-owned /quit
+				// separately from an unclassified user pane close.
 				if err := db.SetSessionExitReason(sess.ID, daemonSoftExitReason); err != nil {
 					slog.Warn("failed to record daemon soft-exit reason",
 						"session", sess.ID, "conv", convID, "error", err)

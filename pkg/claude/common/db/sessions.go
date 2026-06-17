@@ -294,24 +294,23 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 // between "observed dead" and "write exited" is never clobbered. A
 // false return is benign — the reaper re-evaluates the row next sweep.
 //
-// Reaching this path means no graceful SessionEnd hook fired for the
-// session: the reaper only ever marks a row whose status was still
-// live — a cleanly-exited row is already status='exited' and the
-// reaper skips it. So when no exit_reason was recorded the death was
-// unexpected (a crash, an OOM kill, `tclaude session kill`, a reboot),
-// and the COALESCE stamps 'unexpected'. An exit_reason already present
-// — a narrow race where a real SessionEnd landed first — is preserved.
-func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt time.Time) (bool, error) {
+// The caller supplies fallbackExitReason, which is used only when no
+// reason was already recorded. Passing "" leaves exit_reason NULL:
+// useful for harnesses such as Codex where a normal close can have no
+// SessionEnd-style hook. An exit_reason already present — a narrow race
+// where a real SessionEnd or daemon soft-stop landed first — is
+// preserved.
+func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt time.Time, fallbackExitReason string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE sessions
 		SET status = 'exited', status_detail = '', updated_at = ?,
-			exit_reason = COALESCE(exit_reason, 'unexpected')
+			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?`,
 		time.Now().Format(time.RFC3339Nano),
-		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
+		fallbackExitReason, id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return false, err
 	}
@@ -699,7 +698,7 @@ type CostDailyRow struct {
 	Day       string // local "2006-01-02"
 	ConvID    string
 	CostUSD   float64 // cumulative within the session as of that day
-	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
+	UpdatedAt string  // RFC3339Nano of the day's last spend; "" if unknown
 }
 
 // SumCostSinceDay totals the actual spend recorded on or after fromDay

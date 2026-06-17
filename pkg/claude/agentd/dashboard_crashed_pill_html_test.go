@@ -8,9 +8,8 @@ import (
 // The dashboard tells a clean exit from an unexpected death entirely in
 // dashboard.html's embedded JS — statePill reads state.exit_reason.
 // There is no Go path and no JS test runner, so this guard pins the
-// contract: an offline agent whose exit_reason is 'unexpected' (the
-// reaper stamps that when no SessionEnd hook fired) renders as a
-// "crashed" pill; every other offline agent — a clean exit, or an
+// contract: an offline agent whose exit_reason is 'unexpected' renders
+// as a "crashed" pill; every other offline agent — a clean exit, or an
 // unknown/blank reason — stays a plain "offline".
 func TestDashboardHTML_CrashedPill(t *testing.T) {
 	must := func(needle, why string) {

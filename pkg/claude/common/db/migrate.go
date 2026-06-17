@@ -492,8 +492,8 @@ func migrateV58toV59(db *sql.DB) error {
 // migrateV57toV58 adds the `sandbox_mode` column to `sessions` — the
 // launch-time OS-sandbox mode a session was spawned under (Codex's
 // `--sandbox`: read-only / workspace-write / danger-full-access). Default
-// '' so every existing row, and every reader that doesn't yet select the
-// column, keeps working untouched; '' is also the genuine value for a
+// "" so every existing row, and every reader that doesn't yet select the
+// column, keeps working untouched; "" is also the genuine value for a
 // harness with no launch sandbox flag (Claude Code, whose sandbox is
 // settings.json-driven, not a launch flag). The dashboard reads it to
 // render a per-agent sandbox badge (JOH-162).
@@ -639,7 +639,7 @@ func migrateV55toV56(db *sql.DB) error {
 // be fed back to `claude --model`. The ID can: it's what lets a
 // reincarnated / cloned / resumed agent come back on the SAME model
 // its predecessor was running instead of claude's default
-// (inheritedLaunchFlags in agentd reads it). '' = not reported yet —
+// (inheritedLaunchFlags in agentd reads it). "" = not reported yet —
 // successor spawns then omit --model, the pre-v55 behaviour.
 //
 // Runs in one transaction AND guards the column add behind a
@@ -1125,9 +1125,10 @@ func migrateV41toV42(db *sql.DB) error {
 // bypass_permissions_disabled / other); the hook callback records that
 // reason here. A process that dies WITHOUT a graceful shutdown — a
 // crash, an OOM kill, `tclaude session kill`, a reboot — fires no
-// SessionEnd, so the session reaper finds a dead row carrying no
-// recorded reason and stamps exit_reason='unexpected' when it marks
-// the row exited (see MarkSessionExitedIfUnchanged).
+// SessionEnd, so the session reaper can find a dead row carrying no
+// recorded reason and stamp exit_reason='unexpected' when it marks
+// the row exited (see MarkSessionExitedIfUnchanged). Harnesses without
+// a reliable SessionEnd equivalent may leave the reason NULL instead.
 //
 // The column is nullable on purpose: NULL means "no reason recorded" —
 // a live session, or a row that exited before this migration existed.

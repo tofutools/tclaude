@@ -75,16 +75,15 @@ func TestGetSessionExitReason_UnknownID(t *testing.T) {
 	assert.Equal(t, "", got)
 }
 
-// MarkSessionExitedIfUnchanged stamps exit_reason='unexpected' when it
-// reaps a session that recorded no reason — the death was unclean (no
-// SessionEnd hook fired).
-func TestMarkSessionExitedIfUnchanged_StampsUnexpected(t *testing.T) {
+// MarkSessionExitedIfUnchanged stamps the caller's fallback exit reason
+// when it reaps a session that recorded no reason.
+func TestMarkSessionExitedIfUnchanged_StampsFallbackReason(t *testing.T) {
 	setupTestDB(t)
 	seedExitReasonSession(t, "crash", "working")
 	row, err := LoadSession("crash")
 	require.NoError(t, err)
 
-	ok, err := MarkSessionExitedIfUnchanged("crash", "working", row.UpdatedAt)
+	ok, err := MarkSessionExitedIfUnchanged("crash", "working", row.UpdatedAt, "unexpected")
 	require.NoError(t, err)
 	require.True(t, ok, "the CAS should succeed — the row was unchanged")
 
@@ -98,9 +97,27 @@ func TestMarkSessionExitedIfUnchanged_StampsUnexpected(t *testing.T) {
 		"a reaped session with no recorded reason is stamped unexpected")
 }
 
+// MarkSessionExitedIfUnchanged with an empty fallback leaves a missing
+// exit_reason NULL. That lets callers mark a dead process as plain
+// offline when they do not have a positive crash signal.
+func TestMarkSessionExitedIfUnchanged_EmptyFallbackLeavesReasonEmpty(t *testing.T) {
+	setupTestDB(t)
+	seedExitReasonSession(t, "plain", "working")
+	row, err := LoadSession("plain")
+	require.NoError(t, err)
+
+	ok, err := MarkSessionExitedIfUnchanged("plain", "working", row.UpdatedAt, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	reason, err := GetSessionExitReason("plain")
+	require.NoError(t, err)
+	assert.Equal(t, "", reason, "empty fallback must leave exit_reason NULL")
+}
+
 // MarkSessionExitedIfUnchanged must NOT clobber an exit_reason a real
-// SessionEnd already recorded — the COALESCE only fills a NULL. Pins
-// the narrow reaper-vs-SessionEnd race.
+// SessionEnd already recorded — the COALESCE only fills a NULL, even
+// when the fallback is empty. Pins the narrow reaper-vs-SessionEnd race.
 func TestMarkSessionExitedIfUnchanged_KeepsExistingReason(t *testing.T) {
 	setupTestDB(t)
 	seedExitReasonSession(t, "clean", "working")
@@ -108,7 +125,7 @@ func TestMarkSessionExitedIfUnchanged_KeepsExistingReason(t *testing.T) {
 	row, err := LoadSession("clean")
 	require.NoError(t, err)
 
-	ok, err := MarkSessionExitedIfUnchanged("clean", "working", row.UpdatedAt)
+	ok, err := MarkSessionExitedIfUnchanged("clean", "working", row.UpdatedAt, "")
 	require.NoError(t, err)
 	require.True(t, ok)
 
