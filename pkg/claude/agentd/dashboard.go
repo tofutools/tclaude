@@ -712,11 +712,13 @@ type agentState struct {
 	// liveness, like Model — what a dead agent cost is still informative.
 	CostUSD float64 `json:"cost_usd,omitempty"`
 	// ExitReason is why a now-offline agent's session ended: a graceful
-	// SessionEnd `reason`, or 'unexpected' when the process died with no
-	// clean shutdown (reaper-stamped). Only populated for an offline
-	// agent; empty for a live one, or for a row that exited before the
-	// exit_reason column existed. The dashboard renders 'unexpected' as
-	// "crashed" and everything else (incl. empty) as a plain exit.
+	// SessionEnd `reason`, a daemon-owned clean reason, or 'unexpected'
+	// when a harness-specific reaper path has a positive abnormal-death
+	// signal. Only populated for an offline agent; empty for a live one,
+	// a normal Codex close with no explicit reason, or a row that exited
+	// before the exit_reason column existed. The dashboard renders
+	// 'unexpected' as "crashed" and everything else (incl. empty) as a
+	// plain exit.
 	ExitReason string `json:"exit_reason,omitempty"`
 	// Harness is the coding tool this agent runs under ("claude", "codex"),
 	// from the session row. Empty (a conv with no session row) renders as

@@ -7,6 +7,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -29,6 +30,8 @@ const sessionReaperGracePeriod = 90 * time.Second
 // routes it through notify.OnStateTransition; tests swap in a recorder.
 // Mirrors the flushSender injection pattern in flush.go.
 type reaperNotify func(st *session.SessionState, prevStatus string)
+
+const unexpectedExitReason = "unexpected"
 
 // sessionReaper marks sessions whose tmux session and process are both
 // gone as "exited" in the DB, and fires an offline notification on the
@@ -151,7 +154,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		if !st.Created.IsZero() && now.Sub(st.Created) < r.grace {
 			continue
 		}
-		ok, err := db.MarkSessionExitedIfUnchanged(st.ID, prevStatus, prevUpdated)
+		ok, err := db.MarkSessionExitedIfUnchanged(st.ID, prevStatus, prevUpdated, reaperFallbackExitReason(st.Harness))
 		if err != nil {
 			slog.Warn("reaper: mark exited failed", "session", st.ID, "error", err)
 			continue
@@ -174,4 +177,18 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 	r.aliveLastTick = aliveNow
 	r.seeded = true
 	return reaped
+}
+
+// reaperFallbackExitReason classifies a dead session when no explicit
+// exit reason was recorded before the reaper observed it gone. Claude
+// Code has a SessionEnd hook for graceful exits, so missing that hook
+// means an abnormal death. Codex does not have an equivalent reliable
+// end hook, and a user closing the pane is indistinguishable from a
+// plain terminal exit here, so leave it reasonless unless another path
+// recorded a reason first.
+func reaperFallbackExitReason(h string) string {
+	if h == harness.CodexName {
+		return ""
+	}
+	return unexpectedExitReason
 }

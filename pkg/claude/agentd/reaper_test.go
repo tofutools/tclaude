@@ -77,6 +77,9 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	st, err := session.LoadSessionState(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, session.StatusExited, st.Status, "dead Codex session reaped to exited")
+	reason, err := db.GetSessionExitReason(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "", reason, "plain Codex disappearance is offline, not crashed")
 
 	require.Len(t, fired, 1, "exactly one offline notification")
 	assert.Equal(t, sessionID, fired[0].id)

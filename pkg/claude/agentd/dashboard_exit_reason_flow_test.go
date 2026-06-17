@@ -100,11 +100,12 @@ func TestDashboardSnapshot_ExitReasonSurfacesCrashedVsClean(t *testing.T) {
 		"a live agent must not carry an exit_reason")
 }
 
-// End-to-end: a live agent's pane dies with no SessionEnd hook; a reaper
-// sweep stamps exit_reason='unexpected'; the dashboard snapshot then
-// surfaces it as a crash. The reaper→db and db→dashboard halves are
-// each covered separately — this pins the seam between them, which a
-// regression in stateForConv's row selection could slip past.
+// End-to-end: a default Claude Code agent's pane dies with no
+// SessionEnd hook; a reaper sweep stamps exit_reason='unexpected'; the
+// dashboard snapshot then surfaces it as a crash. The reaper→db and
+// db→dashboard halves are each covered separately — this pins the seam
+// between them, which a regression in stateForConv's row selection
+// could slip past.
 func TestDashboardSnapshot_ReapedAgentSurfacesAsCrashed(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
@@ -116,8 +117,9 @@ func TestDashboardSnapshot_ReapedAgentSurfacesAsCrashed(t *testing.T) {
 	f.HaveGroup("crew")
 	f.HaveMember("crew", conv)
 
-	// The pane dies with no SessionEnd; a reaper sweep marks it exited
-	// and — finding no recorded reason — stamps it 'unexpected'.
+	// The Claude Code pane dies with no SessionEnd; a reaper sweep marks
+	// it exited and — finding no recorded reason — stamps it
+	// 'unexpected'.
 	f.MarkOffline("tmux-reap")
 	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
 	require.Equal(t, 1, reaper.Tick(), "the dead session is reaped")

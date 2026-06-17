@@ -680,8 +680,8 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// Record the graceful-exit reason (logout / prompt_input_exit /
 		// bypass_permissions_disabled / other — clear and resume never
 		// reach here, see sessionEndIsExit) so the dashboard can tell
-		// this clean exit from an unexpected death — for which no
-		// SessionEnd fires and the session reaper stamps 'unexpected'.
+		// this clean exit from an unexpected death — for harnesses where
+		// a missing SessionEnd is itself an abnormal-death signal.
 		if err := db.SetSessionExitReason(state.ID, input.Reason); err != nil {
 			slog.Warn("failed to record exit reason", "error", err, "module", "hooks")
 		}
