@@ -64,12 +64,22 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, whoamiResp{})
 		return
 	}
-	row := agent.FreshConvRow(p.ConvID)
-	title := "(unnamed)"
-	if row != nil {
-		if t := agent.DisplayTitle(row); t != "" {
-			title = t
-		}
+	// Resolve the agent's name through FreshTitle so it picks up the
+	// spawn-time pending_name (agent_enrollment) when no custom title has
+	// landed yet — the same priority (custom → pending → summary → first
+	// prompt) the dashboard and conv-listing surfaces use. A bare
+	// DisplayTitle would skip the pending name, which is the bug for a
+	// freshly-spawned Codex agent (JOH-219): Codex persists its title
+	// out-of-band AFTER the welcome is injected (JOH-216), so at the
+	// moment the agent runs `whoami` there is no custom title in
+	// conv_index yet and it would read itself as "(unnamed)" — and
+	// self-describe that way — despite the welcome having named it.
+	// Claude Code is unaffected (its /rename writes the .jsonl before the
+	// welcome). UnknownTitle maps back to the "(unnamed)" placeholder
+	// whoami has always shown.
+	title := agent.FreshTitle(p.ConvID)
+	if title == agent.UnknownTitle {
+		title = "(unnamed)"
 	}
 	groups, _ := db.ListGroupsForConv(p.ConvID)
 	gs := make([]string, 0, len(groups))
