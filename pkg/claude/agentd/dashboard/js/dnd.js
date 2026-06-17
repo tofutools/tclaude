@@ -73,17 +73,36 @@ function bindDnd() {
   // row, never the control that was pressed, and a closest('button') test
   // would never match. pointerdown, by contrast, targets the actual
   // element under the cursor, and it fires BEFORE the drag is initiated.
-  // So gate draggability here: if the press landed on an interactive
-  // descendant, turn the row's draggable OFF for this gesture so the
-  // click lands; a press on a plain cell (id, last-hook, descr, …) leaves
-  // it ON so the row can still be dragged between groups. Each 2s
-  // re-render rebuilds the row with draggable="true", re-arming it.
+  // So if the press landed on an interactive descendant, turn the row's
+  // draggable OFF for the duration of this gesture so the click lands; a
+  // press on a plain cell (id, last-hook, descr, …) leaves it ON so the
+  // row can still be dragged between groups.
+  //
+  // The suppression is strictly gesture-scoped: pointerup / pointercancel
+  // restore draggability immediately, so the row is never left
+  // un-draggable between gestures (it doesn't have to wait for the next
+  // pointerdown or the 2s re-render to re-arm). Restoring on pointerup is
+  // safe — the drag-vs-click decision is made during the move BEFORE
+  // pointerup, so re-enabling at gesture end can't trigger an unwanted
+  // drag. dndSuppressedRow remembers which row we touched so we restore
+  // exactly that one (and only when we actually disabled it).
+  let dndSuppressedRow = null;
+  const restoreDraggable = () => {
+    if (!dndSuppressedRow) return;
+    dndSuppressedRow.draggable = true;
+    dndSuppressedRow = null;
+  };
   document.addEventListener('pointerdown', (e) => {
     const row = e.target.closest('.dnd-draggable');
     if (!row) return;
     const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable]');
-    row.draggable = !(ctl && row.contains(ctl));
+    if (ctl && row.contains(ctl)) {
+      row.draggable = false;
+      dndSuppressedRow = row;
+    }
   });
+  document.addEventListener('pointerup', restoreDraggable);
+  document.addEventListener('pointercancel', restoreDraggable);
   document.addEventListener('dragstart', (e) => {
     const row = e.target.closest('.dnd-draggable');
     if (!row) return;
