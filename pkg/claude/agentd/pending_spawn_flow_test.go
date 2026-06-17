@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -127,13 +128,14 @@ type gatedCodexSpawner struct {
 	sims map[string]*testharness.CodexSim
 }
 
-func (s *gatedCodexSpawner) SpawnNew(label, cwd, effort, model, harnessName, sandbox, approval string, autoReview, trustDir bool) error {
-	if harnessName != "codex" {
-		return s.inner.SpawnNew(label, cwd, effort, model, harnessName, sandbox, approval, autoReview, trustDir)
+func (s *gatedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	if args.Harness != "codex" {
+		return s.inner.SpawnNew(args)
 	}
+	label := args.Label
 	// Build the sim but do NOT Start it: no rollout (the spawn poll's
 	// conv-store discovery finds nothing) and not alive yet.
-	cx := testharness.NewCodexSim(s.t, s.w.HomeDir, cwd)
+	cx := testharness.NewCodexSim(s.t, s.w.HomeDir, args.Cwd)
 	// The pane exists, but the SessionRow carries NO conv-id — the first-turn
 	// hook has not fired, the JOH-205 freeze condition.
 	if err := db.SaveSession(&db.SessionRow{
@@ -152,8 +154,8 @@ func (s *gatedCodexSpawner) SpawnNew(label, cwd, effort, model, harnessName, san
 	return nil
 }
 
-func (s *gatedCodexSpawner) SpawnResume(convID, cwd, effort, model, harnessName, sandbox, approval string, autoReview bool) error {
-	return s.inner.SpawnResume(convID, cwd, effort, model, harnessName, sandbox, approval, autoReview)
+func (s *gatedCodexSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return s.inner.SpawnResume(args)
 }
 
 // firstTurn models the spawned Codex finally taking its first turn once the

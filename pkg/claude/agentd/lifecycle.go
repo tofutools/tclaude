@@ -219,8 +219,16 @@ func resumeOneConv(convID string) memberOpResult {
 		return res
 	}
 	// Relaunch never re-engages the experimental guardian (auto-review is an
-	// explicit fresh-spawn opt-in, not persisted per-conv), so autoReview=false.
-	if err := SpawnDetachedTclaudeResume(convID, cwd, effort, model, harnessName, sandboxForHarness(harnessName), approvalForHarness(harnessName), false); err != nil {
+	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
+	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
+		ConvID:   convID,
+		Cwd:      cwd,
+		Effort:   effort,
+		Model:    model,
+		Harness:  harnessName,
+		Sandbox:  sandboxForHarness(harnessName),
+		Approval: approvalForHarness(harnessName),
+	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
@@ -984,7 +992,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(label, p.Cwd, p.Effort, model, p.Harness, p.SandboxMode, p.ApprovalPolicy, p.AutoReview, p.TrustDir); err != nil {
+	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
+		Label:      label,
+		Cwd:        p.Cwd,
+		Effort:     p.Effort,
+		Model:      model,
+		Harness:    p.Harness,
+		Sandbox:    p.SandboxMode,
+		Approval:   p.ApprovalPolicy,
+		AutoReview: p.AutoReview,
+		TrustDir:   p.TrustDir,
+	}); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -1490,25 +1508,26 @@ func generateSpawnLabel() string {
 
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
-// setup; production keeps the LiveSpawner default.
-func SpawnDetachedTclaudeNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
-	return Spawn.SpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview, trustDir)
+// setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
+// for the per-field semantics.
+func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
+	return Spawn.SpawnNew(args)
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
-// effort and model ("" = omit the flag) ride through to the resumed
-// claude invocation — `claude --resume` does NOT restore the
-// conversation's previous model on its own, so resume surfaces pass
-// the predecessor's inherited flags to keep the agent on its model.
-// sandbox ("" = omit) likewise rides through so a relaunched Codex agent
-// stays sandboxed (the mode isn't persisted per-conv; callers re-resolve
-// the harness default). approval ("" = omit) rides through the same way so a
-// relaunched unattended Codex agent keeps its non-escalating posture and
-// can't deadlock on an approval prompt (JOH-200). autoReview ("false" = the
-// human reviews, the default) rides through the same way; relaunch never
-// re-engages the experimental guardian, so resume callers pass false.
-func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
-	return Spawn.SpawnResume(convID, cwd, effort, model, harness, sandbox, approval, autoReview)
+// Args.Effort and Args.Model ("" = omit the flag) ride through to the resumed
+// invocation — `claude --resume` does NOT restore the conversation's previous
+// model on its own, so resume surfaces pass the predecessor's inherited flags
+// to keep the agent on its model. Args.Sandbox ("" = omit) likewise rides
+// through so a relaunched Codex agent stays sandboxed (the mode isn't persisted
+// per-conv; callers re-resolve the harness default). Args.Approval ("" = omit)
+// rides through the same way so a relaunched unattended Codex agent keeps its
+// non-escalating posture and can't deadlock on an approval prompt (JOH-200).
+// Args.AutoReview (false = the human reviews, the default) rides through the
+// same way; relaunch never re-engages the experimental guardian, so resume
+// callers leave it false.
+func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
+	return Spawn.SpawnResume(args)
 }
 
 // sessionNewArgs builds the argv for the detached `tclaude session new`
@@ -1516,23 +1535,23 @@ func SpawnDetachedTclaudeResume(convID, cwd, effort, model, harness, sandbox, ap
 // an explicit value was chosen; an empty value leaves claude on its own
 // default. Kept pure so it can be unit-tested without forking a
 // subprocess.
-func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) []string {
-	args := []string{"session", "new", "-d", "--global", "--label", label}
-	if cwd != "" {
-		args = append(args, "-C", cwd)
+func sessionNewArgs(a clcommon.SpawnArgs) []string {
+	args := []string{"session", "new", "-d", "--global", "--label", a.Label}
+	if a.Cwd != "" {
+		args = append(args, "-C", a.Cwd)
 	}
-	if effort != "" {
-		args = append(args, "--effort", effort)
+	if a.Effort != "" {
+		args = append(args, "--effort", a.Effort)
 	}
-	if model != "" {
-		args = append(args, "--model", model)
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
 	}
-	args = appendHarnessFlag(args, harness)
-	args = appendSandboxArgs(args, harness, sandbox)
-	args = appendApprovalFlag(args, approval)
-	args = appendAutoReviewFlag(args, autoReview)
-	args = appendTrustDirFlag(args, trustDir)
-	args = appendInitialPromptFlag(args, harness)
+	args = appendHarnessFlag(args, a.Harness)
+	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendApprovalFlag(args, a.Approval)
+	args = appendAutoReviewFlag(args, a.AutoReview)
+	args = appendTrustDirFlag(args, a.TrustDir)
+	args = appendInitialPromptFlag(args, a.Harness)
 	return args
 }
 
@@ -1541,21 +1560,21 @@ func sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval string
 // sessionNewArgs: --effort and --model are appended only when a value
 // was chosen, so "" keeps claude on its own default. Kept pure so it
 // can be unit-tested without forking a subprocess.
-func sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) []string {
-	args := []string{"session", "new", "-r", convID, "-d", "--global"}
-	if cwd != "" {
-		args = append(args, "-C", cwd)
+func sessionResumeArgs(a clcommon.SpawnArgs) []string {
+	args := []string{"session", "new", "-r", a.ConvID, "-d", "--global"}
+	if a.Cwd != "" {
+		args = append(args, "-C", a.Cwd)
 	}
-	if effort != "" {
-		args = append(args, "--effort", effort)
+	if a.Effort != "" {
+		args = append(args, "--effort", a.Effort)
 	}
-	if model != "" {
-		args = append(args, "--model", model)
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
 	}
-	args = appendHarnessFlag(args, harness)
-	args = appendSandboxArgs(args, harness, sandbox)
-	args = appendApprovalFlag(args, approval)
-	args = appendAutoReviewFlag(args, autoReview)
+	args = appendHarnessFlag(args, a.Harness)
+	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendApprovalFlag(args, a.Approval)
+	args = appendAutoReviewFlag(args, a.AutoReview)
 	return args
 }
 
@@ -1694,13 +1713,14 @@ func appendTrustDirFlag(args []string, trustDir bool) []string {
 // The label is the tclaude-side session ID (used to look up the row
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
-func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
+func liveSpawnNew(a clcommon.SpawnArgs) error {
+	label := a.Label
 	// effort, model, sandbox, approval, autoReview and trustDir are validated at
 	// the spawn boundary (handleGroupSpawn / the `agent spawn` CLI) before they
 	// reach here; the forked `tclaude session new` re-validates too, though by
 	// then a bad value would only surface as a non-zero exit in the daemon
 	// log. sessionNewArgs omits each flag entirely when its value is "" / false.
-	cmd := exec.Command("tclaude", sessionNewArgs(label, cwd, effort, model, harness, sandbox, approval, autoReview, trustDir)...)
+	cmd := exec.Command("tclaude", sessionNewArgs(a)...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	// Capture stderr so a silent subprocess failure (PATH issue, bad
@@ -1748,8 +1768,9 @@ func liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval string, 
 //
 // Errors only surface if exec.Start() itself fails (binary missing
 // from PATH, etc.).
-func liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
-	args := sessionResumeArgs(convID, cwd, effort, model, harness, sandbox, approval, autoReview)
+func liveSpawnResume(a clcommon.SpawnArgs) error {
+	convID := a.ConvID
+	args := sessionResumeArgs(a)
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil

@@ -307,7 +307,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// never re-engaged (autoReview=false) — it is an explicit fresh-spawn opt-in.
 	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
-	if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, oldSess.Harness, sandboxForHarness(oldSess.Harness), approvalForHarness(oldSess.Harness), false, false); err != nil {
+	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
+		Label:    label,
+		Cwd:      cwd,
+		Effort:   effort,
+		Model:    model,
+		Harness:  oldSess.Harness,
+		Sandbox:  sandboxForHarness(oldSess.Harness),
+		Approval: approvalForHarness(oldSess.Harness),
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
 		return

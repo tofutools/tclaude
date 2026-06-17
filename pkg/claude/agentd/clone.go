@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -67,7 +68,15 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		// cwd (trustDir=false — that edits ~/.codex/config.toml and is an explicit
 		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
 		// rather than carrying per-conv state.
-		if err := SpawnDetachedTclaudeNew(label, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false, false); err != nil {
+		if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
+			Label:    label,
+			Cwd:      cwd,
+			Effort:   effort,
+			Model:    model,
+			Harness:  srcHarness,
+			Sandbox:  sandboxForHarness(srcHarness),
+			Approval: approvalForHarness(srcHarness),
+		}); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
@@ -102,7 +111,15 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		}
 	}
 	newConv = copyResult.NewConvID
-	if err := SpawnDetachedTclaudeResume(newConv, cwd, effort, model, srcHarness, sandboxForHarness(srcHarness), approvalForHarness(srcHarness), false); err != nil {
+	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
+		ConvID:   newConv,
+		Cwd:      cwd,
+		Effort:   effort,
+		Model:    model,
+		Harness:  srcHarness,
+		Sandbox:  sandboxForHarness(srcHarness),
+		Approval: approvalForHarness(srcHarness),
+	}); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),

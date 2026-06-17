@@ -1,42 +1,23 @@
 package agentd
 
+import (
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+)
+
 // Spawner abstracts `tclaude session new` invocations so flow tests
 // can substitute a behavior-accurate simulator for the real
 // fork-exec subprocess. Production wires LiveSpawner; tests assign
 // a fake to Spawn at setup with t.Cleanup-restoration.
 //
-// harness is the harness name to launch (e.g. "claude", "codex"); "" or
-// "claude" omits the --harness flag and spawns Claude Code. It threads
-// through to `tclaude session new --harness <h>` so a daemon-owned Codex
-// agent comes up under the Codex CLI (JOH-160).
-//
-// sandbox is the launch-time OS-sandbox mode for harnesses that take one
-// (Codex's --sandbox); "" omits the flag. The daemon resolves it to the
-// harness's secure default (Codex: workspace-write) before spawning, so a
-// daemon-owned Codex agent runs sandboxed by default (JOH-192).
-//
-// approval is the launch-time approval policy for harnesses that take one
-// (Codex's --ask-for-approval); "" omits the flag. The daemon resolves it to
-// the harness's non-escalating default (Codex: never) before spawning, so a
-// daemon-owned Codex agent — detached, with no human at its TUI — never
-// deadlocks on an approval prompt no one can answer (JOH-200).
-//
-// autoReview opts the spawn into the harness's guardian subagent (Codex's
-// `-c approvals_reviewer=auto_review`), which auto-decides approval prompts in
-// the human's place; false (the default) leaves the human as reviewer. It is an
-// experimental, undocumented-upstream opt-in, only ever true via an explicit
-// request — relaunch paths (resume/clone/reincarnate) pass false (JOH-200 part 2).
-//
-// trustDir (SpawnNew only) opts into pre-trusting the launch dir for Codex:
-// the forked `tclaude session new --trust-dir` writes the [projects."<cwd>"]
-// trust entry into ~/.codex/config.toml before launch so a detached pane
-// doesn't freeze on the trust-folder modal (JOH-205). false (the default)
-// leaves the modal in place. It is fresh-spawn-only — relaunch paths
-// (reincarnate/clone) pass false, the same as autoReview — so SpawnResume has
-// no such parameter (a resumed conv's dir was already its own at first launch).
+// Both methods take a clcommon.SpawnArgs (named fields) rather than a long
+// positional list — see that type for the per-field semantics (harness,
+// sandbox, approval, auto-review, trust-dir, etc.). SpawnNew launches a fresh
+// conversation keyed by SpawnArgs.Label; SpawnResume relaunches the
+// conversation named by SpawnArgs.ConvID and ignores the fresh-spawn-only
+// Label / TrustDir fields.
 type Spawner interface {
-	SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error
-	SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error
+	SpawnNew(args clcommon.SpawnArgs) error
+	SpawnResume(args clcommon.SpawnArgs) error
 }
 
 // Spawn is the package-wide Spawner every caller hits via the
@@ -51,9 +32,9 @@ var Spawn Spawner = LiveSpawner{}
 // it (e.g., a recording proxy).
 type LiveSpawner struct{}
 
-func (LiveSpawner) SpawnNew(label, cwd, effort, model, harness, sandbox, approval string, autoReview, trustDir bool) error {
-	return liveSpawnNew(label, cwd, effort, model, harness, sandbox, approval, autoReview, trustDir)
+func (LiveSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	return liveSpawnNew(args)
 }
-func (LiveSpawner) SpawnResume(convID, cwd, effort, model, harness, sandbox, approval string, autoReview bool) error {
-	return liveSpawnResume(convID, cwd, effort, model, harness, sandbox, approval, autoReview)
+func (LiveSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return liveSpawnResume(args)
 }
