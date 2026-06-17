@@ -916,9 +916,11 @@ func (m *watchModel) fullReloadConversations() {
 	var allEntries []SessionEntry
 
 	if m.global {
+		// A missing projects dir is not fatal — there may still be
+		// other-harness (Codex) convs to merge below. Mirrors list.go.
 		projectsDir := ClaudeProjectsDir()
 		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			return
 		}
 		for _, entry := range entries {
@@ -932,14 +934,25 @@ func (m *watchModel) fullReloadConversations() {
 			}
 			allEntries = append(allEntries, index.Entries...)
 		}
+		// Merge every other registered harness (Codex, …), all dirs.
+		allEntries = appendNonClaudeHarnessEntries(allEntries, "")
 	} else {
-		index, err := LoadSessionsIndex(m.claudeProjectDir)
-		if err != nil {
-			m.entries = []SessionEntry{}
-			m.filtered = []SessionEntry{}
-			return
+		// A missing Claude project dir is not fatal either — the cwd may
+		// have only non-Claude (Codex) convs. Load Claude when its project
+		// dir exists, then always merge other harnesses for the real cwd.
+		if _, err := os.Stat(m.claudeProjectDir); err == nil {
+			index, err := LoadSessionsIndex(m.claudeProjectDir)
+			if err != nil {
+				m.entries = []SessionEntry{}
+				m.filtered = []SessionEntry{}
+				return
+			}
+			allEntries = index.Entries
 		}
-		allEntries = index.Entries
+		// Merge other harnesses for the real cwd (m.projectPath) — NOT the
+		// encoded claudeProjectDir: the harness cwd filter is an exact-string
+		// match, so the encoded dir would silently drop the Codex convs.
+		allEntries = appendNonClaudeHarnessEntries(allEntries, m.projectPath)
 	}
 
 	m.setEntries(allEntries)
@@ -948,14 +961,22 @@ func (m *watchModel) fullReloadConversations() {
 // reloadFromDB loads entries from the SQLite cache only (no filesystem access).
 // Used when DB polling detects changes made by another tclaude instance.
 func (m *watchModel) reloadFromDB() {
-	var dbProjectDir string
+	var dbProjectDir, cwd string
 	if !m.global {
 		dbProjectDir = m.claudeProjectDir
+		cwd = m.projectPath
 	}
 	allEntries, err := LoadEntriesFromDB(dbProjectDir)
 	if err != nil {
 		return
 	}
+	// Merge non-Claude harnesses live, mirroring list.go. conv_index only
+	// caches Claude convs — the Codex rows the hook callback snapshots are
+	// stubs (no `created`) that LoadEntriesFromDB skips — so there is no
+	// duplicate to dedupe. The scoped case must pass the real cwd, not the
+	// encoded claudeProjectDir: the harness cwd filter is an exact-string
+	// match, so the encoded dir would silently drop the Codex convs.
+	allEntries = appendNonClaudeHarnessEntries(allEntries, cwd)
 	m.setEntries(allEntries)
 }
 
