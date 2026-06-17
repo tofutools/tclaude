@@ -352,3 +352,80 @@ func TestRefreshCache_429RefreshesTokenWhenEnvSet(t *testing.T) {
 	require.Equal(t, 55.0, cached.FiveHour.Pct, "expected 55%%, got %+v", cached.FiveHour)
 	assert.Equal(t, int32(2), fetchCount.Load(), "expected 2 fetches")
 }
+
+func TestCarryForwardWindow(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	future := &CachedBucket{Pct: 40, ResetsAt: now.Add(3 * 24 * time.Hour)}
+	fresh := &CachedBucket{Pct: 12, ResetsAt: now.Add(2 * time.Hour)}
+
+	tests := []struct {
+		name       string
+		fresh      *CachedBucket
+		prev       *CachedBucket
+		wantBucket *CachedBucket // expected identity, nil to expect a dropped window
+	}{
+		{"fresh reading always wins", fresh, future, fresh},
+		{"fresh wins even over nil prev", fresh, nil, fresh},
+		{"omitted + nonzero unreset prev → carried forward", nil, future, future},
+		{"omitted + nil prev → dropped", nil, nil, nil},
+		{"omitted + zero-usage prev → dropped", nil, &CachedBucket{Pct: 0, ResetsAt: now.Add(time.Hour)}, nil},
+		{"omitted + past-reset prev → dropped", nil, &CachedBucket{Pct: 40, ResetsAt: now.Add(-time.Minute)}, nil},
+		{"omitted + no-reset prev → dropped", nil, &CachedBucket{Pct: 40}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := carryForwardWindow(tc.fresh, tc.prev, now)
+			if tc.wantBucket == nil {
+				require.Nil(t, got, "expected window dropped")
+				return
+			}
+			require.Same(t, tc.wantBucket, got, "expected the exact bucket carried/kept")
+		})
+	}
+}
+
+// A subsequent statusline render that omits the 7d (weekly) bucket — the
+// API drops it when it has nothing fresh to report — must not blank out
+// the dashboard's 7d bar: UpdateFromStatusLine carries the last-known
+// nonzero, unreset window forward.
+func TestUpdateFromStatusLine_CarriesForwardOmittedSevenDay(t *testing.T) {
+	setupTestCache(t)
+
+	now := time.Now()
+	fh := &CachedBucket{Pct: 20, ResetsAt: now.Add(2 * time.Hour)}
+	sd := &CachedBucket{Pct: 35, ResetsAt: now.Add(4 * 24 * time.Hour)}
+
+	// First render carries both windows.
+	UpdateFromStatusLine(fh, sd, nil)
+
+	// Next render only has the 5h window (API dropped the 7d bucket).
+	UpdateFromStatusLine(&CachedBucket{Pct: 22, ResetsAt: now.Add(90 * time.Minute)}, nil, nil)
+
+	cached := loadCacheStale()
+	require.NotNil(t, cached, "expected cache present")
+	require.NotNil(t, cached.SevenDay, "7d window carried forward when the render omits it")
+	assert.Equal(t, 35.0, cached.SevenDay.Pct, "carried-forward 7d keeps its last-known percent")
+	require.NotNil(t, cached.FiveHour, "5h still present")
+	assert.Equal(t, 22.0, cached.FiveHour.Pct, "fresh 5h reading wins")
+}
+
+// Once the carried 7d window's own reset time has passed, a render that
+// omits it drops it — there's genuinely been no usage within the window.
+func TestUpdateFromStatusLine_DropsSevenDayPastReset(t *testing.T) {
+	setupTestCache(t)
+
+	now := time.Now()
+	// Seed a 7d bucket that already reset in the past.
+	UpdateFromStatusLine(
+		&CachedBucket{Pct: 20, ResetsAt: now.Add(time.Hour)},
+		&CachedBucket{Pct: 35, ResetsAt: now.Add(-time.Minute)},
+		nil,
+	)
+
+	// Next render omits the 7d bucket.
+	UpdateFromStatusLine(&CachedBucket{Pct: 22, ResetsAt: now.Add(90 * time.Minute)}, nil, nil)
+
+	cached := loadCacheStale()
+	require.NotNil(t, cached, "expected cache present")
+	assert.Nil(t, cached.SevenDay, "expired 7d window dropped, not carried forward")
+}

@@ -139,6 +139,117 @@ func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
 	assert.False(t, snap.Usage.Available, "unavailable for an account with no rolling-limit windows")
 }
 
+// Scenario: a Claude Code statusline render reports both the 5h and 7d
+// windows; the next render omits the 7d bucket — the Anthropic usage API
+// drops a window when it has nothing fresh to report. The dashboard's
+// top-bar 7d bar must not flicker out: UpdateFromStatusLine (the real
+// statusbar write path) carries the last-known nonzero, unreset window
+// forward, so /api/snapshot still surfaces it. Pins the operator's stated
+// requirement — keep the 7d (and 5h) bars while there's still usage within
+// the window — at the real dashboard surface.
+func TestDashboardUsage_SevenDayCarriedForwardWhenRenderOmitsIt(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t) // temp $HOME + a fresh SQLite DB
+
+	now := time.Now()
+	// First render: both windows present, exactly as the statusbar leaves
+	// the SQLite usage_cache after a session renders its statusline.
+	usageapi.UpdateFromStatusLine(
+		&usageapi.CachedBucket{Pct: 18, ResetsAt: now.Add(2 * time.Hour)},
+		&usageapi.CachedBucket{Pct: 33, ResetsAt: now.Add(4 * 24 * time.Hour)},
+		nil,
+	)
+	// Next render: only the 5h window; the API dropped the 7d bucket.
+	usageapi.UpdateFromStatusLine(
+		&usageapi.CachedBucket{Pct: 21, ResetsAt: now.Add(90 * time.Minute)},
+		nil,
+		nil,
+	)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	require.True(t, snap.Usage.Available, "usage available — windows carried in the cache")
+	require.NotNil(t, snap.Usage.SevenDay, "7d window still surfaced after the render dropped its bucket")
+	assert.Equal(t, 33.0, snap.Usage.SevenDay.Pct, "carried-forward 7d keeps its last-known percent")
+	require.NotNil(t, snap.Usage.FiveHour, "5h window present")
+	assert.Equal(t, 21.0, snap.Usage.FiveHour.Pct, "fresh 5h reading wins over the carried one")
+}
+
+// Scenario: the 5h and 7d bars are shown as a pair or not at all. A
+// window that has reset (its 5h/7d have elapsed) reads as 0% rather than
+// vanishing, so the two bars never appear or disappear independently. The
+// readout disappears entirely only when there's no live subscription usage
+// at all. Drives the operator's stated rule at the real /api/snapshot
+// surface across the cases that distinguish it.
+func TestDashboardUsage_ShowsBothWindowsOrNeither(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Case A: only the 5h window is live (mid-session, nothing yet on the
+	// week). The 7d bar still renders, at 0%.
+	now := time.Now()
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 25, ResetsAt: now.Add(3 * time.Hour)},
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+	snap := fetchDashSnapshot(t, mux)
+	require.True(t, snap.Usage.Available, "available when one window is live")
+	require.NotNil(t, snap.Usage.FiveHour, "5h present")
+	assert.Equal(t, 25.0, snap.Usage.FiveHour.Pct, "5h shows its live percent")
+	require.NotNil(t, snap.Usage.SevenDay, "7d bar paired with 5h, not dropped")
+	assert.Equal(t, 0.0, snap.Usage.SevenDay.Pct, "absent 7d window reads as 0%")
+
+	// Case B: the operator's headline case — the 5h window has reset (its
+	// last reading is older than 5h), but the week still has usage. The 5h
+	// bar must read 0%, not the stale 80%, and the 7d bar must stay.
+	now = time.Now()
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 80, ResetsAt: now.Add(-10 * time.Minute)},
+		SevenDay:      &usageapi.CachedBucket{Pct: 15, ResetsAt: now.Add(4 * 24 * time.Hour)},
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+	snap = fetchDashSnapshot(t, mux)
+	require.True(t, snap.Usage.Available, "available while the week still has usage")
+	require.NotNil(t, snap.Usage.FiveHour, "5h bar kept, paired with 7d")
+	assert.Equal(t, 0.0, snap.Usage.FiveHour.Pct, "reset 5h reads 0%, not the stale percent")
+	assert.Empty(t, snap.Usage.FiveHour.Remaining, "reset 5h carries no remaining-time hint")
+	require.NotNil(t, snap.Usage.SevenDay, "7d still present")
+	assert.Equal(t, 15.0, snap.Usage.SevenDay.Pct, "7d shows its live percent")
+
+	// Case C: every window has reset — nothing live, so the readout
+	// disappears rather than showing a pair of 0% bars.
+	now = time.Now()
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: now.Add(-time.Hour)},
+		SevenDay:      &usageapi.CachedBucket{Pct: 40, ResetsAt: now.Add(-time.Minute)},
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+	snap = fetchDashSnapshot(t, mux)
+	assert.False(t, snap.Usage.Available, "unavailable when no window is live")
+	assert.Nil(t, snap.Usage.FiveHour, "no 5h bar when nothing is live")
+	assert.Nil(t, snap.Usage.SevenDay, "no 7d bar when nothing is live")
+
+	// Case D: both windows are open but at 0% (a fresh subscription account
+	// with no usage yet) — still nothing to show.
+	now = time.Now()
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 0, ResetsAt: now.Add(2 * time.Hour)},
+		SevenDay:      &usageapi.CachedBucket{Pct: 0, ResetsAt: now.Add(5 * 24 * time.Hour)},
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+	snap = fetchDashSnapshot(t, mux)
+	assert.False(t, snap.Usage.Available, "unavailable when both windows are zero")
+}
+
 // seedCostSession writes one sessions row carrying a recorded API
 // cost, through the production write path: SaveSession (the
 // state-tracking hooks' upsert) + UpdateSessionCost (the statusline
