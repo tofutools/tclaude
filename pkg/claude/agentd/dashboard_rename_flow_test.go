@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -112,6 +113,47 @@ func TestDashboardRename_SetsTitle(t *testing.T) {
 	// ...and the dashboard's own /api/snapshot group row shows it too.
 	assert.Equal(t, "worker-new", dashMemberTitle(t, g.Name, conv),
 		"the renamed title must surface on the dashboard snapshot")
+}
+
+// Scenario: Codex renames are out-of-band writes to Codex's native
+// threads.title store, not `/rename` text typed into the pane. The dashboard
+// snapshot is cache-only, so the rename path must refresh conv_index after
+// the native write; otherwise the UI keeps rendering the old cached title
+// until some unrelated full conversation scan happens.
+func TestDashboardRename_CodexUpdatesCachedTitle(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000004"
+	const tmux = "tclaude-spwn-rencdx"
+	cx := f.HaveAliveCodexSession(conv, "spwn-rencdx", tmux, "/tmp/work")
+	require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
+		Title:            "codex-old",
+		FirstUserMessage: "hello from codex",
+		Cwd:              "/tmp/work",
+	}))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      conv,
+		CustomTitle: "codex-old",
+		FirstPrompt: "hello from codex",
+		ProjectPath: "/tmp/work",
+		Harness:     "codex",
+	}), "seed stale dashboard title cache")
+	mux := renameDashMux(t)
+	g := f.HaveGroup("team")
+	f.HaveMember("team", conv)
+	assert.Equal(t, "codex-old", dashMemberTitle(t, g.Name, conv),
+		"precondition: dashboard reads the cached Codex title")
+
+	rec := postAgentRename(t, mux, conv, map[string]any{"title": "codex-new"})
+	require.Equalf(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
+
+	got, err := cx.ThreadTitle()
+	require.NoError(t, err)
+	assert.Equal(t, "codex-new", got, "Codex native title store updated")
+	assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
+		"Codex rename must not inject /rename; sent=%+v", f.World.Tmux.Sent())
+	assert.Equal(t, "codex-new", dashMemberTitle(t, g.Name, conv),
+		"dashboard cache must reflect the out-of-band Codex rename")
 }
 
 // Scenario: the edit panel's "auto" checkbox POSTs {auto: true}. The
