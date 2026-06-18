@@ -26,6 +26,7 @@ import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   resumeAgentReq, retireConfirm, retireToast, shutdownConfirm, stopAgentReq, termDirModal,
+  showAccessTab,
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 
@@ -389,14 +390,13 @@ function bindRowActions() {
           return;
         }
         case 'sudo-manage': {
-          // Click on the 🔓 badge: switch to the Sudo tab pre-
-          // filtered to this agent so the human can revoke specific
+          // Click on the 🔓 badge: open the Access tab's Sudo sub-view
+          // pre-filtered to this agent so the human can revoke specific
           // grants without scrolling through unrelated rows.
           const filterInput = $('#filter-sudo');
           filterInput.value = shortId(conv);
           try { dashPrefs.setItem('tclaude.dash.filter.sudo', filterInput.value); } catch (_) {}
-          $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'sudo'));
-          $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-sudo'));
+          showAccessTab('sudo');
           renderSudoTab();
           return;
         }

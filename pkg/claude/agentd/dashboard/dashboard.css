@@ -60,6 +60,32 @@ nav button:hover { color: #d4d4d4; }
 main { padding: 16px 24px; }
 section { display: none; }
 section.active { display: block; }
+/* Access tab — sub-navigation. Permissions, Slug registry and Sudo
+   all govern agent access control, so they share one nav tab and switch
+   between these three sub-views via an inset segmented control.
+   bindAccessSubtabs() (refresh.js) toggles .active on the matching
+   button + .access-panel. */
+.access-intro {
+  color: #8b949e; font-size: 13px; line-height: 1.5;
+  margin: 0 0 14px; max-width: 760px;
+}
+.access-intro strong { color: #c9d1d9; font-weight: 600; }
+.access-subnav {
+  display: inline-flex; gap: 2px; margin: 0 0 16px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
+}
+.access-subtab {
+  background: none; border: none; color: #7d8590; cursor: pointer;
+  font-family: inherit; font-size: 13px; padding: 6px 16px; border-radius: 4px;
+}
+.access-subtab:hover { color: #d4d4d4; }
+.access-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.access-panel { display: none; }
+.access-panel.active { display: block; }
+.access-sub-intro {
+  color: #8b949e; font-size: 12px; line-height: 1.5;
+  margin: 0 0 12px; max-width: 760px;
+}
 table { border-collapse: collapse; width: 100%; }
 table th, table td {
   text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3340;

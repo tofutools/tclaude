@@ -253,8 +253,10 @@ export async function refresh() {
     renderLinksTab();
     renderPluginsTab();
     renderPluginsBadge(data.plugins_warn || 0);
-    $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
-    $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
+    // Permissions + Slug registry now live as sub-panels of the merged
+    // "Access" tab; the renderers write into the per-panel mount divs.
+    $('#permissions-body').innerHTML = renderPermissions(data.permissions, data.agents);
+    $('#slugs-body').innerHTML = renderSlugs(data.slugs);
     renderMessagesTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
@@ -283,6 +285,47 @@ function bindTabs() {
       });
     });
   });
+}
+
+// The "Access" tab merges three former tabs — Permissions, Slug
+// registry and Sudo — behind one nav button. Inside it a segmented
+// control switches between the three sub-panels. Unlike the top-level
+// tabs, the per-panel innerHTML keeps getting refreshed every 2s
+// regardless of which sub-tab is visible (the panels are just hidden),
+// so selecting a sub-tab is purely a CSS .active toggle that survives
+// the poll.
+function bindAccessSubtabs() {
+  const subnav = $('#tab-access .access-subnav');
+  if (!subnav) return;
+  subnav.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-subtab]');
+    if (!btn) return;
+    activateAccessSubtab(btn.dataset.subtab);
+  });
+}
+
+// activateAccessSubtab selects one of the Access tab's sub-views
+// (permissions / slugs / sudo) by toggling .active on the matching
+// segmented-control button and its panel. Exported so deep links (the
+// 🔓 sudo-manage badge) can jump straight to a sub-view.
+export function activateAccessSubtab(name) {
+  $$('#tab-access .access-subtab').forEach(b => {
+    const on = b.dataset.subtab === name;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  $$('#tab-access .access-panel').forEach(p => {
+    p.classList.toggle('active', p.id === 'access-' + name);
+  });
+}
+
+// showAccessTab brings the top-level Access tab forward and (optionally)
+// selects a sub-view. Used by the sudo-manage deep link so a click on an
+// agent's 🔓 badge lands on the Sudo sub-view pre-filtered to that agent.
+export function showAccessTab(subtab) {
+  $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'access'));
+  $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-access'));
+  if (subtab) activateAccessSubtab(subtab);
 }
 
 function bindCopy() {
@@ -2139,7 +2182,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
+  bindFilter, bindTabs, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
