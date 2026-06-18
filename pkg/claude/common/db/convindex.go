@@ -94,6 +94,33 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 	return err
 }
 
+// SetConvIndexCustomTitle stamps a conversation's display title in the
+// local cache without touching the rest of the indexed metadata. Harnesses
+// with an out-of-band title store (Codex's threads DB) use this after a
+// successful native rename so cache-only readers such as the dashboard
+// snapshot show the new title immediately.
+func SetConvIndexCustomTitle(convID, title, harness string) error {
+	if convID == "" {
+		return nil
+	}
+	if harness == "" {
+		harness = DefaultHarness
+	}
+	conn, err := Open()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = conn.Exec(`INSERT INTO conv_index
+		(conv_id, project_dir, full_path, custom_title, indexed_at, harness)
+		VALUES (?, '', '', ?, ?, ?)
+		ON CONFLICT(conv_id) DO UPDATE SET
+		 custom_title=excluded.custom_title,
+		 indexed_at=excluded.indexed_at`,
+		convID, title, now, harness)
+	return err
+}
+
 // UpsertConvIndexBranchSnapshot records an out-of-band branch observation for
 // a conversation without clobbering title/prompt metadata owned by the normal
 // conversation scanners. This is used by harnesses whose live branch is not

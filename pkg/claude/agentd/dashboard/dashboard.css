@@ -109,6 +109,18 @@ nav button:hover { color: #d4d4d4; }
 }
 .mail-pager-size select:focus { outline: none; border-color: #58a6ff; }
 
+/* Progress bar shown inside a bulk bar while a batched delete / wipe runs
+   ("Deleting 150 / 300…" + a filling track). */
+.mail-progress-label { flex: 0 0 auto; white-space: nowrap; color: #c9d1d9; }
+.mail-progress {
+  height: 6px; border-radius: 3px; background: #2a3340;
+  overflow: hidden; min-width: 60px;
+}
+.mail-progress-fill {
+  display: block; height: 100%; background: #1f6feb;
+  transition: width .15s ease;
+}
+
 /* Selectable rows: a checkbox sits beside the existing mailbox / message
    button, with a per-row delete button on the message rows. */
 .mailbox-row, .mail-row-wrap {
@@ -835,10 +847,13 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .group-default-model:hover, .user-default-model:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-model.unset, .user-default-model.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover { color: #d4d4d4; }
-.group-default-model-input, .user-default-model-input {
+/* The inline 🧠 profile picker — a <select> swapped in for the group / user
+   chip while choosing a default spawn profile (row-actions openProfilePicker).
+   Same compact monospace look as the chip inputs above. */
+.group-default-profile-select {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
-  font-family: ui-monospace, monospace; font-size: 11px; min-width: 12em;
+  font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
 }
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
@@ -890,6 +905,13 @@ details[open] > summary .spawn-btn { opacity: 1; }
    than incidental. Still below the toast (200) and the shared confirm
    (1000) its own backdrop-discard guard pops. */
 #perm-edit-modal { z-index: 150; }
+/* The profile editor opens standalone (the profiles-manage overlay's edit / +
+   new) AND on top of the spawn modal ("Save as profile") and the inline
+   default-profile pickers ("＋ new profile…"). The spawn modal is a plain
+   z-index:100 overlay that comes LATER in the DOM, so without this the editor
+   would paint behind it; pin it to 150 so it's always the topmost editor.
+   Below the toast (200) and the shared confirm (1000). */
+#profile-editor-modal { z-index: 150; }
 /* #confirm-modal is opened FROM inside other modals — by the backdrop-
    discard guard (bindBackdropDiscard) on every data-entry modal, and
    ahead-of-time by destructive-action confirms invoked from list rows.

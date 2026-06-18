@@ -7,6 +7,9 @@
 import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
 import { renderGroupsTab, renderSudoTab } from './tabs.js';
 import { dashPrefs } from './prefs.js';
+import { loadProfiles, setDashDefaultProfile } from './profiles.js';
+import { openProfileEditor } from './modal-profiles.js';
+import { renderDashDefaultProfile } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
@@ -151,6 +154,94 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
   // Blur cancels rather than commits — explicit Enter to save, same
   // contract as the group-header chips.
   input.addEventListener('blur', revert);
+}
+
+// openProfilePicker turns a 🧠 spawn-profile chip into a one-shot <select>
+// of the saved profile names (+ a leading "(none)" to clear), suspending the
+// 2s auto-refresh while it's open (renameEditing) so a poll can't blow it
+// away. Picking an option (or pressing it then leaving) restores the chip
+// element and calls onCommit(name) — which performs the persistence and any
+// repaint and resolves to true on success, false (or throws) to revert.
+// Escape / blur cancel. Shared by the group-default and dashboard-default
+// pickers, which differ only in onCommit. The profile list is fetched
+// (loadProfiles) so a freshly-created profile shows up; a current value no
+// longer in the list is kept as a "(missing)" option so it's still visible
+// and changeable.
+// Sentinel <option> value for the picker's "＋ new profile…" entry. A leading
+// slash can never appear in a real profile name (server-side validateGroupName
+// rejects "/" and "\"), so this value can't collide with a profile.
+const PROFILE_PICKER_NEW = '/new-profile';
+
+async function openProfilePicker(chipEl, current, onCommit) {
+  const prevSnapshot = lastSnapshot;
+  // Fetch the list BEFORE suspending the refresh or touching the DOM, so a
+  // slow (cold-cache) fetch can't leave the picker half-open. Critically,
+  // renameEditing is set only AFTER the await: were it set before, a second
+  // click during the fetch would start a rival picker whose chip is already
+  // detached — its replaceWith no-ops, so it never mounts, its listeners
+  // never fire, and the only code that resets renameEditing never runs,
+  // wedging the auto-refresh permanently.
+  let profiles = [];
+  try { profiles = await loadProfiles(); } catch (_) { profiles = []; }
+  // Bail if another picker already opened (renameEditing) or this chip was
+  // repainted away (a poll re-rendered it) while we were fetching — either
+  // way, mounting a <select> here would strand it.
+  if (renameEditing || !chipEl.isConnected) return;
+  renameEditing = true;
+  const origEl = chipEl.cloneNode(true);
+  const select = document.createElement('select');
+  select.className = 'group-default-profile-select';
+  // "＋ new profile…" sits at the top — picking it jumps to the editor to
+  // create one (and sets it as this default on save), so an empty profile
+  // list isn't a dead end.
+  select.add(new Option('＋ new profile…', PROFILE_PICKER_NEW));
+  select.add(new Option('(none)', ''));
+  for (const p of profiles) select.add(new Option(p.name, p.name));
+  if (current && !profiles.some(p => p.name === current)) {
+    select.add(new Option(`${current} (missing)`, current));
+  }
+  select.value = current;
+  chipEl.replaceWith(select);
+  select.focus();
+  let done = false;
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    if (select.parentNode) select.replaceWith(origEl);
+    renameEditing = false;
+    setLastSnapshot(prevSnapshot);
+  };
+  const commit = async () => {
+    if (done) return;
+    const name = select.value;
+    if (name === PROFILE_PICKER_NEW) {
+      // Jump to the editor (create mode): close the picker, then on a
+      // successful save set the new profile as this default via onCommit.
+      done = true;
+      if (select.parentNode) select.replaceWith(origEl);
+      renameEditing = false;
+      openProfileEditor(null, { onSaved: (newName) => onCommit(newName) });
+      return;
+    }
+    if (name === current) { cancel(); return; }
+    done = true;
+    // Put the chip element back before persisting so onCommit's refresh /
+    // re-render has a stable mount point and no stray <select> survives.
+    if (select.parentNode) select.replaceWith(origEl);
+    renameEditing = false;
+    try {
+      const ok = await onCommit(name);
+      if (!ok) setLastSnapshot(prevSnapshot);
+    } catch (err) {
+      toast((err && err.message) || String(err), true);
+      setLastSnapshot(prevSnapshot);
+    }
+  };
+  select.addEventListener('change', commit);
+  select.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+  });
+  select.addEventListener('blur', cancel);
 }
 
 // closeAllActionMenus collapses every open ⚙ options menu. Called on
@@ -913,103 +1004,55 @@ function bindRowActions() {
           });
           return; // Skip the default refresh; commit() / restore() handle it.
         }
-        // 'set-group-model' was retired with the per-group default_model
-        // (JOH-210): the group 🧠 chip is now a read-only spawn-profile badge,
-        // and a group's default is set via `groups set-default-profile` / the
-        // profile picker (a coming update). No data-act emits this case.
-        case 'set-user-default-model': {
-          // Inline edit of the USER-level default model — the "model"
-          // key in ~/.claude/settings.json, surfaced as the 🧠 chip in
-          // the groups filter bar. Unlike the per-group chips this
-          // element is static HTML (not rebuilt by the groups-list
-          // re-render), so on success the original chip element must
-          // be restored by hand before refresh() repaints its text —
-          // inlineEdit's saved-path relies on a re-render that never
-          // happens here. Hence the hand-rolled variant.
-          const chip = btn;
-          const prevSnapshot = lastSnapshot;
-          renameEditing = true;
-          const oldModel = chip.getAttribute('data-model') || '';
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.className = 'user-default-model-input';
-          input.value = oldModel;
-          input.placeholder = 'alias or model ID — empty clears';
-          input.setAttribute('list', 'model-alias-list');
-          input.spellcheck = false;
-          input.autocomplete = 'off';
-          chip.replaceWith(input);
-          input.focus();
-          input.select();
-          // Pop the suggestion list open on edit-start, same as
-          // inlineEdit's listId path — best-effort, typing still works.
-          try { input.showPicker(); } catch (_) { /* unsupported — fine */ }
-          // Settled flips once on the first commit/restore — the
-          // deferred-Enter and datalist-pick paths below can both fire
-          // for one acceptance, and the second must be a no-op.
-          // teardown is the unguarded inner cleanup commit/restore
-          // share once they hold the settled flag.
-          let settled = false;
-          const teardown = () => {
-            if (input.parentNode) input.replaceWith(chip);
-            renameEditing = false;
-            setLastSnapshot(prevSnapshot);
-          };
-          const restore = () => {
-            if (settled) return;
-            settled = true;
-            teardown();
-          };
-          const commit = async () => {
-            if (settled) return;
-            settled = true;
-            const newModel = input.value.trim();
-            if (newModel === oldModel) {
-              teardown();
-              return;
-            }
-            const r = await fetch('/api/claude-settings/default-model', {
-              method: 'PUT', credentials: 'same-origin',
+        case 'set-group-profile': {
+          // The group 🧠 chip: pick the group's default spawn profile from a
+          // <select> of saved profiles (+ "(none)"). PATCH /api/groups/{name}
+          // {default_profile}, then refresh() so the badge repaints. The chip
+          // span is the click target; fall back to a summary lookup if the
+          // click landed on a descendant.
+          const chipEl = btn.classList.contains('group-default-model')
+            ? btn
+            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-model'));
+          if (!chipEl) {
+            toast('default profile: could not locate the chip', true);
+            return;
+          }
+          const current = chipEl.getAttribute('data-profile') || '';
+          await openProfilePicker(chipEl, current, async (name) => {
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+              method: 'PATCH', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model: newModel }),
+              body: JSON.stringify({ default_profile: name }),
             });
             if (!r.ok) {
-              toast(`set user default model failed: ${await r.text()}`, true);
-              teardown();
-              return;
+              toast(`set default profile failed: ${await r.text()}`, true);
+              return false;
             }
-            // Put the chip back first — refresh() repaints its text
-            // from the fresh snapshot.
-            if (input.parentNode) input.replaceWith(chip);
-            renameEditing = false;
-            toast(newModel ? `user default model → ${newModel}` : 'user default model cleared (claude decides)');
+            toast(name ? `${group}: default profile → ${name}` : `${group}: default profile cleared`);
             refresh();
-          };
-          input.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') {
-              // Enter may be ACCEPTING a highlighted datalist
-              // suggestion — the browser applies the replacement as
-              // the keydown's default action, after this handler. So
-              // no preventDefault (it can cancel the acceptance), and
-              // commit on the next tick with the final value: one
-              // Enter both accepts and saves. Same contract as
-              // inlineEdit's listId path.
-              setTimeout(commit, 0);
-            } else if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+            return true;
           });
-          // Datalist pick by MOUSE = immediate save, same contract as
-          // inlineEdit's listId path above.
-          const aliasList = document.getElementById('model-alias-list');
-          input.addEventListener('input', (ev) => {
-            const picked = ev.inputType === undefined || ev.inputType === 'insertReplacementText';
-            if (!picked || !aliasList) return;
-            if ([...aliasList.options].some(o => o.value === input.value)) commit();
+          return; // openProfilePicker owns the refresh.
+        }
+        // 'set-group-model' was retired with the per-group default_model
+        // (JOH-210): the group 🧠 chip is now a clickable spawn-profile picker
+        // (set-group-profile, above), not a model editor. No data-act emits
+        // this case.
+        case 'set-dash-profile': {
+          // The dashboard-level 🧠 chip (groups filter bar): pick the
+          // dashboard default spawn profile, which pre-fills the spawn dialog
+          // when a group has no default of its own. Pure client state — stored
+          // in dashPrefs, not on the server — so onCommit persists locally and
+          // re-renders the (static-HTML) chip rather than refresh()ing. This
+          // replaced the retired user-default-model chip (JOH-210 inc3).
+          const current = btn.getAttribute('data-profile') || '';
+          await openProfilePicker(btn, current, async (name) => {
+            setDashDefaultProfile(name);
+            toast(name ? `dashboard default profile → ${name}` : 'dashboard default profile cleared');
+            renderDashDefaultProfile();
+            return true;
           });
-          input.addEventListener('blur', () => {
-            // Blur cancels (like the group chips) — explicit Enter to save.
-            if (renameEditing) restore();
-          });
-          return; // Skip the default refresh; commit() / restore() handle it.
+          return; // openProfilePicker owns the chip lifecycle + re-render.
         }
         case 'export-group': {
           // Export is a file download, not a mutation. Trigger it via

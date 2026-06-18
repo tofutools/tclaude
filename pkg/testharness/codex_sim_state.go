@@ -51,7 +51,10 @@ func (c *CodexSim) WriteThreadRow(seed CodexThreadSeed) error {
 		return err
 	}
 
-	d, err := sql.Open("sqlite", "file:"+path)
+	// busy_timeout mirrors the production read/write opens (codex_state.go,
+	// codex_convstore_settitle.go): the state DB is rollback-journal, so a
+	// concurrent writer's lock would otherwise fail this seed immediately.
+	d, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		return err
 	}
@@ -92,9 +95,14 @@ func (c *CodexSim) WriteThreadRow(seed CodexThreadSeed) error {
 // ThreadTitle reads back this session's threads.title — a convenience for
 // tests asserting a rename (ConvStore.SetTitle) landed. Returns ("", nil)
 // when there is no state DB or no row.
+//
+// busy_timeout mirrors the production read open (loadCodexThreads): without
+// it, this read races the daemon's concurrent SetTitle writes against the
+// same rollback-journal state DB (e.g. a reincarnate's background `<prev>-r-N`
+// rename) and returns SQLITE_BUSY immediately — the original flow-test flake.
 func (c *CodexSim) ThreadTitle() (string, error) {
 	path := filepath.Join(c.home, ".codex", "state_5.sqlite")
-	d, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	d, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return "", err
 	}

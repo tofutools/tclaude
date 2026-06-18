@@ -5,6 +5,8 @@
 
 import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey } from './helpers.js';
 import { dashPrefs } from './prefs.js';
+import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
+import { openProfileEditor } from './modal-profiles.js';
 import { groupDefaultContext } from './modal-templates.js';
 import {
   WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve, wtResolveCwd,
@@ -315,6 +317,163 @@ function spawnWtLoad(cwd) {
   return wtLoad('agent-spawn', cwd, SPAWN_WT_NONE).then(applyWtSync);
 }
 
+// ---- Load-from-profile pre-fill (JOH-210) -------------------------------
+//
+// A spawn profile is a saved bundle of (most of) this dialog's fields. The
+// "Profile" row at the top of the modal loads one in: on open the group's
+// own default profile (or, failing that, the dashboard default) is applied
+// automatically, and the human can pick another from the selector or Clear
+// back to blank. Only the dialog fields are touched — cwd / worktree are a
+// "where", not part of a profile, so they're left alone.
+
+// groupDefaultProfileName looks up a group's default spawn profile from the
+// latest snapshot. "" when the group is unknown or has none.
+function groupDefaultProfileName(groupName) {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  const g = groups.find(x => x.name === groupName);
+  return (g && g.default_profile) || '';
+}
+
+// applyProfileToSpawnForm fills the dialog from a profile object. Every field
+// is optional: a field the profile leaves unset keeps the dialog's own blank
+// default (so a sparse profile only overrides what it actually sets). Harness
+// goes first because it reshapes the Model / Sandbox / Effort / trust-dir rows;
+// the per-field controls are then set into that reshaped layout. cwd, worktree
+// and the group are deliberately untouched.
+function applyProfileToSpawnForm(p) {
+  if (!p) return;
+  // Harness first — applySpawnHarness rebuilds the Model/Sandbox/Effort/trust
+  // controls for it. Only switch when the profile names a harness the catalog
+  // actually offers; otherwise leave the selector on its current value.
+  if (p.harness) {
+    const hSel = $('#agent-spawn-harness');
+    if ([...hSel.options].some(o => o.value === p.harness)) hSel.value = p.harness;
+  }
+  applySpawnHarness($('#agent-spawn-harness').value);
+
+  // Model goes into whichever control the (now-applied) harness uses — the
+  // curated <select> for Claude, the free-text <input> for Codex. A curated
+  // value not in the <select>'s options silently stays on the prior pick.
+  if (p.model) activeSpawnModelEl().value = p.model;
+
+  // Effort: an explicit profile value wins (when the harness offers it);
+  // otherwise fall back to the per-model effort memory for the model just set,
+  // exactly as picking that model by hand would (applySpawnHarness already
+  // applied it for the blank model, so re-apply now that the model changed).
+  const effSel = $('#agent-spawn-effort');
+  if (p.effort && [...effSel.options].some(o => o.value === p.effort)) {
+    effSel.value = p.effort;
+  } else if (!p.effort) {
+    applyRememberedEffort(activeSpawnModelEl().value);
+  }
+
+  if (p.sandbox) {
+    const sandSel = $('#agent-spawn-sandbox');
+    if ([...sandSel.options].some(o => o.value === p.sandbox)) {
+      sandSel.value = p.sandbox;
+      applySpawnSandboxHint(spawnHarnessByName($('#agent-spawn-harness').value));
+    }
+  }
+  // trust_dir is a *bool — apply only when the profile set it (null = unset).
+  // The row is Codex-only and hidden otherwise; setting the checkbox while
+  // hidden is harmless (submit reads it only for Codex).
+  if (p.trust_dir != null) $('#agent-spawn-trust-dir').checked = !!p.trust_dir;
+
+  if (p.agent_name) $('#agent-spawn-name').value = p.agent_name;
+  if (p.role) $('#agent-spawn-role').value = p.role;
+  if (p.descr) $('#agent-spawn-descr').value = p.descr;
+  if (p.initial_message) $('#agent-spawn-init-msg').value = p.initial_message;
+  if (p.auto_focus != null) $('#agent-spawn-focus').checked = !!p.auto_focus;
+  if (p.include_group_default_context != null) {
+    $('#agent-spawn-group-context').checked = !!p.include_group_default_context;
+  }
+  // The name may have changed → re-sync the worktree branch name.
+  applyWtSync();
+}
+
+// clearSpawnProfileFields resets the profile-controlled fields to their
+// fresh-open blank defaults and drops the Profile selector back to "(none)".
+// It deliberately leaves the group, cwd and worktree alone — those aren't part
+// of a profile. Mirrors the blank-init subset of openAgentSpawnModal; shared
+// by the Clear button and the selector's "(none)" choice.
+function clearSpawnProfileFields() {
+  $('#agent-spawn-name').value = '';
+  $('#agent-spawn-role').value = '';
+  $('#agent-spawn-descr').value = '';
+  $('#agent-spawn-init-msg').value = '';
+  $('#agent-spawn-model').value = '';
+  $('#agent-spawn-model-codex').value = '';
+  populateSpawnHarnessSelect();
+  applySpawnHarness($('#agent-spawn-harness').value);
+  applyRememberedEffort(activeSpawnModelEl().value);
+  $('#agent-spawn-focus').checked = spawnAutoFocusPref();
+  updateSpawnGroupContextRow($('#agent-spawn-group').value);
+  $('#agent-spawn-load-profile').value = '';
+  syncSelectTitle($('#agent-spawn-load-profile'));
+  applyWtSync();
+}
+
+// populateSpawnProfileOptions rebuilds the Profile selector's <option> list
+// from `profiles` and selects `selected` (when it's in the list) — WITHOUT
+// applying it to the form. Shared by the open-time pre-fill and the "Save as
+// profile" refresh.
+function populateSpawnProfileOptions(profiles, selected) {
+  const sel = $('#agent-spawn-load-profile');
+  sel.innerHTML = `<option value="">— none (blank form) —</option>`
+    + profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  sel.value = (selected && profiles.some(p => p.name === selected)) ? selected : '';
+  syncSelectTitle(sel);
+}
+
+// initSpawnProfileSelector populates the Profile selector from the saved
+// profiles and applies the pre-fill for `groupName`: the group's own default
+// profile, else the dashboard default. Runs async (the list is fetched), so it
+// guards against the modal being closed or its group switched out from under a
+// slow fetch before it touches the form.
+async function initSpawnProfileSelector(groupName) {
+  const prefill = groupDefaultProfileName(groupName) || getDashDefaultProfile();
+  let profiles = [];
+  try {
+    profiles = await loadProfiles();
+  } catch (_) {
+    profiles = []; // endpoint error — leave the selector with just "(none)"
+  }
+  // Stale-guard: a fast close/reopen (or group switch) may have superseded
+  // this fetch — don't stomp the now-current dialog state.
+  if (!$('#agent-spawn-modal').classList.contains('show')) return;
+  if ($('#agent-spawn-group').value !== groupName) return;
+  populateSpawnProfileOptions(profiles, prefill);
+  if (prefill && profiles.some(p => p.name === prefill)) {
+    applyProfileToSpawnForm(profiles.find(p => p.name === prefill));
+  }
+}
+
+// spawnFormAsProfileSeed snapshots the dialog's current field values into a
+// profile-shaped object for "Save as profile" — only the profile-storable
+// fields (cwd / worktree are per-spawn and never stored). Harness-gated fields
+// (sandbox / trust-dir) are included only for a harness that takes them, so the
+// editor doesn't seed a value its harness would reject. The *bool fields come
+// straight off the dialog's checkboxes (concrete on/off, not "unset").
+function spawnFormAsProfileSeed() {
+  const harness = $('#agent-spawn-harness').value;
+  const hEntry = spawnHarnessByName(harness);
+  const seed = {
+    harness,
+    model: activeSpawnModelEl().value.trim(),
+    effort: $('#agent-spawn-effort').value,
+    agent_name: $('#agent-spawn-name').value.trim(),
+    role: $('#agent-spawn-role').value.trim(),
+    descr: $('#agent-spawn-descr').value.trim(),
+    initial_message: $('#agent-spawn-init-msg').value,
+    auto_focus: $('#agent-spawn-focus').checked,
+    sync_worktree: $('#agent-spawn-wt-sync').checked,
+    include_group_default_context: $('#agent-spawn-group-context').checked,
+  };
+  if (hEntry && hEntry.can_sandbox) seed.sandbox = $('#agent-spawn-sandbox').value;
+  if (harness === 'codex') seed.trust_dir = $('#agent-spawn-trust-dir').checked;
+  return seed;
+}
+
 function openAgentSpawnModal(opts) {
   const groupName = (opts && opts.groupName) || '';
   const groupRow = $('#agent-spawn-group-row');
@@ -391,6 +550,11 @@ function openAgentSpawnModal(opts) {
     meta.style.display = 'none';
   }
   $('#agent-spawn-modal').classList.add('show');
+  // Populate the Profile selector and apply the group/dashboard default
+  // profile. Runs after the modal is shown so its own stale-guard (which
+  // checks the modal is still open) is satisfied; the fields above stand as
+  // the blank baseline a profile then overlays.
+  initSpawnProfileSelector(select.value);
   setTimeout(() => {
     if (groupName) $('#agent-spawn-name').focus();
     else select.focus();
@@ -521,6 +685,13 @@ function bindAgentSpawnModal() {
     updateSpawnModelDefaultLabel(e.target.value);
     if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
     spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
+    // Deliberately NOT re-running the profile pre-fill here: it's a one-shot
+    // on open. Re-applying the new group's default profile mid-dialog would
+    // clobber any name / role / model / init-msg the human already typed (the
+    // profile sets many fields at once, unlike the field-scoped cwd prefill
+    // above which protects user input). The group <select> is hidden in the
+    // common per-group open anyway; to load a different group's profile, the
+    // human picks it from the Profile selector.
   });
   // Switching the harness reshapes the Model + Sandbox rows for the new
   // harness (and re-applies the remembered effort for whatever Model
@@ -542,6 +713,32 @@ function bindAgentSpawnModal() {
   });
   $('#agent-spawn-model-codex').addEventListener('input', (e) => {
     applyRememberedEffort(e.target.value.trim());
+  });
+  // Load-from-profile selector: picking a profile applies it; "(none)"
+  // clears the profile-filled fields back to blank.
+  $('#agent-spawn-load-profile').addEventListener('change', async (e) => {
+    const name = e.target.value;
+    if (!name) { clearSpawnProfileFields(); return; }
+    try {
+      const p = await getProfile(name);
+      if (p) applyProfileToSpawnForm(p);
+    } catch (_) { /* fetch error — leave the form as-is */ }
+  });
+  // Clear resets the profile-controlled fields (leaving group/cwd/worktree).
+  $('#agent-spawn-clear').addEventListener('click', clearSpawnProfileFields);
+  // Save as profile: open the profile editor pre-filled from the current
+  // dialog fields (create mode — the human names it). On save, refresh the
+  // Profile selector so the new profile appears and is selected.
+  $('#agent-spawn-save-profile').addEventListener('click', () => {
+    openProfileEditor(spawnFormAsProfileSeed(), {
+      editExisting: false,
+      onSaved: (newName) => {
+        loadProfiles(true).then((profiles) => {
+          if (!$('#agent-spawn-modal').classList.contains('show')) return;
+          populateSpawnProfileOptions(profiles, newName);
+        }).catch(() => { /* selector just keeps its current options */ });
+      },
+    });
   });
   $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
   $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);

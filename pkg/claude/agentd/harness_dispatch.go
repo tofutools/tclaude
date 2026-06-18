@@ -155,6 +155,10 @@ func deliverRename(convID, title string) bool {
 				"conv", convID, "harness", h.Name, "error", err)
 			return false
 		}
+		if err := db.SetConvIndexCustomTitle(convID, title, h.Name); err != nil {
+			slog.Warn("rename: failed to refresh cached title after ConvStore.SetTitle",
+				"conv", convID, "harness", h.Name, "error", err)
+		}
 		return true
 	}
 

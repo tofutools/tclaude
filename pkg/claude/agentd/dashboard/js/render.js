@@ -12,6 +12,7 @@ import {
 } from './helpers.js';
 import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS } from './sort.js';
 import { dashPrefs } from './prefs.js';
+import { getDashDefaultProfile } from './profiles.js';
 
 // lastSnapshot and sudoBadge live in dashboard.js; sudoByConv lives in
 // refresh.js (refresh() rebuilds it on every poll). Imported back here —
@@ -375,7 +376,7 @@ function renderGroups(groups) {
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
-        <span class="group-default-model${g.default_profile ? '' : ' unset'}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — set via `tclaude agent groups set-default-profile`; an editor lands in a coming update' : 'No default spawn profile — spawns use their own fields'}">🧠 ${g.default_profile ? esc(g.default_profile) : 'no default profile'}</span>
+        <span class="group-default-model${g.default_profile ? '' : ' unset'}" data-act="set-group-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-profile="${esc(g.default_profile || '')}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — fills blank launch fields at spawn. Click to change.' : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}">🧠${g.default_profile ? ' ' + esc(g.default_profile) : ''}</span>
         ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">
@@ -734,35 +735,30 @@ function renderNotifyGlobal(enabled) {
     : 'OS notifications OFF (config.notifications.enabled) — nothing notifies, regardless of group/agent bells. Click to turn on.';
 }
 
-// userDefaultModelLabel describes what a spawn with no model anywhere
-// (no explicit pick, no group default) actually runs on: the
-// user-level settings.json model when set, else claude's own built-in
-// default. Used by the group chip / spawn modal so "default" is never
-// a mystery.
-function userDefaultModelLabel() {
-  const m = (lastSnapshot && lastSnapshot.user_default_model) || '';
-  return m ? `the user default (${m})` : "claude's own default";
-}
-
-// renderUserDefaultModel paints the groups-tab chip showing the
-// user-level default model (~/.claude/settings.json "model"). The chip
-// is click-to-edit (set-user-default-model in row-actions.js); the
-// data-model attr carries the raw current value for the editor.
-function renderUserDefaultModel(model) {
-  const el = $('#user-default-model');
+// renderDashDefaultProfile paints the groups-tab 🧠 chip showing the
+// DASHBOARD-level default spawn profile (a dashPrefs value, not server
+// state). It pre-fills the spawn dialog as the fallback when a group has no
+// default profile of its own. The chip is click-to-pick (set-dash-profile in
+// row-actions.js); the data-profile attr carries the current name for the
+// picker. Replaces the retired user-default-model chip (JOH-210 inc3) — the
+// settings.json model-editing affordance is gone from the dashboard; the
+// /api/claude-settings/default-model endpoint and the snapshot's
+// user_default_model field (which the spawn modal's Default label still
+// reads) are untouched.
+function renderDashDefaultProfile() {
+  const el = $('#dashboard-default-profile');
   if (!el) return;
-  const m = model || '';
-  el.classList.toggle('unset', !m);
-  el.setAttribute('data-model', m);
-  el.textContent = '🧠 ' + (m ? m : 'no user default model');
-  el.title = (m
-    ? `User-level default Claude model: ${m} — what agents spawned without a model pick run on (unless their group sets its own default). Stored as the "model" key in ~/.claude/settings.json.`
-    : 'No user-level default model — claude picks its own. Stored as the "model" key in ~/.claude/settings.json.')
-    + ' Click to edit; empty clears it.';
+  const name = getDashDefaultProfile();
+  el.classList.toggle('unset', !name);
+  el.setAttribute('data-profile', name);
+  el.textContent = '🧠' + (name ? ' ' + name : '');
+  el.title = name
+    ? `Dashboard default spawn profile: ${name} — pre-fills the spawn dialog when the chosen group has no default profile of its own. Click to change.`
+    : 'No dashboard default spawn profile — click to set one. (Pre-fills the spawn dialog as a fallback after a group’s own default.)';
 }
 
 export {
   renderGroups, renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderUsage, renderUserDefaultModel,
+  renderMessagesBadge, renderUsage, renderDashDefaultProfile,
   renderNotifyGlobal,
 };

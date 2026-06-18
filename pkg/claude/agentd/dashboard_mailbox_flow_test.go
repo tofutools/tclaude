@@ -662,3 +662,70 @@ func TestDashboardMailbox_PageSizeClamped(t *testing.T) {
 	assert.LessOrEqual(t, p.PageSize, 500, "page_size clamped to the server cap")
 	assert.Equal(t, 3, p.Total)
 }
+
+// Scenario: the dashboard's bulk delete splits a large selection into
+// many small batched /api/mailbox/delete calls rather than one giant
+// request (so the operator can watch a progress bar fill). Seed more
+// messages than one batch, then delete them the way mail.js does — in
+// sequential chunks — and assert each call reports its own count, the
+// counts sum to the whole, and the folder ends empty. A re-delete of an
+// already-removed chunk is a harmless no-op (count 0), matching the
+// idempotent retry the batching relies on if a later batch were to fail.
+func TestDashboardMailboxDelete_BatchedSequentialCalls(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("bulk")
+	f.HaveMember("bulk", mbAlice)
+	f.HaveMember("bulk", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	dash := dashHandlerForTest(t)
+
+	const total = 120 // > one DELETE_BATCH (50) of mail.js ⇒ 3 batches
+	base := time.Now().Add(-time.Hour)
+	for i := range total {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: mbAlice, ToConv: mbBob,
+			Subject: "bulk", Body: "n",
+			CreatedAt: base.Add(time.Duration(i) * time.Second),
+		})
+		require.NoError(t, err)
+	}
+
+	// Collect every id from the firehose, then delete in chunks of 50 —
+	// the same batch size mail.js uses. The mailbox read is paginated, so
+	// pull a single page large enough to hold them all (page_size is capped
+	// at maxMailboxPageSize=500 server-side, and total < that).
+	all := getMailboxPage(t, dash, "all", "", 1, 500).Messages
+	require.Len(t, all, total)
+	ids := make([]int64, len(all))
+	for i, m := range all {
+		ids[i] = m.ID
+	}
+
+	const batch = 50
+	deletedTotal := 0
+	for i := 0; i < len(ids); i += batch {
+		end := min(i+batch, len(ids))
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+			"/api/mailbox/delete", map[string]any{"ids": ids[i:end]}))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var resp struct {
+			Deleted int `json:"deleted"`
+		}
+		testharness.DecodeJSON(t, rec, &resp)
+		assert.Equal(t, end-i, resp.Deleted, "each batch deletes exactly its chunk")
+		deletedTotal += resp.Deleted
+	}
+	assert.Equal(t, total, deletedTotal, "batches sum to the whole selection")
+	assert.Empty(t, getMailbox(t, dash, "all"), "firehose empty after the batched delete")
+
+	// Idempotent retry: re-deleting the first chunk now removes nothing.
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/delete", map[string]any{"ids": ids[:batch]}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Deleted int `json:"deleted"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	assert.Equal(t, 0, resp.Deleted, "already-deleted ids delete nothing on retry")
+}
