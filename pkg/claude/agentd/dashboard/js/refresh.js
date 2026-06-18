@@ -9,7 +9,7 @@ import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
 import {
   renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderUsage, renderUserDefaultModel,
+  renderMessagesBadge, renderUsage, renderDashDefaultProfile,
   renderNotifyGlobal,
 } from './render.js';
 import { renderMailTab, paintMail } from './mail.js';
@@ -261,7 +261,7 @@ export async function refresh() {
     renderMailTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
-    renderUserDefaultModel(data.user_default_model || '');
+    renderDashDefaultProfile();
     renderNotifyGlobal(!!data.notifications_enabled);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
@@ -454,6 +454,29 @@ export function confirmModal({title, body, meta, okLabel}) {
 // The explicit Cancel button remains an instant unconditional dismiss
 // path. Pass the modal's id (without leading #) and the close function
 // to invoke once the user confirms (or the modal is clean).
+
+// isTopmostOverlay reports whether `el` is the front-most shown overlay, so a
+// document-level Escape dismisses only the modal on top — not every shown
+// modal at once. The backdrop-CLICK path needs no equivalent (its event lands
+// on the top overlay's own element), but Escape is global. Front-most =
+// highest computed z-index, DOM order breaking ties (a later sibling paints on
+// top). Single-modal (the overwhelmingly common case) short-circuits to true,
+// so this only matters once a modal is stacked on another (e.g. the profile
+// editor opened over the spawn dialog).
+function isTopmostOverlay(el) {
+  const shown = [...document.querySelectorAll('.modal-overlay.show, .manage-overlay.show')];
+  if (shown.length <= 1) return true;
+  const zOf = (n) => parseInt(getComputedStyle(n).zIndex, 10) || 0;
+  const myZ = zOf(el);
+  return !shown.some((other) => {
+    if (other === el) return false;
+    const oz = zOf(other);
+    if (oz !== myZ) return oz > myZ;
+    // Tie on z-index: whichever is later in the DOM is painted on top.
+    return !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+}
+
 export function bindBackdropDiscard(modalId, closeFn) {
   const el = $('#' + modalId);
   if (!el) return;
@@ -509,6 +532,9 @@ export function bindBackdropDiscard(modalId, closeFn) {
     // Escape, but check anyway so we never race to pop a second
     // confirm on top of the first.
     if ($('#confirm-modal').classList.contains('show')) return;
+    // Only the front-most modal responds, so an editor opened on top of
+    // another modal (Save-as-profile) doesn't also dismiss the one beneath.
+    if (!isTopmostOverlay(el)) return;
     e.preventDefault();
     tryDismiss();
   });
