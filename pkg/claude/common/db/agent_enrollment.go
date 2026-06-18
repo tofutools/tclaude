@@ -23,7 +23,7 @@ const (
 type AgentEnrollment struct {
 	ConvID       string
 	EnrolledAt   time.Time
-	EnrolledVia  string    // spawn | clone | reincarnate | group | grant | cli | promote | migration
+	EnrolledVia  string    // spawn | clone | reincarnate | group | grant | cli | session-start | online-reconcile | promote | migration
 	RetiredAt    time.Time // zero ⇒ active
 	RetiredBy    string
 	RetireReason string
