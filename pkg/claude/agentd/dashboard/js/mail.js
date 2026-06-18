@@ -622,9 +622,9 @@ function paintReader() {
     ${actions}`;
 }
 
-// paintBulkActions shows the filter-bar "mark all read" / "clear read"
-// buttons only on the human folder — they act on human_messages, which
-// is the only folder with read-state semantics.
+// paintBulkActions shows the message-filter row's "mark all read" /
+// "clear read" buttons only on the human folder — they act on
+// human_messages, which is the only folder with read-state semantics.
 function paintBulkActions() {
   const human = mail.selected === HUMAN_ID;
   const markAll = $('#mail-mark-all');
