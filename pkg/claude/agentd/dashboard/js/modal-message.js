@@ -295,18 +295,41 @@ function bindSudoModal() {
 // the PERMANENT analog of the "+ sudo" elevation — the banner in the
 // modal spells out the difference.
 let permEditConv = '';
+// permEditOwnsGroup: does the agent being edited own at least one group?
+// Owner-conferred ("owner_implied") slugs are effectively held by a group
+// owner via the daemon's owner-bypass, even at Default, so the effective
+// indicator must reflect that — set per-open in openPermEditModal.
+let permEditOwnsGroup = false;
 
-// permRowEffective recomputes the "✓ granted / ✗ denied" indicator on
-// one row from its selected effect plus whether the slug is a global
-// default — mirroring resolvePermission's defaults∪grants−denies.
+// permRowEffective recomputes the "✓ granted / ✗ denied / ✓ via owner"
+// indicator on one row from its selected effect, whether the slug is a
+// global default, and — for an owner — whether the slug is owner-conferred.
+// Mirrors the daemon precedence: an explicit Grant or a global default
+// grants; an explicit Deny is authoritative and suppresses the owner
+// bypass; otherwise a Default on an owner-conferred slug is held "via
+// ownership" when the agent owns a group.
 function permRowEffective(row) {
   const active = row.querySelector('.perm-tristate button.active');
   const effect = active ? active.dataset.effect : 'default';
   const inDefault = row.dataset.indefault === '1';
-  const granted = effect === 'grant' || (effect === 'default' && inDefault);
+  const ownerImplied = row.dataset.ownerimplied === '1';
+  const viaOwner = effect === 'default' && !inDefault && ownerImplied && permEditOwnsGroup;
+  const granted = effect === 'grant' || (effect === 'default' && inDefault) || viaOwner;
   const el = row.querySelector('.perm-row-eff');
-  el.textContent = granted ? '✓ granted' : '✗ denied';
-  el.className = 'perm-row-eff ' + (granted ? 'granted' : 'denied');
+  if (viaOwner) {
+    el.textContent = '✓ via owner';
+    el.className = 'perm-row-eff owner';
+  } else {
+    el.textContent = granted ? '✓ granted' : '✗ denied';
+    el.className = 'perm-row-eff ' + (granted ? 'granted' : 'denied');
+  }
+}
+
+// convOwnedGroups returns the group names the conv owns, read from the
+// snapshot's per-agent owned_groups (empty for non-owners / plain convs).
+function convOwnedGroups(conv) {
+  const a = (lastSnapshot?.agents || []).find(x => x.conv_id === conv);
+  return (a && a.owned_groups) || [];
 }
 
 function openPermEditModal(conv, label) {
@@ -315,9 +338,27 @@ function openPermEditModal(conv, label) {
   const slugs = (snap.slugs || []).slice().sort((a, b) => a.slug < b.slug ? -1 : 1);
   const defaultSet = new Set(perms.defaults || []);
   const overrides = (perms.overrides || {})[conv] || {};
+  const ownedGroups = convOwnedGroups(conv);
   permEditConv = conv;
+  permEditOwnsGroup = ownedGroups.length > 0;
   $('#perm-edit-subtitle').textContent =
     `Agent: ${label || shortId(conv)} · ${shortId(conv)}`;
+  // Owner note: a group owner holds the owner-conferred (👑) slugs below
+  // for its owned groups / their members even at Default. Surface that so
+  // the human isn't misled by a "✗ denied"-looking Default tri-state.
+  const ownerNote = $('#perm-edit-owner-note');
+  if (ownerNote) {
+    if (permEditOwnsGroup) {
+      ownerNote.innerHTML =
+        `👑 <strong>Group owner</strong> of ${ownedGroups.map(g => `<code>${esc(g)}</code>`).join(', ')}. ` +
+        `Owner-conferred slugs (marked 👑) are effectively held for those groups and their members ` +
+        `even at <strong>Default</strong> — shown as “✓ via owner”. A <strong>Deny</strong> still suppresses one.`;
+      ownerNote.hidden = false;
+    } else {
+      ownerNote.hidden = true;
+      ownerNote.innerHTML = '';
+    }
+  }
   $('#perm-edit-error').textContent = '';
   $('#perm-edit-filter').value = '';
   const list = $('#perm-edit-list');
@@ -327,11 +368,15 @@ function openPermEditModal(conv, label) {
     list.innerHTML = slugs.map(s => {
       const cur = overrides[s.slug] || 'default'; // grant | deny | default
       const inDefault = defaultSet.has(s.slug);
+      const ownerImplied = !!s.owner_implied;
       const mk = (eff, txt) =>
         `<button type="button" data-effect="${eff}"${cur === eff ? ' class="active"' : ''}>${txt}</button>`;
-      return `<div class="perm-row" data-slug="${esc(s.slug)}" data-indefault="${inDefault ? '1' : '0'}">
+      const ownerBadge = ownerImplied
+        ? ' <span class="owner-badge" title="Group ownership confers this slug for owned groups / their members, without an explicit grant. A per-agent Deny still suppresses it.">👑 owner</span>'
+        : '';
+      return `<div class="perm-row" data-slug="${esc(s.slug)}" data-indefault="${inDefault ? '1' : '0'}" data-ownerimplied="${ownerImplied ? '1' : '0'}">
         <div class="perm-row-info">
-          <span class="perm-row-slug">${esc(s.slug)}</span>
+          <span class="perm-row-slug">${esc(s.slug)}${ownerBadge}</span>
           <span class="perm-row-desc" title="${esc(s.description || '')}">${esc(s.description || '')}</span>
         </div>
         <div class="perm-tristate">${mk('default', 'Default')}${mk('grant', 'Grant')}${mk('deny', 'Deny')}</div>

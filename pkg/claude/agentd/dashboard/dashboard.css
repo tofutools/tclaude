@@ -1088,6 +1088,16 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
+.perm-row-eff.owner { color: #d29922; }
+/* The 👑 owner-conferred markers reuse the existing .owner-badge pill
+   (defined near .tag) so the slug label, Slugs tab and group-member
+   badges share one consistent style. */
+.perm-edit-owner-note {
+  font-size: 11px; color: #e3b341; line-height: 1.4;
+  background: #1c1606; border: 1px solid #4d3a17; border-radius: 6px;
+  padding: 7px 10px; margin-bottom: 8px;
+}
+.perm-edit-owner-note code { color: #f0c674; }
 .perm-tristate {
   flex: 0 0 auto; display: inline-flex;
   border: 1px solid #2a3340; border-radius: 4px; overflow: hidden;

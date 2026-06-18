@@ -490,12 +490,16 @@ function renderPermissions(perm, agents) {
 function renderSlugs(slugs) {
   if (!slugs || !slugs.length) return '<div class="empty">No slugs registered.</div>';
   return `
+    <div class="muted" style="font-size:11px;margin-bottom:6px">
+      👑 = group ownership confers this slug for owned groups / their members, without an explicit grant (a per-agent deny still suppresses it).
+    </div>
     <table>
-      <thead><tr><th>Slug</th><th>Description</th></tr></thead>
+      <thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead>
       <tbody>
         ${slugs.map(s => `
           <tr>
             <td><span class="slug">${esc(s.slug)}</span></td>
+            <td>${s.owner_implied ? '<span class="owner-badge" title="Conferred by group ownership">👑</span>' : '<span class="muted">—</span>'}</td>
             <td>${esc(s.description || '')}</td>
           </tr>
         `).join('')}
