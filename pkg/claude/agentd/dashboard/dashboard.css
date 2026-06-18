@@ -1256,6 +1256,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   background: transparent; border-color: #2a3340; color: #7d8590;
 }
 .cron-create-modal .modal-buttons .secondary:hover { color: #c9d1d9; }
+/* The spawn + clone dialogs are resizable and float at a min-height pinned
+   to their natural size (refreshModalMinSize), so the dialog box is often
+   taller than its content — a dragged-larger size, or fewer rows than were
+   visible when the floor was measured (the many conditionally-hidden
+   harness/worktree rows). The button row is the last flex child, and the
+   column packs at the top, so without this the Cancel/Spawn buttons sat
+   just under the last field with empty space beneath them. margin-top:auto
+   absorbs that free space above the row, sticking the footer to the bottom
+   edge. When content instead overflows the dialog the auto margin collapses
+   to 0, so the buttons scroll with the form as before — no regression. */
+#agent-spawn-modal .modal-buttons,
+#clone-agent-modal .modal-buttons { margin-top: auto; }
 /* Import-group modal — the ⤒ import overlay. Reuses .cron-create-modal
    for the shell + rows; these rules style the file picker and the
    dry-run preview panel (manifest summary + collision report). */
