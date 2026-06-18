@@ -1139,9 +1139,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
    whole dialog on both axes. resize needs overflow not visible on both
    axes, so these override the base overflow-y:auto with overflow:auto. The
    dragged size is persisted per modal (makeModalResizable → dashPrefs);
-   min/max-width + max-height:86vh still clamp it. The per-field min-width:0
-   clamp and the worktree tooltip keep labels readable without resizing —
-   this is an escape hatch, not the primary fix. */
+   max-width + max-height:86vh cap it, and JS pins the *minimum* to the
+   dialog's natural at-rest size each open (refreshModalMinSize) so the grip
+   can't crush it below where the fields fit — hence no min-height here. The
+   per-field min-width:0 clamp and the worktree tooltip keep labels readable
+   without resizing — this is an escape hatch, not the primary fix. */
 #agent-spawn-modal .cron-create-modal,
 #clone-agent-modal .cron-create-modal {
   resize: both; overflow: auto;
