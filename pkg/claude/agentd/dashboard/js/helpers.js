@@ -33,6 +33,36 @@ function syncSelectTitle(sel) {
   sel.title = (opt ? (opt.title || opt.textContent) : '').trim();
 }
 
+// refreshModalMinSize pins a resizable modal's minimum size to its natural
+// "at rest" size — the size it renders at with no user resize: the default
+// width and the content height (the latter already capped by max-height in
+// CSS). That stops the resize grip from shrinking the dialog below where
+// its fields fit, and it's the previous (pre-resize) default size, not a
+// hardcoded number — measured live each open, so it tracks the viewport and
+// the current content. The box still auto-grows above this floor to fit
+// taller content (a fixed min-height isn't imposed), so this only sets the
+// drag floor. No-op while the modal is hidden (it can't be measured then).
+//
+// Measurement drops any applied size + prior min so the box falls back to
+// its content-driven natural size, reads that, pins it as the min, and
+// restores the applied size — all synchronously, so the cleared state never
+// paints (no flicker). box-sizing is border-box globally, so the measured
+// offsetWidth/Height line up with the width/height we restore.
+function refreshModalMinSize(modalEl) {
+  if (!modalEl || !modalEl.offsetParent) return; // hidden → can't measure
+  const { width, height } = modalEl.style;
+  modalEl.style.minWidth = '';
+  modalEl.style.minHeight = '';
+  modalEl.style.width = '';
+  modalEl.style.height = '';
+  const natW = modalEl.offsetWidth;
+  const natH = modalEl.offsetHeight;
+  modalEl.style.minWidth = natW + 'px';
+  modalEl.style.minHeight = natH + 'px';
+  modalEl.style.width = width;
+  modalEl.style.height = height;
+}
+
 // makeModalResizable persists a CSS-`resize`-enabled modal's dragged size
 // (width + height) in dashPrefs, keyed by `key`, so it survives reopen,
 // daemon restart and tab — dashPrefs lives server-side, unlike
@@ -45,6 +75,11 @@ function syncSelectTitle(sel) {
 // hiding, error text) never get mistaken for a user resize. box-sizing is
 // border-box globally, so offsetWidth/Height match the inline width/height
 // we restore; CSS min/max-width + max-height still clamp the applied size.
+//
+// It also pins the modal's minimum size to its natural default each time it
+// opens (refreshModalMinSize), so the grip can't shrink it below where the
+// fields fit. The open trigger is the overlay gaining its `show` class —
+// watched here so the caller needn't thread a hook through every open path.
 function makeModalResizable(modalEl, key) {
   if (!modalEl) return;
   let saved = { w: 0, h: 0 };
@@ -65,6 +100,17 @@ function makeModalResizable(modalEl, key) {
     saved = { w, h };
     try { dashPrefs.setItem(key, JSON.stringify(saved)); } catch (_) {}
   });
+  // Re-measure the min size whenever the modal becomes visible (its overlay
+  // gains `show`) — content and viewport can differ per open. Observing the
+  // class avoids editing every open*Modal call site, and only fires on the
+  // overlay's own class changes, so there's no measure/observe feedback loop
+  // (refreshModalMinSize mutates modalEl, not the overlay).
+  const overlay = modalEl.closest('.modal-overlay');
+  if (overlay) {
+    new MutationObserver(() => {
+      if (overlay.classList.contains('show')) refreshModalMinSize(modalEl);
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  }
 }
 
 // bindSelectTitles keeps every <select> under `root` tooltip-synced: an
