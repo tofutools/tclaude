@@ -16,6 +16,15 @@ on:
 permissions:
   contents: write
 
+# Share the "release" concurrency group with release.yml so manual and automated
+# releases serialize against each other (the group string is repo-global, not
+# per-workflow). The next version number is computed early and read-only, but the
+# tag isn't pushed until the release job — serializing whole runs prevents two
+# in-flight releases from computing, then racing to push, the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   # golangci-lint is platform-independent, so run it once on a single runner
   # rather than across the test matrix. lint, test, version, and build all run
