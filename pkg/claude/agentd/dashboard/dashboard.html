@@ -461,9 +461,11 @@
   </section>
 </main>
 <!-- Slop-mode side pull-lever — a casino lever pinned to the right edge,
-     CSS-hidden unless body.slop. slop-spectacle.js wires the click to
-     spin every live slot machine at once (pullAllMachines). aria-hidden —
-     pure flair; the per-row machines remain the keyboard-reachable path. -->
+     CSS-hidden unless body.slop AND the Groups tab is active (it's the
+     only tab the per-row slot machines live on). slop-spectacle.js wires
+     the click to spin every live slot machine at once (pullAllMachines).
+     aria-hidden — pure flair; the per-row machines remain the
+     keyboard-reachable path. -->
 <div id="slop-lever" aria-hidden="true" title="Pull the lever — spin every machine at once">
   <div class="slop-lever-track">
     <div class="slop-lever-stick"><span class="slop-lever-knob">🔴</span></div>

@@ -97,7 +97,10 @@ func TestDashboardHTML_SlopExtras(t *testing.T) {
 	must(".slop-hud { display: none; }", "the HUD is hidden in the plain dashboard")
 	must("#slop-lever { display: none; }", "the lever is hidden in the plain dashboard")
 	must("body.slop .slop-hud", "the HUD is revealed only in slop mode")
-	must("body.slop #slop-lever", "the lever is revealed only in slop mode")
+	// The lever is revealed only in slop mode AND only on the Groups tab
+	// (the one place slot machines render) — the :has() gate tracks the
+	// #tab-groups.active toggle so it follows the active tab with no JS.
+	must("body.slop:has(#tab-groups.active) #slop-lever", "the lever is revealed only in slop mode on the Groups tab")
 
 	// Belt + braces: the new motion is reduced-motion gated, matching
 	// the rest of slop's CSS.
