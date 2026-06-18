@@ -67,6 +67,42 @@ func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, err
 	return out, ownerGroups, nil
 }
 
+// isDanglingAgentEntry reports whether convID names a known agent
+// enrollment (active or retired) that agent.ResolveSelector can no
+// longer resolve — its conversation data is gone (no conv_index row,
+// no group membership, no succession chain), yet the enrollment table
+// still lists it as an agent. This is the "dangling agent" case: the
+// dashboard roster surfaces the row (it walks db.ListActiveAgents),
+// but retire — which resolves the selector first — used to dead-end on
+// "no conversation matches" and the entry got stuck.
+//
+// Caller contract: only consult this AFTER ResolveSelector has already
+// failed — a resolvable conv is never dangling. A "none" enrollment
+// (nothing references convID as an agent) returns false, so callers
+// never offer to "clean up" an arbitrary unknown conv-id.
+func isDanglingAgentEntry(convID string) bool {
+	state, err := db.EnrollmentState(convID)
+	if err != nil {
+		return false
+	}
+	return state == db.EnrollmentActive || state == db.EnrollmentRetired
+}
+
+// writeDanglingAgentResponse signals a dangling agent entry to the
+// caller: HTTP 409 with {dangling:true, conv_id, error}. The dashboard
+// turns this into a "remove the dangling entry?" confirm that purges the
+// orphan rows via the DELETE endpoint; the CLI prints guidance pointing
+// at `tclaude agent delete`. Distinct from the generic 404 resolve
+// error so callers can offer best-effort cleanup instead of dead-ending.
+func writeDanglingAgentResponse(w http.ResponseWriter, convID string) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"dangling": true,
+		"conv_id":  convID,
+		"error": "no conversation data found for " + short8(convID) +
+			" — dangling agent entry (remove it instead of retiring)",
+	})
+}
+
 // enrollmentActor names who performed an enrollment action for the
 // audit columns: "human" for a human caller (callerConv empty), the
 // caller's conv-id for an agent.
@@ -240,6 +276,19 @@ func dashboardEnrollmentVerb(w http.ResponseWriter, r *http.Request, selector, v
 	}
 	res, _, err := agent.ResolveSelector(selector)
 	if err != nil {
+		// A retire whose target can't be resolved but looks like a raw
+		// conv-id may be a DANGLING agent entry — an enrollment whose
+		// conversation data is gone, so the resolver legitimately can't
+		// find it. Rather than a dead-end 404 that leaves the entry
+		// stuck on the roster, signal the dashboard so it can offer to
+		// purge the orphan via DELETE (whose union cleanup is a no-op on
+		// the missing conv but drops the leftover enrollment/group/perm
+		// rows). promote/reinstate intentionally stay a 404 — there is
+		// nothing to promote when the conversation is gone.
+		if verb == "retire" && looksLikeConvID(selector) && isDanglingAgentEntry(selector) {
+			writeDanglingAgentResponse(w, selector)
+			return
+		}
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}

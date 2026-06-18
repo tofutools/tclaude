@@ -129,6 +129,24 @@ func (e *DaemonError) Error() string {
 	return fmt.Sprintf("agentd returned %d", e.Status)
 }
 
+// IsDangling reports whether this error carries the dangling-agent-entry
+// signal (HTTP 409 + {"dangling":true}) the retire endpoint emits when
+// the target enrollment has no resolvable conversation. Callers turn it
+// into actionable guidance toward `tclaude agent delete` instead of the
+// generic resolve error.
+func (e *DaemonError) IsDangling() bool {
+	if e == nil || e.Status != http.StatusConflict || len(e.Raw) == 0 {
+		return false
+	}
+	var body struct {
+		Dangling bool `json:"dangling"`
+	}
+	if err := json.Unmarshal(e.Raw, &body); err != nil {
+		return false
+	}
+	return body.Dangling
+}
+
 // ParseAskHuman normalises a --ask-human flag value into a duration.
 // Accepts: "" (no popup), bare integers (seconds), or Go duration
 // strings ("30s", "2m"). Caps at 300s to match the daemon. Returns

@@ -9,7 +9,7 @@ import { renderGroupsTab } from './tabs.js';
 // refresh()/toast()/confirmModal/retireConfirm/retireToast live in refresh.js;
 // lastSnapshot is dashboard.js's shared state (read-only here).
 // Deliberate benign cycles (see render.js); TDZ-safe.
-import { refresh, toast, confirmModal, retireConfirm, retireToast } from './refresh.js';
+import { refresh, toast, confirmModal, retireConfirm, retireToast, maybeHandleDanglingRetire } from './refresh.js';
 import { lastSnapshot } from './dashboard.js';
 
 // Drag-and-drop: move a member row from group A onto group B's
@@ -542,6 +542,9 @@ async function runDndRetire(payload) {
       method: 'POST', credentials: 'same-origin',
     });
     if (!r.ok) {
+      // A dangling entry (conversation gone) can't be retired — offer to
+      // remove it instead. maybeHandleDanglingRetire refreshes itself.
+      if (await maybeHandleDanglingRetire(r, conv, label)) return;
       toast(`retire ${label} failed: ${await r.text()}`, true);
       return;
     }
