@@ -165,9 +165,11 @@ func TestGroupDefaultProfile_HarnessCorrectFill(t *testing.T) {
 }
 
 // Scenario: a Codex default profile that leaves sandbox/approval BLANK must
-// still launch the agent under the harness's secure defaults (workspace-write /
-// never), not unsandboxed. This guards against the profile fill bypassing the
-// secure-default resolution.
+// still launch the agent under the harness's secure defaults — the managed
+// tclaude-agent profile (workspace-write containment PLUS agentd-socket
+// reachability, the recommended default for a daemon-spawned agent) and the
+// non-escalating "never" approval — not unsandboxed. This guards against the
+// profile fill bypassing the secure-default resolution.
 func TestGroupDefaultProfile_BlankCodexSandboxGetsSecureDefault(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -180,7 +182,7 @@ func TestGroupDefaultProfile_BlankCodexSandboxGetsSecureDefault(t *testing.T) {
 
 	sandbox, ok := f.World.SpawnSandbox(spawn.ConvID)
 	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
-	assert.Equal(t, "workspace-write", sandbox, "blank profile sandbox must resolve to the Codex secure default, not unsandboxed")
+	assert.Equal(t, "tclaude-agent", sandbox, "blank profile sandbox must resolve to the Codex secure default (the managed tclaude-agent profile), not unsandboxed")
 	approval, _ := f.World.SpawnApproval(spawn.ConvID)
 	assert.Equal(t, "never", approval, "blank profile approval must resolve to the Codex non-escalating default")
 }

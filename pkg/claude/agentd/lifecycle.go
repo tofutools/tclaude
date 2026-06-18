@@ -758,7 +758,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 
 	// Resolve the sandbox mode for the chosen harness: a Codex agent gets
-	// its secure default (workspace-write) when unset, an explicit mode is
+	// its secure default (the managed tclaude-agent profile) when unset, an explicit mode is
 	// validated, and a harness with no launch sandbox flag (Claude Code)
 	// rejects a non-empty mode. Then the cwd-safety guard: a writable Codex
 	// sandbox confines writes to the cwd subtree, so a cwd at/above $HOME
@@ -898,7 +898,7 @@ type spawnParams struct {
 	// before building the params).
 	Harness string
 	// SandboxMode is the resolved launch sandbox mode for a harness that
-	// takes one (Codex: "workspace-write" by default), or "" to omit the
+	// takes one (Codex: the managed "tclaude-agent" profile by default), or "" to omit the
 	// flag (Claude Code, or no sandbox handling). Resolved + cwd-guarded at
 	// the spawn boundary (handleGroupSpawn) before building the params; it
 	// forwards to `tclaude session new --sandbox <mode>`.
@@ -1032,9 +1032,18 @@ func harnessOrDefault(name string) string {
 // defaults to whatever is still blank and validates the result. A field the
 // request already set wins; for a field both the request and the profile leave
 // blank, the harness's secure default is applied (e.g. a Codex profile that
-// omits sandbox/approval still launches workspace-write / never — NOT an
-// unsandboxed config.toml-driven agent). Returns a typed failure if a filled
-// value is invalid for the harness.
+// omits sandbox/approval still launches the managed tclaude-agent profile /
+// never — NOT an unsandboxed config.toml-driven agent). Returns a typed failure
+// if a filled value is invalid for the harness.
+//
+// The profile's launch fields are inherited ONLY when the spawn will run on the
+// profile's harness — the same gate handleGroupSpawn applies before its own
+// resolution. A spawn that pins a DIFFERENT harness brings its own
+// harness-specific fields (validated against ITS harness); copying the profile's
+// over them would either 400 at resolution or, worse, leak a foreign model onto
+// the pinned harness. So when the harnesses differ we skip the profile here too,
+// preserving handleGroupSpawn's deliberate skip instead of silently undoing it.
+// A blank-harness caller adopts the profile's harness and inherits the rest.
 //
 // This is the SAFETY-NET fill for any caller that reaches executeSpawn WITHOUT
 // going through handleGroupSpawn (today only the group-template instantiator,
@@ -1048,7 +1057,7 @@ func harnessOrDefault(name string) string {
 // left them at the zero value (false) AND the profile sets them.
 func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	prof := groupDefaultProfile(g)
-	if prof != nil {
+	if prof != nil && (p.Harness == "" || harnessOrDefault(p.Harness) == harnessOrDefault(prof.Harness)) {
 		if p.Harness == "" {
 			p.Harness = prof.Harness
 		}
