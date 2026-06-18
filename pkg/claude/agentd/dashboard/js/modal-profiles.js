@@ -25,8 +25,14 @@ import {
 
 // The original profile object while editing an existing one (the PATCH target
 // + the source of carried-forward fields the editor doesn't surface); null
-// while creating.
+// while creating (incl. a pre-filled "save as" / "new profile" create).
 let profileEditorEditing = null;
+
+// Optional callback invoked with the saved profile's name after a successful
+// submit — lets a caller that opened the editor (the spawn dialog's "Save as
+// profile", the default-profile pickers' "new profile") react, e.g. select
+// the new profile as a default. Reset on every open/close.
+let profileEditorOnSaved = null;
 
 // The last list the manage overlay fetched — the filter box re-paints from
 // this without a re-fetch; a create/edit/delete reloads it.
@@ -189,19 +195,33 @@ function profilesByName() {
 
 // ---- Profile editor modal -----------------------------------------------
 
-function openProfileEditor(profile) {
-  profileEditorEditing = profile || null;
+// openProfileEditor opens the editor, populated from `seed` (a profile-shaped
+// object, or null for a blank form). Options:
+//   - editExisting (default true): edit `seed` in place — submit PATCHes
+//     seed.name and the name field starts at seed.name. When false, `seed` is
+//     only a pre-fill (the spawn dialog's "Save as profile", a picker's "new
+//     profile"): submit CREATES a fresh profile and the name field starts
+//     blank so the human names it.
+//   - onSaved(name): fired after a successful submit (see profileEditorOnSaved).
+// The manage modal's existing callers pass one argument, so they keep the
+// edit-existing behaviour (openProfileEditor(null) = blank create,
+// openProfileEditor(p) = edit p).
+function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
+  profileEditorEditing = (editExisting && seed) ? seed : null;
+  profileEditorOnSaved = onSaved;
   $('#profile-editor-title').textContent =
-    profile ? `Edit profile: ${profile.name}` : 'New spawn profile';
+    profileEditorEditing ? `Edit profile: ${seed.name}` : 'New spawn profile';
   $('#profile-editor-error').textContent = '';
-  $('#profile-editor-name').value = profile ? (profile.name || '') : '';
+  // Name field carries the existing name only when editing in place; a
+  // pre-filled create starts blank so the human gives the new profile a name.
+  $('#profile-editor-name').value = profileEditorEditing ? (seed.name || '') : '';
 
-  // Harness first — populate the selector, set it to the profile's harness (or
+  // Harness first — populate the selector, set it to the seed's harness (or
   // default), then reshape the launch rows before filling per-field controls.
   populateProfileHarnessSelect();
   const hSel = $('#profile-editor-harness');
-  if (profile && profile.harness && [...hSel.options].some(o => o.value === profile.harness)) {
-    hSel.value = profile.harness;
+  if (seed && seed.harness && [...hSel.options].some(o => o.value === seed.harness)) {
+    hSel.value = seed.harness;
   }
   applyProfileEditorHarness(hSel.value);
 
@@ -209,26 +229,29 @@ function openProfileEditor(profile) {
   // selects.
   $('#profile-editor-model').value = '';
   $('#profile-editor-model-codex').value = '';
-  if (profile && profile.model) profileActiveModelEl().value = profile.model;
-  setSelectIfPresent($('#profile-editor-effort'), profile ? profile.effort : '');
-  setSelectIfPresent($('#profile-editor-sandbox'), profile ? profile.sandbox : '');
+  if (seed && seed.model) profileActiveModelEl().value = seed.model;
+  setSelectIfPresent($('#profile-editor-effort'), seed ? seed.effort : '');
+  setSelectIfPresent($('#profile-editor-sandbox'), seed ? seed.sandbox : '');
 
-  setTri($('#profile-editor-trust-dir'), profile ? profile.trust_dir : null);
-  setTri($('#profile-editor-sync-worktree'), profile ? profile.sync_worktree : null);
-  setTri($('#profile-editor-auto-focus'), profile ? profile.auto_focus : null);
-  setTri($('#profile-editor-group-context'), profile ? profile.include_group_default_context : null);
+  setTri($('#profile-editor-trust-dir'), seed ? seed.trust_dir : null);
+  setTri($('#profile-editor-sync-worktree'), seed ? seed.sync_worktree : null);
+  setTri($('#profile-editor-auto-focus'), seed ? seed.auto_focus : null);
+  setTri($('#profile-editor-group-context'), seed ? seed.include_group_default_context : null);
 
-  $('#profile-editor-agent-name').value = profile ? (profile.agent_name || '') : '';
-  $('#profile-editor-role').value = profile ? (profile.role || '') : '';
-  $('#profile-editor-descr').value = profile ? (profile.descr || '') : '';
-  $('#profile-editor-init-msg').value = profile ? (profile.initial_message || '') : '';
+  $('#profile-editor-agent-name').value = seed ? (seed.agent_name || '') : '';
+  $('#profile-editor-role').value = seed ? (seed.role || '') : '';
+  $('#profile-editor-descr').value = seed ? (seed.descr || '') : '';
+  $('#profile-editor-init-msg').value = seed ? (seed.initial_message || '') : '';
 
   $('#profile-editor-modal').classList.add('show');
   bindSelectTitles($('#profile-editor-modal'));
   setTimeout(() => $('#profile-editor-name').focus(), 0);
 }
 
-function closeProfileEditor() { $('#profile-editor-modal').classList.remove('show'); }
+function closeProfileEditor() {
+  $('#profile-editor-modal').classList.remove('show');
+  profileEditorOnSaved = null;
+}
 
 // buildProfilePayload assembles the full desired state from the editor. The
 // server's PATCH is a full replace, so every field the profile should keep
@@ -288,9 +311,12 @@ async function submitProfileEditor() {
   try {
     if (editing) await updateProfile(editing, payload);
     else await createProfile(payload);
+    // Capture the callback before closeProfileEditor() clears it.
+    const onSaved = profileEditorOnSaved;
     closeProfileEditor();
     toast(editing ? `profile updated: ${name}` : `profile created: ${name}`);
     reloadProfilesList();
+    if (onSaved) onSaved(name);
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
   } finally {
@@ -357,4 +383,4 @@ function bindProfilesUI() {
   bindBackdropDiscard('profile-editor-modal', closeProfileEditor);
 }
 
-export { bindProfilesUI };
+export { bindProfilesUI, openProfileEditor };

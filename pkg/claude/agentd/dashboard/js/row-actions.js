@@ -8,6 +8,7 @@ import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
 import { renderGroupsTab, renderSudoTab } from './tabs.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, setDashDefaultProfile } from './profiles.js';
+import { openProfileEditor } from './modal-profiles.js';
 import { renderDashDefaultProfile } from './render.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
@@ -166,6 +167,11 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
 // (loadProfiles) so a freshly-created profile shows up; a current value no
 // longer in the list is kept as a "(missing)" option so it's still visible
 // and changeable.
+// Sentinel <option> value for the picker's "＋ new profile…" entry. A leading
+// slash can never appear in a real profile name (server-side validateGroupName
+// rejects "/" and "\"), so this value can't collide with a profile.
+const PROFILE_PICKER_NEW = '/new-profile';
+
 async function openProfilePicker(chipEl, current, onCommit) {
   const prevSnapshot = lastSnapshot;
   // Fetch the list BEFORE suspending the refresh or touching the DOM, so a
@@ -185,6 +191,10 @@ async function openProfilePicker(chipEl, current, onCommit) {
   const origEl = chipEl.cloneNode(true);
   const select = document.createElement('select');
   select.className = 'group-default-profile-select';
+  // "＋ new profile…" sits at the top — picking it jumps to the editor to
+  // create one (and sets it as this default on save), so an empty profile
+  // list isn't a dead end.
+  select.add(new Option('＋ new profile…', PROFILE_PICKER_NEW));
   select.add(new Option('(none)', ''));
   for (const p of profiles) select.add(new Option(p.name, p.name));
   if (current && !profiles.some(p => p.name === current)) {
@@ -204,6 +214,15 @@ async function openProfilePicker(chipEl, current, onCommit) {
   const commit = async () => {
     if (done) return;
     const name = select.value;
+    if (name === PROFILE_PICKER_NEW) {
+      // Jump to the editor (create mode): close the picker, then on a
+      // successful save set the new profile as this default via onCommit.
+      done = true;
+      if (select.parentNode) select.replaceWith(origEl);
+      renameEditing = false;
+      openProfileEditor(null, { onSaved: (newName) => onCommit(newName) });
+      return;
+    }
     if (name === current) { cancel(); return; }
     done = true;
     // Put the chip element back before persisting so onCommit's refresh /

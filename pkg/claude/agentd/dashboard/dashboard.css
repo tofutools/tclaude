@@ -869,6 +869,13 @@ details[open] > summary .spawn-btn { opacity: 1; }
    than incidental. Still below the toast (200) and the shared confirm
    (1000) its own backdrop-discard guard pops. */
 #perm-edit-modal { z-index: 150; }
+/* The profile editor opens standalone (the profiles-manage overlay's edit / +
+   new) AND on top of the spawn modal ("Save as profile") and the inline
+   default-profile pickers ("＋ new profile…"). The spawn modal is a plain
+   z-index:100 overlay that comes LATER in the DOM, so without this the editor
+   would paint behind it; pin it to 150 so it's always the topmost editor.
+   Below the toast (200) and the shared confirm (1000). */
+#profile-editor-modal { z-index: 150; }
 /* #confirm-modal is opened FROM inside other modals — by the backdrop-
    discard guard (bindBackdropDiscard) on every data-entry modal, and
    ahead-of-time by destructive-action confirms invoked from list rows.

@@ -6,6 +6,7 @@
 import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
+import { openProfileEditor } from './modal-profiles.js';
 import { groupDefaultContext } from './modal-templates.js';
 import {
   WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve, wtResolveCwd,
@@ -412,13 +413,24 @@ function clearSpawnProfileFields() {
   applyWtSync();
 }
 
+// populateSpawnProfileOptions rebuilds the Profile selector's <option> list
+// from `profiles` and selects `selected` (when it's in the list) — WITHOUT
+// applying it to the form. Shared by the open-time pre-fill and the "Save as
+// profile" refresh.
+function populateSpawnProfileOptions(profiles, selected) {
+  const sel = $('#agent-spawn-load-profile');
+  sel.innerHTML = `<option value="">— none (blank form) —</option>`
+    + profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  sel.value = (selected && profiles.some(p => p.name === selected)) ? selected : '';
+  syncSelectTitle(sel);
+}
+
 // initSpawnProfileSelector populates the Profile selector from the saved
 // profiles and applies the pre-fill for `groupName`: the group's own default
 // profile, else the dashboard default. Runs async (the list is fetched), so it
 // guards against the modal being closed or its group switched out from under a
 // slow fetch before it touches the form.
 async function initSpawnProfileSelector(groupName) {
-  const sel = $('#agent-spawn-load-profile');
   const prefill = groupDefaultProfileName(groupName) || getDashDefaultProfile();
   let profiles = [];
   try {
@@ -430,15 +442,36 @@ async function initSpawnProfileSelector(groupName) {
   // this fetch — don't stomp the now-current dialog state.
   if (!$('#agent-spawn-modal').classList.contains('show')) return;
   if ($('#agent-spawn-group').value !== groupName) return;
-  sel.innerHTML = `<option value="">— none (blank form) —</option>`
-    + profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  populateSpawnProfileOptions(profiles, prefill);
   if (prefill && profiles.some(p => p.name === prefill)) {
-    sel.value = prefill;
     applyProfileToSpawnForm(profiles.find(p => p.name === prefill));
-  } else {
-    sel.value = '';
   }
-  syncSelectTitle(sel);
+}
+
+// spawnFormAsProfileSeed snapshots the dialog's current field values into a
+// profile-shaped object for "Save as profile" — only the profile-storable
+// fields (cwd / worktree are per-spawn and never stored). Harness-gated fields
+// (sandbox / trust-dir) are included only for a harness that takes them, so the
+// editor doesn't seed a value its harness would reject. The *bool fields come
+// straight off the dialog's checkboxes (concrete on/off, not "unset").
+function spawnFormAsProfileSeed() {
+  const harness = $('#agent-spawn-harness').value;
+  const hEntry = spawnHarnessByName(harness);
+  const seed = {
+    harness,
+    model: activeSpawnModelEl().value.trim(),
+    effort: $('#agent-spawn-effort').value,
+    agent_name: $('#agent-spawn-name').value.trim(),
+    role: $('#agent-spawn-role').value.trim(),
+    descr: $('#agent-spawn-descr').value.trim(),
+    initial_message: $('#agent-spawn-init-msg').value,
+    auto_focus: $('#agent-spawn-focus').checked,
+    sync_worktree: $('#agent-spawn-wt-sync').checked,
+    include_group_default_context: $('#agent-spawn-group-context').checked,
+  };
+  if (hEntry && hEntry.can_sandbox) seed.sandbox = $('#agent-spawn-sandbox').value;
+  if (harness === 'codex') seed.trust_dir = $('#agent-spawn-trust-dir').checked;
+  return seed;
 }
 
 function openAgentSpawnModal(opts) {
@@ -693,6 +726,20 @@ function bindAgentSpawnModal() {
   });
   // Clear resets the profile-controlled fields (leaving group/cwd/worktree).
   $('#agent-spawn-clear').addEventListener('click', clearSpawnProfileFields);
+  // Save as profile: open the profile editor pre-filled from the current
+  // dialog fields (create mode — the human names it). On save, refresh the
+  // Profile selector so the new profile appears and is selected.
+  $('#agent-spawn-save-profile').addEventListener('click', () => {
+    openProfileEditor(spawnFormAsProfileSeed(), {
+      editExisting: false,
+      onSaved: (newName) => {
+        loadProfiles(true).then((profiles) => {
+          if (!$('#agent-spawn-modal').classList.contains('show')) return;
+          populateSpawnProfileOptions(profiles, newName);
+        }).catch(() => { /* selector just keeps its current options */ });
+      },
+    });
+  });
   $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
   $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
   // Ctrl/Cmd+Enter spawns from anywhere in the dialog (incl. the

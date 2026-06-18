@@ -35,10 +35,17 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`function bindProfilesUI(`, "profiles UI binder")
 	present(`bindProfilesUI();`, "profiles UI binder is called at boot")
 
-	// 1. Spawn dialog: load-from-profile selector + Clear button.
+	// 1. Spawn dialog: load-from-profile selector + Clear + Save-as-profile.
 	present(`id="agent-spawn-load-profile"`, "spawn dialog load-from-profile selector")
 	present(`id="agent-spawn-clear"`, "spawn dialog Clear button")
+	present(`id="agent-spawn-save-profile"`, "spawn dialog Save-as-profile button")
 	present(`function applyProfileToSpawnForm(`, "spawn-form profile applier")
+	present(`function spawnFormAsProfileSeed(`, "spawn-form → profile seed for Save-as")
+
+	// The default-profile pickers offer a "new profile" entry that jumps to
+	// the editor (so an empty profile list isn't a dead end).
+	present(`const PROFILE_PICKER_NEW`, "the picker's new-profile sentinel")
+	present(`openProfileEditor(null, { onSaved:`, "new-profile entry opens the editor + sets the default")
 
 	// 2. Manage-profiles overlay + editor, reached from the Groups cog.
 	present(`id="profiles-manage-open"`, "the Groups cog's manage-profiles button")
