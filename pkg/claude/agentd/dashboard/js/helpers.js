@@ -16,6 +16,73 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function shortId(id) { return (id || '').slice(0, 8); }
+
+// syncSelectTitle mirrors a <select>'s currently-selected option text
+// into its `title` attribute. The modal form controls shrink to the
+// available width (min-width:0 in dashboard.css), so a long option label
+// — e.g. a worktree's "branch — ~/long/path" — is clipped in the closed
+// box; the tooltip makes the full label readable on hover without having
+// to open the dropdown. Safe to call repeatedly and after every
+// (re)population; a short/blank label just yields a short/blank tooltip.
+function syncSelectTitle(sel) {
+  if (!sel) return;
+  const opt = sel.selectedOptions && sel.selectedOptions[0];
+  // Prefer an option's own `title` when it carries one — the worktree
+  // options set it to the full, untruncated path (their visible label
+  // shortens the path), so the tooltip can show more than the box does.
+  sel.title = (opt ? (opt.title || opt.textContent) : '').trim();
+}
+
+// makeModalResizable persists a CSS-`resize`-enabled modal's dragged size
+// (width + height) in dashPrefs, keyed by `key`, so it survives reopen,
+// daemon restart and tab — dashPrefs lives server-side, unlike
+// localStorage which the random loopback port would partition away.
+// `modalEl` is the element that carries `resize` in CSS (the inner card,
+// not the overlay). Restores any saved size up front, then writes the new
+// size only on a genuine resize: it brackets each pointer gesture
+// (pointerdown→pointerup) and persists only when the box actually changed
+// between them, so plain clicks and content-driven reflows (rows showing/
+// hiding, error text) never get mistaken for a user resize. box-sizing is
+// border-box globally, so offsetWidth/Height match the inline width/height
+// we restore; CSS min/max-width + max-height still clamp the applied size.
+function makeModalResizable(modalEl, key) {
+  if (!modalEl) return;
+  let saved = { w: 0, h: 0 };
+  try {
+    const s = JSON.parse(dashPrefs.getItem(key));
+    if (s && typeof s === 'object') saved = { w: +s.w || 0, h: +s.h || 0 };
+  } catch (_) { /* missing / corrupt — fall back to the CSS default size */ }
+  if (saved.w) modalEl.style.width = saved.w + 'px';
+  if (saved.h) modalEl.style.height = saved.h + 'px';
+  let downW = 0, downH = 0;
+  modalEl.addEventListener('pointerdown', () => {
+    downW = modalEl.offsetWidth; downH = modalEl.offsetHeight;
+  });
+  modalEl.addEventListener('pointerup', () => {
+    const w = modalEl.offsetWidth, h = modalEl.offsetHeight;
+    if (w === downW && h === downH) return;     // a click, not a resize
+    if (w === saved.w && h === saved.h) return; // already the stored size
+    saved = { w, h };
+    try { dashPrefs.setItem(key, JSON.stringify(saved)); } catch (_) {}
+  });
+}
+
+// bindSelectTitles keeps every <select> under `root` tooltip-synced: an
+// initial pass over the current selections plus one delegated `change`
+// listener so user picks update the tooltip live. Programmatic
+// repopulation (e.g. the worktree reload) doesn't fire `change`, so those
+// call sites sync explicitly via syncSelectTitle. Idempotent per root via
+// a data-flag so re-binding (modules can bind on open) won't stack
+// listeners.
+function bindSelectTitles(root) {
+  if (!root) return;
+  $$('select', root).forEach(syncSelectTitle);
+  if (root.dataset.selectTitlesBound === '1') return;
+  root.dataset.selectTitlesBound = '1';
+  root.addEventListener('change', (e) => {
+    if (e.target && e.target.tagName === 'SELECT') syncSelectTitle(e.target);
+  });
+}
 function onlineDot(online) {
   return online
     ? '<span class="online" title="online">●</span>'
@@ -827,7 +894,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
+  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
   harnessCanRename,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,

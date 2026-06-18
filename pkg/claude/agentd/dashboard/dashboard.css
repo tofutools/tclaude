@@ -1122,10 +1122,29 @@ details.group-virtual .group-name { color: #8aa0b8; }
    slightly and let the body textarea grow. */
 .cron-create-modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
-  padding: 18px 22px; min-width: 520px; max-width: 640px;
-  width: calc(100% - 32px);
+  padding: 18px 22px;
+  min-width: 520px;
+  /* Default ~640px on desktop — min(640, viewport-gutter), the same used
+     size as the old max-width:640 + width:calc(100%-32px). The raised
+     max-width is only a drag ceiling for the resizable spawn/clone dialogs
+     below; non-resized modals stay 640 because `width` caps the used size,
+     so this change is visually neutral for them. */
+  width: min(640px, calc(100vw - 32px));
+  max-width: min(1100px, calc(100vw - 32px));
   display: flex; flex-direction: column; gap: 10px;
   color: #c9d1d9; max-height: 86vh; overflow-y: auto;
+}
+/* The spawn + clone dialogs are user-resizable (a long worktree label can
+   make every field feel cramped): drag the bottom-right grip to size the
+   whole dialog on both axes. resize needs overflow not visible on both
+   axes, so these override the base overflow-y:auto with overflow:auto. The
+   dragged size is persisted per modal (makeModalResizable → dashPrefs);
+   min/max-width + max-height:86vh still clamp it. The per-field min-width:0
+   clamp and the worktree tooltip keep labels readable without resizing —
+   this is an escape hatch, not the primary fix. */
+#agent-spawn-modal .cron-create-modal,
+#clone-agent-modal .cron-create-modal {
+  resize: both; overflow: auto;
 }
 .cron-create-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
 .cron-create-modal .modal-meta {
@@ -1143,9 +1162,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-row select,
 .cron-create-row textarea {
   flex: 1;
+  /* min-width:0 lets these flex children shrink below their intrinsic
+     content width. Without it a flex item's default min-width:auto pins
+     the box to its content size — and a <select> can't wrap, so its
+     widest <option> (e.g. a worktree's "branch — ~/long/path" label)
+     forced the whole row past the modal's max-width, surfacing a
+     horizontal scrollbar. With min-width:0 the closed select shrinks to
+     the available width and ellipsises the selected label; the open
+     dropdown still shows each option's full text. */
+  min-width: 0;
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
 }
+.cron-create-row select { text-overflow: ellipsis; }
 .cron-create-row input[type=text]:focus,
 .cron-create-row select:focus,
 .cron-create-row textarea:focus { outline: none; border-color: #58a6ff; }
@@ -1165,7 +1194,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   font-size: 10px; background: #161b22; padding: 1px 4px; border-radius: 3px;
 }
 .cron-create-target {
-  flex: 1; display: flex; flex-direction: column; gap: 6px;
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
 }
 .cron-create-target .cron-target-modes {
   display: flex; gap: 12px; font-size: 12px; color: #c9d1d9;

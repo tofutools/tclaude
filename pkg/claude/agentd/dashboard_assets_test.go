@@ -93,6 +93,67 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 	}
 }
 
+// TestDashboardCSS_SpawnFieldsCannotOverflow guards the fix for the
+// spawn/clone modals' horizontal scrollbar: the worktree <select>'s
+// options carry long "branch — ~/path" labels, and a flex child's
+// default min-width:auto pinned the box to that widest option, forcing
+// the row past the modal's max-width. The shared .cron-create-row form
+// control rule must keep min-width:0 (so the control shrinks to the
+// available width) and the select must ellipsise its clipped label. A
+// refactor dropping either silently brings the scrollbar back.
+func TestDashboardCSS_SpawnFieldsCannotOverflow(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	for _, needle := range []string{
+		"min-width: 0;",                                   // form controls may shrink below content width
+		".cron-create-row select { text-overflow: ellipsis; }", // selected label clips with an ellipsis
+		"resize: both;",                                   // modal is a resizable escape hatch (both axes)
+	} {
+		if !strings.Contains(css, needle) {
+			t.Errorf("dashboard.css missing %q — spawn modal field-width clamp regressed", needle)
+		}
+	}
+}
+
+// TestDashboardJS_SelectTooltipWired guards the readability half of the
+// spawn-field fix: because the width-limited <select> clips long labels,
+// the worktree options carry a full-path title and a helper mirrors the
+// selected option's label/title into the <select> so it's legible on
+// hover. The three pieces — helper, worktree option title, and the
+// modal-level binding — must stay wired together.
+func TestDashboardJS_SelectTooltipWired(t *testing.T) {
+	for _, needle := range []string{
+		"function syncSelectTitle(",          // helper exists (helpers.js)
+		"function bindSelectTitles(",         // modal-level binder exists (helpers.js)
+		"syncSelectTitle(select)",            // worktree picker syncs after repopulate (modal-link-wt.js)
+		"bindSelectTitles($('#agent-spawn-modal'))", // spawn modal wires it (modal-spawn.js)
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard JS missing %q — select tooltip wiring broken", needle)
+		}
+	}
+}
+
+// TestDashboardJS_ModalResizePersisted guards that the resizable spawn /
+// clone dialogs persist their dragged size: a helper stores width+height
+// in dashPrefs and both modals wire it to their resizable card. A drop
+// here means the modal would silently forget its size across reopens.
+func TestDashboardJS_ModalResizePersisted(t *testing.T) {
+	for _, needle := range []string{
+		"function makeModalResizable(",                                                   // helper exists (helpers.js)
+		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')",                  // spawn modal wires it
+		"makeModalResizable($('#clone-agent-modal .cron-create-modal')",                  // clone modal wires it
+		"tclaude.dash.modalSize.agent-spawn",                                             // per-modal pref key
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard JS missing %q — modal resize persistence broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever
