@@ -1215,7 +1215,12 @@ async function maybeHandleDanglingRetire(resp, conv, label) {
     okLabel: 'Remove dangling entry',
   });
   if (!confirmed) { toast('dangling entry kept'); return true; }
-  const dr = await fetch(`/api/agents/${encodeURIComponent(conv)}`, {
+  // Delete by the daemon-confirmed conv_id from the 409 body, falling
+  // back to the caller's conv — they match today (dashboard rows carry
+  // the full conv-id), but trusting the resolved id keeps this correct
+  // if a future caller ever passes a prefix or title.
+  const delConv = (body.conv_id || conv);
+  const dr = await fetch(`/api/agents/${encodeURIComponent(delConv)}`, {
     method: 'DELETE', credentials: 'same-origin',
   });
   if (!dr.ok) {

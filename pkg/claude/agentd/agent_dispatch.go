@@ -52,6 +52,15 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		// dead-end 404 that left the entry stuck. Read-only — the
 		// destructive cleanup runs only if the caller follows up with
 		// DELETE, which has its own permission gate.
+		//
+		// Gate the signal behind the SAME permission a normal retire
+		// requires, so an unauthorized caller gets the usual 403/404 and
+		// can't use the 409 to distinguish "dangling enrollment" from
+		// "unknown conv" — a disclosure a bare resolver 404 never gave.
+		// requireCrossAgentPermission writes its own failure response.
+		if _, ok := requireCrossAgentPermission(w, r, PermAgentRetire, selector); !ok {
+			return
+		}
 		writeDanglingAgentResponse(w, selector)
 		return
 	} else {
