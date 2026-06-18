@@ -187,6 +187,16 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 		} `json:"worktree"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
+		// A dangling agent entry — an enrollment whose conversation data
+		// is gone — can't be retired (there's no conversation to demote).
+		// Point the human at the only meaningful cleanup instead of the
+		// raw resolver error.
+		if de, ok := err.(*DaemonError); ok && de.IsDangling() {
+			fmt.Fprintf(stderr, "Error: %s has no conversation data — it's a dangling agent entry.\n", short(selector))
+			fmt.Fprintln(stderr, "Retire can't demote a missing conversation. To remove the dangling entry, run:")
+			fmt.Fprintf(stderr, "  tclaude agent delete %s\n", selector)
+			return rcNotFound
+		}
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

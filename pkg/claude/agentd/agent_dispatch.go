@@ -44,6 +44,16 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		// input — defence-in-depth on top of the dispatcher's
 		// permission gating downstream.
 		convID = selector
+	} else if verb == "retire" && looksLikeConvID(selector) && isDanglingAgentEntry(selector) {
+		// Dangling agent entry: an enrollment whose conversation data
+		// is gone, so retire can't resolve a conversation to demote.
+		// Signal the caller (the CLI prints guidance toward `agent
+		// delete`; the dashboard pops a remove-confirm) instead of the
+		// dead-end 404 that left the entry stuck. Read-only — the
+		// destructive cleanup runs only if the caller follows up with
+		// DELETE, which has its own permission gate.
+		writeDanglingAgentResponse(w, selector)
+		return
 	} else {
 		writeError(w, http.StatusNotFound, "not_found",
 			"could not resolve target conv "+selector+": "+err.Error())

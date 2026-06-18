@@ -1098,6 +1098,47 @@ function retireToast(label, choice, resp) {
   return msg;
 }
 
+// maybeHandleDanglingRetire inspects a FAILED retire response. The daemon
+// flags a dangling agent entry — an enrollment whose conversation data is
+// gone, so it can't be retired (there's nothing to demote) — with HTTP
+// 409 + {dangling:true}. When it does, we pop a confirm offering to remove
+// the dangling entry, and on OK purge the orphan rows via the DELETE
+// endpoint (whose union cleanup is a no-op on the missing conversation but
+// drops the leftover enrollment/group/permission rows). This is what
+// unsticks the entry that retire alone never could.
+//
+// Returns true when it handled the response (dangling — the caller must
+// stop and NOT surface its own retire-failed toast), false otherwise
+// (the caller falls through to its normal error handling). The response
+// is read via clone() so a false return leaves the caller free to read
+// the original body for its error toast.
+async function maybeHandleDanglingRetire(resp, conv, label) {
+  if (!resp || resp.status !== 409) return false;
+  let body = null;
+  try { body = await resp.clone().json(); } catch (_) { return false; }
+  if (!body || !body.dangling) return false;
+  const confirmed = await confirmModal({
+    title: 'Remove dangling agent entry?',
+    body: 'No conversation data was found for this agent — its conversation is '
+      + 'gone, so it can’t be retired (there’s nothing to demote). Remove the '
+      + 'dangling entry instead? This purges its leftover enrollment, group '
+      + 'and permission rows. It cannot be undone.',
+    meta: label || conv,
+    okLabel: 'Remove dangling entry',
+  });
+  if (!confirmed) { toast('dangling entry kept'); return true; }
+  const dr = await fetch(`/api/agents/${encodeURIComponent(conv)}`, {
+    method: 'DELETE', credentials: 'same-origin',
+  });
+  if (!dr.ok) {
+    toast(`Remove failed: ${await dr.text()}`, true);
+    return true;
+  }
+  toast(`removed dangling entry: ${label || conv}`);
+  refresh();
+  return true;
+}
+
 // shutdownConfirm pops a 3-button confirm: Soft exit (default),
 // Force kill (destructive), Cancel. Resolves to "soft" / "force" /
 // null. Mirrors the existing confirmModal but with two distinct
@@ -2280,6 +2321,7 @@ async function stopAgentReq(conv, label, force) {
 export {
   bindFilter, bindTabs, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
+  maybeHandleDanglingRetire,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };
