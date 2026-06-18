@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { groupDefaultContext } from './modal-templates.js';
 import {
@@ -544,6 +544,9 @@ function bindAgentSpawnModal() {
   });
   $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
   $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
+  // Ctrl/Cmd+Enter spawns from anywhere in the dialog (incl. the
+  // init-message textarea), so power users needn't mouse to the button.
+  bindModalSubmitHotkey($('#agent-spawn-modal'), $('#agent-spawn-submit'));
   bindWtPicker('agent-spawn');
   // Keep every <select> in the modal tooltip-synced (one delegated change
   // listener + an initial pass) so a clipped label stays readable on hover.
@@ -689,6 +692,8 @@ async function submitCloneAgent() {
 function bindCloneAgentModal() {
   $('#clone-agent-cancel').addEventListener('click', closeCloneAgentModal);
   $('#clone-agent-submit').addEventListener('click', submitCloneAgent);
+  // Ctrl/Cmd+Enter clones — same hotkey as the spawn dialog.
+  bindModalSubmitHotkey($('#clone-agent-modal'), $('#clone-agent-submit'));
   bindWtPicker('clone-agent');
   bindSelectTitles($('#clone-agent-modal'));
   makeModalResizable($('#clone-agent-modal .cron-create-modal'), 'tclaude.dash.modalSize.clone-agent');
@@ -800,6 +805,10 @@ async function submitReincarnateAgent() {
 function bindReincarnateAgentModal() {
   $('#reincarnate-agent-cancel').addEventListener('click', closeReincarnateAgentModal);
   $('#reincarnate-agent-submit').addEventListener('click', submitReincarnateAgent);
+  // Ctrl/Cmd+Enter submits — same hotkey as the spawn dialog. The button
+  // is disabled in force-mode until a follow-up is typed, and the helper
+  // no-ops on a disabled button, so the hotkey honours that gate too.
+  bindModalSubmitHotkey($('#reincarnate-agent-modal'), $('#reincarnate-agent-submit'));
   $('#reincarnate-agent-followup').addEventListener('input', updateReincarnateMode);
   $$('input[name=reincarnate-mode]').forEach(rdo => {
     rdo.addEventListener('change', () => {

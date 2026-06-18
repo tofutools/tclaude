@@ -1218,6 +1218,16 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
+.perm-row-eff.owner { color: #d29922; }
+/* The 👑 owner-conferred markers reuse the existing .owner-badge pill
+   (defined near .tag) so the slug label, Slugs tab and group-member
+   badges share one consistent style. */
+.perm-edit-owner-note {
+  font-size: 11px; color: #e3b341; line-height: 1.4;
+  background: #1c1606; border: 1px solid #4d3a17; border-radius: 6px;
+  padding: 7px 10px; margin-bottom: 8px;
+}
+.perm-edit-owner-note code { color: #f0c674; }
 .perm-tristate {
   flex: 0 0 auto; display: inline-flex;
   border: 1px solid #2a3340; border-radius: 4px; overflow: hidden;
@@ -1386,6 +1396,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   background: transparent; border-color: #2a3340; color: #7d8590;
 }
 .cron-create-modal .modal-buttons .secondary:hover { color: #c9d1d9; }
+/* The spawn + clone dialogs are resizable and float at a min-height pinned
+   to their natural size (refreshModalMinSize), so the dialog box is often
+   taller than its content — a dragged-larger size, or fewer rows than were
+   visible when the floor was measured (the many conditionally-hidden
+   harness/worktree rows). The button row is the last flex child, and the
+   column packs at the top, so without this the Cancel/Spawn buttons sat
+   just under the last field with empty space beneath them. margin-top:auto
+   absorbs that free space above the row, sticking the footer to the bottom
+   edge. When content instead overflows the dialog the auto margin collapses
+   to 0, so the buttons scroll with the form as before — no regression. */
+#agent-spawn-modal .modal-buttons,
+#clone-agent-modal .modal-buttons { margin-top: auto; }
 /* Import-group modal — the ⤒ import overlay. Reuses .cron-create-modal
    for the shell + rows; these rules style the file picker and the
    dry-run preview panel (manifest summary + collision report). */

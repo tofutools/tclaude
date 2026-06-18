@@ -223,13 +223,12 @@ func runServe(p *serveParams) error {
 	// .jsonl on every access. Shares the daemon-wide stop channel.
 	startConvMonitor(cronStop)
 
-	// One-shot: enroll any conv that is online right now but not yet
-	// in agent_enrollment. The v29→v30 migration backfills agents from
-	// the durable agentic tables, but a still-running agent that was
-	// otherwise unrecorded can't be tmux-probed from a SQL migration —
-	// this sweep closes that gap so no live agent drops off the roster
-	// across the upgrade.
-	go reconcileOnlineEnrollment()
+	// Online conversations are enrolled as agents by the session reaper's
+	// continuous liveness sweep (its first tick fires immediately at
+	// startup) — see enrollOnlineSession. That subsumes the one-shot
+	// startup reconcile this used to run and keeps enrolling convs that
+	// come online later, so terminal-launched sessions (`tclaude conv
+	// new`) surface on the dashboard like web-UI spawns do.
 
 	// Both the Unix-socket server and the popup server run in
 	// goroutines so the main goroutine is free for the tray loop

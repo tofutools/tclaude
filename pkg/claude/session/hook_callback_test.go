@@ -745,3 +745,123 @@ func TestRunHookCallback_ClearMigratesAgentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, newConv, succ, "succession edge old→new should be recorded")
 }
+
+// A SessionStart from a tclaude-launched session (TCLAUDE_SESSION_ID
+// set) instant-enrolls its conversation as an agent — so a regular
+// terminal-launched conv (`tclaude conv new`) surfaces on the dashboard
+// the moment it boots, instead of waiting for the reaper's online sweep.
+func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "start-sess",
+		ConvID: "conv-start",
+		Status: StatusIdle,
+	}))
+
+	pre, err := db.EnrollmentState("conv-start")
+	require.NoError(t, err)
+	require.Equal(t, db.EnrollmentNone, pre, "pre: a plain conversation, not yet an agent")
+
+	feedHook(t, "start-sess", map[string]any{
+		"session_id":      "conv-start",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	post, err := db.EnrollmentState("conv-start")
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, post,
+		"a SessionStart from a tclaude-launched session must instant-enroll the conv as an agent")
+}
+
+// Instant enrollment must be retirement-safe: a conv the human
+// deliberately retired stays retired even when its session fires a fresh
+// SessionStart (e.g. a /clear or a reattach). EnrollAgent is INSERT OR
+// IGNORE, so it never un-retires.
+func TestRunHookCallback_SessionStartDoesNotResurrectRetired(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "retd-sess",
+		ConvID: "conv-retd",
+		Status: StatusIdle,
+	}))
+	require.NoError(t, db.EnrollAgent("conv-retd", "test"))
+	_, err := db.RetireAgent("conv-retd", "human", "no thanks")
+	require.NoError(t, err)
+
+	feedHook(t, "retd-sess", map[string]any{
+		"session_id":      "conv-retd",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	post, err := db.EnrollmentState("conv-retd")
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, post,
+		"a retired conv must stay retired across a SessionStart — instant enroll is INSERT OR IGNORE")
+}
+
+// A SessionStart carrying agent_id was fired from inside a subagent; it
+// returns early (the main thread is unaffected) and must NOT, on its
+// own, enroll the conversation. The main session's own SessionStart is
+// what enrolls — this guards against a subagent hook standing in for it.
+func TestRunHookCallback_SubagentSessionStartDoesNotEnroll(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "sub-sess",
+		ConvID: "conv-sub",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "sub-sess", map[string]any{
+		"session_id":      "conv-sub",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"agent_id":        "sub-1",
+		"cwd":             dir,
+	})
+
+	post, err := db.EnrollmentState("conv-sub")
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentNone, post,
+		"a subagent SessionStart (agent_id set) must not enroll the main conv on its own")
+}
+
+// Instant enrollment is gated to SessionStart so the per-hook subprocess
+// does not attempt an enrollment write on every tool event. A mid-turn
+// hook (here UserPromptSubmit) on a not-yet-enrolled conv must not enroll
+// it — the reaper's online sweep is the backstop for any session that
+// somehow never fired a SessionStart.
+func TestRunHookCallback_NonSessionStartDoesNotEnroll(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "mid-sess",
+		ConvID: "conv-mid",
+		Status: StatusIdle,
+	}))
+
+	feedHook(t, "mid-sess", map[string]any{
+		"session_id":      "conv-mid",
+		"hook_event_name": "UserPromptSubmit",
+		"cwd":             dir,
+	})
+
+	post, err := db.EnrollmentState("conv-mid")
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentNone, post,
+		"only SessionStart instant-enrolls; a mid-turn hook must not")
+}

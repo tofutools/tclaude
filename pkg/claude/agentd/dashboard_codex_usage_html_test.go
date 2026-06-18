@@ -58,7 +58,14 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 	must("#usage.multiline .upct", "the percent column is fixed-width + right-aligned")
 	must("#usage.multiline .urem", "the reset-hint column is fixed-width")
 
-	// render.js must NOT reintroduce the leading space before .urem (it would
-	// become a stray flex item and break the monospace column widths).
-	must("'<span class=\"urem\">(' + esc(win.remaining)", "no leading space before the reset-hint span")
+	// render.js must always emit the .urem span — even for a window with no
+	// remaining-time text (a harness idle long enough that the window has
+	// reset) — so its fixed min-width still reserves the column and the rows
+	// stay aligned. Dropping the span collapsed the column and slid the
+	// following windows left.
+	must("const rem = '<span class=\"urem\">' + remText + '</span>'", "the reset-hint column is always emitted, even when empty")
+	// And it must NOT reintroduce a leading space before .urem (it would
+	// become a stray flex item and break the monospace column widths); the
+	// parens wrap only when there is remaining text.
+	must("win.remaining ? '(' + esc(win.remaining) + ')' : ''", "no leading space; parens only when there is remaining text")
 }

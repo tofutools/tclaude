@@ -63,6 +63,28 @@ function refreshModalMinSize(modalEl) {
   modalEl.style.height = height;
 }
 
+// growModalToFitContent expands a resizable modal whose *applied* (saved or
+// dragged) height has been outgrown by content that appeared after the drag
+// — e.g. the spawn dialog revealing the worktree branch field on name entry,
+// or the Codex Model / Sandbox / trust-dir rows on a harness switch. Without
+// an applied inline height the box is content-driven and CSS already grows it
+// (overflow:auto + max-height), so this is a no-op then; it only kicks in once
+// a fixed height is pinned, where the extra rows would otherwise scroll inside
+// the box instead of enlarging it.
+//
+// Grow-only — it never shrinks, so it can't undo a deliberate drag (switching
+// back to a shorter layout just leaves the roomier box, footer bottom-stuck by
+// the margin-top:auto rule, exactly the look #398 already settled on). The new
+// height adds the chrome the content height excludes (border + any horizontal
+// scrollbar, = offsetHeight − clientHeight) so the grown box exactly contains
+// the content. CSS max-height:86vh still caps it: past the cap the browser
+// clamps the applied height and overflow:auto restores the scrollbar.
+function growModalToFitContent(modalEl) {
+  if (!modalEl || !modalEl.style.height) return; // content-driven; CSS grows it
+  if (modalEl.scrollHeight - modalEl.clientHeight <= 1) return; // fits already (1px rounding slack)
+  modalEl.style.height = modalEl.scrollHeight + (modalEl.offsetHeight - modalEl.clientHeight) + 'px';
+}
+
 // makeModalResizable persists a CSS-`resize`-enabled modal's dragged size
 // (width + height) in dashPrefs, keyed by `key`, so it survives reopen,
 // daemon restart and tab — dashPrefs lives server-side, unlike
@@ -80,6 +102,18 @@ function refreshModalMinSize(modalEl) {
 // opens (refreshModalMinSize), so the grip can't shrink it below where the
 // fields fit. The open trigger is the overlay gaining its `show` class —
 // watched here so the caller needn't thread a hook through every open path.
+//
+// Finally it auto-grows a pinned height to fit content that appears after a
+// drag (growModalToFitContent), watching the card's own subtree for the
+// row-reveal mutations the spawn/clone forms make (style/class/hidden flips +
+// option repopulation). Centralising it here means every resizable modal —
+// and any field a future change adds — gets the behaviour without threading a
+// hook through each reshape call site. It reacts ONLY to mutations of a
+// *descendant*, never of the card itself: a content reveal always flips a
+// descendant's style/display or repopulates a descendant <select>, whereas the
+// card's own width/height changes are the user's resize drag and our own
+// grow-write. Filtering those out means auto-grow never fights a deliberate
+// drag-shrink and our height write can't recurse — no re-entrancy guard needed.
 function makeModalResizable(modalEl, key) {
   if (!modalEl) return;
   let saved = { w: 0, h: 0 };
@@ -111,6 +145,19 @@ function makeModalResizable(modalEl, key) {
       if (overlay.classList.contains('show')) refreshModalMinSize(modalEl);
     }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
   }
+  // Auto-grow a pinned height to fit content revealed after a drag. The
+  // attributeFilter keeps this to the structural changes that move the
+  // content height (row display/hidden flips), not every title/value tweak;
+  // childList catches option repopulation (the worktree picker reload). The
+  // descendant-only guard (target !== modalEl) skips the card's own size
+  // changes — the resize drag and our grow-write — so auto-grow neither fights
+  // a drag nor recurses on itself.
+  new MutationObserver((records) => {
+    if (records.some(r => r.target !== modalEl)) growModalToFitContent(modalEl);
+  }).observe(modalEl, {
+    childList: true, subtree: true,
+    attributes: true, attributeFilter: ['style', 'class', 'hidden'],
+  });
 }
 
 // bindSelectTitles keeps every <select> under `root` tooltip-synced: an
@@ -127,6 +174,25 @@ function bindSelectTitles(root) {
   root.dataset.selectTitlesBound = '1';
   root.addEventListener('change', (e) => {
     if (e.target && e.target.tagName === 'SELECT') syncSelectTitle(e.target);
+  });
+}
+// bindModalSubmitHotkey makes Ctrl/Cmd+Enter anywhere inside a modal
+// fire its primary submit button — a keyboard alternative to mousing over
+// to click it. Both modifiers are accepted on every platform (Cmd+Enter
+// on macOS, Ctrl+Enter elsewhere), so it just works without sniffing the
+// OS. It clicks the real <button>, so a disabled submit — an in-flight
+// request, or a form that isn't valid yet (e.g. reincarnate force-mode
+// with no follow-up) — is a no-op, the same guard the mouse path already
+// respects. Plain Enter is left alone so the multi-line textareas (the
+// init-message / follow-up fields) keep inserting newlines. Scoped to the
+// modal element so it only fires while focus is inside the open dialog.
+// Matches the existing Ctrl/Cmd+Enter convention in the edit-member modal.
+function bindModalSubmitHotkey(modalEl, submitBtn) {
+  if (!modalEl || !submitBtn) return;
+  modalEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    if (!submitBtn.disabled) submitBtn.click();
   });
 }
 function onlineDot(online) {
@@ -940,7 +1006,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
+  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
   harnessCanRename,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
