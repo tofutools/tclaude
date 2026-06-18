@@ -1654,8 +1654,9 @@ func migrateV30toV31(db *sql.DB) error {
 // The backfill is load-bearing: every conv-id that appears in any
 // agentic table is enrolled here, so no agent disappears when tclaude
 // upgrades. Online-but-otherwise-unrecorded sessions can't be
-// tmux-probed from a SQL migration — the daemon enrolls those on
-// startup instead (see agentd reconcileOnlineEnrollment).
+// tmux-probed from a SQL migration — the daemon's session reaper
+// enrolls those from its continuous liveness sweep instead (see agentd
+// enrollOnlineSession).
 func migrateV29toV30(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS agent_enrollment (
