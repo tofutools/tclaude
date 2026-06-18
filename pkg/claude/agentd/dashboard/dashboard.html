@@ -387,16 +387,26 @@
     <div id="costs-chart"></div>
     <div id="costs-table"></div>
   </section>
+  <!-- Messages tab — a mail client for introspecting every mailbox the
+       daemon stores: agent-to-agent mail plus the human.notify channel.
+       Three panes (sidebar → message list → reading pane), populated by
+       mail.js from /api/mailboxes + /api/mailbox. The two bulk buttons
+       act on the human folder only (mutating human_messages) and are
+       shown/hidden by mail.js. -->
   <section id="tab-messages">
     <div class="filter-bar">
-      <input id="filter-messages" type="text" placeholder="Filter (sender / group / subject / body)" autocomplete="off" spellcheck="false" />
+      <input id="filter-messages" type="text" placeholder="Filter messages (sender / recipient / subject / body)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-messages-count"></span>
       <button class="clear-filter" id="filter-messages-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
-      <button class="tool" data-act="msg-mark-all-read" title="Mark every message read">✓ mark all read</button>
-      <button class="tool" data-act="msg-clear" title="Delete every message that has been marked read">🧹 clear read</button>
+      <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read" title="Mark every human notification read" hidden>✓ mark all read</button>
+      <button class="tool" id="mail-clear-read" data-act="msg-clear" title="Delete every human notification that has been marked read" hidden>🧹 clear read</button>
     </div>
-    <div id="messages-list"></div>
+    <div class="mail-client">
+      <aside class="mail-sidebar" id="mail-sidebar"></aside>
+      <div class="mail-list" id="mail-list"></div>
+      <div class="mail-reader" id="mail-reader"></div>
+    </div>
   </section>
   <!-- Vegas tab — appears after Config only in slop mode. vegas.js
        injects a lounge-radio <audio> player into #vegas-player when slop
