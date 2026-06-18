@@ -17,6 +17,26 @@ permissions:
   contents: write
 
 jobs:
+  # golangci-lint is platform-independent, so run it once on a single runner
+  # rather than across the test matrix. The version/build/release chain gates
+  # on this job (via version's needs), so a manual release requires lint to pass.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}
@@ -38,7 +58,7 @@ jobs:
   version:
     name: Generate Version
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, lint]
     outputs:
       new_version: ${{ steps.version.outputs.new_version }}
     steps:
