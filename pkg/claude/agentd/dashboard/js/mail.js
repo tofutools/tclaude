@@ -584,6 +584,10 @@ async function deleteOneMessage(id) {
 
 async function deleteSelectedMessages() {
   if (mail.busy) return;
+  // Snapshot the selection up front: runBatches iterates this captured
+  // list, not the live Set, so a background refresh landing during the
+  // confirm wait (before mail.busy is set) can prune the Set without
+  // affecting the in-flight op — the per-batch delete just no-ops.
   const ids = [...mail.selectedMsgs];
   if (!ids.length) return;
   const confirmed = await confirmModal({
