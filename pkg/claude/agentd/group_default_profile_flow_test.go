@@ -164,6 +164,53 @@ func TestGroupDefaultProfile_HarnessCorrectFill(t *testing.T) {
 	assert.Equal(t, "codex", rows[0].Harness, "profile's harness drives the spawn")
 }
 
+// Scenario: a Codex default profile that leaves sandbox/approval BLANK must
+// still launch the agent under the harness's secure defaults (workspace-write /
+// never), not unsandboxed. This guards against the profile fill bypassing the
+// secure-default resolution.
+func TestGroupDefaultProfile_BlankCodexSandboxGetsSecureDefault(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	rec := createProfile(t, f, map[string]any{"name": "cx-bare", "harness": "codex", "model": "gpt-5-codex"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create codex profile body=%s", rec.Body.String())
+	require.Equalf(t, http.StatusOK, setGroupProfile(t, f, "alpha", "cx-bare").Code, "set default_profile")
+
+	spawn := f.AsHuman().Spawn("alpha", "worker")
+
+	sandbox, ok := f.World.SpawnSandbox(spawn.ConvID)
+	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
+	assert.Equal(t, "workspace-write", sandbox, "blank profile sandbox must resolve to the Codex secure default, not unsandboxed")
+	approval, _ := f.World.SpawnApproval(spawn.ConvID)
+	assert.Equal(t, "never", approval, "blank profile approval must resolve to the Codex non-escalating default")
+}
+
+// Scenario: a spawn request that pins a DIFFERENT harness than the group's
+// default profile does NOT inherit the profile's harness-specific fields — the
+// profile is skipped, and the spawn runs on the pinned harness with its own
+// defaults (no confusing cross-harness 400, no Codex model on a Claude spawn).
+func TestGroupDefaultProfile_PinnedDifferentHarnessSkipsProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	rec := createProfile(t, f, map[string]any{"name": "cx", "harness": "codex", "model": "gpt-5-codex"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create codex profile body=%s", rec.Body.String())
+	require.Equalf(t, http.StatusOK, setGroupProfile(t, f, "alpha", "cx").Code, "set default_profile")
+
+	// Pin claude explicitly: the codex default profile must be ignored.
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "harness": "claude"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	model, ok := f.World.SpawnModel(spawn.ConvID)
+	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
+	assert.Equal(t, "", model, "a claude-pinned spawn must not inherit the codex profile's model")
+
+	rows, err := db.FindSessionsByConvID(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows, "spawned session row")
+	assert.Equal(t, "claude", rows[0].Harness, "the pinned harness wins; the codex profile is skipped")
+}
+
 // Scenario: a group created with a default profile in one shot — POST
 // /v1/groups carries default_profile, applied as a post-create update (the same
 // pattern as default_cwd / default_context). A blank-model spawn inherits it.

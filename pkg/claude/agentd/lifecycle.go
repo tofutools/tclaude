@@ -669,27 +669,37 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// re-validated here as if the caller had typed them. The toggles are bool
 	// in the request, so a profile that sets them true fills a request that
 	// left them at the false default.
+	//
+	// The profile is only inherited when the spawn will run on the profile's
+	// harness. A request that pins a DIFFERENT harness brings its own
+	// harness-specific fields (model/sandbox/approval/…, which the profile
+	// validated against ITS harness), so copying the profile's onto a foreign
+	// harness would just produce a confusing 400 at resolution; we skip the
+	// profile entirely instead. A blank request adopts the profile's harness.
 	if prof := groupDefaultProfile(g); prof != nil {
-		if strings.TrimSpace(body.Harness) == "" {
-			body.Harness = prof.Harness
-		}
-		if strings.TrimSpace(body.Model) == "" {
-			body.Model = prof.Model
-		}
-		if strings.TrimSpace(body.Effort) == "" {
-			body.Effort = prof.Effort
-		}
-		if strings.TrimSpace(body.SandboxMode) == "" {
-			body.SandboxMode = prof.Sandbox
-		}
-		if strings.TrimSpace(body.ApprovalPolicy) == "" {
-			body.ApprovalPolicy = prof.Approval
-		}
-		if !body.AutoReview && prof.AutoReview != nil {
-			body.AutoReview = *prof.AutoReview
-		}
-		if !body.TrustDir && prof.TrustDir != nil {
-			body.TrustDir = *prof.TrustDir
+		reqHarness := strings.TrimSpace(body.Harness)
+		if reqHarness == "" || harnessOrDefault(reqHarness) == harnessOrDefault(prof.Harness) {
+			if reqHarness == "" {
+				body.Harness = prof.Harness
+			}
+			if strings.TrimSpace(body.Model) == "" {
+				body.Model = prof.Model
+			}
+			if strings.TrimSpace(body.Effort) == "" {
+				body.Effort = prof.Effort
+			}
+			if strings.TrimSpace(body.SandboxMode) == "" {
+				body.SandboxMode = prof.Sandbox
+			}
+			if strings.TrimSpace(body.ApprovalPolicy) == "" {
+				body.ApprovalPolicy = prof.Approval
+			}
+			if !body.AutoReview && prof.AutoReview != nil {
+				body.AutoReview = *prof.AutoReview
+			}
+			if !body.TrustDir && prof.TrustDir != nil {
+				body.TrustDir = *prof.TrustDir
+			}
 		}
 	}
 
@@ -1005,46 +1015,90 @@ func groupDefaultProfile(g *db.AgentGroup) *db.SpawnProfile {
 	return prof
 }
 
+// harnessOrDefault normalizes a (possibly blank) harness name to a canonical
+// name for equality checks: a blank name means the default harness (Claude
+// Code), so "" and "claude" compare equal.
+func harnessOrDefault(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return harness.DefaultName
+	}
+	return name
+}
+
 // applyDefaultProfile fills blank launch fields on p from the group's default
 // spawn profile (JOH-210), the harness-correct replacement for the retired
-// per-group default_model. A field the request already set wins; a field the
-// profile also leaves unset stays unset, so the launch boundary applies its own
-// default at spawn time.
+// per-group default_model, then APPLIES the chosen harness's secure launch
+// defaults to whatever is still blank and validates the result. A field the
+// request already set wins; for a field both the request and the profile leave
+// blank, the harness's secure default is applied (e.g. a Codex profile that
+// omits sandbox/approval still launches workspace-write / never — NOT an
+// unsandboxed config.toml-driven agent). Returns a typed failure if a filled
+// value is invalid for the harness.
 //
-// This is the SAFETY-NET fill for callers that reach executeSpawn WITHOUT going
-// through handleGroupSpawn (the group-template instantiator). handleGroupSpawn
-// itself overlays the profile onto the request BEFORE its harness/model/sandbox
-// resolution (so a Codex default profile resolves harness-correctly), which
-// leaves these fields already non-blank here — making this a no-op on that
-// path. The two launch toggles are tri-state in the profile (*bool): filled
-// only when the request left them at the zero value (false) AND the profile
-// sets them.
-func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) {
+// This is the SAFETY-NET fill for any caller that reaches executeSpawn WITHOUT
+// going through handleGroupSpawn (today only the group-template instantiator,
+// whose freshly-created group carries no default profile, so this is a no-op
+// there). handleGroupSpawn itself overlays the profile onto the request BEFORE
+// its own harness/model/sandbox resolution, leaving these fields already
+// resolved here — so on that path the fills are no-ops and the secure-default
+// resolution is idempotent. The harness fields all come from the SAME profile,
+// so harness + sandbox/approval are internally consistent. The two launch
+// toggles are tri-state in the profile (*bool): filled only when the request
+// left them at the zero value (false) AND the profile sets them.
+func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	prof := groupDefaultProfile(g)
+	if prof != nil {
+		if p.Harness == "" {
+			p.Harness = prof.Harness
+		}
+		if p.Model == "" {
+			p.Model = prof.Model
+		}
+		if p.Effort == "" {
+			p.Effort = prof.Effort
+		}
+		if p.SandboxMode == "" {
+			p.SandboxMode = prof.Sandbox
+		}
+		if p.ApprovalPolicy == "" {
+			p.ApprovalPolicy = prof.Approval
+		}
+		if !p.AutoReview && prof.AutoReview != nil {
+			p.AutoReview = *prof.AutoReview
+		}
+		if !p.TrustDir && prof.TrustDir != nil {
+			p.TrustDir = *prof.TrustDir
+		}
+	}
+
+	// Apply the chosen harness's SECURE launch defaults to any field still
+	// blank, and validate — the same resolution handleGroupSpawn runs before
+	// building its params. Idempotent on the handleGroupSpawn path (already
+	// resolved); the load-bearing case is any other caller that reaches
+	// executeSpawn with a profile-carrying group, where this is what keeps a
+	// Codex spawn sandboxed. Skipped entirely when there is no profile to apply
+	// (the template path), to preserve that path's existing pass-through.
 	if prof == nil {
-		return
+		return nil
 	}
-	if p.Harness == "" {
-		p.Harness = prof.Harness
+	h, err := resolveSpawnHarness(p.Harness)
+	if err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
 	}
-	if p.Model == "" {
-		p.Model = prof.Model
+	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
-	if p.Effort == "" {
-		p.Effort = prof.Effort
+	if p.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, p.ApprovalPolicy); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
 	}
-	if p.SandboxMode == "" {
-		p.SandboxMode = prof.Sandbox
+	if p.AutoReview, err = harness.ResolveAutoReview(h, p.AutoReview); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
 	}
-	if p.ApprovalPolicy == "" {
-		p.ApprovalPolicy = prof.Approval
+	if p.TrustDir, err = harness.ResolveTrustDir(h, p.TrustDir); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_trust_dir", err.Error()}
 	}
-	if !p.AutoReview && prof.AutoReview != nil {
-		p.AutoReview = *prof.AutoReview
-	}
-	if !p.TrustDir && prof.TrustDir != nil {
-		p.TrustDir = *prof.TrustDir
-	}
+	return nil
 }
 
 // executeSpawn runs the validated spawn sequence: it forks a detached
@@ -1074,15 +1128,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		timeout = 30 * time.Second
 	}
 
-	// Fill blank launch fields from the group's default spawn profile
-	// (JOH-210), the harness-correct replacement for the retired per-group
-	// default_model. This reaches every server-side spawn path — the dashboard
-	// Spawn button and the group-template instantiator (templates.go), whose
-	// params carry blank launch fields. A field the request already set wins; a
-	// field the profile also leaves blank stays blank, so the launch boundary's
-	// own default still applies. The stored profile was validated against its
-	// harness at save (buildProfileFromJSON), so no revalidation is needed here.
-	applyDefaultProfile(g, &p)
+	// Fill blank launch fields from the group's default spawn profile (JOH-210)
+	// and apply the harness's secure launch defaults. On the handleGroupSpawn
+	// path this is an idempotent no-op (the request overlay already resolved
+	// these); it is the safety net for any other caller that reaches
+	// executeSpawn with a profile-carrying group, keeping a Codex spawn
+	// sandboxed. A value invalid for the harness is a typed failure.
+	if fail := applyDefaultProfile(g, &p); fail != nil {
+		return nil, fail
+	}
 
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
