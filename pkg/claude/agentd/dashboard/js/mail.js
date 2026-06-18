@@ -29,6 +29,11 @@
 // folder keeps its /api/human-messages/* path (delete accepts an ids
 // array for multi-select). The reader's human-only mark-read / focus
 // actions still flow through row-actions.js's document handler.
+//
+// Bulk delete/wipe is split into many small batched requests (see
+// runBatches) rather than one giant call: a progress bar fills in the
+// bulk bar as each batch lands, and mail.busy freezes the refresh +
+// handlers for the duration so nothing races the running op.
 
 import { $, $$, esc, relTime, shortId } from './helpers.js';
 import { dashPrefs } from './prefs.js';
@@ -44,6 +49,15 @@ const ALL_ID = 'all';
 const SELECTED_KEY = 'tclaude.dash.mail.mailbox';
 const BOX_FILTER_KEY = 'tclaude.dash.mail.boxfilter';
 
+// Bulk deletes are split into many small API calls rather than one giant
+// request, so the operator watches the work advance and a huge selection
+// can't block on a single long round-trip. DELETE_BATCH caps how many
+// message ids go in one /api/mailbox/delete; WIPE_BATCH caps how many
+// mailboxes go in one /api/mailbox/wipe (each conv can delete an unbounded
+// number of rows server-side, so the per-call fan-out stays small).
+const DELETE_BATCH = 50;
+const WIPE_BATCH = 5;
+
 // Module-local view state. selected survives across the 2s repaint
 // (persisted) so the human's chosen folder is sticky; selectedMsgId (the
 // open message) is per-session. selectedMsgs (checked rows) is
@@ -58,6 +72,13 @@ const mail = {
   selectedMsgs: new Set(),
   selectedBoxes: new Set(),
   inflight: false,
+  // busy is set while a batched delete/wipe runs: it freezes the 2s
+  // refresh (so mail.messages isn't swapped out from under the running
+  // op) and the tab's click/change handlers (so no second mutation
+  // starts mid-run). progress, when set, drives the progress bar painted
+  // into one of the bulk bars — {where:'bulk'|'wipe', verb, done, total}.
+  busy: false,
+  progress: null,
 };
 
 function mailTabActive() {
@@ -104,7 +125,9 @@ async function loadMessages() {
 // loadMail refreshes both the roster and the open folder, then repaints.
 // Guarded so overlapping 2s ticks don't stack fetches.
 async function loadMail() {
-  if (mail.inflight) return;
+  // A running bulk op owns mail.messages / the selection sets; let it
+  // finish before the background refresh swaps them out.
+  if (mail.inflight || mail.busy) return;
   mail.inflight = true;
   try {
     await Promise.all([loadMailboxes(), loadMessages()]);
@@ -119,6 +142,7 @@ async function loadMail() {
 // the inflight guard so the operator sees the result immediately rather
 // than waiting up to 2s for the next tick.
 async function reloadMail() {
+  if (mail.busy) return;
   await Promise.all([loadMailboxes(), loadMessages()]);
   pruneSelections();
   paintMail();
@@ -216,6 +240,11 @@ function paintSidebar() {
 function paintWipeBar() {
   const bar = $('#mail-wipe-bar');
   if (!bar) return;
+  if (mail.busy && mail.progress && mail.progress.where === 'wipe') {
+    bar.hidden = false;
+    bar.innerHTML = progressBarHTML(mail.progress);
+    return;
+  }
   const n = mail.selectedBoxes.size;
   bar.hidden = n === 0;
   if (n === 0) { bar.innerHTML = ''; return; }
@@ -327,6 +356,11 @@ function paintList() {
 function paintListBulkBar() {
   const bar = $('#mail-bulk-bar');
   if (!bar) return;
+  if (mail.busy && mail.progress && mail.progress.where === 'bulk') {
+    bar.hidden = false;
+    bar.innerHTML = progressBarHTML(mail.progress);
+    return;
+  }
   const filtered = filteredMessages();
   if (!filtered.length) { bar.hidden = true; bar.innerHTML = ''; return; }
   bar.hidden = false;
@@ -455,6 +489,59 @@ function selectMessage(id) {
 
 // --- mutations ------------------------------------------------------
 
+// progressBarHTML renders the "Deleting 150 / 300…" label + a filling bar
+// shown in a bulk bar while a batched op runs.
+function progressBarHTML(p) {
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+  return `<span class="mail-progress-label">${esc(p.verb)} ${p.done} / ${p.total}…</span>
+    <span class="mail-progress grow"><span class="mail-progress-fill" style="width:${pct}%"></span></span>`;
+}
+
+// chunk splits an array into runs of at most `size`.
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// runBatches drives a batched bulk operation: it splits `items` into
+// chunks of `size` and runs `doBatch(chunk)` for each in series, painting
+// a progress bar (in the `where` bulk bar) after every chunk so a large
+// delete/wipe advances visibly instead of blocking on one request.
+// doBatch returns the server-reported count handled by that chunk, or
+// null on failure (already toasted) — a null aborts the remaining
+// chunks. A single-chunk op skips the bar entirely, keeping the old
+// quick-delete UX. While the run is in flight mail.busy freezes the 2s
+// refresh and the tab handlers. Returns {deleted, handled, ok}.
+async function runBatches(items, size, where, verb, doBatch) {
+  const chunks = chunk(items, size);
+  const showBar = chunks.length > 1;
+  mail.busy = true;
+  let deleted = 0, handled = 0, ok = true;
+  if (showBar) {
+    mail.progress = { where, verb, done: 0, total: items.length };
+    paintWipeBar();
+    paintListBulkBar();
+  }
+  try {
+    for (const c of chunks) {
+      const n = await doBatch(c);
+      if (n === null) { ok = false; break; }
+      deleted += n;
+      handled += c.length;
+      if (showBar) {
+        mail.progress.done = handled;
+        paintWipeBar();
+        paintListBulkBar();
+      }
+    }
+  } finally {
+    mail.busy = false;
+    mail.progress = null;
+  }
+  return { deleted, handled, ok };
+}
+
 // postDeleteMessages routes a delete by folder kind: the human folder
 // mutates human_messages via its own endpoint; agent + "all" folders
 // delete agent_messages rows. Returns the deleted count, or null on
@@ -479,7 +566,7 @@ async function postDeleteMessages(ids) {
 }
 
 async function deleteOneMessage(id) {
-  if (!Number.isFinite(id)) return;
+  if (mail.busy || !Number.isFinite(id)) return;
   const confirmed = await confirmModal({
     title: 'Delete this message?',
     body: 'Permanently deletes this one message. This cannot be undone.',
@@ -496,25 +583,41 @@ async function deleteOneMessage(id) {
 }
 
 async function deleteSelectedMessages() {
+  if (mail.busy) return;
   const ids = [...mail.selectedMsgs];
   if (!ids.length) return;
   const confirmed = await confirmModal({
     title: `Delete ${ids.length} message${ids.length === 1 ? '' : 's'}?`,
-    body: 'Permanently deletes the selected messages. This cannot be undone.',
+    body: ids.length > DELETE_BATCH
+      ? `Permanently deletes the selected messages, in batches of ${DELETE_BATCH}. This cannot be undone.`
+      : 'Permanently deletes the selected messages. This cannot be undone.',
     okLabel: 'Delete',
   });
   if (!confirmed) return;
-  const n = await postDeleteMessages(ids);
-  if (n === null) return;
-  if (mail.selectedMsgId != null && mail.selectedMsgs.has(mail.selectedMsgId)) {
-    mail.selectedMsgId = null;
+  const { deleted, handled, ok } = await runBatches(
+    ids, DELETE_BATCH, 'bulk', 'Deleting',
+    async batch => {
+      const n = await postDeleteMessages(batch);
+      if (n === null) return null;
+      // Drop the handled ids from the selection as each batch lands, so a
+      // mid-run failure leaves the selection pointing only at what's left.
+      batch.forEach(id => mail.selectedMsgs.delete(id));
+      if (mail.selectedMsgId != null && batch.includes(mail.selectedMsgId)) {
+        mail.selectedMsgId = null;
+      }
+      return n;
+    });
+  if (handled) {
+    toast(ok
+      ? `deleted ${deleted} message${deleted === 1 ? '' : 's'}`
+      : `deleted ${deleted} message${deleted === 1 ? '' : 's'}, then stopped on an error`,
+      !ok);
   }
-  mail.selectedMsgs.clear();
-  toast(`deleted ${n} message${n === 1 ? '' : 's'}`);
   await reloadMail();
 }
 
 async function wipeSelectedMailboxes() {
+  if (mail.busy) return;
   const convs = [...mail.selectedBoxes];
   if (!convs.length) return;
   const names = convs.map(c => {
@@ -528,22 +631,33 @@ async function wipeSelectedMailboxes() {
     okLabel: 'Wipe',
   });
   if (!confirmed) return;
-  try {
-    const r = await fetch('/api/mailbox/wipe', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ convs }),
+  const { deleted, handled, ok } = await runBatches(
+    convs, WIPE_BATCH, 'wipe', 'Wiping',
+    async batch => {
+      try {
+        const r = await fetch('/api/mailbox/wipe', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ convs: batch }),
+        });
+        if (!r.ok) { toast(`wipe failed: ${await r.text()}`, true); return null; }
+        const res = await r.json().catch(() => ({}));
+        batch.forEach(c => mail.selectedBoxes.delete(c));
+        return res.deleted || 0;
+      } catch (err) {
+        toast(`wipe failed: ${(err && err.message) || err}`, true);
+        return null;
+      }
     });
-    if (!r.ok) { toast(`wipe failed: ${await r.text()}`, true); return; }
-    const res = await r.json().catch(() => ({}));
-    mail.selectedBoxes.clear();
+  if (handled) {
     mail.selectedMsgs.clear();
     mail.selectedMsgId = null;
-    toast(`wiped ${res.deleted || 0} message${res.deleted === 1 ? '' : 's'}`);
-    await reloadMail();
-  } catch (err) {
-    toast(`wipe failed: ${(err && err.message) || err}`, true);
+    toast(ok
+      ? `wiped ${deleted} message${deleted === 1 ? '' : 's'}`
+      : `wiped ${deleted} message${deleted === 1 ? '' : 's'}, then stopped on an error`,
+      !ok);
   }
+  await reloadMail();
 }
 
 // --- wiring ---------------------------------------------------------
@@ -556,6 +670,10 @@ function initMail() {
     // row-actions.js's document-level handler; the data-act values here
     // don't overlap those.
     sec.addEventListener('click', e => {
+      // A batched delete/wipe owns the view until it finishes — ignore
+      // clicks (including the row delete buttons) so no second mutation
+      // races the running one.
+      if (mail.busy) return;
       const btn = e.target.closest('[data-act]');
       if (!btn || !sec.contains(btn)) return;
       const act = btn.getAttribute('data-act');
@@ -580,6 +698,7 @@ function initMail() {
     // preventDefault) and they toggle normally. Selection state is the
     // source of truth; the 2s repaint re-derives `checked` from it.
     sec.addEventListener('change', e => {
+      if (mail.busy) return;  // selection is frozen during a batched op
       const t = e.target;
       if (t.classList.contains('mail-msg-check')) {
         const id = Number(t.getAttribute('data-id'));

@@ -85,6 +85,18 @@ nav button:hover { color: #d4d4d4; }
 .mail-bulk-bar button.danger { color: #d4d4d4; }
 .mail-bulk-bar button.danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
 
+/* Progress bar shown inside a bulk bar while a batched delete / wipe runs
+   ("Deleting 150 / 300…" + a filling track). */
+.mail-progress-label { flex: 0 0 auto; white-space: nowrap; color: #c9d1d9; }
+.mail-progress {
+  height: 6px; border-radius: 3px; background: #2a3340;
+  overflow: hidden; min-width: 60px;
+}
+.mail-progress-fill {
+  display: block; height: 100%; background: #1f6feb;
+  transition: width .15s ease;
+}
+
 /* Selectable rows: a checkbox sits beside the existing mailbox / message
    button, with a per-row delete button on the message rows. */
 .mailbox-row, .mail-row-wrap {
