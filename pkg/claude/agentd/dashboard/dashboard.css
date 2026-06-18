@@ -235,6 +235,21 @@ details[open] > summary::before { content: "▼ "; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
 .group-links-section > table { margin: 4px 0 6px 0; }
 .group-links-section > button { margin-left: 6px; }
+/* Per-group link chips in the <summary> header — an at-a-glance, always-
+   visible (even when the group is collapsed) view of who this group can
+   message (→) and who can message it (←). Clicking any chip opens the
+   Links… management overlay. Outbound chips lean blue, inbound green. */
+.group-link-chips {
+  margin-left: 8px; font-size: 11px; color: #6e7681;
+  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+.group-link-chip {
+  cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid #2a3340; white-space: nowrap; line-height: 1.5;
+}
+.group-link-chip.out { color: #79c0ff; }
+.group-link-chip.in { color: #7ee787; }
+.group-link-chip:hover { border-color: #58a6ff; filter: brightness(1.15); }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
@@ -700,6 +715,31 @@ details[open] > summary .spawn-btn { opacity: 1; }
   display: none; align-items: center; justify-content: center; z-index: 100;
 }
 .modal-overlay.show { display: flex; }
+/* .manage-overlay is the backdrop for the Templates… / Links… management
+   panels (former top-level tabs, now reached from the Groups cog). It is a
+   DELIBERATE sibling of .modal-overlay rather than the same class: the
+   auto-refresh suspends on `.modal-overlay.show` (to protect inline inputs
+   / drags / forms), but these panels are plain live listings with no such
+   state, so they must keep refreshing — staying off that selector is how
+   their list reflects create/edit/delete from their child modals without a
+   close/reopen. Same visual treatment as .modal-overlay otherwise. */
+.manage-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.manage-overlay.show { display: flex; }
+.manage-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 620px; max-width: min(880px, calc(100vw - 32px));
+  width: calc(100% - 32px); max-height: 86vh; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.manage-modal h3 { margin: 0; font-size: 15px; color: #d4d4d4; }
+.manage-modal .manage-intro { margin: 0; font-size: 12px; color: #7d8590; line-height: 1.45; }
+/* The relocated filter bars sit flush inside the panel rather than spanning
+   a full page width. */
+.manage-modal .filter-bar { margin: 0; }
 /* The cron-pick-target overlay is opened FROM inside the cron-create
    form (Owner / Target 🔍 buttons), so it has to stack on top of the
    create modal — not below it. Plain z-index:100 ties with the create

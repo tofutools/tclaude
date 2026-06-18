@@ -61,9 +61,7 @@
 </div>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
-  <button data-tab="templates">Templates</button>
   <button data-tab="cron">Cron</button>
-  <button data-tab="links">Links</button>
   <button data-tab="plugins">Plugins<span id="plugins-badge" class="tab-badge warn" hidden></span></button>
   <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants">Access</button>
   <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
@@ -97,6 +95,8 @@
           <button role="menuitem" id="group-import-open" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
           <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
+          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)">⧉ templates…</button>
+          <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
     </div>
@@ -111,17 +111,6 @@
       <em>Retired</em> row → group (reinstate + join)
     </aside>
   </section>
-  <section id="tab-templates">
-    <div class="filter-bar">
-      <input id="filter-templates" type="text" placeholder="Filter (template name / descr / agent name / role)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-templates-count"></span>
-      <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template">⤓ from a group</button>
-      <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
-    </div>
-    <div id="templates-list"></div>
-  </section>
   <section id="tab-cron">
     <div class="filter-bar">
       <input id="filter-cron" type="text" placeholder="Filter (name + owner/target label + subject + body)" autocomplete="off" spellcheck="false" />
@@ -131,16 +120,6 @@
       <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job">+ new cron job</button>
     </div>
     <div id="cron-list"></div>
-  </section>
-  <section id="tab-links">
-    <div class="filter-bar">
-      <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-links-count"></span>
-      <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
-    </div>
-    <div id="links-list"></div>
   </section>
   <section id="tab-plugins">
     <div class="filter-bar">
@@ -785,6 +764,30 @@
     </div>
   </div>
 </div>
+<!-- Templates… manage overlay — the former Templates tab, folded into the
+     Groups tab's ⚙ cog menu. A .manage-overlay (not .modal-overlay) so it
+     does NOT suspend the auto-refresh: the listing stays live and reflects
+     create/edit/delete done through its child modals immediately, exactly
+     like the old tab did. -->
+<div class="manage-overlay" id="templates-manage-modal">
+  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="templates-manage-title">
+    <h3 id="templates-manage-title">Group templates</h3>
+    <p class="manage-intro">Reusable blueprints for a working group — a name, shared context and an ordered list of agent specs. Instantiate one to spawn a whole team in a single shot.</p>
+    <div class="filter-bar">
+      <input id="filter-templates" type="text" placeholder="Filter (template name / descr / agent name / role)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-templates-count"></span>
+      <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template">⤓ from a group</button>
+      <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
+    </div>
+    <div id="templates-list"></div>
+    <div class="modal-buttons">
+      <span class="spacer"></span>
+      <button id="templates-manage-close" type="button">Close</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="template-editor-modal">
   <div class="cron-create-modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="template-editor-title">
     <h3 id="template-editor-title">New group template</h3>
@@ -994,6 +997,30 @@
       <button id="plugin-modal-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="plugin-modal-submit" class="primary" type="button">Create plugin</button>
+    </div>
+  </div>
+</div>
+<!-- Links… manage overlay — the former Links tab, folded into the Groups
+     tab's ⚙ cog menu. A .manage-overlay (not .modal-overlay) for the same
+     reason as the Templates one above: the listing stays live so add/edit/
+     delete via the +new-link / link-edit child modal reflect immediately.
+     Per-group links also surface as chips in each group header + a table in
+     each group's expanded body. -->
+<div class="manage-overlay" id="links-manage-modal">
+  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="links-manage-title">
+    <h3 id="links-manage-title">Inter-group links</h3>
+    <p class="manage-intro">Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach.</p>
+    <div class="filter-bar">
+      <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-links-count"></span>
+      <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
+    </div>
+    <div id="links-list"></div>
+    <div class="modal-buttons">
+      <span class="spacer"></span>
+      <button id="links-manage-close" type="button">Close</button>
     </div>
   </div>
 </div>

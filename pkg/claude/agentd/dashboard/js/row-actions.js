@@ -13,7 +13,7 @@ import {
 } from './modal-cron.js';
 import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openGroupContextModal } from './modal-templates.js';
-import { openLinkModal } from './modal-link-wt.js';
+import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -1228,6 +1228,12 @@ function bindRowActions() {
           // current group so the user only has to pick TO.
           const from = btn.getAttribute('data-from') || '';
           openLinkModal({ mode: 'create', preset: { from } });
+          return;
+        }
+        case 'links-manage': {
+          // From a group-header link chip: open the full cross-group
+          // Links… management overlay (the former Links tab).
+          openLinksManageModal();
           return;
         }
         case 'link-edit': {

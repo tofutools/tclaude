@@ -513,6 +513,35 @@ export function bindBackdropDiscard(modalId, closeFn) {
   });
 }
 
+// bindManageOverlayDismiss wires backdrop-click + Escape close for the
+// Templates… / Links… management overlays. Unlike bindBackdropDiscard it
+// does NOT dirty-track: these panels are a live listing plus a filter
+// box, not an editable form, so closing them can never lose unsaved input
+// and should be friction-free (no "discard?" prompt for a typed filter).
+// Both paths no-op while any child .modal-overlay (the editor /
+// instantiate / link modals these panels launch) is open on top, so a
+// backdrop click or Escape dismisses the child first and only reaches the
+// panel once the child is gone.
+export function bindManageOverlayDismiss(id, closeFn) {
+  const el = $('#' + id);
+  if (!el) return;
+  let pressedOnBackdrop = false;
+  el.addEventListener('mousedown', (e) => { pressedOnBackdrop = (e.target === el); });
+  el.addEventListener('click', (e) => {
+    const isBackdrop = (e.target === el) && pressedOnBackdrop;
+    pressedOnBackdrop = false;
+    if (isBackdrop) closeFn();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!el.classList.contains('show')) return;
+    // A child form modal sits on top — let its own handler take the Escape.
+    if (document.querySelector('.modal-overlay.show')) return;
+    e.preventDefault();
+    closeFn();
+  });
+}
+
 // shutdownScope drives the group-level and whole-dashboard Shutdown
 // buttons. It counts the running agents in scope from the last
 // snapshot, pops a confirm modal that states the count and spells out

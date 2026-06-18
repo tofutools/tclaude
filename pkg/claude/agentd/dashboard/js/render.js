@@ -376,6 +376,7 @@ function renderGroups(groups) {
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
         <span class="group-default-model${g.default_model ? '' : ' unset'}" data-act="set-group-model" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-model="${esc(g.default_model || '')}" title="${g.default_model ? 'Default model for agents spawned into this group: ' + esc(g.default_model) + ' — click to edit' : 'No group default model — spawns inherit ' + esc(userDefaultModelLabel()) + '. Click to set one.'}">🧠 ${g.default_model ? esc(g.default_model) : 'no default model'}</span>
+        ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
@@ -396,6 +397,33 @@ function renderGroups(groups) {
     </details>
   `;
   }).join('');
+}
+
+// renderGroupLinkChips: compact, always-visible (even when collapsed)
+// link badges for a group's <summary> header. Outbound chips (→ X) name
+// groups this group can message; inbound chips (← Y) name groups that can
+// message it. Each chip carries data-act="links-manage", so a click opens
+// the full Links… management overlay (and the row-action dispatcher's
+// e.preventDefault() stops it from toggling the <details>). Returns '' for
+// a group with no links so the header stays uncluttered. The expanded body
+// still shows the editable per-group links table (renderGroupLinksSection).
+function renderGroupLinkChips(groupName) {
+  const all = (lastSnapshot && lastSnapshot.links) || [];
+  const out = all.filter(l => l.from === groupName);
+  const inc = all.filter(l => l.to === groupName);
+  if (!out.length && !inc.length) return '';
+  const chip = (other, dir, mode) => {
+    const arrow = dir === 'out' ? '→' : '←';
+    const title = dir === 'out'
+      ? `Members of this group can message "${other}" (${mode}) — click to manage links`
+      : `Members of "${other}" can message this group (${mode}) — click to manage links`;
+    return `<span class="group-link-chip ${dir}" data-act="links-manage" title="${esc(title)}">${arrow} ${esc(other || '(deleted)')}</span>`;
+  };
+  const chips = [
+    ...out.map(l => chip(l.to, 'out', l.mode)),
+    ...inc.map(l => chip(l.from, 'in', l.mode)),
+  ].join('');
+  return `<span class="group-link-chips" data-act="links-manage" title="Inter-group links — click to manage">🔗 ${chips}</span>`;
 }
 
 // renderGroupLinksSection: per-group outbound/inbound link rows. Reads

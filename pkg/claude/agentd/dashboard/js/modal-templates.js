@@ -9,7 +9,7 @@ import { dashPrefs } from './prefs.js';
 // lastSnapshot lives in dashboard.js; refresh() / confirmModal / toast
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, confirmModal, toast, bindBackdropDiscard } from './refresh.js';
+import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 
 
 // ---- Group templates --------------------------------------------------
@@ -53,6 +53,21 @@ function renderTemplatesTab() {
   }
   host.innerHTML = list.map(templateCardHTML).join('');
 }
+
+// ---- Templates… management overlay ------------------------------------
+//
+// The former Templates tab, now reached from the Groups tab's ⚙ cog.
+// Opening paints the list once immediately; the 2s auto-refresh keeps it
+// live afterwards (the overlay is a .manage-overlay, so it does not
+// suspend the refresh — see dashboard.css). Its child modals (editor /
+// instantiate / from-group) open on top and DO suspend.
+function openTemplatesManageModal() {
+  $('#templates-manage-modal').classList.add('show');
+  renderTemplatesTab();
+  setTimeout(() => $('#filter-templates').focus(), 0);
+}
+
+function closeTemplatesManageModal() { $('#templates-manage-modal').classList.remove('show'); }
 
 function templateCardHTML(t) {
   const agents = (t.agents || []).map(a => {
@@ -218,7 +233,7 @@ async function deleteTemplate(name) {
 function openInstantiateModal(presetName) {
   const templates = (lastSnapshot && lastSnapshot.templates) || [];
   if (!templates.length) {
-    toast('no templates yet — define one in the Templates tab first', true);
+    toast('no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first', true);
     return;
   }
   const sel = $('#template-instantiate-template');
@@ -284,6 +299,11 @@ async function submitInstantiate() {
     let resp = {};
     try { resp = JSON.parse(txt); } catch (_) {}
     closeInstantiateModal();
+    // Instantiate can be launched from inside the Templates… overlay (a
+    // card's ⎘ instantiate) — close it too so the Groups tab we jump to
+    // below isn't hidden behind the panel. No-op when launched from the
+    // cog's standalone "from template" shortcut.
+    closeTemplatesManageModal();
     const failed = resp.failed || 0;
     toast(failed
       ? `group ${groupName}: spawned ${resp.spawned || 0}, ${failed} failed — check the group`
@@ -350,7 +370,12 @@ async function submitFromGroup() {
 }
 
 function bindTemplatesUI() {
-  // Entry points: Templates tab + the Groups tab's "⎘ from template".
+  // Entry points: the Groups cog's "⧉ templates…" management overlay, its
+  // "+ new template" / "⤓ from a group" buttons, and the cog's standalone
+  // "⎘ from template" instantiate shortcut.
+  $('#templates-manage-open').addEventListener('click', openTemplatesManageModal);
+  $('#templates-manage-close').addEventListener('click', closeTemplatesManageModal);
+  bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);
   $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
   $('#template-from-group-open').addEventListener('click', openFromGroupModal);
   $('#group-from-template-open').addEventListener('click', () => openInstantiateModal(null));
