@@ -119,7 +119,7 @@ type DaemonError struct {
 	Status int
 	Code   string
 	Msg    string
-	Raw    []byte // when the body wasn't a structured error
+	Raw    []byte // the full response body (always set on a >= 400 reply)
 }
 
 func (e *DaemonError) Error() string {

@@ -543,7 +543,8 @@ async function runDndRetire(payload) {
     });
     if (!r.ok) {
       // A dangling entry (conversation gone) can't be retired — offer to
-      // remove it instead. maybeHandleDanglingRetire refreshes itself.
+      // remove it instead. On return the finally below re-syncs (which
+      // also undoes the optimistic drag state on the cancel branch).
       if (await maybeHandleDanglingRetire(r, conv, label)) return;
       toast(`retire ${label} failed: ${await r.text()}`, true);
       return;
