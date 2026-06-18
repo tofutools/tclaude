@@ -321,6 +321,34 @@ func TestHumanMessages_DashboardDeleteRequiresID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 }
 
+// Scenario: the delete endpoint also accepts an ids array — the Messages
+// tab's multi-select delete. Read state is irrelevant (like the single
+// case); only the named ids go.
+func TestHumanMessages_DashboardDeleteMany(t *testing.T) {
+	newFlow(t)
+	dash := dashHandlerForTest(t)
+
+	keepID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: "c", Body: "keep me"})
+	require.NoError(t, err)
+	drop1, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: "c", Body: "drop one"})
+	require.NoError(t, err)
+	drop2, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: "c", Body: "drop two"})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/human-messages/delete", map[string]any{"ids": []int64{drop1, drop2}}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Deleted int `json:"deleted"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	assert.Equal(t, 2, resp.Deleted, "both named rows removed")
+
+	msgs, _ := db.ListHumanMessages()
+	require.Len(t, msgs, 1, "only the unselected message survives")
+	assert.Equal(t, keepID, msgs[0].ID)
+}
+
 // Scenario: the server stores an agent-supplied subject/body VERBATIM —
 // it does NOT escape on the way in. This pins the XSS contract for the
 // Messages tab: the dashboard JS `esc()` helper is the SINGLE source of

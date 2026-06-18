@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -184,4 +185,32 @@ func DeleteHumanMessage(id int64) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// DeleteHumanMessages hard-deletes the listed messages by id, regardless
+// of read state — the multi-select complement to DeleteHumanMessage on
+// the Messages tab. Non-existent ids are silently skipped. Returns how
+// many rows were actually removed.
+func DeleteHumanMessages(ids []int64) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	res, err := d.Exec(
+		`DELETE FROM human_messages WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete human messages: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }

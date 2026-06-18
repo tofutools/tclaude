@@ -407,8 +407,20 @@
       <button class="tool" id="mail-clear-read" data-act="msg-clear" title="Delete every human notification that has been marked read" hidden>🧹 clear read</button>
     </div>
     <div class="mail-client">
-      <aside class="mail-sidebar" id="mail-sidebar"></aside>
-      <div class="mail-list" id="mail-list"></div>
+      <!-- Sidebar column: a static mailbox filter + the "wipe selected"
+           bar sit above the scrolling roster (#mail-sidebar), which
+           mail.js repaints. -->
+      <div class="mail-col">
+        <input id="filter-mailboxes" type="text" class="mail-sidebar-filter" placeholder="Filter mailboxes (name / id)" autocomplete="off" spellcheck="false" />
+        <div id="mail-wipe-bar" class="mail-bulk-bar" hidden></div>
+        <aside class="mail-sidebar" id="mail-sidebar"></aside>
+      </div>
+      <!-- List column: the "delete selected" / select-all bar sits above
+           the scrolling message list (#mail-list). -->
+      <div class="mail-col">
+        <div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>
+        <div class="mail-list" id="mail-list"></div>
+      </div>
       <div class="mail-reader" id="mail-reader"></div>
     </div>
   </section>

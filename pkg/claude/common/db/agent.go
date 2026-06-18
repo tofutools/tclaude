@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -1538,7 +1539,7 @@ type MailboxCount struct {
 // any mail plus its unread badge without N per-conv queries.
 //
 // Unread counts only received messages the recipient has not read
-// (to_conv side, read_at == '') — mirroring an agent's own inbox
+// (to_conv side, read_at == ”) — mirroring an agent's own inbox
 // unread. A conv appears in the map if it is the sender or recipient
 // of at least one message.
 func MailboxCounts() (map[string]MailboxCount, error) {
@@ -1604,6 +1605,123 @@ func MailboxCounts() (map[string]MailboxCount, error) {
 		bump(conv, maxCreated)
 	}
 	return out, outRows.Err()
+}
+
+// CountAgentMessages returns the number of distinct agent_messages rows
+// — the badge count for the dashboard's virtual "all messages" mailbox.
+// Distinct rows, not the In+Out tally MailboxCounts produces (a 1:1
+// message is one row counted once here, but once as In and once as Out
+// there).
+func CountAgentMessages() (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM agent_messages`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// ListAllAgentMessages returns every agent_messages row, newest-first,
+// for the dashboard's virtual "all messages" mailbox — the chronological
+// firehose across every conv. limit <= 0 means "no limit". Ordered by id
+// DESC (insertion order), not created_at, for the same RFC3339Nano
+// lexical-sort reason listAgentMessagesByCol documents.
+func ListAllAgentMessages(limit int) ([]*AgentMessage, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
+		created_at, delivered_at, read_at,
+		to_recipients, cc_recipients, original_to_conv
+		FROM agent_messages ORDER BY id DESC`
+	var args []any
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// DeleteAgentMessagesByIDs hard-deletes the listed agent_messages rows
+// unconditionally — the dashboard operator's authority (cookie + Origin)
+// stands in for the per-conv party check DeleteAgentMessageByID enforces
+// for an agent acting on its own mailbox. Used by the Messages tab's
+// per-message and multi-select delete. A non-existent id is a silent
+// skip, not an error. Returns how many rows were actually removed.
+func DeleteAgentMessagesByIDs(ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	res, err := d.Exec(
+		`DELETE FROM agent_messages WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// WipeAgentMessagesForConvs hard-deletes every agent_messages row where
+// any of the listed convs is a party (sender or recipient) — the
+// dashboard's "wipe selected mailboxes" bulk action. Because a 1:1
+// message is one shared row, wiping conv A also removes A's messages
+// from conv B's mailbox view; that is the intended "erase this agent's
+// correspondence" semantics. Returns how many rows were removed.
+func WipeAgentMessagesForConvs(convs []string) (int64, error) {
+	if len(convs) == 0 {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	placeholders := make([]string, len(convs))
+	args := make([]any, 0, len(convs)*2)
+	for i, c := range convs {
+		placeholders[i] = "?"
+		args = append(args, c)
+	}
+	for _, c := range convs {
+		args = append(args, c)
+	}
+	in := strings.Join(placeholders, ",")
+	res, err := d.Exec(
+		`DELETE FROM agent_messages WHERE from_conv IN (`+in+`) OR to_conv IN (`+in+`)`,
+		args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 func formatTimeOrEmpty(t time.Time) string {
