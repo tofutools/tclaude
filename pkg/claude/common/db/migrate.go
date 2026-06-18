@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 61
+const currentVersion = 62
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -397,7 +397,167 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 62 {
+		if err := migrateV61toV62(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// migrateV61toV62 adds agent_groups.default_profile — the name of the spawn
+// profile (spawn_profiles.name, v61) whose launch fields fill blank spawn
+// fields server-side for agents spawned into the group (JOH-210 inc2). It is
+// the harness-correct replacement for the Claude-only default_model column
+// (v52): a profile carries its own harness and its model is validated against
+// THAT harness's catalog at save, fixing the #343 bug where default_model was
+// validated Claude-only (rejecting e.g. gpt-5) and then forwarded at spawn
+// without revalidating against the spawn's harness.
+//
+// Existing per-group default_model values are migrated forward so nothing
+// regresses: each group with a non-empty default_model gets a synthesized
+// claude profile (named "group-default-<group>", suffixed on a name collision)
+// carrying that model, and the group's default_profile is pointed at it. The
+// vestigial default_model column is intentionally KEPT — still round-tripped
+// by group export/import — but is no longer read at spawn; a follow-up PR drops
+// it and bumps the export format.
+//
+// Idempotent / self-healing (the migrateV56toV57 convention): the ADD COLUMN
+// is pragma_table_info-guarded, and the synthesis only touches groups whose
+// default_profile is still '' (so a re-run after a half-applied attempt skips
+// the groups it already converted). It also tolerates a DB with no agent_groups
+// table / no default_model column (a minimally-seeded migration-heal DB). The
+// whole thing rides one transaction with the version bump.
+func migrateV61toV62(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v61→v62 (add agent_groups.default_profile): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Tolerate a DB that has no agent_groups table yet — a minimally-seeded
+	// migration-heal DB advancing to head past versions that predate the table
+	// (a real DB created agent_groups long before v61). Nothing to migrate, so
+	// just land the version.
+	var haveTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_groups'`,
+	).Scan(&haveTable); err != nil {
+		return fmt.Errorf("migrate v61→v62 (probe agent_groups): %w", err)
+	}
+	if haveTable > 0 {
+		var haveCol int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = 'default_profile'`,
+		).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v61→v62 (add agent_groups.default_profile): probe column: %w", err)
+		}
+		if haveCol == 0 {
+			if _, err := tx.Exec(
+				`ALTER TABLE agent_groups ADD COLUMN default_profile TEXT NOT NULL DEFAULT ''`,
+			); err != nil {
+				return fmt.Errorf("migrate v61→v62 (add agent_groups.default_profile): add column: %w", err)
+			}
+		}
+		if err := synthesizeGroupDefaultProfiles(tx); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 62`); err != nil {
+		return fmt.Errorf("migrate v61→v62 (add agent_groups.default_profile): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v61→v62 (add agent_groups.default_profile): commit: %w", err)
+	}
+	return nil
+}
+
+// synthesizeGroupDefaultProfiles migrates each group's legacy default_model
+// into a synthesized claude spawn profile and points the group's default_profile
+// at it, so the per-group spawn default survives the JOH-210 cutover. Only
+// groups not yet converted (default_profile still '') are touched, which makes
+// it converge on a re-run. A DB whose agent_groups predates the v52
+// default_model column (a minimally-seeded heal DB) has nothing to migrate, so
+// the absence of default_model is tolerated.
+func synthesizeGroupDefaultProfiles(tx *sql.Tx) error {
+	var haveModelCol int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = 'default_model'`,
+	).Scan(&haveModelCol); err != nil {
+		return fmt.Errorf("migrate v61→v62 (synthesize profiles): probe default_model: %w", err)
+	}
+	if haveModelCol == 0 {
+		return nil
+	}
+
+	// Collect the rows fully before the insert loop — the same tx cannot
+	// interleave an open query with the writes below.
+	rows, err := tx.Query(
+		`SELECT name, default_model FROM agent_groups WHERE default_model != '' AND default_profile = ''`)
+	if err != nil {
+		return fmt.Errorf("migrate v61→v62 (synthesize profiles): query groups: %w", err)
+	}
+	type groupModel struct{ name, model string }
+	var pending []groupModel
+	for rows.Next() {
+		var gm groupModel
+		if err := rows.Scan(&gm.name, &gm.model); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("migrate v61→v62 (synthesize profiles): scan group: %w", err)
+		}
+		pending = append(pending, gm)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("migrate v61→v62 (synthesize profiles): iterate groups: %w", err)
+	}
+	_ = rows.Close()
+
+	now := time.Now().Format(time.RFC3339Nano)
+	for _, gm := range pending {
+		profileName, err := uniqueSpawnProfileName(tx, "group-default-"+gm.name)
+		if err != nil {
+			return fmt.Errorf("migrate v61→v62 (synthesize profiles): pick name for group %q: %w", gm.name, err)
+		}
+		// harness 'claude': the legacy default_model passed the Claude-only
+		// ValidateModel gate, so it is a Claude model by construction. Only
+		// name/harness/model are set; every other field stays unset (its
+		// column default — "" or NULL).
+		if _, err := tx.Exec(
+			`INSERT INTO spawn_profiles (name, harness, model, created_at, updated_at)
+			 VALUES (?, 'claude', ?, ?, ?)`,
+			profileName, gm.model, now, now); err != nil {
+			return fmt.Errorf("migrate v61→v62 (synthesize profiles): insert profile for group %q: %w", gm.name, err)
+		}
+		if _, err := tx.Exec(
+			`UPDATE agent_groups SET default_profile = ? WHERE name = ?`,
+			profileName, gm.name); err != nil {
+			return fmt.Errorf("migrate v61→v62 (synthesize profiles): point group %q at profile: %w", gm.name, err)
+		}
+	}
+	return nil
+}
+
+// uniqueSpawnProfileName returns base, or base with a "-2"/"-3"/… suffix, such
+// that it does not collide with an existing spawn_profiles.name. The v62
+// migration uses it to synthesize per-group default profiles without tripping
+// the UNIQUE(name) constraint when a human-made profile already holds the base
+// name. Reads through the supplied tx so it sees rows inserted earlier in the
+// same migration run.
+func uniqueSpawnProfileName(tx *sql.Tx, base string) (string, error) {
+	name := base
+	for i := 2; ; i++ {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM spawn_profiles WHERE name = ?`, name).Scan(&n); err != nil {
+			return "", err
+		}
+		if n == 0 {
+			return name, nil
+		}
+		name = fmt.Sprintf("%s-%d", base, i)
+	}
 }
 
 // migrateV60toV61 adds spawn_profiles — the store behind reusable Spawn
