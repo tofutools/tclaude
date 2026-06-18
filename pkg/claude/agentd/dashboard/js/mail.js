@@ -401,6 +401,18 @@ function counterparty(m) {
   return m.from_title || shortId(m.from_conv) || '(unknown sender)';
 }
 
+// allSenderLabel names a row's sender in the aggregate "all" view, or ''
+// when there is no real sender to name. A message with no originating conv
+// (from_conv empty, so no resolvable title either) was sent by the
+// human/operator — e.g. from a spawn dialog — not an agent; we render it as
+// a bare "→ recipient" rather than a misleading "(unknown)". A genuinely
+// unresolvable but real conv still falls back to its short conv-id, so only
+// the truly-sender-less rows lose the party. Mirrors the reader pane, which
+// already omits the "From" header entirely for these.
+function allSenderLabel(m) {
+  return m.from_title || shortId(m.from_conv);
+}
+
 // allRecipientLabel names a row's recipient in the aggregate "all" view,
 // collapsing a multicast to "first +N".
 function allRecipientLabel(m) {
@@ -459,9 +471,14 @@ function paintList() {
     const checked = mail.selectedMsgs.has(m.id) ? ' checked' : '';
     let head;
     if (isAll) {
-      // The firehose has no "self" to be relative to — render from→to.
-      head = `<span class="mail-row-party">${esc(m.from_title || shortId(m.from_conv) || '(unknown)')}</span>
-        <span class="mail-row-arrow">→</span>
+      // The firehose has no "self" to be relative to — render from→to. A
+      // sender-less row (human/operator) drops the empty party and reads as a
+      // bare "→ recipient" rather than "(unknown) → recipient".
+      const sender = allSenderLabel(m);
+      const fromHTML = sender
+        ? `<span class="mail-row-party">${esc(sender)}</span>`
+        : '';
+      head = `${fromHTML}<span class="mail-row-arrow">→</span>
         <span class="mail-row-party">${esc(allRecipientLabel(m))}</span>`;
     } else {
       const arrow = m.direction === 'out'
