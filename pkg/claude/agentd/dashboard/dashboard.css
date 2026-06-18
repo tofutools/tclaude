@@ -78,9 +78,22 @@ nav button:hover { color: #d4d4d4; }
   background: #161b22; border: 1px solid #2a3340; border-radius: 5px;
   padding: 5px 8px; font-size: 12px; color: #8b949e;
 }
+/* These bars (and the pager below) set display:flex, which overrides the
+   browser's built-in [hidden]{display:none} — so without this they leak an
+   empty bordered box when toggled off (an unselected wipe bar, an
+   empty-folder pager). Same workaround as .tab-badge[hidden] above. */
+.mail-bulk-bar[hidden], .mail-pager[hidden] { display: none; }
 .mail-bulk-bar .grow { flex: 1 1 auto; }
 .mail-bulk-bar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
-.mail-bulk-bar button { font-size: 12px; padding: 3px 8px; }
+/* Match the dark chrome the pager / row-action buttons use. Without an
+   explicit background these fell back to the native (light-grey) button,
+   which made the light "delete selected" / "wipe" labels unreadable. */
+.mail-bulk-bar button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; font-family: inherit;
+  font-size: 12px; padding: 3px 8px;
+}
+.mail-bulk-bar button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
 .mail-bulk-bar button:disabled { opacity: .45; cursor: default; }
 .mail-bulk-bar button.danger { color: #d4d4d4; }
 .mail-bulk-bar button.danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
