@@ -120,13 +120,14 @@ func TestDashboardMailboxes_EnumeratesFoldersWithCounts(t *testing.T) {
 	dash := seedMailboxes(t, f)
 
 	boxes := getMailboxes(t, dash)
-	require.NotEmpty(t, boxes)
+	require.GreaterOrEqual(t, len(boxes), 2)
 
-	// The human.notify channel always leads the list.
-	assert.Equal(t, "human", boxes[0].ID)
-	assert.Equal(t, "human", boxes[0].Kind)
-	assert.Equal(t, 2, boxes[0].Total, "two human notifications")
-	assert.Equal(t, 1, boxes[0].Unread, "one of them unread drives the badge")
+	// The virtual "all" firehose leads, then the human.notify channel.
+	assert.Equal(t, "all", boxes[0].ID)
+	assert.Equal(t, "human", boxes[1].ID)
+	assert.Equal(t, "human", boxes[1].Kind)
+	assert.Equal(t, 2, boxes[1].Total, "two human notifications")
+	assert.Equal(t, 1, boxes[1].Unread, "one of them unread drives the badge")
 
 	alice := findMailbox(boxes, mbAlice)
 	require.NotNil(t, alice, "alice has a mailbox")
@@ -236,4 +237,150 @@ func TestDashboardMailbox_RequiresAuth(t *testing.T) {
 	agentd.RegisterDashboardRoutesForTest(mux)
 	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/mailboxes", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code, "uncookied request is refused")
+}
+
+// getMailbox fetches one folder's messages through the production
+// handler — the read surface the delete/wipe tests assert against.
+func getMailbox(t *testing.T, dash http.Handler, id string) []mailboxMsg {
+	t.Helper()
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/mailbox?id="+id, nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var payload struct {
+		Messages []mailboxMsg `json:"messages"`
+	}
+	testharness.DecodeJSON(t, rec, &payload)
+	return payload.Messages
+}
+
+// Scenario: the roster leads with the virtual "all" folder, whose total
+// is the DISTINCT agent_messages row count (two rows here), not the
+// In+Out sum the per-conv tallies report.
+func TestDashboardMailboxes_AllVirtualFolderLeads(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	boxes := getMailboxes(t, dash)
+	require.GreaterOrEqual(t, len(boxes), 2)
+	assert.Equal(t, "all", boxes[0].ID, "the all-messages firehose is pinned first")
+	assert.Equal(t, "all", boxes[0].Kind)
+	assert.Equal(t, 2, boxes[0].Total, "two distinct agent_messages rows")
+	assert.Equal(t, 0, boxes[0].Unread, "the aggregate has no per-recipient unread")
+	// Human folder follows the virtual one.
+	assert.Equal(t, "human", boxes[1].ID)
+}
+
+// Scenario: id=all returns every agent_messages row newest-first, each
+// carrying both ends resolved so the firehose can render from→to.
+func TestDashboardMailbox_AllFolderListsEverythingNewestFirst(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/mailbox?id=all", nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var payload struct {
+		ID       string       `json:"id"`
+		Kind     string       `json:"kind"`
+		Messages []mailboxMsg `json:"messages"`
+	}
+	testharness.DecodeJSON(t, rec, &payload)
+	assert.Equal(t, "all", payload.ID)
+	assert.Equal(t, "all", payload.Kind)
+	require.Len(t, payload.Messages, 2)
+
+	// Newest first: bob's reply precedes alice's opener. Both ends are
+	// title-resolved for the from→to render.
+	assert.Equal(t, "re: hi bob", payload.Messages[0].Subject)
+	assert.Equal(t, "bob", payload.Messages[0].FromTitle)
+	assert.Equal(t, "alice", payload.Messages[0].ToTitle)
+	assert.Equal(t, "hi bob", payload.Messages[1].Subject)
+}
+
+// Scenario: POST /api/mailbox/delete removes the named agent_messages
+// rows, and the deletion shows up in BOTH parties' folders — it is one
+// shared row.
+func TestDashboardMailboxDelete_RemovesByIDs(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	// Grab bob's two messages; delete the one he received from alice.
+	bobMsgs := getMailbox(t, dash, mbBob)
+	require.Len(t, bobMsgs, 2)
+	var dropID int64
+	for _, m := range bobMsgs {
+		if m.Subject == "hi bob" {
+			dropID = m.ID
+		}
+	}
+	require.NotZero(t, dropID, "found alice→bob message")
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/delete", map[string]any{"ids": []int64{dropID}}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Deleted int `json:"deleted"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	assert.Equal(t, 1, resp.Deleted)
+
+	// Gone from bob's folder (recipient) AND alice's (sender).
+	require.Len(t, getMailbox(t, dash, mbBob), 1, "bob's received copy removed")
+	for _, m := range getMailbox(t, dash, mbAlice) {
+		assert.NotEqual(t, dropID, m.ID, "same shared row gone from alice's folder too")
+	}
+	require.Len(t, getMailbox(t, dash, "all"), 1, "firehose down to one row")
+}
+
+// Scenario: an empty ids list is a 400 — the client must name rows.
+func TestDashboardMailboxDelete_RequiresIDs(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/delete", map[string]any{"ids": []int64{}}))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: POST /api/mailbox/wipe deletes every row where any listed
+// conv is a party. Wiping alice removes BOTH messages (she sent one,
+// received the other), emptying bob's folder too.
+func TestDashboardMailboxWipe_RemovesAllForConvs(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/wipe", map[string]any{"convs": []string{mbAlice}}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Deleted int `json:"deleted"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	assert.Equal(t, 2, resp.Deleted, "both messages touched alice")
+
+	assert.Empty(t, getMailbox(t, dash, mbAlice), "alice's folder emptied")
+	assert.Empty(t, getMailbox(t, dash, mbBob), "bob's folder emptied — shared rows")
+	assert.Empty(t, getMailbox(t, dash, "all"), "firehose empty")
+}
+
+// Scenario: wipe rejects an empty conv list with 400.
+func TestDashboardMailboxWipe_RequiresConvs(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/wipe", map[string]any{"convs": []string{}}))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: the mutating endpoints refuse an uncookied request, same as
+// the read surfaces — the human-consent gate is actually wired.
+func TestDashboardMailboxMutations_RequireAuth(t *testing.T) {
+	newFlow(t)
+	mux := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(mux)
+	del := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/delete", map[string]any{"ids": []int64{1}}))
+	assert.Equal(t, http.StatusForbidden, del.Code, "uncookied delete refused")
+	wipe := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/wipe", map[string]any{"convs": []string{"x"}}))
+	assert.Equal(t, http.StatusForbidden, wipe.Code, "uncookied wipe refused")
 }

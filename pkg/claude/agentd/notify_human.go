@@ -301,9 +301,10 @@ func handleDashboardHumanMessagesClear(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDashboardHumanMessagesDelete serves POST /api/human-messages/delete
-// — hard-deletes one message by id ({"id": N}), read or unread. The
-// per-message delete control on the tab, distinct from the bulk
-// "clear read" sweep. Cookie-authed (dashboard-only).
+// — hard-deletes one message ({"id": N}) or several ({"ids": [...]}),
+// read or unread. The per-message and multi-select delete controls on
+// the tab, distinct from the bulk "clear read" sweep. Cookie-authed
+// (dashboard-only).
 func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -312,18 +313,29 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	// Tiny {"id":N} envelope — cap the body well below anything
-	// legitimate so a stray huge POST cannot be buffered.
-	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)
+	// A {"id":N} or {"ids":[...]} envelope — cap the body generously
+	// above a "select all then delete" list but well below anything that
+	// could blow up memory.
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 	var body struct {
-		ID int64 `json:"id"`
+		ID  int64   `json:"id"`
+		IDs []int64 `json:"ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	if len(body.IDs) > 0 {
+		n, err := db.DeleteHumanMessages(body.IDs)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+		return
+	}
 	if body.ID <= 0 {
-		http.Error(w, "id is required", http.StatusBadRequest)
+		http.Error(w, "id or ids is required", http.StatusBadRequest)
 		return
 	}
 	deleted, err := db.DeleteHumanMessage(body.ID)

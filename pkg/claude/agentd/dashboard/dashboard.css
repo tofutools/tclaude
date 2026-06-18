@@ -49,13 +49,61 @@ nav button:hover { color: #d4d4d4; }
   height: calc(100vh - 150px);
   min-height: 320px;
 }
+/* The sidebar + list columns each stack a static header (mailbox filter
+   / bulk-action bar) above a scrolling pane; the reader is the plain
+   third column. */
+.mail-col { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .mail-sidebar, .mail-list, .mail-reader {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   overflow-y: auto;
 }
+.mail-sidebar, .mail-list { flex: 1 1 auto; min-height: 0; }
 .mail-sidebar { padding: 6px; }
 .mail-list { padding: 6px; }
 .mail-reader { padding: 14px 16px; }
+
+/* Sidebar mailbox filter — narrower twin of the top filter bar input,
+   scoped to the roster (name / short-id / group). */
+.mail-sidebar-filter {
+  flex: 0 0 auto; width: 100%; box-sizing: border-box;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
+  color: #c9d1d9; font-size: 12px; padding: 6px 8px;
+}
+.mail-sidebar-filter:focus { outline: none; border-color: #1f6feb; }
+
+/* Bulk-action bars above each column's scrolling pane: a count/label on
+   the left, action buttons on the right. */
+.mail-bulk-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 5px;
+  padding: 5px 8px; font-size: 12px; color: #8b949e;
+}
+.mail-bulk-bar .grow { flex: 1 1 auto; }
+.mail-bulk-bar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.mail-bulk-bar button { font-size: 12px; padding: 3px 8px; }
+.mail-bulk-bar button:disabled { opacity: .45; cursor: default; }
+.mail-bulk-bar button.danger { color: #d4d4d4; }
+.mail-bulk-bar button.danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
+
+/* Selectable rows: a checkbox sits beside the existing mailbox / message
+   button, with a per-row delete button on the message rows. */
+.mailbox-row, .mail-row-wrap {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 2px;
+}
+.mailbox-row .mailbox, .mail-row-wrap .mail-row { margin: 0; flex: 1 1 auto; min-width: 0; }
+.mail-box-check, .mail-msg-check { flex: 0 0 auto; cursor: pointer; margin: 0; }
+/* Keeps the "all" / "human" folder labels aligned with the checkbox
+   column on the agent rows. */
+.mail-box-check-spacer { flex: 0 0 13px; }
+.mail-row-del {
+  flex: 0 0 auto; background: none; border: 1px solid transparent;
+  border-radius: 5px; color: #7d8590; cursor: pointer;
+  padding: 4px 6px; font-size: 13px; line-height: 1;
+}
+.mail-row-del:hover { color: #f85149; border-color: #f85149; }
+/* The "all messages" firehose row renders sender → recipient rather
+   than a single counterparty. */
+.mail-row-arrow { color: #7d8590; flex: 0 0 auto; }
 
 /* Sidebar mailbox buttons */
 .mailbox {

@@ -1,47 +1,62 @@
 // mail.js — the Messages tab's mail client.
 //
-// A read-only introspection view over every mailbox agentd stores, so
+// An introspection + cleanup view over every mailbox agentd stores, so
 // the operator can see what agents actually said to each other (and to
-// the human) when something goes wrong between them. Three panes, the
-// way a desktop mail client reads:
+// the human) when something goes wrong between them — and prune that
+// history. Three panes, the way a desktop mail client reads:
 //
-//   sidebar (#mail-sidebar) → mailbox list, one per agent + the
-//                             "Human notifications" folder, with unread
-//                             badges.
-//   list    (#mail-list)    → the selected mailbox's messages, newest
-//                             first, filtered by the filter-bar input.
+//   sidebar (#mail-sidebar) → mailbox list: a virtual "All agent
+//                             messages" firehose, the "Human
+//                             notifications" folder, then one folder per
+//                             agent. Filtered by #filter-mailboxes (name
+//                             / id / group); each agent row carries a
+//                             checkbox for the bulk "wipe selected"
+//                             action (#mail-wipe-bar).
+//   list    (#mail-list)    → the selected folder's messages, newest
+//                             first, filtered by #filter-messages. Each
+//                             row has a select checkbox and a delete
+//                             button; #mail-bulk-bar drives select-all +
+//                             "delete selected".
 //   reader  (#mail-reader)  → the selected message's headers + body,
-//                             plus (human folder only) the existing
-//                             mark-read / delete / focus actions.
+//                             plus per-folder actions (human folder:
+//                             mark-read / focus; every folder: delete).
 //
-// Data comes from two cookie-authed GET endpoints (see
-// dashboard_mailbox.go): /api/mailboxes for the sidebar roster and
-// /api/mailbox?id=<conv|human> for a folder's messages. Viewing an
-// agent mailbox never mutates that agent's read-state — this is
-// introspection, not inbox management; the only mutating actions are on
-// the human folder, reusing the /api/human-messages/* handlers wired in
-// row-actions.js (data-act="msg-mark-read" / "msg-delete" /
-// "msg-mark-all-read" / "msg-clear" / "msg-focus").
+// Read data comes from two cookie-authed GETs (dashboard_mailbox.go):
+// /api/mailboxes for the sidebar roster and /api/mailbox?id=<all|human|
+// conv> for a folder's messages. Mutations are the operator's authority
+// (cookie + Origin): agent + "all" folders delete agent_messages via
+// /api/mailbox/delete (by id) and /api/mailbox/wipe (by conv); the human
+// folder keeps its /api/human-messages/* path (delete accepts an ids
+// array for multi-select). The reader's human-only mark-read / focus
+// actions still flow through row-actions.js's document handler.
 
 import { $, $$, esc, relTime, shortId } from './helpers.js';
 import { dashPrefs } from './prefs.js';
-// lastSnapshot lives in dashboard.js — imported back for the online set
-// that gates the human-folder "focus" button. A benign, TDZ-safe cycle
-// (see tabs.js): no top-level code here reads it.
+// lastSnapshot lives in dashboard.js; confirmModal/toast live in
+// refresh.js. Both are benign, TDZ-safe import cycles (see tabs.js):
+// nothing here reads them at module top level — only inside handlers —
+// and refresh.js's confirmModal/toast are hoisted function declarations.
 import { lastSnapshot } from './dashboard.js';
+import { confirmModal, toast } from './refresh.js';
 
 const HUMAN_ID = 'human';
+const ALL_ID = 'all';
 const SELECTED_KEY = 'tclaude.dash.mail.mailbox';
+const BOX_FILTER_KEY = 'tclaude.dash.mail.boxfilter';
 
 // Module-local view state. selected survives across the 2s repaint
-// (persisted) so the human's chosen folder is sticky; selectedMsgId is
-// per-session (an id that vanishes from the list just clears the
-// reader).
+// (persisted) so the human's chosen folder is sticky; selectedMsgId (the
+// open message) is per-session. selectedMsgs (checked rows) is
+// per-folder — cleared on folder switch. selectedBoxes (checked agent
+// mailboxes for the bulk wipe) persists across folder switches so the
+// operator can tick several folders then wipe.
 const mail = {
   mailboxes: [],
   selected: dashPrefs.getItem(SELECTED_KEY) || HUMAN_ID,
   messages: [],
   selectedMsgId: null,
+  selectedMsgs: new Set(),
+  selectedBoxes: new Set(),
   inflight: false,
 };
 
@@ -93,9 +108,33 @@ async function loadMail() {
   mail.inflight = true;
   try {
     await Promise.all([loadMailboxes(), loadMessages()]);
+    pruneSelections();
     paintMail();
   } finally {
     mail.inflight = false;
+  }
+}
+
+// reloadMail forces a roster+folder refresh after a mutation, bypassing
+// the inflight guard so the operator sees the result immediately rather
+// than waiting up to 2s for the next tick.
+async function reloadMail() {
+  await Promise.all([loadMailboxes(), loadMessages()]);
+  pruneSelections();
+  paintMail();
+}
+
+// pruneSelections drops checked ids/convs that no longer exist (deleted
+// messages, vanished mailboxes) so the bulk-bar counts stay honest.
+function pruneSelections() {
+  const msgIds = new Set(mail.messages.map(m => m.id));
+  for (const id of [...mail.selectedMsgs]) {
+    if (!msgIds.has(id)) mail.selectedMsgs.delete(id);
+  }
+  const agentIds = new Set(
+    mail.mailboxes.filter(mb => mb.kind === 'agent').map(mb => mb.id));
+  for (const c of [...mail.selectedBoxes]) {
+    if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
   }
 }
 
@@ -109,45 +148,86 @@ function renderMailTab() {
   if (mailTabActive()) loadMail();
 }
 
-// paintMail repaints all three panes from cached state, applying the
-// current filter. Sync — used by the filter input and after selection
-// changes, with no server round-trip.
+// paintMail repaints all panes from cached state, applying the current
+// filters. Sync — used by the filter inputs and after selection changes,
+// with no server round-trip.
 function paintMail() {
   paintBulkActions();
   paintSidebar();
+  paintWipeBar();
   paintList();
+  paintListBulkBar();
   paintReader();
 }
 
 function mailboxLabel(mb) {
+  if (mb.kind === 'all') return 'All agent messages';
   if (mb.kind === 'human') return 'Human notifications';
   return mb.title || shortId(mb.id) || '(unknown)';
+}
+
+function mailboxIcon(mb) {
+  if (mb.kind === 'all') return '🗂';
+  if (mb.kind === 'human') return '📬';
+  return `<span class="mail-dot ${mb.online ? 'online' : 'offline'}">●</span>`;
+}
+
+function mailboxMatchesFilter(mb, q) {
+  if (!q) return true;
+  return [mailboxLabel(mb), mb.id, mb.short, ...(mb.groups || [])]
+    .some(s => (s || '').toLowerCase().includes(q));
 }
 
 function paintSidebar() {
   const el = $('#mail-sidebar');
   if (!el) return;
-  el.innerHTML = mail.mailboxes.map(mb => {
+  const q = ($('#filter-mailboxes')?.value || '').toLowerCase();
+  const boxes = mail.mailboxes.filter(mb => mailboxMatchesFilter(mb, q));
+  if (!boxes.length) {
+    el.innerHTML = mail.mailboxes.length
+      ? '<div class="empty">No mailboxes match the filter.</div>'
+      : '<div class="empty">No mailboxes.</div>';
+    return;
+  }
+  el.innerHTML = boxes.map(mb => {
     const active = mb.id === mail.selected;
-    const icon = mb.kind === 'human'
-      ? '📬'
-      : `<span class="mail-dot ${mb.online ? 'online' : 'offline'}">●</span>`;
     const unread = mb.unread
-      ? `<span class="mail-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
+      ? `<span class="mailbox-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
       : '';
-    const count = `<span class="mail-count" title="${mb.in} received · ${mb.out} sent">${mb.total}</span>`;
-    return `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
+    const count = `<span class="mailbox-count" title="${mb.in} received · ${mb.out} sent">${mb.total}</span>`;
+    const btn = `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
       data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxLabel(mb))}">
-      <span class="mailbox-icon">${icon}</span>
+      <span class="mailbox-icon">${mailboxIcon(mb)}</span>
       <span class="mailbox-name">${esc(mailboxLabel(mb))}</span>
       ${count}${unread}
     </button>`;
-  }).join('') || '<div class="empty">No mailboxes.</div>';
+    // Only real agent mailboxes are checkable for the bulk wipe — the
+    // virtual "all" and "human" folders are special views. A spacer
+    // keeps their labels aligned with the checkbox column.
+    const lead = mb.kind === 'agent'
+      ? `<input type="checkbox" class="mail-box-check" data-conv="${esc(mb.id)}"${mail.selectedBoxes.has(mb.id) ? ' checked' : ''} title="Select for bulk wipe" />`
+      : '<span class="mail-box-check-spacer"></span>';
+    return `<div class="mailbox-row">${lead}${btn}</div>`;
+  }).join('');
 }
 
-// counterparty returns the name to show in the message-list row — the
-// OTHER party relative to the selected mailbox. For a received message
-// that's the sender; for a sent one, the recipient.
+// paintWipeBar shows the "wipe selected mailboxes" bar when one or more
+// agent folders are ticked in the sidebar.
+function paintWipeBar() {
+  const bar = $('#mail-wipe-bar');
+  if (!bar) return;
+  const n = mail.selectedBoxes.size;
+  bar.hidden = n === 0;
+  if (n === 0) { bar.innerHTML = ''; return; }
+  bar.innerHTML = `
+    <span class="grow">${n} mailbox${n === 1 ? '' : 'es'} selected</span>
+    <button data-act="mail-clear-box-sel" title="Clear selection">clear</button>
+    <button class="danger" data-act="mail-wipe-selected" title="Delete every message in the selected mailboxes">🗑 wipe</button>`;
+}
+
+// counterparty returns the name to show in a non-aggregate message-list
+// row — the OTHER party relative to the selected mailbox. For a received
+// message that's the sender; for a sent one, the recipient.
 function counterparty(m) {
   if (m.direction === 'out') {
     return m.to_title || shortId(m.to_conv) || '(unknown)';
@@ -155,9 +235,22 @@ function counterparty(m) {
   return m.from_title || shortId(m.from_conv) || '(unknown sender)';
 }
 
+// allRecipientLabel names a row's recipient in the aggregate "all" view,
+// collapsing a multicast to "first +N".
+function allRecipientLabel(m) {
+  if (m.to_title) return m.to_title;
+  if (m.to_conv) return shortId(m.to_conv);
+  const rs = m.to_recipients || [];
+  if (rs.length) {
+    const first = rs[0].title || shortId(rs[0].conv_id);
+    return rs.length > 1 ? `${first} +${rs.length - 1}` : first;
+  }
+  return '(group)';
+}
+
 function msgMatchesFilter(m, q) {
   if (!q) return true;
-  return [counterparty(m), m.from_title, m.to_title, m.group, m.subject, m.body]
+  return [counterparty(m), m.from_title, m.to_title, m.from_conv, m.to_conv, m.group, m.subject, m.body]
     .some(s => (s || '').toLowerCase().includes(q));
 }
 
@@ -165,6 +258,13 @@ function msgPreview(m) {
   if (m.subject) return m.subject;
   const firstNonBlank = (m.body || '').split('\n').find(l => l.trim() !== '');
   return firstNonBlank || '(no subject)';
+}
+
+// filteredMessages applies the message-list filter — shared by the list
+// paint, the bulk bar, and select-all so they agree on "in view".
+function filteredMessages() {
+  const q = ($('#filter-messages')?.value || '').toLowerCase();
+  return mail.messages.filter(m => msgMatchesFilter(m, q));
 }
 
 function paintList() {
@@ -187,25 +287,57 @@ function paintList() {
       : '<div class="empty">This mailbox is empty.</div>';
     return;
   }
+  const isAll = mail.selected === ALL_ID;
   el.innerHTML = filtered.map(m => {
     const active = m.id === mail.selectedMsgId;
     const unread = !m.read;
-    const arrow = m.direction === 'out'
-      ? '<span class="mail-dir out" title="sent">→</span>'
-      : '<span class="mail-dir in" title="received">←</span>';
+    const checked = mail.selectedMsgs.has(m.id) ? ' checked' : '';
+    let head;
+    if (isAll) {
+      // The firehose has no "self" to be relative to — render from→to.
+      head = `<span class="mail-row-party">${esc(m.from_title || shortId(m.from_conv) || '(unknown)')}</span>
+        <span class="mail-row-arrow">→</span>
+        <span class="mail-row-party">${esc(allRecipientLabel(m))}</span>`;
+    } else {
+      const arrow = m.direction === 'out'
+        ? '<span class="mail-dir out" title="sent">→</span>'
+        : '<span class="mail-dir in" title="received">←</span>';
+      head = `${arrow}<span class="mail-row-party">${esc(counterparty(m))}</span>`;
+    }
     const grp = m.group ? `<span class="mail-row-group">${esc(m.group)}</span>` : '';
-    return `<button class="mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}"
-      data-act="mail-open" data-id="${m.id}">
-      <span class="mail-row-top">
-        ${unread ? '<span class="mail-row-dot" title="unread">●</span>' : ''}
-        ${arrow}
-        <span class="mail-row-party">${esc(counterparty(m))}</span>
-        ${grp}
-        <span class="mail-row-time">${esc(relTime(m.created_at))}</span>
-      </span>
-      <span class="mail-row-subject">${esc(msgPreview(m))}</span>
-    </button>`;
+    return `<div class="mail-row-wrap">
+      <input type="checkbox" class="mail-msg-check" data-id="${m.id}"${checked} title="Select message" />
+      <button class="mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}"
+        data-act="mail-open" data-id="${m.id}">
+        <span class="mail-row-top">
+          ${unread ? '<span class="mail-row-dot" title="unread">●</span>' : ''}
+          ${head}
+          ${grp}
+          <span class="mail-row-time">${esc(relTime(m.created_at))}</span>
+        </span>
+        <span class="mail-row-subject">${esc(msgPreview(m))}</span>
+      </button>
+      <button class="mail-row-del" data-act="mail-msg-delete" data-id="${m.id}" title="Delete this message">🗑</button>
+    </div>`;
   }).join('');
+}
+
+// paintListBulkBar drives the select-all checkbox + "delete selected"
+// action over the messages currently in view.
+function paintListBulkBar() {
+  const bar = $('#mail-bulk-bar');
+  if (!bar) return;
+  const filtered = filteredMessages();
+  if (!filtered.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  const n = mail.selectedMsgs.size;
+  const allChecked = filtered.every(m => mail.selectedMsgs.has(m.id));
+  bar.innerHTML = `
+    <label title="Select / deselect every message in view">
+      <input type="checkbox" class="mail-select-all"${allChecked ? ' checked' : ''} /> all
+    </label>
+    <span class="grow">${n ? `${n} selected` : ''}</span>
+    <button class="danger" data-act="mail-del-selected" title="Delete the selected messages"${n ? '' : ' disabled'}>🗑 delete selected</button>`;
 }
 
 // recipientNames renders a decorated recipients array ([{conv_id,title}])
@@ -257,13 +389,18 @@ function paintReader() {
   if (m.delivered_at) stateBits.push('delivered');
   else if (m.direction === 'out') stateBits.push('<span class="mail-state-pending">undelivered</span>');
 
-  // Human-folder messages keep the mark-read / delete actions (and
-  // focus); agent folders are read-only introspection.
-  let actions = '';
+  // The human folder keeps mark-read + focus (its read-state is
+  // meaningful); every folder gets delete. The human-folder delete
+  // routes through row-actions.js's msg-delete; agent + "all" folders
+  // route through this module's mail-msg-delete.
+  let actions;
   if (mail.selected === HUMAN_ID) {
     const readBtn = m.read ? '' : `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`;
     const delBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
     actions = `<div class="mail-reader-actions">${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
+  } else {
+    const delBtn = `<button class="danger" data-act="mail-msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
+    actions = `<div class="mail-reader-actions">${delBtn}</div>`;
   }
 
   el.innerHTML = `
@@ -284,7 +421,7 @@ function paintReader() {
 
 // paintBulkActions shows the filter-bar "mark all read" / "clear read"
 // buttons only on the human folder — they act on human_messages, which
-// is the only folder the dashboard is allowed to mutate.
+// is the only folder with read-state semantics.
 function paintBulkActions() {
   const human = mail.selected === HUMAN_ID;
   const markAll = $('#mail-mark-all');
@@ -298,15 +435,16 @@ function paintBulkActions() {
 function selectMailbox(id) {
   if (!id || id === mail.selected) {
     // Re-click on the active folder: just refresh it.
-    loadMessages().then(paintMail);
+    loadMessages().then(() => { pruneSelections(); paintMail(); });
     return;
   }
   mail.selected = id;
   mail.selectedMsgId = null;
+  mail.selectedMsgs.clear();  // message selection is per-folder
   mail.messages = [];
   dashPrefs.setItem(SELECTED_KEY, id);
   paintMail();        // immediate feedback (active folder, empty list)
-  loadMessages().then(paintMail);
+  loadMessages().then(() => { pruneSelections(); paintMail(); });
 }
 
 function selectMessage(id) {
@@ -315,15 +453,108 @@ function selectMessage(id) {
   paintReader();
 }
 
+// --- mutations ------------------------------------------------------
+
+// postDeleteMessages routes a delete by folder kind: the human folder
+// mutates human_messages via its own endpoint; agent + "all" folders
+// delete agent_messages rows. Returns the deleted count, or null on
+// failure (already toasted).
+async function postDeleteMessages(ids) {
+  const url = mail.selected === HUMAN_ID
+    ? '/api/human-messages/delete'
+    : '/api/mailbox/delete';
+  try {
+    const r = await fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!r.ok) { toast(`delete failed: ${await r.text()}`, true); return null; }
+    const res = await r.json().catch(() => ({}));
+    return res.deleted ?? ids.length;
+  } catch (err) {
+    toast(`delete failed: ${(err && err.message) || err}`, true);
+    return null;
+  }
+}
+
+async function deleteOneMessage(id) {
+  if (!Number.isFinite(id)) return;
+  const confirmed = await confirmModal({
+    title: 'Delete this message?',
+    body: 'Permanently deletes this one message. This cannot be undone.',
+    meta: `#${id}`,
+    okLabel: 'Delete',
+  });
+  if (!confirmed) return;
+  const n = await postDeleteMessages([id]);
+  if (n === null) return;
+  mail.selectedMsgs.delete(id);
+  if (mail.selectedMsgId === id) mail.selectedMsgId = null;
+  toast('message deleted');
+  await reloadMail();
+}
+
+async function deleteSelectedMessages() {
+  const ids = [...mail.selectedMsgs];
+  if (!ids.length) return;
+  const confirmed = await confirmModal({
+    title: `Delete ${ids.length} message${ids.length === 1 ? '' : 's'}?`,
+    body: 'Permanently deletes the selected messages. This cannot be undone.',
+    okLabel: 'Delete',
+  });
+  if (!confirmed) return;
+  const n = await postDeleteMessages(ids);
+  if (n === null) return;
+  if (mail.selectedMsgId != null && mail.selectedMsgs.has(mail.selectedMsgId)) {
+    mail.selectedMsgId = null;
+  }
+  mail.selectedMsgs.clear();
+  toast(`deleted ${n} message${n === 1 ? '' : 's'}`);
+  await reloadMail();
+}
+
+async function wipeSelectedMailboxes() {
+  const convs = [...mail.selectedBoxes];
+  if (!convs.length) return;
+  const names = convs.map(c => {
+    const mb = mail.mailboxes.find(x => x.id === c);
+    return (mb && (mb.title || mb.short)) || shortId(c);
+  });
+  const confirmed = await confirmModal({
+    title: `Wipe ${convs.length} mailbox${convs.length === 1 ? '' : 'es'}?`,
+    body: 'Permanently deletes every message where these agents are sender or recipient — including the copy in the other party’s mailbox. This cannot be undone.',
+    meta: names.join(', '),
+    okLabel: 'Wipe',
+  });
+  if (!confirmed) return;
+  try {
+    const r = await fetch('/api/mailbox/wipe', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ convs }),
+    });
+    if (!r.ok) { toast(`wipe failed: ${await r.text()}`, true); return; }
+    const res = await r.json().catch(() => ({}));
+    mail.selectedBoxes.clear();
+    mail.selectedMsgs.clear();
+    mail.selectedMsgId = null;
+    toast(`wiped ${res.deleted || 0} message${res.deleted === 1 ? '' : 's'}`);
+    await reloadMail();
+  } catch (err) {
+    toast(`wipe failed: ${(err && err.message) || err}`, true);
+  }
+}
+
 // --- wiring ---------------------------------------------------------
 
 function initMail() {
-  // Delegated click handler scoped to the Messages tab. The human-
-  // message mutation actions (msg-*) are handled by row-actions.js's
-  // own document-level handler; here we only own folder/message
-  // selection, which has no overlap with those data-act values.
   const sec = $('#tab-messages');
   if (sec) {
+    // Delegated click handler scoped to the Messages tab. The human-
+    // message mark-read / focus actions (msg-*) are handled by
+    // row-actions.js's document-level handler; the data-act values here
+    // don't overlap those.
     sec.addEventListener('click', e => {
       const btn = e.target.closest('[data-act]');
       if (!btn || !sec.contains(btn)) return;
@@ -332,7 +563,51 @@ function initMail() {
         selectMailbox(btn.getAttribute('data-id'));
       } else if (act === 'mail-open') {
         selectMessage(btn.getAttribute('data-id'));
+      } else if (act === 'mail-msg-delete') {
+        deleteOneMessage(Number(btn.getAttribute('data-id')));
+      } else if (act === 'mail-del-selected') {
+        deleteSelectedMessages();
+      } else if (act === 'mail-wipe-selected') {
+        wipeSelectedMailboxes();
+      } else if (act === 'mail-clear-box-sel') {
+        mail.selectedBoxes.clear();
+        paintSidebar();
+        paintWipeBar();
       }
+    });
+    // Checkbox toggles arrive as `change`, not `click` — and carry no
+    // data-act, so row-actions.js's click handler leaves them alone (no
+    // preventDefault) and they toggle normally. Selection state is the
+    // source of truth; the 2s repaint re-derives `checked` from it.
+    sec.addEventListener('change', e => {
+      const t = e.target;
+      if (t.classList.contains('mail-msg-check')) {
+        const id = Number(t.getAttribute('data-id'));
+        if (t.checked) mail.selectedMsgs.add(id); else mail.selectedMsgs.delete(id);
+        paintListBulkBar();
+      } else if (t.classList.contains('mail-box-check')) {
+        const conv = t.getAttribute('data-conv');
+        if (t.checked) mail.selectedBoxes.add(conv); else mail.selectedBoxes.delete(conv);
+        paintWipeBar();
+      } else if (t.classList.contains('mail-select-all')) {
+        const filtered = filteredMessages();
+        if (t.checked) filtered.forEach(m => mail.selectedMsgs.add(m.id));
+        else filtered.forEach(m => mail.selectedMsgs.delete(m.id));
+        paintList();
+        paintListBulkBar();
+      }
+    });
+  }
+  // Sidebar mailbox filter — name / short-id / group. Persisted like the
+  // other tab filters, but scoped to the roster pane (the top filter bar
+  // stays scoped to the open folder's messages).
+  const boxFilter = $('#filter-mailboxes');
+  if (boxFilter) {
+    boxFilter.value = dashPrefs.getItem(BOX_FILTER_KEY) || '';
+    boxFilter.addEventListener('input', () => {
+      const v = boxFilter.value;
+      if (v) dashPrefs.setItem(BOX_FILTER_KEY, v); else dashPrefs.removeItem(BOX_FILTER_KEY);
+      paintSidebar();
     });
   }
   // Load immediately when the human switches TO the Messages tab, rather
