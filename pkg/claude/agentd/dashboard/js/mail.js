@@ -48,6 +48,22 @@ const HUMAN_ID = 'human';
 const ALL_ID = 'all';
 const SELECTED_KEY = 'tclaude.dash.mail.mailbox';
 const BOX_FILTER_KEY = 'tclaude.dash.mail.boxfilter';
+const PAGE_SIZE_KEY = 'tclaude.dash.mail.pagesize';
+
+// Page sizes the selector offers. The default (50) is what a fresh
+// dashboard uses until the operator picks one; every value stays at or
+// below the server's maxMailboxPageSize cap (500).
+const PAGE_SIZES = [25, 50, 100, 200];
+const DEFAULT_PAGE_SIZE = 50;
+
+// SEARCH_DEBOUNCE_MS delays the server reload after a keystroke so a fast
+// typist fires one query, not one per character.
+const SEARCH_DEBOUNCE_MS = 220;
+
+function initialPageSize() {
+  const n = parseInt(dashPrefs.getItem(PAGE_SIZE_KEY) || '', 10);
+  return PAGE_SIZES.includes(n) ? n : DEFAULT_PAGE_SIZE;
+}
 
 // Bulk deletes are split into many small API calls rather than one giant
 // request, so the operator watches the work advance and a huge selection
@@ -60,10 +76,18 @@ const WIPE_BATCH = 5;
 
 // Module-local view state. selected survives across the 2s repaint
 // (persisted) so the human's chosen folder is sticky; selectedMsgId (the
-// open message) is per-session. selectedMsgs (checked rows) is
-// per-folder — cleared on folder switch. selectedBoxes (checked agent
-// mailboxes for the bulk wipe) persists across folder switches so the
-// operator can tick several folders then wipe.
+// open message) is per-session. selectedMsgs (checked rows) persists
+// across page navigation so a batched bulk delete can span pages (it is
+// cleared only on folder switch or a search change, where the message
+// universe itself changes); select-all ticks the current page into it.
+// selectedBoxes (checked agent mailboxes for the bulk wipe) persists
+// across folder switches so the operator can tick several folders then
+// wipe.
+//
+// Pagination + search are server-side: messages holds only the current
+// page; page/pageSize/total/totalUnfiltered come back with each fetch.
+// reqSeq tokens the in-flight fetch so a slow earlier response can't
+// clobber a newer page/search.
 const mail = {
   mailboxes: [],
   selected: dashPrefs.getItem(SELECTED_KEY) || HUMAN_ID,
@@ -72,6 +96,12 @@ const mail = {
   selectedMsgs: new Set(),
   selectedBoxes: new Set(),
   inflight: false,
+  page: 1,
+  pageSize: initialPageSize(),
+  total: 0,
+  totalUnfiltered: 0,
+  reqSeq: 0,
+  searchTimer: null,
   // busy is set while a batched delete/wipe runs: it freezes the 2s
   // refresh (so mail.messages isn't swapped out from under the running
   // op) and the tab's click/change handlers (so no second mutation
@@ -80,6 +110,18 @@ const mail = {
   busy: false,
   progress: null,
 };
+
+// pageCount derives the number of pages from the live total + page size
+// (at least 1, even for an empty folder).
+function pageCount() {
+  return Math.max(1, Math.ceil(mail.total / mail.pageSize));
+}
+
+// currentSearch reads the live message-filter text (server-side search
+// term). Trimmed so trailing spaces don't count as a query.
+function currentSearch() {
+  return ($('#filter-messages')?.value || '').trim();
+}
 
 function mailTabActive() {
   const sec = $('#tab-messages');
@@ -110,16 +152,39 @@ async function loadMailboxes() {
 
 async function loadMessages() {
   const id = mail.selected;
+  const q = currentSearch();
+  const seq = ++mail.reqSeq;
+  const params = new URLSearchParams({
+    id,
+    q,
+    page: String(mail.page),
+    page_size: String(mail.pageSize),
+  });
   try {
-    const r = await fetch(`/api/mailbox?id=${encodeURIComponent(id)}`,
+    const r = await fetch(`/api/mailbox?${params.toString()}`,
       { credentials: 'same-origin' });
-    if (!r.ok) { mail.messages = []; return; }
+    if (!r.ok) { if (seq === mail.reqSeq) clearMessages(); return; }
     const data = await r.json();
     // Guard against a stale response landing after the human switched
-    // folders mid-flight.
-    if (mail.selected !== id) return;
+    // folders / page / search mid-flight (reqSeq is the newest request).
+    if (mail.selected !== id || seq !== mail.reqSeq) return;
     mail.messages = data.messages || [];
-  } catch { mail.messages = []; }
+    // Trust the server's clamped page (a stale page past the last one
+    // comes back pulled to the last page after a delete).
+    if (typeof data.page === 'number') mail.page = data.page;
+    if (typeof data.page_size === 'number') mail.pageSize = data.page_size;
+    mail.total = data.total || 0;
+    mail.totalUnfiltered = data.total_unfiltered || 0;
+  } catch { if (seq === mail.reqSeq) clearMessages(); }
+}
+
+// clearMessages empties the current page and its totals together, so a
+// transient fetch failure doesn't leave the pager reading "Page 1 / 3"
+// over an empty list. Self-heals on the next tick / reload.
+function clearMessages() {
+  mail.messages = [];
+  mail.total = 0;
+  mail.totalUnfiltered = 0;
 }
 
 // loadMail refreshes both the roster and the open folder, then repaints.
@@ -148,13 +213,14 @@ async function reloadMail() {
   paintMail();
 }
 
-// pruneSelections drops checked ids/convs that no longer exist (deleted
-// messages, vanished mailboxes) so the bulk-bar counts stay honest.
+// pruneSelections drops checked mailboxes that no longer exist so the
+// wipe-bar count stays honest. Message selections are NOT pruned against
+// the current page: selectedMsgs spans pages, and mail.messages is only
+// the page in view, so pruning here would silently drop every off-page
+// pick. A genuinely-deleted message left in the set is harmless — the
+// batched delete no-ops it server-side — and folder / search changes
+// clear the set outright.
 function pruneSelections() {
-  const msgIds = new Set(mail.messages.map(m => m.id));
-  for (const id of [...mail.selectedMsgs]) {
-    if (!msgIds.has(id)) mail.selectedMsgs.delete(id);
-  }
   const agentIds = new Set(
     mail.mailboxes.filter(mb => mb.kind === 'agent').map(mb => mb.id));
   for (const c of [...mail.selectedBoxes]) {
@@ -181,7 +247,66 @@ function paintMail() {
   paintWipeBar();
   paintList();
   paintListBulkBar();
+  paintPager();
   paintReader();
+}
+
+// reloadMessagesPage refetches the current folder's page (current
+// search + page + size) and repaints. Used by the pager, the page-size
+// selector, and the debounced search. Bypasses the inflight guard — it's
+// an explicit operator action that should land promptly — but defers to a
+// running bulk op, which owns mail.messages / the selection until it ends.
+async function reloadMessagesPage() {
+  if (mail.busy) return;
+  await loadMessages();
+  pruneSelections();
+  paintMail();
+}
+
+// scheduleMailReload debounces a server reload after the operator types
+// in the message filter.
+function scheduleMailReload() {
+  if (mail.searchTimer) clearTimeout(mail.searchTimer);
+  mail.searchTimer = setTimeout(() => {
+    mail.searchTimer = null;
+    reloadMessagesPage();
+  }, SEARCH_DEBOUNCE_MS);
+}
+
+// onMailSearchChanged is the message-filter hook (called by refresh.js's
+// bindFilter when #filter-messages changes). A new search resets to page
+// 1 and clears the selection (the search changes the message universe, so
+// a cross-page selection made under the old query no longer makes sense),
+// then reloads from the server — pagination has to span the whole
+// filtered folder, so the filter can't be a client-side repaint. Repaints
+// the bulk bar immediately so it feels responsive while the debounced
+// fetch is in flight.
+function onMailSearchChanged() {
+  mail.page = 1;
+  mail.selectedMsgs.clear();
+  paintListBulkBar();
+  scheduleMailReload();
+}
+
+// goToPage navigates to a 1-based page (clamped) and reloads. No-op when
+// already there. The message selection persists across pages (a bulk
+// delete can span them), so it is left untouched.
+function goToPage(n) {
+  const target = Math.min(Math.max(n, 1), pageCount());
+  if (target === mail.page) return;
+  mail.page = target;
+  reloadMessagesPage();
+}
+
+// setPageSize switches how many messages a page holds, persists the
+// choice, resets to page 1, and reloads. Selection persists (same
+// messages, just regrouped into pages).
+function setPageSize(n) {
+  if (!PAGE_SIZES.includes(n) || n === mail.pageSize) return;
+  mail.pageSize = n;
+  mail.page = 1;
+  dashPrefs.setItem(PAGE_SIZE_KEY, String(n));
+  reloadMessagesPage();
 }
 
 function mailboxLabel(mb) {
@@ -277,41 +402,40 @@ function allRecipientLabel(m) {
   return '(group)';
 }
 
-function msgMatchesFilter(m, q) {
-  if (!q) return true;
-  return [counterparty(m), m.from_title, m.to_title, m.from_conv, m.to_conv, m.group, m.subject, m.body]
-    .some(s => (s || '').toLowerCase().includes(q));
-}
-
 function msgPreview(m) {
   if (m.subject) return m.subject;
   const firstNonBlank = (m.body || '').split('\n').find(l => l.trim() !== '');
   return firstNonBlank || '(no subject)';
 }
 
-// filteredMessages applies the message-list filter — shared by the list
-// paint, the bulk bar, and select-all so they agree on "in view".
+// filteredMessages is the set of messages currently in view — with
+// server-side search + pagination that is exactly the current page
+// (mail.messages). Shared by the list paint, the bulk bar, and select-all
+// so they agree on "in view" (= this page).
 function filteredMessages() {
-  const q = ($('#filter-messages')?.value || '').toLowerCase();
-  return mail.messages.filter(m => msgMatchesFilter(m, q));
+  return mail.messages;
 }
 
 function paintList() {
   const el = $('#mail-list');
   if (!el) return;
-  const q = ($('#filter-messages')?.value || '').toLowerCase();
-  const filtered = mail.messages.filter(m => msgMatchesFilter(m, q));
+  const q = currentSearch();
+  const filtered = mail.messages;
 
-  const total = mail.messages.length;
+  // total = rows matching the search across the whole folder;
+  // totalUnfiltered = rows in the folder regardless of search. Show
+  // "matching / all" while searching, else a plain count.
+  const total = mail.total;
+  const totalUnfiltered = mail.totalUnfiltered;
   const countEl = $('#filter-messages-count');
   if (countEl) {
     countEl.textContent = q
-      ? `${filtered.length} / ${total}`
-      : `${total} message${total === 1 ? '' : 's'}`;
+      ? `${total} / ${totalUnfiltered}`
+      : `${totalUnfiltered} message${totalUnfiltered === 1 ? '' : 's'}`;
   }
 
   if (!filtered.length) {
-    el.innerHTML = total
+    el.innerHTML = totalUnfiltered
       ? '<div class="empty">No messages match the filter.</div>'
       : '<div class="empty">This mailbox is empty.</div>';
     return;
@@ -352,7 +476,10 @@ function paintList() {
 }
 
 // paintListBulkBar drives the select-all checkbox + "delete selected"
-// action over the messages currently in view.
+// action over the messages currently in view. With server-side
+// pagination "in view" is this page, so select-all ticks just this page —
+// but the selection persists across pages, so the operator can walk pages
+// ticking more and then delete the lot in one batched op.
 function paintListBulkBar() {
   const bar = $('#mail-bulk-bar');
   if (!bar) return;
@@ -367,11 +494,41 @@ function paintListBulkBar() {
   const n = mail.selectedMsgs.size;
   const allChecked = filtered.every(m => mail.selectedMsgs.has(m.id));
   bar.innerHTML = `
-    <label title="Select / deselect every message in view">
+    <label title="Select / deselect every message on this page">
       <input type="checkbox" class="mail-select-all"${allChecked ? ' checked' : ''} /> all
     </label>
     <span class="grow">${n ? `${n} selected` : ''}</span>
     <button class="danger" data-act="mail-del-selected" title="Delete the selected messages"${n ? '' : ' disabled'}>🗑 delete selected</button>`;
+}
+
+// paintPager renders the footer under the message list: a page-size
+// selector (always shown for a non-empty folder so the operator can tune
+// it) plus first/prev/«position»/next/last navigation when the folder
+// spans more than one page. Hidden entirely for an empty folder.
+function paintPager() {
+  const bar = $('#mail-pager');
+  if (!bar) return;
+  if (!mail.totalUnfiltered) { bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  const pages = pageCount();
+  const page = Math.min(mail.page, pages);
+  const sizeOpts = PAGE_SIZES.map(sz =>
+    `<option value="${sz}"${sz === mail.pageSize ? ' selected' : ''}>${sz}</option>`).join('');
+  const sizeSel = `<label class="mail-pager-size" title="Messages per page">
+      <select class="mail-page-size">${sizeOpts}</select> / page
+    </label>`;
+  let nav = '';
+  if (pages > 1) {
+    const atStart = page <= 1;
+    const atEnd = page >= pages;
+    nav = `
+      <button data-act="mail-page-first" title="First page"${atStart ? ' disabled' : ''}>«</button>
+      <button data-act="mail-page-prev" title="Previous page"${atStart ? ' disabled' : ''}>‹</button>
+      <span class="mail-pager-pos">Page ${page} / ${pages}</span>
+      <button data-act="mail-page-next" title="Next page"${atEnd ? ' disabled' : ''}>›</button>
+      <button data-act="mail-page-last" title="Last page"${atEnd ? ' disabled' : ''}>»</button>`;
+  }
+  bar.innerHTML = `${nav}<span class="grow"></span>${sizeSel}`;
 }
 
 // recipientNames renders a decorated recipients array ([{conv_id,title}])
@@ -476,6 +633,10 @@ function selectMailbox(id) {
   mail.selectedMsgId = null;
   mail.selectedMsgs.clear();  // message selection is per-folder
   mail.messages = [];
+  mail.page = 1;              // a new folder starts at its first page
+  mail.total = 0;
+  mail.totalUnfiltered = 0;
+  if (mail.searchTimer) { clearTimeout(mail.searchTimer); mail.searchTimer = null; }
   dashPrefs.setItem(SELECTED_KEY, id);
   paintMail();        // immediate feedback (active folder, empty list)
   loadMessages().then(() => { pruneSelections(); paintMail(); });
@@ -695,6 +856,14 @@ function initMail() {
         mail.selectedBoxes.clear();
         paintSidebar();
         paintWipeBar();
+      } else if (act === 'mail-page-first') {
+        goToPage(1);
+      } else if (act === 'mail-page-prev') {
+        goToPage(mail.page - 1);
+      } else if (act === 'mail-page-next') {
+        goToPage(mail.page + 1);
+      } else if (act === 'mail-page-last') {
+        goToPage(pageCount());
       }
     });
     // Checkbox toggles arrive as `change`, not `click` — and carry no
@@ -712,6 +881,8 @@ function initMail() {
         const conv = t.getAttribute('data-conv');
         if (t.checked) mail.selectedBoxes.add(conv); else mail.selectedBoxes.delete(conv);
         paintWipeBar();
+      } else if (t.classList.contains('mail-page-size')) {
+        setPageSize(Number(t.value));
       } else if (t.classList.contains('mail-select-all')) {
         const filtered = filteredMessages();
         if (t.checked) filtered.forEach(m => mail.selectedMsgs.add(m.id));
@@ -742,4 +913,4 @@ function initMail() {
     b.addEventListener('click', renderMailTab));
 }
 
-export { renderMailTab, paintMail, initMail };
+export { renderMailTab, initMail, onMailSearchChanged };

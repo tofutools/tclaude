@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -26,11 +28,24 @@ import (
 //       virtual "all" folder (every agent_messages row). Each carries
 //       in/out/unread counts and a recency timestamp for the sidebar.
 //
-//   GET /api/mailbox?id=<all|human|conv>  -> handleDashboardMailbox
-//       Returns the selected mailbox's messages — "all" is every row
-//       newest-first; an agent mailbox is its received + sent rows
-//       merged newest-first; "human" is the human_messages rows. Titles
-//       are resolved so the reading pane can render friendly names.
+//   GET /api/mailbox?id=<all|human|conv>&q=&page=&page_size=
+//       -> handleDashboardMailbox
+//       Returns ONE newest-first page of the selected mailbox's messages
+//       — "all" is every row; an agent mailbox is its received + sent
+//       rows (a single OR predicate dedups the self-addressed row);
+//       "human" is the human_messages rows. Titles are resolved so the
+//       reading pane can render friendly names.
+//
+//       Pagination + search are server-side so the Messages tab pages
+//       through the whole folder (not a client-loaded prefix) and the
+//       search box filters the entire folder before paging. q matches
+//       subject / body / conv-id and — resolved against the conv index +
+//       group roster — counterpart titles and group names, mirroring the
+//       old client-side filter. The response carries page, page_size,
+//       total (rows matching q) and total_unfiltered (rows in the folder)
+//       so the pager and count can render without a second request. page
+//       is clamped to the last page, so a stale page after a delete still
+//       lands on real rows (the served page comes back in the response).
 //
 // Mutation surfaces — cookie-authed POSTs. Viewing an agent mailbox
 // still never mutates that agent's read-state (that would corrupt the
@@ -213,13 +228,66 @@ type mailboxMessage struct {
 	ParentID     int64           `json:"parent_id,omitempty"`
 }
 
-// mailboxMessagesLimit caps how many messages either direction returns
-// — generous (this is operator introspection, not an agent's working
-// inbox) but bounded so a runaway mailbox can't blow up the response.
-const mailboxMessagesLimit = 1000
+// Mailbox pagination bounds. defaultMailboxPageSize is what the
+// dashboard requests when the operator hasn't picked a page size;
+// maxMailboxPageSize caps the request so a hand-crafted query can't ask
+// the daemon to materialise an unbounded page.
+const (
+	defaultMailboxPageSize = 50
+	maxMailboxPageSize     = 500
+)
 
-// handleDashboardMailbox serves GET /api/mailbox?id=<conv|human> — the
-// selected mailbox's messages. Cookie-authed (dashboard-only).
+// mailboxPageParams parses the page (1-based) and page_size query params,
+// clamping page_size to [1, maxMailboxPageSize] and page to >= 1. The
+// requested page may still exceed the last page; clampOffset handles that
+// against the live total so deletions can't strand the operator on an
+// empty page.
+func mailboxPageParams(r *http.Request) (page, pageSize int) {
+	page = max(atoiOr(r.URL.Query().Get("page"), 1), 1)
+	pageSize = atoiOr(r.URL.Query().Get("page_size"), defaultMailboxPageSize)
+	if pageSize < 1 {
+		pageSize = defaultMailboxPageSize
+	}
+	pageSize = min(pageSize, maxMailboxPageSize)
+	return page, pageSize
+}
+
+func atoiOr(s string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return n
+	}
+	return def
+}
+
+// clampOffset resolves a requested 1-based page against a known total
+// into the page actually served and its row offset. A page past the last
+// is pulled back to the last page (so a stale "page 7" after a delete
+// still shows real rows); an empty folder serves page 1, offset 0.
+func clampOffset(page, pageSize, total int) (servedPage, offset int) {
+	maxPage := 1
+	if total > 0 {
+		maxPage = (total + pageSize - 1) / pageSize
+	}
+	page = max(min(page, maxPage), 1)
+	return page, (page - 1) * pageSize
+}
+
+// mailboxPage is the paginated read response shared by all three folder
+// kinds. Total counts rows matching the search; TotalUnfiltered counts
+// the whole folder — the pager divides Total into pages, the count chip
+// shows "Total / TotalUnfiltered" while searching.
+type mailboxPage struct {
+	Messages        []mailboxMessage
+	Page            int
+	PageSize        int
+	Total           int
+	TotalUnfiltered int
+}
+
+// handleDashboardMailbox serves
+// GET /api/mailbox?id=<conv|human|all>&q=&page=&page_size= — one
+// newest-first page of the selected mailbox's messages, server-filtered
+// by q. Cookie-authed (dashboard-only).
 func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -233,33 +301,34 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "id is required (a conv-id or \"human\")")
 		return
 	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	page, pageSize := mailboxPageParams(r)
 
 	if id == humanMailboxID {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"id":       humanMailboxID,
-			"kind":     "human",
-			"title":    "Human notifications",
-			"messages": humanMailboxMessages(),
-		})
+		p := humanMailboxPage(q, page, pageSize)
+		writeMailboxPage(w, map[string]any{
+			"id":    humanMailboxID,
+			"kind":  "human",
+			"title": "Human notifications",
+		}, p)
 		return
 	}
 
 	if id == allMailboxID {
-		msgs, err := allMailboxMessages()
+		p, err := agentMailboxPage("", q, page, pageSize)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"id":       allMailboxID,
-			"kind":     "all",
-			"title":    "All agent messages",
-			"messages": msgs,
-		})
+		writeMailboxPage(w, map[string]any{
+			"id":    allMailboxID,
+			"kind":  "all",
+			"title": "All agent messages",
+		}, p)
 		return
 	}
 
-	msgs, err := agentMailboxMessages(id)
+	p, err := agentMailboxPage(id, q, page, pageSize)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -268,13 +337,56 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 	if title == agent.UnknownTitle {
 		title = ""
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":       id,
-		"kind":     "agent",
-		"title":    title,
-		"short":    agent.ShortID(id),
-		"messages": msgs,
-	})
+	writeMailboxPage(w, map[string]any{
+		"id":    id,
+		"kind":  "agent",
+		"title": title,
+		"short": agent.ShortID(id),
+	}, p)
+}
+
+// writeMailboxPage merges the folder-identity fields with the paginated
+// body and emits the JSON. messages is always a (possibly empty) array,
+// never null, so the JS can .map() it directly.
+func writeMailboxPage(w http.ResponseWriter, head map[string]any, p mailboxPage) {
+	if p.Messages == nil {
+		p.Messages = []mailboxMessage{}
+	}
+	head["messages"] = p.Messages
+	head["page"] = p.Page
+	head["page_size"] = p.PageSize
+	head["total"] = p.Total
+	head["total_unfiltered"] = p.TotalUnfiltered
+	writeJSON(w, http.StatusOK, head)
+}
+
+// resolveMailboxSearch turns the search box text into the two id-sets
+// MailboxFilter can't derive from agent_messages alone: convs whose
+// resolved display title contains q (matched the same way the reading
+// pane renders from_title/to_title — via agent.TitleFor over the small
+// set of convs that appear in any message), and groups whose name
+// contains q. Returns (nil, nil) for an empty query.
+func resolveMailboxSearch(q string) (titleConvs []string, groupIDs []int64) {
+	if q == "" {
+		return nil, nil
+	}
+	lq := strings.ToLower(q)
+	if convs, err := db.DistinctAgentMessageConvs(); err == nil {
+		for _, c := range convs {
+			t := agent.TitleFor(c)
+			if t != "" && strings.Contains(strings.ToLower(t), lq) {
+				titleConvs = append(titleConvs, c)
+			}
+		}
+	}
+	if gs, err := db.ListAgentGroups(); err == nil {
+		for _, g := range gs {
+			if strings.Contains(strings.ToLower(g.Name), lq) {
+				groupIDs = append(groupIDs, g.ID)
+			}
+		}
+	}
+	return titleConvs, groupIDs
 }
 
 // humanMailboxMessages maps the human_messages snapshot into the shared
@@ -370,63 +482,110 @@ func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMess
 	return mm
 }
 
-// agentMailboxMessages merges a conv's received (inbox) and sent
-// (outbox) agent_messages into one newest-first list, deduplicating the
-// rare self-addressed row that appears in both. Titles for the
-// counterpart conv(s) are resolved best-effort for the reading pane.
-func agentMailboxMessages(conv string) ([]mailboxMessage, error) {
-	received, err := db.ListAgentMessagesForConv(conv, mailboxMessagesLimit)
-	if err != nil {
-		return nil, err
+// directionFor labels a row relative to the folder being viewed: "in"
+// (received) when the folder conv is the recipient, "out" (sent)
+// otherwise. The "all" firehose (forConv == "") has no self to be
+// relative to, so every row is "" and renders from→to. A self-addressed
+// row (to == from == folder) reads as "in" — matching the old merge that
+// listed the inbox copy first when deduplicating.
+func directionFor(forConv string, m *db.AgentMessage) string {
+	if forConv == "" {
+		return ""
 	}
-	sent, err := db.ListAgentMessagesFromConv(conv, mailboxMessagesLimit)
-	if err != nil {
-		return nil, err
+	if m.ToConv == forConv {
+		return "in"
 	}
-
-	dec := newMailboxDecorator()
-	out := make([]mailboxMessage, 0, len(received)+len(sent))
-	seen := map[int64]struct{}{}
-	add := func(m *db.AgentMessage, dir string) {
-		if _, dup := seen[m.ID]; dup {
-			return
-		}
-		seen[m.ID] = struct{}{}
-		out = append(out, dec.toMessage(m, dir))
-	}
-	for _, m := range received {
-		add(m, "in")
-	}
-	for _, m := range sent {
-		add(m, "out")
-	}
-
-	// Newest first across the merged set (each side arrives sorted, but
-	// the union is not).
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].CreatedAt != out[j].CreatedAt {
-			return out[i].CreatedAt > out[j].CreatedAt
-		}
-		return out[i].ID > out[j].ID
-	})
-	return out, nil
+	return "out"
 }
 
-// allMailboxMessages returns every agent_messages row newest-first for
-// the virtual "all" folder. Direction is left empty — there is no
-// "self" to be relative to — and the reading list renders each row as
-// from→to. Already ordered by the DB (id DESC), so no re-sort here.
-func allMailboxMessages() ([]mailboxMessage, error) {
-	rows, err := db.ListAllAgentMessages(mailboxMessagesLimit)
+// agentMailboxPage builds one newest-first page of an agent folder (or
+// the "all" firehose when forConv == ""), server-filtered by q. The scope
+// predicate `(to_conv = ? OR from_conv = ?)` returns each row once, so the
+// self-addressed row that the old two-query merge had to dedup is handled
+// for free. Counts: total = rows matching q, totalUnfiltered = rows in
+// the folder regardless of q (cheap when q is empty — the two queries are
+// identical, so we run a single count).
+func agentMailboxPage(forConv, q string, page, pageSize int) (mailboxPage, error) {
+	scope := db.MailboxFilter{ForConv: forConv}
+	totalUnfiltered, err := db.CountMailbox(scope)
 	if err != nil {
-		return nil, err
+		return mailboxPage{}, err
+	}
+
+	filter := scope
+	total := totalUnfiltered
+	if q != "" {
+		filter.Text = q
+		filter.TitleConvs, filter.GroupIDs = resolveMailboxSearch(q)
+		if total, err = db.CountMailbox(filter); err != nil {
+			return mailboxPage{}, err
+		}
+	}
+
+	servedPage, offset := clampOffset(page, pageSize, total)
+	rows, err := db.ListMailboxPage(filter, pageSize, offset)
+	if err != nil {
+		return mailboxPage{}, err
 	}
 	dec := newMailboxDecorator()
-	out := make([]mailboxMessage, 0, len(rows))
+	msgs := make([]mailboxMessage, 0, len(rows))
 	for _, m := range rows {
-		out = append(out, dec.toMessage(m, ""))
+		msgs = append(msgs, dec.toMessage(m, directionFor(forConv, m)))
 	}
-	return out, nil
+	return mailboxPage{
+		Messages:        msgs,
+		Page:            servedPage,
+		PageSize:        pageSize,
+		Total:           total,
+		TotalUnfiltered: totalUnfiltered,
+	}, nil
+}
+
+// humanMailboxPage paginates the human_messages folder. The snapshot is
+// small (the operator's own notifications) and lives in a different
+// table with its own builder, so search + paging happen in Go over the
+// already-loaded, newest-first snapshot rather than in SQL.
+func humanMailboxPage(q string, page, pageSize int) mailboxPage {
+	all := humanMailboxMessages()
+	filtered := all
+	if q != "" {
+		lq := strings.ToLower(q)
+		filtered = make([]mailboxMessage, 0, len(all))
+		for _, m := range all {
+			if humanMsgMatchesSearch(m, lq) {
+				filtered = append(filtered, m)
+			}
+		}
+	}
+	total := len(filtered)
+	servedPage, offset := clampOffset(page, pageSize, total)
+	end := offset + pageSize
+	if offset > total {
+		offset = total
+	}
+	if end > total {
+		end = total
+	}
+	return mailboxPage{
+		Messages:        filtered[offset:end],
+		Page:            servedPage,
+		PageSize:        pageSize,
+		Total:           total,
+		TotalUnfiltered: len(all),
+	}
+}
+
+// humanMsgMatchesSearch reports whether a human notification matches the
+// (already-lowercased) query, over the same fields the agent-folder
+// search covers that a human message has: sender title / conv-id, group,
+// subject, body.
+func humanMsgMatchesSearch(m mailboxMessage, lq string) bool {
+	for _, s := range []string{m.FromTitle, m.FromConv, m.Group, m.Subject, m.Body} {
+		if s != "" && strings.Contains(strings.ToLower(s), lq) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleDashboardMailboxDelete serves POST /api/mailbox/delete — hard-
@@ -438,9 +597,9 @@ func handleDashboardMailboxDelete(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	// A list of ids — cap the body generously above the
-	// mailboxMessagesLimit-sized "select all then delete" case but well
-	// below anything that could blow up memory.
+	// A list of ids — cap the body generously above a full-page
+	// "select all then delete" (maxMailboxPageSize ids) but well below
+	// anything that could blow up memory.
 	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 	var body struct {
 		IDs []int64 `json:"ids"`

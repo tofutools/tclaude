@@ -85,6 +85,30 @@ nav button:hover { color: #d4d4d4; }
 .mail-bulk-bar button.danger { color: #d4d4d4; }
 .mail-bulk-bar button.danger:hover:not(:disabled) { color: #f85149; border-color: #f85149; }
 
+/* Pager footer under the message list: prev/next navigation on the left,
+   a page-size selector pushed to the right. Same chrome as the bulk bar
+   so the list column reads as one unit. */
+.mail-pager {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 5px;
+  padding: 4px 8px; font-size: 12px; color: #8b949e;
+}
+.mail-pager .grow { flex: 1 1 auto; }
+.mail-pager-pos { white-space: nowrap; padding: 0 4px; }
+.mail-pager-size { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.mail-pager button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 12px;
+  min-width: 26px; font-family: inherit;
+}
+.mail-pager button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.mail-pager button:disabled { opacity: .4; cursor: default; }
+.mail-pager-size select {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; font-size: 12px; padding: 2px 4px; font-family: inherit;
+}
+.mail-pager-size select:focus { outline: none; border-color: #58a6ff; }
+
 /* Progress bar shown inside a bulk bar while a batched delete / wipe runs
    ("Deleting 150 / 300…" + a filling track). */
 .mail-progress-label { flex: 0 0 auto; white-space: nowrap; color: #c9d1d9; }

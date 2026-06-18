@@ -12,7 +12,7 @@ import {
   renderMessagesBadge, renderUsage, renderDashDefaultProfile,
   renderNotifyGlobal,
 } from './render.js';
-import { renderMailTab, paintMail } from './mail.js';
+import { renderMailTab, onMailSearchChanged } from './mail.js';
 import {
   renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
 } from './tabs.js';
@@ -80,7 +80,10 @@ function bindFilter(tab) {
     else if (tab === 'sudo') renderSudoTab();
     else if (tab === 'links') renderLinksTab();
     else if (tab === 'plugins') renderPluginsTab();
-    else if (tab === 'messages') paintMail();
+    // The Messages search is server-side (pagination must span the whole
+    // folder, not a client-loaded prefix), so a filter change resets to
+    // page 1 and triggers a debounced reload rather than a cache repaint.
+    else if (tab === 'messages') onMailSearchChanged();
   };
   const onChange = () => {
     const v = input.value;
