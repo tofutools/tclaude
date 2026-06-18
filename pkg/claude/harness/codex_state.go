@@ -45,6 +45,15 @@ type codexThread struct {
 //
 // The DB is opened read-only (`mode=ro`) so a concurrently-running Codex
 // instance is never disturbed; this read path is, by contract, read-only.
+//
+// busy_timeout(5000) matches the SetTitle write path (codex_convstore_-
+// settitle.go). Codex's state DB is a rollback-journal (non-WAL) SQLite
+// file, where a writer holds an exclusive lock that blocks readers; without
+// a busy handler a read that lands during a concurrent write — a live Codex
+// instance, or our own SetTitle from another goroutine — returns SQLITE_BUSY
+// *immediately* (busy handler = 0) instead of waiting. That surfaced as an
+// intermittent "database is locked" flake; the timeout makes the read retry
+// for up to 5s rather than fail the whole enrichment.
 func loadCodexThreads(home string) (map[string]codexThread, error) {
 	path := codexStateDBPath(home)
 	if _, err := os.Stat(path); err != nil {
@@ -54,7 +63,7 @@ func loadCodexThreads(home string) (map[string]codexThread, error) {
 		return nil, err
 	}
 
-	d, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	d, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
