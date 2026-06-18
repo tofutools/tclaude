@@ -9,9 +9,10 @@ import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
 import {
   renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
+  renderMessagesBadge, renderUsage, renderUserDefaultModel,
   renderNotifyGlobal,
 } from './render.js';
+import { renderMailTab, paintMail } from './mail.js';
 import {
   renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
 } from './tabs.js';
@@ -79,7 +80,7 @@ function bindFilter(tab) {
     else if (tab === 'sudo') renderSudoTab();
     else if (tab === 'links') renderLinksTab();
     else if (tab === 'plugins') renderPluginsTab();
-    else if (tab === 'messages') renderMessagesTab();
+    else if (tab === 'messages') paintMail();
   };
   const onChange = () => {
     const v = input.value;
@@ -257,7 +258,7 @@ export async function refresh() {
     // "Access" tab; the renderers write into the per-panel mount divs.
     $('#permissions-body').innerHTML = renderPermissions(data.permissions, data.agents);
     $('#slugs-body').innerHTML = renderSlugs(data.slugs);
-    renderMessagesTab();
+    renderMailTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
     renderUserDefaultModel(data.user_default_model || '');

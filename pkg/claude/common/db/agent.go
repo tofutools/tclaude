@@ -1489,6 +1489,94 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 	return out, rows.Err()
 }
 
+// MailboxCount is the per-conv aggregate the mailbox sidebar renders:
+// how many messages a conv has received (In), sent (Out), how many
+// received ones are still unread, and when its newest message (sent or
+// received) landed. A conv's mailbox "total" for the dashboard is
+// In+Out — the inbox+sent view a mail client presents; Last drives the
+// recency sort of the mailbox list.
+type MailboxCount struct {
+	In     int
+	Out    int
+	Unread int
+	Last   time.Time
+}
+
+// MailboxCounts returns per-conv message tallies across the whole
+// agent_messages table in two grouped scans (received-by-to_conv and
+// sent-by-from_conv), merged by conv-id. It feeds the dashboard mail
+// client's mailbox list so the sidebar can show every conv that has
+// any mail plus its unread badge without N per-conv queries.
+//
+// Unread counts only received messages the recipient has not read
+// (to_conv side, read_at == '') — mirroring an agent's own inbox
+// unread. A conv appears in the map if it is the sender or recipient
+// of at least one message.
+func MailboxCounts() (map[string]MailboxCount, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]MailboxCount{}
+
+	// bump records the newest message instant seen for a conv. created_at
+	// is stored as zero-padded RFC3339Nano text, so MAX() over it is a
+	// valid chronological max; parse it once here.
+	bump := func(conv, maxCreated string) {
+		c := out[conv]
+		if t := parseTimeOrZero(maxCreated); t.After(c.Last) {
+			c.Last = t
+		}
+		out[conv] = c
+	}
+
+	// Received side: total in + unread + newest, grouped by recipient.
+	inRows, err := db.Query(`SELECT to_conv,
+		COUNT(*),
+		SUM(CASE WHEN read_at = '' THEN 1 ELSE 0 END),
+		MAX(created_at)
+		FROM agent_messages WHERE to_conv != '' GROUP BY to_conv`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = inRows.Close() }()
+	for inRows.Next() {
+		var conv, maxCreated string
+		var total, unread int
+		if err := inRows.Scan(&conv, &total, &unread, &maxCreated); err != nil {
+			return nil, err
+		}
+		c := out[conv]
+		c.In = total
+		c.Unread = unread
+		out[conv] = c
+		bump(conv, maxCreated)
+	}
+	if err := inRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Sent side: total out + newest, grouped by sender.
+	outRows, err := db.Query(`SELECT from_conv, COUNT(*), MAX(created_at)
+		FROM agent_messages WHERE from_conv != '' GROUP BY from_conv`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = outRows.Close() }()
+	for outRows.Next() {
+		var conv, maxCreated string
+		var total int
+		if err := outRows.Scan(&conv, &total, &maxCreated); err != nil {
+			return nil, err
+		}
+		c := out[conv]
+		c.Out = total
+		out[conv] = c
+		bump(conv, maxCreated)
+	}
+	return out, outRows.Err()
+}
+
 func formatTimeOrEmpty(t time.Time) string {
 	if t.IsZero() {
 		return ""
