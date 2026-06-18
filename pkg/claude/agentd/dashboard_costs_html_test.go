@@ -158,3 +158,29 @@ func TestDashboardHTML_CostsFillEmptyWeekdaysWired(t *testing.T) {
 	// dashboard.css: a disabled toggle is visibly dimmed.
 	must(".filter-bar label.filter-toggle.disabled", "disabled toggle styled")
 }
+
+// The cost display multiplier is editable in two places — live on the
+// Costs tab and persisted via the Config tab — both backed by
+// /api/cost-factor. Pin the wiring so a rename of an id or endpoint
+// breaks loudly.
+func TestDashboardHTML_CostFactorWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+
+	// dashboard.html: the live input on the Costs tab + the Config tab field.
+	must(`id="costs-factor"`, "live cost-factor input on the Costs tab")
+	must(`id="cfg-cost-factor"`, "cost-factor field on the Config tab")
+
+	// costs.js: load on activation, persist + reload on edit, all via
+	// /api/cost-factor.
+	must("/api/cost-factor", "costs.js talks to the cost-factor endpoint")
+	must("function loadCostFactor", "factor loaded when the tab opens")
+	must("function saveCostFactor", "factor persisted + costs reloaded on edit")
+
+	// config.js: round-trips cost.estimate_factor.
+	must("estimate_factor", "config.js round-trips the cost.estimate_factor key")
+}

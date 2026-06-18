@@ -224,6 +224,15 @@
     </div>
 
     <div class="cfg-section">
+      <h3>Costs</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Cost display multiplier</span>
+        <input type="number" id="cfg-cost-factor" min="0" max="10" step="0.01" placeholder="1.0" aria-label="Cost display multiplier" style="min-width:120px" />
+        <span class="cfg-hint">Scales every <em>displayed</em> cost estimate — the per-agent badge, the Costs tab, and the top-bar month-to-date / today figures. Claude Code estimates cost client-side and it tends to run a little under the actual bill, so <code>1.1</code> nudges the numbers up ~10% to match. Display-only: recorded data is never changed, so resetting to <code>1</code> restores the raw figures. Empty or <code>1</code> = no adjustment. Also editable live on the Costs tab.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
       <h3>Log rotation</h3>
       <div class="cfg-field">
         <span class="cfg-label">Max log size</span>
@@ -368,6 +377,10 @@
       <button class="tool" data-span="30d" title="Trailing 30 days">Last 30d</button>
       <button class="tool" data-span="90d" title="Trailing 90 days">Last 90d</button>
       <label class="filter-toggle" id="costs-fill-weekdays-label" title="Fill the empty weekdays before your first run this month with the per-weekday average, so the projection reflects a representative full month (&quot;projected average month cost&quot;) rather than one skewed low by starting mid-month. Only affects the This month projection."><input id="costs-fill-weekdays" type="checkbox" /><span>fill empty weekdays</span></label>
+      <label class="filter-toggle" id="costs-factor-label" title="Display multiplier applied to every cost figure here, on the per-agent badges, and in the top bar. Claude Code's cost is a client-side estimate that runs a little under the actual bill — set e.g. 1.1 to nudge it up ~10%. Display-only: recorded data is never changed; 1 = no adjustment. Persisted to config and shared with the Config tab.">
+        <span>×</span><input id="costs-factor" type="number" min="0" max="10" step="0.01" placeholder="1.0" aria-label="Cost display multiplier" style="width:5em" />
+        <span id="costs-factor-status" class="muted"></span>
+      </label>
       <span class="spacer"></span>
       <span id="costs-summary"></span>
     </div>

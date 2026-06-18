@@ -215,6 +215,11 @@ function populateConfigForm(cfg) {
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
   $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
 
+  // Cost display multiplier — blank when unset (no adjustment); a stored
+  // value shows as-is so the human sees exactly what's on disk.
+  const cf = cfg.cost && cfg.cost.estimate_factor;
+  $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
+
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
   // keep: 0 and absent both mean "built-in default", so show a stored 0
@@ -278,6 +283,18 @@ function assembleConfig() {
   if (Object.keys(pcg).length) cfg.pre_compact_guard = pcg; else delete cfg.pre_compact_guard;
 
   cfg.record_hooks = $('#cfg-record-hooks').checked;
+
+  // cost is an optional block. Clone the existing one so a future
+  // sub-field with no widget round-trips, then set the one form-owned
+  // key. 1 (and blank) is the no-op default — drop the field, and the
+  // block when it's all that's left, so an all-default cost block doesn't
+  // marshal as a spurious "cost": {} diff. A 0/negative is written so the
+  // server's Validate surfaces the out-of-range error.
+  const cost = (cfg.cost && typeof cfg.cost === 'object') ? cfg.cost : {};
+  const cfRaw = $('#cfg-cost-factor').value.trim();
+  const cf = cfgFloat('cfg-cost-factor', 1);
+  if (cfRaw !== '' && cf !== 1) cost.estimate_factor = cf; else delete cost.estimate_factor;
+  if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
 
   // focus is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, set the one form-owned key, and

@@ -1179,7 +1179,40 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	out.PluginsCatalog = pluginCatalog()
 
+	// Display-only cost compensation, applied as the final step over the
+	// fully-assembled payload (cfg was loaded once at the top). The DB
+	// rows feeding these figures stay raw — see config.CostConfig.
+	applyCostDisplayFactor(&out, cfg.ResolvedCostFactor())
+
 	writeJSON(w, http.StatusOK, out)
+}
+
+// applyCostDisplayFactor scales every cost figure in the snapshot by the
+// configured display multiplier: the per-agent badge (Agents, Ungrouped,
+// and each group member's State.CostUSD) plus the top-bar month-to-date
+// / today readouts. It is the snapshot twin of collectCosts's scaling,
+// so the per-agent badge, the Costs tab and the top-bar headline all
+// move together. A factor of 1 (the default / unset) is a no-op, so the
+// common path is untouched. Display-only: the DB keeps raw values.
+func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
+	if factor == 1 {
+		return
+	}
+	out.Usage.TotalCostUSD *= factor
+	out.Usage.TodayCostUSD *= factor
+	scaleAgents := func(rows []dashboardAgent) {
+		for i := range rows {
+			rows[i].State.CostUSD *= factor
+		}
+	}
+	scaleAgents(out.Agents)
+	scaleAgents(out.Ungrouped)
+	for gi := range out.Groups {
+		members := out.Groups[gi].Members
+		for mi := range members {
+			members[mi].State.CostUSD *= factor
+		}
+	}
 }
 
 // Conversation-list sizing. conversationsScanLimit caps how many
