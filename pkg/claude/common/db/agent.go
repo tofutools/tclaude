@@ -1624,26 +1624,135 @@ func CountAgentMessages() (int, error) {
 	return n, nil
 }
 
-// ListAllAgentMessages returns every agent_messages row, newest-first,
-// for the dashboard's virtual "all messages" mailbox — the chronological
-// firehose across every conv. limit <= 0 means "no limit". Ordered by id
-// DESC (insertion order), not created_at, for the same RFC3339Nano
-// lexical-sort reason listAgentMessagesByCol documents.
-func ListAllAgentMessages(limit int) ([]*AgentMessage, error) {
-	db, err := Open()
+// MailboxFilter selects which agent_messages rows a dashboard mailbox
+// read returns — the backing query for the Messages tab's paginated,
+// searchable folder view.
+//
+// ForConv scopes to one mailbox: rows where the conv is sender OR
+// recipient. "" is the virtual "all" firehose (no scope). A single
+// (to_conv = ? OR from_conv = ?) predicate dedups the rare self-addressed
+// row for free, so the scope needs no UNION.
+//
+// The remaining fields are the Messages-tab search box, already split
+// into the parts the DB can match directly and the parts the caller
+// resolved out-of-band:
+//   - Text: matched case-insensitively (SQLite LIKE) against subject /
+//     body / from_conv / to_conv. A conv-id prefix the operator types
+//     matches the full id this way (so the sidebar's short-id is
+//     searchable here too).
+//   - TitleConvs: convs whose resolved DISPLAY title contained the query.
+//     The display title (custom title > pending name > summary > first
+//     prompt) is not a single column — the caller resolves it via the
+//     conv index and passes the matching conv-ids, which fold in as
+//     from_conv/to_conv IN (…).
+//   - GroupIDs: groups whose name contained the query, folded in as
+//     group_id IN (…).
+//
+// A filter with empty Text and nil id-sets matches the whole scope (the
+// unfiltered total).
+type MailboxFilter struct {
+	ForConv    string
+	Text       string
+	TitleConvs []string
+	GroupIDs   []int64
+}
+
+// HasSearch reports whether f carries any search predicate (free text or
+// a resolved title/group match set) beyond its folder scope.
+func (f MailboxFilter) HasSearch() bool {
+	return f.Text != "" || len(f.TitleConvs) > 0 || len(f.GroupIDs) > 0
+}
+
+// likeEscape escapes the LIKE metacharacters so the operator's search
+// text matches literally — a typed '%' means a percent sign, not "any
+// run". Pairs with `LIKE ? ESCAPE '\'`.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// where builds the WHERE clause (without the "WHERE" keyword) and its
+// args. Returns ("", nil) for the unscoped, unfiltered "all" firehose so
+// the caller can omit the clause entirely.
+func (f MailboxFilter) where() (string, []any) {
+	var clauses []string
+	var args []any
+	if f.ForConv != "" {
+		clauses = append(clauses, "(to_conv = ? OR from_conv = ?)")
+		args = append(args, f.ForConv, f.ForConv)
+	}
+	if f.HasSearch() {
+		var ors []string
+		if f.Text != "" {
+			like := "%" + likeEscape(f.Text) + "%"
+			ors = append(ors,
+				`subject LIKE ? ESCAPE '\'`,
+				`body LIKE ? ESCAPE '\'`,
+				`from_conv LIKE ? ESCAPE '\'`,
+				`to_conv LIKE ? ESCAPE '\'`)
+			args = append(args, like, like, like, like)
+		}
+		if len(f.TitleConvs) > 0 {
+			ph := sqlPlaceholders(len(f.TitleConvs))
+			ors = append(ors, "from_conv IN ("+ph+")", "to_conv IN ("+ph+")")
+			for _, c := range f.TitleConvs {
+				args = append(args, c)
+			}
+			for _, c := range f.TitleConvs {
+				args = append(args, c)
+			}
+		}
+		if len(f.GroupIDs) > 0 {
+			ph := sqlPlaceholders(len(f.GroupIDs))
+			ors = append(ors, "group_id IN ("+ph+")")
+			for _, g := range f.GroupIDs {
+				args = append(args, g)
+			}
+		}
+		if len(ors) > 0 {
+			clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
+		}
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
+// sqlPlaceholders returns "?, ?, …" with n placeholders (n >= 1).
+func sqlPlaceholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat("?, ", n-1) + "?"
+}
+
+// ListMailboxPage returns one newest-first page of the rows matching f.
+// limit <= 0 means "no limit" (the whole match); offset < 0 is clamped to
+// 0. Ordered by id DESC (insertion order), not created_at, for the same
+// RFC3339Nano lexical-sort reason listAgentMessagesByCol documents.
+func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error) {
+	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
 		created_at, delivered_at, read_at,
 		to_recipients, cc_recipients, original_to_conv
-		FROM agent_messages ORDER BY id DESC`
-	var args []any
-	if limit > 0 {
-		q += ` LIMIT ?`
-		args = append(args, limit)
+		FROM agent_messages`
+	where, args := f.where()
+	if where != "" {
+		q += " WHERE " + where
 	}
-	rows, err := db.Query(q, args...)
+	q += " ORDER BY id DESC"
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+		if offset > 0 {
+			q += " OFFSET ?"
+			args = append(args, offset)
+		}
+	}
+	rows, err := d.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1656,6 +1765,56 @@ func ListAllAgentMessages(limit int) ([]*AgentMessage, error) {
 			return nil, err
 		}
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// CountMailbox returns how many agent_messages rows match f — the total
+// the pager divides into pages. Same WHERE as ListMailboxPage, so the two
+// never drift.
+func CountMailbox(f MailboxFilter) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	q := `SELECT COUNT(*) FROM agent_messages`
+	where, args := f.where()
+	if where != "" {
+		q += " WHERE " + where
+	}
+	var n int
+	if err := d.QueryRow(q, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// DistinctAgentMessageConvs returns every conv-id that appears as a
+// sender or recipient in agent_messages. Small — bounded by the number
+// of agents that ever exchanged mail, not the message count — so the
+// dashboard can resolve each one's display title in Go and decide which
+// match the mailbox search box (feeding MailboxFilter.TitleConvs)
+// without a conv_index join.
+func DistinctAgentMessageConvs() ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT from_conv FROM agent_messages WHERE from_conv != ''
+		UNION
+		SELECT to_conv FROM agent_messages WHERE to_conv != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }

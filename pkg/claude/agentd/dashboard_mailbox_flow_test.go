@@ -1,7 +1,10 @@
 package agentd_test
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 const (
 	mbAlice = "mbox-alic-1111-2222-333333333301"
 	mbBob   = "mbox-bobb-1111-2222-333333333302"
+	mbCarol = "mbox-caro-1111-2222-333333333303"
 )
 
 // mailboxEntry mirrors the dashboardMailbox wire shape.
@@ -383,4 +387,278 @@ func TestDashboardMailboxMutations_RequireAuth(t *testing.T) {
 	wipe := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
 		"/api/mailbox/wipe", map[string]any{"convs": []string{"x"}}))
 	assert.Equal(t, http.StatusForbidden, wipe.Code, "uncookied wipe refused")
+}
+
+// --- pagination + server-side search --------------------------------
+
+// mailboxPageResp mirrors the paginated /api/mailbox wire shape: a page
+// of messages plus the pager metadata.
+type mailboxPageResp struct {
+	ID              string       `json:"id"`
+	Kind            string       `json:"kind"`
+	Messages        []mailboxMsg `json:"messages"`
+	Page            int          `json:"page"`
+	PageSize        int          `json:"page_size"`
+	Total           int          `json:"total"`
+	TotalUnfiltered int          `json:"total_unfiltered"`
+}
+
+// getMailboxPage fetches one page of a folder through the production
+// handler, with optional search (q="" omits it) and pagination params
+// (<=0 omits them, letting the server default).
+func getMailboxPage(t *testing.T, dash http.Handler, id, q string, page, pageSize int) mailboxPageResp {
+	t.Helper()
+	params := url.Values{}
+	params.Set("id", id)
+	if q != "" {
+		params.Set("q", q)
+	}
+	if page > 0 {
+		params.Set("page", strconv.Itoa(page))
+	}
+	if pageSize > 0 {
+		params.Set("page_size", strconv.Itoa(pageSize))
+	}
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/mailbox?"+params.Encode(), nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var p mailboxPageResp
+	testharness.DecodeJSON(t, rec, &p)
+	return p
+}
+
+// seedManyAgentMessages stands up alice + bob and inserts n alice→bob
+// messages with deterministic subjects (msg-0000 … msg-(n-1)) and
+// ascending timestamps, so the id order (the newest-first sort key)
+// matches insertion order: msg-(n-1) is newest. Returns the dash handler.
+func seedManyAgentMessages(t *testing.T, f *testharness.Flow, n int) http.Handler {
+	t.Helper()
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	base := time.Now().Add(-time.Duration(n+1) * time.Minute)
+	for i := 0; i < n; i++ {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: mbAlice, ToConv: mbBob,
+			Subject:   fmt.Sprintf("msg-%04d", i),
+			Body:      fmt.Sprintf("body for message %d", i),
+			CreatedAt: base.Add(time.Duration(i) * time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	return dashHandlerForTest(t)
+}
+
+// subjectsOf collects the subjects of a page in order.
+func subjectsOf(msgs []mailboxMsg) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		out[i] = m.Subject
+	}
+	return out
+}
+
+// Scenario: an agent folder pages newest-first. page_size=5 over 12
+// messages yields pages of 5/5/2 covering every message once, with total
+// + total_unfiltered constant across pages and the served page echoed.
+func TestDashboardMailbox_PaginatesAgentFolder(t *testing.T) {
+	f := newFlow(t)
+	dash := seedManyAgentMessages(t, f, 12)
+
+	seen := map[string]int{}
+	wantSizes := []int{5, 5, 2}
+	var firstNewest string
+	for pg := 1; pg <= 3; pg++ {
+		p := getMailboxPage(t, dash, mbBob, "", pg, 5)
+		assert.Equal(t, pg, p.Page, "served page echoed")
+		assert.Equal(t, 5, p.PageSize)
+		assert.Equal(t, 12, p.Total, "total spans the whole folder")
+		assert.Equal(t, 12, p.TotalUnfiltered)
+		require.Len(t, p.Messages, wantSizes[pg-1], "page %d size", pg)
+		if pg == 1 {
+			firstNewest = p.Messages[0].Subject
+		}
+		for _, s := range subjectsOf(p.Messages) {
+			seen[s]++
+		}
+	}
+	assert.Equal(t, "msg-0011", firstNewest, "newest (highest id) leads page 1")
+	assert.Len(t, seen, 12, "every message appears exactly once across the pages")
+	for s, n := range seen {
+		assert.Equal(t, 1, n, "no overlap for %s", s)
+	}
+}
+
+// Scenario: a page past the last is pulled back to the last page (a stale
+// "page 99" after deletions still lands on real rows), and the response
+// reports the page actually served.
+func TestDashboardMailbox_PageClampedPastLast(t *testing.T) {
+	f := newFlow(t)
+	dash := seedManyAgentMessages(t, f, 7)
+
+	p := getMailboxPage(t, dash, mbBob, "", 99, 5)
+	assert.Equal(t, 2, p.Page, "clamped to the last page (7 msgs / 5 = 2 pages)")
+	assert.Equal(t, 7, p.Total)
+	require.Len(t, p.Messages, 2, "the last page holds the remaining 2")
+}
+
+// Scenario: server-side search filters the WHOLE folder before paging —
+// total reflects matches, total_unfiltered the folder, and only matching
+// rows come back.
+func TestDashboardMailbox_SearchFiltersWholeFolder(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	base := time.Now().Add(-time.Hour)
+	for i := 0; i < 10; i++ {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: mbAlice, ToConv: mbBob,
+			Subject: fmt.Sprintf("keep-%d", i), Body: "ordinary",
+			CreatedAt: base.Add(time.Duration(i) * time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	for i := 0; i < 3; i++ {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: mbAlice, ToConv: mbBob,
+			Subject: fmt.Sprintf("FINDME-%d", i), Body: "special",
+			CreatedAt: base.Add(time.Duration(20+i) * time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	dash := dashHandlerForTest(t)
+
+	// Case-insensitive subject match, default page big enough for all 3.
+	p := getMailboxPage(t, dash, mbBob, "findme", 0, 0)
+	assert.Equal(t, 3, p.Total, "three subjects match the search")
+	assert.Equal(t, 13, p.TotalUnfiltered, "folder still holds all 13")
+	require.Len(t, p.Messages, 3)
+	for _, m := range p.Messages {
+		assert.Contains(t, m.Subject, "FINDME")
+	}
+
+	// Body match works too.
+	pb := getMailboxPage(t, dash, mbBob, "special", 0, 0)
+	assert.Equal(t, 3, pb.Total, "three bodies match the search")
+}
+
+// Scenario: search + pagination compose — q narrows the folder, then the
+// page slices the matches.
+func TestDashboardMailbox_SearchThenPaginate(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	base := time.Now().Add(-time.Hour)
+	// 4 of 9 carry the needle.
+	for i := 0; i < 9; i++ {
+		subj := fmt.Sprintf("plain-%d", i)
+		if i%2 == 0 && i < 8 {
+			subj = fmt.Sprintf("needle-%d", i)
+		}
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: mbAlice, ToConv: mbBob,
+			Subject: subj, Body: "x", CreatedAt: base.Add(time.Duration(i) * time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	dash := dashHandlerForTest(t)
+
+	p1 := getMailboxPage(t, dash, "all", "needle", 1, 3)
+	assert.Equal(t, 4, p1.Total, "four needles match")
+	require.Len(t, p1.Messages, 3, "page 1 holds 3 of the 4 matches")
+	for _, m := range p1.Messages {
+		assert.Contains(t, m.Subject, "needle")
+	}
+	p2 := getMailboxPage(t, dash, "all", "needle", 2, 3)
+	require.Len(t, p2.Messages, 1, "page 2 holds the last match")
+	assert.Contains(t, p2.Messages[0].Subject, "needle")
+}
+
+// Scenario: search matches a counterpart's resolved title even though the
+// title is not a column on agent_messages — the handler resolves which
+// convs match and folds them into the query. A search for "carol" returns
+// only carol's message, not the alice↔bob traffic.
+func TestDashboardMailbox_SearchMatchesCounterpartTitle(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveMember("team", mbCarol)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbCarol, "carol")
+	base := time.Now().Add(-time.Hour)
+	// Two alice↔bob messages, one carol→bob message.
+	_, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g.ID, FromConv: mbAlice, ToConv: mbBob,
+		Subject: "ab one", Body: "x", CreatedAt: base,
+	})
+	require.NoError(t, err)
+	_, err = db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g.ID, FromConv: mbBob, ToConv: mbAlice,
+		Subject: "ab two", Body: "x", CreatedAt: base.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	_, err = db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g.ID, FromConv: mbCarol, ToConv: mbBob,
+		Subject: "from carol", Body: "x", CreatedAt: base.Add(2 * time.Minute),
+	})
+	require.NoError(t, err)
+	dash := dashHandlerForTest(t)
+
+	p := getMailboxPage(t, dash, "all", "carol", 0, 0)
+	assert.Equal(t, 3, p.TotalUnfiltered, "folder holds all three")
+	require.Equal(t, 1, p.Total, "only the carol message matches the title search")
+	require.Len(t, p.Messages, 1)
+	assert.Equal(t, "from carol", p.Messages[0].Subject)
+}
+
+// Scenario: the human folder paginates + searches in Go over its
+// snapshot, with the same page/total contract as the agent folders.
+func TestDashboardMailbox_HumanFolderPaginatesAndSearches(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	for i := 0; i < 6; i++ {
+		body := fmt.Sprintf("note %d", i)
+		if i >= 4 {
+			body = fmt.Sprintf("urgent note %d", i)
+		}
+		_, err := db.InsertHumanMessage(&db.HumanMessage{
+			FromConv: mbAlice, FromTitle: "alice", Body: body,
+		})
+		require.NoError(t, err)
+	}
+	dash := dashHandlerForTest(t)
+
+	p1 := getMailboxPage(t, dash, "human", "", 1, 4)
+	assert.Equal(t, 6, p1.Total)
+	assert.Equal(t, 6, p1.TotalUnfiltered)
+	require.Len(t, p1.Messages, 4, "first human page")
+	p2 := getMailboxPage(t, dash, "human", "", 2, 4)
+	require.Len(t, p2.Messages, 2, "second human page")
+
+	ps := getMailboxPage(t, dash, "human", "urgent", 0, 0)
+	assert.Equal(t, 2, ps.Total, "two human notes match 'urgent'")
+	assert.Equal(t, 6, ps.TotalUnfiltered)
+	require.Len(t, ps.Messages, 2)
+}
+
+// Scenario: page_size is clamped to maxMailboxPageSize so a hand-crafted
+// query can't ask the daemon for an unbounded page.
+func TestDashboardMailbox_PageSizeClamped(t *testing.T) {
+	f := newFlow(t)
+	dash := seedManyAgentMessages(t, f, 3)
+	p := getMailboxPage(t, dash, mbBob, "", 1, 100000)
+	assert.LessOrEqual(t, p.PageSize, 500, "page_size clamped to the server cap")
+	assert.Equal(t, 3, p.Total)
 }

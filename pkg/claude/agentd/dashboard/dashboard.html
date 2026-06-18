@@ -416,10 +416,13 @@
         <aside class="mail-sidebar" id="mail-sidebar"></aside>
       </div>
       <!-- List column: the "delete selected" / select-all bar sits above
-           the scrolling message list (#mail-list). -->
+           the scrolling message list (#mail-list); the pager (page-size
+           selector + prev/next nav) sits below it. Both are painted by
+           mail.js, which drives server-side pagination + search. -->
       <div class="mail-col">
         <div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>
         <div class="mail-list" id="mail-list"></div>
+        <div id="mail-pager" class="mail-pager" hidden></div>
       </div>
       <div class="mail-reader" id="mail-reader"></div>
     </div>
