@@ -652,6 +652,13 @@ function bindAgentSpawnModal() {
     updateSpawnModelDefaultLabel(e.target.value);
     if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
     spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
+    // Deliberately NOT re-running the profile pre-fill here: it's a one-shot
+    // on open. Re-applying the new group's default profile mid-dialog would
+    // clobber any name / role / model / init-msg the human already typed (the
+    // profile sets many fields at once, unlike the field-scoped cwd prefill
+    // above which protects user input). The group <select> is hidden in the
+    // common per-group open anyway; to load a different group's profile, the
+    // human picks it from the Profile selector.
   });
   // Switching the harness reshapes the Model + Sandbox rows for the new
   // harness (and re-applies the remembered effort for whatever Model

@@ -168,10 +168,21 @@ function inlineEdit({ el, value, type = 'text', inputClass, placeholder, listId,
 // and changeable.
 async function openProfilePicker(chipEl, current, onCommit) {
   const prevSnapshot = lastSnapshot;
-  renameEditing = true;
-  const origEl = chipEl.cloneNode(true);
+  // Fetch the list BEFORE suspending the refresh or touching the DOM, so a
+  // slow (cold-cache) fetch can't leave the picker half-open. Critically,
+  // renameEditing is set only AFTER the await: were it set before, a second
+  // click during the fetch would start a rival picker whose chip is already
+  // detached — its replaceWith no-ops, so it never mounts, its listeners
+  // never fire, and the only code that resets renameEditing never runs,
+  // wedging the auto-refresh permanently.
   let profiles = [];
   try { profiles = await loadProfiles(); } catch (_) { profiles = []; }
+  // Bail if another picker already opened (renameEditing) or this chip was
+  // repainted away (a poll re-rendered it) while we were fetching — either
+  // way, mounting a <select> here would strand it.
+  if (renameEditing || !chipEl.isConnected) return;
+  renameEditing = true;
+  const origEl = chipEl.cloneNode(true);
   const select = document.createElement('select');
   select.className = 'group-default-profile-select';
   select.add(new Option('(none)', ''));

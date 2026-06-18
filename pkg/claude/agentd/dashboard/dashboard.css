@@ -763,11 +763,6 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .group-default-model:hover, .user-default-model:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-model.unset, .user-default-model.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover { color: #d4d4d4; }
-.group-default-model-input, .user-default-model-input {
-  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
-  color: #d4d4d4; padding: 1px 6px; font: inherit;
-  font-family: ui-monospace, monospace; font-size: 11px; min-width: 12em;
-}
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
    chip while choosing a default spawn profile (row-actions openProfilePicker).
    Same compact monospace look as the chip inputs above. */
