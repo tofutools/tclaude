@@ -895,8 +895,11 @@ func (f *Flow) AssertCloneTitle(c CloneResp, groupName, wantTitle string, timeou
 type MemberView struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// CreatedAt is the conversation's creation timestamp (RFC3339); the
+	// listing defaults to newest-first on it (the dashboard's Age column).
+	CreatedAt string `json:"created_at,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Descr     string `json:"descr,omitempty"`
 	// Branch is the agent's *current* git branch; StartupBranch is the
 	// launch dir's branch and StartupDir / CurrentDir are the launch
 	// vs. live-worktree directories — see agentd.agentLocationView.

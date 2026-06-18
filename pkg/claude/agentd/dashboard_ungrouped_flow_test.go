@@ -67,6 +67,7 @@ type dashGroup struct {
 type dashMember struct {
 	ConvID          string    `json:"conv_id"`
 	Title           string    `json:"title"`
+	CreatedAt       string    `json:"created_at,omitempty"`
 	Branch          string    `json:"branch,omitempty"`
 	StartupDir      string    `json:"startup_dir,omitempty"`
 	StartupBranch   string    `json:"startup_branch,omitempty"`

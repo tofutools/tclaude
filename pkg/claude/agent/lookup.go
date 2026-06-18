@@ -377,6 +377,32 @@ func CachedTitle(convID string) string {
 	return UnknownTitle
 }
 
+// CachedCreated returns convID's conversation creation timestamp
+// (RFC3339 — the first .jsonl event's time) from the conv_index cache,
+// or "" when unknown. Creation time is immutable once recorded, so the
+// cache is authoritative; use this on the dashboard hot path where a
+// per-row .jsonl rescan would be pure waste (the fsnotify monitor keeps
+// conv_index fresh). It is FreshCreated's cache-only twin, mirroring
+// CachedTitle vs FreshTitle.
+func CachedCreated(convID string) string {
+	if row, _ := db.GetConvIndex(convID); row != nil {
+		return row.Created
+	}
+	return ""
+}
+
+// FreshCreated returns convID's conversation creation timestamp
+// (RFC3339), refreshing the conv_index row from the underlying .jsonl
+// first (FreshConvRowResolved) so a freshly-spawned, not-yet-indexed
+// conv still reports a creation time. Use it off the hot path — the CLI
+// `groups members` listing — exactly where FreshTitle is used.
+func FreshCreated(convID string) string {
+	if row := FreshConvRowResolved(convID); row != nil {
+		return row.Created
+	}
+	return ""
+}
+
 // pendingName returns the intended display name recorded for convID at
 // spawn time (agent_enrollment.pending_name), or "" when the conv was
 // not spawned with a name or is not an agent. Errors are swallowed — a

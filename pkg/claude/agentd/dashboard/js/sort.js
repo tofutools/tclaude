@@ -108,6 +108,7 @@ const MEMBER_COLS = [
   { label: 'Name', col: 'title' },
   { label: 'State', col: 'state' },
   { label: 'Last', col: 'last' },
+  { label: 'Age', col: 'age' },
   { label: 'CWD', col: 'cwd' },
   { label: 'Branch', col: 'branch' },
   { label: 'Role', col: 'role' },
@@ -118,6 +119,11 @@ const MEMBER_ACCESSORS = {
   title:  m => m.title,
   state:  m => (m.state || {}).status,
   last:   m => (m.state || {}).last_hook,
+  // age sorts on the raw creation timestamp (ISO → lexical = chrono):
+  // ascending = oldest first, descending = newest first. The default
+  // listing already arrives newest-first from the server, which this
+  // column surfaces.
+  age:    m => m.created_at,
   cwd:    m => m.current_dir || (m.state || {}).cwd,
   branch: m => m.branch,
   role:   m => m.role,
