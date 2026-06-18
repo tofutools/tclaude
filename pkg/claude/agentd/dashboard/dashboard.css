@@ -2649,9 +2649,16 @@ body.slop .slop-hud {
 /* ─── Side pull-lever (body.slop, slop-spectacle.js) ────────────────
    A casino lever pinned to the right edge. Hidden in the plain
    dashboard. The gold stick drops on .slop-lever-pulled (added for the
-   yank's duration) then springs back. */
+   yank's duration) then springs back.
+
+   Revealed only when the Groups tab is the active one (:has(#tab-groups
+   .active)) — that tab is the only place the per-row slot machines
+   render, so a global "spin them all" lever is meaningless on Costs /
+   Messages / Vegas / etc. The :has() tracks the .active toggle that
+   bindTabs() (and the other tab-switch paths) already apply, so the
+   lever follows the tab with no extra JS. */
 #slop-lever { display: none; }
-body.slop #slop-lever {
+body.slop:has(#tab-groups.active) #slop-lever {
   display: flex;
   flex-direction: column;
   align-items: center;
