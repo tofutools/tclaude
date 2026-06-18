@@ -399,32 +399,44 @@
        act on the human folder only (mutating human_messages) and are
        shown/hidden by mail.js. -->
   <section id="tab-messages">
-    <div class="filter-bar">
-      <input id="filter-messages" type="text" placeholder="Filter messages (sender / recipient / subject / body)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-messages-count"></span>
-      <button class="clear-filter" id="filter-messages-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read" title="Mark every human notification read" hidden>✓ mark all read</button>
-      <button class="tool" id="mail-clear-read" data-act="msg-clear" title="Delete every human notification that has been marked read" hidden>🧹 clear read</button>
-    </div>
+    <!-- The mail client is a 3-column × 2-row grid. Row 1 holds the two
+         column filters: the recipient (mailbox) filter heads the sidebar,
+         the message filter heads the list. The two <input>s are kept
+         DOM-adjacent so Tab moves recipient-filter → message-filter
+         directly, even though they head different columns. Row 2 holds
+         each column's scrolling body; the reader spans both rows in
+         column 3. Explicit grid placement (dashboard.css) maps each child
+         to its cell. -->
     <div class="mail-client">
-      <!-- Sidebar column: a static mailbox filter + the "wipe selected"
-           bar sit above the scrolling roster (#mail-sidebar), which
-           mail.js repaints. -->
-      <div class="mail-col">
-        <input id="filter-mailboxes" type="text" class="mail-sidebar-filter" placeholder="Filter mailboxes (name / id)" autocomplete="off" spellcheck="false" />
+      <!-- Row 1, col 1: the recipient (mailbox) filter — name / id / group. -->
+      <input id="filter-mailboxes" type="text" class="mail-sidebar-filter" placeholder="Filter mailboxes (name / id)" autocomplete="off" spellcheck="false" />
+      <!-- Row 1, col 2: the message filter — sits right above the message
+           list, mirroring the recipient filter above the sidebar. Carries
+           the match count, a clear button, and the human-folder bulk
+           actions (mark-all / clear-read, shown/hidden by mail.js). -->
+      <div class="mail-list-filter">
+        <input id="filter-messages" type="text" placeholder="Filter messages (sender / recipient / subject / body)" autocomplete="off" spellcheck="false" />
+        <span class="filter-count" id="filter-messages-count"></span>
+        <button class="clear-filter" id="filter-messages-clear" title="Clear filter">×</button>
+        <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read" title="Mark every human notification read" hidden>✓ mark all read</button>
+        <button class="tool" id="mail-clear-read" data-act="msg-clear" title="Delete every human notification that has been marked read" hidden>🧹 clear read</button>
+      </div>
+      <!-- Row 2, col 1: sidebar body — the "wipe selected" bar sits above
+           the scrolling roster (#mail-sidebar), which mail.js repaints. -->
+      <div class="mail-col mail-sidebar-col">
         <div id="mail-wipe-bar" class="mail-bulk-bar" hidden></div>
         <aside class="mail-sidebar" id="mail-sidebar"></aside>
       </div>
-      <!-- List column: the "delete selected" / select-all bar sits above
-           the scrolling message list (#mail-list); the pager (page-size
-           selector + prev/next nav) sits below it. Both are painted by
-           mail.js, which drives server-side pagination + search. -->
-      <div class="mail-col">
+      <!-- Row 2, col 2: list body — the "delete selected" / select-all bar
+           sits above the scrolling message list (#mail-list); the pager
+           (page-size selector + prev/next nav) sits below it. Both are
+           painted by mail.js, which drives server-side pagination + search. -->
+      <div class="mail-col mail-list-col">
         <div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>
         <div class="mail-list" id="mail-list"></div>
         <div id="mail-pager" class="mail-pager" hidden></div>
       </div>
+      <!-- Col 3, spanning both rows: the reading pane. -->
       <div class="mail-reader" id="mail-reader"></div>
     </div>
   </section>

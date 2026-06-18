@@ -39,19 +39,34 @@ nav button:hover { color: #d4d4d4; }
 
 /* === Messages tab — mail client (mail.js) ===
    Three columns: a mailbox sidebar, the selected folder's message list,
-   and a reading pane. A CSS grid so the three panes share one scroll
-   container and the reader gets the remaining width. */
+   and a reading pane. A CSS grid laid out as 3 columns × 2 rows. Row 1
+   holds the two column filters (the recipient filter heads the sidebar,
+   the message filter heads the list — DOM-adjacent so Tab moves between
+   them directly); row 2 holds each column's scrolling body; the reader
+   spans both rows in column 3. */
 .mail-client {
   display: grid;
   grid-template-columns: 240px minmax(260px, 1fr) minmax(320px, 1.4fr);
-  gap: 10px;
-  /* Fill the viewport below the filter bar; each pane scrolls itself. */
-  height: calc(100vh - 150px);
+  grid-template-rows: auto 1fr;
+  /* row-gap (6px) matches the old in-column filter→body spacing;
+     column-gap (10px) is the inter-pane gutter. */
+  gap: 6px 10px;
+  /* Fill the viewport below the nav; each pane scrolls itself. The filter
+     bar that used to sit above this grid is now row 1 inside it, so this
+     reclaims that ~42px of height. */
+  height: calc(100vh - 108px);
   min-height: 320px;
 }
-/* The sidebar + list columns each stack a static header (mailbox filter
-   / bulk-action bar) above a scrolling pane; the reader is the plain
-   third column. */
+/* Map each grid child to its cell: the two filters head columns 1 + 2 on
+   row 1, the scrolling bodies fill row 2, and the reader spans both rows
+   in column 3 (so its top aligns with the filters, as before). */
+#filter-mailboxes { grid-column: 1; grid-row: 1; }
+.mail-list-filter { grid-column: 2; grid-row: 1; }
+.mail-sidebar-col { grid-column: 1; grid-row: 2; }
+.mail-list-col    { grid-column: 2; grid-row: 2; }
+.mail-reader      { grid-column: 3; grid-row: 1 / span 2; }
+/* The sidebar + list bodies each stack a bulk-action bar above a
+   scrolling pane; the reader is the plain third column. */
 .mail-col { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .mail-sidebar, .mail-list, .mail-reader {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
@@ -62,14 +77,42 @@ nav button:hover { color: #d4d4d4; }
 .mail-list { padding: 6px; }
 .mail-reader { padding: 14px 16px; }
 
-/* Sidebar mailbox filter — narrower twin of the top filter bar input,
-   scoped to the roster (name / short-id / group). */
+/* Sidebar mailbox filter — scoped to the roster (name / short-id /
+   group). Heads column 1, row 1 as a grid item filling the column. */
 .mail-sidebar-filter {
-  flex: 0 0 auto; width: 100%; box-sizing: border-box;
+  width: 100%; box-sizing: border-box;
   background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
   color: #c9d1d9; font-size: 12px; padding: 6px 8px;
 }
 .mail-sidebar-filter:focus { outline: none; border-color: #1f6feb; }
+
+/* Message filter — heads the list column (row 1), the twin of the
+   recipient filter above the sidebar. A flex row: the input grows to fill
+   the column, with the match count, clear button, and the human-folder
+   bulk actions (#mail-mark-all / #mail-clear-read, shown only on the Human
+   folder) trailing on the right. */
+.mail-list-filter {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.mail-list-filter input {
+  flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
+  color: #c9d1d9; font-size: 12px; padding: 6px 8px; font-family: inherit;
+}
+.mail-list-filter input:focus { outline: none; border-color: #1f6feb; }
+.mail-list-filter .filter-count { font-size: 11px; color: #7d8590; white-space: nowrap; }
+.mail-list-filter button.clear-filter {
+  background: transparent; border: none; color: #7d8590;
+  cursor: pointer; padding: 4px 6px; font-size: 12px; font-family: inherit;
+}
+.mail-list-filter button.clear-filter:hover { color: #d4d4d4; }
+.mail-list-filter button.tool {
+  flex: 0 0 auto;
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 4px 8px; font-size: 12px;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.mail-list-filter button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
 
 /* Bulk-action bars above each column's scrolling pane: a count/label on
    the left, action buttons on the right. */
