@@ -822,6 +822,35 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		}
 	}
 
+	// Instant agent-enrollment for a tclaude-launched session. A
+	// SessionStart means the conversation just (re)booted, and by here
+	// state.ConvID is the settled conv-id (after any /clear or /resume
+	// identity migration above). Enrolling it now means a
+	// terminal-launched session — `tclaude conv new`, a fresh
+	// `tclaude session` — surfaces on the dashboard the instant it
+	// starts, the same way a web-UI/CLI `tclaude agent spawn` does,
+	// instead of waiting up to one reaper interval for the daemon's
+	// online-enrollment sweep (which stays as the backstop, and also
+	// covers sessions tclaude did not launch — see agentd
+	// enrollOnlineSession).
+	//
+	// Gated on envSessionID (TCLAUDE_SESSION_ID): only sessions tclaude
+	// launched get the instant path, so a foreign headless one-shot
+	// (`claude -p`, a plugin probe) firing a SessionStart never lands an
+	// enrollment row the reaper would never have created. Subagent and
+	// foreign-process SessionStarts already returned early above, so they
+	// cannot reach here.
+	//
+	// INSERT OR IGNORE makes this idempotent and retirement-safe: a conv
+	// the migration above already enrolled, or one the human deliberately
+	// retired, is left untouched (a retired conv is never un-retired).
+	if input.HookEventName == "SessionStart" && envSessionID != "" && state.ConvID != "" {
+		if err := db.EnrollAgent(state.ConvID, "session-start"); err != nil {
+			slog.Warn("failed to enroll launched session as agent",
+				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
+		}
+	}
+
 	// Keep the row keyed by the real harness process, not tmux's shell
 	// wrapper pane PID. Spawn records #{pane_pid}; hooks run under the
 	// harness, so FindClaudePID can correct wrapper-shaped rows.

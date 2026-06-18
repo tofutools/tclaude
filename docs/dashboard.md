@@ -150,12 +150,14 @@ these virtual groups joins / leaves a group or promotes a conversation into
 an agent.
 
 Any **online** conversation is enrolled as an agent automatically — a
-terminal-launched session (`tclaude conv new`, a plain reattach) surfaces
-in **Ungrouped** on its own within a reaper sweep, the same way a web-UI
-spawn does, with no manual promote needed. The **promote** button is
-therefore mainly for *offline* past conversations you want back on the
-roster; a conversation you deliberately **retire** stays retired even
-while its pane is still running.
+terminal-launched session (`tclaude conv new`) surfaces in **Ungrouped**
+the moment it starts, the same way a web-UI spawn does, with no manual
+promote needed. (A session tclaude did not launch — a plain reattach, or
+a session predating this behaviour — is picked up by the daemon's online
+sweep within a reaper interval instead of instantly.) The **promote**
+button is therefore mainly for *offline* past conversations you want back
+on the roster; a conversation you deliberately **retire** stays retired
+even while its pane is still running.
 
 **Drag-and-drop.** Drag a member row onto another group's header to **move**
 it; hold **Ctrl** (**Cmd** on macOS) while dragging to **clone** it into the
