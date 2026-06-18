@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -10,42 +11,56 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// The dashboard mail client — a read-only introspection view over every
-// mailbox the daemon stores, so the operator can see what agents
+// The dashboard mail client — an introspection + cleanup view over
+// every mailbox the daemon stores, so the operator can see what agents
 // actually said to each other (and to the human) when something goes
-// wrong between them.
+// wrong between them, and prune that history.
 //
-// Two cookie-authed GET endpoints, both dashboard-only twins of data
-// the `tclaude agent inbox` CLI reads:
+// Read surfaces — cookie-authed GETs, dashboard-only twins of data the
+// `tclaude agent inbox` CLI reads:
 //
 //   GET /api/mailboxes        -> handleDashboardMailboxes
 //       Enumerates one mailbox per conv that has any agent-to-agent
-//       mail (plus every active agent, even with an empty mailbox) and
-//       the special "human" mailbox (the human.notify channel). Each
-//       carries in/out/unread counts and a recency timestamp for the
-//       sidebar.
+//       mail (plus every active agent, even with an empty mailbox), the
+//       special "human" mailbox (the human.notify channel), and the
+//       virtual "all" folder (every agent_messages row). Each carries
+//       in/out/unread counts and a recency timestamp for the sidebar.
 //
-//   GET /api/mailbox?id=<conv|human>  -> handleDashboardMailbox
-//       Returns the selected mailbox's messages — for an agent mailbox,
-//       its received + sent rows merged newest-first; for "human", the
-//       human_messages rows. Titles are resolved so the reading pane
-//       can render friendly sender/recipient names.
+//   GET /api/mailbox?id=<all|human|conv>  -> handleDashboardMailbox
+//       Returns the selected mailbox's messages — "all" is every row
+//       newest-first; an agent mailbox is its received + sent rows
+//       merged newest-first; "human" is the human_messages rows. Titles
+//       are resolved so the reading pane can render friendly names.
 //
-// These are *introspection* surfaces: viewing an agent mailbox never
-// mutates that agent's read-state (that would corrupt the agent's own
-// inbox view). Read/clear/delete actions remain only on the human
-// mailbox, reusing the existing /api/human-messages/* endpoints.
+// Mutation surfaces — cookie-authed POSTs. Viewing an agent mailbox
+// still never mutates that agent's read-state (that would corrupt the
+// agent's own inbox view); the read-state stays the agent's. But the
+// operator (whose cookie + Origin is the human-consent layer) may delete
+// the shared rows:
+//
+//   POST /api/mailbox/delete  {ids:[...]}    -> handleDashboardMailboxDelete
+//   POST /api/mailbox/wipe    {convs:[...]}  -> handleDashboardMailboxWipe
+//
+// The human folder keeps its own /api/human-messages/* mutation path
+// (its delete accepts an ids array for multi-select).
 //
 // Wired into the dashboard mux from registerDashboardEditRoutes.
 
 // humanMailboxID is the sentinel mailbox id for the human.notify
-// channel. Agent mailboxes are keyed by conv-id (a UUID), so this
-// reserved word never collides with a real conv.
-const humanMailboxID = "human"
+// channel. allMailboxID is the sentinel for the virtual "all messages"
+// folder — every agent_messages row, newest-first, across every conv.
+// Agent mailboxes are keyed by conv-id (a UUID), so these reserved words
+// never collide with a real conv.
+const (
+	humanMailboxID = "human"
+	allMailboxID   = "all"
+)
 
 func registerDashboardMailboxRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mailboxes", handleDashboardMailboxes)
 	mux.HandleFunc("/api/mailbox", handleDashboardMailbox)
+	mux.HandleFunc("POST /api/mailbox/delete", handleDashboardMailboxDelete)
+	mux.HandleFunc("POST /api/mailbox/wipe", handleDashboardMailboxWipe)
 }
 
 // dashboardMailbox is one sidebar entry. Kind is "human" or "agent".
@@ -96,10 +111,24 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	mailboxes := make([]dashboardMailbox, 0, len(convSet)+1)
+	mailboxes := make([]dashboardMailbox, 0, len(convSet)+2)
 
-	// The human.notify channel always leads the list — it is the
-	// operator's own folder, distinct from the agent-to-agent traffic.
+	// The virtual "all messages" folder leads the list — the
+	// chronological firehose of every agent-to-agent message, so the
+	// operator can read traffic across convs in one place. Its total is
+	// the distinct row count (not the In+Out sum the per-conv tallies
+	// produce). Unread is left 0: "unread" is a per-recipient notion that
+	// has no meaning for an aggregate view.
+	allTotal, _ := db.CountAgentMessages()
+	mailboxes = append(mailboxes, dashboardMailbox{
+		ID:    allMailboxID,
+		Kind:  "all",
+		Title: "All agent messages",
+		Total: allTotal,
+	})
+
+	// The human.notify channel comes next — it is the operator's own
+	// folder, distinct from the agent-to-agent traffic.
 	humanMsgs, humanUnread := buildHumanMessagesSnapshot()
 	mailboxes = append(mailboxes, dashboardMailbox{
 		ID:     humanMailboxID,
@@ -137,9 +166,10 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 
 	// Sort agent mailboxes by recency — newest mail on top, the way a
 	// mail client lists folders by last activity — then by title, then
-	// conv-id for a stable tiebreak. The human folder stays pinned first
-	// (mailboxes[0]); only the agent tail (mailboxes[1:]) is reordered.
-	agents := mailboxes[1:]
+	// conv-id for a stable tiebreak. The two virtual folders stay pinned
+	// at the head (mailboxes[0]=all, mailboxes[1]=human); only the agent
+	// tail (mailboxes[2:]) is reordered.
+	agents := mailboxes[2:]
 	sort.Slice(agents, func(i, j int) bool {
 		if agents[i].LastAt != agents[j].LastAt {
 			return agents[i].LastAt > agents[j].LastAt
@@ -214,6 +244,21 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if id == allMailboxID {
+		msgs, err := allMailboxMessages()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":       allMailboxID,
+			"kind":     "all",
+			"title":    "All agent messages",
+			"messages": msgs,
+		})
+		return
+	}
+
 	msgs, err := agentMailboxMessages(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -254,18 +299,82 @@ func humanMailboxMessages() []mailboxMessage {
 	return out
 }
 
-// agentMailboxMessages merges a conv's received (inbox) and sent
-// (outbox) agent_messages into one newest-first list, deduplicating the
-// rare self-addressed row that appears in both. Titles for the
-// counterpart conv(s) are resolved best-effort for the reading pane.
-func agentMailboxMessages(conv string) ([]mailboxMessage, error) {
+// mailboxDecorator memoizes the per-conv title lookups and group-name
+// resolution that turning a db.AgentMessage into a wire-shape
+// mailboxMessage needs. A two-agent thread repeats the same one or two
+// conv-ids across hundreds of rows, and the folder builders run on every
+// 2s refresh while a folder is open, so caching collapses thousands of
+// GetConvIndex reads into a handful. Shared by the agent-folder and
+// all-folder builders.
+type mailboxDecorator struct {
+	groupNames map[int64]string
+	titleCache map[string]string
+}
+
+func newMailboxDecorator() *mailboxDecorator {
 	groupNames := map[int64]string{}
 	if gs, err := db.ListAgentGroups(); err == nil {
 		for _, g := range gs {
 			groupNames[g.ID] = g.Name
 		}
 	}
+	return &mailboxDecorator{groupNames: groupNames, titleCache: map[string]string{}}
+}
 
+func (d *mailboxDecorator) titleOf(c string) string {
+	if c == "" {
+		return ""
+	}
+	if t, ok := d.titleCache[c]; ok {
+		return t
+	}
+	t := agent.TitleFor(c)
+	d.titleCache[c] = t
+	return t
+}
+
+func (d *mailboxDecorator) recipients(ids []string) []recipientLine {
+	if len(ids) == 0 {
+		return nil
+	}
+	ls := make([]recipientLine, 0, len(ids))
+	for _, id := range ids {
+		ls = append(ls, recipientLine{ConvID: id, Title: d.titleOf(id)})
+	}
+	return ls
+}
+
+// toMessage maps one stored row into the reading-pane shape. dir is the
+// direction relative to the folder being viewed ("in"/"out" for an agent
+// folder, "" for the aggregate "all" folder, which renders from→to).
+func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMessage {
+	mm := mailboxMessage{
+		ID:           m.ID,
+		Direction:    dir,
+		FromConv:     m.FromConv,
+		FromTitle:    d.titleOf(m.FromConv),
+		ToConv:       m.ToConv,
+		ToTitle:      d.titleOf(m.ToConv),
+		ToRecipients: d.recipients(m.ToRecipients),
+		CcRecipients: d.recipients(m.CcRecipients),
+		Group:        d.groupNames[m.GroupID],
+		Subject:      m.Subject,
+		Body:         m.Body,
+		CreatedAt:    m.CreatedAt.Format(time.RFC3339),
+		Read:         !m.ReadAt.IsZero(),
+		ParentID:     m.ParentID,
+	}
+	if !m.DeliveredAt.IsZero() {
+		mm.DeliveredAt = m.DeliveredAt.Format(time.RFC3339)
+	}
+	return mm
+}
+
+// agentMailboxMessages merges a conv's received (inbox) and sent
+// (outbox) agent_messages into one newest-first list, deduplicating the
+// rare self-addressed row that appears in both. Titles for the
+// counterpart conv(s) are resolved best-effort for the reading pane.
+func agentMailboxMessages(conv string) ([]mailboxMessage, error) {
 	received, err := db.ListAgentMessagesForConv(conv, mailboxMessagesLimit)
 	if err != nil {
 		return nil, err
@@ -275,33 +384,7 @@ func agentMailboxMessages(conv string) ([]mailboxMessage, error) {
 		return nil, err
 	}
 
-	// Memoize title lookups: a two-agent thread repeats the same one or
-	// two conv-ids across hundreds of rows, and this runs on every 2s
-	// refresh while the folder is open, so caching collapses thousands
-	// of GetConvIndex reads into a handful.
-	titleCache := map[string]string{}
-	titleOf := func(c string) string {
-		if c == "" {
-			return ""
-		}
-		if t, ok := titleCache[c]; ok {
-			return t
-		}
-		t := agent.TitleFor(c)
-		titleCache[c] = t
-		return t
-	}
-	decorate := func(ids []string) []recipientLine {
-		if len(ids) == 0 {
-			return nil
-		}
-		ls := make([]recipientLine, 0, len(ids))
-		for _, id := range ids {
-			ls = append(ls, recipientLine{ConvID: id, Title: titleOf(id)})
-		}
-		return ls
-	}
-
+	dec := newMailboxDecorator()
 	out := make([]mailboxMessage, 0, len(received)+len(sent))
 	seen := map[int64]struct{}{}
 	add := func(m *db.AgentMessage, dir string) {
@@ -309,26 +392,7 @@ func agentMailboxMessages(conv string) ([]mailboxMessage, error) {
 			return
 		}
 		seen[m.ID] = struct{}{}
-		mm := mailboxMessage{
-			ID:           m.ID,
-			Direction:    dir,
-			FromConv:     m.FromConv,
-			FromTitle:    titleOf(m.FromConv),
-			ToConv:       m.ToConv,
-			ToTitle:      titleOf(m.ToConv),
-			ToRecipients: decorate(m.ToRecipients),
-			CcRecipients: decorate(m.CcRecipients),
-			Group:        groupNames[m.GroupID],
-			Subject:      m.Subject,
-			Body:         m.Body,
-			CreatedAt:    m.CreatedAt.Format(time.RFC3339),
-			Read:         !m.ReadAt.IsZero(),
-			ParentID:     m.ParentID,
-		}
-		if !m.DeliveredAt.IsZero() {
-			mm.DeliveredAt = m.DeliveredAt.Format(time.RFC3339)
-		}
-		out = append(out, mm)
+		out = append(out, dec.toMessage(m, dir))
 	}
 	for _, m := range received {
 		add(m, "in")
@@ -346,4 +410,81 @@ func agentMailboxMessages(conv string) ([]mailboxMessage, error) {
 		return out[i].ID > out[j].ID
 	})
 	return out, nil
+}
+
+// allMailboxMessages returns every agent_messages row newest-first for
+// the virtual "all" folder. Direction is left empty — there is no
+// "self" to be relative to — and the reading list renders each row as
+// from→to. Already ordered by the DB (id DESC), so no re-sort here.
+func allMailboxMessages() ([]mailboxMessage, error) {
+	rows, err := db.ListAllAgentMessages(mailboxMessagesLimit)
+	if err != nil {
+		return nil, err
+	}
+	dec := newMailboxDecorator()
+	out := make([]mailboxMessage, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, dec.toMessage(m, ""))
+	}
+	return out, nil
+}
+
+// handleDashboardMailboxDelete serves POST /api/mailbox/delete — hard-
+// deletes the listed agent_messages rows by id ({"ids":[...]}). The
+// operator's per-message / multi-select delete on the Messages tab.
+// Unconditional (the cookie + Origin gate is the human-consent layer,
+// same as the other dashboard mutations). Cookie-authed.
+func handleDashboardMailboxDelete(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	// A list of ids — cap the body generously above the
+	// mailboxMessagesLimit-sized "select all then delete" case but well
+	// below anything that could blow up memory.
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	var body struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
+		return
+	}
+	if len(body.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "ids is required (one or more message ids)")
+		return
+	}
+	n, err := db.DeleteAgentMessagesByIDs(body.IDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}
+
+// handleDashboardMailboxWipe serves POST /api/mailbox/wipe — hard-
+// deletes every agent_messages row touching any of the listed convs
+// ({"convs":[...]}), sender or recipient. The operator's "wipe selected
+// mailboxes" bulk action. Cookie-authed.
+func handleDashboardMailboxWipe(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	var body struct {
+		Convs []string `json:"convs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
+		return
+	}
+	if len(body.Convs) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "convs is required (one or more mailbox conv-ids)")
+		return
+	}
+	n, err := db.WipeAgentMessagesForConvs(body.Convs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
