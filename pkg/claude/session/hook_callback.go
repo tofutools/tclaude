@@ -841,10 +841,26 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// foreign-process SessionStarts already returned early above, so they
 	// cannot reach here.
 	//
+	// Restricted to a genuine fresh launch (source startup / none) via
+	// !isConvTransitionStart: a /clear, an interactive /resume switch, or
+	// a compaction also fires a SessionStart, but those are in-process
+	// conversation TRANSITIONS, not a process booting — and the
+	// conv-advance/migration block above already decided their
+	// enrollment correctly (an agent's identity, including its
+	// enrollment, migrates onto the new conv-id; a plain conversation's
+	// conv-id rotation just advances the session row and stays plain).
+	// Without this guard the post-/clear SessionStart(source=clear) would
+	// promote a never-an-agent plain conversation to an agent on the
+	// freshly rotated conv-id — the #407 regression
+	// (TestClearRotation_PlainConversationNotPromotedToAgent). The reaper
+	// sweep still enrolls any genuinely live transitioned conv as the
+	// backstop, exactly as it does for sessions tclaude did not launch.
+	//
 	// INSERT OR IGNORE makes this idempotent and retirement-safe: a conv
 	// the migration above already enrolled, or one the human deliberately
 	// retired, is left untouched (a retired conv is never un-retired).
-	if input.HookEventName == "SessionStart" && envSessionID != "" && state.ConvID != "" {
+	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) &&
+		envSessionID != "" && state.ConvID != "" {
 		if err := db.EnrollAgent(state.ConvID, "session-start"); err != nil {
 			slog.Warn("failed to enroll launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
