@@ -213,6 +213,86 @@ function bindFilter(tab) {
   }
 }
 
+// --- focus preservation across the 2s re-render ----------------------
+//
+// refresh() rebuilds whole tab bodies with innerHTML, which detaches
+// whatever the keyboard user had focused — a member-row button, the ⚙
+// cog, a group <summary> — and drops focus to <body>. Tab-cycling the
+// main UI then snaps back to the top of the page on every poll. We
+// can't just suspend the refresh while the user navigates the way we do
+// for a modal or a drag (those have an unambiguous open/close or
+// dragstart/dragend signal; "the user is reading with the keyboard" has
+// none), so instead we preserve focus ACROSS the re-render: snapshot a
+// stable signature of the focused control, run the render, then
+// re-focus the matching control in the freshly-built DOM.
+//
+// The signature is the element's tag plus the identifying data-*
+// attributes every actionable control the renderers emit already
+// carries (data-act + data-conv / data-group / data-id / …); a
+// <summary> is keyed by its parent <details data-group-key>. A few
+// controls share a signature — every row's ⚙ cog is just
+// button[data-act="row-menu"] — so we also record the focused control's
+// index among its same-signature peers and restore to that index. In
+// the steady-state poll the snapshot is identical between ticks, so
+// index N maps back to the very same row; the worst case under a
+// concurrent add/remove is focus landing on an adjacent control, still
+// far better than snapping to the top. A null signature (focus was on a
+// static element the render never rebuilds, or on nothing) skips
+// restoration entirely.
+const FOCUS_SIG_ATTRS = [
+  'data-act', 'data-conv', 'data-group', 'data-id',
+  'data-tab', 'data-subtab', 'data-goto-tab', 'data-copy',
+];
+
+function focusSignature(el) {
+  if (!el || el === document.body || el === document.documentElement) return null;
+  // A group / details header carries no identifying attribute of its
+  // own; key it off the parent <details data-group-key>.
+  if (el.tagName === 'SUMMARY') {
+    const d = el.parentElement;
+    const key = d && d.getAttribute && d.getAttribute('data-group-key');
+    return key ? `details[data-group-key="${CSS.escape(key)}"] > summary` : null;
+  }
+  const parts = [];
+  for (const a of FOCUS_SIG_ATTRS) {
+    const v = el.getAttribute(a);
+    if (v !== null) parts.push(`[${a}="${CSS.escape(v)}"]`);
+  }
+  if (!parts.length) return null;
+  return el.tagName.toLowerCase() + parts.join('');
+}
+
+// captureFocus reads the active element's restorable identity right
+// before a re-render. Returns null when there is nothing worth
+// restoring (no focused control, or a control with no stable identity).
+function captureFocus() {
+  const el = document.activeElement;
+  const sig = focusSignature(el);
+  if (!sig) return null;
+  const peers = document.querySelectorAll(sig);
+  let idx = 0;
+  for (let i = 0; i < peers.length; i++) {
+    if (peers[i] === el) { idx = i; break; }
+  }
+  return { sig, idx };
+}
+
+// restoreFocus re-focuses the control matching a captureFocus() token —
+// but ONLY when the re-render actually stole focus (activeElement fell
+// back to <body>). If the user has since moved focus into a modal, an
+// input, or any element the render left intact, we leave it alone.
+// preventScroll keeps the viewport from lurching when the restored
+// control happens to be scrolled off-screen.
+function restoreFocus(token) {
+  if (!token) return;
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== document.documentElement) return;
+  const peers = document.querySelectorAll(token.sig);
+  if (!peers.length) return;
+  const el = peers[Math.min(token.idx, peers.length - 1)];
+  if (el) el.focus({ preventScroll: true });
+}
+
 export async function refresh() {
   if (refreshSuspended()) {
     // An inline-edit input, a modal, or a drag is in progress;
@@ -236,6 +316,11 @@ export async function refresh() {
     // applied to the old snapshot; the drag/modal teardown re-runs
     // refresh() when it finishes.
     if (refreshSuspended()) return;
+    // Snapshot the keyboard focus before the renders below replace the
+    // tab bodies wholesale, so a Tab-navigating user isn't bounced to
+    // the top of the page on every poll. Restored at the end once the
+    // fresh DOM is in place.
+    const focusToken = captureFocus();
     setLastSnapshot(data);
     $('#meta').textContent = data.popup_base + ' · refreshed ' + new Date(data.generated_at).toLocaleTimeString();
     // Refresh the proactive-grant blocklist hint from the snapshot
@@ -275,6 +360,9 @@ export async function refresh() {
     // keeps the dependency one-way — refresh.js doesn't have to
     // import any feature module that wants to react to a tick.
     document.dispatchEvent(new CustomEvent('tclaude:snapshot'));
+    // Re-focus whatever the keyboard user had selected before the
+    // re-render detached it. No-op when focus was never stolen.
+    restoreFocus(focusToken);
   } catch (e) {
     showStatus('snapshot failed: ' + (e.message || e), true);
   }
