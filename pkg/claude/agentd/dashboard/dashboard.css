@@ -1089,11 +1089,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
 .perm-row-eff.owner { color: #d29922; }
-/* 👑 marker on owner-conferred slugs — in the slug label + the Slugs tab. */
-.owner-badge {
-  font-size: 10px; color: #d29922; white-space: nowrap;
-  border: 1px solid #4d3a17; border-radius: 4px; padding: 0 4px; margin-left: 6px;
-}
+/* The 👑 owner-conferred markers reuse the existing .owner-badge pill
+   (defined near .tag) so the slug label, Slugs tab and group-member
+   badges share one consistent style. */
 .perm-edit-owner-note {
   font-size: 11px; color: #e3b341; line-height: 1.4;
   background: #1c1606; border: 1px solid #4d3a17; border-radius: 6px;
