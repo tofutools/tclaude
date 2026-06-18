@@ -129,6 +129,25 @@ function bindSelectTitles(root) {
     if (e.target && e.target.tagName === 'SELECT') syncSelectTitle(e.target);
   });
 }
+// bindModalSubmitHotkey makes Ctrl/Cmd+Enter anywhere inside a modal
+// fire its primary submit button — a keyboard alternative to mousing over
+// to click it. Both modifiers are accepted on every platform (Cmd+Enter
+// on macOS, Ctrl+Enter elsewhere), so it just works without sniffing the
+// OS. It clicks the real <button>, so a disabled submit — an in-flight
+// request, or a form that isn't valid yet (e.g. reincarnate force-mode
+// with no follow-up) — is a no-op, the same guard the mouse path already
+// respects. Plain Enter is left alone so the multi-line textareas (the
+// init-message / follow-up fields) keep inserting newlines. Scoped to the
+// modal element so it only fires while focus is inside the open dialog.
+// Matches the existing Ctrl/Cmd+Enter convention in the edit-member modal.
+function bindModalSubmitHotkey(modalEl, submitBtn) {
+  if (!modalEl || !submitBtn) return;
+  modalEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    if (!submitBtn.disabled) submitBtn.click();
+  });
+}
 function onlineDot(online) {
   return online
     ? '<span class="online" title="online">●</span>'
@@ -940,7 +959,7 @@ function groupOfflineToggleHTML(name) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
+  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
   harnessCanRename,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
