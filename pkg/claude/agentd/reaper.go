@@ -92,36 +92,32 @@ func startSessionReaper(stop <-chan struct{}) {
 	}()
 }
 
-// reconcileOnlineEnrollment enrolls every conv with a live tmux
-// session at daemon startup. The v29→v30 migration backfills agents
-// from the durable agentic tables (groups, grants, succession, …), but
-// a conv that was merely online and otherwise unrecorded — an
-// ungrouped agent predating the enrollment feature — can't be
-// tmux-probed from inside a SQL migration. This one-shot sweep closes
-// that gap. Idempotent: EnrollAgent is INSERT OR IGNORE, so a conv the
-// migration already enrolled (or one already retired) is left alone.
-func reconcileOnlineEnrollment() {
-	sessions, err := db.ListSessions()
-	if err != nil {
-		slog.Warn("enrollment reconcile: list sessions failed", "error", err)
+// enrollOnlineSession records a live session's conversation as an agent
+// so every terminal-launched conversation — `tclaude conv new`, a plain
+// reattached session, anything with a running pane — surfaces on the
+// dashboard (in its group, or the virtual "Ungrouped" group) the same
+// way a web-UI spawn does, without first having to be put in a group,
+// granted a permission, or run a `tclaude agent` command.
+//
+// It is called from every reaper tick, so enrollment is continuous and
+// self-healing: a conv that comes online after daemon startup is picked
+// up on the next sweep (≤ one reaper interval), not only at boot. The
+// reaper's first tick fires immediately at startup, so this also closes
+// the gap the v29→v30 migration can't — it backfills agents from the
+// durable agentic tables (groups, grants, succession, …) but cannot
+// tmux-probe an online-but-otherwise-unrecorded session from inside a
+// SQL migration.
+//
+// Idempotent and retirement-safe: EnrollAgent is INSERT OR IGNORE, so a
+// conv that is already enrolled is left untouched and one the human
+// deliberately retired is never un-retired — a retired agent whose pane
+// is still alive stays retired.
+func enrollOnlineSession(st *session.SessionState) {
+	if st.ConvID == "" {
 		return
 	}
-	enrolled := 0
-	for _, s := range sessions {
-		if s.ConvID == "" || s.TmuxSession == "" {
-			continue
-		}
-		if !session.IsTmuxSessionAlive(s.TmuxSession) {
-			continue
-		}
-		if err := db.EnrollAgent(s.ConvID, "online-reconcile"); err != nil {
-			slog.Warn("enrollment reconcile: enroll failed", "conv", s.ConvID, "error", err)
-			continue
-		}
-		enrolled++
-	}
-	if enrolled > 0 {
-		slog.Info("enrollment reconcile: enrolled online agents", "count", enrolled)
+	if err := db.EnrollAgent(st.ConvID, "online-reconcile"); err != nil {
+		slog.Warn("reaper: enroll online session failed", "conv", st.ConvID, "error", err)
 	}
 }
 
@@ -146,6 +142,10 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		session.RefreshSessionStatus(st) // tmux→PID; sets exited iff both gone
 		if st.Status != session.StatusExited {
 			aliveNow[st.ID] = true
+			// A live session is a running agent — enroll it so every
+			// terminal-launched conversation surfaces on the dashboard
+			// like a web-UI spawn does. See enrollOnlineSession.
+			enrollOnlineSession(st)
 			continue
 		}
 		// Looks dead. A row created within the grace window may just be

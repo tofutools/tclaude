@@ -490,12 +490,16 @@ function renderPermissions(perm, agents) {
 function renderSlugs(slugs) {
   if (!slugs || !slugs.length) return '<div class="empty">No slugs registered.</div>';
   return `
+    <div class="muted" style="font-size:11px;margin-bottom:6px">
+      👑 = group ownership confers this slug for owned groups / their members, without an explicit grant (a per-agent deny still suppresses it).
+    </div>
     <table>
-      <thead><tr><th>Slug</th><th>Description</th></tr></thead>
+      <thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead>
       <tbody>
         ${slugs.map(s => `
           <tr>
             <td><span class="slug">${esc(s.slug)}</span></td>
+            <td>${s.owner_implied ? '<span class="owner-badge" title="Conferred by group ownership">👑</span>' : '<span class="muted">—</span>'}</td>
             <td>${esc(s.description || '')}</td>
           </tr>
         `).join('')}
@@ -658,11 +662,19 @@ function usageBar(pct) {
 // mini bar, percent, and the remaining-time hint.
 function usageWindowHTML(label, win) {
   const pct = win.pct || 0;
+  // Always emit the .urem column, even when a window has no remaining-time
+  // text. In the two-line Claude/Codex layout .urem carries a fixed min-width
+  // so the windows line up field-for-field between the rows; a harness idle
+  // long enough that a window has reset reports no reset time (remaining ""),
+  // and dropping the span entirely collapsed its column and slid every
+  // following token left — an empty Codex 5h hint pulled its 7d window out
+  // from under Claude's. An empty span keeps the reserved width.
+  //
   // No leading space before .urem: .uw is a flex row whose `gap` owns the
   // spacing, and a literal space would become a stray anonymous flex item
   // that throws off the monospace column widths in the two-line layout.
-  const rem = win.remaining
-    ? '<span class="urem">(' + esc(win.remaining) + ')</span>' : '';
+  const remText = win.remaining ? '(' + esc(win.remaining) + ')' : '';
+  const rem = '<span class="urem">' + remText + '</span>';
   return '<span class="uw"><span class="ulabel">' + label + '</span>'
     + '<span class="ubar">' + usageBar(pct) + '</span>'
     + '<span class="upct">' + Math.round(pct) + '%</span>' + rem + '</span>';

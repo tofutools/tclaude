@@ -400,3 +400,74 @@ func TestEnrollment_ReinstateThenJoinGroup(t *testing.T) {
 	assert.Equal(t, db.EnrollmentActive, state,
 		"reinstated + joined agent must be active-enrolled, not a retired ghost")
 }
+
+// Scenario (the feature): a regular terminal-launched conversation —
+// `tclaude conv new`, not a web-UI spawn — becomes an agent on its own.
+// It has a live tmux pane but was never put in a group, granted a
+// permission, or made to run a `tclaude agent` command, so nothing has
+// enrolled it: it starts life as a mere promotion candidate. The session
+// reaper's continuous liveness sweep must enroll it, so it surfaces on
+// the dashboard as an agent in the virtual "Ungrouped" group — exactly
+// the way a web-UI spawn would.
+func TestEnrollment_LiveTerminalConvBecomesUngroupedAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "trml-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "terminal-launched")
+	f.HaveAliveSession(conv, "spwn-trml", "tmux-trml", "/tmp/trml")
+
+	// Pre: a live but un-enrolled conv is a promotion candidate, not an
+	// agent, and not in the Ungrouped group.
+	pre := fetchDashSnapshot(t, mux)
+	require.True(t, convInSnap(pre.Conversations, conv),
+		"pre: a live un-enrolled conv is a promotion candidate")
+	require.False(t, agentInSnap(pre.Agents, conv), "pre: not an agent yet")
+	require.False(t, ungroupedHas(pre, conv), "pre: not in the Ungrouped group yet")
+
+	// One reaper sweep stands in for the daemon's continuous online
+	// enrollment. A live session is enrolled, not reaped.
+	reaped := agentd.NewSessionReaperForTest(0, func(string, string) {}).Tick()
+	require.Equal(t, 0, reaped, "a live session is enrolled, never reaped")
+
+	state, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, state,
+		"a live terminal-launched conv must be enrolled as an active agent")
+
+	// Post: on the roster, surfaced in the virtual Ungrouped group, and
+	// no longer a mere promotion candidate.
+	post := fetchDashSnapshot(t, mux)
+	assert.True(t, agentInSnap(post.Agents, conv), "post: on the agent roster")
+	assert.True(t, ungroupedHas(post, conv),
+		"post: a live ungrouped agent surfaces in the virtual Ungrouped group")
+	assert.False(t, convInSnap(post.Conversations, conv),
+		"post: no longer a promotion candidate — it's an agent now")
+}
+
+// Scenario: the human deliberately retired an agent whose pane is still
+// alive. The reaper's continuous online enrollment must NOT resurrect it
+// — EnrollAgent is INSERT OR IGNORE and never un-retires. A retired
+// agent stays retired even while its session keeps running, so the human
+// can permanently demote a still-open conversation.
+func TestEnrollment_ReaperDoesNotResurrectRetiredLiveAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "retd-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "retired-but-alive")
+	f.HaveAliveSession(conv, "spwn-retd", "tmux-retd", "/tmp/retd")
+	f.HaveRetiredAgent(conv) // enrolled, then retired by the human
+
+	preState, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	require.Equal(t, db.EnrollmentRetired, preState, "pre: agent is retired")
+
+	agentd.NewSessionReaperForTest(0, func(string, string) {}).Tick()
+
+	postState, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, postState,
+		"a retired agent with a live pane must stay retired across a reaper sweep")
+}

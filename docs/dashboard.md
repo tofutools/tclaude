@@ -149,6 +149,14 @@ conversations, each with a **promote** button). Dragging a row onto or off
 these virtual groups joins / leaves a group or promotes a conversation into
 an agent.
 
+Any **online** conversation is enrolled as an agent automatically — a
+terminal-launched session (`tclaude conv new`, a plain reattach) surfaces
+in **Ungrouped** on its own within a reaper sweep, the same way a web-UI
+spawn does, with no manual promote needed. The **promote** button is
+therefore mainly for *offline* past conversations you want back on the
+roster; a conversation you deliberately **retire** stays retired even
+while its pane is still running.
+
 **Drag-and-drop.** Drag a member row onto another group's header to **move**
 it; hold **Ctrl** (**Cmd** on macOS) while dragging to **clone** it into the
 target group instead, leaving the original in place. A hint pill follows the

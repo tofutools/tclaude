@@ -60,6 +60,10 @@ type permissionsState struct {
 type permSlugEntry struct {
 	Slug        string `json:"slug"`
 	Description string `json:"description"`
+	// OwnerImplied mirrors agentd.PermSlug.OwnerImplied: group ownership
+	// confers this slug structurally (the owner-bypass), so an owner holds
+	// it for owned groups / their members without an explicit grant.
+	OwnerImplied bool `json:"owner_implied,omitempty"`
 }
 
 type permissionsMutateResp struct {
@@ -223,17 +227,20 @@ func renderEffectivePerms(p *permissionsLsParams, state permissionsState, stdout
 	if res.Row != nil {
 		title = DisplayTitle(res.Row)
 	}
-	effective, source := effectivePermsFor(state, res.ConvID, title)
+	ownerImplied, isOwner := ownerImpliedSlugsFor(res.ConvID)
+	effective, ownerAdded, source := effectivePermsFor(state, res.ConvID, ownerImplied, isOwner)
 	sort.Strings(effective)
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
+		sort.Strings(ownerAdded)
 		if err := enc.Encode(map[string]any{
-			"target":     p.Target,
-			"target_key": res.ConvID,
-			"title":      title,
-			"effective":  effective,
-			"source":     source,
+			"target":        p.Target,
+			"target_key":    res.ConvID,
+			"title":         title,
+			"effective":     effective,
+			"source":        source,
+			"owner_implied": ownerAdded,
 		}); err != nil {
 			return rcIOFailure
 		}
@@ -244,27 +251,81 @@ func renderEffectivePerms(p *permissionsLsParams, state permissionsState, stdout
 		fmt.Fprintln(stdout, "  (none)")
 		return rcOK
 	}
+	ownerSet := map[string]bool{}
+	for _, s := range ownerAdded {
+		ownerSet[s] = true
+	}
 	for _, s := range effective {
-		fmt.Fprintf(stdout, "  %s\n", s)
+		if ownerSet[s] {
+			fmt.Fprintf(stdout, "  %s  (via ownership)\n", s)
+		} else {
+			fmt.Fprintf(stdout, "  %s\n", s)
+		}
 	}
 	return rcOK
+}
+
+// ownerImpliedSlugsFor reports the owner-conferred slug set and whether
+// convID owns at least one group. Group ownership is read straight from
+// the shared SQLite (db.ListGroupsOwnedBy); the owner-conferred slug set
+// comes from the daemon's registry (the daemon is the source of truth, and
+// the agent package can't import agentd). On any error it degrades to
+// (nil, false) — owner perms simply go un-annotated rather than failing
+// the listing.
+func ownerImpliedSlugsFor(convID string) ([]string, bool) {
+	owned, err := db.ListGroupsOwnedBy(convID)
+	if err != nil || len(owned) == 0 {
+		return nil, false
+	}
+	var slugs []permSlugEntry
+	if err := DaemonGet("/v1/permissions/slugs", &slugs); err != nil {
+		return nil, true
+	}
+	var out []string
+	for _, s := range slugs {
+		if s.OwnerImplied {
+			out = append(out, s.Slug)
+		}
+	}
+	return out, true
 }
 
 // effectivePermsFor returns the slug list the daemon would consult for
 // this agent. Per-conv overrides live in SQLite keyed by full conv-id:
 // a grant override ADDS a slug on top of the global defaults, a deny
-// override SUBTRACTS one. So the effective set is
-// (defaults ∪ grants) − denies.
+// override SUBTRACTS one. Group ownership ADDS the owner-conferred slugs
+// (ownerImplied, folded in only when isOwner) — the structural owner-
+// bypass, which a deny still suppresses. So the effective set is
+// ((defaults ∪ grants ∪ owner-implied) − denies).
+//
+// ownerAdded reports the subset contributed SOLELY by ownership (not
+// already held via defaults/grants and not denied), so the caller can
+// annotate those rows "(via ownership)".
 //
 // The returned label names the matched sources ("defaults",
-// "defaults+grants:<conv>", with " −denies" appended when any deny
-// override applies).
-func effectivePermsFor(state permissionsState, convID, _ string) ([]string, string) {
-	effective := append([]string{}, state.Defaults...)
-	source := "defaults"
+// "defaults+grants:<conv>", "+owner", with " −denies" appended when any
+// deny override applies).
+func effectivePermsFor(state permissionsState, convID string, ownerImplied []string, isOwner bool) (effective, ownerAdded []string, source string) {
+	effective = append([]string{}, state.Defaults...)
+	source = "defaults"
 	if grants, ok := state.Grants[convID]; ok && len(grants) > 0 {
 		effective = mergeUnique(effective, grants)
 		source = "defaults+grants:" + convID
+	}
+	if isOwner && len(ownerImplied) > 0 {
+		held := map[string]bool{}
+		for _, s := range effective {
+			held[s] = true
+		}
+		for _, s := range ownerImplied {
+			if !held[s] {
+				ownerAdded = append(ownerAdded, s)
+			}
+		}
+		if len(ownerAdded) > 0 {
+			effective = mergeUnique(effective, ownerImplied)
+			source += "+owner"
+		}
 	}
 	denied := map[string]bool{}
 	for slug, effect := range state.Overrides[convID] {
@@ -273,16 +334,25 @@ func effectivePermsFor(state permissionsState, convID, _ string) ([]string, stri
 		}
 	}
 	if len(denied) > 0 {
-		kept := make([]string, 0, len(effective))
-		for _, s := range effective {
-			if !denied[s] {
-				kept = append(kept, s)
-			}
-		}
-		effective = kept
+		effective = dropDenied(effective, denied)
+		ownerAdded = dropDenied(ownerAdded, denied)
 		source += " −denies"
 	}
-	return effective, source
+	return effective, ownerAdded, source
+}
+
+// dropDenied returns slugs with every denied entry removed, preserving
+// order. Shared by the effective set and its owner-conferred projection so
+// a deny override suppresses a slug in both — deny is authoritative over
+// the owner-bypass, mirroring the daemon's precedence.
+func dropDenied(slugs []string, denied map[string]bool) []string {
+	kept := make([]string, 0, len(slugs))
+	for _, s := range slugs {
+		if !denied[s] {
+			kept = append(kept, s)
+		}
+	}
+	return kept
 }
 
 func mergeUnique(a, b []string) []string {
@@ -473,12 +543,18 @@ func runPermissionsSlugs(p *permissionsSlugsParams, stdout, stderr io.Writer) in
 	}
 	tbl := table.New(
 		table.Column{Header: "SLUG", MinWidth: 12, Weight: 0.5, Truncate: true},
+		table.Column{Header: "OWNER", Width: 5},
 		table.Column{Header: "DESCRIPTION", MinWidth: 20, Weight: 1.5, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, s := range slugs {
-		tbl.AddRow(table.Row{Cells: []string{s.Slug, s.Description}})
+		owner := ""
+		if s.OwnerImplied {
+			owner = "✔"
+		}
+		tbl.AddRow(table.Row{Cells: []string{s.Slug, owner, s.Description}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
+	fmt.Fprintln(stdout, "\nOWNER ✔ = group ownership confers this slug for owned groups / their members, without an explicit grant (a per-agent deny still suppresses it).")
 	return rcOK
 }
