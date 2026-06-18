@@ -6,14 +6,13 @@
 
 import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
 import { renderGroupsTab, renderSudoTab } from './tabs.js';
-import { toggleMessageCollapse } from './render.js';
 import { dashPrefs } from './prefs.js';
 import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
 import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openGroupContextModal } from './modal-templates.js';
-import { openLinkModal } from './modal-link-wt.js';
+import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -26,6 +25,7 @@ import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   resumeAgentReq, retireConfirm, retireToast, shutdownConfirm, stopAgentReq, termDirModal,
+  showAccessTab,
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 
@@ -389,14 +389,13 @@ function bindRowActions() {
           return;
         }
         case 'sudo-manage': {
-          // Click on the 🔓 badge: switch to the Sudo tab pre-
-          // filtered to this agent so the human can revoke specific
+          // Click on the 🔓 badge: open the Access tab's Sudo sub-view
+          // pre-filtered to this agent so the human can revoke specific
           // grants without scrolling through unrelated rows.
           const filterInput = $('#filter-sudo');
           filterInput.value = shortId(conv);
           try { dashPrefs.setItem('tclaude.dash.filter.sudo', filterInput.value); } catch (_) {}
-          $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'sudo'));
-          $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-sudo'));
+          showAccessTab('sudo');
           renderSudoTab();
           return;
         }
@@ -1196,6 +1195,12 @@ function bindRowActions() {
           openLinkModal({ mode: 'create', preset: { from } });
           return;
         }
+        case 'links-manage': {
+          // From a group-header link chip: open the full cross-group
+          // Links… management overlay (the former Links tab).
+          openLinksManageModal();
+          return;
+        }
         case 'link-edit': {
           const id = btn.getAttribute('data-id');
           const from = btn.getAttribute('data-from') || '';
@@ -1307,12 +1312,6 @@ function bindRowActions() {
           if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
           toast('message deleted');
           refresh();
-          return;
-        }
-        case 'msg-toggle': {
-          // Pure client-side view state — expand/collapse one card. No
-          // daemon round-trip; the override survives the 2s re-render.
-          toggleMessageCollapse(btn.getAttribute('data-id'));
           return;
         }
         case 'row-menu':

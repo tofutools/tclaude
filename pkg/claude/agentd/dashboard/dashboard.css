@@ -36,30 +36,120 @@ nav button:hover { color: #d4d4d4; }
    never hide and a bright-red `0` would always show. This restores
    hide-at-0; the red badge then appears only when unread > 0. */
 .tab-badge[hidden] { display: none; }
-.msg-card {
-  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
-  padding: 10px 14px; margin-bottom: 8px;
+
+/* === Messages tab — mail client (mail.js) ===
+   Three columns: a mailbox sidebar, the selected folder's message list,
+   and a reading pane. A CSS grid so the three panes share one scroll
+   container and the reader gets the remaining width. */
+.mail-client {
+  display: grid;
+  grid-template-columns: 240px minmax(260px, 1fr) minmax(320px, 1.4fr);
+  gap: 10px;
+  /* Fill the viewport below the filter bar; each pane scrolls itself. */
+  height: calc(100vh - 150px);
+  min-height: 320px;
 }
-.msg-card.msg-unread { border-left: 3px solid #58a6ff; }
-.msg-card.msg-collapsed { padding-bottom: 8px; }
-/* The whole header toggles collapse — make it read as clickable. */
-.msg-head { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
-.msg-caret { color: #7d8590; font-size: 10px; width: 10px; display: inline-block; text-align: center; }
-.msg-head:hover .msg-caret { color: #d4d4d4; }
-/* Collapsed one-liner: subject or first body line, ellipsised at width. */
-.msg-preview { color: #8b949e; margin-top: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.msg-dot { color: #58a6ff; font-size: 10px; }
-.msg-from { font-weight: 600; color: #d4d4d4; }
-.msg-group { color: #7d8590; }
-.msg-id { color: #7d8590; font-family: ui-monospace, monospace; font-size: 11px; }
-.msg-time { color: #7d8590; font-size: 12px; }
-.msg-subject { font-weight: 600; color: #d4d4d4; margin-top: 6px; }
-.msg-body { color: #c9d1d9; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
-.msg-actions { margin-top: 8px; display: flex; gap: 6px; }
-.msg-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+.mail-sidebar, .mail-list, .mail-reader {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  overflow-y: auto;
+}
+.mail-sidebar { padding: 6px; }
+.mail-list { padding: 6px; }
+.mail-reader { padding: 14px 16px; }
+
+/* Sidebar mailbox buttons */
+.mailbox {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  background: none; border: 1px solid transparent; border-radius: 5px;
+  padding: 7px 8px; margin: 0 0 2px; cursor: pointer;
+  color: #c9d1d9; font-size: 13px; text-align: left;
+}
+.mailbox:hover { background: #1c2330; border-color: #2a3340; }
+.mailbox.active { background: #1f6feb22; border-color: #1f6feb; }
+.mailbox-icon { width: 16px; text-align: center; flex: 0 0 auto; }
+.mailbox-name {
+  flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mailbox.has-unread .mailbox-name { font-weight: 600; color: #f0f6fc; }
+.mailbox-count {
+  flex: 0 0 auto; color: #7d8590; font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+.mailbox-unread {
+  flex: 0 0 auto; background: #1f6feb; color: #fff; border-radius: 9px;
+  font-size: 10px; line-height: 1; padding: 3px 6px; font-weight: 600;
+}
+.mail-dot.online { color: #3fb950; font-size: 9px; }
+.mail-dot.offline { color: #484f58; font-size: 9px; }
+
+/* Message list rows */
+.mail-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%;
+  background: none; border: 1px solid transparent; border-radius: 5px;
+  border-left: 3px solid transparent;
+  padding: 7px 9px; margin: 0 0 2px; cursor: pointer; text-align: left;
+}
+.mail-row:hover { background: #1c2330; border-color: #2a3340; }
+.mail-row.active { background: #1f6feb22; border-color: #1f6feb; }
+.mail-row.unread { border-left-color: #58a6ff; }
+.mail-row.unread .mail-row-subject { color: #f0f6fc; font-weight: 600; }
+.mail-row-top { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.mail-row-dot { color: #58a6ff; font-size: 9px; flex: 0 0 auto; }
+.mail-dir { font-size: 12px; flex: 0 0 auto; }
+.mail-dir.in { color: #3fb950; }
+.mail-dir.out { color: #d29922; }
+.mail-row-party { color: #d4d4d4; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-row-group { color: #7d8590; font-size: 11px; }
+.mail-row-time { margin-left: auto; color: #7d8590; font-size: 11px; flex: 0 0 auto; }
+.mail-row-subject {
+  color: #8b949e; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Reading pane */
+.mail-reader-head { border-bottom: 1px solid #2a3340; padding-bottom: 10px; margin-bottom: 10px; }
+.mail-subject { font-weight: 600; font-size: 15px; color: #f0f6fc; }
+.mail-id { color: #7d8590; font-family: ui-monospace, monospace; font-size: 12px; font-weight: 400; }
+.mail-headers { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.mail-hrow { display: flex; gap: 8px; font-size: 12px; }
+.mail-hlabel { flex: 0 0 52px; color: #7d8590; text-align: right; }
+.mail-hval { color: #c9d1d9; word-break: break-word; }
+.mail-cid { color: #7d8590; font-family: ui-monospace, monospace; font-size: 11px; }
+.mail-state-unread { color: #58a6ff; }
+.mail-state-pending { color: #d29922; }
+.mail-reader-body { color: #c9d1d9; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.5; }
+.mail-reader-actions { margin-top: 14px; display: flex; gap: 6px; }
+.mail-reader-actions button.danger:hover { color: #f85149; border-color: #f85149; }
+
 main { padding: 16px 24px; }
 section { display: none; }
 section.active { display: block; }
+/* Access tab — sub-navigation. Permissions, Slug registry and Sudo
+   all govern agent access control, so they share one nav tab and switch
+   between these three sub-views via an inset segmented control.
+   bindAccessSubtabs() (refresh.js) toggles .active on the matching
+   button + .access-panel. */
+.access-intro {
+  color: #8b949e; font-size: 13px; line-height: 1.5;
+  margin: 0 0 14px; max-width: 760px;
+}
+.access-intro strong { color: #c9d1d9; font-weight: 600; }
+.access-subnav {
+  display: inline-flex; gap: 2px; margin: 0 0 16px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
+}
+.access-subtab {
+  background: none; border: none; color: #7d8590; cursor: pointer;
+  font-family: inherit; font-size: 13px; padding: 6px 16px; border-radius: 4px;
+}
+.access-subtab:hover { color: #d4d4d4; }
+.access-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.access-panel { display: none; }
+.access-panel.active { display: block; }
+.access-sub-intro {
+  color: #8b949e; font-size: 12px; line-height: 1.5;
+  margin: 0 0 12px; max-width: 760px;
+}
 table { border-collapse: collapse; width: 100%; }
 table th, table td {
   text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3340;
@@ -209,6 +299,21 @@ details[open] > summary::before { content: "▼ "; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
 .group-links-section > table { margin: 4px 0 6px 0; }
 .group-links-section > button { margin-left: 6px; }
+/* Per-group link chips in the <summary> header — an at-a-glance, always-
+   visible (even when the group is collapsed) view of who this group can
+   message (→) and who can message it (←). Clicking any chip opens the
+   Links… management overlay. Outbound chips lean blue, inbound green. */
+.group-link-chips {
+  margin-left: 8px; font-size: 11px; color: #6e7681;
+  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+.group-link-chip {
+  cursor: pointer; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid #2a3340; white-space: nowrap; line-height: 1.5;
+}
+.group-link-chip.out { color: #79c0ff; }
+.group-link-chip.in { color: #7ee787; }
+.group-link-chip:hover { border-color: #58a6ff; filter: brightness(1.15); }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
@@ -674,6 +779,31 @@ details[open] > summary .spawn-btn { opacity: 1; }
   display: none; align-items: center; justify-content: center; z-index: 100;
 }
 .modal-overlay.show { display: flex; }
+/* .manage-overlay is the backdrop for the Templates… / Links… management
+   panels (former top-level tabs, now reached from the Groups cog). It is a
+   DELIBERATE sibling of .modal-overlay rather than the same class: the
+   auto-refresh suspends on `.modal-overlay.show` (to protect inline inputs
+   / drags / forms), but these panels are plain live listings with no such
+   state, so they must keep refreshing — staying off that selector is how
+   their list reflects create/edit/delete from their child modals without a
+   close/reopen. Same visual treatment as .modal-overlay otherwise. */
+.manage-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.manage-overlay.show { display: flex; }
+.manage-modal {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 18px 22px; min-width: 620px; max-width: min(880px, calc(100vw - 32px));
+  width: calc(100% - 32px); max-height: 86vh; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.manage-modal h3 { margin: 0; font-size: 15px; color: #d4d4d4; }
+.manage-modal .manage-intro { margin: 0; font-size: 12px; color: #7d8590; line-height: 1.45; }
+/* The relocated filter bars sit flush inside the panel rather than spanning
+   a full page width. */
+.manage-modal .filter-bar { margin: 0; }
 /* The cron-pick-target overlay is opened FROM inside the cron-create
    form (Owner / Target 🔍 buttons), so it has to stack on top of the
    create modal — not below it. Plain z-index:100 ties with the create

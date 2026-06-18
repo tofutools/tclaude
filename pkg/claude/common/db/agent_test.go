@@ -392,16 +392,17 @@ func TestListUndeliveredAgentMessagesFor(t *testing.T) {
 	g, _ := CreateAgentGroup("alpha", "")
 
 	// Create three messages addressed to "me", in known order.
+	// No sleeps between inserts: ListUndeliveredAgentMessagesFor orders by id
+	// (insertion order), so the oldest-first order holds regardless of how the
+	// created_at timestamps land (the #242 fix this test guards).
 	id1, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "first",
 	})
 	require.NoError(t, err)
-	time.Sleep(2 * time.Millisecond)
 	id2, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "second",
 	})
 	require.NoError(t, err)
-	time.Sleep(2 * time.Millisecond)
 	id3, err := InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "peer", ToConv: "me", Body: "third",
 	})
@@ -505,8 +506,8 @@ func TestListAgentMessagesFromConv(t *testing.T) {
 		GroupID: g, FromConv: "me", ToConv: "peer", Body: "first",
 	})
 	require.NoError(t, err)
-	// Sleep a tick so created_at differs and ORDER BY is meaningful.
-	time.Sleep(2 * time.Millisecond)
+	// No sleep needed: ListAgentMessagesFromConv orders by id (insertion
+	// order), so "second" sorts after "first" regardless of wall-clock spacing.
 	_, err = InsertAgentMessage(&AgentMessage{
 		GroupID: g, FromConv: "me", ToConv: "peer", Body: "second",
 	})
@@ -521,6 +522,44 @@ func TestListAgentMessagesFromConv(t *testing.T) {
 	require.Len(t, out, 2, "expected 2 outgoing rows")
 	assert.Equal(t, "second", out[0].Body, "expected most-recent-first")
 	assert.Equal(t, "first", out[1].Body, "expected most-recent-first")
+}
+
+// TestListAgentMessages_WholeSecondBoundaryOrdering is the deterministic
+// regression guard for the #242-class flake on the inbox/outbox path: a
+// message stamped exactly on a whole second ("…:00Z") versus one a few ms
+// later ("…:00.004Z"). As RFC3339Nano text, the whole-second value sorts
+// AFTER the fractional one ('.' < 'Z'), so an ORDER BY created_at query would
+// return the OLDER message as "most recent" — and drop the newer one under
+// LIMIT. Ordering by id (insertion order) returns them correctly newest-first.
+// This test fails on the pre-fix `ORDER BY created_at DESC` and passes on id.
+func TestListAgentMessages_WholeSecondBoundaryOrdering(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("alpha", "")
+
+	// base lands on a whole second → RFC3339Nano renders it with no fractional
+	// part ("…:00Z"); the newer one renders as "…:00.004Z".
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	_, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "me", ToConv: "peer", Body: "older", CreatedAt: base,
+	})
+	require.NoError(t, err)
+	_, err = InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "me", ToConv: "peer", Body: "newer", CreatedAt: base.Add(4 * time.Millisecond),
+	})
+	require.NoError(t, err)
+
+	out, err := ListAgentMessagesFromConv("me", 0)
+	require.NoError(t, err, "ListAgentMessagesFromConv")
+	require.Len(t, out, 2, "expected 2 outgoing rows")
+	assert.Equal(t, "newer", out[0].Body, "newest message must come first despite its created_at sorting lexically before the whole-second one")
+	assert.Equal(t, "older", out[1].Body, "older message must come second")
+
+	// Under LIMIT 1 the single row must be the genuinely-newest, not the older
+	// one a created_at sort would surface at the boundary.
+	limited, err := ListAgentMessagesFromConv("me", 1)
+	require.NoError(t, err, "ListAgentMessagesFromConv limit 1")
+	require.Len(t, limited, 1, "expected 1 row under LIMIT 1")
+	assert.Equal(t, "newer", limited[0].Body, "LIMIT 1 must return the newest message")
 }
 
 // TestDeleteAgentByConvID_PurgesAllReferencingTables guards the

@@ -5,10 +5,12 @@
 // Stage 2 module split.
 
 import { $, esc, shortCwd, syncSelectTitle } from './helpers.js';
-// lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
-// Imported back — benign cycles (see render.js); TDZ-safe.
+// lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js;
+// renderLinksTab in tabs.js. Imported back — benign cycles (see render.js);
+// TDZ-safe (used only at runtime, never at top-level eval).
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, bindBackdropDiscard } from './refresh.js';
+import { refresh, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
+import { renderLinksTab } from './tabs.js';
 
 
 // ---- Link modal (create + edit) ----------------------------------------
@@ -140,7 +142,25 @@ async function submitLinkModal() {
   }
 }
 
+// ---- Links… management overlay ----------------------------------------
+//
+// The former Links tab, now reached from the Groups cog's "🔗 links…"
+// item and from the per-group link chips in each group header. Opening
+// paints the listing once; the 2s auto-refresh keeps it live afterwards
+// (a .manage-overlay does not suspend the refresh — see dashboard.css).
+// The +new-link / link-edit child modal opens on top and DOES suspend.
+function openLinksManageModal() {
+  $('#links-manage-modal').classList.add('show');
+  renderLinksTab();
+  setTimeout(() => $('#filter-links').focus(), 0);
+}
+
+function closeLinksManageModal() { $('#links-manage-modal').classList.remove('show'); }
+
 function bindLinkModal() {
+  $('#links-manage-open').addEventListener('click', openLinksManageModal);
+  $('#links-manage-close').addEventListener('click', closeLinksManageModal);
+  bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);
   $('#link-new-open').addEventListener('click', () => openLinkModal({ mode: 'create' }));
   $('#link-modal-cancel').addEventListener('click', closeLinkModal);
   $('#link-modal-submit').addEventListener('click', submitLinkModal);
@@ -308,6 +328,6 @@ async function wtResolveCwd(prefix, repo, fallback) {
 }
 
 export {
-  openLinkModal, bindLinkModal,
+  openLinkModal, openLinksManageModal, bindLinkModal,
   WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve, wtResolveCwd,
 };
