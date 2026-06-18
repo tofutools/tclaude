@@ -74,6 +74,7 @@ function memberRowHTML(m, ctx) {
                   ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
                 </td>
                 <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
+                <td><span class="last-hook" title="${esc(m.created_at || '')}">${esc(relTime(m.created_at))}</span></td>
                 <td>${cwdCell(m)}</td>
                 <td>${branchCell(m)}</td>
                 <td>${roleCell(m, ctx.group)}</td>

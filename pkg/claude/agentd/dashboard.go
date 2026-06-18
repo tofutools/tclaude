@@ -556,8 +556,12 @@ type dashboardGroup struct {
 type dashboardMember struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
+	// first .jsonl event's time), empty when unknown. Rendered as a
+	// relative "Age" column and the default sort key (newest first).
+	CreatedAt string `json:"created_at,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Descr     string `json:"descr,omitempty"`
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
@@ -948,6 +952,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            m.ConvID,
 				Title:             agent.CachedTitle(m.ConvID),
+				CreatedAt:         agent.CachedCreated(m.ConvID),
 				Role:              m.Role,
 				Descr:             m.Descr,
 				agentLocationView: loc,
@@ -979,6 +984,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			dg.Members = append(dg.Members, dashboardMember{
 				ConvID:            ownerConv,
 				Title:             agent.CachedTitle(ownerConv),
+				CreatedAt:         agent.CachedCreated(ownerConv),
 				Role:              "owner",
 				agentLocationView: ownerLoc,
 				repoLinksView:     branchLinksFor(ownerConv, ownerLoc),
@@ -995,6 +1001,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			a.Groups = append(a.Groups, g.Name)
 			a.OwnedGroups = append(a.OwnedGroups, g.Name)
 		}
+		// Default ordering: newest-first by creation time (the Age
+		// column; the JS column sort treats this as the natural order it
+		// falls back to). Mirrors handleGroupMembersList.
+		sortMembersByAge(dg.Members,
+			func(m dashboardMember) string { return m.CreatedAt },
+			func(m dashboardMember) string { return m.ConvID })
 		out.Groups = append(out.Groups, dg)
 	}
 	for convID, slugs := range allGrants {

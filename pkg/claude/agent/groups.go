@@ -465,13 +465,41 @@ func groupsMembersCmd() *cobra.Command {
 type memberEntry struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// CreatedAt is the conversation's creation timestamp (RFC3339); the
+	// listing defaults to newest-first on it, surfaced as the AGE column.
+	CreatedAt string `json:"created_at,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Descr     string `json:"descr,omitempty"`
 	// Branch is the git branch / worktree the member is working on,
 	// from its conv_index row. Empty when not indexed / not in a repo.
 	Branch string `json:"branch,omitempty"`
 	Online bool   `json:"online"`
 	Owner  bool   `json:"owner,omitempty"`
+}
+
+// relTimeAgo renders an RFC3339 timestamp as a coarse "N{s,m,h,d} ago"
+// string, or "" when empty/unparseable. It is the Go port of the
+// dashboard's relTime (helpers.js) — same buckets, same wording — so the
+// AGE column reads identically in the CLI and the browser.
+func relTimeAgo(iso string) string {
+	if iso == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		return ""
+	}
+	sec := max(int(time.Since(t).Seconds()), 0)
+	switch {
+	case sec < 60:
+		return fmt.Sprintf("%ds ago", sec)
+	case sec < 3600:
+		return fmt.Sprintf("%dm ago", sec/60)
+	case sec < 86400:
+		return fmt.Sprintf("%dh ago", sec/3600)
+	default:
+		return fmt.Sprintf("%dd ago", sec/86400)
+	}
 }
 
 func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
@@ -499,6 +527,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 8},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
+		table.Column{Header: "AGE", Width: 7},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "BRANCH", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
@@ -520,6 +549,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 			onlineMark(m.Online),
 			short(m.ConvID),
 			m.Title,
+			relTimeAgo(m.CreatedAt),
 			role,
 			m.Branch,
 			m.Descr,

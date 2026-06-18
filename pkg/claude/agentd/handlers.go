@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2598,13 +2599,42 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 type memberJSON struct {
 	ConvID string `json:"conv_id"`
 	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
+	// first .jsonl event's time), empty when unknown. The dashboard
+	// renders it as a relative "Age", and it is the default sort key
+	// (newest first).
+	CreatedAt string `json:"created_at,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Descr     string `json:"descr,omitempty"`
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
 	Online bool `json:"online"`
 	Owner  bool `json:"owner,omitempty"`
+}
+
+// sortMembersByAge orders a group-member listing newest-first by
+// conversation creation time (RFC3339 strings, which sort lexically =
+// chronologically) — the default ordering for every group listing,
+// shared by the CLI (`tclaude agent groups members`, which renders the
+// JSON below) and the browser dashboard, whose Age column shows this and
+// whose client-side column sort treats it as the "natural" order it
+// falls back to when no column is active. Blank/unknown creation times
+// sort last so a freshly-spawned, not-yet-indexed agent never crowds the
+// top; conv_id breaks ties so the order is deterministic — the previous
+// joined_at order left owner-only rows, appended from a map, in random
+// iteration order.
+func sortMembersByAge[T any](items []T, created func(T) string, convID func(T) string) {
+	sort.SliceStable(items, func(i, j int) bool {
+		ci, cj := created(items[i]), created(items[j])
+		if (ci == "") != (cj == "") {
+			return ci != "" // known creation times before unknown
+		}
+		if ci != cj {
+			return ci > cj // newest first
+		}
+		return convID(items[i]) < convID(items[j])
+	})
 }
 
 func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
@@ -2632,6 +2662,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		out = append(out, memberJSON{
 			ConvID:            m.ConvID,
 			Title:             agent.FreshTitle(m.ConvID),
+			CreatedAt:         agent.FreshCreated(m.ConvID),
 			Role:              m.Role,
 			Descr:             m.Descr,
 			agentLocationView: locationView(m.ConvID),
@@ -2649,12 +2680,16 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 		out = append(out, memberJSON{
 			ConvID:            ownerConv,
 			Title:             agent.FreshTitle(ownerConv),
+			CreatedAt:         agent.FreshCreated(ownerConv),
 			Role:              "owner",
 			agentLocationView: locationView(ownerConv),
 			Online:            isConvOnlineIn(ownerConv, aliveSessions),
 			Owner:             true,
 		})
 	}
+	sortMembersByAge(out,
+		func(m memberJSON) string { return m.CreatedAt },
+		func(m memberJSON) string { return m.ConvID })
 	writeJSON(w, http.StatusOK, out)
 }
 
