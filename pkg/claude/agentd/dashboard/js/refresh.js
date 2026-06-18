@@ -342,6 +342,33 @@ function bindCopy() {
   });
 }
 
+// Group <details> headers fold/unfold ONLY when the group title is
+// clicked — not when the click lands on a header chip (📝/📁/👥/🧠), a
+// badge, a link chip, or the empty space to the right of them. The
+// <summary> is one wide hit target (it doubles as a drag/drop zone), so
+// before this a stray click anywhere on the header toggled the group;
+// scoping the toggle to the .group-name label (the disclosure triangle
+// now rides on it, see dashboard.css) leaves the rest of the header inert
+// for folding. Other <details> in the dashboard (the permissions
+// disclosure, the advanced-config panel) carry no data-group-key and keep
+// native whole-summary toggling.
+//
+// Capturing listener so preventDefault lands before the browser's default
+// toggle. Keyboard activation (Enter/Space on a focused summary) arrives
+// as a synthetic click with detail === 0 — left alone so the header stays
+// keyboard-foldable.
+function bindGroupTitleToggle() {
+  document.addEventListener('click', e => {
+    if (e.detail === 0) return; // keyboard activation — keep native toggle
+    const summary = e.target.closest('summary');
+    if (!summary) return;
+    const details = summary.parentElement;
+    if (!details || !details.hasAttribute('data-group-key')) return;
+    if (e.target.closest('.group-name')) return; // the title — allow toggle
+    e.preventDefault();
+  }, true);
+}
+
 // <details> only fires `toggle` on the element itself (not bubbling),
 // so use a capturing listener at the document level rather than
 // re-binding per-element after every render.
@@ -2238,7 +2265,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
+  bindFilter, bindTabs, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,

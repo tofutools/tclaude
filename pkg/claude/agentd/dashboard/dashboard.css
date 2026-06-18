@@ -354,6 +354,17 @@ details > summary {
 details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[open] > summary::before { content: "▼ "; }
+/* Group headers fold/unfold only from the title (see bindGroupTitleToggle):
+   the disclosure triangle rides on .group-name so triangle + name read and
+   click as one unit, and the rest of the wide summary (chips, badges, empty
+   space) drops the pointer cursor so it doesn't advertise a fold it won't
+   perform. Non-group <details> (permissions, advanced config) carry no
+   data-group-key and keep the generic whole-summary marker + pointer above. */
+details[data-group-key] > summary { cursor: default; }
+details[data-group-key] > summary::before { content: none; }
+details[data-group-key] > summary .group-name { cursor: pointer; user-select: none; }
+details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
+details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
 .group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
