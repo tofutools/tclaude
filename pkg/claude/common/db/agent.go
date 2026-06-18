@@ -1458,6 +1458,16 @@ func ListAgentMessagesFromConv(fromConv string, limit int) ([]*AgentMessage, err
 // listAgentMessagesByCol shares the read/scan path between the inbox
 // and outbox queries. col must be a literal column name (`to_conv` or
 // `from_conv`), never user input — it's interpolated into SQL.
+//
+// Ordering is by id DESC (autoincrement = insertion order), NOT created_at.
+// created_at is an RFC3339Nano string compared lexically by SQLite: a time on
+// a whole second serialises with no fractional part ("…:00Z") and sorts AFTER
+// a later same-second value ("…:00.004Z") because '.' < 'Z'. ORDER BY
+// created_at could therefore return a newer row as "older" — and with LIMIT,
+// silently drop the genuinely-newest row. This is the same RFC3339Nano flake
+// already fixed for the undelivered-queue query in #242 (see
+// ListUndeliveredAgentMessagesFor); id is monotonic with insertion, giving a
+// correct, total most-recent-first order independent of the timestamp format.
 func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, error) {
 	db, err := Open()
 	if err != nil {
@@ -1466,7 +1476,7 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
 		created_at, delivered_at, read_at,
 		to_recipients, cc_recipients, original_to_conv
-		FROM agent_messages WHERE ` + col + ` = ? ORDER BY created_at DESC`
+		FROM agent_messages WHERE ` + col + ` = ? ORDER BY id DESC`
 	args := []any{value}
 	if limit > 0 {
 		q += ` LIMIT ?`
