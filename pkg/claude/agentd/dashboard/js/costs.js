@@ -346,6 +346,77 @@ function costsTabActive() {
   return $('#tab-costs').classList.contains('active');
 }
 
+// --- Cost display multiplier (live edit) -----------------------------
+// The factor lives in config.json (cost.estimate_factor) and is applied
+// server-side to every cost figure — this tab, the per-agent badges and
+// the top bar. Editing it here is a small live twin of the Config tab:
+// GET on tab activation, debounced POST on change, then a reload so the
+// scaled numbers repaint immediately. Persisted, so it sticks and the
+// Config tab shows the same value.
+let costFactorSaveTimer = null;
+
+function setCostFactorStatus(msg, isError) {
+  const el = $('#costs-factor-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('error', !!isError);
+}
+
+// loadCostFactor fetches the resolved factor and shows it in the input.
+// Best-effort: a failure leaves the field blank rather than blocking the
+// chart, which loads independently.
+async function loadCostFactor() {
+  const inp = $('#costs-factor');
+  if (!inp) return;
+  try {
+    const r = await fetch('/api/cost-factor', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const f = Number(data.estimate_factor);
+    // Show a non-default factor verbatim; 1 (no adjustment) reads cleaner
+    // as a blank field with the placeholder "1.0".
+    inp.value = (Number.isFinite(f) && f !== 1) ? +f.toFixed(4) : '';
+    setCostFactorStatus('');
+  } catch (e) {
+    setCostFactorStatus('');
+  }
+}
+
+// saveCostFactor persists the input's value, then reloads the costs so
+// the scaled figures show at once. A blank field clears the override
+// (null → server resets to 1). The per-agent badges and top bar pick the
+// new factor up on the next snapshot tick.
+async function saveCostFactor() {
+  const inp = $('#costs-factor');
+  if (!inp) return;
+  const raw = inp.value.trim();
+  let factor = null; // blank clears the override
+  if (raw !== '') {
+    const f = Number(raw);
+    if (!Number.isFinite(f) || f <= 0 || f > 10) {
+      setCostFactorStatus('must be 0–10', true);
+      return;
+    }
+    factor = f;
+  }
+  setCostFactorStatus('saving…');
+  try {
+    const r = await fetch('/api/cost-factor', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estimate_factor: factor }),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || ('HTTP ' + r.status));
+    }
+    setCostFactorStatus('saved');
+    loadCosts();
+  } catch (e) {
+    setCostFactorStatus(e.message || String(e), true);
+  }
+}
+
 // syncFillToggle enables the "fill empty weekdays" checkbox only on the
 // month span (the only span with a projection) and dims it otherwise, so
 // toggling it on a trailing-window span — where it would do nothing —
@@ -362,7 +433,23 @@ function syncFillToggle() {
 // bindCostsTab wires the tab: load on activation, reload on span
 // change, slow re-poll off the snapshot tick while visible.
 function bindCostsTab() {
-  $('nav button[data-tab="costs"]').addEventListener('click', loadCosts);
+  $('nav button[data-tab="costs"]').addEventListener('click', () => { loadCosts(); loadCostFactor(); });
+  // Cost display multiplier: debounce typing so a few keystrokes settle
+  // into one save+reload, but commit immediately on Enter / blur.
+  const factorInput = $('#costs-factor');
+  if (factorInput) {
+    factorInput.addEventListener('input', () => {
+      clearTimeout(costFactorSaveTimer);
+      costFactorSaveTimer = setTimeout(saveCostFactor, 600);
+    });
+    factorInput.addEventListener('change', () => {
+      clearTimeout(costFactorSaveTimer);
+      saveCostFactor();
+    });
+    factorInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { clearTimeout(costFactorSaveTimer); saveCostFactor(); }
+    });
+  }
   $$('#costs-spans button').forEach(b => {
     b.addEventListener('click', () => {
       currentSpan = b.dataset.span;

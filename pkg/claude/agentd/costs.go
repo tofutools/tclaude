@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -162,7 +163,14 @@ const maxCostSpanDays = 366
 // collectCosts aggregates the daily cost table over [from, today].
 // Pure assembly over costDeltasFromRows; the handler owns HTTP
 // concerns, this owns the shape.
-func collectCosts(from time.Time) (costsResponse, error) {
+//
+// factor is the display multiplier from config (config.ResolvedCostFactor):
+// every dollar figure in the response — the per-day bars, the per-agent
+// breakdown, and the total — is scaled by it as the last step, so a
+// compensation factor nudges the whole tab in lockstep while the
+// underlying session_cost_daily rows stay raw. factor 1 (the default)
+// is a no-op.
+func collectCosts(from time.Time, factor float64) (costsResponse, error) {
 	now := time.Now()
 	if min := now.AddDate(0, 0, -(maxCostSpanDays - 1)); from.Before(min) {
 		from = min
@@ -250,6 +258,19 @@ func collectCosts(from time.Time) (costsResponse, error) {
 		})
 	}
 	sortCostAgentRows(out.Agents)
+	// Display-only compensation, applied last so it never feeds back into
+	// the per-conv baseline walk above. Scaling is monotonic for a
+	// positive factor, so the sort order is unchanged. factor 1 is the
+	// common path and a no-op.
+	if factor != 1 {
+		out.TotalUSD *= factor
+		for i := range out.Days {
+			out.Days[i].CostUSD *= factor
+		}
+		for i := range out.Agents {
+			out.Agents[i].CostUSD *= factor
+		}
+	}
 	return out, nil
 }
 
@@ -310,7 +331,8 @@ func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 		}
 		from = t
 	}
-	out, err := collectCosts(from)
+	cfg, _ := config.Load()
+	out, err := collectCosts(from, cfg.ResolvedCostFactor())
 	if err != nil {
 		http.Error(w, "collect costs: "+err.Error(), http.StatusInternalServerError)
 		return

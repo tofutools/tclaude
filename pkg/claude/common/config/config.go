@@ -50,6 +50,63 @@ type Config struct {
 	// ConvWatch holds persisted UI preferences for the interactive
 	// `tclaude conv ls -w` watch view. Absent → all defaults.
 	ConvWatch *ConvWatchConfig `json:"conv_watch,omitempty"`
+
+	// Cost holds display-only cost adjustments — see CostConfig. Absent →
+	// no adjustment (the recorded figures are shown verbatim).
+	Cost *CostConfig `json:"cost,omitempty"`
+}
+
+// CostConfig holds display-only cost knobs.
+//
+// EstimateFactor is an opt-in multiplier applied to every *displayed*
+// cost figure (the per-agent cost badge, the Costs tab, and the top
+// bar's month-to-date / today readouts). Claude Code computes its cost
+// from token counts client-side and flags it as an estimate; in
+// practice that estimate runs a little below the actual billed amount,
+// so a factor of e.g. 1.1 nudges the displayed numbers up ~10% to track
+// reality.
+//
+// It is purely a display multiplier. The values stored in the DB
+// (sessions.cost_usd, session_cost_daily) are never scaled, so changing
+// the factor only changes what the dashboard shows, never recorded
+// history — toggling it back to 1 restores the raw figures exactly.
+//
+// nil block / nil pointer / a non-positive value all mean "no
+// adjustment" (factor 1.0). An out-of-range value is clamped by
+// ResolvedCostFactor and reported by Validate.
+type CostConfig struct {
+	EstimateFactor *float64 `json:"estimate_factor,omitempty"`
+}
+
+// defaultCostFactor is the no-op multiplier: the displayed cost equals
+// the recorded cost.
+const defaultCostFactor = 1.0
+
+// maxCostEstimateFactor is the upper bound on the display multiplier. A
+// compensation factor lives just above 1 (≈1.1 for the observed ~10%
+// gap); a far larger value is almost certainly a fat-finger (e.g. "110"
+// meant as a percent), so the editor rejects it and the resolver clamps
+// it rather than letting it 100×-inflate the dashboard.
+const maxCostEstimateFactor = 10.0
+
+// ResolvedCostFactor returns the effective display multiplier for cost
+// figures: 1.0 when unconfigured, the configured value otherwise,
+// clamped to (0, maxCostEstimateFactor]. A nil config / absent block /
+// non-positive value all yield 1.0 (no adjustment); an over-range value
+// is clamped down so a hand-edited absurd value cannot silently blow up
+// the display (mirrors ResolvedSlopVolumes). Nil-safe on the receiver.
+func (c *Config) ResolvedCostFactor() float64 {
+	if c == nil || c.Cost == nil || c.Cost.EstimateFactor == nil {
+		return defaultCostFactor
+	}
+	f := *c.Cost.EstimateFactor
+	if f <= 0 {
+		return defaultCostFactor
+	}
+	if f > maxCostEstimateFactor {
+		return maxCostEstimateFactor
+	}
+	return f
 }
 
 // ConvWatchConfig holds the watch view's persisted UI preferences.
@@ -767,6 +824,12 @@ func Validate(c *Config) []string {
 			}
 		}
 		errs = append(errs, validateSudo(a.Sudo)...)
+	}
+
+	if cc := c.Cost; cc != nil && cc.EstimateFactor != nil {
+		if f := *cc.EstimateFactor; f <= 0 || f > maxCostEstimateFactor {
+			errs = append(errs, fmt.Sprintf("cost.estimate_factor %g is out of range (>0 and ≤%g) — it is a display multiplier, e.g. 1.1 for +10%%", f, maxCostEstimateFactor))
+		}
 	}
 
 	if s := c.Slop; s != nil {
