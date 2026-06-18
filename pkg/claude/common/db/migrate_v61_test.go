@@ -89,7 +89,7 @@ func TestMigrateV60toV61_HealsHalfAppliedRun(t *testing.T) {
 
 // TestMigrateV60toV61_FreshSchemaRoundTrips builds a fresh DB through the full
 // migrate() chain and round-trips a profile through the production CRUD
-// helpers. v61 is head, so this is where the literal currentVersion pin lives.
+// helpers. (The literal currentVersion tripwire moved forward to the v62 test.)
 func TestMigrateV60toV61_FreshSchemaRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -98,9 +98,6 @@ func TestMigrateV60toV61_FreshSchemaRoundTrips(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v60 test —
-	// the next migration's author moves it into their own v62 test.
-	require.Equal(t, 61, currentVersion, "currentVersion is 61")
 
 	id, err := CreateSpawnProfile(&SpawnProfile{Name: "codex-high", Harness: "codex", Effort: "high"})
 	require.NoError(t, err, "CreateSpawnProfile")

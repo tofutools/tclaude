@@ -657,6 +657,42 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		body.Cwd = g.DefaultCwd
 	}
 
+	// Overlay the group's default spawn profile (JOH-210) onto blank launch
+	// fields BEFORE the harness/model/sandbox resolution below — the same way
+	// the default_cwd fill above reaches every spawn path. Doing it here (not
+	// only in executeSpawn) is what makes a group whose default profile selects
+	// a Codex harness+model resolve harness-correctly: the harness resolver
+	// below sees the profile's harness and validates the profile's model
+	// against THAT harness's catalog (the #343 fix), instead of defaulting the
+	// blank request to Claude Code. A field the request set wins; the profile's
+	// launch fields were validated against their own harness at save and are
+	// re-validated here as if the caller had typed them. The toggles are bool
+	// in the request, so a profile that sets them true fills a request that
+	// left them at the false default.
+	if prof := groupDefaultProfile(g); prof != nil {
+		if strings.TrimSpace(body.Harness) == "" {
+			body.Harness = prof.Harness
+		}
+		if strings.TrimSpace(body.Model) == "" {
+			body.Model = prof.Model
+		}
+		if strings.TrimSpace(body.Effort) == "" {
+			body.Effort = prof.Effort
+		}
+		if strings.TrimSpace(body.SandboxMode) == "" {
+			body.SandboxMode = prof.Sandbox
+		}
+		if strings.TrimSpace(body.ApprovalPolicy) == "" {
+			body.ApprovalPolicy = prof.Approval
+		}
+		if !body.AutoReview && prof.AutoReview != nil {
+			body.AutoReview = *prof.AutoReview
+		}
+		if !body.TrustDir && prof.TrustDir != nil {
+			body.TrustDir = *prof.TrustDir
+		}
+	}
+
 	// Validate the requested cwd before doing any work. Expands "~",
 	// makes the path absolute, and confirms it exists as a directory.
 	// Catching a bad cwd here turns what used to be a silent 30s
@@ -946,6 +982,71 @@ type spawnFailure struct {
 // ForTest) and drive the pending path without a multi-second real wait.
 var asyncSpawnInlineGrace = 6 * time.Second
 
+// groupDefaultProfile loads the group's default spawn profile (JOH-210), or nil
+// when the group has none or the referenced row is missing/unreadable (the
+// error is logged, not fatal — the spawn proceeds on its own fields, exactly as
+// before the group had a default). Shared by handleGroupSpawn's request overlay
+// and executeSpawn's applyDefaultProfile.
+func groupDefaultProfile(g *db.AgentGroup) *db.SpawnProfile {
+	if g == nil || g.DefaultProfile == "" {
+		return nil
+	}
+	prof, err := db.GetSpawnProfile(g.DefaultProfile)
+	if err != nil {
+		slog.Warn("spawn: failed to load group default profile",
+			"group", g.Name, "profile", g.DefaultProfile, "error", err)
+		return nil
+	}
+	if prof == nil {
+		slog.Warn("spawn: group default profile no longer exists",
+			"group", g.Name, "profile", g.DefaultProfile)
+		return nil
+	}
+	return prof
+}
+
+// applyDefaultProfile fills blank launch fields on p from the group's default
+// spawn profile (JOH-210), the harness-correct replacement for the retired
+// per-group default_model. A field the request already set wins; a field the
+// profile also leaves unset stays unset, so the launch boundary applies its own
+// default at spawn time.
+//
+// This is the SAFETY-NET fill for callers that reach executeSpawn WITHOUT going
+// through handleGroupSpawn (the group-template instantiator). handleGroupSpawn
+// itself overlays the profile onto the request BEFORE its harness/model/sandbox
+// resolution (so a Codex default profile resolves harness-correctly), which
+// leaves these fields already non-blank here — making this a no-op on that
+// path. The two launch toggles are tri-state in the profile (*bool): filled
+// only when the request left them at the zero value (false) AND the profile
+// sets them.
+func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) {
+	prof := groupDefaultProfile(g)
+	if prof == nil {
+		return
+	}
+	if p.Harness == "" {
+		p.Harness = prof.Harness
+	}
+	if p.Model == "" {
+		p.Model = prof.Model
+	}
+	if p.Effort == "" {
+		p.Effort = prof.Effort
+	}
+	if p.SandboxMode == "" {
+		p.SandboxMode = prof.Sandbox
+	}
+	if p.ApprovalPolicy == "" {
+		p.ApprovalPolicy = prof.Approval
+	}
+	if !p.AutoReview && prof.AutoReview != nil {
+		p.AutoReview = *prof.AutoReview
+	}
+	if !p.TrustDir && prof.TrustDir != nil {
+		p.TrustDir = *prof.TrustDir
+	}
+}
+
 // executeSpawn runs the validated spawn sequence: it forks a detached
 // `tclaude session new`, polls the sessions table for the conv-id, and —
 // once the conv-id is known — joins the conv to the group, records the
@@ -973,18 +1074,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		timeout = 30 * time.Second
 	}
 
-	// When the request leaves model blank, fall back to the group's
-	// default_model (set via the dashboard's model chip or `groups
-	// set-default-model`). Living here — not in the HTTP handler —
-	// makes the default reach every spawn path, including the
-	// group-template instantiator. The stored value was validated by
-	// the write path (handleGroupUpdate); an empty default keeps the
-	// prior behaviour of omitting --model so claude resolves its own
-	// default (user settings.json, then built-in).
-	model := p.Model
-	if model == "" {
-		model = g.DefaultModel
-	}
+	// Fill blank launch fields from the group's default spawn profile
+	// (JOH-210), the harness-correct replacement for the retired per-group
+	// default_model. This reaches every server-side spawn path — the dashboard
+	// Spawn button and the group-template instantiator (templates.go), whose
+	// params carry blank launch fields. A field the request already set wins; a
+	// field the profile also leaves blank stays blank, so the launch boundary's
+	// own default still applies. The stored profile was validated against its
+	// harness at save (buildProfileFromJSON), so no revalidation is needed here.
+	applyDefaultProfile(g, &p)
 
 	// Generate a label that's unlikely to collide with existing
 	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
@@ -996,7 +1094,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Label:      label,
 		Cwd:        p.Cwd,
 		Effort:     p.Effort,
-		Model:      model,
+		Model:      p.Model,
 		Harness:    p.Harness,
 		Sandbox:    p.SandboxMode,
 		Approval:   p.ApprovalPolicy,

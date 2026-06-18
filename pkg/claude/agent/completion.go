@@ -43,6 +43,23 @@ func completeGroupNames(_ *cobra.Command, _ []string, toComplete string) []strin
 	return out
 }
 
+// completeSpawnProfileNames returns every spawn-profile name (JOH-210),
+// prefix-filtered — for the profile-name argument of
+// `groups set-default-profile`.
+func completeSpawnProfileNames(_ *cobra.Command, _ []string, toComplete string) []string {
+	profiles, err := db.ListSpawnProfiles()
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, p := range profiles {
+		if strings.HasPrefix(p.Name, toComplete) {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
 // completeTemplateNames returns every group-template name,
 // prefix-filtered — for the template-name argument of
 // `templates instantiate` (and a model for other template verbs).

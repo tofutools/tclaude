@@ -2023,10 +2023,15 @@ type groupSummary struct {
 	// MaxMembers is the group's hard member cap (agent_groups.max_members);
 	// 0 = unlimited. A spawn that would exceed it is refused.
 	MaxMembers int `json:"max_members,omitempty"`
-	// DefaultModel is the model substituted into spawns that leave
-	// model blank; "" = none (claude's own default resolution).
+	// DefaultModel is the group's legacy default model (JOH-210: vestigial,
+	// no longer read at spawn — see DefaultProfile). Still surfaced so the
+	// dashboard's read-only model badge keeps showing a migrated group's
+	// former default; "" = none.
 	DefaultModel string `json:"default_model,omitempty"`
-	Archived     bool   `json:"archived,omitempty"`
+	// DefaultProfile is the name of the spawn profile whose launch fields fill
+	// blank spawn fields for this group's agents (JOH-210); "" = none.
+	DefaultProfile string `json:"default_profile,omitempty"`
+	Archived       bool   `json:"archived,omitempty"`
 	// NotifyMuted flags a group whose OS notifications are switched
 	// off (agent_groups.notify_enabled = false). omitempty: only the
 	// exceptional muted state is serialized.
@@ -2110,10 +2115,11 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Descr:        g.Descr,
 				Members:      len(members),
 				Online:       online,
-				MaxMembers:   g.MaxMembers,
-				DefaultModel: g.DefaultModel,
-				Archived:     g.IsArchived(),
-				NotifyMuted:  !g.NotifyEnabled,
+				MaxMembers:     g.MaxMembers,
+				DefaultModel:   g.DefaultModel,
+				DefaultProfile: g.DefaultProfile,
+				Archived:       g.IsArchived(),
+				NotifyMuted:    !g.NotifyEnabled,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -2127,7 +2133,9 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			Descr          string `json:"descr,omitempty"`
 			DefaultCwd     string `json:"default_cwd,omitempty"`
 			DefaultContext string `json:"default_context,omitempty"`
-			DefaultModel   string `json:"default_model,omitempty"`
+			// DefaultProfile names the spawn profile (JOH-210) whose launch
+			// fields fill blank spawn fields for this group's agents. "" = none.
+			DefaultProfile string `json:"default_profile,omitempty"`
 			// MaxMembers is the group's hard member cap; 0 = unlimited.
 			// A negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
 			MaxMembers int `json:"max_members,omitempty"`
@@ -2160,9 +2168,14 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
-		groupModel, err := clcommon.ValidateModel(body.DefaultModel)
+		// The default profile (JOH-210) replaces the Claude-only default_model
+		// gate: validate only that the referenced profile exists — its launch
+		// fields were already validated against their own harness at save, so a
+		// group can default its team onto a Codex profile without the
+		// Claude-only model validator rejecting it (#343). "" = no default.
+		groupProfile, err := resolveGroupDefaultProfileName(body.DefaultProfile)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_model", err.Error())
+			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
 			return
 		}
 		// Fold newlines out of the description on the create path too,
@@ -2195,9 +2208,9 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 					"group", body.Name, "error", err)
 			}
 		}
-		if groupModel != "" {
-			if _, err := db.SetAgentGroupDefaultModel(body.Name, groupModel); err != nil {
-				slog.Warn("groups create: failed to set default model",
+		if groupProfile != "" {
+			if _, err := db.SetAgentGroupDefaultProfile(body.Name, groupProfile); err != nil {
+				slog.Warn("groups create: failed to set default profile",
 					"group", body.Name, "error", err)
 			}
 		}
@@ -2355,6 +2368,26 @@ func normalizeGroupContext(s string) (string, error) {
 	return s, nil
 }
 
+// resolveGroupDefaultProfileName validates a requested group default-profile
+// reference (JOH-210): it trims the name and, when non-empty, requires a spawn
+// profile by that name to exist — there is no DB-level foreign key, so the
+// referential check lives here. Empty is valid and clears the group's default.
+// Returns the trimmed name to store.
+func resolveGroupDefaultProfileName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", nil
+	}
+	p, err := db.GetSpawnProfile(name)
+	if err != nil {
+		return "", err
+	}
+	if p == nil {
+		return "", fmt.Errorf("no spawn profile named %q", name)
+	}
+	return name, nil
+}
+
 // normalizeGroupDescr prepares a group description for storage. The
 // descr is a one-line label rendered inline in the dashboard's group
 // header, so any embedded CR / LF is folded to a single space and the
@@ -2381,22 +2414,25 @@ func normalizeGroupDescr(s string) string {
 //   - default_context — a block of shared startup guidance delivered
 //     to the inbox of agents spawned into the group (see
 //     handleGroupSpawn).
-//   - default_model — the Claude model substituted server-side into a
-//     spawn request that leaves model blank (see executeSpawn), so a
-//     group can default its whole team onto e.g. "sonnet".
+//   - default_profile — the spawn profile (JOH-210) whose launch fields
+//     fill blank spawn fields server-side (see executeSpawn /
+//     applyDefaultProfile), so a group can default its whole team onto a
+//     given harness+model+… without the Claude-only default_model gate.
+//     Validated only for existence; the profile carries its own validated
+//     launch fields. Replaces the retired default_model setting (#343).
 //   - max_members — the group's hard member cap (0 = unlimited); a
 //     spawn that would exceed it is refused by the spawn-guardrail
 //     layer. See checkSpawnGuardrails.
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
 // fields present (non-nil) in the body are touched. descr / default_cwd
-// / default_context / default_model are *string so a caller can clear
+// / default_context / default_profile are *string so a caller can clear
 // any of them by sending "" — distinct from omitting it; max_members is
 // *int and clears to "unlimited" with 0. An empty body (no field) is a
 // 400.
 //
 // Permission: groups.rename. Setting a group's description / default
-// cwd / context / model / member cap is the same class of human-curated
+// cwd / context / profile / member cap is the same class of human-curated
 // group config as renaming it (the blast radius is a dashboard label /
 // UI prefill / spawn-time injection / spawn refusal, strictly lower
 // than a rename), so it rides the existing slug rather than minting a
@@ -2412,7 +2448,10 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		Descr          *string `json:"descr,omitempty"`
 		DefaultCwd     *string `json:"default_cwd,omitempty"`
 		DefaultContext *string `json:"default_context,omitempty"`
-		DefaultModel   *string `json:"default_model,omitempty"`
+		// DefaultProfile names the spawn profile (JOH-210) whose launch fields
+		// fill blank spawn fields for this group's agents; "" clears it. *string
+		// so a caller can clear it by sending "" — distinct from omitting it.
+		DefaultProfile *string `json:"default_profile,omitempty"`
 		// MaxMembers is the group's hard member cap; 0 = unlimited. A
 		// negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
 		MaxMembers *int `json:"max_members,omitempty"`
@@ -2425,9 +2464,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultModel == nil && body.MaxMembers == nil && body.NotifyEnabled == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_model, max_members and/or notify_enabled)")
+			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members and/or notify_enabled)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -2498,16 +2537,17 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		resp["default_context"] = ctx
 	}
 
-	if body.DefaultModel != nil {
-		// Normalise + validate against the known aliases / full-ID
-		// pattern. Empty stays empty — that clears the group default
-		// (spawns then fall back to claude's own model resolution).
-		model, err := clcommon.ValidateModel(*body.DefaultModel)
+	if body.DefaultProfile != nil {
+		// Validate only that the referenced profile exists (its launch fields
+		// were validated against their own harness at save) — the harness-correct
+		// replacement for the retired Claude-only default_model gate (#343).
+		// Empty stays empty — that clears the group default.
+		profile, err := resolveGroupDefaultProfileName(*body.DefaultProfile)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_model", err.Error())
+			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
 			return
 		}
-		n, err := db.SetAgentGroupDefaultModel(g.Name, model)
+		n, err := db.SetAgentGroupDefaultProfile(g.Name, profile)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -2516,7 +2556,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			writeError(w, http.StatusNotFound, "not_found", "no such group")
 			return
 		}
-		resp["default_model"] = model
+		resp["default_profile"] = profile
 	}
 
 	if body.MaxMembers != nil {

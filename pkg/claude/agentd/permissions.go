@@ -175,6 +175,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Instantiate a working group from a template — creates the group and spawns its whole agent team in one shot. Strictly more powerful than groups.spawn (a whole team at once), so not default-granted (effectively human-only).",
 	},
 	{
+		Slug:        PermProfilesManage,
+		Description: "Create, edit and delete reusable spawn profiles — named, saved bundles of the spawn-agent dialog (harness/model/effort/role/… ) that pre-fill spawns and back a group's default spawn settings (JOH-210). Reads are open; writes rewrite shared spawn config, so not default-granted (effectively human-only).",
+	},
+	{
 		Slug:        PermHumanNotify,
 		Description: "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Group owners get this by default (a trusted coordinating role), suppressible by a deny override; otherwise not in the global defaults, so plain workers cannot spam the channel without an explicit grant.",
 	},
@@ -360,8 +364,8 @@ type permissionsMutateResp struct {
 	TargetKey string   `json:"target_key,omitempty"` // resolved conv-id when target != "default"
 	Title     string   `json:"title,omitempty"`      // display title of the resolved conv, when known
 	Slug      string   `json:"slug"`
-	Effect    string   `json:"effect,omitempty"`     // post-mutation override effect: "grant", "deny", or "default" (cleared)
-	Effective []string `json:"effective"`            // post-mutation GRANTED slug list for that target
+	Effect    string   `json:"effect,omitempty"` // post-mutation override effect: "grant", "deny", or "default" (cleared)
+	Effective []string `json:"effective"`        // post-mutation GRANTED slug list for that target
 }
 
 func decodeMutateReq(w http.ResponseWriter, r *http.Request) (*permissionsMutateReq, bool) {

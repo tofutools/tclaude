@@ -14,7 +14,6 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -53,7 +52,7 @@ func groupsCmd() *cobra.Command {
 			groupsRenameCmd(),
 			groupsSetDescrCmd(),
 			groupsSetDefaultDirCmd(),
-			groupsSetDefaultModelCmd(),
+			groupsSetDefaultProfileCmd(),
 			groupsSetContextCmd(),
 			groupsSetMaxMembersCmd(),
 			groupsSetNotificationsCmd(),
@@ -96,10 +95,11 @@ type groupSummary struct {
 	Descr        string `json:"descr,omitempty"`
 	Members      int    `json:"members"`
 	Online       int    `json:"online"`
-	MaxMembers   int    `json:"max_members,omitempty"`   // hard member cap; 0 = unlimited
-	DefaultModel string `json:"default_model,omitempty"` // model for spawns that leave model blank; "" = claude's own default
-	Archived     bool   `json:"archived,omitempty"`
-	NotifyMuted  bool   `json:"notify_muted,omitempty"` // OS notifications switched off for this group's agents
+	MaxMembers     int    `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
+	DefaultModel   string `json:"default_model,omitempty"`   // legacy default model (JOH-210: vestigial, no longer read at spawn)
+	DefaultProfile string `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
+	Archived       bool   `json:"archived,omitempty"`
+	NotifyMuted    bool   `json:"notify_muted,omitempty"` // OS notifications switched off for this group's agents
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
@@ -145,7 +145,7 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "MEMBERS", Width: 9, Align: table.AlignRight},
 		table.Column{Header: "ONLINE", Width: 6, Align: table.AlignRight},
-		table.Column{Header: "MODEL", MinWidth: 5, Weight: 0.4, Truncate: true},
+		table.Column{Header: "PROFILE", MinWidth: 7, Weight: 0.4, Truncate: true},
 		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.4, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
@@ -169,7 +169,7 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 			name,
 			members,
 			fmt.Sprintf("%d", g.Online),
-			g.DefaultModel,
+			g.DefaultProfile,
 			g.Descr,
 		}})
 	}
@@ -1286,48 +1286,42 @@ func runGroupsSetDefaultDir(p *groupsSetDefaultDirParams, stdout, stderr io.Writ
 	return rcOK
 }
 
-// --- groups set-default-model ---
+// --- groups set-default-profile ---
 
-type groupsSetDefaultModelParams struct {
+type groupsSetDefaultProfileParams struct {
 	Group    string `pos:"true" help:"Group to configure"`
-	Model    string `pos:"true" optional:"true" help:"Default Claude model for agents spawned into this group: an alias (fable, fable[1m], opus, opus[1m], sonnet, sonnet[1m], haiku, opusplan) or a full model ID (e.g. claude-fable-5). Omit to clear the default."`
+	Profile  string `pos:"true" optional:"true" help:"Name of the spawn profile whose launch fields fill blank spawn fields for this group's agents. Omit to clear the default."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
-func groupsSetDefaultModelCmd() *cobra.Command {
-	return boa.CmdT[groupsSetDefaultModelParams]{
-		Use:   "set-default-model",
-		Short: "Set (or clear) a group's default Claude model",
-		Long: "Set the Claude model substituted server-side into spawn requests " +
-			"that leave model blank, so `tclaude agent spawn <group>` and the " +
-			"dashboard's '+ spawn agent' button both inherit it. Omit <model> " +
-			"to clear the default (spawns then omit --model, and claude falls " +
-			"back to the user-level settings.json model, then its own " +
-			"default). Gated on the `groups.rename` permission (default " +
-			"human-only).",
+func groupsSetDefaultProfileCmd() *cobra.Command {
+	return boa.CmdT[groupsSetDefaultProfileParams]{
+		Use:   "set-default-profile",
+		Short: "Set (or clear) a group's default spawn profile",
+		Long: "Set the spawn profile (JOH-210) whose launch fields " +
+			"(harness/model/effort/sandbox/…) fill blank spawn fields server-side, " +
+			"so `tclaude agent spawn <group>`, the dashboard's '+ spawn agent' " +
+			"button and group-template instantiation all inherit it. The profile " +
+			"carries its own harness, so a group can default its team onto a Codex " +
+			"profile — the harness-correct replacement for the retired " +
+			"`set-default-model`. Omit <profile> to clear the default. Gated on " +
+			"the `groups.rename` permission (default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
-		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDefaultModelParams, _ *cobra.Command) error {
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDefaultProfileParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
-			boa.GetParamT(ctx, &p.Model).SetAlternatives(clcommon.ValidModels)
+			boa.GetParamT(ctx, &p.Profile).SetAlternativesFunc(completeSpawnProfileNames)
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
-		RunFunc: func(p *groupsSetDefaultModelParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetDefaultModel(p, os.Stdout, os.Stderr))
+		RunFunc: func(p *groupsSetDefaultProfileParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetDefaultProfile(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runGroupsSetDefaultModel(p *groupsSetDefaultModelParams, stdout, stderr io.Writer) int {
+func runGroupsSetDefaultProfile(p *groupsSetDefaultProfileParams, stdout, stderr io.Writer) int {
 	if p.Group == "" {
 		fmt.Fprintf(stderr, "Error: group name is required\n")
-		return rcInvalidArg
-	}
-	// Validate client-side for a fast, descriptive error; the daemon
-	// re-validates the same way ("" clears).
-	model, err := clcommon.ValidateModel(p.Model)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -1342,19 +1336,20 @@ func runGroupsSetDefaultModel(p *groupsSetDefaultModelParams, stdout, stderr io.
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	var resp struct {
-		Group        string `json:"group"`
-		DefaultModel string `json:"default_model"`
+		Group          string `json:"group"`
+		DefaultProfile string `json:"default_profile"`
 	}
-	body := map[string]string{"default_model": model}
+	// The daemon validates the profile exists ("" clears the default).
+	body := map[string]string{"default_profile": strings.TrimSpace(p.Profile)}
 	path := "/v1/groups/" + url.PathEscape(p.Group)
 	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	if resp.DefaultModel == "" {
-		fmt.Fprintf(stdout, "%s: default model cleared (claude decides)\n", resp.Group)
+	if resp.DefaultProfile == "" {
+		fmt.Fprintf(stdout, "%s: default profile cleared\n", resp.Group)
 	} else {
-		fmt.Fprintf(stdout, "%s: default model set to %s\n", resp.Group, resp.DefaultModel)
+		fmt.Fprintf(stdout, "%s: default profile set to %s\n", resp.Group, resp.DefaultProfile)
 	}
 	return rcOK
 }

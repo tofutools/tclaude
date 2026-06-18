@@ -45,10 +45,12 @@ function groupDefaultCwd(groupName) {
 
 // updateSpawnModelDefaultLabel rewrites the Model dropdown's "Default"
 // option so it names the model an omitted pick actually resolves to —
-// the daemon substitutes the group's default_model into a blank spawn,
-// and claude itself falls back to the user-level settings.json model —
-// instead of an opaque "Default". Called on modal open and whenever
-// the group <select> changes.
+// instead of an opaque "Default". It shows a migrated group's legacy
+// default_model when present; otherwise the daemon fills blank launch
+// fields from the group's default spawn profile (JOH-210) at spawn, and
+// claude itself falls back to the user-level settings.json model. (Full
+// profile-aware prefill is a coming update.) Called on modal open and
+// whenever the group <select> changes.
 function updateSpawnModelDefaultLabel(groupName) {
   const opt = $('#agent-spawn-model').querySelector('option[value=""]');
   if (!opt) return;
@@ -409,11 +411,10 @@ async function submitAgentSpawn() {
   // preserved. Send the textarea verbatim; the daemon trims it.
   const initMsg = $('#agent-spawn-init-msg').value;
   // Empty value = the "Default" option → omit effort/model entirely.
-  // For model that means the daemon substitutes the group's
-  // default_model, and failing that claude resolves its own default
-  // (user settings.json, then built-in) — exactly what the Default
-  // option's label promises. A chosen value rides along in the POST
-  // body.
+  // For model that means the daemon fills the blank field from the group's
+  // default spawn profile (JOH-210), and failing that claude resolves its
+  // own default (user settings.json, then built-in). A chosen value rides
+  // along in the POST body.
   const effort = $('#agent-spawn-effort').value;
   // Harness drives which Model control is active (curated <select> vs the
   // Codex free-text input) and whether a Sandbox was chosen.

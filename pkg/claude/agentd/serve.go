@@ -412,6 +412,9 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/templates/from-group", handleTemplateFromGroup)
 	mux.HandleFunc("POST /v1/templates/{name}/instantiate", handleTemplateInstantiate)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
+	// Spawn profiles (JOH-210). Reads open, writes gated on profiles.manage.
+	mux.HandleFunc("/v1/spawn-profiles", handleSpawnProfiles)
+	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
 	mux.HandleFunc("/v1/claude-settings/default-model", handleClaudeDefaultModel)
 	mux.HandleFunc("/v1/links", handleLinksAll)
 	mux.HandleFunc("/v1/can-message", handleCanMessage)

@@ -539,7 +539,8 @@ type dashboardGroup struct {
 	Descr          string            `json:"descr"`
 	DefaultCwd     string            `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
 	DefaultContext string            `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultModel   string            `json:"default_model"`   // model substituted into spawns that leave model blank; "" = none
+	DefaultModel   string            `json:"default_model"`   // legacy default model (JOH-210: vestigial, no longer read at spawn); kept so a migrated group's model still prefills the spawn modal
+	DefaultProfile string            `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none
 	MaxMembers     int               `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
 	NotifyEnabled  bool              `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	Members        []dashboardMember `json:"members"`
@@ -929,7 +930,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultModel: g.DefaultModel, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultModel: g.DefaultModel, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.

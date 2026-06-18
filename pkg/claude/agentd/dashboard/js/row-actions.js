@@ -914,44 +914,10 @@ function bindRowActions() {
           });
           return; // Skip the default refresh; commit() / restore() handle it.
         }
-        case 'set-group-model': {
-          // Inline edit of the group's default model (the 🧠 chip)
-          // via the canonical inlineEdit primitive, with the shared
-          // model-alias datalist for suggestions (full model IDs can
-          // be typed freely). Empty clears the default; the daemon
-          // validates against the known aliases / full-ID pattern.
-          const modelEl = btn.classList.contains('group-default-model')
-            ? btn
-            : (btn.closest('summary') && btn.closest('summary').querySelector('.group-default-model'));
-          if (!modelEl) {
-            toast('default model: could not locate the model element', true);
-            return;
-          }
-          const oldModel = modelEl.getAttribute('data-model') || '';
-          inlineEdit({
-            el: modelEl,
-            value: oldModel,
-            inputClass: 'group-default-model-input',
-            placeholder: 'alias or model ID — empty clears',
-            listId: 'model-alias-list',
-            onSave: async (raw) => {
-              const newModel = raw.trim();
-              if (newModel === oldModel) return 'revert';
-              const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-                method: 'PATCH', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ default_model: newModel }),
-              });
-              if (!r.ok) {
-                toast(`set default model failed: ${await r.text()}`, true);
-                return 'revert';
-              }
-              toast(newModel ? `${group}: default model → ${newModel}` : `${group}: default model cleared`);
-              return 'saved';
-            },
-          });
-          return; // inlineEdit owns the refresh / restore lifecycle.
-        }
+        // 'set-group-model' was retired with the per-group default_model
+        // (JOH-210): the group 🧠 chip is now a read-only spawn-profile badge,
+        // and a group's default is set via `groups set-default-profile` / the
+        // profile picker (a coming update). No data-act emits this case.
         case 'set-user-default-model': {
           // Inline edit of the USER-level default model — the "model"
           // key in ~/.claude/settings.json, surfaced as the 🧠 chip in
