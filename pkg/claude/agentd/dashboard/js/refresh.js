@@ -9,9 +9,10 @@ import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
 import {
   renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
+  renderMessagesBadge, renderUsage, renderUserDefaultModel,
   renderNotifyGlobal,
 } from './render.js';
+import { renderMailTab, paintMail } from './mail.js';
 import {
   renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
 } from './tabs.js';
@@ -79,7 +80,7 @@ function bindFilter(tab) {
     else if (tab === 'sudo') renderSudoTab();
     else if (tab === 'links') renderLinksTab();
     else if (tab === 'plugins') renderPluginsTab();
-    else if (tab === 'messages') renderMessagesTab();
+    else if (tab === 'messages') paintMail();
   };
   const onChange = () => {
     const v = input.value;
@@ -253,9 +254,11 @@ export async function refresh() {
     renderLinksTab();
     renderPluginsTab();
     renderPluginsBadge(data.plugins_warn || 0);
-    $('#tab-permissions').innerHTML = renderPermissions(data.permissions, data.agents);
-    $('#tab-slugs').innerHTML = renderSlugs(data.slugs);
-    renderMessagesTab();
+    // Permissions + Slug registry now live as sub-panels of the merged
+    // "Access" tab; the renderers write into the per-panel mount divs.
+    $('#permissions-body').innerHTML = renderPermissions(data.permissions, data.agents);
+    $('#slugs-body').innerHTML = renderSlugs(data.slugs);
+    renderMailTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
     renderUserDefaultModel(data.user_default_model || '');
@@ -283,6 +286,47 @@ function bindTabs() {
       });
     });
   });
+}
+
+// The "Access" tab merges three former tabs — Permissions, Slug
+// registry and Sudo — behind one nav button. Inside it a segmented
+// control switches between the three sub-panels. Unlike the top-level
+// tabs, the per-panel innerHTML keeps getting refreshed every 2s
+// regardless of which sub-tab is visible (the panels are just hidden),
+// so selecting a sub-tab is purely a CSS .active toggle that survives
+// the poll.
+function bindAccessSubtabs() {
+  const subnav = $('#tab-access .access-subnav');
+  if (!subnav) return;
+  subnav.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-subtab]');
+    if (!btn) return;
+    activateAccessSubtab(btn.dataset.subtab);
+  });
+}
+
+// activateAccessSubtab selects one of the Access tab's sub-views
+// (permissions / slugs / sudo) by toggling .active on the matching
+// segmented-control button and its panel. Exported so deep links (the
+// 🔓 sudo-manage badge) can jump straight to a sub-view.
+export function activateAccessSubtab(name) {
+  $$('#tab-access .access-subtab').forEach(b => {
+    const on = b.dataset.subtab === name;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  $$('#tab-access .access-panel').forEach(p => {
+    p.classList.toggle('active', p.id === 'access-' + name);
+  });
+}
+
+// showAccessTab brings the top-level Access tab forward and (optionally)
+// selects a sub-view. Used by the sudo-manage deep link so a click on an
+// agent's 🔓 badge lands on the Sudo sub-view pre-filtered to that agent.
+export function showAccessTab(subtab) {
+  $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'access'));
+  $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-access'));
+  if (subtab) activateAccessSubtab(subtab);
 }
 
 function bindCopy() {
@@ -467,6 +511,35 @@ export function bindBackdropDiscard(modalId, closeFn) {
     if ($('#confirm-modal').classList.contains('show')) return;
     e.preventDefault();
     tryDismiss();
+  });
+}
+
+// bindManageOverlayDismiss wires backdrop-click + Escape close for the
+// Templates… / Links… management overlays. Unlike bindBackdropDiscard it
+// does NOT dirty-track: these panels are a live listing plus a filter
+// box, not an editable form, so closing them can never lose unsaved input
+// and should be friction-free (no "discard?" prompt for a typed filter).
+// Both paths no-op while any child .modal-overlay (the editor /
+// instantiate / link modals these panels launch) is open on top, so a
+// backdrop click or Escape dismisses the child first and only reaches the
+// panel once the child is gone.
+export function bindManageOverlayDismiss(id, closeFn) {
+  const el = $('#' + id);
+  if (!el) return;
+  let pressedOnBackdrop = false;
+  el.addEventListener('mousedown', (e) => { pressedOnBackdrop = (e.target === el); });
+  el.addEventListener('click', (e) => {
+    const isBackdrop = (e.target === el) && pressedOnBackdrop;
+    pressedOnBackdrop = false;
+    if (isBackdrop) closeFn();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!el.classList.contains('show')) return;
+    // A child form modal sits on top — let its own handler take the Escape.
+    if (document.querySelector('.modal-overlay.show')) return;
+    e.preventDefault();
+    closeFn();
   });
 }
 
@@ -2139,7 +2212,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
+  bindFilter, bindTabs, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,

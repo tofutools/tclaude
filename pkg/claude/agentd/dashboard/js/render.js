@@ -376,6 +376,7 @@ function renderGroups(groups) {
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
         <span class="group-default-model${g.default_model ? '' : ' unset'}" data-act="set-group-model" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-model="${esc(g.default_model || '')}" title="${g.default_model ? 'Default model for agents spawned into this group: ' + esc(g.default_model) + ' — click to edit' : 'No group default model — spawns inherit ' + esc(userDefaultModelLabel()) + '. Click to set one.'}">🧠 ${g.default_model ? esc(g.default_model) : 'no default model'}</span>
+        ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
@@ -396,6 +397,33 @@ function renderGroups(groups) {
     </details>
   `;
   }).join('');
+}
+
+// renderGroupLinkChips: compact, always-visible (even when collapsed)
+// link badges for a group's <summary> header. Outbound chips (→ X) name
+// groups this group can message; inbound chips (← Y) name groups that can
+// message it. Each chip carries data-act="links-manage", so a click opens
+// the full Links… management overlay (and the row-action dispatcher's
+// e.preventDefault() stops it from toggling the <details>). Returns '' for
+// a group with no links so the header stays uncluttered. The expanded body
+// still shows the editable per-group links table (renderGroupLinksSection).
+function renderGroupLinkChips(groupName) {
+  const all = (lastSnapshot && lastSnapshot.links) || [];
+  const out = all.filter(l => l.from === groupName);
+  const inc = all.filter(l => l.to === groupName);
+  if (!out.length && !inc.length) return '';
+  const chip = (other, dir, mode) => {
+    const arrow = dir === 'out' ? '→' : '←';
+    const title = dir === 'out'
+      ? `Members of this group can message "${other}" (${mode}) — click to manage links`
+      : `Members of "${other}" can message this group (${mode}) — click to manage links`;
+    return `<span class="group-link-chip ${dir}" data-act="links-manage" title="${esc(title)}">${arrow} ${esc(other || '(deleted)')}</span>`;
+  };
+  const chips = [
+    ...out.map(l => chip(l.to, 'out', l.mode)),
+    ...inc.map(l => chip(l.from, 'in', l.mode)),
+  ].join('');
+  return `<span class="group-link-chips" data-act="links-manage" title="Inter-group links — click to manage">🔗 ${chips}</span>`;
 }
 
 // renderGroupLinksSection: per-group outbound/inbound link rows. Reads
@@ -518,116 +546,18 @@ function showStatus(text, isError) {
   el.classList.toggle('live', !isError && !!text);
 }
 
-// === Messages tab — human-facing notifications from agents ===
+// === Messages tab — the mail client's nav-button badge ===
 // The unread count drives a badge on the Messages nav button, so the
 // human sees there's something to read from whatever tab they're on.
+// It tracks the human.notify channel (the operator's own folder) — the
+// agent-to-agent folders carry their own per-mailbox unread badges in
+// the mail-client sidebar (see mail.js). The rest of the Messages tab —
+// sidebar / list / reading pane — lives in mail.js.
 function renderMessagesBadge(unread) {
   const badge = $('#messages-badge');
   if (!badge) return;
   badge.textContent = unread > 99 ? '99+' : String(unread);
   badge.hidden = unread === 0;
-}
-
-function renderMessagesTab() {
-  if (!lastSnapshot) return;
-  const all = lastSnapshot.messages || [];
-  // Conv-ids with a live tmux window — focus is only meaningful for
-  // those. Cross-referenced from the agent lists already in the
-  // snapshot, so no extra round-trip.
-  const onlineConvs = new Set();
-  (lastSnapshot.agents || []).concat(lastSnapshot.ungrouped || [])
-    .forEach(a => { if (a && a.online) onlineConvs.add(a.conv_id); });
-  const q = ($('#filter-messages').value || '').toLowerCase();
-  const filtered = q
-    ? all.filter(m => [m.from_title, m.group, m.subject, m.body]
-        .some(s => (s || '').toLowerCase().includes(q)))
-    : all;
-  $('#messages-list').innerHTML = renderMessages(filtered, onlineConvs);
-  const total = all.length;
-  $('#filter-messages-count').textContent = q
-    ? `${filtered.length} / ${total}`
-    : `${total} message${total === 1 ? '' : 's'}`;
-}
-
-// Per-message collapse state. The Messages tab re-renders on every 2s
-// poll, so the human's expand/collapse choices live in module state
-// (keyed by message id) rather than the DOM, which each re-render wipes.
-// An id absent from the map uses the default: unread expanded (you want
-// to read what just arrived), read collapsed (declutter what's handled).
-const msgExpandOverride = new Map();
-
-function isMsgExpanded(m) {
-  if (msgExpandOverride.has(m.id)) return msgExpandOverride.get(m.id);
-  return !m.read;
-}
-
-// toggleMessageCollapse flips one message's expand state and redraws the
-// tab. Driven by the delegated click handler (data-act="msg-toggle").
-function toggleMessageCollapse(id) {
-  id = Number(id);
-  // Flip the CURRENT effective state (override or read-derived default)
-  // so the first click always inverts what the human actually sees.
-  const m = ((lastSnapshot && lastSnapshot.messages) || []).find(x => x.id === id);
-  const cur = m ? isMsgExpanded(m) : (msgExpandOverride.get(id) ?? false);
-  msgExpandOverride.set(id, !cur);
-  renderMessagesTab();
-}
-
-// msgPreview is the one-line collapsed title: the sender's subject if
-// there is one, else the first non-blank line of the body. CSS truncates
-// it with an ellipsis at the card width.
-function msgPreview(m) {
-  if (m.subject) return m.subject;
-  const firstNonBlank = (m.body || '').split('\n').find(l => l.trim() !== '');
-  return firstNonBlank || '';
-}
-
-function renderMessages(msgs, onlineConvs) {
-  if (!msgs || !msgs.length) return '<div class="empty">No messages.</div>';
-  return msgs.map(m => {
-    const unread = !m.read;
-    const expanded = isMsgExpanded(m);
-    const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
-    const grp = m.group ? `<span class="msg-group">· ${esc(m.group)}</span>` : '';
-    // Collapsed shows one ellipsised title line; expanded shows the full
-    // subject + body + the per-message action buttons.
-    let detail;
-    if (expanded) {
-      const subj = m.subject ? `<div class="msg-subject">${esc(m.subject)}</div>` : '';
-      // Focus raises the sending agent's terminal window. Only offered
-      // when the agent is online — disabled otherwise, never an error.
-      const focusable = m.from_conv && onlineConvs.has(m.from_conv);
-      const focusBtn = m.from_conv
-        ? `<button data-act="msg-focus" data-conv="${esc(m.from_conv)}" data-id="${m.id}" data-label="${esc(m.from_title || m.from_conv)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`
-        : '';
-      const readBtn = unread
-        ? `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`
-        : '';
-      // Per-message delete — works on read AND unread messages, the
-      // single-row complement to the bulk "clear read" sweep.
-      const deleteBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
-      detail = `${subj}
-      <div class="msg-body">${esc(m.body)}</div>
-      <div class="msg-actions">${focusBtn}${readBtn}${deleteBtn}</div>`;
-    } else {
-      detail = `<div class="msg-preview" data-act="msg-toggle" data-id="${m.id}" title="Expand to read">${esc(msgPreview(m))}</div>`;
-    }
-    // The whole header toggles collapse (data-act="msg-toggle"); the
-    // caret mirrors the state. Matches the dashboard's other clickable
-    // headers — the delegated handler preventDefaults the click.
-    return `<div class="msg-card${unread ? ' msg-unread' : ''}${expanded ? '' : ' msg-collapsed'}">
-      <div class="msg-head" data-act="msg-toggle" data-id="${m.id}" title="${expanded ? 'Collapse' : 'Expand'} this message">
-        <span class="msg-caret">${expanded ? '▾' : '▸'}</span>
-        ${unread ? '<span class="msg-dot" title="unread">●</span>' : ''}
-        <span class="msg-from">${esc(m.from_title || '(unknown sender)')}</span>
-        ${grp}
-        <span class="msg-id">#${m.id}</span>
-        <span class="spacer"></span>
-        <span class="msg-time">${esc(when)}</span>
-      </div>
-      ${detail}
-    </div>`;
-  }).join('');
 }
 
 // === Subscription-usage readout (top bar, left of the live dot) ===
@@ -833,7 +763,6 @@ function renderUserDefaultModel(model) {
 
 export {
   renderGroups, renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderMessagesTab, renderUsage, renderUserDefaultModel,
-  toggleMessageCollapse,
+  renderMessagesBadge, renderUsage, renderUserDefaultModel,
   renderNotifyGlobal,
 };

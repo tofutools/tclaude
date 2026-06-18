@@ -61,13 +61,9 @@
 </div>
 <nav>
   <button class="active" data-tab="groups">Groups</button>
-  <button data-tab="templates">Templates</button>
   <button data-tab="cron">Cron</button>
-  <button data-tab="sudo">Sudo</button>
-  <button data-tab="links">Links</button>
   <button data-tab="plugins">Plugins<span id="plugins-badge" class="tab-badge warn" hidden></span></button>
-  <button data-tab="permissions">Permissions</button>
-  <button data-tab="slugs">Slug registry</button>
+  <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants">Access</button>
   <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
   <button data-tab="costs">Costs</button>
   <button data-tab="config">Config</button>
@@ -99,6 +95,8 @@
           <button role="menuitem" id="group-import-open" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
           <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
+          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)">⧉ templates…</button>
+          <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
     </div>
@@ -113,17 +111,6 @@
       <em>Retired</em> row → group (reinstate + join)
     </aside>
   </section>
-  <section id="tab-templates">
-    <div class="filter-bar">
-      <input id="filter-templates" type="text" placeholder="Filter (template name / descr / agent name / role)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-templates-count"></span>
-      <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template">⤓ from a group</button>
-      <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
-    </div>
-    <div id="templates-list"></div>
-  </section>
   <section id="tab-cron">
     <div class="filter-bar">
       <input id="filter-cron" type="text" placeholder="Filter (name + owner/target label + subject + body)" autocomplete="off" spellcheck="false" />
@@ -133,26 +120,6 @@
       <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job">+ new cron job</button>
     </div>
     <div id="cron-list"></div>
-  </section>
-  <section id="tab-sudo">
-    <div class="filter-bar">
-      <input id="filter-sudo" type="text" placeholder="Filter active sudo grants (matches conv title / id / slug / reason)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-sudo-count"></span>
-      <button class="clear-filter" id="filter-sudo-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent">+ Grant sudo</button>
-    </div>
-    <div id="sudo-list"></div>
-  </section>
-  <section id="tab-links">
-    <div class="filter-bar">
-      <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
-      <span class="filter-count" id="filter-links-count"></span>
-      <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
-      <span class="spacer"></span>
-      <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
-    </div>
-    <div id="links-list"></div>
   </section>
   <section id="tab-plugins">
     <div class="filter-bar">
@@ -165,8 +132,45 @@
     </div>
     <div id="plugins-list"></div>
   </section>
-  <section id="tab-permissions"></section>
-  <section id="tab-slugs"></section>
+  <!-- Access control — Permissions, Slug registry and Sudo were three
+       separate nav tabs (all governing what an agent may do); they're
+       merged here behind one tab with an internal segmented sub-nav.
+       The sub-tab switcher (bindAccessSubtabs / activateAccessSubtab in
+       refresh.js) toggles .active on the matching button + panel. The
+       renderers still write into the per-panel mount divs below
+       (#permissions-body / #slugs-body / #sudo-list). -->
+  <section id="tab-access">
+    <p class="access-intro">
+      Everything that governs <strong>what an agent is allowed to do</strong>, in one place:
+      the permanent <strong>Permissions</strong> roster, the <strong>Slug registry</strong> of
+      every grantable capability, and time-bounded <strong>Sudo</strong> elevations.
+    </p>
+    <div class="access-subnav" role="tablist" aria-label="Access control views">
+      <button class="access-subtab active" data-subtab="permissions" role="tab" aria-selected="true" aria-controls="access-permissions">Permissions</button>
+      <button class="access-subtab" data-subtab="slugs" role="tab" aria-selected="false" aria-controls="access-slugs">Slug registry</button>
+      <button class="access-subtab" data-subtab="sudo" role="tab" aria-selected="false" aria-controls="access-sudo">Sudo</button>
+    </div>
+    <div class="access-panel active" id="access-permissions" role="tabpanel" aria-label="Permissions">
+      <div id="permissions-body"></div>
+    </div>
+    <div class="access-panel" id="access-slugs" role="tabpanel" aria-label="Slug registry">
+      <p class="access-sub-intro">
+        Every capability slug an agent can be granted — registered by the daemon, read-only here.
+        Grant them as permanent overrides (Permissions) or temporary elevations (Sudo).
+      </p>
+      <div id="slugs-body"></div>
+    </div>
+    <div class="access-panel" id="access-sudo" role="tabpanel" aria-label="Sudo">
+      <div class="filter-bar">
+        <input id="filter-sudo" type="text" placeholder="Filter active sudo grants (matches conv title / id / slug / reason)" autocomplete="off" spellcheck="false" />
+        <span class="filter-count" id="filter-sudo-count"></span>
+        <button class="clear-filter" id="filter-sudo-clear" title="Clear filter">×</button>
+        <span class="spacer"></span>
+        <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent">+ Grant sudo</button>
+      </div>
+      <div id="sudo-list"></div>
+    </div>
+  </section>
   <section id="tab-config">
     <p class="cfg-intro">
       Visual editor for <code id="cfg-path">~/.tclaude/config.json</code>. It covers the
@@ -387,16 +391,26 @@
     <div id="costs-chart"></div>
     <div id="costs-table"></div>
   </section>
+  <!-- Messages tab — a mail client for introspecting every mailbox the
+       daemon stores: agent-to-agent mail plus the human.notify channel.
+       Three panes (sidebar → message list → reading pane), populated by
+       mail.js from /api/mailboxes + /api/mailbox. The two bulk buttons
+       act on the human folder only (mutating human_messages) and are
+       shown/hidden by mail.js. -->
   <section id="tab-messages">
     <div class="filter-bar">
-      <input id="filter-messages" type="text" placeholder="Filter (sender / group / subject / body)" autocomplete="off" spellcheck="false" />
+      <input id="filter-messages" type="text" placeholder="Filter messages (sender / recipient / subject / body)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-messages-count"></span>
       <button class="clear-filter" id="filter-messages-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
-      <button class="tool" data-act="msg-mark-all-read" title="Mark every message read">✓ mark all read</button>
-      <button class="tool" data-act="msg-clear" title="Delete every message that has been marked read">🧹 clear read</button>
+      <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read" title="Mark every human notification read" hidden>✓ mark all read</button>
+      <button class="tool" id="mail-clear-read" data-act="msg-clear" title="Delete every human notification that has been marked read" hidden>🧹 clear read</button>
     </div>
-    <div id="messages-list"></div>
+    <div class="mail-client">
+      <aside class="mail-sidebar" id="mail-sidebar"></aside>
+      <div class="mail-list" id="mail-list"></div>
+      <div class="mail-reader" id="mail-reader"></div>
+    </div>
   </section>
   <!-- Vegas tab — appears after Config only in slop mode. vegas.js
        injects a lounge-radio <audio> player into #vegas-player when slop
@@ -761,6 +775,30 @@
     </div>
   </div>
 </div>
+<!-- Templates… manage overlay — the former Templates tab, folded into the
+     Groups tab's ⚙ cog menu. A .manage-overlay (not .modal-overlay) so it
+     does NOT suspend the auto-refresh: the listing stays live and reflects
+     create/edit/delete done through its child modals immediately, exactly
+     like the old tab did. -->
+<div class="manage-overlay" id="templates-manage-modal">
+  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="templates-manage-title">
+    <h3 id="templates-manage-title">Group templates</h3>
+    <p class="manage-intro">Reusable blueprints for a working group — a name, shared context and an ordered list of agent specs. Instantiate one to spawn a whole team in a single shot.</p>
+    <div class="filter-bar">
+      <input id="filter-templates" type="text" placeholder="Filter (template name / descr / agent name / role)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-templates-count"></span>
+      <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template">⤓ from a group</button>
+      <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
+    </div>
+    <div id="templates-list"></div>
+    <div class="modal-buttons">
+      <span class="spacer"></span>
+      <button id="templates-manage-close" type="button">Close</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="template-editor-modal">
   <div class="cron-create-modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="template-editor-title">
     <h3 id="template-editor-title">New group template</h3>
@@ -970,6 +1008,30 @@
       <button id="plugin-modal-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="plugin-modal-submit" class="primary" type="button">Create plugin</button>
+    </div>
+  </div>
+</div>
+<!-- Links… manage overlay — the former Links tab, folded into the Groups
+     tab's ⚙ cog menu. A .manage-overlay (not .modal-overlay) for the same
+     reason as the Templates one above: the listing stays live so add/edit/
+     delete via the +new-link / link-edit child modal reflect immediately.
+     Per-group links also surface as chips in each group header + a table in
+     each group's expanded body. -->
+<div class="manage-overlay" id="links-manage-modal">
+  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="links-manage-title">
+    <h3 id="links-manage-title">Inter-group links</h3>
+    <p class="manage-intro">Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach.</p>
+    <div class="filter-bar">
+      <input id="filter-links" type="text" placeholder="Filter (from / to / mode)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-links-count"></span>
+      <button class="clear-filter" id="filter-links-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="link-new-open" class="primary" title="Add a new inter-group communication link">+ new link</button>
+    </div>
+    <div id="links-list"></div>
+    <div class="modal-buttons">
+      <span class="spacer"></span>
+      <button id="links-manage-close" type="button">Close</button>
     </div>
   </div>
 </div>
