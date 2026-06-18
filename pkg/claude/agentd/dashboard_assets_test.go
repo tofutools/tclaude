@@ -154,6 +154,24 @@ func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	}
 }
 
+// TestDashboardJS_ModalMinSizePinned guards the resize floor: the modal
+// can't be dragged below its natural default size. A helper measures that
+// size live (no hardcoded number) and makeModalResizable re-pins it each
+// time the modal opens — watched off the overlay's `show` class so no open
+// path needs a manual hook. Dropping either lets the grip crush the dialog
+// below where its fields fit.
+func TestDashboardJS_ModalMinSizePinned(t *testing.T) {
+	for _, needle := range []string{
+		"function refreshModalMinSize(", // measures + pins the natural min size (helpers.js)
+		"refreshModalMinSize(modalEl)",  // makeModalResizable invokes it
+		"new MutationObserver(",         // re-measures when the overlay gains `show`
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard JS missing %q — modal min-size floor regressed", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever
