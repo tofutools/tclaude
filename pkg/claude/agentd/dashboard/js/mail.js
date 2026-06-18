@@ -35,7 +35,7 @@
 // bulk bar as each batch lands, and mail.busy freezes the refresh +
 // handlers for the duration so nothing races the running op.
 
-import { $, $$, esc, relTime, shortId } from './helpers.js';
+import { $, $$, esc, relTime, shortId, withPreservedFocus } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
 // refresh.js. Both are benign, TDZ-safe import cycles (see tabs.js):
@@ -241,14 +241,26 @@ function renderMailTab() {
 // paintMail repaints all panes from cached state, applying the current
 // filters. Sync — used by the filter inputs and after selection changes,
 // with no server round-trip.
+//
+// Wrapped in withPreservedFocus because this is the mail tab's single
+// repaint chokepoint, and several callers reach it ASYNCHRONOUSLY —
+// loadMail()/reloadMail() repaint after their fetch resolves, i.e. after
+// refresh.js's own synchronous focus restore has already run. Without
+// this wrap a Tab-navigating user (stepping the mailbox sidebar or the
+// message list) was bounced to the top each time fresh mail data landed.
+// The sidebar/list rows carry data-act + data-id, so they restore by
+// signature; the static filter inputs above the panes are never rebuilt
+// and keep their focus untouched.
 function paintMail() {
-  paintBulkActions();
-  paintSidebar();
-  paintWipeBar();
-  paintList();
-  paintListBulkBar();
-  paintPager();
-  paintReader();
+  withPreservedFocus(() => {
+    paintBulkActions();
+    paintSidebar();
+    paintWipeBar();
+    paintList();
+    paintListBulkBar();
+    paintPager();
+    paintReader();
+  });
 }
 
 // reloadMessagesPage refetches the current folder's page (current

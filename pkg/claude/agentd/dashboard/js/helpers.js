@@ -1000,6 +1000,99 @@ function groupOfflineToggleHTML(name) {
   return `<span class="${cls}" data-act="cycle-group-offline" data-group="${esc(name)}" data-label="${esc(name)}" title="Per-group offline visibility — click to cycle: inherit tab default → always show → always hide">${esc(label)}</span>`;
 }
 
+// --- focus preservation across a re-render ---------------------------
+//
+// The dashboard rebuilds whole panes with innerHTML — the 2s snapshot
+// poll (refresh.js) rebuilds every tab body; the Messages tab repaints
+// its sidebar / list / reader on each mail load. An innerHTML swap
+// detaches whatever the keyboard user had focused — a member-row button,
+// the ⚙ cog, a group <summary>, a mailbox or message row — and drops
+// focus to <body>, so a Tab-navigating user is bounced to the top on
+// every poll. We can't just suspend the render while the user navigates
+// the way we do for a modal or a drag (those have an unambiguous
+// open/close or dragstart/dragend signal; "the user is reading with the
+// keyboard" has none), so instead we preserve focus ACROSS the render:
+// snapshot a stable signature of the focused control, run the render,
+// then re-focus the matching control in the freshly-built DOM.
+//
+// The signature is the element's tag plus the identifying data-*
+// attributes every actionable control the renderers emit already
+// carries (data-act + data-conv / data-group / data-id / …); a
+// <summary> is keyed by its parent <details data-group-key>. A few
+// controls share a signature — every row's ⚙ cog is just
+// button[data-act="row-menu"] — so we also record the focused control's
+// index among its same-signature peers and restore to that index. In a
+// steady-state repaint the markup is identical, so index N maps back to
+// the very same row; the worst case under a concurrent add/remove is
+// focus landing on an adjacent control, still far better than snapping
+// to the top. A null signature (focus was on a static element the render
+// never rebuilds — a filter <input>, a nav button — or on nothing) skips
+// restoration entirely, leaving that natural focus untouched.
+const FOCUS_SIG_ATTRS = [
+  'data-act', 'data-conv', 'data-group', 'data-id',
+  'data-tab', 'data-subtab', 'data-goto-tab', 'data-copy',
+];
+
+function focusSignature(el) {
+  if (!el || el === document.body || el === document.documentElement) return null;
+  // A group / details header carries no identifying attribute of its
+  // own; key it off the parent <details data-group-key>.
+  if (el.tagName === 'SUMMARY') {
+    const d = el.parentElement;
+    const key = d && d.getAttribute && d.getAttribute('data-group-key');
+    return key ? `details[data-group-key="${CSS.escape(key)}"] > summary` : null;
+  }
+  const parts = [];
+  for (const a of FOCUS_SIG_ATTRS) {
+    const v = el.getAttribute(a);
+    if (v !== null) parts.push(`[${a}="${CSS.escape(v)}"]`);
+  }
+  if (!parts.length) return null;
+  return el.tagName.toLowerCase() + parts.join('');
+}
+
+// captureFocus reads the active element's restorable identity right
+// before a re-render. Returns null when there is nothing worth
+// restoring (no focused control, or a control with no stable identity).
+function captureFocus() {
+  const el = document.activeElement;
+  const sig = focusSignature(el);
+  if (!sig) return null;
+  const peers = document.querySelectorAll(sig);
+  let idx = 0;
+  for (let i = 0; i < peers.length; i++) {
+    if (peers[i] === el) { idx = i; break; }
+  }
+  return { sig, idx };
+}
+
+// restoreFocus re-focuses the control matching a captureFocus() token —
+// but ONLY when the re-render actually stole focus (activeElement fell
+// back to <body>). If the user has since moved focus into a modal, an
+// input, or any element the render left intact, we leave it alone.
+// preventScroll keeps the viewport from lurching when the restored
+// control happens to be scrolled off-screen.
+function restoreFocus(token) {
+  if (!token) return;
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== document.documentElement) return;
+  const peers = document.querySelectorAll(token.sig);
+  if (!peers.length) return;
+  const el = peers[Math.min(token.idx, peers.length - 1)];
+  if (el) el.focus({ preventScroll: true });
+}
+
+// withPreservedFocus wraps a synchronous re-render `fn`, capturing the
+// keyboard focus before it and restoring it after. The single-call form
+// used by any repaint chokepoint that replaces its own DOM (e.g. mail.js's
+// paintMail). refresh.js spreads captureFocus()/restoreFocus() apart by
+// hand instead, since its capture and restore straddle non-render work.
+function withPreservedFocus(fn) {
+  const token = captureFocus();
+  fn();
+  restoreFocus(token);
+}
+
 // Public API — the helpers used outside this module. actionCog is
 // exported because render.js builds the group header's ⚙ menu with it.
 // The rest (statusPillClass, fmtTokens, contextMeterTooltip, the
@@ -1011,6 +1104,10 @@ export {
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,
+  // Focus preservation across innerHTML re-renders — refresh.js wraps its
+  // 2s render block with captureFocus/restoreFocus; mail.js wraps its mail
+  // repaint with withPreservedFocus.
+  captureFocus, restoreFocus, withPreservedFocus,
   // slop-fx.js re-uses these for the manual-pull animation and the
   // 7-7-7 win detection — single source of truth.
   SLOP_SYMBOLS, SLOP_STOPPED,
