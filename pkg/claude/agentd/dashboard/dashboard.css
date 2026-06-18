@@ -768,6 +768,14 @@ details[open] > summary .spawn-btn { opacity: 1; }
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; min-width: 12em;
 }
+/* The inline 🧠 profile picker — a <select> swapped in for the group / user
+   chip while choosing a default spawn profile (row-actions openProfilePicker).
+   Same compact monospace look as the chip inputs above. */
+.group-default-profile-select {
+  background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
+  color: #d4d4d4; padding: 1px 6px; font: inherit;
+  font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
+}
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #0d1117; border: 1px solid #30363d; border-radius: 3px;

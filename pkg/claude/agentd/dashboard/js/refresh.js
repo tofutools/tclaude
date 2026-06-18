@@ -9,7 +9,7 @@ import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
 import {
   renderPermissions, renderSlugs, showStatus,
-  renderMessagesBadge, renderUsage, renderUserDefaultModel,
+  renderMessagesBadge, renderUsage, renderDashDefaultProfile,
   renderNotifyGlobal,
 } from './render.js';
 import { renderMailTab, paintMail } from './mail.js';
@@ -261,7 +261,7 @@ export async function refresh() {
     renderMailTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
-    renderUserDefaultModel(data.user_default_model || '');
+    renderDashDefaultProfile();
     renderNotifyGlobal(!!data.notifications_enabled);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML

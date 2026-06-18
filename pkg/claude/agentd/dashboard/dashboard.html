@@ -87,7 +87,7 @@
         </div>
       </div>
       <span class="spacer"></span>
-      <span id="user-default-model" class="user-default-model unset" data-act="set-user-default-model" data-model="" title="User-level default Claude model (~/.claude/settings.json) — click to edit">🧠 …</span>
+      <span id="dashboard-default-profile" class="user-default-model unset" data-act="set-dash-profile" data-profile="" title="Dashboard default spawn profile — pre-fills the spawn dialog when a group has no default of its own. Click to set.">🧠 …</span>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
       <div class="filter-bar-cog">
         <button class="cog-btn" type="button" data-act="filter-bar-menu" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, from template" aria-label="More group actions">⚙︎</button>
@@ -96,6 +96,7 @@
           <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)">⧉ templates…</button>
+          <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default">⧉ profiles…</button>
           <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
@@ -827,6 +828,126 @@
     </div>
   </div>
 </div>
+<div class="manage-overlay" id="profiles-manage-modal">
+  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="profiles-manage-title">
+    <h3 id="profiles-manage-title">Spawn profiles</h3>
+    <p class="manage-intro">Reusable bundles of the spawn dialog's fields — harness, model, effort, sandbox, name, role, descr and the initial message (not the directory or worktree). A profile pre-fills the spawn dialog; set one as a group's default (the group 🧠 badge) or the dashboard default (the 🧠 chip above) to have it pre-fill automatically.</p>
+    <div class="filter-bar">
+      <input id="filter-profiles" type="text" placeholder="Filter (name / harness / model / role)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-profiles-count"></span>
+      <button class="clear-filter" id="filter-profiles-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="profile-create-open" class="primary" title="Define a new spawn profile">+ new profile</button>
+    </div>
+    <div id="profiles-list"></div>
+    <div class="modal-buttons">
+      <span class="spacer"></span>
+      <button id="profiles-manage-close" type="button">Close</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="profile-editor-modal">
+  <div class="cron-create-modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
+    <h3 id="profile-editor-title">New spawn profile</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Name</span>
+      <input id="profile-editor-name" type="text" placeholder="profile name — kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" id="profile-editor-harness-row" title="Coding harness the profile targets. The Model / Effort / Sandbox options below validate against this harness, exactly like the spawn dialog.">
+      <span class="cron-create-label">Harness</span>
+      <select id="profile-editor-harness"></select>
+    </label>
+    <label class="cron-create-row" id="profile-editor-model-claude-row" title="Claude model. Blank leaves the model unset — the spawn inherits the group / user / claude default at launch.">
+      <span class="cron-create-label">Model</span>
+      <!-- Curated Claude aliases — mirrors the spawn dialog's Model select.
+           Keep in sync with ValidModels in pkg/claude/common/model.go. -->
+      <select id="profile-editor-model">
+        <option value="">Default (unset)</option>
+        <option value="fable">fable</option>
+        <option value="fable[1m]">fable[1m]</option>
+        <option value="opus">opus</option>
+        <option value="opus[1m]">opus[1m]</option>
+        <option value="sonnet">sonnet</option>
+        <option value="sonnet[1m]">sonnet[1m]</option>
+        <option value="haiku">haiku</option>
+        <option value="opusplan">opusplan</option>
+      </select>
+    </label>
+    <label class="cron-create-row" id="profile-editor-model-codex-row" style="display:none" title="Codex model (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Free text — Codex validates it itself. Blank leaves it unset.">
+      <span class="cron-create-label">Model</span>
+      <input id="profile-editor-model-codex" type="text" placeholder="blank = unset; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" title="Reasoning effort. Default leaves it unset (the harness's own setting).">
+      <span class="cron-create-label">Effort</span>
+      <select id="profile-editor-effort">
+        <option value="">Default (harness's own)</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max</option>
+      </select>
+    </label>
+    <label class="cron-create-row" id="profile-editor-sandbox-row" style="display:none" title="Launch sandbox (Codex). Pre-selected to the harness's secure default.">
+      <span class="cron-create-label">Sandbox</span>
+      <select id="profile-editor-sandbox"></select>
+    </label>
+    <label class="cron-create-row" id="profile-editor-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex (writes ~/.codex/config.toml). Default leaves it unset.">
+      <span class="cron-create-label">Trust dir</span>
+      <select id="profile-editor-trust-dir">
+        <option value="">Default (leave dialog's own)</option>
+        <option value="1">on</option>
+        <option value="0">off</option>
+      </select>
+    </label>
+    <label class="cron-create-row" title="Sets the spawned agent's name (a /rename at spawn). Blank leaves it unset.">
+      <span class="cron-create-label">Agent name</span>
+      <input id="profile-editor-agent-name" type="text" placeholder="optional — names the spawned agent" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" title="Short role tag pre-filled into the spawn dialog.">
+      <span class="cron-create-label">Role</span>
+      <input id="profile-editor-role" type="text" placeholder="optional — e.g. researcher, planner" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" title="One-line description pre-filled into the spawn dialog.">
+      <span class="cron-create-label">Descr</span>
+      <input id="profile-editor-descr" type="text" placeholder="optional — short one-line description" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" title="Initial message / task brief pre-filled into the spawn dialog (newlines preserved).">
+      <span class="cron-create-label">Initial msg</span>
+      <textarea id="profile-editor-init-msg" class="modal-context-textarea" rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row" title="Pre-fill the spawn dialog's “Sync worktree branch with name” checkbox. Default leaves the dialog's own default.">
+      <span class="cron-create-label">Sync worktree</span>
+      <select id="profile-editor-sync-worktree">
+        <option value="">Default (leave dialog's own)</option>
+        <option value="1">on</option>
+        <option value="0">off</option>
+      </select>
+    </label>
+    <label class="cron-create-row" title="Pre-fill the spawn dialog's “Auto focus” checkbox. Default leaves the dialog's own default.">
+      <span class="cron-create-label">Auto focus</span>
+      <select id="profile-editor-auto-focus">
+        <option value="">Default (leave dialog's own)</option>
+        <option value="1">on</option>
+        <option value="0">off</option>
+      </select>
+    </label>
+    <label class="cron-create-row" title="Pre-fill the spawn dialog's “Include group default context” checkbox. Default leaves the dialog's own default.">
+      <span class="cron-create-label">Group context</span>
+      <select id="profile-editor-group-context">
+        <option value="">Default (leave dialog's own)</option>
+        <option value="1">on</option>
+        <option value="0">off</option>
+      </select>
+    </label>
+    <div class="cron-create-error" id="profile-editor-error"></div>
+    <div class="modal-buttons">
+      <button id="profile-editor-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="profile-editor-submit" class="primary" type="button">Save profile</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="template-instantiate-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-instantiate-title">
     <h3 id="template-instantiate-title">New group from template</h3>
@@ -1069,6 +1190,15 @@
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="agent-spawn-title">
     <h3 id="agent-spawn-title">Spawn a new agent</h3>
     <div class="modal-meta" id="agent-spawn-meta" style="display:none"></div>
+    <label class="cron-create-row" id="agent-spawn-load-profile-row" title="Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). The group's default profile (or, failing that, the dashboard default) loads automatically when the dialog opens; pick a different one here, or Clear to start from blank. Manage profiles via the Groups cog ⚙ → ⧉ profiles…">
+      <span class="cron-create-label">Profile</span>
+      <div class="cron-create-target">
+        <div class="cron-target-input-row">
+          <select id="agent-spawn-load-profile"><option value="">— none (blank form) —</option></select>
+          <button id="agent-spawn-clear" type="button" title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched">Clear</button>
+        </div>
+      </div>
+    </label>
     <label class="cron-create-row" id="agent-spawn-group-row">
       <span class="cron-create-label">Group</span>
       <select id="agent-spawn-group"></select>
@@ -1265,21 +1395,6 @@
     </div>
   </div>
 </div>
-<!-- Shared model-alias suggestions for the inline model editors (the
-     group 🧠 chip and the user-level 🧠 chip). A datalist rather than a
-     <select> so a full model ID (e.g. claude-fable-5[1m]) can be typed
-     freely while the curated aliases stay one click away. Keep in sync
-     with ValidModels in pkg/claude/common/model.go. -->
-<datalist id="model-alias-list">
-  <option value="fable"></option>
-  <option value="fable[1m]"></option>
-  <option value="opus"></option>
-  <option value="opus[1m]"></option>
-  <option value="sonnet"></option>
-  <option value="sonnet[1m]"></option>
-  <option value="haiku"></option>
-  <option value="opusplan"></option>
-</datalist>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
 <script type="module" src="/static/js/dashboard.js"></script>
