@@ -48,6 +48,38 @@ func TestHumanMessages_InsertListCount(t *testing.T) {
 	assert.Equal(t, 2, n)
 }
 
+// TestHumanMessages_WholeSecondBoundaryOrdering is the deterministic
+// regression guard for the #242-class flake on the human-notifications list:
+// a message stamped exactly on a whole second ("…:00Z") versus one a few ms
+// later ("…:00.004Z"). As RFC3339Nano text, the whole-second value sorts AFTER
+// the fractional one ('.' < 'Z'), so an ORDER BY created_at query would render
+// the OLDER message as "newest". A `, id DESC` tiebreak does not save it — the
+// rows have different created_at strings, so the tiebreak never engages.
+// Ordering by id (insertion order) returns them correctly newest-first.
+// This test fails on the pre-fix `ORDER BY created_at DESC, id DESC` and passes
+// on `ORDER BY id DESC`.
+func TestHumanMessages_WholeSecondBoundaryOrdering(t *testing.T) {
+	setupTestDB(t)
+
+	// base lands on a whole second → RFC3339Nano renders it with no fractional
+	// part ("…:00Z"); the newer one renders as "…:00.004Z".
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	olderID, err := InsertHumanMessage(&HumanMessage{
+		FromConv: "c", Body: "older", CreatedAt: base,
+	})
+	require.NoError(t, err)
+	newerID, err := InsertHumanMessage(&HumanMessage{
+		FromConv: "c", Body: "newer", CreatedAt: base.Add(4 * time.Millisecond),
+	})
+	require.NoError(t, err)
+
+	msgs, err := ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, newerID, msgs[0].ID, "newer (fractional) message must come first")
+	assert.Equal(t, olderID, msgs[1].ID, "older (whole-second) message must come second")
+}
+
 func TestHumanMessages_MarkRead(t *testing.T) {
 	setupTestDB(t)
 	id, err := InsertHumanMessage(&HumanMessage{FromConv: "c", Body: "x"})
