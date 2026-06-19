@@ -281,13 +281,21 @@ func InsertAgentCronRun(r *AgentCronRun) (int64, error) {
 
 // ListAgentCronRunsForJob returns the most-recent runs for one job,
 // newest first. limit caps the result set; pass 0 for "no limit".
+//
+// Ordering is by id DESC (autoincrement = insertion order), NOT fired_at.
+// fired_at is a stored timestamp string; two runs that fire in the same
+// whole second serialise identically, so ORDER BY fired_at leaves their
+// relative order unspecified — and under LIMIT that can drop the genuinely
+// newest run from a "last N runs" view. id is monotonic with insertion,
+// giving a correct, total newest-first order. Same class as the inbox/outbox
+// fix in #411 and the undelivered-queue fix in #242.
 func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	q := `SELECT id, job_id, fired_at, status, error_msg
-		FROM agent_cron_runs WHERE job_id = ? ORDER BY fired_at DESC`
+		FROM agent_cron_runs WHERE job_id = ? ORDER BY id DESC`
 	args := []any{jobID}
 	if limit > 0 {
 		q += ` LIMIT ?`

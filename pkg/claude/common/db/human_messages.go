@@ -60,6 +60,18 @@ func InsertHumanMessage(m *HumanMessage) (int64, error) {
 }
 
 // ListHumanMessages returns every human message, newest first.
+//
+// Ordering is by id DESC (autoincrement = insertion order), NOT created_at.
+// created_at is an RFC3339Nano string compared lexically by SQLite: a time on
+// a whole second serialises with no fractional part ("…:00Z") and sorts AFTER
+// a later same-second value ("…:00.004Z") because '.' < 'Z'. ORDER BY
+// created_at could therefore render a newer message below an older one near a
+// second boundary. A `, id DESC` tiebreak does NOT fix it — the misordered
+// rows have *different* created_at strings, so the id tiebreak never engages.
+// This is the same RFC3339Nano flake fixed for the agent inbox/outbox in #411
+// (see listAgentMessagesByCol) and the undelivered queue in #242; id is
+// monotonic with insertion, giving a correct, total newest-first order
+// independent of the timestamp format.
 func ListHumanMessages() ([]*HumanMessage, error) {
 	d, err := Open()
 	if err != nil {
@@ -68,7 +80,7 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 	rows, err := d.Query(`
 		SELECT id, from_conv, from_title, group_name, subject, body, created_at, read_at
 		FROM human_messages
-		ORDER BY created_at DESC, id DESC`)
+		ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}

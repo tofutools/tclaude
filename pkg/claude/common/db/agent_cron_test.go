@@ -116,6 +116,51 @@ func TestAgentCronRun_InsertListCascade(t *testing.T) {
 	assert.Len(t, after, 0, "expected runs cascaded with job delete")
 }
 
+// TestAgentCronRun_SameSecondOrdering locks in newest-first ordering when
+// several runs fire within the same whole second. fired_at is stored as a
+// second-precision timestamp string, so same-second runs serialise
+// identically — under ORDER BY fired_at their relative order is unspecified,
+// and with LIMIT the genuinely-newest run can be dropped from a "last N runs"
+// view. Ordering by id (autoincrement = insertion order) is deterministic and
+// correct regardless of how the timestamps collapse. Same flake class as the
+// inbox/outbox fix in #411.
+func TestAgentCronRun_SameSecondOrdering(t *testing.T) {
+	setupTestDB(t)
+
+	jobID, _ := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		IntervalSeconds: 60, Body: "x", Enabled: true,
+	})
+
+	// Five runs, all stamped on the exact same whole second → identical
+	// fired_at strings. Insertion order (= id order) is the only thing that
+	// distinguishes them.
+	whole := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	var ids []int64
+	for range 5 {
+		runID, err := InsertAgentCronRun(&AgentCronRun{
+			JobID: jobID, FiredAt: whole, Status: "ok",
+		})
+		require.NoError(t, err)
+		ids = append(ids, runID)
+	}
+
+	// Full list: strictly descending by id (newest insertion first).
+	runs, err := ListAgentCronRunsForJob(jobID, 0)
+	require.NoError(t, err)
+	require.Len(t, runs, 5)
+	for i := range runs {
+		assert.Equal(t, ids[len(ids)-1-i], runs[i].ID, "run %d out of newest-first order", i)
+	}
+
+	// Under LIMIT the newest runs must survive, not arbitrary same-second ties.
+	limited, err := ListAgentCronRunsForJob(jobID, 2)
+	require.NoError(t, err)
+	require.Len(t, limited, 2)
+	assert.Equal(t, ids[4], limited[0].ID, "newest run must be kept under LIMIT")
+	assert.Equal(t, ids[3], limited[1].ID, "second-newest run must be kept under LIMIT")
+}
+
 func TestAgentCronJob_UpdateFields_Partial(t *testing.T) {
 	setupTestDB(t)
 
