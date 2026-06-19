@@ -1024,6 +1024,7 @@ func groupsUnarchiveCmd() *cobra.Command {
 type groupsCloneParams struct {
 	Source   string `pos:"true" help:"Source group to clone"`
 	NewName  string `pos:"true" optional:"true" help:"Optional new group name (defaults to <source>-c-<N>)"`
+	NoAgents bool   `long:"no-agents" help:"Clone only the group's settings + owners — do NOT clone the member agents. The new group comes up with no members."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
@@ -1039,7 +1040,12 @@ func groupsCloneCmd() *cobra.Command {
 			"so names don't nest.\n\n" +
 			"Each member clone uses the copy-jsonl path so the clone starts with the " +
 			"source's conversation history. Owners stay as the same conv-id (no clone). " +
-			"Per-conv permissions on each member are copied to the clone (best-effort).",
+			"Per-conv permissions on each member are copied to the clone (best-effort).\n\n" +
+			"The new group always carries every source setting — default directory, " +
+			"description, startup context, default profile, max-members cap and the notify " +
+			"switch.\n\n" +
+			"Pass --no-agents to clone only the group's settings + owners and skip the " +
+			"member agents entirely (the new group comes up with no members).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsCloneParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Source).SetAlternativesFunc(completeGroupNames)
@@ -1068,9 +1074,12 @@ func runGroupsClone(p *groupsCloneParams, stdout, stderr io.Writer) int {
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
-	body := map[string]string{}
+	body := map[string]any{}
 	if p.NewName != "" {
 		body["new_name"] = p.NewName
+	}
+	if p.NoAgents {
+		body["no_clone_members"] = true
 	}
 	var resp struct {
 		Group        string `json:"group"`
@@ -1091,6 +1100,9 @@ func runGroupsClone(p *groupsCloneParams, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "%s -> %s (%d owner(s) copied)\n",
 		resp.SrcGroup, resp.Group, resp.OwnersCopied)
+	if p.NoAgents {
+		fmt.Fprintf(stdout, "  (settings + owners only — no member agents cloned)\n")
+	}
 	failed := 0
 	for _, m := range resp.Members {
 		if m.Error != "" {

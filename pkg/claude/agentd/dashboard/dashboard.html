@@ -1138,6 +1138,28 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="group-clone-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-clone-title">
+    <h3 id="group-clone-title">Clone group</h3>
+    <div class="modal-meta" id="group-clone-meta" style="display:none"></div>
+    <p style="margin:4px 0; font-size:12px; color:#7d8590">Creates a new group from the source. The source group is left untouched. Review what it carries below, set a name and choose whether the member agents come along.</p>
+    <label class="cron-create-row">
+      <span class="cron-create-label">New name</span>
+      <input id="group-clone-name" type="text" placeholder="leave blank for &lt;source&gt;-c-N" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-enabled" title="Checked: clone every member agent into the new group (full conversation history). Unchecked: copy only the group's settings + owners — the new group comes up with no members.">
+      <input id="group-clone-with-agents" type="checkbox" checked /> Clone member agents too
+    </label>
+    <p style="margin:4px 0 0 0; font-size:11px; color:#7d8590">Unchecked → settings &amp; owners only; no agents are cloned.</p>
+    <div class="group-clone-preview" id="group-clone-preview"></div>
+    <div class="cron-create-error" id="group-clone-error"></div>
+    <div class="modal-buttons">
+      <button id="group-clone-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="group-clone-submit" class="primary" type="button">Clone group</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="plugin-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-modal-title">
     <h3 id="plugin-modal-title">New plugin</h3>

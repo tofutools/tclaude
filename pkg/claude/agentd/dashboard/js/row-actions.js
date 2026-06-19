@@ -14,7 +14,7 @@ import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
 import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
-import { openGroupContextModal } from './modal-templates.js';
+import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
@@ -1123,6 +1123,12 @@ function bindRowActions() {
           // gets its own modal with a <textarea>.
           openGroupContextModal(group);
           return; // Modal owns the save + refresh.
+        }
+        case 'clone-group': {
+          // Open the clone-group modal (new name + with/without agents).
+          // The modal owns its POST + toast + refresh.
+          openGroupCloneModal(group);
+          return;
         }
         case 'delete-group': {
           const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);

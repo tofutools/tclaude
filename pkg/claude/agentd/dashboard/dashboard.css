@@ -1455,6 +1455,26 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 4px 8px; background: #0d1117;
   border-left: 2px solid #2a3340; margin-top: -4px;
 }
+/* Clone-group modal: a compact preview of the source settings the clone
+   will carry (directory, descr, context, profile, cap, notify, owners,
+   member agents). Populated by openGroupCloneModal in modal-templates.js;
+   the member-agents row updates live with the "clone agents" checkbox. */
+.group-clone-preview {
+  margin-top: 6px;
+  border: 1px solid #2a3340; border-radius: 4px;
+  background: #0d1117; padding: 6px 8px;
+  font-size: 12px; color: #c9d1d9;
+}
+.group-clone-preview .gcp-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  color: #7d8590; margin-bottom: 4px;
+}
+.group-clone-preview .gcp-row {
+  display: flex; gap: 8px; padding: 1px 0; line-height: 1.5;
+}
+.group-clone-preview .gcp-key { flex: 0 0 116px; color: #7d8590; }
+.group-clone-preview .gcp-val { flex: 1; min-width: 0; word-break: break-word; }
+.group-clone-preview .gcp-val.muted { color: #6e7681; font-style: italic; }
 .cron-create-row {
   display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
 }
